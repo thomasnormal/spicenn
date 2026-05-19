@@ -417,7 +417,12 @@ with readout-only flow reached 93.75\%, and the full hidden-delta path reached
 the same 93.75\% when hidden writes were weakened to \code{2e-7 u}.  The
 standard hidden-write strength stayed at 87.5\%, and a readout charge-noise
 trial collapsed, so the current bottleneck is hidden/write calibration rather
-than missing front-end separability.
+than missing front-end separability.  The newer 32-sample and fixed16-feature
+controls make the bottleneck sharper: the external input rails remain linearly
+separable, but the 8-cell random hidden layer often collapses that separability
+before the readout can exploit it.  On the 32-sample pool2 bridge, enabling the
+real hidden-delta write path moves hidden capacitors by up to 25.3 mV but still
+lands at the same 78.12\% accuracy as the readout-only control.
 
 \begin{table}[h]
   \centering
@@ -455,6 +460,22 @@ than missing front-end separability.
     50.00\% &
     Negative control: the final hidden activations are separable, but the
     readout/update polarity or balance is wrong for this initialization. \\
+    \addlinespace
+    \code{mnist01\_32}, e2 &
+    off & 78.12\% &
+    The 4-rail input is strongly separable, but the final random-hidden code is
+    not; readout-only flow no longer scales cleanly. \\
+    \addlinespace
+    \code{mnist01\_32}, e2 &
+    real hidden-delta path, \code{2e-7 u} write &
+    78.12\% &
+    Hidden writes are present and nontrivial, but they do not repair the
+    non-separable 8-cell hidden code. \\
+    \addlinespace
+    \code{mnist01fixed16\_16}, e2 &
+    off & 62.50\% &
+    Richer fixed input features are separable, but the same 8-cell random
+    hidden bottleneck destroys the code. \\
     \bottomrule
   \end{tabular}
 \end{table}

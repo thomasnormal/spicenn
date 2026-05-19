@@ -1,0 +1,439 @@
+{
+  "simulator": "ngspice-46 : Circuit level simulation program",
+  "architecture": "device_level_binary_general_random_hidden",
+  "status": "tiny_general_hidden_device_experiment",
+  "benchmark": "mnist01_12",
+  "dataset": "mnist01_12",
+  "dataset_records": [
+    {
+      "pattern": 0,
+      "label": 0,
+      "source_index": 5228,
+      "source_digit": 0,
+      "input_frontend": "2x2_area_downsample_per_feature_selected_subset_minmax_to_0p08_0p92",
+      "input_frontend_key": "pool2",
+      "input_rails": [
+        "x0",
+        "nx0",
+        "x1",
+        "nx1"
+      ],
+      "inputs": {
+        "x0": 0.8405220888222318,
+        "nx0": 0.6200368466687806,
+        "x1": 0.5767851716460033,
+        "nx1": 0.7935028004902409
+      }
+    },
+    {
+      "pattern": 1,
+      "label": 0,
+      "source_index": 10732,
+      "source_digit": 0,
+      "input_frontend": "2x2_area_downsample_per_feature_selected_subset_minmax_to_0p08_0p92",
+      "input_frontend_key": "pool2",
+      "input_rails": [
+        "x0",
+        "nx0",
+        "x1",
+        "nx1"
+      ],
+      "inputs": {
+        "x0": 0.8920090392440344,
+        "nx0": 0.20657229334411925,
+        "x1": 0.46719770142473765,
+        "nx1": 0.6050514876565528
+      }
+    },
+    {
+      "pattern": 2,
+      "label": 0,
+      "source_index": 13955,
+      "source_digit": 0,
+      "input_frontend": "2x2_area_downsample_per_feature_selected_subset_minmax_to_0p08_0p92",
+      "input_frontend_key": "pool2",
+      "input_rails": [
+        "x0",
+        "nx0",
+        "x1",
+        "nx1"
+      ],
+      "inputs": {
+        "x0": 0.5302383415586455,
+        "nx0": 0.35396921254747843,
+        "x1": 0.5036130601006074,
+        "nx1": 0.3540575642925852
+      }
+    },
+    {
+      "pattern": 3,
+      "label": 0,
+      "source_index": 48715,
+      "source_digit": 0,
+      "input_frontend": "2x2_area_downsample_per_feature_selected_subset_minmax_to_0p08_0p92",
+      "input_frontend_key": "pool2",
+      "input_rails": [
+        "x0",
+        "nx0",
+        "x1",
+        "nx1"
+      ],
+      "inputs": {
+        "x0": 0.9199999999999998,
+        "nx0": 0.9163076978271928,
+        "x1": 0.9199999999999999,
+        "nx1": 0.9199999999999999
+      }
+    },
+    {
+      "pattern": 4,
+      "label": 0,
+      "source_index": 10563,
+      "source_digit": 0,
+      "input_frontend": "2x2_area_downsample_per_feature_selected_subset_minmax_to_0p08_0p92",
+      "input_frontend_key": "pool2",
+      "input_rails": [
+        "x0",
+        "nx0",
+        "x1",
+        "nx1"
+      ],
+      "inputs": {
+        "x0": 0.5019750126273739,
+        "nx0": 0.7792492155250484,
+        "x1": 0.8777239792012165,
+        "nx1": 0.5338600243954557
+      }
+    },
+    {
+      "pattern": 5,
+      "label": 0,
+      "source_index": 48185,
+      "source_digit": 0,
+      "input_frontend": "2x2_area_downsample_per_feature_selected_subset_minmax_to_0p08_0p92",
+      "input_frontend_key": "pool2",
+      "input_rails": [
+        "x0",
+        "nx0",
+        "x1",
+        "nx1"
+      ],
+      "inputs": {
+        "x0": 0.44006808622814264,
+        "nx0": 0.9199999999999999,
+        "x1": 0.7260881656752683,
+        "nx1": 0.5886362666297517
+      }
+    },
+    {
+      "pattern": 6,
+      "label": 1,
+      "source_index": 28235,
+      "source_digit": 1,
+      "input_frontend": "2x2_area_downsample_per_feature_selected_subset_minmax_to_0p08_0p92",
+      "input_frontend_key": "pool2",
+      "input_rails": [
+        "x0",
+        "nx0",
+        "x1",
+        "nx1"
+      ],
+      "inputs": {
+        "x0": 0.19427921929582015,
+        "nx0": 0.2172061442862555,
+        "x1": 0.36159314883295085,
+        "nx1": 0.22167681727147426
+      }
+    },
+    {
+      "pattern": 7,
+      "label": 1,
+      "source_index": 15809,
+      "source_digit": 1,
+      "input_frontend": "2x2_area_downsample_per_feature_selected_subset_minmax_to_0p08_0p92",
+      "input_frontend_key": "pool2",
+      "input_rails": [
+        "x0",
+        "nx0",
+        "x1",
+        "nx1"
+      ],
+      "inputs": {
+        "x0": 0.08,
+        "nx0": 0.25663995120120114,
+        "x1": 0.36751064709061976,
+        "nx1": 0.08
+      }
+    },
+    {
+      "pattern": 8,
+      "label": 1,
+      "source_index": 36669,
+      "source_digit": 1,
+      "input_frontend": "2x2_area_downsample_per_feature_selected_subset_minmax_to_0p08_0p92",
+      "input_frontend_key": "pool2",
+      "input_rails": [
+        "x0",
+        "nx0",
+        "x1",
+        "nx1"
+      ],
+      "inputs": {
+        "x0": 0.27607262714429676,
+        "nx0": 0.7556184560283348,
+        "x1": 0.682275947865766,
+        "nx1": 0.26968691397491257
+      }
+    },
+    {
+      "pattern": 9,
+      "label": 1,
+      "source_index": 40878,
+      "source_digit": 1,
+      "input_frontend": "2x2_area_downsample_per_feature_selected_subset_minmax_to_0p08_0p92",
+      "input_frontend_key": "pool2",
+      "input_rails": [
+        "x0",
+        "nx0",
+        "x1",
+        "nx1"
+      ],
+      "inputs": {
+        "x0": 0.09920544769641186,
+        "nx0": 0.14882462516776057,
+        "x1": 0.1705832227728228,
+        "nx1": 0.09535618129880927
+      }
+    },
+    {
+      "pattern": 10,
+      "label": 1,
+      "source_index": 25549,
+      "source_digit": 1,
+      "input_frontend": "2x2_area_downsample_per_feature_selected_subset_minmax_to_0p08_0p92",
+      "input_frontend_key": "pool2",
+      "input_rails": [
+        "x0",
+        "nx0",
+        "x1",
+        "nx1"
+      ],
+      "inputs": {
+        "x0": 0.12290578781294648,
+        "nx0": 0.08,
+        "x1": 0.08,
+        "nx1": 0.28045388932360976
+      }
+    },
+    {
+      "pattern": 11,
+      "label": 1,
+      "source_index": 9492,
+      "source_digit": 1,
+      "input_frontend": "2x2_area_downsample_per_feature_selected_subset_minmax_to_0p08_0p92",
+      "input_frontend_key": "pool2",
+      "input_rails": [
+        "x0",
+        "nx0",
+        "x1",
+        "nx1"
+      ],
+      "inputs": {
+        "x0": 0.13775255072613377,
+        "nx0": 0.1409968892382526,
+        "x1": 0.13655760572377004,
+        "nx1": 0.20131961104181734
+      }
+    }
+  ],
+  "model_level": "ngspice built-in LEVEL=1 MOS models; not a foundry PDK.",
+  "synapse_design": "split_signed_passact_v1",
+  "synapse_design_description": "Readout positive branch uses the hidden activation voltage as the source through a weight-gated pass device; negative branch remains a signed discharge stack. This tests a more voltage-mode readout while keeping capacitor-held signed weights and backprop weight transport.",
+  "hidden_delta_width_scale": 16.0,
+  "hidden_gradient_width_scale": 1.0,
+  "readout_gradient_width_scale": 1.0,
+  "effective_hidden_delta_width_u": 512.0,
+  "effective_hidden_gradient_width_u": 40.0,
+  "effective_readout_gradient_width_u": 24.0,
+  "hidden_error_rule": "backprop",
+  "hidden_delta_relu_gate": "act_nsense",
+  "hidden_delta_weight_device": "nmos",
+  "hidden_delta_output_mode": "senseamp",
+  "hidden_delta_sense_width_u": 512.0,
+  "hidden_delta_sense_cap_f": 2.0,
+  "hidden_delta_internal_cap_f": 0.02,
+  "hidden_delta_internal_leak_ohm": 1000000000.0,
+  "hidden_gradient_act_gate": "act_nrel",
+  "hidden_apply_mode": "direct",
+  "learning_mode": "flow",
+  "measure_detail": "light",
+  "flow_hidden_write": "direct",
+  "flow_pre_store": "synapse_gate",
+  "flow_pre_cap_f": 2.0,
+  "flow_pre_consume_width_u": null,
+  "uses_gradient_accumulators": false,
+  "uses_separate_apply_phase": true,
+  "uses_direct_backward_write_flow": true,
+  "uses_hidden_write_flow": true,
+  "uses_per_synapse_pre_activation_trace": true,
+  "uses_destructive_pre_activation_trace_read": false,
+  "pre_activation_capture_path": "mos_store_trace_caps",
+  "hidden_delta_passes_through_activation_gate": true,
+  "hidden_delta_output_latched": true,
+  "direct_weight_write_path": true,
+  "hidden_grad_sense_width_u": null,
+  "hidden_grad_sense_cap_f": null,
+  "hidden_delta_network_enabled": true,
+  "real_backprop_through_readout_synapses": true,
+  "uses_readout_weight_transport_for_hidden_delta": true,
+  "fixed_feedback_caps": false,
+  "feedback_scale": null,
+  "input_rails": [
+    "x0",
+    "nx0",
+    "x1",
+    "nx1"
+  ],
+  "input_count": 4,
+  "input_frontend": "2x2_area_downsample_per_feature_selected_subset_minmax_to_0p08_0p92",
+  "input_frontend_key": "pool2",
+  "signal_path": "8 fully connected hidden ReLU cells receive signed conductance from 4 externally driven input rails plus a bias rail. Readout, output-bias, and hidden weights are capacitor-held signed states and update through discharge-only signed updates.",
+  "no_behavioral_signal_math": true,
+  "uses_behavioral_tanh": false,
+  "uses_behavioral_multipliers": false,
+  "hidden_topology_programmed_as_literals": false,
+  "hidden_bias_rail": true,
+  "hidden_cells": 8,
+  "output_bias_weights_trained": true,
+  "hidden_weight_initialization": "deterministic_pseudorandom_dense_signed",
+  "readout_initialization": "random",
+  "separator_scale": null,
+  "separator_offset_v": null,
+  "readout_center_v": null,
+  "output_bias_offset_v": 0.0,
+  "separator_csv": null,
+  "separator_phase": null,
+  "readout_weights_trained": true,
+  "hidden_feature_weights_trained": true,
+  "epochs": 3,
+  "seed": 3,
+  "dataset_seed": 3,
+  "initialization_seed": 3,
+  "train_order": [
+    0,
+    1,
+    2,
+    3,
+    4,
+    5,
+    6,
+    7,
+    8,
+    9,
+    10,
+    11
+  ],
+  "batch_apply": false,
+  "error_rule": "out_competitive",
+  "latch_boost_width_u": null,
+  "lose_pull_kohm": 100.0,
+  "lose_width_u": 24.0,
+  "lead_mode": "out_senseamp",
+  "lead_width_u": 96.0,
+  "backward_gate_mode": "target_mistake",
+  "backward_gate_width_u": 64.0,
+  "backward_gate_cap_f": 2.0,
+  "bwd_start_ns": 6.75,
+  "cmp_end_ns": 4.1,
+  "lead_gate_tracks_score_winner": false,
+  "lead_gate_score_winner_fraction": 0.4444444444444444,
+  "mean_train_lead01_v": 1.1969813888888892,
+  "mean_train_lead10_v": 0.33499997399672227,
+  "mean_abs_train_lead_diff_v": 0.8619814148921667,
+  "max_train_bwd_signal_v": 1.04498,
+  "mean_train_bwd_signal_v": 0.29622837533888885,
+  "train_cycles": 36,
+  "train_apply_cycles": 36,
+  "hidden_cap_f": 0.245,
+  "cap_dither_v": 0.0,
+  "cap_dither_seed": null,
+  "cap_dither_scope": null,
+  "uses_train_charge_noise": false,
+  "train_charge_noise_width_u": 0.0,
+  "train_charge_noise_prob": 0.0,
+  "train_charge_noise_seed": null,
+  "train_charge_noise_scope": null,
+  "train_charge_noise_pulse_ns": null,
+  "gradient_cap_f": null,
+  "hidden_gradient_cap_f": null,
+  "hidden_delta_cap_f": 12.0,
+  "lead_cap_f": 2.0,
+  "update_width_u": 120.0,
+  "readout_update_width_u": 0.1,
+  "output_bias_update_width_u": 0.0015,
+  "hidden_update_width_u": 1e-06,
+  "apply_start_ns": 9.25,
+  "apply_end_ns": 11.2,
+  "apply_duration_ns": 1.9499999999999993,
+  "readout_sample_offsets_ns": [
+    2.95
+  ],
+  "readout_offset_stats": [
+    {
+      "offset_ns": 2.95,
+      "key": "2950ps",
+      "initial_accuracy": 0.5,
+      "final_accuracy": 0.8333333333333334,
+      "initial_min_margin_v": -0.000825209,
+      "final_min_margin_v": -0.000149787
+    }
+  ],
+  "best_final_transient_offset_ns": 2.95,
+  "best_final_transient_accuracy": 0.8333333333333334,
+  "best_final_transient_min_margin_v": -0.000149787,
+  "initial_eval_accuracy": 0.5,
+  "final_eval_accuracy": 0.8333333333333334,
+  "initial_hidden_feature_separability": {
+    "linearly_separable": false,
+    "perceptron_epochs": 20000,
+    "best_min_margin": -0.0,
+    "best_epoch": 0
+  },
+  "final_hidden_feature_separability": {
+    "linearly_separable": false,
+    "perceptron_epochs": 20000,
+    "best_min_margin": -0.0,
+    "best_epoch": 0
+  },
+  "initial_min_margin_v": -0.000825209,
+  "final_min_margin_v": -0.000149787,
+  "min_margin_gain_v": -0.0009425039999999999,
+  "mean_hidden_activation_initial_v": 0.11943714583333336,
+  "mean_hidden_activation_final_v": 0.06897223749999999,
+  "all_train_cycles_update_readout": null,
+  "all_train_cycles_update_hidden": null,
+  "max_train_readout_signed_delta_v": 0.0,
+  "max_train_readout_weight_signed_delta_v": 0.0,
+  "max_train_output_bias_signed_delta_v": 0.0,
+  "max_train_hidden_signed_delta_v": 0.0,
+  "max_train_output_delta_signal_v": 0.0,
+  "max_train_output_delta_node_v": 0.0,
+  "max_train_hidden_delta_signal_v": 0.0,
+  "max_train_hidden_delta_node_v": 0.0,
+  "max_train_hidden_delta_update_signal_v": 0.0,
+  "max_train_hidden_delta_update_node_v": 0.0,
+  "max_train_hidden_delta_gate_signal_v": 0.0,
+  "max_train_hidden_delta_gate_node_v": 0.0,
+  "max_train_hidden_grad_signal_v": 0.0,
+  "max_train_hidden_grad_node_v": 0.0,
+  "max_train_hidden_apply_gate_signal_v": 0.0,
+  "max_train_hidden_apply_gate_node_v": 0.0,
+  "max_abs_total_readout_weight_signed_delta_v": 0.0521368,
+  "max_abs_total_output_bias_signed_delta_v": 0.0687673,
+  "max_abs_total_readout_signed_delta_v": 0.0687673,
+  "max_abs_total_hidden_signed_delta_v": 0.0633191,
+  "curve": "/Users/ahle/kode/stochastic-local-computer/spice/results/device_mnist01_12_random_hidden_v113_passact_targetmistake_h8_cap0245_senseamp_applyfix_e3.csv",
+  "table_curve": "/Users/ahle/kode/stochastic-local-computer/results/tables/device_mnist01_12_random_hidden_v113_passact_targetmistake_h8_cap0245_senseamp_applyfix_e3.csv",
+  "wall_time_s": 284.105893958,
+  "interpretation": "This removes literal-detector hidden topology and tests whether a general dense hidden layer can run and update at device level on tiny binary datasets before moving to 8x8 MNIST."
+}

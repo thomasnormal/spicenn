@@ -21,7 +21,15 @@ MEAS_RE = re.compile(r"(?im)^\s*([a-zA-Z_][a-zA-Z0-9_]*)\s*=\s*([-+0-9.eE]+)")
 HIDDEN = 8
 INPUT_RAILS = ["x0", "nx0", "x1", "nx1"]
 HIDDEN_RAILS = ["bias", *INPUT_RAILS]
-DATASET_EXAMPLES = ["xor2", "moons8", "moons12", "mnist01_8", "mnist01_12"]
+DATASET_EXAMPLES = [
+    "xor2",
+    "moons8",
+    "moons12",
+    "mnist01_8",
+    "mnist01_12",
+    "mnist01pool16_12",
+    "mnist01fixed16_12",
+]
 
 
 @dataclass(frozen=True)
@@ -123,6 +131,21 @@ def set_hidden_cells(count: int) -> None:
     HIDDEN = count
 
 
+def set_input_rails(rails: list[str]) -> None:
+    global INPUT_RAILS, HIDDEN_RAILS
+    if not rails:
+        raise ValueError("at least one input rail is required.")
+    if len(set(rails)) != len(rails):
+        raise ValueError(f"input rail names must be unique: {rails}")
+    for rail in rails:
+        if not re.fullmatch(r"[A-Za-z][A-Za-z0-9_]*", rail):
+            raise ValueError(f"input rail name is not SPICE-safe: {rail!r}")
+        if rail == "bias":
+            raise ValueError("input rail name 'bias' is reserved.")
+    INPUT_RAILS = list(rails)
+    HIDDEN_RAILS = ["bias", *INPUT_RAILS]
+
+
 def scaled_synapse_design(
     name: str,
     hidden_delta_width_scale: float,
@@ -173,7 +196,68 @@ def two_moons_records(sample_count: int, seed: int) -> list[dict[str, Any]]:
     return records
 
 
-def mnist01_records(sample_count: int, seed: int) -> list[dict[str, Any]]:
+def dct2_lowfreq(image: np.ndarray, side: int) -> np.ndarray:
+    n = image.shape[0]
+    coords = np.arange(n, dtype=np.float64)
+    basis = []
+    for k in range(side):
+        alpha = np.sqrt(1.0 / n) if k == 0 else np.sqrt(2.0 / n)
+        basis.append(alpha * np.cos(np.pi * (coords + 0.5) * k / n))
+    mat = np.stack(basis)
+    return mat @ image @ mat.T
+
+
+def mnist01_frontend(image: np.ndarray, frontend: str) -> tuple[np.ndarray, str]:
+    if frontend == "pool2":
+        return image.reshape(2, 4, 2, 4).mean(axis=(1, 3)).reshape(-1), "2x2_area_downsample"
+    if frontend == "pool16":
+        return image.reshape(4, 2, 4, 2).mean(axis=(1, 3)).reshape(-1), "4x4_area_downsample"
+    if frontend == "fixed8":
+        pooled = image.reshape(2, 4, 2, 4).mean(axis=(1, 3)).reshape(-1)
+        lr = abs(float(image[:, :4].mean() - image[:, 4:].mean()))
+        tb = abs(float(image[:4, :].mean() - image[4:, :].mean()))
+        diag = abs(float(np.trace(image) / 8.0 - np.trace(np.fliplr(image)) / 8.0))
+        center = float(image[2:6, 2:6].mean())
+        return np.r_[pooled, [lr, tb, diag, center]], "2x2_pool_plus_global_haar_energy"
+    if frontend == "fixed16":
+        pooled = image.reshape(2, 4, 2, 4).mean(axis=(1, 3)).reshape(-1)
+        features = [*pooled]
+        for br in range(2):
+            for bc in range(2):
+                block = image[br * 4 : (br + 1) * 4, bc * 4 : (bc + 1) * 4]
+                features.extend(
+                    [
+                        abs(float(block[:, :2].mean() - block[:, 2:].mean())),
+                        abs(float(block[:2, :].mean() - block[2:, :].mean())),
+                        abs(float(np.trace(block) / 4.0 - np.trace(np.fliplr(block)) / 4.0)),
+                    ]
+                )
+        return np.asarray(features, dtype=np.float64), "2x2_pool_plus_local_haar_energy"
+    if frontend == "haar16":
+        features = []
+        for br in range(2):
+            for bc in range(2):
+                block = image[br * 4 : (br + 1) * 4, bc * 4 : (bc + 1) * 4]
+                features.extend(
+                    [
+                        float(block.mean()),
+                        abs(float(block[:, :2].mean() - block[:, 2:].mean())),
+                        abs(float(block[:2, :].mean() - block[2:, :].mean())),
+                        abs(float(np.trace(block) / 4.0 - np.trace(np.fliplr(block)) / 4.0)),
+                    ]
+                )
+        return np.asarray(features, dtype=np.float64), "local_haar_dc_and_energy"
+    if frontend == "dct16":
+        coeff = dct2_lowfreq(image, 4).reshape(-1)
+        coeff[1:] = np.abs(coeff[1:])
+        return coeff, "low_frequency_4x4_dct_abs_ac"
+    raise ValueError(
+        f"unknown MNIST01 frontend: {frontend}. "
+        "Expected pool2, pool16, fixed8, fixed16, haar16, or dct16."
+    )
+
+
+def mnist01_records(sample_count: int, seed: int, frontend: str = "pool2") -> list[dict[str, Any]]:
     if sample_count % 2 != 0:
         raise ValueError("MNIST 0/1 sample count must be even.")
     from torch.nn import functional as F
@@ -189,14 +273,20 @@ def mnist01_records(sample_count: int, seed: int) -> list[dict[str, Any]]:
         chosen = rng.choice(candidates, size=half, replace=False)
         selected.extend((int(idx), digit) for idx in chosen)
     raw_features: list[np.ndarray] = []
+    frontend_description = ""
     for idx, _label in selected:
         x, _digit = ds[idx]
-        x2 = F.interpolate(x.unsqueeze(0), size=(2, 2), mode="area").squeeze()
-        raw_features.append(x2.reshape(-1).numpy().astype(np.float64))
+        x8 = F.interpolate(x.unsqueeze(0), size=(8, 8), mode="area").squeeze().numpy().astype(np.float64)
+        features, frontend_description = mnist01_frontend(x8, frontend)
+        raw_features.append(features)
     raw = np.stack(raw_features)
     lo = raw.min(axis=0)
     hi = raw.max(axis=0)
     scaled = 0.08 + 0.84 * (raw - lo) / np.maximum(hi - lo, 1e-9)
+    if frontend == "pool2":
+        rail_names = ["x0", "nx0", "x1", "nx1"]
+    else:
+        rail_names = [f"x{i}" for i in range(scaled.shape[1])]
     records: list[dict[str, Any]] = []
     for pattern, ((idx, label), features) in enumerate(zip(selected, scaled)):
         records.append(
@@ -205,13 +295,10 @@ def mnist01_records(sample_count: int, seed: int) -> list[dict[str, Any]]:
                 "label": int(label),
                 "source_index": idx,
                 "source_digit": int(label),
-                "input_frontend": "2x2_area_downsample_per_feature_selected_subset_minmax_to_0p08_0p92",
-                "inputs": {
-                    "x0": float(features[0]),
-                    "nx0": float(features[1]),
-                    "x1": float(features[2]),
-                    "nx1": float(features[3]),
-                },
+                "input_frontend": f"{frontend_description}_per_feature_selected_subset_minmax_to_0p08_0p92",
+                "input_frontend_key": frontend,
+                "input_rails": rail_names,
+                "inputs": {rail: float(value) for rail, value in zip(rail_names, features)},
             }
         )
     return records
@@ -224,12 +311,23 @@ def dataset_records(name: str, seed: int) -> list[dict[str, Any]]:
         suffix = name.removeprefix("moons").removeprefix("_")
         if suffix.isdigit():
             return two_moons_records(int(suffix), seed)
-    if name.startswith("mnist01_"):
-        suffix = name.removeprefix("mnist01_")
-        if suffix.isdigit():
-            return mnist01_records(int(suffix), seed)
-    examples = ", ".join(DATASET_EXAMPLES + ["moons16", "mnist01_16"])
+    mnist_match = re.fullmatch(r"mnist01([a-z0-9]*)_(\d+)", name)
+    if mnist_match:
+        frontend = mnist_match.group(1) or "pool2"
+        return mnist01_records(int(mnist_match.group(2)), seed, frontend)
+    examples = ", ".join(DATASET_EXAMPLES + ["moons16", "mnist01_16", "mnist01fixed8_16"])
     raise ValueError(f"unknown dataset: {name}. Expected one of {examples} or another even-sized counted variant.")
+
+
+def input_rails_for_records(records: list[dict[str, Any]]) -> list[str]:
+    for record in records:
+        inputs = record.get("inputs")
+        if inputs is not None:
+            rails = record.get("input_rails")
+            if rails is not None:
+                return [str(rail) for rail in rails]
+            return [str(rail) for rail in inputs.keys()]
+    return ["x0", "nx0", "x1", "nx1"]
 
 
 def interleaved_order(records: list[dict[str, Any]]) -> list[int]:
@@ -1748,8 +1846,12 @@ def random_hidden_netlist(
     include_gradient_caps = learning_mode == "accumulate_apply"
     state_seed = seed if init_seed is None else init_seed
     records = dataset_records(dataset_name, seed)
+    set_input_rails(input_rails_for_records(records))
     samples = make_samples(records, epochs, train_order, batch_apply)
     stop = len(samples) * CYCLE_NS
+    input_sources = "\n".join(
+        f"V{rail} {rail} 0 {sample_wave(samples, rail, stop)}" for rail in INPUT_RAILS
+    )
     meas, prints = measure_lines(
         samples,
         hidden_apply_mode,
@@ -1854,7 +1956,7 @@ def random_hidden_netlist(
         f"""
 * Device-level binary dataset with general random hidden layer.
 * Dataset: {dataset_name}.
-* {HIDDEN} hidden ReLU cells are fully connected to x0/nx0/x1/nx1 plus a bias rail.
+* {HIDDEN} hidden ReLU cells are fully connected to {len(INPUT_RAILS)} input rails plus a bias rail.
 * Output ReLU cells also have capacitor-held trainable bias weights.
 * No hidden cell is wired to a specific literal pattern.
 * Synapse design: {design.name}; hidden error rule: {hidden_error_rule}; learning mode: {learning_mode}.
@@ -1862,10 +1964,7 @@ def random_hidden_netlist(
 {mos_models()}
 Vdd vdd 0 {{VDD}}
 Vbias bias 0 {{VDD}}
-Vx0 x0 0 {sample_wave(samples, "x0", stop)}
-Vx1 x1 0 {sample_wave(samples, "x1", stop)}
-Vnx0 nx0 0 {sample_wave(samples, "nx0", stop)}
-Vnx1 nx1 0 {sample_wave(samples, "nx1", stop)}
+{input_sources}
 Vt0 t0 0 {target_wave(samples, 0, stop)}
 Vt1 t1 0 {target_wave(samples, 1, stop)}
 {phases(samples, bwd_start_ns, apply_start_ns, apply_end_ns, cmp_end_ns, learning_mode, backward_gate_mode)}
@@ -2090,6 +2189,10 @@ def main() -> None:
     if not 9.0 <= args.apply_start_ns < args.apply_end_ns <= 11.8:
         raise SystemExit("--apply-start-ns/--apply-end-ns must stay inside the update window before refiring.")
     records = dataset_records(args.dataset, args.seed)
+    try:
+        set_input_rails(input_rails_for_records(records))
+    except ValueError as exc:
+        raise SystemExit(str(exc)) from exc
     all_patterns = [int(record["pattern"]) for record in records]
     if args.order == "auto":
         train_order = all_patterns
@@ -2463,8 +2566,13 @@ def main() -> None:
         "uses_readout_weight_transport_for_hidden_delta": args.hidden_error_rule == "backprop" and hidden_delta_network_enabled,
         "fixed_feedback_caps": args.hidden_error_rule == "dfa",
         "feedback_scale": args.feedback_scale if args.hidden_error_rule == "dfa" else None,
+        "input_rails": INPUT_RAILS,
+        "input_count": len(INPUT_RAILS),
+        "input_frontend": records[0].get("input_frontend") if records else None,
+        "input_frontend_key": records[0].get("input_frontend_key") if records else None,
         "signal_path": (
-            f"{HIDDEN} fully connected hidden ReLU cells receive signed conductance from x0/nx0/x1/nx1 plus a bias rail. "
+            f"{HIDDEN} fully connected hidden ReLU cells receive signed conductance from "
+            f"{len(INPUT_RAILS)} externally driven input rails plus a bias rail. "
             "Readout, output-bias, and hidden weights are capacitor-held signed states and update through discharge-only signed updates."
         ),
         "no_behavioral_signal_math": True,

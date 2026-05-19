@@ -1734,6 +1734,8 @@ def readout_flow_updates(
     flow_pre_store: str,
     readout_flow_polarity: str,
     readout_flow_write_mode: str = "discharge",
+    readout_center_pull_width_u: float = 0.0,
+    output_bias_center_pull_width_u: float = 0.0,
 ) -> str:
     if flow_pre_store not in FLOW_PRE_STORES:
         raise ValueError(f"unknown flow pre-store mode: {flow_pre_store}")
@@ -1741,7 +1743,12 @@ def readout_flow_updates(
         raise ValueError(f"unknown readout flow polarity: {readout_flow_polarity}")
     if readout_flow_write_mode not in READOUT_FLOW_WRITE_MODES:
         raise ValueError(f"unknown readout flow write mode: {readout_flow_write_mode}")
-    if readout_update_width_u < 0 or output_bias_update_width_u < 0:
+    if (
+        readout_update_width_u < 0
+        or output_bias_update_width_u < 0
+        or readout_center_pull_width_u < 0
+        or output_bias_center_pull_width_u < 0
+    ):
         raise ValueError("readout flow update widths must be nonnegative.")
     n_gate, p_gate = ("dp", "dn") if readout_flow_polarity == "normal" else ("dn", "dp")
     lines: list[str] = []
@@ -1762,6 +1769,11 @@ def readout_flow_updates(
                     f"Mvbo{out}n_ch_d vbo{out}n_ch_b {p_gate}{out} vbo{out}n 0 NSENSE W={output_bias_update_width_u:.12g}u L=180n",
                 ]
                 lines += node_parasitics(f"vbo{out}p_ch_b", f"vbo{out}n_ch_b")
+        if output_bias_center_pull_width_u > 0:
+            lines += [
+                f"Mvbo{out}p_center vbo{out}p bwd wcenter 0 NREL W={output_bias_center_pull_width_u:.12g}u L=180n",
+                f"Mvbo{out}n_center vbo{out}n bwd wcenter 0 NREL W={output_bias_center_pull_width_u:.12g}u L=180n",
+            ]
         for h in range(HIDDEN):
             pre_gate = f"fpro{out}{h}" if flow_pre_store != "shared_node" else f"act{h}"
             if readout_update_width_u > 0:
@@ -1795,6 +1807,11 @@ def readout_flow_updates(
                         f"vw{out}{h}n_ch_b",
                         f"vw{out}{h}n_ch_a",
                     )
+            if readout_center_pull_width_u > 0:
+                lines += [
+                    f"Mvw{out}{h}p_center vw{out}{h}p bwd wcenter 0 NREL W={readout_center_pull_width_u:.12g}u L=180n",
+                    f"Mvw{out}{h}n_center vw{out}{h}n bwd wcenter 0 NREL W={readout_center_pull_width_u:.12g}u L=180n",
+                ]
     return "\n".join(lines)
 
 
@@ -2211,6 +2228,9 @@ def random_hidden_netlist(
     score_reset_v: float,
     readout_update_width_u: float,
     output_bias_update_width_u: float,
+    readout_center_pull_width_u: float,
+    output_bias_center_pull_width_u: float,
+    readout_center_pull_v: float,
     readout_flow_polarity: str,
     readout_flow_write_mode: str,
     hidden_update_width_u: float,
@@ -2328,6 +2348,8 @@ def random_hidden_netlist(
                 flow_pre_store,
                 readout_flow_polarity,
                 readout_flow_write_mode,
+                readout_center_pull_width_u,
+                output_bias_center_pull_width_u,
             ),
             hidden_delta_sense_block,
         ]
@@ -2379,6 +2401,7 @@ def random_hidden_netlist(
 Vdd vdd 0 {{VDD}}
 Vbias bias 0 {{VDD}}
 Vscorecm scorecm 0 {score_reset_v:.12g}
+Vwcenter wcenter 0 {readout_center_pull_v:.12g}
 {input_sources}
 Vt0 t0 0 {target_wave(samples, 0, stop)}
 Vt1 t1 0 {target_wave(samples, 1, stop)}
@@ -2584,6 +2607,30 @@ def main() -> None:
     ap.add_argument("--readout-update-width-u", type=float)
     ap.add_argument("--output-bias-update-width-u", type=float)
     ap.add_argument(
+        "--readout-center-pull-width-u",
+        type=float,
+        default=0.0,
+        help=(
+            "Optional weak MOS pass width that pulls each readout weight capacitor "
+            "toward --readout-center-pull-v during the backward/write window."
+        ),
+    )
+    ap.add_argument(
+        "--output-bias-center-pull-width-u",
+        type=float,
+        default=0.0,
+        help=(
+            "Optional weak MOS pass width that pulls each output-bias capacitor "
+            "toward --readout-center-pull-v during the backward/write window."
+        ),
+    )
+    ap.add_argument(
+        "--readout-center-pull-v",
+        type=float,
+        default=0.64,
+        help="Global center rail used by the optional readout/output-bias center-pull pass devices.",
+    )
+    ap.add_argument(
         "--readout-flow-polarity",
         choices=READOUT_FLOW_POLARITIES,
         default="normal",
@@ -2701,6 +2748,10 @@ def main() -> None:
         raise SystemExit("--readout-update-width-u must be nonnegative.")
     if args.output_bias_update_width_u is not None and args.output_bias_update_width_u < 0:
         raise SystemExit("--output-bias-update-width-u must be nonnegative.")
+    if args.readout_center_pull_width_u < 0 or args.output_bias_center_pull_width_u < 0:
+        raise SystemExit("--readout/output-bias center-pull widths must be nonnegative.")
+    if not 0.0 <= args.readout_center_pull_v <= 1.2:
+        raise SystemExit("--readout-center-pull-v must be in 0..1.2 V.")
     if args.hidden_update_width_u is not None and args.hidden_update_width_u < 0:
         raise SystemExit("--hidden-update-width-u must be nonnegative.")
     if args.backward_gate_width_u <= 0 or args.backward_gate_cap_f <= 0:
@@ -2820,6 +2871,9 @@ def main() -> None:
         args.output_bias_update_width_u
         if args.output_bias_update_width_u is not None
         else (args.readout_update_width_u if args.readout_update_width_u is not None else args.update_width_u),
+        args.readout_center_pull_width_u,
+        args.output_bias_center_pull_width_u,
+        args.readout_center_pull_v,
         args.readout_flow_polarity,
         args.readout_flow_write_mode,
         args.hidden_update_width_u if args.hidden_update_width_u is not None else args.update_width_u,
@@ -3260,6 +3314,11 @@ def main() -> None:
         "output_bias_update_width_u": args.output_bias_update_width_u
         if args.output_bias_update_width_u is not None
         else (args.readout_update_width_u if args.readout_update_width_u is not None else args.update_width_u),
+        "readout_center_pull_width_u": args.readout_center_pull_width_u if args.learning_mode == "flow" else None,
+        "output_bias_center_pull_width_u": args.output_bias_center_pull_width_u
+        if args.learning_mode == "flow"
+        else None,
+        "readout_center_pull_v": args.readout_center_pull_v if args.learning_mode == "flow" else None,
         "readout_flow_polarity": args.readout_flow_polarity if args.learning_mode == "flow" else None,
         "readout_flow_write_mode": args.readout_flow_write_mode if args.learning_mode == "flow" else None,
         "hidden_update_width_u": args.hidden_update_width_u if args.hidden_update_width_u is not None else args.update_width_u,

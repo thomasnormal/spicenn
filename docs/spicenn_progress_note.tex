@@ -1221,6 +1221,23 @@ the readout is no longer starved of backward current, but the state-dependent
 write mobility and imperfect gate timing still make the effective separator
 move unevenly.
 
+The next circuit probe added optional center-pull devices on the readout state
+itself.  During the backward/write window, weak MOS pass devices can pull
+\(w^+\), \(w^-\), and optionally the output-bias capacitor states toward a
+global \code{wcenter} rail.  This is a physical state path in the generated
+netlist, not a Python regularizer, and it tests whether keeping \(\theta\) near
+a better mobility region helps the linear readout.  The result is mixed but
+useful.  Removing output-bias updates regressed to 75\%.  Gentler readout/bias
+writes and score-precharge controls stayed at 87.5\%.  Center pulls of
+\code{0.00005u} and \code{0.0001u} also regressed to 75\%, while
+\code{0.0002u} improved the best four-epoch transient margin to about
+\(-1\ \mathrm{mV}\) without improving final accuracy.  Extending the
+\code{0.0002u} center-pull setting to five epochs reached 93.75\%, but the
+target-mistake gate match fraction fell to roughly 0.64 with many false opens
+and missed openings.  So the \(G'_{\mathrm{eff}}s_{\mathrm{MOS}}\) mobility
+issue is plausibly part of the linear-readout blocker, but it is coupled to the
+comparator and update-gate selectivity; a better state map alone is not enough.
+
 \subsection{Local-Feature Phase-Training Path}
 
 The strongest MNIST evidence uses local feature cells rather than dense

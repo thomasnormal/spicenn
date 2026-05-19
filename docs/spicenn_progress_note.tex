@@ -422,60 +422,74 @@ controls make the bottleneck sharper: the external input rails remain linearly
 separable, but the 8-cell random hidden layer often collapses that separability
 before the readout can exploit it.  On the 32-sample pool2 bridge, enabling the
 real hidden-delta write path moves hidden capacitors by up to 25.3 mV but still
-lands at the same 78.12\% accuracy as the readout-only control.
+lands at the same 78.12\% accuracy as the readout-only control.  A follow-up
+rail-buffer mode now bypasses that compression by charging hidden activation
+capacitors directly from input rails through MOS pass gates during the forward
+window.  On the 32-sample pool2 bridge, this produces linearly separable hidden
+activations.  Random readout learning still falls to 50\%, but a programmed
+\code{csv\_separator} readout reaches 100\% with a positive 14.9 mV margin and
+stays at 100\% after two mistake-gated flow epochs.  This separates the present
+failure into readout-discovery dynamics rather than representational capacity.
 
 \begin{table}[h]
   \centering
+  \footnotesize
+  \setlength{\tabcolsep}{3pt}
+  \renewcommand{\arraystretch}{0.92}
   \caption{Current tiny-MNIST direct-flow bridge results using per-synapse
-  stored traces and 8 hidden cells.}
+  stored traces.}
   \label{tab:mnist-direct-flow}
-  \begin{tabular}{p{0.25\linewidth}p{0.18\linewidth}p{0.18\linewidth}p{0.27\linewidth}}
+  \begin{tabular}{p{0.24\linewidth}p{0.17\linewidth}p{0.14\linewidth}p{0.34\linewidth}}
     \toprule
     Run & Hidden-write path & Final accuracy & What it shows \\
     \midrule
     \code{mnist01\_16}, e2 &
     off & 93.75\% &
-    The fixed front end plus measured hidden activations are readout
-    separable when hidden weights are not disturbed. \\
+    Readout-only flow works when the hidden code is preserved. \\
     \addlinespace
     \code{mnist01\_16}, e2 &
     real hidden-delta path, \code{2e-7 u} write &
     93.75\% &
-    Weak real hidden writes preserve the separable hidden code on the
-    16-sample bridge. \\
+    Weak real hidden writes preserve the separable code. \\
     \addlinespace
     \code{mnist01\_24}, e2 &
     off & 91.67\% &
-    The 24-sample readout-only control is already above 90\%; the matching
-    full hidden-write run checks whether hidden updates destroy this code. \\
+    Readout-only control stays above 90\%. \\
     \addlinespace
     \code{mnist01\_24}, e2 &
     real hidden-delta path, \code{2e-7 u} write &
     91.67\% &
-    The weak hidden-write path also clears 90\% and leaves the final hidden
-    activations linearly separable. \\
+    Weak hidden writes also clear 90\%. \\
     \addlinespace
     \code{mnist01\_24}, e2, \code{input\_identity} &
     real hidden-delta path, \code{2e-7 u} write &
     50.00\% &
-    Negative control: the final hidden activations are separable, but the
-    readout/update polarity or balance is wrong for this initialization. \\
+    Separable hidden code, wrong readout/update operating point. \\
     \addlinespace
     \code{mnist01\_32}, e2 &
     off & 78.12\% &
-    The 4-rail input is strongly separable, but the final random-hidden code is
-    not; readout-only flow no longer scales cleanly. \\
+    Input is separable; random-hidden code is not. \\
     \addlinespace
     \code{mnist01\_32}, e2 &
     real hidden-delta path, \code{2e-7 u} write &
     78.12\% &
-    Hidden writes are present and nontrivial, but they do not repair the
-    non-separable 8-cell hidden code. \\
+    Hidden writes do not repair the non-separable h8 code. \\
     \addlinespace
     \code{mnist01fixed16\_16}, e2 &
     off & 62.50\% &
-    Richer fixed input features are separable, but the same 8-cell random
-    hidden bottleneck destroys the code. \\
+    Fixed16 input is separable; h8 random bottleneck is not. \\
+    \addlinespace
+    \code{mnist01\_32}, \code{rail\_buffer}, e2 &
+    off, random readout & 50.00\% &
+    MOS-buffered hidden code is separable; random readout overshoots. \\
+    \addlinespace
+    \code{mnist01\_32}, \code{rail\_buffer}, \code{csv\_separator} &
+    off, programmed readout & 100.00\% &
+    Buffered code is usable by the MOS readout from fitted capacitor ICs. \\
+    \addlinespace
+    \code{mnist01\_32}, \code{rail\_buffer}, \code{csv\_separator}, e2 &
+    off, weak mistake-gated flow & 100.00\% &
+    Programmed state is stable; random discovery is the blocker. \\
     \bottomrule
   \end{tabular}
 \end{table}
@@ -569,8 +583,8 @@ spike arrival opening the backward/write path.
 The figures in this note should be treated as the first stable documentation
 layer.  The next additions should be:
 \begin{itemize}
-  \item a per-synapse pre-trace direct-flow figure once the
-    \code{synapse\_gate} and \code{synapse\_consume} XOR checks settle;
+  \item a refreshed direct-flow architecture figure once the wider-hidden and
+    identity-buffer MNIST01 checks identify the next stable topology;
   \item a separate note on biologically plausible alternatives such as feedback
     alignment, local losses, predictive coding, and equilibrium propagation,
     mapped to capacitor state;

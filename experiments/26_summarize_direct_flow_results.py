@@ -16,6 +16,7 @@ FIELDS = [
     "dataset",
     "input_frontend_key",
     "hidden_cells",
+    "hidden_forward_mode",
     "hidden_init",
     "flow_pre_store",
     "flow_hidden_write",
@@ -25,7 +26,9 @@ FIELDS = [
     "best_final_transient_accuracy",
     "best_final_transient_min_margin_v",
     "input_feature_separable",
+    "input_feature_min_margin",
     "initial_hidden_separable",
+    "initial_hidden_min_margin",
     "final_hidden_separable",
     "final_hidden_min_margin",
     "max_abs_total_readout_signed_delta_v",
@@ -44,6 +47,13 @@ def nested(data: dict[str, Any], *keys: str) -> Any:
     return value
 
 
+def separability_margin(data: dict[str, Any], key: str) -> Any:
+    stats = data.get(key)
+    if not isinstance(stats, dict):
+        return None
+    return stats.get("min_margin", stats.get("best_min_margin"))
+
+
 def row_from_summary(path: Path) -> dict[str, Any]:
     data = json.loads(path.read_text())
     tag = path.name.removesuffix("_summary.json")
@@ -52,6 +62,7 @@ def row_from_summary(path: Path) -> dict[str, Any]:
         "dataset": data.get("dataset") or data.get("benchmark"),
         "input_frontend_key": data.get("input_frontend_key"),
         "hidden_cells": data.get("hidden_cells"),
+        "hidden_forward_mode": data.get("hidden_forward_mode", "weighted_relu"),
         "hidden_init": data.get("hidden_init"),
         "flow_pre_store": data.get("flow_pre_store"),
         "flow_hidden_write": data.get("flow_hidden_write"),
@@ -61,9 +72,11 @@ def row_from_summary(path: Path) -> dict[str, Any]:
         "best_final_transient_accuracy": data.get("best_final_transient_accuracy"),
         "best_final_transient_min_margin_v": data.get("best_final_transient_min_margin_v"),
         "input_feature_separable": nested(data, "input_feature_separability", "linearly_separable"),
+        "input_feature_min_margin": separability_margin(data, "input_feature_separability"),
         "initial_hidden_separable": nested(data, "initial_hidden_feature_separability", "linearly_separable"),
+        "initial_hidden_min_margin": separability_margin(data, "initial_hidden_feature_separability"),
         "final_hidden_separable": nested(data, "final_hidden_feature_separability", "linearly_separable"),
-        "final_hidden_min_margin": nested(data, "final_hidden_feature_separability", "min_margin"),
+        "final_hidden_min_margin": separability_margin(data, "final_hidden_feature_separability"),
         "max_abs_total_readout_signed_delta_v": data.get("max_abs_total_readout_signed_delta_v"),
         "max_abs_total_hidden_signed_delta_v": data.get("max_abs_total_hidden_signed_delta_v"),
         "wall_time_s": data.get("wall_time_s"),

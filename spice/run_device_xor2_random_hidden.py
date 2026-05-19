@@ -96,6 +96,7 @@ HIDDEN_DELTA_WEIGHT_DEVICES = ["nmos", "nrel", "nsense"]
 HIDDEN_DELTA_OUTPUT_MODES = ["raw", "senseamp"]
 HIDDEN_GRADIENT_ACT_GATES = ["act_nrel", "act_nsense", "none"]
 HIDDEN_APPLY_MODES = ["direct", "grad_senseamp"]
+HIDDEN_FORWARD_MODES = ["weighted_relu", "rail_buffer"]
 LEARNING_MODES = ["accumulate_apply", "flow"]
 FLOW_HIDDEN_WRITES = ["direct", "off"]
 FLOW_PRE_STORES = ["shared_node", "synapse_gate", "synapse_consume"]
@@ -973,10 +974,20 @@ def resets(lead_mode: str, include_gradient_resets: bool) -> str:
     return "\n".join(lines)
 
 
-def hidden_forward(design: SynapseDesign) -> str:
+def hidden_forward(design: SynapseDesign, hidden_forward_mode: str) -> str:
+    if hidden_forward_mode not in HIDDEN_FORWARD_MODES:
+        raise ValueError(f"unknown hidden forward mode: {hidden_forward_mode}")
     lines: list[str] = []
     syn_w = design.hidden_forward_width_u
     for h in range(HIDDEN):
+        if hidden_forward_mode == "rail_buffer" and h < len(INPUT_RAILS):
+            rail = INPUT_RAILS[h]
+            lines += [
+                f"* Buffered hidden {h}: forward pass-gate copy from input rail {rail} into activation/pre caps.",
+                f"Mhbuf{h}_act act{h} fwd {rail} 0 NMOS W={syn_w:.12g}u L=180n",
+                f"Mhbuf{h}_pre pre{h} fwd {rail} 0 NMOS W={syn_w:.12g}u L=180n",
+            ]
+            continue
         lines.append(f"* General hidden {h}: fully connected signed conductance from input rails plus one bias rail.")
         for rail in HIDDEN_RAILS:
             lines += [
@@ -1862,6 +1873,7 @@ def random_hidden_netlist(
     train_order: list[int],
     batch_apply: bool,
     synapse_design_name: str,
+    hidden_forward_mode: str,
     hidden_delta_width_scale: float,
     hidden_gradient_width_scale: float,
     readout_gradient_width_scale: float,
@@ -2062,7 +2074,7 @@ Vt1 t1 0 {target_wave(samples, 1, stop)}
 {flow_pre_activation_stores(flow_pre_store, flow_pre_cap_f, flow_pre_consume_width_u) if learning_mode == "flow" else ""}
 {train_charge_noise(samples, stop, train_charge_noise_width_u, train_charge_noise_probability, train_charge_noise_seed, train_charge_noise_scope, train_charge_noise_pulse_ns, bwd_start_ns)}
 
-{hidden_forward(design)}
+    {hidden_forward(design, hidden_forward_mode)}
 {output_forward(design)}
 {low_score_gate_cells(lose_pull_kohm, lose_width_u)}
 {score_lead_gate_cells(lead_width_u, lead_mode)}
@@ -2140,6 +2152,15 @@ def main() -> None:
     ap.add_argument("--hidden-delta-internal-leak-ohm", type=float, default=0.0)
     ap.add_argument("--hidden-gradient-act-gate", choices=HIDDEN_GRADIENT_ACT_GATES, default="act_nrel")
     ap.add_argument("--hidden-apply-mode", choices=HIDDEN_APPLY_MODES, default="direct")
+    ap.add_argument(
+        "--hidden-forward-mode",
+        choices=HIDDEN_FORWARD_MODES,
+        default="weighted_relu",
+        help=(
+            "Hidden forward circuit. weighted_relu uses trainable signed conductance into a ReLU cell; "
+            "rail_buffer pass-gate copies input rails into hidden activation capacitors during fwd."
+        ),
+    )
     ap.add_argument("--learning-mode", choices=LEARNING_MODES, default="accumulate_apply")
     ap.add_argument("--flow-hidden-write", choices=FLOW_HIDDEN_WRITES, default="direct")
     ap.add_argument("--flow-pre-store", choices=FLOW_PRE_STORES, default="shared_node")
@@ -2321,6 +2342,7 @@ def main() -> None:
         train_order,
         args.batch_apply,
         args.synapse_design,
+        args.hidden_forward_mode,
         args.hidden_delta_width_scale,
         args.hidden_gradient_width_scale,
         args.readout_gradient_width_scale,
@@ -2666,11 +2688,20 @@ def main() -> None:
         "input_count": len(INPUT_RAILS),
         "input_frontend": records[0].get("input_frontend") if records else None,
         "input_frontend_key": records[0].get("input_frontend_key") if records else None,
+        "hidden_forward_mode": args.hidden_forward_mode,
         "signal_path": (
-            f"{HIDDEN} fully connected hidden ReLU cells receive signed conductance from "
-            f"{len(INPUT_RAILS)} externally driven input rails plus a bias rail. "
-            "Readout, output-bias, and hidden weights are capacitor-held signed states and update through discharge-only signed updates."
-        ),
+            (
+                f"{min(HIDDEN, len(INPUT_RAILS))} hidden activation capacitors are MOS pass-gate buffered "
+                f"from externally driven input rails; any remaining hidden cells use signed conductance from "
+                f"{len(INPUT_RAILS)} input rails plus a bias rail. "
+            )
+            if args.hidden_forward_mode == "rail_buffer"
+            else (
+                f"{HIDDEN} fully connected hidden ReLU cells receive signed conductance from "
+                f"{len(INPUT_RAILS)} externally driven input rails plus a bias rail. "
+            )
+        )
+        + "Readout, output-bias, and hidden weights are capacitor-held signed states and update through discharge-only signed updates.",
         "no_behavioral_signal_math": True,
         "uses_behavioral_tanh": False,
         "uses_behavioral_multipliers": False,

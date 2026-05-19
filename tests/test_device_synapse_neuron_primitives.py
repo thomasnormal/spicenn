@@ -208,6 +208,31 @@ def test_direct_flow_generator_wires_backward_path_through_saved_pre_traces_and_
     assert "Mwh0_x0p_flow_d wh0_x0p_flow_x hdng0" in hidden_updates
 
 
+def test_rail_buffer_hidden_forward_uses_input_pass_gates() -> None:
+    original_hidden = direct_flow.HIDDEN
+    original_input_rails = list(direct_flow.INPUT_RAILS)
+    try:
+        direct_flow.set_hidden_cells(3)
+        direct_flow.set_input_rails(["x0", "x1"])
+        design = direct_flow.scaled_synapse_design(
+            "split_signed_passact_v1",
+            hidden_delta_width_scale=1.0,
+            hidden_gradient_width_scale=1.0,
+            readout_gradient_width_scale=1.0,
+        )
+
+        forward = direct_flow.hidden_forward(design, "rail_buffer")
+    finally:
+        direct_flow.set_hidden_cells(original_hidden)
+        direct_flow.set_input_rails(original_input_rails)
+
+    assert "Mhbuf0_act act0 fwd x0 0 NMOS" in forward
+    assert "Mhbuf0_pre pre0 fwd x0 0 NMOS" in forward
+    assert "Mhbuf1_act act1 fwd x1 0 NMOS" in forward
+    assert "General hidden 2" in forward
+    assert "Mh2_biasp_x" in forward
+
+
 def test_probe_measurement_keeps_backward_signals_without_full_weight_snapshots() -> None:
     original_hidden = direct_flow.HIDDEN
     original_input_rails = list(direct_flow.INPUT_RAILS)

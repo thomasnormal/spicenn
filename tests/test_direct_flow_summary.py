@@ -27,6 +27,7 @@ def test_direct_flow_summary_extracts_nested_separability(tmp_path: Path) -> Non
                 "dataset": "mnist01_24",
                 "input_frontend_key": "pool2",
                 "hidden_cells": 8,
+                "hidden_forward_mode": "rail_buffer",
                 "hidden_init": "random",
                 "flow_pre_store": "synapse_gate",
                 "flow_hidden_write": "direct",
@@ -35,8 +36,11 @@ def test_direct_flow_summary_extracts_nested_separability(tmp_path: Path) -> Non
                 "final_eval_accuracy": 0.9166666667,
                 "best_final_transient_accuracy": 0.9166666667,
                 "best_final_transient_min_margin_v": -0.0019,
-                "input_feature_separability": {"linearly_separable": True},
-                "initial_hidden_feature_separability": {"linearly_separable": False},
+                "input_feature_separability": {"linearly_separable": True, "min_margin": 0.42},
+                "initial_hidden_feature_separability": {
+                    "linearly_separable": False,
+                    "best_min_margin": -0.01,
+                },
                 "final_hidden_feature_separability": {
                     "linearly_separable": True,
                     "min_margin": 0.00055,
@@ -53,9 +57,12 @@ def test_direct_flow_summary_extracts_nested_separability(tmp_path: Path) -> Non
 
     assert row["tag"] == "device_mnist01_24_random_hidden_v190"
     assert row["dataset"] == "mnist01_24"
+    assert row["hidden_forward_mode"] == "rail_buffer"
     assert row["flow_pre_store"] == "synapse_gate"
     assert row["flow_hidden_write"] == "direct"
     assert row["input_feature_separable"] is True
+    assert row["input_feature_min_margin"] == 0.42
     assert row["initial_hidden_separable"] is False
+    assert row["initial_hidden_min_margin"] == -0.01
     assert row["final_hidden_separable"] is True
     assert row["final_hidden_min_margin"] == 0.00055

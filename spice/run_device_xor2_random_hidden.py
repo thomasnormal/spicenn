@@ -112,6 +112,7 @@ READOUT_FLOW_WRITE_MODES = [
     "charge_discharge",
     "bounded_charge_discharge",
 ]
+HIDDEN_FLOW_WRITE_MODES = list(READOUT_FLOW_WRITE_MODES)
 HIDDEN_INIT_MODES = ["random", "input_identity"]
 MEASURE_DETAILS = ["full", "probe", "light"]
 BACKWARD_GATE_MODES = [
@@ -2086,25 +2087,47 @@ def hidden_gradients_and_updates(
     return "\n".join(lines)
 
 
-def hidden_flow_updates(update_width_u: float, flow_pre_store: str, hidden_delta_output_mode: str) -> str:
+def hidden_flow_updates(
+    update_width_u: float,
+    flow_pre_store: str,
+    hidden_delta_output_mode: str,
+    hidden_flow_write_mode: str,
+) -> str:
     if flow_pre_store not in FLOW_PRE_STORES:
         raise ValueError(f"unknown flow pre-store mode: {flow_pre_store}")
     if hidden_delta_output_mode not in HIDDEN_DELTA_OUTPUT_MODES:
         raise ValueError(f"unknown hidden delta output mode: {hidden_delta_output_mode}")
+    if hidden_flow_write_mode not in HIDDEN_FLOW_WRITE_MODES:
+        raise ValueError(f"unknown hidden flow write mode: {hidden_flow_write_mode}")
+    bounded_write = hidden_flow_write_mode.startswith("bounded_")
+    discharge_enabled = hidden_flow_write_mode in {
+        "discharge",
+        "bounded_discharge",
+        "charge_discharge",
+        "bounded_charge_discharge",
+    }
+    charge_enabled = hidden_flow_write_mode in {
+        "charge_only",
+        "bounded_charge_only",
+        "charge_discharge",
+        "bounded_charge_discharge",
+    }
+    high_node = "whigh" if bounded_write else "vdd"
+    low_node = "wlow" if bounded_write else "0"
     lines: list[str] = []
     for h in range(HIDDEN):
         pos_delta_gate = f"hdpg{h}" if hidden_delta_output_mode == "senseamp" else f"hdp{h}"
         neg_delta_gate = f"hdng{h}" if hidden_delta_output_mode == "senseamp" else f"hdn{h}"
         for rail in HIDDEN_RAILS:
             pre_gate = f"fphi{h}_{rail}" if flow_pre_store != "shared_node" else rail
-            if hidden_delta_output_mode == "raw":
+            if hidden_delta_output_mode == "raw" and discharge_enabled:
                 lines += [
                     f"Mwh{h}_{rail}n_flow_b wh{h}_{rail}n bwd wh{h}_{rail}n_flow_b 0 NREL W={update_width_u:.12g}u L=180n",
                     f"Mwh{h}_{rail}n_flow_x wh{h}_{rail}n_flow_b {pre_gate} wh{h}_{rail}n_flow_x 0 NMOS W={update_width_u:.12g}u L=180n",
-                    f"Mwh{h}_{rail}n_flow_d wh{h}_{rail}n_flow_x {pos_delta_gate} 0 0 NSENSE W={update_width_u:.12g}u L=180n",
+                    f"Mwh{h}_{rail}n_flow_d wh{h}_{rail}n_flow_x {pos_delta_gate} {low_node} 0 NSENSE W={update_width_u:.12g}u L=180n",
                     f"Mwh{h}_{rail}p_flow_b wh{h}_{rail}p bwd wh{h}_{rail}p_flow_b 0 NREL W={update_width_u:.12g}u L=180n",
                     f"Mwh{h}_{rail}p_flow_x wh{h}_{rail}p_flow_b {pre_gate} wh{h}_{rail}p_flow_x 0 NMOS W={update_width_u:.12g}u L=180n",
-                    f"Mwh{h}_{rail}p_flow_d wh{h}_{rail}p_flow_x {neg_delta_gate} 0 0 NSENSE W={update_width_u:.12g}u L=180n",
+                    f"Mwh{h}_{rail}p_flow_d wh{h}_{rail}p_flow_x {neg_delta_gate} {low_node} 0 NSENSE W={update_width_u:.12g}u L=180n",
                 ]
                 lines += node_parasitics(
                     f"wh{h}_{rail}n_flow_b",
@@ -2112,16 +2135,31 @@ def hidden_flow_updates(update_width_u: float, flow_pre_store: str, hidden_delta
                     f"wh{h}_{rail}p_flow_b",
                     f"wh{h}_{rail}p_flow_x",
                 )
-            else:
+            if hidden_delta_output_mode == "raw" and charge_enabled:
+                lines += [
+                    f"Mwh{h}_{rail}p_ch_b {high_node} bwd wh{h}_{rail}p_ch_b 0 NREL W={update_width_u:.12g}u L=180n",
+                    f"Mwh{h}_{rail}p_ch_x wh{h}_{rail}p_ch_b {pre_gate} wh{h}_{rail}p_ch_x 0 NMOS W={update_width_u:.12g}u L=180n",
+                    f"Mwh{h}_{rail}p_ch_d wh{h}_{rail}p_ch_x {pos_delta_gate} wh{h}_{rail}p 0 NSENSE W={update_width_u:.12g}u L=180n",
+                    f"Mwh{h}_{rail}n_ch_b {high_node} bwd wh{h}_{rail}n_ch_b 0 NREL W={update_width_u:.12g}u L=180n",
+                    f"Mwh{h}_{rail}n_ch_x wh{h}_{rail}n_ch_b {pre_gate} wh{h}_{rail}n_ch_x 0 NMOS W={update_width_u:.12g}u L=180n",
+                    f"Mwh{h}_{rail}n_ch_d wh{h}_{rail}n_ch_x {neg_delta_gate} wh{h}_{rail}n 0 NSENSE W={update_width_u:.12g}u L=180n",
+                ]
+                lines += node_parasitics(
+                    f"wh{h}_{rail}p_ch_b",
+                    f"wh{h}_{rail}p_ch_x",
+                    f"wh{h}_{rail}n_ch_b",
+                    f"wh{h}_{rail}n_ch_x",
+                )
+            if hidden_delta_output_mode != "raw" and discharge_enabled:
                 lines += [
                     f"Mwh{h}_{rail}n_flow_b wh{h}_{rail}n bwd wh{h}_{rail}n_flow_b 0 NREL W={update_width_u:.12g}u L=180n",
                     f"Mwh{h}_{rail}n_flow_x wh{h}_{rail}n_flow_b {pre_gate} wh{h}_{rail}n_flow_x 0 NMOS W={update_width_u:.12g}u L=180n",
                     f"Mwh{h}_{rail}n_flow_d wh{h}_{rail}n_flow_x {pos_delta_gate} wh{h}_{rail}n_flow_d 0 NSENSE W={update_width_u:.12g}u L=180n",
-                    f"Mwh{h}_{rail}n_flow_a wh{h}_{rail}n_flow_d apply 0 0 NREL W={update_width_u:.12g}u L=180n",
+                    f"Mwh{h}_{rail}n_flow_a wh{h}_{rail}n_flow_d apply {low_node} 0 NREL W={update_width_u:.12g}u L=180n",
                     f"Mwh{h}_{rail}p_flow_b wh{h}_{rail}p bwd wh{h}_{rail}p_flow_b 0 NREL W={update_width_u:.12g}u L=180n",
                     f"Mwh{h}_{rail}p_flow_x wh{h}_{rail}p_flow_b {pre_gate} wh{h}_{rail}p_flow_x 0 NMOS W={update_width_u:.12g}u L=180n",
                     f"Mwh{h}_{rail}p_flow_d wh{h}_{rail}p_flow_x {neg_delta_gate} wh{h}_{rail}p_flow_d 0 NSENSE W={update_width_u:.12g}u L=180n",
-                    f"Mwh{h}_{rail}p_flow_a wh{h}_{rail}p_flow_d apply 0 0 NREL W={update_width_u:.12g}u L=180n",
+                    f"Mwh{h}_{rail}p_flow_a wh{h}_{rail}p_flow_d apply {low_node} 0 NREL W={update_width_u:.12g}u L=180n",
                 ]
                 lines += node_parasitics(
                     f"wh{h}_{rail}n_flow_b",
@@ -2130,6 +2168,25 @@ def hidden_flow_updates(update_width_u: float, flow_pre_store: str, hidden_delta
                     f"wh{h}_{rail}p_flow_b",
                     f"wh{h}_{rail}p_flow_x",
                     f"wh{h}_{rail}p_flow_d",
+                )
+            if hidden_delta_output_mode != "raw" and charge_enabled:
+                lines += [
+                    f"Mwh{h}_{rail}p_ch_b {high_node} bwd wh{h}_{rail}p_ch_b 0 NREL W={update_width_u:.12g}u L=180n",
+                    f"Mwh{h}_{rail}p_ch_x wh{h}_{rail}p_ch_b {pre_gate} wh{h}_{rail}p_ch_x 0 NMOS W={update_width_u:.12g}u L=180n",
+                    f"Mwh{h}_{rail}p_ch_d wh{h}_{rail}p_ch_x {pos_delta_gate} wh{h}_{rail}p_ch_d 0 NSENSE W={update_width_u:.12g}u L=180n",
+                    f"Mwh{h}_{rail}p_ch_a wh{h}_{rail}p_ch_d apply wh{h}_{rail}p 0 NREL W={update_width_u:.12g}u L=180n",
+                    f"Mwh{h}_{rail}n_ch_b {high_node} bwd wh{h}_{rail}n_ch_b 0 NREL W={update_width_u:.12g}u L=180n",
+                    f"Mwh{h}_{rail}n_ch_x wh{h}_{rail}n_ch_b {pre_gate} wh{h}_{rail}n_ch_x 0 NMOS W={update_width_u:.12g}u L=180n",
+                    f"Mwh{h}_{rail}n_ch_d wh{h}_{rail}n_ch_x {neg_delta_gate} wh{h}_{rail}n_ch_d 0 NSENSE W={update_width_u:.12g}u L=180n",
+                    f"Mwh{h}_{rail}n_ch_a wh{h}_{rail}n_ch_d apply wh{h}_{rail}n 0 NREL W={update_width_u:.12g}u L=180n",
+                ]
+                lines += node_parasitics(
+                    f"wh{h}_{rail}p_ch_b",
+                    f"wh{h}_{rail}p_ch_x",
+                    f"wh{h}_{rail}p_ch_d",
+                    f"wh{h}_{rail}n_ch_b",
+                    f"wh{h}_{rail}n_ch_x",
+                    f"wh{h}_{rail}n_ch_d",
                 )
     return "\n".join(lines)
 
@@ -2399,6 +2456,7 @@ def random_hidden_netlist(
     readout_flow_polarity: str,
     readout_flow_write_mode: str,
     hidden_update_width_u: float,
+    hidden_flow_write_mode: str,
     error_rule: str,
     latch_boost_width_u: float,
     residual_target_width_u: float,
@@ -2519,7 +2577,14 @@ def random_hidden_netlist(
             hidden_delta_sense_block,
         ]
         if flow_hidden_write == "direct":
-            flow_blocks.append(hidden_flow_updates(hidden_update_width_u, flow_pre_store, hidden_delta_output_mode))
+            flow_blocks.append(
+                hidden_flow_updates(
+                    hidden_update_width_u,
+                    flow_pre_store,
+                    hidden_delta_output_mode,
+                    hidden_flow_write_mode,
+                )
+            )
         else:
             flow_blocks.append("* Hidden weight capacitors are held during this direct-flow run.")
         learning_block = "\n".join(
@@ -2820,15 +2885,24 @@ def main() -> None:
         "--readout-write-high-v",
         type=float,
         default=0.58,
-        help="High rail for bounded_charge_discharge local selected-branch readout writes.",
+        help="High rail for bounded_* local selected-branch readout/hidden writes.",
     )
     ap.add_argument(
         "--readout-write-low-v",
         type=float,
         default=0.16,
-        help="Low rail for bounded_charge_discharge local selected-branch readout writes.",
+        help="Low rail for bounded_* local selected-branch readout/hidden writes.",
     )
     ap.add_argument("--hidden-update-width-u", type=float)
+    ap.add_argument(
+        "--hidden-flow-write-mode",
+        choices=HIDDEN_FLOW_WRITE_MODES,
+        default="discharge",
+        help=(
+            "Physical direct-flow hidden-weight write primitive. Uses the same mode names "
+            "as --readout-flow-write-mode; bounded_* modes use the readout write rails."
+        ),
+    )
     ap.add_argument(
         "--error-rule",
         choices=[
@@ -3073,6 +3147,7 @@ def main() -> None:
         args.readout_flow_polarity,
         args.readout_flow_write_mode,
         args.hidden_update_width_u if args.hidden_update_width_u is not None else args.update_width_u,
+        args.hidden_flow_write_mode,
         args.error_rule,
         args.latch_boost_width_u,
         args.residual_target_width_u,
@@ -3415,7 +3490,8 @@ def main() -> None:
         )
         + (
             "Readout, output-bias, and hidden weights are capacitor-held signed states. "
-            f"Readout flow writes use {args.readout_flow_write_mode} signed updates."
+            f"Readout flow writes use {args.readout_flow_write_mode} signed updates. "
+            f"Hidden flow writes use {args.hidden_flow_write_mode} signed updates."
         ),
         "no_behavioral_signal_math": True,
         "uses_behavioral_tanh": False,
@@ -3524,17 +3600,24 @@ def main() -> None:
         "readout_center_pull_v": args.readout_center_pull_v if args.learning_mode == "flow" else None,
         "readout_write_high_v": (
             args.readout_write_high_v
-            if args.learning_mode == "flow" and args.readout_flow_write_mode.startswith("bounded_")
+            if args.learning_mode == "flow"
+            and (args.readout_flow_write_mode.startswith("bounded_") or args.hidden_flow_write_mode.startswith("bounded_"))
             else None
         ),
         "readout_write_low_v": (
             args.readout_write_low_v
-            if args.learning_mode == "flow" and args.readout_flow_write_mode.startswith("bounded_")
+            if args.learning_mode == "flow"
+            and (args.readout_flow_write_mode.startswith("bounded_") or args.hidden_flow_write_mode.startswith("bounded_"))
             else None
         ),
         "readout_flow_polarity": args.readout_flow_polarity if args.learning_mode == "flow" else None,
         "readout_flow_write_mode": args.readout_flow_write_mode if args.learning_mode == "flow" else None,
         "hidden_update_width_u": args.hidden_update_width_u if args.hidden_update_width_u is not None else args.update_width_u,
+        "hidden_flow_write_mode": (
+            args.hidden_flow_write_mode
+            if args.learning_mode == "flow" and args.flow_hidden_write == "direct"
+            else None
+        ),
         "apply_start_ns": args.apply_start_ns,
         "apply_end_ns": args.apply_end_ns,
         "apply_duration_ns": args.apply_end_ns - args.apply_start_ns,

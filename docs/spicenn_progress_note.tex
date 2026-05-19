@@ -1320,6 +1320,38 @@ on the same 64-example task, bounded discharge with a smaller
 linear-readout bug as a state-dependent mobility problem first, and only then
 scale the representation or depth.
 
+The first 128-example fixed8 readout scale probe confirms that this is not
+fully solved yet.  With the same \(0.70/0.24\ \mathrm{V}\) bounded-discharge
+rails, \(0.00035\,\mu\mathrm{m}\) reached 83.59375\%, while the weaker
+\(0.00015\,\mu\mathrm{m}\) setting fell to 60.15625\%, and a
+\(0.0005\,\mu\mathrm{m}\) setting again reached only 83.59375\%.  A stronger
+two-epoch \(0.0008\,\mu\mathrm{m}\) setting improved the same 128-example
+subset to 85.9375\%, while \(0.0012\,\mu\mathrm{m}\) slipped to 85.15625\% with
+a worse final margin.  So \(0.0008\,\mu\mathrm{m}\) is currently the best
+128-example readout-only point, but it still does not clear 90\%.  The initial
+and final hidden feature diagnostics still find a linear separator, so the
+remaining readout issue is still a hardware update-field problem rather than a
+reason to immediately complicate preprocessing.
+
+The generator now mirrors this control on the lower-layer synapses through
+\code{--hidden-flow-write-mode}.  When hidden direct flow is enabled, hidden
+synapse capacitors can use the same discharge-only, charge-only,
+charge/discharge, and bounded variants as the readout.  This gives the
+all-layer backprop path the same state-window knob that fixed the readout
+bridge.
+
+The first bounded-hidden-write all-layer check is positive.  On
+\code{mnist01fixed8\_32}, with per-synapse pre-activation trace gates,
+readout-weight-transport hidden deltas, bounded-discharge readout writes, and
+bounded-discharge hidden writes, the circuit reached 100\% final accuracy with
+a small positive final transient margin.  The hidden signed-weight capacitors
+moved by about \(21\ \mathrm{mV}\), so this is not a readout-only artifact.
+Scaling the same bounded-hidden-write configuration to 64 examples reached
+92.1875\% with about \(26.7\ \mathrm{mV}\) of hidden signed-weight motion.  That
+64-example run does not beat the best readout-only accuracy, but it confirms
+that the newly bounded lower-layer write path is usable at the next scale and
+does not collapse the trained readout.
+
 \subsection{Local-Feature Phase-Training Path}
 
 The strongest MNIST evidence uses local feature cells rather than dense

@@ -197,6 +197,7 @@ def test_direct_flow_generator_wires_backward_path_through_saved_pre_traces_and_
             update_width_u=0.04,
             flow_pre_store="synapse_consume",
             hidden_delta_output_mode="senseamp",
+            hidden_flow_write_mode="discharge",
         )
     finally:
         direct_flow.set_hidden_cells(original_hidden)
@@ -226,6 +227,50 @@ def test_direct_flow_generator_wires_backward_path_through_saved_pre_traces_and_
     assert "Mwh0_x0n_flow_a wh0_x0n_flow_d apply 0 0" in hidden_updates
     assert "Mwh0_x0p_flow_x wh0_x0p_flow_b fphi0_x0" in hidden_updates
     assert "Mwh0_x0p_flow_d wh0_x0p_flow_x hdng0" in hidden_updates
+
+
+def test_direct_flow_hidden_can_bound_discharge_only() -> None:
+    original_hidden = direct_flow.HIDDEN
+    original_input_rails = list(direct_flow.INPUT_RAILS)
+    try:
+        direct_flow.set_hidden_cells(1)
+        direct_flow.set_input_rails(["x0"])
+        updates = direct_flow.hidden_flow_updates(
+            update_width_u=0.02,
+            flow_pre_store="synapse_gate",
+            hidden_delta_output_mode="raw",
+            hidden_flow_write_mode="bounded_discharge",
+        )
+    finally:
+        direct_flow.set_hidden_cells(original_hidden)
+        direct_flow.set_input_rails(original_input_rails)
+
+    assert "Mwh0_x0n_flow_d wh0_x0n_flow_x hdp0 wlow 0 NSENSE" in updates
+    assert "Mwh0_x0p_flow_d wh0_x0p_flow_x hdn0 wlow 0 NSENSE" in updates
+    assert "_ch_b whigh" not in updates
+
+
+def test_direct_flow_hidden_can_bound_charge_only_with_latched_delta() -> None:
+    original_hidden = direct_flow.HIDDEN
+    original_input_rails = list(direct_flow.INPUT_RAILS)
+    try:
+        direct_flow.set_hidden_cells(1)
+        direct_flow.set_input_rails(["x0"])
+        updates = direct_flow.hidden_flow_updates(
+            update_width_u=0.02,
+            flow_pre_store="synapse_gate",
+            hidden_delta_output_mode="senseamp",
+            hidden_flow_write_mode="bounded_charge_only",
+        )
+    finally:
+        direct_flow.set_hidden_cells(original_hidden)
+        direct_flow.set_input_rails(original_input_rails)
+
+    assert "Mwh0_x0p_ch_b whigh bwd wh0_x0p_ch_b" in updates
+    assert "Mwh0_x0p_ch_d wh0_x0p_ch_x hdpg0 wh0_x0p_ch_d" in updates
+    assert "Mwh0_x0p_ch_a wh0_x0p_ch_d apply wh0_x0p" in updates
+    assert "Mwh0_x0n_ch_d wh0_x0n_ch_x hdng0 wh0_x0n_ch_d" in updates
+    assert "_flow_d" not in updates
 
 
 def test_rail_buffer_hidden_forward_uses_input_pass_gates() -> None:

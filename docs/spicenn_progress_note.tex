@@ -1,0 +1,360 @@
+\documentclass[11pt]{article}
+
+\usepackage[margin=0.85in]{geometry}
+\usepackage[american]{circuitikz}
+\usepackage{amsmath}
+\usepackage{amssymb}
+\usepackage{booktabs}
+\usepackage{xcolor}
+\usepackage{hyperref}
+\usepackage{microtype}
+\usepackage{tikz}
+\usetikzlibrary{arrows.meta,calc,fit,positioning,shapes.geometric}
+
+\hypersetup{
+  colorlinks=true,
+  linkcolor=blue!55!black,
+  urlcolor=blue!55!black
+}
+
+\definecolor{forwardblue}{RGB}{37,99,235}
+\definecolor{backred}{RGB}{190,18,60}
+\definecolor{writeorange}{RGB}{217,119,6}
+\definecolor{stategreen}{RGB}{22,101,52}
+\definecolor{lightgray}{RGB}{246,247,249}
+
+\newcommand{\code}[1]{\texttt{#1}}
+\newcommand{\capstate}[1]{\ensuremath{C_{\mathrm{#1}}}}
+
+\title{SPICENN Hardware Progress Note}
+\author{Working architecture notes}
+\date{\today}
+
+\begin{document}
+\maketitle
+
+\begin{abstract}
+This note summarizes the circuit-level neural-network architectures that have
+worked so far in the SPICENN experiments.  The long-term target is a trainable,
+mostly combinatorial neural network whose forward pass, backward signal
+propagation, and weight writes run inside SPICE using transistor, resistor, and
+capacitor primitives.  Python is allowed to provide sample rails, target rails,
+and coarse guiding waveforms, but not to compute hidden activations or
+gradients.  The current evidence splits into two tracks: a chip-faithful
+device-level direct-flow track that now solves XOR, and a higher-accuracy
+MNIST local-feature phase-training track that has crossed 90\% but still uses
+a more structured local-feature rule and is not yet the final pure direct-flow
+dense architecture.
+\end{abstract}
+
+\section{Goal And Current Status}
+
+The desired hardware contract is:
+\begin{enumerate}
+  \item Python drives external inputs, target rails, and phase/guide waveforms.
+  \item The circuit performs the forward pass by charging pre-activation and
+    activation capacitors.
+  \item A backward window opens after the output comparison.
+  \item Output error current propagates backward through capacitor-held readout
+    weights and hidden activation gates.
+  \item Weight capacitors are updated by local transistor stacks gated by
+    backward error and saved pre-activation traces.
+\end{enumerate}
+
+Table~\ref{tab:status} gives the shortest honest summary of where the work is.
+The direct-flow XOR result is the closest to the target architecture.  The
+local-feature MNIST result is the strongest accuracy result, but it is a
+structured local feature architecture with a phase-portable update rule rather
+than the final dense direct-flow synapse design.
+
+\begin{table}[h]
+  \centering
+  \caption{Main evidence tracks.}
+  \label{tab:status}
+  \begin{tabular}{p{0.27\linewidth}p{0.31\linewidth}p{0.30\linewidth}}
+    \toprule
+    Track & Best evidence so far & Main caveat \\
+    \midrule
+    Device primitives &
+    MOS/capacitor ReLU, signed synapse, signed update cell, and delta/write
+    cells run in ngspice and have unit tests for both directions. &
+    LEVEL=1 MOS models, not a foundry PDK. \\
+    \addlinespace
+    Direct-flow dense hidden net &
+    XOR reached 100\% with flow-mode training, backprop through readout
+    weight capacitors, hidden-delta sense amps, and no gradient accumulators
+    in the main write path. &
+    Best completed run used shared source nodes for pre-activations; per-synapse
+    trace variants are under active test. \\
+    \addlinespace
+    Tiny MNIST01 direct-flow &
+    Fixed sensory front-ends and random-retina rails are implemented; small
+    binary subsets are linearly separable at the input level. &
+    Training readout/write dynamics have not reliably exploited that
+    separability yet. \\
+    \addlinespace
+    Local-feature MNIST phase path &
+    A private/local 7x7 block model with 796 phase-state values stays above
+    90\% in real 1 ns SPICE phase-training gates; the high-margin 10x10
+    branch reaches about 94.8\% on the full 10k MNIST test set after resumed
+    SPICE phase training. &
+    This is a local-feature phase-training architecture, not yet the final
+    direct-flow synapse architecture. \\
+    \bottomrule
+  \end{tabular}
+\end{table}
+
+\section{Primitive Circuit Model}
+
+The primitive state variables are voltages on capacitors:
+\[
+  w_{ij}^+,\; w_{ij}^-,
+  \quad
+  a_i,
+  \quad
+  \phi_i,
+  \quad
+  \delta_j,
+  \quad
+  g_{ij}^+,\; g_{ij}^- \;\; \text{when gradient accumulators are used.}
+\]
+Signed weights are represented differentially:
+\[
+  w_{ij} \propto V(C_{w^+}) - V(C_{w^-}).
+\]
+The direct-flow branch tries to remove explicit gradient accumulators by using
+the backward/write window itself as the local update event:
+\[
+  \Delta V(C_{w^\pm}) \approx F(\phi_i,\delta_j,\mathrm{bwd},\mathrm{apply}).
+\]
+
+\begin{figure}[h]
+  \centering
+  \begin{circuitikz}[american, scale=0.9, transform shape]
+    \draw (0,3.0) node[left] {$V_{DD}$} to[short,o-] (1.0,3.0);
+    \draw (0,2.1) node[left] {$x_i$} to[short,o-] (1.0,2.1);
+    \draw (1.7,2.55) node[nmos, anchor=S] (mxp) {};
+    \draw (mxp.G) -- ++(-0.75,0) node[left] {$w^+$};
+    \draw (mxp.D) -- (1.7,3.0);
+    \draw (mxp.S) -- (2.35,2.1);
+    \draw (1.0,2.1) -- (mxp.S);
+    \draw (2.35,2.1) node[nmos, anchor=S] (mfp) {};
+    \draw (mfp.G) -- ++(0,-0.65) node[below] {fwd};
+    \draw (mfp.D) -- (3.15,2.1);
+
+    \draw (3.15,2.1) -- (4.05,2.1) node[circ] (pre) {};
+    \draw (pre) to[C,l_={$C_{\mathrm{pre}}$}] (4.05,0.6) node[ground] {};
+    \draw (pre) to[R,l={$R_{\mathrm{leak}}$}] (5.2,0.6) node[ground] {};
+
+    \draw (pre) -- ++(1.4,0) node[nmos, anchor=G] (mrelu) {};
+    \draw (mrelu.D) -- ++(0,0.9) node[vcc] {$V_{DD}$};
+    \draw (mrelu.S) -- ++(0.9,0) node[circ] (act) {};
+    \draw (act) to[C,l_={$C_{\mathrm{act}}$}] ++(0,-1.5) node[ground] {};
+    \draw (act) -- ++(0.9,0) node[right] {$a_j$};
+
+    \draw (3.15,2.1) -- (3.15,1.25) node[nmos, anchor=D] (mfn) {};
+    \draw (mfn.G) -- ++(-0.65,0) node[left] {fwd};
+    \draw (mfn.S) -- ++(0,-0.45) node[nmos, anchor=D] (mxn) {};
+    \draw (mxn.G) -- ++(-0.65,0) node[left] {$x_i$};
+    \draw (mxn.S) -- ++(0,-0.45) node[nmos, anchor=D] (mwn) {};
+    \draw (mwn.G) -- ++(-0.65,0) node[left] {$w^-$};
+    \draw (mwn.S) -- ++(0,-0.25) node[ground] {};
+
+    \node[draw, rounded corners=2pt, fill=lightgray, align=left, text width=4.1cm]
+      at (6.35,3.05)
+      {Forward primitive:\\
+       positive branch charges $C_{\mathrm{pre}}$;\\
+       negative branch discharges it;\\
+       ReLU-like source follower charges $C_{\mathrm{act}}$.};
+  \end{circuitikz}
+  \caption{Conceptual signed conductance synapse and ReLU-like neuron.  The
+  actual generated netlists use MOS stacks, capacitor state, leakage resistors,
+  and phase rails; the figure omits parasitic damping elements for readability.}
+  \label{fig:synapse-neuron}
+\end{figure}
+
+\section{Direct Backward/Write Flow}
+
+The direct-flow architecture is the cleanest match to the desired hardware
+story.  During the forward window, hidden and output nodes settle by charge
+flow through the forward synapses.  During the backward/write window, the
+output error nodes drive current backward through the readout weight capacitor
+gates.  Hidden deltas are optionally latched by a local sense amplifier, and
+the same window can discharge the corresponding positive or negative weight
+capacitor through stacks gated by the saved pre-activation trace.
+
+\begin{figure}[h]
+  \centering
+  \begin{tikzpicture}[
+      font=\small,
+      block/.style={draw, rounded corners=2pt, minimum height=1.0cm, align=center, fill=lightgray},
+      capnode/.style={draw, cylinder, shape border rotate=90, aspect=0.25, minimum height=0.8cm,
+        minimum width=0.45cm, align=center, fill=green!8},
+      arr/.style={-{Latex[length=2.5mm]}, thick},
+      fwd/.style={arr, forwardblue},
+      bwd/.style={arr, backred},
+      wr/.style={arr, writeorange}
+    ]
+    \node[block, minimum width=2.4cm] (inputs) {input rails\\$x_i$};
+    \node[block, minimum width=2.5cm, right=1.2cm of inputs] (hidden) {hidden\\synapses + ReLU};
+    \node[block, minimum width=2.5cm, right=1.2cm of hidden] (readout) {readout\\synapses + outputs};
+    \node[block, minimum width=2.0cm, right=1.2cm of readout] (err) {compare\\error nodes};
+
+    \node[capnode, below=0.75cm of hidden, xshift=-0.7cm] (cphi) {$C_\phi$};
+    \node[capnode, below=0.75cm of hidden, xshift=0.7cm] (cact) {$C_a$};
+    \node[capnode, below=0.75cm of readout, xshift=-0.7cm] (cw) {$C_w$};
+    \node[block, below=0.75cm of readout, xshift=1.0cm, minimum width=1.6cm] (sense) {hidden\\delta SA};
+
+    \draw[fwd] (inputs) -- node[above] {forward charge} (hidden);
+    \draw[fwd] (hidden) -- node[above] {activation voltage} (readout);
+    \draw[fwd] (readout) -- node[above] {scores} (err);
+    \draw[fwd] (hidden) -- (cact);
+    \draw[fwd] (inputs.south east) to[bend right=20] node[below, sloped] {store pre trace} (cphi);
+
+    \draw[bwd] (err.south) to[out=-90,in=10] node[right] {$\delta_{\mathrm{out}}$} (cw.east);
+    \draw[bwd] (cw.west) to[out=180,in=-40] node[below] {through readout $C_w$} (sense.east);
+    \draw[bwd] (cact) -- node[below] {activation gate} (sense);
+    \draw[wr] (sense.west) to[out=180,in=-30] node[below] {$\delta_h$} (hidden.south);
+    \draw[wr] (cphi.east) -- node[below] {local write gate} (hidden.south west);
+
+    \node[draw, rounded corners=2pt, align=left, fill=white, text width=12.5cm,
+      below=1.4cm of cact, xshift=2.0cm] (legend)
+      {\textcolor{forwardblue}{blue}: forward settling and capacitor capture.
+       \quad \textcolor{backred}{red}: backward error current through readout synapses.
+       \quad \textcolor{writeorange}{orange}: local weight-capacitor write path.};
+  \end{tikzpicture}
+  \caption{Direct backward/write flow.  This is the architecture we want to
+  scale: Python provides rails and timing windows, while hidden deltas and
+  weight writes are produced by local circuit paths.}
+  \label{fig:direct-flow}
+\end{figure}
+
+\subsection{Most Important Direct-Flow Result}
+
+The strongest completed XOR run before this note was:
+\begin{center}
+  \code{spice/results/device\_xor2\_random\_hidden\_v182\_senseamp\_applyfix\_h8\_e8\_summary.json}.
+\end{center}
+It reached 100\% XOR final accuracy from 50\% initial accuracy with flow-mode
+training, backprop through the readout weights, hidden-delta sense amps, and no
+explicit gradient accumulator capacitors in the main write path.  It also used
+output-sense comparison and a lead-or backward gate.  The main caveat is that
+this run used \code{flow\_pre\_store=shared\_node}; the per-synapse pre-trace
+versions are the next fidelity step.  Full-measurement reruns of the
+shared-node, \code{synapse\_gate}, and \code{synapse\_consume} variants timed
+out at the current diagnostic settings, so those variants should be rerun with
+light/scalar measurement output before being treated as evidence.
+
+\section{MNIST Architectures That Have Worked}
+
+\subsection{Fixed Front-End Direct-Flow Attempts}
+
+Since learned convolutional weight sharing is not physically free in the target
+architecture, the direct-flow harness supports fixed sensory transforms as
+externally driven input rails: pooled pixels, Haar-like local contrast, DCT
+features, and random local ReLU features.  These are not trainable shared
+weights.  They are a retina-like fixed encoder feeding ordinary voltage rails
+into the trainable silicon block.  Small MNIST-0-vs-1 subsets are often
+linearly separable after this front end, but the current direct-flow readout and
+hidden write dynamics have not yet reliably converted that separability into
+high accuracy.
+
+\subsection{Local-Feature Phase-Training Path}
+
+The strongest MNIST evidence uses local feature cells rather than dense
+all-to-all hidden cells.  A compact version is:
+
+\begin{figure}[h]
+  \centering
+  \begin{tikzpicture}[
+      font=\small,
+      block/.style={draw, rounded corners=2pt, align=center, minimum height=0.9cm, fill=lightgray},
+      arr/.style={-{Latex[length=2.5mm]}, thick}
+    ]
+    \node[block, minimum width=2.2cm] (img) {MNIST image};
+    \node[block, minimum width=2.4cm, right=0.9cm of img] (blocks) {local spatial\\blocks};
+    \node[block, minimum width=2.8cm, right=0.9cm of blocks] (feat) {local feature cells\\per block};
+    \node[block, minimum width=2.4cm, right=0.9cm of feat] (readout) {class readout\\weights};
+    \node[block, minimum width=1.6cm, right=0.9cm of readout] (class) {digit\\class};
+    \draw[arr, forwardblue] (img) -- (blocks);
+    \draw[arr, forwardblue] (blocks) -- (feat);
+    \draw[arr, forwardblue] (feat) -- (readout);
+    \draw[arr, forwardblue] (readout) -- (class);
+
+    \node[draw, rounded corners=2pt, fill=white, align=left, text width=11cm,
+      below=0.8cm of feat]
+      {Capacitor state includes local feature weights/biases, feature
+       activations, readout weights, output biases, deltas, and temporary
+       gradient state.  This path is locally wired and SPICE phase-trained, but
+       it is not yet the same direct-flow synapse design used in the XOR
+       architecture.};
+  \end{tikzpicture}
+  \caption{Local-feature MNIST architecture.  This is the highest-accuracy
+  path so far and the best evidence that local analog state can clear MNIST,
+  but it remains a separate structured architecture.}
+  \label{fig:local-feature}
+\end{figure}
+
+\begin{table}[h]
+  \centering
+  \caption{Representative MNIST local-feature results.}
+  \label{tab:mnist}
+  \begin{tabular}{p{0.31\linewidth}p{0.31\linewidth}p{0.24\linewidth}}
+    \toprule
+    Architecture & Evidence & Interpretation \\
+    \midrule
+    7x7 blocks, 3x3 stride-2, 2 channels; 796 phase-state values &
+    91.35\% after a 12-sample real 1 ns SPICE gate; 90.9\% after continuing
+    to 212 total phase-trained samples. &
+    Strong private/local small-state candidate. \\
+    \addlinespace
+    7x7 blocks, 5x5 stride-1, 1 channel; 706 phase-state values &
+    90.5\% after a 12-sample real 1 ns SPICE gate, but fast continuation dips
+    below 90\% around 212 samples. &
+    Smallest short-gate pass, but low margin. \\
+    \addlinespace
+    10x10 blocks, 4x4 stride-2, 2 channels; 1832 phase-state values &
+    Full-train/full-test path ended around 94.8\% on all 10,000 MNIST test
+    images after resumed real 1 ns SPICE phase training. &
+    Highest-margin repeated phase-training evidence. \\
+    \addlinespace
+    Partial-sharing 9x9/7x7 branches &
+    90.95--92.15\% on 2,000-image ngspice evaluation after short SPICE gates. &
+    Compact but relies on shared physical weight-capacitor assumptions. \\
+    \bottomrule
+  \end{tabular}
+\end{table}
+
+\section{Phase Timing}
+
+The present direct-flow timing template is not a digital clock in the usual
+logic sense; it is a sequence of analog guide windows.  A typical cycle is:
+\[
+\begin{array}{ll}
+0.00\text{--}0.50\,\mathrm{ns} & reset temporary state,\\
+0.75\text{--}3.00\,\mathrm{ns} & forward settling and trace capture,\\
+3.25\text{--}4.4\,\mathrm{ns} & output compare,\\
+5.25\text{--}6.50\,\mathrm{ns} & error-node formation,\\
+6.75\text{--}11.20\,\mathrm{ns} & backward/write flow,\\
+9.25\text{--}11.20\,\mathrm{ns} & optional latched apply sub-window.
+\end{array}
+\]
+The long-term self-timed version would replace some of these fixed Python
+windows with circuit-derived events, for example a sense-amp decision or output
+spike arrival opening the backward/write path.
+
+\section{What Should Be Documented Next}
+
+The figures in this note should be treated as the first stable documentation
+layer.  The next additions should be:
+\begin{itemize}
+  \item a per-synapse pre-trace direct-flow figure once the
+    \code{synapse\_gate} and \code{synapse\_consume} XOR checks settle;
+  \item a separate note on biologically plausible alternatives such as feedback
+    alignment, local losses, predictive coding, and equilibrium propagation,
+    mapped to capacitor state;
+  \item a quantitative appendix generated directly from JSON summaries, so
+    architecture tables cannot drift from the experiment outputs.
+\end{itemize}
+
+\end{document}

@@ -112,6 +112,7 @@ BACKWARD_GATE_MODES = [
     "lead_or",
     "target_mistake",
     "target_mistake_latch",
+    "target_mistake_latch_simple",
     "target_out_mistake_latch",
 ]
 CAP_DITHER_SCOPES = ["none", "hidden", "readout", "all"]
@@ -690,6 +691,12 @@ def lead_win_gate(lead_mode: str, class_index: int) -> str:
     raise ValueError(f"unknown lead mode: {lead_mode}")
 
 
+def target_loss_mask(train: pd.DataFrame) -> np.ndarray:
+    score0_wins = train["score0_cmp"] > train["score1_cmp"]
+    target_is_class0 = train["label"].astype(int) == 0
+    return np.where(target_is_class0, ~score0_wins, score0_wins)
+
+
 def target_mistake_gate_stats(train: pd.DataFrame, bwd_threshold_v: float = 0.5) -> dict[str, Any]:
     required = {"label", "score0_cmp", "score1_cmp", "bwd_signal"}
     if train.empty or not required.issubset(train.columns):
@@ -708,9 +715,7 @@ def target_mistake_gate_stats(train: pd.DataFrame, bwd_threshold_v: float = 0.5)
             "target_mistake_bwd_best_threshold_v": None,
             "target_mistake_bwd_best_threshold_match_fraction": None,
         }
-    score0_wins = train["score0_cmp"] > train["score1_cmp"]
-    target_is_class0 = train["label"].astype(int) == 0
-    target_loses = np.where(target_is_class0, ~score0_wins, score0_wins)
+    target_loses = target_loss_mask(train)
     bwd_signal = train["bwd_signal"].to_numpy()
     bwd_open = bwd_signal > bwd_threshold_v
     match = bwd_open == target_loses
@@ -744,6 +749,52 @@ def target_mistake_gate_stats(train: pd.DataFrame, bwd_threshold_v: float = 0.5)
         ),
         "target_mistake_bwd_best_threshold_v": float(best_threshold),
         "target_mistake_bwd_best_threshold_match_fraction": best_match,
+    }
+
+
+def target_mistake_latch_stats(train: pd.DataFrame, latch_threshold_v: float = 0.5) -> dict[str, Any]:
+    empty = {
+        "target_mistake_latch_threshold_v": latch_threshold_v,
+        "target_mistake_latch_match_fraction": None,
+        "target_mistake_latch_false_positive_count": None,
+        "target_mistake_latch_false_negative_count": None,
+        "target_mistake_latch_open_count": None,
+        "target_mistake_latch_best_threshold_v": None,
+        "target_mistake_latch_best_threshold_match_fraction": None,
+    }
+    if train.empty or not {"label", "score0_cmp", "score1_cmp", "merr0", "merr1"}.issubset(train.columns):
+        return empty
+    target_loses = target_loss_mask(train)
+    labels = train["label"].astype(int).to_numpy()
+    expected0 = target_loses & (labels == 0)
+    expected1 = target_loses & (labels == 1)
+    merr0 = train["merr0"].to_numpy()
+    merr1 = train["merr1"].to_numpy()
+    open0 = merr0 > latch_threshold_v
+    open1 = merr1 > latch_threshold_v
+    match = (open0 == expected0) & (open1 == expected1)
+    any_open = open0 | open1
+    false_positive = any_open & ~target_loses
+    false_negative = ~any_open & target_loses
+    latch_signal = np.maximum(merr0, merr1)
+    thresholds = [-1.0]
+    unique_signal = np.unique(latch_signal)
+    if len(unique_signal) > 1:
+        thresholds.extend(float((a + b) / 2) for a, b in zip(unique_signal[:-1], unique_signal[1:]))
+    thresholds.append(2.0)
+    best_threshold = max(
+        thresholds,
+        key=lambda threshold: float(((latch_signal > threshold) == target_loses).mean()),
+    )
+    best_match = float(((latch_signal > best_threshold) == target_loses).mean())
+    return {
+        "target_mistake_latch_threshold_v": latch_threshold_v,
+        "target_mistake_latch_match_fraction": float(match.mean()),
+        "target_mistake_latch_false_positive_count": int(false_positive.sum()),
+        "target_mistake_latch_false_negative_count": int(false_negative.sum()),
+        "target_mistake_latch_open_count": int(any_open.sum()),
+        "target_mistake_latch_best_threshold_v": float(best_threshold),
+        "target_mistake_latch_best_threshold_match_fraction": best_match,
     }
 
 
@@ -1363,6 +1414,43 @@ def backward_gate_cells(mode: str, width_u: float, cap_f: float, lead_mode: str 
                 "merr0_t",
                 "merr0_l",
                 "merr1_p",
+                "merr1_t",
+                "merr1_l",
+                "bwd_merr0_a",
+                "bwd_merr1_a",
+            )
+        )
+    if mode == "target_mistake_latch_simple":
+        target0_wins_gate = lead_win_gate(lead_mode, 0)
+        target1_wins_gate = lead_win_gate(lead_mode, 1)
+        return "\n".join(
+            [
+                "* Short-stack latched mistake gate: trusts a regenerated winner lead and captures",
+                "* target-and-other-wins events during compare, then replays them during bwd_src.",
+                f"* Winner gates: class 0 uses {target0_wins_gate}; class 1 uses {target1_wins_gate}.",
+                f"Cbwd_gate bwd 0 {cap_f:.12g}f IC=0",
+                "Rbwd_gate bwd 0 1G",
+                "Mreset_bwd_gate bwd rste 0 0 NMOS W=4u L=180n",
+                f"Cmerr0 merr0 0 {cap_f:.12g}f IC=0",
+                f"Cmerr1 merr1 0 {cap_f:.12g}f IC=0",
+                "Rmerr0 merr0 0 1G",
+                "Rmerr1 merr1 0 1G",
+                "Mreset_merr0 merr0 rste 0 0 NMOS W=4u L=180n",
+                "Mreset_merr1 merr1 rste 0 0 NMOS W=4u L=180n",
+                f"Mmerr0_t vdd t0 merr0_t 0 NSENSE W={width_u:.12g}u L=180n",
+                f"Mmerr0_l merr0_t {target1_wins_gate} merr0_l 0 NSENSE W={width_u:.12g}u L=180n",
+                f"Mmerr0_c merr0_l cmp merr0 0 NSENSE W={width_u:.12g}u L=180n",
+                f"Mmerr1_t vdd t1 merr1_t 0 NSENSE W={width_u:.12g}u L=180n",
+                f"Mmerr1_l merr1_t {target0_wins_gate} merr1_l 0 NSENSE W={width_u:.12g}u L=180n",
+                f"Mmerr1_c merr1_l cmp merr1 0 NSENSE W={width_u:.12g}u L=180n",
+                f"Mbwd_merr0_a vdd merr0 bwd_merr0_a 0 NSENSE W={width_u:.12g}u L=180n",
+                f"Mbwd_merr0_b bwd_merr0_a bwd_src bwd 0 NSENSE W={width_u:.12g}u L=180n",
+                f"Mbwd_merr1_a vdd merr1 bwd_merr1_a 0 NSENSE W={width_u:.12g}u L=180n",
+                f"Mbwd_merr1_b bwd_merr1_a bwd_src bwd 0 NSENSE W={width_u:.12g}u L=180n",
+            ]
+            + node_parasitics(
+                "merr0_t",
+                "merr0_l",
                 "merr1_t",
                 "merr1_l",
                 "bwd_merr0_a",
@@ -3158,6 +3246,9 @@ def main() -> None:
     )
     has_bwd_metrics = not train.empty and "bwd_signal" in train.columns
     mistake_gate_stats = target_mistake_gate_stats(train) if args.backward_gate_mode == "target_mistake" else {}
+    mistake_latch_stats = (
+        target_mistake_latch_stats(train) if "mistake_latch" in args.backward_gate_mode else {}
+    )
     hidden_delta_network_enabled = args.learning_mode != "flow" or args.flow_hidden_write == "direct"
     hidden_weight_updates_enabled = args.epochs > 0 and not (
         args.learning_mode == "flow" and args.flow_hidden_write == "off"
@@ -3347,6 +3438,7 @@ def main() -> None:
         "max_train_bwd_signal_v": float(train["bwd_signal"].max()) if has_bwd_metrics else 0.0,
         "mean_train_bwd_signal_v": float(train["bwd_signal"].mean()) if has_bwd_metrics else 0.0,
         **mistake_gate_stats,
+        **mistake_latch_stats,
         "max_train_mistake_latch_v": float(train[["merr0", "merr1"]].max().max())
         if has_mistake_latch_metrics
         else None,

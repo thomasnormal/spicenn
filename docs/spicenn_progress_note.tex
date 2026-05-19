@@ -1252,6 +1252,21 @@ be better conditioned: the target-mistake event has to be rail-level and
 selective, and the selected write path has to move the effective conductance
 through a useful \(G'_{\mathrm{eff}}(\theta)s_{\mathrm{MOS}}(\theta)\) region.
 
+The following sweep rules out two tempting fixes.  Replaying a latched mistake
+event is worse than the direct flow: the original \code{target\_mistake\_latch}
+variants land at 50\%, the output-cap latch falls to 31.25\%, and the new
+short-stack \code{target\_mistake\_latch\_simple} variants also stay at 50\%
+even when the latch diagnostic agrees with the score comparison around
+76--82.5\%.  Lowering the center-pull rail is also not a direct mobility fix.
+A \(0.50\ \mathrm{V}\) center rail gives the best target-mistake gate agreement
+so far, 91.25\%, but accuracy still collapses to 50\%; a \(0.34\ \mathrm{V}\)
+center rail collapses to 25\%.  Removing center pull reaches 75\%, and
+discharge-only write modes stay at 50\%.  This separates the event path from
+the state map: the circuit can make the event mostly right, but an
+unconditional center pull or a coarse replayed latch does not implement the
+desired state-dependent mobility.  The next useful circuit change should be
+local to the selected write branch, not a global pull on every stored weight.
+
 \subsection{Local-Feature Phase-Training Path}
 
 The strongest MNIST evidence uses local feature cells rather than dense

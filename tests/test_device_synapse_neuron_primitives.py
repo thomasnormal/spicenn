@@ -354,6 +354,26 @@ def test_target_mistake_latch_stores_compare_result_for_late_backward_window() -
     assert "Mbwd_merr1_b bwd_merr1_a bwd_src bwd" in gate
 
 
+def test_simple_target_mistake_latch_uses_short_regenerated_lead_stack() -> None:
+    gate = direct_flow.backward_gate_cells(
+        "target_mistake_latch_simple",
+        width_u=64.0,
+        cap_f=2.0,
+        lead_mode="senseamp_strong",
+    )
+
+    assert "Short-stack latched mistake gate" in gate
+    assert "Winner gates: class 0 uses lead01; class 1 uses lead10" in gate
+    assert "Mmerr0_p" not in gate
+    assert "Mmerr0_t vdd t0 merr0_t" in gate
+    assert "Mmerr0_l merr0_t lead10 merr0_l" in gate
+    assert "Mmerr0_c merr0_l cmp merr0" in gate
+    assert "Mmerr1_t vdd t1 merr1_t" in gate
+    assert "Mmerr1_l merr1_t lead01 merr1_l" in gate
+    assert "Mbwd_merr0_b bwd_merr0_a bwd_src bwd" in gate
+    assert "Mbwd_merr1_b bwd_merr1_a bwd_src bwd" in gate
+
+
 def test_target_output_mistake_latch_samples_output_caps_during_error_window() -> None:
     gate = direct_flow.backward_gate_cells("target_out_mistake_latch", width_u=64.0, cap_f=2.0)
 
@@ -616,6 +636,25 @@ def test_target_mistake_gate_stats_count_false_opens_and_misses() -> None:
     assert stats["target_mistake_bwd_target_wins_mean_v"] == pytest.approx(0.535)
     assert stats["target_mistake_bwd_voltage_separation_v"] == pytest.approx(-1.03)
     assert stats["target_mistake_bwd_best_threshold_match_fraction"] == pytest.approx(0.5)
+
+
+def test_target_mistake_latch_stats_count_channel_specific_events() -> None:
+    train = pd.DataFrame(
+        [
+            {"label": 0, "score0_cmp": 0.10, "score1_cmp": 0.20, "merr0": 1.05, "merr1": 0.02},
+            {"label": 1, "score0_cmp": 0.10, "score1_cmp": 0.20, "merr0": 0.02, "merr1": 0.02},
+            {"label": 0, "score0_cmp": 0.20, "score1_cmp": 0.10, "merr0": 1.05, "merr1": 0.02},
+            {"label": 1, "score0_cmp": 0.20, "score1_cmp": 0.10, "merr0": 0.02, "merr1": 0.02},
+        ]
+    )
+
+    stats = direct_flow.target_mistake_latch_stats(train, latch_threshold_v=0.5)
+
+    assert stats["target_mistake_latch_open_count"] == 2
+    assert stats["target_mistake_latch_false_positive_count"] == 1
+    assert stats["target_mistake_latch_false_negative_count"] == 1
+    assert stats["target_mistake_latch_match_fraction"] == pytest.approx(0.5)
+    assert stats["target_mistake_latch_best_threshold_match_fraction"] == pytest.approx(0.5)
 
 
 def test_out_residual_error_uses_each_outputs_own_stored_score() -> None:

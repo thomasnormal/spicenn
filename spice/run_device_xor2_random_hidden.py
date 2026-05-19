@@ -29,6 +29,7 @@ DATASET_EXAMPLES = [
     "mnist01_12",
     "mnist01pool16_12",
     "mnist01fixed16_12",
+    "mnist01rand16_12",
 ]
 
 
@@ -98,6 +99,7 @@ HIDDEN_APPLY_MODES = ["direct", "grad_senseamp"]
 LEARNING_MODES = ["accumulate_apply", "flow"]
 FLOW_HIDDEN_WRITES = ["direct", "off"]
 FLOW_PRE_STORES = ["shared_node", "synapse_gate", "synapse_consume"]
+HIDDEN_INIT_MODES = ["random", "input_identity"]
 MEASURE_DETAILS = ["full", "light"]
 BACKWARD_GATE_MODES = ["scheduled", "lead_or", "target_mistake"]
 CAP_DITHER_SCOPES = ["none", "hidden", "readout", "all"]
@@ -207,6 +209,25 @@ def dct2_lowfreq(image: np.ndarray, side: int) -> np.ndarray:
     return mat @ image @ mat.T
 
 
+def random_local_relu_features(image: np.ndarray, feature_count: int) -> np.ndarray:
+    rng = np.random.default_rng(17_003 + feature_count)
+    features: list[float] = []
+    for feature_idx in range(feature_count):
+        patch_side = int(rng.choice([3, 4, 5]))
+        row0 = int(rng.integers(0, image.shape[0] - patch_side + 1))
+        col0 = int(rng.integers(0, image.shape[1] - patch_side + 1))
+        patch = image[row0 : row0 + patch_side, col0 : col0 + patch_side]
+        weights = rng.choice([-1.0, 0.0, 1.0], size=patch.shape, p=[0.35, 0.30, 0.35])
+        if not np.any(weights):
+            weights[patch_side // 2, patch_side // 2] = 1.0
+        response = float(np.sum(weights * patch) / max(1, np.count_nonzero(weights)))
+        bias = float(rng.uniform(-0.08, 0.08))
+        if feature_idx % 2:
+            response = -response
+        features.append(max(0.0, response - bias))
+    return np.asarray(features, dtype=np.float64)
+
+
 def mnist01_frontend(image: np.ndarray, frontend: str) -> tuple[np.ndarray, str]:
     if frontend == "pool2":
         return image.reshape(2, 4, 2, 4).mean(axis=(1, 3)).reshape(-1), "2x2_area_downsample"
@@ -251,9 +272,18 @@ def mnist01_frontend(image: np.ndarray, frontend: str) -> tuple[np.ndarray, str]
         coeff = dct2_lowfreq(image, 4).reshape(-1)
         coeff[1:] = np.abs(coeff[1:])
         return coeff, "low_frequency_4x4_dct_abs_ac"
+    random_match = re.fullmatch(r"rand(\d+)", frontend)
+    if random_match:
+        feature_count = int(random_match.group(1))
+        if not 1 <= feature_count <= 64:
+            raise ValueError("random local ReLU frontend feature count must be in 1..64.")
+        return (
+            random_local_relu_features(image, feature_count),
+            f"{feature_count}_fixed_sparse_random_local_relu_filters",
+        )
     raise ValueError(
         f"unknown MNIST01 frontend: {frontend}. "
-        "Expected pool2, pool16, fixed8, fixed16, haar16, or dct16."
+        "Expected pool2, pool16, fixed8, fixed16, haar16, dct16, or randN."
     )
 
 
@@ -315,7 +345,7 @@ def dataset_records(name: str, seed: int) -> list[dict[str, Any]]:
     if mnist_match:
         frontend = mnist_match.group(1) or "pool2"
         return mnist01_records(int(mnist_match.group(2)), seed, frontend)
-    examples = ", ".join(DATASET_EXAMPLES + ["moons16", "mnist01_16", "mnist01fixed8_16"])
+    examples = ", ".join(DATASET_EXAMPLES + ["moons16", "mnist01_16", "mnist01fixed8_16", "mnist01rand8_16"])
     raise ValueError(f"unknown dataset: {name}. Expected one of {examples} or another even-sized counted variant.")
 
 
@@ -383,6 +413,50 @@ def perceptron_separable(df: pd.DataFrame) -> dict[str, Any]:
         "perceptron_epochs": 20_000,
         "best_min_margin": best_margin,
         "best_epoch": best_epoch,
+    }
+
+
+def perceptron_separable_array(x: np.ndarray, y_labels: np.ndarray) -> dict[str, Any]:
+    y = np.where(y_labels.astype(int) == 1, 1.0, -1.0)
+    xb = np.c_[x, np.ones(len(x))]
+    w = np.zeros(xb.shape[1])
+    best_margin = float("-inf")
+    best_epoch = 0
+    for epoch in range(20_000):
+        errors = 0
+        margins = y * (xb @ w)
+        margin = float(margins.min())
+        if margin > best_margin:
+            best_margin = margin
+            best_epoch = epoch
+        for xi, yi, mi in zip(xb, y, margins):
+            if mi <= 1e-9:
+                w += yi * xi
+                errors += 1
+        if errors == 0:
+            return {
+                "linearly_separable": True,
+                "perceptron_epochs": epoch,
+                "min_margin": float((y * (xb @ w)).min()),
+            }
+    return {
+        "linearly_separable": False,
+        "perceptron_epochs": 20_000,
+        "best_min_margin": best_margin,
+        "best_epoch": best_epoch,
+    }
+
+
+def input_feature_separability(records: list[dict[str, Any]]) -> dict[str, Any] | None:
+    if not records or records[0].get("inputs") is None:
+        return None
+    rails = input_rails_for_records(records)
+    x = np.asarray([[float(record["inputs"][rail]) for rail in rails] for record in records], dtype=float)
+    y = np.asarray([int(record["label"]) for record in records], dtype=int)
+    return {
+        "input_count": len(rails),
+        "input_rails": rails,
+        **perceptron_separable_array(x, y),
     }
 
 
@@ -491,9 +565,17 @@ def make_samples(records: list[dict[str, Any]], epochs: int, order: list[int], b
     return samples
 
 
-def hidden_init(seed: int) -> dict[str, float]:
+def hidden_init(seed: int, mode: str) -> dict[str, float]:
+    if mode not in HIDDEN_INIT_MODES:
+        raise ValueError(f"unknown hidden init mode: {mode}")
     init: dict[str, float] = {}
     for h in range(HIDDEN):
+        if mode == "input_identity" and h < len(INPUT_RAILS):
+            passthrough_rail = INPUT_RAILS[h]
+            for rail in HIDDEN_RAILS:
+                init[f"wh{h}_{rail}p"] = 1.05 if rail == passthrough_rail else 0.01
+                init[f"wh{h}_{rail}n"] = 0.01
+            continue
         init[f"wh{h}_biasp"] = 0.90 - 0.03 * ((h + seed) % 3)
         init[f"wh{h}_biasn"] = 0.42 + 0.02 * ((h + seed) % 2)
         for rail_idx, rail in enumerate(INPUT_RAILS):
@@ -1798,6 +1880,7 @@ def random_hidden_netlist(
     hidden_grad_sense_width_u: float,
     hidden_grad_sense_cap_f: float,
     feedback_scale: float,
+    hidden_init_mode: str,
     readout_init_mode: str,
     separator_scale: float,
     separator_offset_v: float,
@@ -1935,7 +2018,7 @@ def random_hidden_netlist(
         else ""
     )
     hidden_state, readout_state = dither_persistent_state(
-        hidden_init(state_seed),
+        hidden_init(state_seed, hidden_init_mode),
         apply_output_bias_offset(
             readout_init(
                 state_seed,
@@ -2062,6 +2145,12 @@ def main() -> None:
     ap.add_argument("--hidden-grad-sense-width-u", type=float, default=512.0)
     ap.add_argument("--hidden-grad-sense-cap-f", type=float, default=2.0)
     ap.add_argument("--feedback-scale", type=float, default=0.3)
+    ap.add_argument(
+        "--hidden-init",
+        choices=HIDDEN_INIT_MODES,
+        default="random",
+        help="Initial hidden synapse capacitor pattern. input_identity maps input rail i to hidden cell i.",
+    )
     ap.add_argument(
         "--readout-init",
         choices=[
@@ -2193,6 +2282,8 @@ def main() -> None:
         set_input_rails(input_rails_for_records(records))
     except ValueError as exc:
         raise SystemExit(str(exc)) from exc
+    if args.hidden_init == "input_identity" and args.hidden_cells < len(INPUT_RAILS):
+        raise SystemExit("--hidden-init input_identity requires --hidden-cells >= the dataset input rail count.")
     all_patterns = [int(record["pattern"]) for record in records]
     if args.order == "auto":
         train_order = all_patterns
@@ -2248,6 +2339,7 @@ def main() -> None:
         args.hidden_grad_sense_width_u,
         args.hidden_grad_sense_cap_f,
         args.feedback_scale,
+        args.hidden_init,
         args.readout_init,
         args.separator_scale,
         args.separator_offset_v,
@@ -2582,7 +2674,12 @@ def main() -> None:
         "hidden_bias_rail": True,
         "hidden_cells": HIDDEN,
         "output_bias_weights_trained": True,
-        "hidden_weight_initialization": "deterministic_pseudorandom_dense_signed",
+        "hidden_weight_initialization": (
+            "input_identity_passthrough_signed_caps"
+            if args.hidden_init == "input_identity"
+            else "deterministic_pseudorandom_dense_signed"
+        ),
+        "hidden_init": args.hidden_init,
         "readout_initialization": args.readout_init,
         "separator_scale": args.separator_scale if args.readout_init in SEPARATOR_READOUT_INITS else None,
         "separator_offset_v": args.separator_offset_v if args.readout_init in SEPARATOR_READOUT_INITS else None,
@@ -2662,6 +2759,7 @@ def main() -> None:
         "best_final_transient_min_margin_v": best_final_transient["final_min_margin_v"],
         "initial_eval_accuracy": float(initial_eval["correct"].mean()),
         "final_eval_accuracy": float(final_eval["correct"].mean()),
+        "input_feature_separability": input_feature_separability(records),
         "initial_hidden_feature_separability": perceptron_separable(initial_eval),
         "final_hidden_feature_separability": perceptron_separable(final_eval),
         "initial_min_margin_v": float(initial_eval["margin"].min()),

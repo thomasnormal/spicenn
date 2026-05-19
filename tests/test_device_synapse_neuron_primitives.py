@@ -324,6 +324,32 @@ def test_direct_flow_readout_can_charge_and_discharge_signed_weight_branches() -
     assert "Mvbo0n_ch_d vbo0n_ch_b dn0 vbo0n" in updates
 
 
+def test_target_mistake_latch_stores_compare_result_for_late_backward_window() -> None:
+    gate = direct_flow.backward_gate_cells("target_mistake_latch", width_u=64.0, cap_f=2.0)
+
+    assert "Cmerr0 merr0 0 2f IC=0" in gate
+    assert "Mmerr0_p vdd lead10 merr0_p vdd PMOS" in gate
+    assert "Mmerr0_l merr0_t lead01 merr0_l" in gate
+    assert "Mmerr0_c merr0_l cmp merr0" in gate
+    assert "Mbwd_merr0_b bwd_merr0_a bwd_src bwd" in gate
+    assert "Mmerr1_p vdd lead01 merr1_p vdd PMOS" in gate
+    assert "Mmerr1_l merr1_t lead10 merr1_l" in gate
+    assert "Mbwd_merr1_b bwd_merr1_a bwd_src bwd" in gate
+
+
+def test_target_output_mistake_latch_samples_output_caps_during_error_window() -> None:
+    gate = direct_flow.backward_gate_cells("target_out_mistake_latch", width_u=64.0, cap_f=2.0)
+
+    assert "Cmerr0 merr0 0 2f IC=0" in gate
+    assert "Mmerr0_p vdd out0 merr0_p vdd PMOS" in gate
+    assert "Mmerr0_o merr0_t out1 merr0_o" in gate
+    assert "Mmerr0_e merr0_o err merr0" in gate
+    assert "Mmerr1_p vdd out1 merr1_p vdd PMOS" in gate
+    assert "Mmerr1_o merr1_t out0 merr1_o" in gate
+    assert "Mmerr1_e merr1_o err merr1" in gate
+    assert "Mbwd_merr0_b bwd_merr0_a bwd_src bwd" in gate
+
+
 def test_probe_measurement_keeps_backward_signals_without_full_weight_snapshots() -> None:
     original_hidden = direct_flow.HIDDEN
     original_input_rails = list(direct_flow.INPUT_RAILS)
@@ -341,6 +367,11 @@ def test_probe_measurement_keeps_backward_signals_without_full_weight_snapshots(
             hidden_delta_output_mode="senseamp",
             measure_detail="probe",
             readout_sample_offsets_ns=[2.95],
+            cmp_start_ns=3.25,
+            cmp_end_ns=4.10,
+            bwd_start_ns=6.75,
+            apply_end_ns=11.20,
+            backward_gate_mode="scheduled",
         )
     finally:
         direct_flow.set_hidden_cells(original_hidden)
@@ -376,6 +407,11 @@ def test_readout_only_probe_measurement_omits_hidden_delta_nodes() -> None:
             hidden_delta_output_mode="senseamp",
             measure_detail="full",
             readout_sample_offsets_ns=[2.95],
+            cmp_start_ns=3.25,
+            cmp_end_ns=4.10,
+            bwd_start_ns=6.75,
+            apply_end_ns=11.20,
+            backward_gate_mode="scheduled",
             hidden_delta_network_enabled=False,
         )
     finally:
@@ -389,6 +425,63 @@ def test_readout_only_probe_measurement_omits_hidden_delta_nodes() -> None:
     assert "hdp0_guard_0" not in measures
 
 
+def test_backward_probe_time_tracks_shortened_flow_window() -> None:
+    original_hidden = direct_flow.HIDDEN
+    original_input_rails = list(direct_flow.INPUT_RAILS)
+    try:
+        direct_flow.set_hidden_cells(1)
+        direct_flow.set_input_rails(["x0"])
+        samples = [
+            {"phase": "train", "label": 0, "pattern": 0, "apply_update": True},
+        ]
+
+        measures, _prints = direct_flow.measure_lines(
+            samples=samples,
+            hidden_apply_mode="direct",
+            learning_mode="flow",
+            hidden_delta_output_mode="raw",
+            measure_detail="probe",
+            readout_sample_offsets_ns=[2.95],
+            cmp_start_ns=3.25,
+            cmp_end_ns=4.10,
+            bwd_start_ns=8.90,
+            apply_end_ns=9.20,
+            backward_gate_mode="scheduled",
+            hidden_delta_network_enabled=True,
+        )
+    finally:
+        direct_flow.set_hidden_cells(original_hidden)
+        direct_flow.set_input_rails(original_input_rails)
+
+    assert "FIND V(bwd) AT=9.15n" in measures
+    assert "FIND V(dp0) AT=9.15n" in measures
+    assert "FIND V(hdp0) AT=9.15n" in measures
+
+
+def test_mistake_latch_measurement_records_latched_event_caps() -> None:
+    samples = [
+        {"phase": "train", "label": 0, "pattern": 0, "apply_update": True},
+    ]
+
+    measures, _prints = direct_flow.measure_lines(
+        samples=samples,
+        hidden_apply_mode="direct",
+        learning_mode="flow",
+        hidden_delta_output_mode="raw",
+        measure_detail="light",
+        readout_sample_offsets_ns=[2.95],
+        cmp_start_ns=3.25,
+        cmp_end_ns=4.10,
+        bwd_start_ns=6.75,
+        apply_end_ns=11.20,
+        backward_gate_mode="target_out_mistake_latch",
+        hidden_delta_network_enabled=False,
+    )
+
+    assert "merr0_0 FIND V(merr0)" in measures
+    assert "merr1_0 FIND V(merr1)" in measures
+
+
 def test_error_and_target_mistake_backward_gate_are_transistor_generated() -> None:
     error = direct_flow.error_cells("out_competitive", latch_boost_width_u=0.0)
     gate = direct_flow.backward_gate_cells("target_mistake", width_u=64.0, cap_f=2.0)
@@ -397,6 +490,7 @@ def test_error_and_target_mistake_backward_gate_are_transistor_generated() -> No
         bwd_start_ns=6.75,
         apply_start_ns=9.25,
         apply_end_ns=11.20,
+        cmp_start_ns=3.25,
         cmp_end_ns=4.10,
         learning_mode="flow",
         backward_gate_mode="target_mistake",
@@ -419,6 +513,21 @@ def test_error_and_target_mistake_backward_gate_are_transistor_generated() -> No
 
     assert "Vbwd_src bwd_src 0" in phases
     assert "Vbwd bwd 0" not in phases
+
+
+def test_target_mistake_gate_can_use_score_senseamp_polarity() -> None:
+    gate = direct_flow.backward_gate_cells(
+        "target_mistake",
+        width_u=64.0,
+        cap_f=2.0,
+        lead_mode="senseamp",
+    )
+
+    assert "class 0 uses lead01; class 1 uses lead10" in gate
+    assert "Mbwd_t0_p vdd lead01 bwd_t0_p" in gate
+    assert "Mbwd_t0_l bwd_t0_a lead10 bwd_t0_l" in gate
+    assert "Mbwd_t1_p vdd lead10 bwd_t1_p" in gate
+    assert "Mbwd_t1_l bwd_t1_a lead01 bwd_t1_l" in gate
 
 
 def test_out_residual_error_uses_each_outputs_own_stored_score() -> None:

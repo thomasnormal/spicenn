@@ -107,7 +107,13 @@ READOUT_FLOW_POLARITIES = ["normal", "reversed"]
 READOUT_FLOW_WRITE_MODES = ["discharge", "charge_discharge"]
 HIDDEN_INIT_MODES = ["random", "input_identity"]
 MEASURE_DETAILS = ["full", "probe", "light"]
-BACKWARD_GATE_MODES = ["scheduled", "lead_or", "target_mistake"]
+BACKWARD_GATE_MODES = [
+    "scheduled",
+    "lead_or",
+    "target_mistake",
+    "target_mistake_latch",
+    "target_out_mistake_latch",
+]
 CAP_DITHER_SCOPES = ["none", "hidden", "readout", "all"]
 TRAIN_CHARGE_NOISE_SCOPES = CAP_DITHER_SCOPES
 DIFFERENTIAL_SEPARATOR_INITS = {"separator", "csv_separator"}
@@ -517,6 +523,7 @@ def phases(
     bwd_start_ns: float,
     apply_start_ns: float,
     apply_end_ns: float,
+    cmp_start_ns: float,
     cmp_end_ns: float,
     learning_mode: str,
     backward_gate_mode: str,
@@ -546,7 +553,7 @@ def phases(
             rstg.append((base + 0.00, base + 0.50))
         fwd.append((base + 0.75, base + 3.00))
         if sample["phase"] == "train":
-            cmp.append((base + 3.25, base + cmp_end_ns))
+            cmp.append((base + cmp_start_ns, base + cmp_end_ns))
             err.append((base + 5.25, base + 6.50))
             bwd_end = apply_end_ns if learning_mode == "flow" else 8.00
             bwd.append((base + bwd_start_ns, base + bwd_end))
@@ -669,6 +676,16 @@ def lead_class0_wins(lead_mode: str, lead01, lead10):
     if lead_mode == "out_senseamp":
         return lead10 > lead01
     return lead01 > lead10
+
+
+def lead_win_gate(lead_mode: str, class_index: int) -> str:
+    if class_index not in {0, 1}:
+        raise ValueError(f"unknown class index: {class_index}")
+    if lead_mode == "out_senseamp":
+        return "lead10" if class_index == 0 else "lead01"
+    if lead_mode in {"score", "lose", "senseamp"}:
+        return "lead01" if class_index == 0 else "lead10"
+    raise ValueError(f"unknown lead mode: {lead_mode}")
 
 
 def readout_init(
@@ -1079,6 +1096,12 @@ def output_forward(design: SynapseDesign, output_head: str) -> str:
     for out in range(OUTPUTS):
         lines.append(f"* Output {out}: signed readout from all general hidden activations.")
         for h in range(HIDDEN):
+            readout_internal_nodes = [
+                f"o{out}{h}p0",
+                f"o{out}{h}p1",
+                f"o{out}{h}n0",
+                f"o{out}{h}n1",
+            ]
             if design.output_forward_style == "gate_stack":
                 lines += [
                     f"Mo{out}{h}pos_a vdd act{h} o{out}{h}p0 0 NSENSE W={design.output_forward_pos_width_u:.12g}u L=180n",
@@ -1098,6 +1121,7 @@ def output_forward(design: SynapseDesign, output_head: str) -> str:
                 ]
             else:
                 raise ValueError(f"unknown output forward style: {design.output_forward_style}")
+            lines += node_parasitics(*readout_internal_nodes)
         lines += [
             (
                 f"Mo{out}bpos_a vdd bias o{out}bp0 0 NSENSE W={design.output_bias_forward_pos_width_u:.12g}u L=180n"
@@ -1114,6 +1138,7 @@ def output_forward(design: SynapseDesign, output_head: str) -> str:
             f"Mo{out}bneg_a o{out}bn0 bias o{out}bn1 0 NSENSE W={design.output_bias_forward_neg_width_u:.12g}u L=180n",
             f"Mo{out}bneg_w o{out}bn1 vbo{out}n 0 0 NREL W={design.output_bias_forward_neg_width_u:.12g}u L=180n",
         ]
+        lines += node_parasitics(f"o{out}bp0", f"o{out}bp1", f"o{out}bn0", f"o{out}bn1")
         if output_head == "source_follower":
             lines.append(f"Mrelu_o{out} vdd score{out} out{out} 0 NSENSE W={design.output_relu_width_u:.12g}u L=180n")
         elif output_head == "score_diff":
@@ -1216,27 +1241,108 @@ def score_lead_gate_cells(lead_width_u: float, lead_mode: str) -> str:
     raise ValueError(f"unknown lead mode: {lead_mode}")
 
 
-def backward_gate_cells(mode: str, width_u: float, cap_f: float) -> str:
+def backward_gate_cells(mode: str, width_u: float, cap_f: float, lead_mode: str = "out_senseamp") -> str:
     if mode not in BACKWARD_GATE_MODES:
         raise ValueError(f"unknown backward gate mode: {mode}")
     if mode == "scheduled":
         return "* Backward rail is driven directly by the scheduled Python guide waveform."
+    if mode == "target_mistake_latch":
+        target0_wins_gate = lead_win_gate(lead_mode, 0)
+        target1_wins_gate = lead_win_gate(lead_mode, 1)
+        return "\n".join(
+            [
+                "* Latched mistake-gated backward rail: target-loss events are captured during compare,",
+                "* then replayed later when bwd_src opens the backward/write window.",
+                f"* Target winner gates: class 0 uses {target0_wins_gate}; class 1 uses {target1_wins_gate}.",
+                f"Cbwd_gate bwd 0 {cap_f:.12g}f IC=0",
+                "Rbwd_gate bwd 0 1G",
+                "Mreset_bwd_gate bwd rste 0 0 NMOS W=4u L=180n",
+                f"Cmerr0 merr0 0 {cap_f:.12g}f IC=0",
+                f"Cmerr1 merr1 0 {cap_f:.12g}f IC=0",
+                "Rmerr0 merr0 0 1G",
+                "Rmerr1 merr1 0 1G",
+                "Mreset_merr0 merr0 rste 0 0 NMOS W=4u L=180n",
+                "Mreset_merr1 merr1 rste 0 0 NMOS W=4u L=180n",
+                f"Mmerr0_p vdd {target0_wins_gate} merr0_p vdd PMOS W={width_u:.12g}u L=180n",
+                f"Mmerr0_t merr0_p t0 merr0_t 0 NSENSE W={width_u:.12g}u L=180n",
+                f"Mmerr0_l merr0_t {target1_wins_gate} merr0_l 0 NSENSE W={width_u:.12g}u L=180n",
+                f"Mmerr0_c merr0_l cmp merr0 0 NSENSE W={width_u:.12g}u L=180n",
+                f"Mmerr1_p vdd {target1_wins_gate} merr1_p vdd PMOS W={width_u:.12g}u L=180n",
+                f"Mmerr1_t merr1_p t1 merr1_t 0 NSENSE W={width_u:.12g}u L=180n",
+                f"Mmerr1_l merr1_t {target0_wins_gate} merr1_l 0 NSENSE W={width_u:.12g}u L=180n",
+                f"Mmerr1_c merr1_l cmp merr1 0 NSENSE W={width_u:.12g}u L=180n",
+                f"Mbwd_merr0_a vdd merr0 bwd_merr0_a 0 NSENSE W={width_u:.12g}u L=180n",
+                f"Mbwd_merr0_b bwd_merr0_a bwd_src bwd 0 NSENSE W={width_u:.12g}u L=180n",
+                f"Mbwd_merr1_a vdd merr1 bwd_merr1_a 0 NSENSE W={width_u:.12g}u L=180n",
+                f"Mbwd_merr1_b bwd_merr1_a bwd_src bwd 0 NSENSE W={width_u:.12g}u L=180n",
+            ]
+            + node_parasitics(
+                "merr0_p",
+                "merr0_t",
+                "merr0_l",
+                "merr1_p",
+                "merr1_t",
+                "merr1_l",
+                "bwd_merr0_a",
+                "bwd_merr1_a",
+            )
+        )
+    if mode == "target_out_mistake_latch":
+        return "\n".join(
+            [
+                "* Output-capacitor mistake latch: captures target-low/other-high during the error window,",
+                "* then uses the stored event to open the later backward/write stream.",
+                f"Cbwd_gate bwd 0 {cap_f:.12g}f IC=0",
+                "Rbwd_gate bwd 0 1G",
+                "Mreset_bwd_gate bwd rste 0 0 NMOS W=4u L=180n",
+                f"Cmerr0 merr0 0 {cap_f:.12g}f IC=0",
+                f"Cmerr1 merr1 0 {cap_f:.12g}f IC=0",
+                "Rmerr0 merr0 0 1G",
+                "Rmerr1 merr1 0 1G",
+                "Mreset_merr0 merr0 rste 0 0 NMOS W=4u L=180n",
+                "Mreset_merr1 merr1 rste 0 0 NMOS W=4u L=180n",
+                f"Mmerr0_p vdd out0 merr0_p vdd PMOS W={width_u:.12g}u L=180n",
+                f"Mmerr0_t merr0_p t0 merr0_t 0 NSENSE W={width_u:.12g}u L=180n",
+                f"Mmerr0_o merr0_t out1 merr0_o 0 NSENSE W={width_u:.12g}u L=180n",
+                f"Mmerr0_e merr0_o err merr0 0 NSENSE W={width_u:.12g}u L=180n",
+                f"Mmerr1_p vdd out1 merr1_p vdd PMOS W={width_u:.12g}u L=180n",
+                f"Mmerr1_t merr1_p t1 merr1_t 0 NSENSE W={width_u:.12g}u L=180n",
+                f"Mmerr1_o merr1_t out0 merr1_o 0 NSENSE W={width_u:.12g}u L=180n",
+                f"Mmerr1_e merr1_o err merr1 0 NSENSE W={width_u:.12g}u L=180n",
+                f"Mbwd_merr0_a vdd merr0 bwd_merr0_a 0 NSENSE W={width_u:.12g}u L=180n",
+                f"Mbwd_merr0_b bwd_merr0_a bwd_src bwd 0 NSENSE W={width_u:.12g}u L=180n",
+                f"Mbwd_merr1_a vdd merr1 bwd_merr1_a 0 NSENSE W={width_u:.12g}u L=180n",
+                f"Mbwd_merr1_b bwd_merr1_a bwd_src bwd 0 NSENSE W={width_u:.12g}u L=180n",
+            ]
+            + node_parasitics(
+                "merr0_p",
+                "merr0_t",
+                "merr0_o",
+                "merr1_p",
+                "merr1_t",
+                "merr1_o",
+                "bwd_merr0_a",
+                "bwd_merr1_a",
+            )
+        )
     if mode == "target_mistake":
+        target0_wins_gate = lead_win_gate(lead_mode, 0)
+        target1_wins_gate = lead_win_gate(lead_mode, 1)
         return "\n".join(
             [
                 "* Mistake-gated backward rail: bwd rises only when the target class loses the output sense latch.",
                 "* The PMOS inhibit requires the target's winning lead to be low, suppressing ambiguous both-high latches.",
-                "* In out_senseamp mode lead10 high means class 0 wins; lead01 high means class 1 wins.",
+                f"* Target winner gates: class 0 uses {target0_wins_gate}; class 1 uses {target1_wins_gate}.",
                 f"Cbwd_gate bwd 0 {cap_f:.12g}f IC=0",
                 "Rbwd_gate bwd 0 1G",
                 "Mreset_bwd_gate bwd rste 0 0 NMOS W=4u L=180n",
-                f"Mbwd_t0_p vdd lead10 bwd_t0_p vdd PMOS W={width_u:.12g}u L=180n",
+                f"Mbwd_t0_p vdd {target0_wins_gate} bwd_t0_p vdd PMOS W={width_u:.12g}u L=180n",
                 f"Mbwd_t0_a bwd_t0_p t0 bwd_t0_a 0 NSENSE W={width_u:.12g}u L=180n",
-                f"Mbwd_t0_l bwd_t0_a lead01 bwd_t0_l 0 NSENSE W={width_u:.12g}u L=180n",
+                f"Mbwd_t0_l bwd_t0_a {target1_wins_gate} bwd_t0_l 0 NSENSE W={width_u:.12g}u L=180n",
                 f"Mbwd_t0_b bwd_t0_l bwd_src bwd 0 NSENSE W={width_u:.12g}u L=180n",
-                f"Mbwd_t1_p vdd lead01 bwd_t1_p vdd PMOS W={width_u:.12g}u L=180n",
+                f"Mbwd_t1_p vdd {target1_wins_gate} bwd_t1_p vdd PMOS W={width_u:.12g}u L=180n",
                 f"Mbwd_t1_a bwd_t1_p t1 bwd_t1_a 0 NSENSE W={width_u:.12g}u L=180n",
-                f"Mbwd_t1_l bwd_t1_a lead10 bwd_t1_l 0 NSENSE W={width_u:.12g}u L=180n",
+                f"Mbwd_t1_l bwd_t1_a {target0_wins_gate} bwd_t1_l 0 NSENSE W={width_u:.12g}u L=180n",
                 f"Mbwd_t1_b bwd_t1_l bwd_src bwd 0 NSENSE W={width_u:.12g}u L=180n",
             ]
             + node_parasitics("bwd_t0_p", "bwd_t0_a", "bwd_t0_l", "bwd_t1_p", "bwd_t1_a", "bwd_t1_l")
@@ -1827,6 +1933,11 @@ def measure_lines(
     hidden_delta_output_mode: str,
     measure_detail: str,
     readout_sample_offsets_ns: list[float],
+    cmp_start_ns: float,
+    cmp_end_ns: float,
+    bwd_start_ns: float,
+    apply_end_ns: float,
+    backward_gate_mode: str,
     hidden_delta_network_enabled: bool = True,
 ) -> tuple[str, str]:
     if hidden_apply_mode not in HIDDEN_APPLY_MODES:
@@ -1837,12 +1948,20 @@ def measure_lines(
         raise ValueError(f"unknown hidden delta output mode: {hidden_delta_output_mode}")
     if measure_detail not in MEASURE_DETAILS:
         raise ValueError(f"unknown measurement detail level: {measure_detail}")
+    if backward_gate_mode not in BACKWARD_GATE_MODES:
+        raise ValueError(f"unknown backward gate mode: {backward_gate_mode}")
     if not readout_sample_offsets_ns:
         raise ValueError("at least one readout sample offset is required.")
     include_hidden_grad_measures = learning_mode == "accumulate_apply"
     include_train_detail = measure_detail == "full"
     include_signal_probe = measure_detail in {"full", "probe"}
     default_offset = readout_sample_offsets_ns[0]
+    cmp_probe_offset_ns = (cmp_start_ns + cmp_end_ns) / 2.0
+    lead_probe_offset_ns = min(5.00, cmp_end_ns + 0.10)
+    bwd_probe_offset_ns = min(apply_end_ns - 0.05, bwd_start_ns + 0.50)
+    if bwd_probe_offset_ns <= bwd_start_ns:
+        bwd_probe_offset_ns = (bwd_start_ns + apply_end_ns) / 2.0
+    update_probe_offset_ns = min(apply_end_ns - 0.05, max(bwd_probe_offset_ns, 10.50))
     lines: list[str] = []
     prints: list[str] = []
     for idx, sample in enumerate(samples):
@@ -1855,10 +1974,10 @@ def measure_lines(
             f".meas tran margin_{idx} PARAM='target_out_{idx}-other_out_{idx}'",
             f".meas tran score0_{idx} FIND V(score0) AT={base + default_offset:.2f}n",
             f".meas tran score1_{idx} FIND V(score1) AT={base + default_offset:.2f}n",
-            f".meas tran score0_cmp_{idx} FIND V(score0) AT={base + 4.05:.2f}n",
-            f".meas tran score1_cmp_{idx} FIND V(score1) AT={base + 4.05:.2f}n",
-            f".meas tran out0_cmp_{idx} FIND V(out0) AT={base + 4.05:.2f}n",
-            f".meas tran out1_cmp_{idx} FIND V(out1) AT={base + 4.05:.2f}n",
+            f".meas tran score0_cmp_{idx} FIND V(score0) AT={base + cmp_probe_offset_ns:.2f}n",
+            f".meas tran score1_cmp_{idx} FIND V(score1) AT={base + cmp_probe_offset_ns:.2f}n",
+            f".meas tran out0_cmp_{idx} FIND V(out0) AT={base + cmp_probe_offset_ns:.2f}n",
+            f".meas tran out1_cmp_{idx} FIND V(out1) AT={base + cmp_probe_offset_ns:.2f}n",
         ]
         for offset in readout_sample_offsets_ns:
             key = offset_key(offset)
@@ -1872,15 +1991,20 @@ def measure_lines(
         for out in range(OUTPUTS):
             lines.append(f".meas tran lose{out}_{idx} FIND V(lose{out}) AT={base + 3.20:.2f}n")
         lines += [
-            f".meas tran lead01_{idx} FIND V(lead01) AT={base + 4.95:.2f}n",
-            f".meas tran lead10_{idx} FIND V(lead10) AT={base + 4.95:.2f}n",
+            f".meas tran lead01_{idx} FIND V(lead01) AT={base + lead_probe_offset_ns:.2f}n",
+            f".meas tran lead10_{idx} FIND V(lead10) AT={base + lead_probe_offset_ns:.2f}n",
         ]
         if sample["phase"] == "train":
-            lines.append(f".meas tran bwd_signal_{idx} FIND V(bwd) AT={base + 7.95:.2f}n")
+            lines.append(f".meas tran bwd_signal_{idx} FIND V(bwd) AT={base + bwd_probe_offset_ns:.2f}n")
+            if "mistake_latch" in backward_gate_mode:
+                lines += [
+                    f".meas tran merr0_{idx} FIND V(merr0) AT={base + bwd_probe_offset_ns:.2f}n",
+                    f".meas tran merr1_{idx} FIND V(merr1) AT={base + bwd_probe_offset_ns:.2f}n",
+                ]
             applies_update = sample.get("apply_update", True)
             if include_train_detail and hidden_delta_network_enabled:
                 lines += [
-                    f".meas tran hdp0_guard_{idx} FIND V(hdp0) AT={base + 7.95:.2f}n",
+                    f".meas tran hdp0_guard_{idx} FIND V(hdp0) AT={base + bwd_probe_offset_ns:.2f}n",
                 ]
             if applies_update and include_train_detail:
                 lines += [
@@ -1912,24 +2036,24 @@ def measure_lines(
             if include_signal_probe:
                 for out in range(OUTPUTS):
                     lines += [
-                        f".meas tran dp{out}_{idx} FIND V(dp{out}) AT={base + 7.95:.2f}n",
-                        f".meas tran dn{out}_{idx} FIND V(dn{out}) AT={base + 7.95:.2f}n",
+                        f".meas tran dp{out}_{idx} FIND V(dp{out}) AT={base + bwd_probe_offset_ns:.2f}n",
+                        f".meas tran dn{out}_{idx} FIND V(dn{out}) AT={base + bwd_probe_offset_ns:.2f}n",
                         f".meas tran output_delta_net_{out}_{idx} PARAM='dp{out}_{idx}-dn{out}_{idx}'",
                     ]
                 if hidden_delta_network_enabled:
                     for h in range(HIDDEN):
                         lines += [
-                            f".meas tran hdp{h}_{idx} FIND V(hdp{h}) AT={base + 7.95:.2f}n",
-                            f".meas tran hdn{h}_{idx} FIND V(hdn{h}) AT={base + 7.95:.2f}n",
+                            f".meas tran hdp{h}_{idx} FIND V(hdp{h}) AT={base + bwd_probe_offset_ns:.2f}n",
+                            f".meas tran hdn{h}_{idx} FIND V(hdn{h}) AT={base + bwd_probe_offset_ns:.2f}n",
                             f".meas tran hidden_delta_net_{h}_{idx} PARAM='hdp{h}_{idx}-hdn{h}_{idx}'",
-                            f".meas tran hdp{h}_update_{idx} FIND V(hdp{h}) AT={base + 10.50:.2f}n",
-                            f".meas tran hdn{h}_update_{idx} FIND V(hdn{h}) AT={base + 10.50:.2f}n",
+                            f".meas tran hdp{h}_update_{idx} FIND V(hdp{h}) AT={base + update_probe_offset_ns:.2f}n",
+                            f".meas tran hdn{h}_update_{idx} FIND V(hdn{h}) AT={base + update_probe_offset_ns:.2f}n",
                             f".meas tran hidden_delta_update_net_{h}_{idx} PARAM='hdp{h}_update_{idx}-hdn{h}_update_{idx}'",
                         ]
                         if hidden_delta_output_mode == "senseamp":
                             lines += [
-                                f".meas tran hdpg{h}_{idx} FIND V(hdpg{h}) AT={base + 10.50:.2f}n",
-                                f".meas tran hdng{h}_{idx} FIND V(hdng{h}) AT={base + 10.50:.2f}n",
+                                f".meas tran hdpg{h}_{idx} FIND V(hdpg{h}) AT={base + update_probe_offset_ns:.2f}n",
+                                f".meas tran hdng{h}_{idx} FIND V(hdng{h}) AT={base + update_probe_offset_ns:.2f}n",
                                 f".meas tran hidden_delta_gate_net_{h}_{idx} PARAM='hdpg{h}_{idx}-hdng{h}_{idx}'",
                             ]
                 for h in range(HIDDEN):
@@ -2074,6 +2198,7 @@ def random_hidden_netlist(
     backward_gate_width_u: float,
     backward_gate_cap_f: float,
     bwd_start_ns: float,
+    cmp_start_ns: float,
     cmp_end_ns: float,
     apply_start_ns: float,
     apply_end_ns: float,
@@ -2106,6 +2231,11 @@ def random_hidden_netlist(
         hidden_delta_output_mode,
         measure_detail,
         readout_sample_offsets_ns,
+        cmp_start_ns,
+        cmp_end_ns,
+        bwd_start_ns,
+        apply_end_ns,
+        backward_gate_mode,
         hidden_delta_network_enabled,
     )
     if learning_mode == "accumulate_apply":
@@ -2224,7 +2354,7 @@ Vscorecm scorecm 0 {score_reset_v:.12g}
 {input_sources}
 Vt0 t0 0 {target_wave(samples, 0, stop)}
 Vt1 t1 0 {target_wave(samples, 1, stop)}
-{phases(samples, bwd_start_ns, apply_start_ns, apply_end_ns, cmp_end_ns, learning_mode, backward_gate_mode)}
+{phases(samples, bwd_start_ns, apply_start_ns, apply_end_ns, cmp_start_ns, cmp_end_ns, learning_mode, backward_gate_mode)}
 
 {persistent_caps(hidden_state, readout_state, hidden_cap_f)}
 {feedback_block}
@@ -2237,7 +2367,7 @@ Vt1 t1 0 {target_wave(samples, 1, stop)}
 {output_forward(design, output_head)}
 {low_score_gate_cells(lose_pull_kohm, lose_width_u)}
 {score_lead_gate_cells(lead_width_u, lead_mode)}
-{backward_gate_cells(backward_gate_mode, backward_gate_width_u, backward_gate_cap_f)}
+{backward_gate_cells(backward_gate_mode, backward_gate_width_u, backward_gate_cap_f, lead_mode)}
 {error_cells(error_rule, latch_boost_width_u, residual_target_width_u, residual_output_width_u)}
 {hidden_delta_block}
 {learning_block}
@@ -2483,6 +2613,12 @@ def main() -> None:
     ap.add_argument("--backward-gate-width-u", type=float, default=64.0)
     ap.add_argument("--backward-gate-cap-f", type=float, default=2.0)
     ap.add_argument("--bwd-start-ns", type=float, default=6.75)
+    ap.add_argument(
+        "--cmp-start-ns",
+        type=float,
+        default=3.25,
+        help="Start of the output/score compare window within each training cycle.",
+    )
     ap.add_argument("--cmp-end-ns", type=float, default=4.10)
     ap.add_argument("--apply-start-ns", type=float, default=9.25)
     ap.add_argument("--apply-end-ns", type=float, default=11.20)
@@ -2555,8 +2691,8 @@ def main() -> None:
         readout_sample_offsets_ns = parse_offsets(args.readout_sample_offsets_ns)
     except ValueError as exc:
         raise SystemExit(str(exc)) from exc
-    if not 3.30 <= args.cmp_end_ns <= 5.00:
-        raise SystemExit("--cmp-end-ns must stay between 3.30 and 5.00 ns.")
+    if not 2.40 <= args.cmp_start_ns < args.cmp_end_ns <= 5.00:
+        raise SystemExit("--cmp-start-ns/--cmp-end-ns must stay inside 2.40..5.00 ns with start < end.")
     if not 6.50 <= args.bwd_start_ns < args.apply_end_ns:
         raise SystemExit("--bwd-start-ns must start after error storage and before the backward/update window ends.")
     if not 9.0 <= args.apply_start_ns < args.apply_end_ns <= 11.8:
@@ -2582,8 +2718,6 @@ def main() -> None:
         raise SystemExit(f"--readout-init {args.readout_init} is only calibrated for --dataset xor2.")
     if args.readout_init in {"csv_separator", "csv_rectified_separator", "csv_threshold_separator"} and args.separator_csv is None:
         raise SystemExit(f"--readout-init {args.readout_init} requires --separator-csv.")
-    if args.backward_gate_mode == "target_mistake" and args.lead_mode != "out_senseamp":
-        raise SystemExit("--backward-gate-mode target_mistake requires --lead-mode out_senseamp.")
     if args.residual_target_width_u <= 0 or args.residual_output_width_u <= 0:
         raise SystemExit("--residual-target-width-u and --residual-output-width-u must be positive.")
 
@@ -2673,6 +2807,7 @@ def main() -> None:
         args.backward_gate_width_u,
         args.backward_gate_cap_f,
         args.bwd_start_ns,
+        args.cmp_start_ns,
         args.cmp_end_ns,
         args.apply_start_ns,
         args.apply_end_ns,
@@ -2720,6 +2855,9 @@ def main() -> None:
         row["lead10"] = parsed[f"lead10_{idx}"]
         if phase == "train":
             row["bwd_signal"] = parsed[f"bwd_signal_{idx}"]
+            if "mistake_latch" in args.backward_gate_mode:
+                row["merr0"] = parsed[f"merr0_{idx}"]
+                row["merr1"] = parsed[f"merr1_{idx}"]
         if phase == "train" and args.measure_detail in {"full", "probe"}:
             row["max_abs_output_delta_signal"] = max(
                 abs(parsed[f"output_delta_net_{out}_{idx}"]) for out in range(OUTPUTS)
@@ -2860,6 +2998,7 @@ def main() -> None:
     has_train_delta_metrics = has_applied_train and "max_abs_readout_signed_delta" in applied_train.columns
     has_output_delta_metrics = not train.empty and "max_abs_output_delta_signal" in train.columns
     has_hidden_delta_metrics = not train.empty and "max_abs_hidden_delta_signal" in train.columns
+    has_mistake_latch_metrics = not train.empty and {"merr0", "merr1"}.issubset(train.columns)
     has_hidden_delta_update_metrics = (
         not train.empty and "max_abs_hidden_delta_update_signal" in train.columns
     )
@@ -2989,7 +3128,10 @@ def main() -> None:
                 f"{len(INPUT_RAILS)} externally driven input rails plus a bias rail. "
             )
         )
-        + "Readout, output-bias, and hidden weights are capacitor-held signed states and update through discharge-only signed updates.",
+        + (
+            "Readout, output-bias, and hidden weights are capacitor-held signed states. "
+            f"Readout flow writes use {args.readout_flow_write_mode} signed updates."
+        ),
         "no_behavioral_signal_math": True,
         "uses_behavioral_tanh": False,
         "uses_behavioral_multipliers": False,
@@ -3043,6 +3185,7 @@ def main() -> None:
         "backward_gate_width_u": args.backward_gate_width_u if args.backward_gate_mode != "scheduled" else None,
         "backward_gate_cap_f": args.backward_gate_cap_f if args.backward_gate_mode != "scheduled" else None,
         "bwd_start_ns": args.bwd_start_ns,
+        "cmp_start_ns": args.cmp_start_ns,
         "cmp_end_ns": args.cmp_end_ns,
         "lead_gate_tracks_score_winner": lead_tracks_score_winner,
         "lead_gate_score_winner_fraction": lead_score_winner_fraction,
@@ -3051,6 +3194,12 @@ def main() -> None:
         "mean_abs_train_lead_diff_v": mean_abs_train_lead_diff,
         "max_train_bwd_signal_v": float(train["bwd_signal"].max()) if has_bwd_metrics else 0.0,
         "mean_train_bwd_signal_v": float(train["bwd_signal"].mean()) if has_bwd_metrics else 0.0,
+        "max_train_mistake_latch_v": float(train[["merr0", "merr1"]].max().max())
+        if has_mistake_latch_metrics
+        else None,
+        "mean_train_mistake_latch_v": float(train[["merr0", "merr1"]].to_numpy().mean())
+        if has_mistake_latch_metrics
+        else None,
         "train_cycles": int(len(train)),
         "train_apply_cycles": int(len(applied_train)),
         "hidden_cap_f": args.hidden_cap_f,

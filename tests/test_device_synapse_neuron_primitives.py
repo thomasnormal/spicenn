@@ -348,6 +348,21 @@ def test_error_and_target_mistake_backward_gate_are_transistor_generated() -> No
     assert "Vbwd bwd 0" not in phases
 
 
+def test_out_residual_error_uses_each_outputs_own_stored_score() -> None:
+    error = direct_flow.error_cells("out_residual", latch_boost_width_u=0.0)
+
+    assert "Mdp0_t0 vdd t0 dp0_t" in error
+    assert "Mdp0_y1 dp0_y out0 0" in error
+    assert "Mdn0_y0 vdd out0 dn0_y" in error
+    assert "Mdn0_t1 dn0_t t0 0" in error
+    assert "Mdp1_t0 vdd t1 dp1_t" in error
+    assert "Mdp1_y1 dp1_y out1 0" in error
+    assert "Mdn1_y0 vdd out1 dn1_y" in error
+    assert "Mdn1_t1 dn1_t t1 0" in error
+    assert "Mdp0_o0 dp0_t out1" not in error
+    assert "Mdn1_s0 dn1_t out1" not in error
+
+
 def test_input_and_target_pwl_sources_have_strictly_increasing_times() -> None:
     samples = [
         {"phase": "train", "pattern": 0, "label": 0, "apply_update": True},

@@ -1248,6 +1248,18 @@ def error_cells(error_rule: str, latch_boost_width_u: float) -> str:
                 f"Mdn{out}_e0 dn{out}_s err dn{out} 0 NSENSE W=96u L=180n",
             ]
             lines += node_parasitics(f"dp{out}_t", f"dp{out}_o", f"dn{out}_t", f"dn{out}_s")
+        elif error_rule == "out_residual":
+            lines += [
+                f"Mdp{out}_t0 vdd t{out} dp{out}_t 0 NSENSE W=96u L=180n",
+                f"Mdp{out}_t1 dp{out}_t err dp{out} 0 NSENSE W=96u L=180n",
+                f"Mdp{out}_y0 dp{out} err dp{out}_y 0 NSENSE W=64u L=180n",
+                f"Mdp{out}_y1 dp{out}_y out{out} 0 0 NSENSE W=64u L=180n",
+                f"Mdn{out}_y0 vdd out{out} dn{out}_y 0 NSENSE W=96u L=180n",
+                f"Mdn{out}_y1 dn{out}_y err dn{out} 0 NSENSE W=96u L=180n",
+                f"Mdn{out}_t0 dn{out} err dn{out}_t 0 NSENSE W=64u L=180n",
+                f"Mdn{out}_t1 dn{out}_t t{out} 0 0 NSENSE W=64u L=180n",
+            ]
+            lines += node_parasitics(f"dp{out}_t", f"dp{out}_y", f"dn{out}_y", f"dn{out}_t")
         elif error_rule == "out_competitive_latchboost":
             other = 1 - out
             other_wins_gate = "lead01" if out == 0 else "lead10"
@@ -2253,6 +2265,7 @@ def main() -> None:
             "margin",
             "competitive",
             "out_competitive",
+            "out_residual",
             "out_competitive_latchboost",
             "out_mistake",
             "out_latch_mistake",
@@ -2649,6 +2662,7 @@ def main() -> None:
         key=lambda item: (float(item["final_accuracy"]), float(item["final_min_margin_v"])),
     )
     summary = {
+        "tag": safe_tag,
         "simulator": version,
         "architecture": "device_level_binary_general_random_hidden",
         "status": "tiny_general_hidden_device_experiment",

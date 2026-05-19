@@ -9,6 +9,7 @@
 \usepackage{hyperref}
 \usepackage{microtype}
 \usepackage{tikz}
+\usepackage{float}
 \usetikzlibrary{arrows.meta,calc,fit,positioning,shapes.geometric}
 
 \hypersetup{
@@ -119,34 +120,105 @@ than the final dense direct-flow synapse design.
 \section{Preliminaries}
 
 For readers coming from the machine-learning side, the analog primitives used
-throughout this note are:
+throughout this note are summarised in Fig.~\ref{fig:primitives} and defined
+below.
+
+\begin{figure}[H]
+  \centering
+  \begin{circuitikz}[american, font=\footnotesize, scale=0.8, transform shape]
+    %% Common baseline for row-1 captions (just below the lowest ground) and
+    %% row-2 captions, so all sub-figure labels align.
+    \def\rowonecap{-1.2}
+    \def\rowtwocap{-1.55}
+
+    %% --- Row 1: passive + active two-terminal-ish primitives ---
+    %% (a) Capacitor
+    \begin{scope}[shift={(0,0)}]
+      \draw (0,1.4) to[C, l_={$C$}] (0,0.3) node[ground]{};
+      \node at (0,\rowonecap) {(a) capacitor};
+    \end{scope}
+    %% (b) Resistor
+    \begin{scope}[shift={(2.7,0)}]
+      \draw (0,1.4) to[R, l_={$R$}] (0,0.3) node[ground]{};
+      \node at (0,\rowonecap) {(b) resistor};
+    \end{scope}
+    %% (c) NMOS (gate/drain/source labels next to the body, no extra stubs)
+    \begin{scope}[shift={(5.5,0)}]
+      \node[nmos] (m) at (0.3,0.85) {};
+      \node[anchor=east, font=\scriptsize] at ($(m.G)+(-0.05,0)$) {G};
+      \node[anchor=south, font=\scriptsize] at ($(m.D)+(0,0.02)$) {D};
+      \node[anchor=north, font=\scriptsize] at ($(m.S)+(0,-0.02)$) {S};
+      \node at (0.3,\rowonecap) {(c) NMOS};
+    \end{scope}
+    %% (d) Source follower
+    \begin{scope}[shift={(8.6,0)}]
+      \draw (0,2.0) node[above]{$V_{DD}$} -- (0,1.65);
+      \node[nmos, anchor=D] (m) at (0,1.65) {};
+      \draw (m.G) -- ++(-0.4,0) node[left]{in};
+      \draw (m.S) -- ++(0.7,0) node[circ](o){};
+      \draw (o) -- ++(0,-0.55) node[ground]{};
+      \draw (o) -- ++(0.5,0) node[right]{out};
+      \node at (0.45,\rowonecap) {(d) source follower};
+    \end{scope}
+
+    %% --- Row 2: composite / signal primitives ---
+    %% (e) Signed differential pair
+    \begin{scope}[shift={(0.5,-3.2)}]
+      \draw (0,1.4) to[C, l_={$C^+$}] (0,0.3) node[ground]{};
+      \draw (1.1,1.4) to[C, l={$C^-$}] (1.1,0.3) node[ground]{};
+      \node at (0.55,\rowtwocap) {(e) differential pair};
+    \end{scope}
+    %% (f) Sense amplifier (comparator triangle)
+    \begin{scope}[shift={(4.6,-2.6)}]
+      \draw (0,0.45) -- (1.3,0) -- (0,-0.45) -- cycle;
+      \node[anchor=west, font=\scriptsize] at (0.05,0.27) {$+$};
+      \node[anchor=west, font=\scriptsize] at (0.05,-0.27) {$-$};
+      \draw (1.3,0) -- ++(0.3,0) node[right]{out};
+      \node at (0.7,-1.25) {(f) sense amplifier};
+    \end{scope}
+    %% (g) Rail / phase signal (digital pulse)
+    \begin{scope}[shift={(8.1,-2.6)}]
+      \draw[semithick] (0,-0.35) -- (0.35,-0.35) -- (0.35,0.45)
+        -- (1.25,0.45) -- (1.25,-0.35) -- (1.7,-0.35);
+      \node[anchor=west, font=\scriptsize] at (0.4,0.72) {fwd window};
+      \node at (0.85,-1.25) {(g) rail / phase signal};
+    \end{scope}
+  \end{circuitikz}
+  \caption{Standard symbols for the analog primitives used throughout this
+  note.}
+  \label{fig:primitives}
+\end{figure}
+
 \begin{description}
-  \item[Capacitor ($C$).] Stores charge $Q = CV$, so the voltage across a
-    capacitor acts as a small, leaky analog memory.  All trainable state in
-    this design lives on capacitors: weights $w_{ij}^\pm$, pre-activations
-    $\phi_i$, activations $a_i$, deltas $\delta_j$.
-  \item[Resistor ($R$).] Sets a current $I=V/R$ and, when paired with a
-    capacitor, gives a leakage time constant $\tau=RC$.  Used here as a slow
-    discharge path on stored voltages, e.g.\ \(R_{\mathrm{leak}}\) on
-    \(C_{\mathrm{pre}}\).
-  \item[NMOS transistor.] A voltage-controlled switch: when the gate voltage
-    exceeds the threshold, drain and source are connected.  Stacking NMOS
-    devices realises a logical AND of their gate signals, which is how we
-    gate the forward, backward, and write paths.
-  \item[Source follower.] An NMOS biased so that the source voltage tracks the
-    gate (minus a threshold drop).  Used as the ReLU-like neuron: a positive
-    \(V(C_{\mathrm{pre}})\) above threshold charges \(C_{\mathrm{act}}\), a
-    sub-threshold pre-activation leaves it at ground.
-  \item[Signed differential pair.] A signed quantity \(x\) is encoded as
-    \(V(C^+) - V(C^-)\).  Sign-aware updates push charge onto whichever rail
-    matches the sign of the local error.
-  \item[Sense amplifier.] A small regenerative cell that latches a noisy
-    differential voltage into a clean logic level; here it converts the tiny
-    hidden-delta voltage difference into a gate signal for the write path.
-  \item[Rail / phase signal.] A globally driven voltage (from Python in this
-    work) that opens or closes circuit-wide gates --- e.g.\ the
-    \texttt{fwd}/\texttt{bwd}/\texttt{apply} phase rails or the per-sample
-    input rail \(x_i\).
+  \item[Capacitor ($C$, Fig.~\ref{fig:primitives}a).] Stores charge $Q = CV$,
+    so the voltage across a capacitor acts as a small, leaky analog memory.
+    All trainable state in this design lives on capacitors: weights
+    $w_{ij}^\pm$, pre-activations $\phi_i$, activations $a_i$, deltas
+    $\delta_j$.
+  \item[Resistor ($R$, Fig.~\ref{fig:primitives}b).] Sets a current $I=V/R$
+    and, when paired with a capacitor, gives a leakage time constant
+    $\tau=RC$.  Used here as a slow discharge path on stored voltages, e.g.\
+    \(R_{\mathrm{leak}}\) on \(C_{\mathrm{pre}}\).
+  \item[NMOS transistor (Fig.~\ref{fig:primitives}c).] A voltage-controlled
+    switch: when the gate voltage exceeds the threshold, drain and source are
+    connected.  Stacking NMOS devices realises a logical AND of their gate
+    signals, which is how we gate the forward, backward, and write paths.
+  \item[Source follower (Fig.~\ref{fig:primitives}d).] An NMOS biased so that
+    the source voltage tracks the gate (minus a threshold drop).  Used as the
+    ReLU-like neuron: a positive \(V(C_{\mathrm{pre}})\) above threshold
+    charges \(C_{\mathrm{act}}\), a sub-threshold pre-activation leaves it at
+    ground.
+  \item[Signed differential pair (Fig.~\ref{fig:primitives}e).] A signed
+    quantity \(x\) is encoded as \(V(C^+) - V(C^-)\).  Sign-aware updates push
+    charge onto whichever rail matches the sign of the local error.
+  \item[Sense amplifier (Fig.~\ref{fig:primitives}f).] A small regenerative
+    cell that latches a noisy differential voltage into a clean logic level;
+    here it converts the tiny hidden-delta voltage difference into a gate
+    signal for the write path.
+  \item[Rail / phase signal (Fig.~\ref{fig:primitives}g).] A globally driven
+    voltage (from Python in this work) that opens or closes circuit-wide gates
+    --- e.g.\ the \texttt{fwd}/\texttt{bwd}/\texttt{apply} phase rails or the
+    per-sample input rail \(x_i\).
 \end{description}
 
 \section{Primitive Circuit Model}
@@ -213,14 +285,12 @@ the backward/write window itself as the local update event:
     \draw (mwn.S) -- (2,-1.4) node[ground] {};
 
     %% Description box
-    \node[draw, rounded corners=2pt, fill=lightgray, align=left, text width=5.4cm,
+    \node[draw, rounded corners=2pt, fill=lightgray, align=left, text width=6.4cm,
           font=\small]
-      at (9.3,4.5)
+      at (9.8,4.5)
       {\textbf{Signed synapse:}\\
-       positive branch (top) charges $C_{\mathrm{pre}}$ when fwd, $x_i$, and
-       $w^+$ are all on;\\
-       negative branch (bottom) discharges $C_{\mathrm{pre}}$ via the symmetric
-       $w^-$ stack;\\
+       top branch charges $C_{\mathrm{pre}}$ when fwd, $x_i$, $w^+$ are on;\\
+       bottom branch discharges it via the symmetric $w^-$ stack;\\
        $R_{\mathrm{leak}}$ sets the trace decay time constant.};
   \end{circuitikz}
   \caption{Conceptual signed conductance synapse.  One synapse contributes
@@ -512,6 +582,54 @@ failure into scale and margin calibration rather than basic representational
 capacity, readout sign, or the existence of a transistor-level hidden backprop
 path.
 
+\subsection{Relation To The Rigorous Gradient-Flow Contract}
+
+The intended mathematical target for the dense path is the usual one-hidden-layer
+ReLU model:
+\[
+u = Ax + b_h,\qquad h=\rho(u),\qquad y=Bh+b_o,\qquad e=t-y,
+\]
+with local gradient-flow writes
+\[
+\dot B_{kj}=\eta e_k h_j,\qquad
+\dot A_{ji}=\eta \delta_{h,j}x_i,\qquad
+\delta_h=\rho'(u)\odot B^T e.
+\]
+The clean circuit contract is therefore: reciprocal signed synapses implement
+\(W\) forward and \(W^T\) backward, output-error cells form \(e=t-y\), ReLU
+neurons store and reuse the active mask, and each synapse writer injects charge
+proportional to a local pre-value times a local post-error.
+
+The 96.875\% \code{mnist01\_32} rail-buffer result is only a partial match to
+that contract.  It does use capacitor-held signed weights, ngspice-generated
+output-error rails, readout-weight-transport hidden deltas, hidden activation
+gating, and local direct-flow writes.  It does not yet use learned
+\(h=\rho(Ax+b_h)\) hidden features: \code{rail\_buffer} copies the four input
+rails into hidden activation capacitors through MOS pass gates.  Its error rule,
+\code{out\_competitive} plus target-mistake gating, is closer to a margin/mistake
+update than exact analog \(e=t-y\).  The backward transport is implemented by
+transistor stacks controlled by the same readout weight-capacitor voltages, not
+yet by a single proven reciprocal two-port driven literally in reverse.  The
+local write cell is also a series-gated charge/discharge product approximation,
+not an ideal four-quadrant analog multiplier.  This is why the result should be
+read as a strong device-level bridge rather than a completed proof of exact
+analog SGD.
+
+To test the specific error-generation gap, the generator now has an
+\code{out\_residual} mode.  Unlike \code{out\_competitive}, which gates the target
+class by the competing output, \code{out\_residual} uses each class's own stored
+output capacitor when forming the positive and negative error rails.  It is still
+a transistor-stack approximation, but it is much closer to the intended
+\(e_k=t_k-y_k\) circuit contract.  The first residual experiments show the
+tradeoff clearly.  On XOR, scheduled \code{out\_residual} direct flow solves the
+task at 100\% with a \(+12.2\ \mathrm{mV}\) margin.  On the 32-sample
+MNIST-0-vs-1 rail-buffer bridge, scheduled residual updates collapse to 50\%.
+Reusing the target-mistake backward gate recovers 93.75\% for both the
+readout-only control and the all-layer per-synapse-trace run, but still trails
+the 96.875\% \code{out\_competitive} bridge.  Thus the residual cell is wired and
+useful, but not yet sized or timed well enough to replace the more margin-like
+competitive rule.
+
 \begin{table}[h]
   \centering
   \footnotesize
@@ -584,6 +702,16 @@ path.
     full backprop, per-synapse pre-trace, \code{1e-6 u} hidden write &
     96.875\% &
     Per-synapse stored pre-activation traces preserve the same result. \\
+    \addlinespace
+    \code{mnist01\_32}, \code{rail\_buffer}, \code{out\_residual}/scheduled, e1 &
+    full backprop, per-synapse pre-trace, \code{1e-6 u} hidden write &
+    50.00\% &
+    Closer \(e=t-y\) error cell is electrically active but destructive when backflow is always open. \\
+    \addlinespace
+    \code{mnist01\_32}, \code{rail\_buffer}, \code{out\_residual}/target-mistake, e1 &
+    full backprop, per-synapse pre-trace, \code{1e-6 u} hidden write &
+    93.75\% &
+    Residual error plus mistake gate works end to end, but trails the competitive rule. \\
     \addlinespace
     \code{mnist01\_32}, \code{rail\_buffer}, \code{csv\_separator} &
     off, programmed readout & 100.00\% &
@@ -666,16 +794,20 @@ all-to-all hidden cells.  A compact version is:
 
 The present direct-flow timing template is not a digital clock in the usual
 logic sense; it is a sequence of analog guide windows.  A typical cycle is:
-\[
-\begin{array}{ll}
-0.00\text{--}0.50\,\mathrm{ns} & reset temporary state,\\
-0.75\text{--}3.00\,\mathrm{ns} & forward settling and trace capture,\\
-3.25\text{--}4.4\,\mathrm{ns} & output compare,\\
-5.25\text{--}6.50\,\mathrm{ns} & error-node formation,\\
-6.75\text{--}11.20\,\mathrm{ns} & backward/write flow,\\
-9.25\text{--}11.20\,\mathrm{ns} & optional latched apply sub-window.
-\end{array}
-\]
+\begin{center}
+\begin{tabular}{ll}
+\toprule
+Window & Phase \\
+\midrule
+0.00--0.50\,ns   & reset temporary state \\
+0.75--3.00\,ns   & forward settling and trace capture \\
+3.25--4.40\,ns   & output compare \\
+5.25--6.50\,ns   & error-node formation \\
+6.75--11.20\,ns  & backward/write flow \\
+9.25--11.20\,ns  & optional latched apply sub-window \\
+\bottomrule
+\end{tabular}
+\end{center}
 The long-term self-timed version would replace some of these fixed Python
 windows with circuit-derived events, for example a sense-amp decision or output
 spike arrival opening the backward/write path.

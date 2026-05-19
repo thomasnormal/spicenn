@@ -1,0 +1,34 @@
+* Time-to-threshold charge neuron.
+* Encodes activation as firing time, not a multi-bit voltage word.
+.param VDD=0.8
+.param VIN=0.1
+.param GSUM=100n
+.param CINT=10f
+.param VTH=4m
+.param TRESET=0.5n
+.param TPULSE=30n
+.param TSTOP=40n
+.param SIGMA=0m
+.param NT=100p
+.param SEED=1
+
+Vdrive in 0 PULSE(0 {VIN} {TRESET} 20p 20p {TPULSE} {TSTOP})
+Bsyn 0 int I = {GSUM} * V(in)
+Cint int 0 {CINT} IC=0
+Vn n 0 DC 0 TRNOISE({SIGMA} {NT} 0 0)
+
+* Behavioral spike output. In a real circuit this is a dynamic comparator/latch.
+Bspk spk 0 V = {VDD} * (V(int)+V(n) > {VTH})
+
+.tran 20p {TSTOP} uic
+.meas tran tfire WHEN V(spk)={VDD/2} RISE=1
+.meas tran vint_end FIND V(int) AT={TSTOP}
+.meas tran ecap_end PARAM='0.5*CINT*vint_end*vint_end'
+
+.control
+setseed {SEED}
+run
+print tfire vint_end ecap_end
+.endc
+.end
+

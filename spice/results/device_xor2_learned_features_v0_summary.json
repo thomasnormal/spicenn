@@ -1,0 +1,32 @@
+{
+  "simulator": "ngspice-46 : Circuit level simulation program",
+  "architecture": "device_level_2bit_xor_learned_hidden_feature_updates",
+  "status": "tiny_learned_hidden_update_device_smoke",
+  "benchmark": "2-bit XOR",
+  "model_level": "ngspice built-in LEVEL=1 MOS models; not a foundry PDK.",
+  "signal_path": "Four literal hidden feature cells and a two-output readout run forward/error/backward/accumulate/apply phases. Both readout weights and active hidden-feature match weights are capacitor-held and updated in SPICE.",
+  "no_behavioral_signal_math": true,
+  "uses_behavioral_tanh": false,
+  "uses_behavioral_multipliers": false,
+  "hidden_feature_weights_trained": true,
+  "hidden_features_programmed_initially": true,
+  "readout_weights_trained": true,
+  "full_dataset_patterns": 4,
+  "train_orders": 2,
+  "eval_accuracy_by_order": {
+    "binary_order": 1.0,
+    "interleaved_order": 1.0
+  },
+  "min_eval_accuracy": 1.0,
+  "all_eval_patterns_correct": true,
+  "all_train_updates_improve_margin": true,
+  "all_active_hidden_updates_nonzero": true,
+  "min_train_margin_improvement_v": 0.0888498,
+  "min_eval_margin_v": 0.172447,
+  "mean_eval_margin_v": 0.172447,
+  "max_active_hidden_weight_delta_v": 1.6253e-06,
+  "curve": "/Users/ahle/kode/stochastic-local-computer/spice/results/device_xor2_learned_features_v0.csv",
+  "table_curve": "/Users/ahle/kode/stochastic-local-computer/results/tables/device_xor2_learned_features_v0.csv",
+  "wall_time_s": 37.493956042,
+  "interpretation": "This is the first complete nonlinear tiny benchmark where hidden feature weight capacitors are included in the update path and measured. The hidden features start from programmed XOR literal detectors, so this is not random hidden-feature discovery yet."
+}

@@ -1,0 +1,34 @@
+{
+  "simulator": "ngspice-46 : Circuit level simulation program",
+  "dataset": "MNIST test split, downsampled",
+  "architecture": "local_block_spice_ensemble_eval",
+  "image_size": 14,
+  "test_samples": 1000,
+  "batch_size": 100,
+  "models": [
+    {
+      "path": "spice/results/spice_mnist_local_block_local_block_14x14_b7_2000_e6_frome5_traingains_lr0005_b100_final_weights.npz",
+      "activation": "tanh",
+      "output": "tanh",
+      "block_size": 7,
+      "stride": 7,
+      "center": false,
+      "weight": 1.0,
+      "blocks": 4
+    },
+    {
+      "path": "spice/results/spice_mnist_local_block_local_block_14x14_b7_1000_e3_diff_clipped_relu_softmax_frome2_lr015_b100_final_weights.npz",
+      "activation": "diff-clipped-relu",
+      "output": "softmax",
+      "block_size": 7,
+      "stride": 7,
+      "center": false,
+      "weight": 1.0,
+      "blocks": 4
+    }
+  ],
+  "heldout_test_accuracy": 0.857,
+  "wall_time_s": 202.31326099999998,
+  "table": "/Users/ahle/kode/stochastic-local-computer/spice/results/spice_mnist_local_ensemble_tanh879_plus_diffrelu809_eval1000_results.csv",
+  "note": "Eval-only diagnostic: all branch nonlinear evidence and ensemble scores are computed inside ngspice; weights were trained by prior SPICE runs."
+}

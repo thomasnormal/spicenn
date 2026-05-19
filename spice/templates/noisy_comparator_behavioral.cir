@@ -1,0 +1,25 @@
+* Behavioral noisy comparator for stochastic activation extraction.
+.param VDD=0.8
+.param S=0m
+.param VTH=0m
+.param SIGMA=1.5m
+.param NT=100p
+.param TSTOP=30n
+.param TDECIDE=25n
+.param SEED=1
+
+Vs sig 0 DC {S}
+Vn n 0 DC 0 TRNOISE({SIGMA} {NT} 0 0)
+
+* Ideal behavioral comparator. Replace with real comparator later.
+Bcmp out 0 V = {VDD} * (V(sig)+V(n) > {VTH})
+
+.tran 20p {TSTOP}
+.meas tran y FIND V(out) AT={TDECIDE}
+
+.control
+setseed {SEED}
+run
+print y
+.endc
+.end

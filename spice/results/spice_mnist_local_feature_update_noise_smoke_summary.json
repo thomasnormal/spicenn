@@ -1,0 +1,42 @@
+{
+  "architecture": "local_feature_manual_phase_update_noise_surrogate",
+  "dataset": "MNIST train/test split, downsampled",
+  "image_size": 14,
+  "block_size": 7,
+  "stride": 7,
+  "blocks": 4,
+  "train_samples": 500,
+  "test_samples": 300,
+  "epochs": 3,
+  "batch_size": 128,
+  "channels_list": [
+    4
+  ],
+  "lr_spice_list": [
+    0.3
+  ],
+  "update_noise_std_list": [
+    0.0,
+    0.001
+  ],
+  "trials": 2,
+  "best_overall": {
+    "channels": 4.0,
+    "lr_spice": 0.3,
+    "equivalent_lr_torch_mse_tanh": 1.5,
+    "update_noise_std": 0.0,
+    "epoch": 2.0,
+    "test_accuracy": 0.2633333333333333,
+    "test_correct": 79.0,
+    "trial_wall_time_s": 0.015916916999999753
+  },
+  "curve": "/Users/ahle/kode/stochastic-local-computer/spice/results/spice_mnist_local_feature_update_noise_smoke_curve.csv",
+  "table_curve": "/Users/ahle/kode/stochastic-local-computer/results/tables/spice_mnist_local_feature_update_noise_smoke_curve.csv",
+  "best_by_trial_csv": "/Users/ahle/kode/stochastic-local-computer/results/tables/spice_mnist_local_feature_update_noise_smoke_best_by_trial.csv",
+  "best_weight_paths": {
+    "c4_lrspice0.3_noise0": "/Users/ahle/kode/stochastic-local-computer/spice/results/update_noise_sweep_local_feature_update_noise_smoke/local_feature_update_noise_smoke_c4_lrspice0.3_noise0_best_weights.npz",
+    "c4_lrspice0.3_noise0.001": "/Users/ahle/kode/stochastic-local-computer/spice/results/update_noise_sweep_local_feature_update_noise_smoke/local_feature_update_noise_smoke_c4_lrspice0.3_noise0.001_best_weights.npz"
+  },
+  "wall_time_s": 0.03454779200000013,
+  "note": "Fast manual implementation of the same tanh-output delta rule used by the SPICE local-feature deck. update_noise_std injects absolute parameter noise after each update to approximate accumulated phase/integration error."
+}

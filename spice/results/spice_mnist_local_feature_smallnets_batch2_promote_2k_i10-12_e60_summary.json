@@ -1,0 +1,163 @@
+{
+  "architecture": "local_feature_manual_phase_update_small_network_frontier",
+  "dataset": "MNIST train/test split, downsampled",
+  "topologies": [
+    {
+      "image_size": 10,
+      "block_size": 5,
+      "channels": 2,
+      "stride": 2
+    },
+    {
+      "image_size": 10,
+      "block_size": 4,
+      "channels": 2,
+      "stride": 2
+    },
+    {
+      "image_size": 10,
+      "block_size": 4,
+      "channels": 1,
+      "stride": 1
+    },
+    {
+      "image_size": 10,
+      "block_size": 5,
+      "channels": 1,
+      "stride": 1
+    },
+    {
+      "image_size": 12,
+      "block_size": 4,
+      "channels": 2,
+      "stride": 2
+    },
+    {
+      "image_size": 12,
+      "block_size": 6,
+      "channels": 2,
+      "stride": 2
+    }
+  ],
+  "train_samples_list": [
+    2000
+  ],
+  "test_samples": 1000,
+  "epochs": 60,
+  "batch_size": 2,
+  "lr_spice_list": [
+    0.03,
+    0.05,
+    0.08,
+    0.1,
+    0.15,
+    0.2
+  ],
+  "update_noise_std_list": [
+    0.0
+  ],
+  "seeds": [
+    0
+  ],
+  "target_accuracy": 0.9,
+  "trials": 36,
+  "best_overall": {
+    "image_size": 12.0,
+    "block_size": 4.0,
+    "stride": 2.0,
+    "blocks": 25.0,
+    "channels": 2.0,
+    "local_features": 50.0,
+    "train_samples": 2000.0,
+    "test_samples": 1000.0,
+    "lr_spice": 0.05,
+    "equivalent_lr_torch_mse_tanh": 0.25,
+    "update_noise_std": 0.0,
+    "seed": 0.0,
+    "epoch": 58.0,
+    "test_accuracy": 0.935,
+    "test_correct": 935.0,
+    "trial_wall_time_s": 6.729757291000027,
+    "weight_values": 800.0,
+    "local_bias_values": 50.0,
+    "readout_values": 500.0,
+    "output_bias_values": 10.0,
+    "train_state_values": 1360.0,
+    "gradient_state_values": 1360.0,
+    "temporary_state_values": 120.0,
+    "phase_state_values": 2840.0,
+    "multiply_terms_per_sample": 1300.0
+  },
+  "smallest_target_hit": {
+    "image_size": 10.0,
+    "block_size": 5.0,
+    "stride": 2.0,
+    "blocks": 9.0,
+    "channels": 2.0,
+    "local_features": 18.0,
+    "train_samples": 2000.0,
+    "test_samples": 1000.0,
+    "lr_spice": 0.03,
+    "equivalent_lr_torch_mse_tanh": 0.15,
+    "update_noise_std": 0.0,
+    "seed": 0.0,
+    "epoch": 28.0,
+    "test_accuracy": 0.912,
+    "test_correct": 912.0,
+    "trial_wall_time_s": 3.096128167,
+    "weight_values": 450.0,
+    "local_bias_values": 18.0,
+    "readout_values": 180.0,
+    "output_bias_values": 10.0,
+    "train_state_values": 658.0,
+    "gradient_state_values": 658.0,
+    "temporary_state_values": 56.0,
+    "phase_state_values": 1372.0,
+    "multiply_terms_per_sample": 630.0
+  },
+  "curve": "/Users/ahle/kode/stochastic-local-computer/spice/results/spice_mnist_local_feature_smallnets_batch2_promote_2k_i10-12_e60_curve.csv",
+  "table_curve": "/Users/ahle/kode/stochastic-local-computer/results/tables/spice_mnist_local_feature_smallnets_batch2_promote_2k_i10-12_e60_curve.csv",
+  "best_by_trial_csv": "/Users/ahle/kode/stochastic-local-computer/results/tables/spice_mnist_local_feature_smallnets_batch2_promote_2k_i10-12_e60_best_by_trial.csv",
+  "pareto_by_state_csv": "/Users/ahle/kode/stochastic-local-computer/results/tables/spice_mnist_local_feature_smallnets_batch2_promote_2k_i10-12_e60_pareto_by_state.csv",
+  "pareto_by_wall_time_csv": "/Users/ahle/kode/stochastic-local-computer/results/tables/spice_mnist_local_feature_smallnets_batch2_promote_2k_i10-12_e60_pareto_by_wall_time.csv",
+  "best_weight_paths": {
+    "i10_b5_s2_c2_n2000_lrspice0.03_noise0_seed0": "/Users/ahle/kode/stochastic-local-computer/spice/results/small_frontier_local_feature_smallnets_batch2_promote_2k_i10-12_e60/local_feature_smallnets_batch2_promote_2k_i10-12_e60_i10_b5_s2_c2_n2000_lrspice0.03_noise0_seed0_best_weights.npz",
+    "i10_b5_s2_c2_n2000_lrspice0.05_noise0_seed0": "/Users/ahle/kode/stochastic-local-computer/spice/results/small_frontier_local_feature_smallnets_batch2_promote_2k_i10-12_e60/local_feature_smallnets_batch2_promote_2k_i10-12_e60_i10_b5_s2_c2_n2000_lrspice0.05_noise0_seed0_best_weights.npz",
+    "i10_b5_s2_c2_n2000_lrspice0.08_noise0_seed0": "/Users/ahle/kode/stochastic-local-computer/spice/results/small_frontier_local_feature_smallnets_batch2_promote_2k_i10-12_e60/local_feature_smallnets_batch2_promote_2k_i10-12_e60_i10_b5_s2_c2_n2000_lrspice0.08_noise0_seed0_best_weights.npz",
+    "i10_b5_s2_c2_n2000_lrspice0.1_noise0_seed0": "/Users/ahle/kode/stochastic-local-computer/spice/results/small_frontier_local_feature_smallnets_batch2_promote_2k_i10-12_e60/local_feature_smallnets_batch2_promote_2k_i10-12_e60_i10_b5_s2_c2_n2000_lrspice0.1_noise0_seed0_best_weights.npz",
+    "i10_b5_s2_c2_n2000_lrspice0.15_noise0_seed0": "/Users/ahle/kode/stochastic-local-computer/spice/results/small_frontier_local_feature_smallnets_batch2_promote_2k_i10-12_e60/local_feature_smallnets_batch2_promote_2k_i10-12_e60_i10_b5_s2_c2_n2000_lrspice0.15_noise0_seed0_best_weights.npz",
+    "i10_b5_s2_c2_n2000_lrspice0.2_noise0_seed0": "/Users/ahle/kode/stochastic-local-computer/spice/results/small_frontier_local_feature_smallnets_batch2_promote_2k_i10-12_e60/local_feature_smallnets_batch2_promote_2k_i10-12_e60_i10_b5_s2_c2_n2000_lrspice0.2_noise0_seed0_best_weights.npz",
+    "i10_b4_s2_c2_n2000_lrspice0.03_noise0_seed0": "/Users/ahle/kode/stochastic-local-computer/spice/results/small_frontier_local_feature_smallnets_batch2_promote_2k_i10-12_e60/local_feature_smallnets_batch2_promote_2k_i10-12_e60_i10_b4_s2_c2_n2000_lrspice0.03_noise0_seed0_best_weights.npz",
+    "i10_b4_s2_c2_n2000_lrspice0.05_noise0_seed0": "/Users/ahle/kode/stochastic-local-computer/spice/results/small_frontier_local_feature_smallnets_batch2_promote_2k_i10-12_e60/local_feature_smallnets_batch2_promote_2k_i10-12_e60_i10_b4_s2_c2_n2000_lrspice0.05_noise0_seed0_best_weights.npz",
+    "i10_b4_s2_c2_n2000_lrspice0.08_noise0_seed0": "/Users/ahle/kode/stochastic-local-computer/spice/results/small_frontier_local_feature_smallnets_batch2_promote_2k_i10-12_e60/local_feature_smallnets_batch2_promote_2k_i10-12_e60_i10_b4_s2_c2_n2000_lrspice0.08_noise0_seed0_best_weights.npz",
+    "i10_b4_s2_c2_n2000_lrspice0.1_noise0_seed0": "/Users/ahle/kode/stochastic-local-computer/spice/results/small_frontier_local_feature_smallnets_batch2_promote_2k_i10-12_e60/local_feature_smallnets_batch2_promote_2k_i10-12_e60_i10_b4_s2_c2_n2000_lrspice0.1_noise0_seed0_best_weights.npz",
+    "i10_b4_s2_c2_n2000_lrspice0.15_noise0_seed0": "/Users/ahle/kode/stochastic-local-computer/spice/results/small_frontier_local_feature_smallnets_batch2_promote_2k_i10-12_e60/local_feature_smallnets_batch2_promote_2k_i10-12_e60_i10_b4_s2_c2_n2000_lrspice0.15_noise0_seed0_best_weights.npz",
+    "i10_b4_s2_c2_n2000_lrspice0.2_noise0_seed0": "/Users/ahle/kode/stochastic-local-computer/spice/results/small_frontier_local_feature_smallnets_batch2_promote_2k_i10-12_e60/local_feature_smallnets_batch2_promote_2k_i10-12_e60_i10_b4_s2_c2_n2000_lrspice0.2_noise0_seed0_best_weights.npz",
+    "i10_b4_s1_c1_n2000_lrspice0.03_noise0_seed0": "/Users/ahle/kode/stochastic-local-computer/spice/results/small_frontier_local_feature_smallnets_batch2_promote_2k_i10-12_e60/local_feature_smallnets_batch2_promote_2k_i10-12_e60_i10_b4_s1_c1_n2000_lrspice0.03_noise0_seed0_best_weights.npz",
+    "i10_b4_s1_c1_n2000_lrspice0.05_noise0_seed0": "/Users/ahle/kode/stochastic-local-computer/spice/results/small_frontier_local_feature_smallnets_batch2_promote_2k_i10-12_e60/local_feature_smallnets_batch2_promote_2k_i10-12_e60_i10_b4_s1_c1_n2000_lrspice0.05_noise0_seed0_best_weights.npz",
+    "i10_b4_s1_c1_n2000_lrspice0.08_noise0_seed0": "/Users/ahle/kode/stochastic-local-computer/spice/results/small_frontier_local_feature_smallnets_batch2_promote_2k_i10-12_e60/local_feature_smallnets_batch2_promote_2k_i10-12_e60_i10_b4_s1_c1_n2000_lrspice0.08_noise0_seed0_best_weights.npz",
+    "i10_b4_s1_c1_n2000_lrspice0.1_noise0_seed0": "/Users/ahle/kode/stochastic-local-computer/spice/results/small_frontier_local_feature_smallnets_batch2_promote_2k_i10-12_e60/local_feature_smallnets_batch2_promote_2k_i10-12_e60_i10_b4_s1_c1_n2000_lrspice0.1_noise0_seed0_best_weights.npz",
+    "i10_b4_s1_c1_n2000_lrspice0.15_noise0_seed0": "/Users/ahle/kode/stochastic-local-computer/spice/results/small_frontier_local_feature_smallnets_batch2_promote_2k_i10-12_e60/local_feature_smallnets_batch2_promote_2k_i10-12_e60_i10_b4_s1_c1_n2000_lrspice0.15_noise0_seed0_best_weights.npz",
+    "i10_b4_s1_c1_n2000_lrspice0.2_noise0_seed0": "/Users/ahle/kode/stochastic-local-computer/spice/results/small_frontier_local_feature_smallnets_batch2_promote_2k_i10-12_e60/local_feature_smallnets_batch2_promote_2k_i10-12_e60_i10_b4_s1_c1_n2000_lrspice0.2_noise0_seed0_best_weights.npz",
+    "i10_b5_s1_c1_n2000_lrspice0.03_noise0_seed0": "/Users/ahle/kode/stochastic-local-computer/spice/results/small_frontier_local_feature_smallnets_batch2_promote_2k_i10-12_e60/local_feature_smallnets_batch2_promote_2k_i10-12_e60_i10_b5_s1_c1_n2000_lrspice0.03_noise0_seed0_best_weights.npz",
+    "i10_b5_s1_c1_n2000_lrspice0.05_noise0_seed0": "/Users/ahle/kode/stochastic-local-computer/spice/results/small_frontier_local_feature_smallnets_batch2_promote_2k_i10-12_e60/local_feature_smallnets_batch2_promote_2k_i10-12_e60_i10_b5_s1_c1_n2000_lrspice0.05_noise0_seed0_best_weights.npz",
+    "i10_b5_s1_c1_n2000_lrspice0.08_noise0_seed0": "/Users/ahle/kode/stochastic-local-computer/spice/results/small_frontier_local_feature_smallnets_batch2_promote_2k_i10-12_e60/local_feature_smallnets_batch2_promote_2k_i10-12_e60_i10_b5_s1_c1_n2000_lrspice0.08_noise0_seed0_best_weights.npz",
+    "i10_b5_s1_c1_n2000_lrspice0.1_noise0_seed0": "/Users/ahle/kode/stochastic-local-computer/spice/results/small_frontier_local_feature_smallnets_batch2_promote_2k_i10-12_e60/local_feature_smallnets_batch2_promote_2k_i10-12_e60_i10_b5_s1_c1_n2000_lrspice0.1_noise0_seed0_best_weights.npz",
+    "i10_b5_s1_c1_n2000_lrspice0.15_noise0_seed0": "/Users/ahle/kode/stochastic-local-computer/spice/results/small_frontier_local_feature_smallnets_batch2_promote_2k_i10-12_e60/local_feature_smallnets_batch2_promote_2k_i10-12_e60_i10_b5_s1_c1_n2000_lrspice0.15_noise0_seed0_best_weights.npz",
+    "i10_b5_s1_c1_n2000_lrspice0.2_noise0_seed0": "/Users/ahle/kode/stochastic-local-computer/spice/results/small_frontier_local_feature_smallnets_batch2_promote_2k_i10-12_e60/local_feature_smallnets_batch2_promote_2k_i10-12_e60_i10_b5_s1_c1_n2000_lrspice0.2_noise0_seed0_best_weights.npz",
+    "i12_b4_s2_c2_n2000_lrspice0.03_noise0_seed0": "/Users/ahle/kode/stochastic-local-computer/spice/results/small_frontier_local_feature_smallnets_batch2_promote_2k_i10-12_e60/local_feature_smallnets_batch2_promote_2k_i10-12_e60_i12_b4_s2_c2_n2000_lrspice0.03_noise0_seed0_best_weights.npz",
+    "i12_b4_s2_c2_n2000_lrspice0.05_noise0_seed0": "/Users/ahle/kode/stochastic-local-computer/spice/results/small_frontier_local_feature_smallnets_batch2_promote_2k_i10-12_e60/local_feature_smallnets_batch2_promote_2k_i10-12_e60_i12_b4_s2_c2_n2000_lrspice0.05_noise0_seed0_best_weights.npz",
+    "i12_b4_s2_c2_n2000_lrspice0.08_noise0_seed0": "/Users/ahle/kode/stochastic-local-computer/spice/results/small_frontier_local_feature_smallnets_batch2_promote_2k_i10-12_e60/local_feature_smallnets_batch2_promote_2k_i10-12_e60_i12_b4_s2_c2_n2000_lrspice0.08_noise0_seed0_best_weights.npz",
+    "i12_b4_s2_c2_n2000_lrspice0.1_noise0_seed0": "/Users/ahle/kode/stochastic-local-computer/spice/results/small_frontier_local_feature_smallnets_batch2_promote_2k_i10-12_e60/local_feature_smallnets_batch2_promote_2k_i10-12_e60_i12_b4_s2_c2_n2000_lrspice0.1_noise0_seed0_best_weights.npz",
+    "i12_b4_s2_c2_n2000_lrspice0.15_noise0_seed0": "/Users/ahle/kode/stochastic-local-computer/spice/results/small_frontier_local_feature_smallnets_batch2_promote_2k_i10-12_e60/local_feature_smallnets_batch2_promote_2k_i10-12_e60_i12_b4_s2_c2_n2000_lrspice0.15_noise0_seed0_best_weights.npz",
+    "i12_b4_s2_c2_n2000_lrspice0.2_noise0_seed0": "/Users/ahle/kode/stochastic-local-computer/spice/results/small_frontier_local_feature_smallnets_batch2_promote_2k_i10-12_e60/local_feature_smallnets_batch2_promote_2k_i10-12_e60_i12_b4_s2_c2_n2000_lrspice0.2_noise0_seed0_best_weights.npz",
+    "i12_b6_s2_c2_n2000_lrspice0.03_noise0_seed0": "/Users/ahle/kode/stochastic-local-computer/spice/results/small_frontier_local_feature_smallnets_batch2_promote_2k_i10-12_e60/local_feature_smallnets_batch2_promote_2k_i10-12_e60_i12_b6_s2_c2_n2000_lrspice0.03_noise0_seed0_best_weights.npz",
+    "i12_b6_s2_c2_n2000_lrspice0.05_noise0_seed0": "/Users/ahle/kode/stochastic-local-computer/spice/results/small_frontier_local_feature_smallnets_batch2_promote_2k_i10-12_e60/local_feature_smallnets_batch2_promote_2k_i10-12_e60_i12_b6_s2_c2_n2000_lrspice0.05_noise0_seed0_best_weights.npz",
+    "i12_b6_s2_c2_n2000_lrspice0.08_noise0_seed0": "/Users/ahle/kode/stochastic-local-computer/spice/results/small_frontier_local_feature_smallnets_batch2_promote_2k_i10-12_e60/local_feature_smallnets_batch2_promote_2k_i10-12_e60_i12_b6_s2_c2_n2000_lrspice0.08_noise0_seed0_best_weights.npz",
+    "i12_b6_s2_c2_n2000_lrspice0.1_noise0_seed0": "/Users/ahle/kode/stochastic-local-computer/spice/results/small_frontier_local_feature_smallnets_batch2_promote_2k_i10-12_e60/local_feature_smallnets_batch2_promote_2k_i10-12_e60_i12_b6_s2_c2_n2000_lrspice0.1_noise0_seed0_best_weights.npz",
+    "i12_b6_s2_c2_n2000_lrspice0.15_noise0_seed0": "/Users/ahle/kode/stochastic-local-computer/spice/results/small_frontier_local_feature_smallnets_batch2_promote_2k_i10-12_e60/local_feature_smallnets_batch2_promote_2k_i10-12_e60_i12_b6_s2_c2_n2000_lrspice0.15_noise0_seed0_best_weights.npz",
+    "i12_b6_s2_c2_n2000_lrspice0.2_noise0_seed0": "/Users/ahle/kode/stochastic-local-computer/spice/results/small_frontier_local_feature_smallnets_batch2_promote_2k_i10-12_e60/local_feature_smallnets_batch2_promote_2k_i10-12_e60_i12_b6_s2_c2_n2000_lrspice0.2_noise0_seed0_best_weights.npz"
+  },
+  "wall_time_s": 245.806780458,
+  "note": "Fast small-network search using the phase-portable tanh-output local-feature update. Use the Pareto tables to choose the smallest topology worth validating in ngspice."
+}

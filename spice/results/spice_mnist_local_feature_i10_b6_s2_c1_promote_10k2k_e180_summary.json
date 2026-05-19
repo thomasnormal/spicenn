@@ -1,0 +1,101 @@
+{
+  "architecture": "local_feature_manual_phase_update_small_network_frontier",
+  "dataset": "MNIST train/test split, downsampled",
+  "topologies": [
+    {
+      "image_size": 10,
+      "block_size": 6,
+      "channels": 1,
+      "stride": 2
+    }
+  ],
+  "train_samples_list": [
+    10000
+  ],
+  "test_samples": 2000,
+  "epochs": 180,
+  "batch_size": 2,
+  "lr_spice_list": [
+    0.01,
+    0.015,
+    0.02,
+    0.03,
+    0.05
+  ],
+  "update_noise_std_list": [
+    0.0
+  ],
+  "seeds": [
+    0
+  ],
+  "target_accuracy": 0.9,
+  "trials": 5,
+  "best_overall": {
+    "image_size": 10.0,
+    "block_size": 6.0,
+    "stride": 2.0,
+    "blocks": 9.0,
+    "channels": 1.0,
+    "local_features": 9.0,
+    "train_samples": 10000.0,
+    "test_samples": 2000.0,
+    "lr_spice": 0.01,
+    "equivalent_lr_torch_mse_tanh": 0.05,
+    "update_noise_std": 0.0,
+    "seed": 0.0,
+    "epoch": 165.0,
+    "test_accuracy": 0.9105,
+    "test_correct": 1821.0,
+    "trial_wall_time_s": 88.94368558299999,
+    "weight_values": 324.0,
+    "local_bias_values": 9.0,
+    "readout_values": 90.0,
+    "output_bias_values": 10.0,
+    "train_state_values": 433.0,
+    "gradient_state_values": 433.0,
+    "temporary_state_values": 38.0,
+    "phase_state_values": 904.0,
+    "multiply_terms_per_sample": 414.0
+  },
+  "smallest_target_hit": {
+    "image_size": 10.0,
+    "block_size": 6.0,
+    "stride": 2.0,
+    "blocks": 9.0,
+    "channels": 1.0,
+    "local_features": 9.0,
+    "train_samples": 10000.0,
+    "test_samples": 2000.0,
+    "lr_spice": 0.05,
+    "equivalent_lr_torch_mse_tanh": 0.25,
+    "update_noise_std": 0.0,
+    "seed": 0.0,
+    "epoch": 40.0,
+    "test_accuracy": 0.9005,
+    "test_correct": 1801.0,
+    "trial_wall_time_s": 20.94880141699997,
+    "weight_values": 324.0,
+    "local_bias_values": 9.0,
+    "readout_values": 90.0,
+    "output_bias_values": 10.0,
+    "train_state_values": 433.0,
+    "gradient_state_values": 433.0,
+    "temporary_state_values": 38.0,
+    "phase_state_values": 904.0,
+    "multiply_terms_per_sample": 414.0
+  },
+  "curve": "/Users/ahle/kode/stochastic-local-computer/spice/results/spice_mnist_local_feature_i10_b6_s2_c1_promote_10k2k_e180_curve.csv",
+  "table_curve": "/Users/ahle/kode/stochastic-local-computer/results/tables/spice_mnist_local_feature_i10_b6_s2_c1_promote_10k2k_e180_curve.csv",
+  "best_by_trial_csv": "/Users/ahle/kode/stochastic-local-computer/results/tables/spice_mnist_local_feature_i10_b6_s2_c1_promote_10k2k_e180_best_by_trial.csv",
+  "pareto_by_state_csv": "/Users/ahle/kode/stochastic-local-computer/results/tables/spice_mnist_local_feature_i10_b6_s2_c1_promote_10k2k_e180_pareto_by_state.csv",
+  "pareto_by_wall_time_csv": "/Users/ahle/kode/stochastic-local-computer/results/tables/spice_mnist_local_feature_i10_b6_s2_c1_promote_10k2k_e180_pareto_by_wall_time.csv",
+  "best_weight_paths": {
+    "i10_b6_s2_c1_n10000_lrspice0.01_noise0_seed0": "/Users/ahle/kode/stochastic-local-computer/spice/results/small_frontier_local_feature_i10_b6_s2_c1_promote_10k2k_e180/local_feature_i10_b6_s2_c1_promote_10k2k_e180_i10_b6_s2_c1_n10000_lrspice0.01_noise0_seed0_best_weights.npz",
+    "i10_b6_s2_c1_n10000_lrspice0.015_noise0_seed0": "/Users/ahle/kode/stochastic-local-computer/spice/results/small_frontier_local_feature_i10_b6_s2_c1_promote_10k2k_e180/local_feature_i10_b6_s2_c1_promote_10k2k_e180_i10_b6_s2_c1_n10000_lrspice0.015_noise0_seed0_best_weights.npz",
+    "i10_b6_s2_c1_n10000_lrspice0.02_noise0_seed0": "/Users/ahle/kode/stochastic-local-computer/spice/results/small_frontier_local_feature_i10_b6_s2_c1_promote_10k2k_e180/local_feature_i10_b6_s2_c1_promote_10k2k_e180_i10_b6_s2_c1_n10000_lrspice0.02_noise0_seed0_best_weights.npz",
+    "i10_b6_s2_c1_n10000_lrspice0.03_noise0_seed0": "/Users/ahle/kode/stochastic-local-computer/spice/results/small_frontier_local_feature_i10_b6_s2_c1_promote_10k2k_e180/local_feature_i10_b6_s2_c1_promote_10k2k_e180_i10_b6_s2_c1_n10000_lrspice0.03_noise0_seed0_best_weights.npz",
+    "i10_b6_s2_c1_n10000_lrspice0.05_noise0_seed0": "/Users/ahle/kode/stochastic-local-computer/spice/results/small_frontier_local_feature_i10_b6_s2_c1_promote_10k2k_e180/local_feature_i10_b6_s2_c1_promote_10k2k_e180_i10_b6_s2_c1_n10000_lrspice0.05_noise0_seed0_best_weights.npz"
+  },
+  "wall_time_s": 481.076176959,
+  "note": "Fast small-network search using the phase-portable tanh-output local-feature update. Use the Pareto tables to choose the smallest topology worth validating in ngspice."
+}

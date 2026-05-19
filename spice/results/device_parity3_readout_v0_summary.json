@@ -1,0 +1,30 @@
+{
+  "simulator": "ngspice-46 : Circuit level simulation program",
+  "architecture": "device_level_3bit_parity_literal_features_readout",
+  "status": "tiny_complete_dataset_device_smoke",
+  "benchmark": "3-bit parity",
+  "model_level": "ngspice built-in LEVEL=1 MOS models; not a foundry PDK.",
+  "signal_path": "Six literal input rails drive eight capacitor-held pattern feature cells. A two-output readout stores weights and gradient accumulators on capacitors and is trained through guide-waveform forward/error/accumulate/apply phases.",
+  "no_behavioral_signal_math": true,
+  "uses_behavioral_tanh": false,
+  "uses_behavioral_multipliers": false,
+  "hidden_feature_weights_trained": false,
+  "readout_weights_trained": true,
+  "full_dataset_patterns": 8,
+  "train_orders": 2,
+  "eval_accuracy_by_order": {
+    "binary_order": 1.0,
+    "interleaved_order": 1.0
+  },
+  "min_eval_accuracy": 1.0,
+  "all_eval_patterns_correct": true,
+  "all_train_updates_improve_margin": true,
+  "min_train_margin_improvement_v": 0.0148374,
+  "mean_train_margin_improvement_v": 0.0148374375,
+  "min_eval_margin_v": 0.0147284,
+  "mean_eval_margin_v": 0.014731,
+  "curve": "/Users/ahle/kode/stochastic-local-computer/spice/results/device_parity3_readout_v0.csv",
+  "table_curve": "/Users/ahle/kode/stochastic-local-computer/results/tables/device_parity3_readout_v0.csv",
+  "wall_time_s": 95.076080625,
+  "interpretation": "This is a complete tiny-dataset readout-training test: all 8 parity patterns are trained once and then evaluated in the same SPICE transient. Hidden literal features are programmed capacitor states rather than learned hidden weights, so this validates readout learning and multi-sample sequencing before hidden-feature learning."
+}

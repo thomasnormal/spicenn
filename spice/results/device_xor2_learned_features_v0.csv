@@ -1,0 +1,17 @@
+order,phase,pattern,label,target_out,other_out,margin,d_margin,hidden_delta_net,max_active_hidden_weight_delta,correct
+binary_order,train,0,0,0.172754,1.06028e-136,0.172754,0.0888506,0.0886453,1.62521e-06,True
+binary_order,eval,0,0,0.172447,-8.72969e-74,0.172447,,,,True
+binary_order,train,1,1,0.172754,1.20906e-49,0.172754,0.0888504,0.0886445,1.62521e-06,True
+binary_order,eval,1,1,0.172447,-1.67663e-25,0.172447,,,,True
+binary_order,train,2,1,0.172754,6.2818e-98,0.172754,0.0888501,0.0886436,1.62521e-06,True
+binary_order,eval,2,1,0.172447,1.20594e-49,0.172447,,,,True
+binary_order,train,3,0,0.172754,1.20906e-49,0.172754,0.0888498,0.0886428,1.6253e-06,True
+binary_order,eval,3,0,0.172447,-1.67663e-25,0.172447,,,,True
+interleaved_order,train,0,0,0.172754,1.06028e-136,0.172754,0.0888506,0.0886453,1.62521e-06,True
+interleaved_order,eval,0,0,0.172447,-1.68019e-25,0.172447,,,,True
+interleaved_order,train,1,1,0.172754,1.20906e-49,0.172754,0.0888501,0.0886436,1.62521e-06,True
+interleaved_order,eval,1,1,0.172447,-1.67663e-25,0.172447,,,,True
+interleaved_order,train,2,1,0.172754,6.28172e-98,0.172754,0.0888498,0.0886428,1.62521e-06,True
+interleaved_order,eval,2,1,0.172447,1.20594e-49,0.172447,,,,True
+interleaved_order,train,3,0,0.172754,5.5088e-185,0.172754,0.0888504,0.0886445,1.62521e-06,True
+interleaved_order,eval,3,0,0.172447,-1.67663e-25,0.172447,,,,True

@@ -1,0 +1,10 @@
+* RC thermal-noise sanity check.
+.param RVAL=100k
+.param CVAL=10f
+Vtest in 0 DC 0 AC 1
+R1 in out {RVAL}
+C1 out 0 {CVAL}
+.noise v(out) Vtest dec 100 1 10G
+.print noise onoise_spectrum inoise_spectrum
+.end
+

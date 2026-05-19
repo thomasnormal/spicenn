@@ -1,0 +1,14 @@
+.DS_Store
+__pycache__/
+.pycache/
+.pytest_cache/
+.mplcache/
+*.pyc
+
+# Local datasets and bulky simulator artifacts.
+data/MNIST/raw/
+spice/generated/
+spice/results/*.dat
+spice/results/*_trace.csv
+spice/results/*trace.csv
+

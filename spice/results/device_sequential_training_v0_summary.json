@@ -1,0 +1,22 @@
+{
+  "simulator": "ngspice-46 : Circuit level simulation program",
+  "architecture": "device_level_repeated_sample_training_loop",
+  "status": "sequential_device_training_smoke",
+  "model_level": "ngspice built-in LEVEL=1 MOS models; not a foundry PDK.",
+  "signal_path": "A single SPICE transient repeats forward/error/backward/accumulate/apply guide phases. Hidden and readout weight capacitors persist inside the deck between samples; only temporary activation, error, delta, and gradient caps are reset.",
+  "no_behavioral_signal_math": true,
+  "uses_behavioral_tanh": false,
+  "uses_behavioral_multipliers": false,
+  "weight_caps_persist_inside_single_spice_transient": true,
+  "curve": "/Users/ahle/kode/stochastic-local-computer/spice/results/device_sequential_training_v0.csv",
+  "table_curve": "/Users/ahle/kode/stochastic-local-computer/results/tables/device_sequential_training_v0.csv",
+  "sequences": 2,
+  "samples_per_sequence": 2,
+  "rows": 4,
+  "all_error_readout_output_polarities_pass": true,
+  "all_hidden_update_polarities_pass": true,
+  "high_then_low_final_readout_signed": -0.0770311,
+  "low_then_high_final_readout_signed": 0.997014,
+  "wall_time_s": 1.506630416,
+  "interpretation": "This moves beyond isolated one-sample netlists: the same transistor-level loop trains on two sequential samples with persistent weight capacitors in one ngspice transient. It is still a tiny binary/regression smoke test, not a multi-class MNIST network."
+}

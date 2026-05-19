@@ -1,0 +1,21 @@
+{
+  "simulator": "ngspice-46 : Circuit level simulation program",
+  "netlist": "/Users/ahle/kode/stochastic-local-computer/spice/generated/spice_mnist_train_best80_e10_lr80k.cir",
+  "trace": "/Users/ahle/kode/stochastic-local-computer/spice/results/spice_mnist_train_best80_e10_lr80k_trace.csv",
+  "learning_curve": "/Users/ahle/kode/stochastic-local-computer/spice/results/spice_mnist_train_best80_e10_lr80k_learning_curve.csv",
+  "figure": "/Users/ahle/kode/stochastic-local-computer/spice/results/spice_mnist_train_best80_e10_lr80k_learning_curve.png",
+  "dataset": "MNIST train split, downsampled",
+  "image_size": 4,
+  "inputs": 16,
+  "classes": 10,
+  "train_samples": 80,
+  "epochs": 10,
+  "sample_period_s": 1e-06,
+  "lr": 80000.0,
+  "final": {
+    "epoch": 10.0,
+    "train_accuracy": 0.55,
+    "mse": 0.3061443392294271
+  },
+  "note": "MNIST sample cycling, forward outputs, class errors, and weight update currents were simulated inside ngspice."
+}

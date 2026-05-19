@@ -1,0 +1,29 @@
+* Behavioral charge-domain stochastic neuron.
+.param VDD=0.8
+.param VIN=0.1
+.param GSUM=100n
+.param CINT=10f
+.param TAU=3n
+.param VTH=0
+.param SIGMA=1m
+.param NT=100p
+.param TSTOP=30n
+.param TDECIDE=25n
+.param SEED=1
+
+Vdrive in 0 PULSE(0 {VIN} 0 20p 20p {TAU} {TSTOP})
+Bsyn 0 int I = {GSUM} * V(in)
+Cint int 0 {CINT} IC=0
+Vn n 0 DC 0 TRNOISE({SIGMA} {NT} 0 0)
+Bcmp out 0 V = {VDD} * (V(int)+V(n) > {VTH})
+
+.tran 20p {TSTOP} uic
+.meas tran vint FIND V(int) AT={TDECIDE}
+.meas tran y FIND V(out) AT={TDECIDE}
+
+.control
+setseed {SEED}
+run
+print vint y
+.endc
+.end

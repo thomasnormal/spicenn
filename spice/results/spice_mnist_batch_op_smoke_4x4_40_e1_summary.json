@@ -1,0 +1,19 @@
+{
+  "simulator": "ngspice-46 : Circuit level simulation program",
+  "dataset": "MNIST train/test split, downsampled",
+  "image_size": 4,
+  "inputs": 16,
+  "classes": 10,
+  "train_samples": 40,
+  "test_samples": 40,
+  "epochs": 1,
+  "batch_size": 20,
+  "lr": 0.2,
+  "wall_time_s": 0.8135854579999999,
+  "learning_curve": "/Users/ahle/kode/stochastic-local-computer/spice/results/spice_mnist_batch_op_smoke_4x4_40_e1_learning_curve.csv",
+  "figure": "/Users/ahle/kode/stochastic-local-computer/spice/results/spice_mnist_batch_op_smoke_4x4_40_e1_learning_curve.png",
+  "final_weights": "/Users/ahle/kode/stochastic-local-computer/spice/results/spice_mnist_batch_op_smoke_4x4_40_e1_final_weights.npz",
+  "heldout_test_accuracy": 0.175,
+  "best_heldout_accuracy": 0.175,
+  "note": "Batch operating-point all-SPICE training: ngspice computes batch forward outputs, errors, and programmable-state updates; Python carries measured state between batches."
+}

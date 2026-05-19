@@ -1,0 +1,3 @@
+chunk,samples_seen,test_accuracy,test_correct,note,checkpoint,wall_time_s
+0,0,0.9105,1821,initial,,0.002686999999999884
+53,212,0.905,1810,post_chunk_eval,/Users/ahle/kode/stochastic-local-computer/spice/results/fast_checkpoint_continuation_tiny_i10_b6_s2_c1_10k2k_e180_lr001_fastcont_lr001_0to212/tiny_i10_b6_s2_c1_10k2k_e180_lr001_fastcont_lr001_0to212_chunk0053_weights.npz,0.01464012499999967

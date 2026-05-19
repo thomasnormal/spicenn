@@ -1,0 +1,20 @@
+{
+  "simulator": "ngspice-46 : Circuit level simulation program",
+  "dataset": "MNIST train/test split, downsampled",
+  "image_size": 8,
+  "inputs": 64,
+  "classes": 10,
+  "train_samples": 100,
+  "test_samples": 100,
+  "epochs": 2,
+  "chunk_size": 25,
+  "lr": 80000.0,
+  "sample_period_s": 1e-06,
+  "wall_time_s": 329.469585,
+  "learning_curve": "/Users/ahle/kode/stochastic-local-computer/spice/results/spice_mnist_stream_stream_8x8_100_e2_lr80k_learning_curve.csv",
+  "figure": "/Users/ahle/kode/stochastic-local-computer/spice/results/spice_mnist_stream_stream_8x8_100_e2_lr80k_learning_curve.png",
+  "final_weights": "/Users/ahle/kode/stochastic-local-computer/spice/results/spice_mnist_stream_stream_8x8_100_e2_lr80k_final_weights.npz",
+  "heldout_test_accuracy": 0.42,
+  "best_heldout_accuracy": 0.42,
+  "note": "Chunked all-SPICE training: each chunk runs forward, class-error, and weight-update currents inside ngspice; Python only transfers final capacitor-state measurements to the next chunk."
+}

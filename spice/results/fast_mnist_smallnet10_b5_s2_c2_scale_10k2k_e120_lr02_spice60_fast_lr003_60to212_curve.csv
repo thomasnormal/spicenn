@@ -1,0 +1,7 @@
+chunk,samples_seen,test_accuracy,test_correct,note,checkpoint,wall_time_s
+15,60,0.916,1832,initial,,0.002879958999999932
+20,80,0.9165,1833,post_chunk_eval,,0.005934291999999619
+30,120,0.918,1836,post_chunk_eval,,0.009611833999999764
+40,160,0.9165,1833,post_chunk_eval,,0.013929749999999963
+50,200,0.9195,1839,post_chunk_eval,,0.01760116700000003
+53,212,0.9185,1837,post_chunk_eval,/Users/ahle/kode/stochastic-local-computer/spice/results/fast_checkpoint_continuation_smallnet10_b5_s2_c2_scale_10k2k_e120_lr02_spice60_fast_lr003_60to212/smallnet10_b5_s2_c2_scale_10k2k_e120_lr02_spice60_fast_lr003_60to212_chunk0053_weights.npz,0.02058150000000003

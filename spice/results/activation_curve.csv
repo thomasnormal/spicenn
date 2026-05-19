@@ -1,0 +1,10 @@
+signal,trials,high,p_high,source,simulator
+-0.006,8,0,0.0,spice,ngspice-46 : Circuit level simulation program
+-0.0045000000000000005,8,0,0.0,spice,ngspice-46 : Circuit level simulation program
+-0.003,8,0,0.0,spice,ngspice-46 : Circuit level simulation program
+-0.0014999999999999996,8,2,0.25,spice,ngspice-46 : Circuit level simulation program
+0.0,8,5,0.625,spice,ngspice-46 : Circuit level simulation program
+0.0014999999999999996,8,7,0.875,spice,ngspice-46 : Circuit level simulation program
+0.003000000000000001,8,8,1.0,spice,ngspice-46 : Circuit level simulation program
+0.0045000000000000005,8,8,1.0,spice,ngspice-46 : Circuit level simulation program
+0.006,8,8,1.0,spice,ngspice-46 : Circuit level simulation program

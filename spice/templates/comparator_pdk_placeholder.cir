@@ -1,0 +1,18 @@
+* Placeholder for a PDK-backed dynamic comparator.
+*
+* Add model includes, device symbols, and corner declarations here, for example:
+* .include /path/to/sky130/libs.tech/ngspice/sky130.lib.spice
+* .lib /path/to/gf180mcu_fd_pr/models/ngspice/sm141064.ngspice typical
+*
+* Characterization targets:
+* - input-referred noise
+* - input-referred offset
+* - energy per comparison
+* - delay vs input differential voltage
+* - metastability near threshold
+* - corner sensitivity when models support it
+*
+* The behavioral comparator sweep is the supported default until a local PDK
+* path and latch topology are selected.
+.end
+

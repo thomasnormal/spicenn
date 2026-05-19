@@ -1,0 +1,3 @@
+chunk,samples_seen,test_accuracy,test_correct,note,checkpoint,wall_time_s
+0,0,0.923,1846,initial,,0.011415041999999431
+256,1024,0.9165,1833,post_chunk_eval,,0.11221687499999966

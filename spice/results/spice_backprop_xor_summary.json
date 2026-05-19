@@ -1,0 +1,16 @@
+{
+  "simulator": "ngspice-46 : Circuit level simulation program",
+  "netlist": "/Users/ahle/kode/stochastic-local-computer/spice/generated/spice_backprop_xor.cir",
+  "trace": "/Users/ahle/kode/stochastic-local-computer/spice/results/spice_backprop_xor_trace.csv",
+  "learning_curve": "/Users/ahle/kode/stochastic-local-computer/spice/results/spice_backprop_xor_learning_curve.csv",
+  "figure": "/Users/ahle/kode/stochastic-local-computer/spice/results/spice_backprop_xor_learning_curve.png",
+  "epochs": 80,
+  "sample_period_s": 1e-06,
+  "lr": 200000.0,
+  "final": {
+    "epoch": 80.0,
+    "xor_accuracy": 1.0,
+    "mse": 0.018562963586224834
+  },
+  "note": "Forward pass, backward deltas, and weight update currents were simulated inside ngspice."
+}

@@ -1,0 +1,35 @@
+* Pulse-width charge neuron.
+* Encodes activation as output pulse duration above threshold.
+.param VDD=0.8
+.param VIN=0.1
+.param GSUM=100n
+.param CINT=10f
+.param RLEAK=5Meg
+.param VTH=4m
+.param TPULSE=10n
+.param TSTOP=60n
+.param SIGMA=0m
+.param NT=100p
+.param SEED=1
+
+Vdrive in 0 PULSE(0 {VIN} 0.5n 20p 20p {TPULSE} {TSTOP})
+Bsyn 0 int I = {GSUM} * V(in)
+Rleak int 0 {RLEAK}
+Cint int 0 {CINT} IC=0
+Vn n 0 DC 0 TRNOISE({SIGMA} {NT} 0 0)
+Bout out 0 V = {VDD} * (V(int)+V(n) > {VTH})
+
+.tran 20p {TSTOP} uic
+.meas tran trise WHEN V(out)={VDD/2} RISE=1
+.meas tran tfall WHEN V(out)={VDD/2} FALL=1
+.meas tran width PARAM='tfall-trise'
+.meas tran vmax MAX V(int)
+.meas tran ecap_peak PARAM='0.5*CINT*vmax*vmax'
+
+.control
+setseed {SEED}
+run
+print trise tfall width vmax ecap_peak
+.endc
+.end
+

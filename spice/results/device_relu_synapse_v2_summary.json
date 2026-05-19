@@ -1,0 +1,43 @@
+{
+  "simulator": "ngspice-46 : Circuit level simulation program",
+  "architecture": "device_level_conductance_synapse_relu_capacitor_primitive",
+  "status": "primitive_device_sweep",
+  "signal_path": "MOS pass-conductance synapses charge Cpre; NMOS source follower charges Cact as a ReLU-like activation.",
+  "no_behavioral_signal_math": true,
+  "uses_behavioral_tanh": false,
+  "uses_behavioral_multipliers": false,
+  "model_level": "ngspice built-in LEVEL=1 MOS models; not a foundry PDK.",
+  "weight_state": "Cw0/Cw1 capacitor IC voltages drive NMOS synapse gates.",
+  "activation_state": "Cact capacitor voltage after source-follower rectification.",
+  "gradient_state": "not included in this primitive sweep",
+  "curve": "/Users/ahle/kode/stochastic-local-computer/spice/results/device_relu_synapse_v2.csv",
+  "table_curve": "/Users/ahle/kode/stochastic-local-computer/results/tables/device_relu_synapse_v2.csv",
+  "rows": 68,
+  "relu_dead_zone_max_v": 2.18965e-252,
+  "relu_high_region_gain_v_per_v": 0.6334822,
+  "relu_transfer_monotone": true,
+  "synapse_pre_monotone_by_input": {
+    "0.2": true,
+    "0.35": true,
+    "0.45": true,
+    "0.55": true,
+    "0.7": true,
+    "0.9": true,
+    "1.1": true,
+    "1.2": true
+  },
+  "synapse_pre_monotone_by_weight": {
+    "0.0": true,
+    "0.05": true,
+    "0.1": true,
+    "0.2": true,
+    "0.4": true,
+    "0.8": true,
+    "1.0": true
+  },
+  "max_single_synapse_vpre": 0.58482,
+  "max_single_synapse_vact": 0.0905672,
+  "single_synapse_can_drive_relu": true,
+  "wall_time_s": 1.478520916,
+  "interpretation": "This validates the first device-level replacement target for the behavioral local feature cell: conductance-weighted input integration followed by a capacitor-held ReLU-like activation. It does not yet implement signed weights, backprop delta storage, or gradient-update devices."
+}

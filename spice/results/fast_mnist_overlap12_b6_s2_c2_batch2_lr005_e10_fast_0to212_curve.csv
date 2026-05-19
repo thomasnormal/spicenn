@@ -1,0 +1,13 @@
+chunk,samples_seen,test_accuracy,test_correct,note,checkpoint,wall_time_s
+0,0,0.911,911,initial,,0.004934541999999986
+5,20,0.903,903,post_chunk_eval,,0.008729542000000201
+10,40,0.908,908,post_chunk_eval,/Users/ahle/kode/stochastic-local-computer/spice/results/fast_checkpoint_continuation_overlap12_b6_s2_c2_batch2_lr005_e10_fast_0to212/overlap12_b6_s2_c2_batch2_lr005_e10_fast_0to212_chunk0010_weights.npz,0.01303604199999997
+15,60,0.905,905,post_chunk_eval,,0.01653266699999989
+20,80,0.905,905,post_chunk_eval,/Users/ahle/kode/stochastic-local-computer/spice/results/fast_checkpoint_continuation_overlap12_b6_s2_c2_batch2_lr005_e10_fast_0to212/overlap12_b6_s2_c2_batch2_lr005_e10_fast_0to212_chunk0020_weights.npz,0.020577917000000223
+25,100,0.907,907,post_chunk_eval,,0.024053250000000137
+30,120,0.9,900,post_chunk_eval,/Users/ahle/kode/stochastic-local-computer/spice/results/fast_checkpoint_continuation_overlap12_b6_s2_c2_batch2_lr005_e10_fast_0to212/overlap12_b6_s2_c2_batch2_lr005_e10_fast_0to212_chunk0030_weights.npz,0.028110917000000235
+35,140,0.905,905,post_chunk_eval,,0.03162033300000022
+40,160,0.902,902,post_chunk_eval,/Users/ahle/kode/stochastic-local-computer/spice/results/fast_checkpoint_continuation_overlap12_b6_s2_c2_batch2_lr005_e10_fast_0to212/overlap12_b6_s2_c2_batch2_lr005_e10_fast_0to212_chunk0040_weights.npz,0.03568725000000006
+45,180,0.91,910,post_chunk_eval,,0.03917329200000008
+50,200,0.91,910,post_chunk_eval,/Users/ahle/kode/stochastic-local-computer/spice/results/fast_checkpoint_continuation_overlap12_b6_s2_c2_batch2_lr005_e10_fast_0to212/overlap12_b6_s2_c2_batch2_lr005_e10_fast_0to212_chunk0050_weights.npz,0.04321475000000019
+53,212,0.904,904,post_chunk_eval,/Users/ahle/kode/stochastic-local-computer/spice/results/fast_checkpoint_continuation_overlap12_b6_s2_c2_batch2_lr005_e10_fast_0to212/overlap12_b6_s2_c2_batch2_lr005_e10_fast_0to212_chunk0053_weights.npz,0.04669445800000016

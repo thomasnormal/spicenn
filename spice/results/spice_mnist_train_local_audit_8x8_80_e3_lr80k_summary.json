@@ -1,0 +1,26 @@
+{
+  "simulator": "ngspice-46 : Circuit level simulation program",
+  "netlist": "/Users/ahle/kode/stochastic-local-computer/spice/generated/spice_mnist_train_local_audit_8x8_80_e3_lr80k.cir",
+  "trace": "/Users/ahle/kode/stochastic-local-computer/spice/results/spice_mnist_train_local_audit_8x8_80_e3_lr80k_trace.csv",
+  "learning_curve": "/Users/ahle/kode/stochastic-local-computer/spice/results/spice_mnist_train_local_audit_8x8_80_e3_lr80k_learning_curve.csv",
+  "figure": "/Users/ahle/kode/stochastic-local-computer/spice/results/spice_mnist_train_local_audit_8x8_80_e3_lr80k_learning_curve.png",
+  "final_weights": "/Users/ahle/kode/stochastic-local-computer/spice/results/spice_mnist_train_local_audit_8x8_80_e3_lr80k_final_weights.npz",
+  "eval_netlist": "/Users/ahle/kode/stochastic-local-computer/spice/generated/spice_mnist_train_local_audit_8x8_80_e3_lr80k_eval.cir",
+  "eval_trace": "/Users/ahle/kode/stochastic-local-computer/spice/results/spice_mnist_train_local_audit_8x8_80_e3_lr80k_eval_trace.csv",
+  "dataset": "MNIST train split, downsampled",
+  "image_size": 8,
+  "inputs": 64,
+  "classes": 10,
+  "train_samples": 80,
+  "test_samples": 80,
+  "epochs": 3,
+  "sample_period_s": 1e-06,
+  "lr": 80000.0,
+  "final": {
+    "epoch": 3.0,
+    "train_accuracy": 0.8625,
+    "mse": 0.21275586974056374
+  },
+  "heldout_test_accuracy": 0.75,
+  "note": "MNIST sample cycling, forward outputs, class errors, and weight update currents were simulated inside ngspice."
+}

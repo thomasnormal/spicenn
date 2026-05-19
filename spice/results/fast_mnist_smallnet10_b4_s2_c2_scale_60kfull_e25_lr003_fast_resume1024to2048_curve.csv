@@ -1,0 +1,6 @@
+chunk,samples_seen,test_accuracy,test_correct,note,checkpoint,wall_time_s
+256,1024,0.9477,9477,initial,,0.016653791999999612
+320,1280,0.9461,9461,post_chunk_eval,,0.0452634999999999
+384,1536,0.9455,9455,post_chunk_eval,/Users/ahle/kode/stochastic-local-computer/spice/results/fast_checkpoint_continuation_smallnet10_b4_s2_c2_scale_60kfull_e25_lr003_fast_resume1024to2048/smallnet10_b4_s2_c2_scale_60kfull_e25_lr003_fast_resume1024to2048_chunk0384_weights.npz,0.07436712499999931
+448,1792,0.9482,9482,post_chunk_eval,,0.10250870799999934
+512,2048,0.948,9480,post_chunk_eval,/Users/ahle/kode/stochastic-local-computer/spice/results/fast_checkpoint_continuation_smallnet10_b4_s2_c2_scale_60kfull_e25_lr003_fast_resume1024to2048/smallnet10_b4_s2_c2_scale_60kfull_e25_lr003_fast_resume1024to2048_chunk0512_weights.npz,0.13170324999999927

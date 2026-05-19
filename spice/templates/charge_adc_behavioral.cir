@@ -1,0 +1,36 @@
+* Behavioral charge-domain integrator plus noisy multi-level ADC.
+* Generated copies replace ADC_EXPR with a sum of noisy threshold decisions.
+.param VDD=0.8
+.param VIN=0.1
+.param GSUM=100n
+.param CINT=10f
+.param TAU=3n
+.param SIGMA=1m
+.param NT=100p
+.param TSTOP=30n
+.param TDECIDE=25n
+.param SEED=1
+
+Vdrive in 0 PULSE(0 {VIN} 0 20p 20p {TAU} {TSTOP})
+
+* Inject conductance-weighted input current into the integration capacitor.
+Bsyn 0 int I = {GSUM} * V(in)
+Cint int 0 {CINT} IC=0
+
+* Shared comparator/input-referred noise term for one sampled decision instant.
+Vn n 0 DC 0 TRNOISE({SIGMA} {NT} 0 0)
+
+* Normalized ADC output represented as 0..VDD.
+Bcode out 0 V = {VDD} * (ADC_EXPR)
+
+.tran 20p {TSTOP} uic
+.meas tran vint FIND V(int) AT={TDECIDE}
+.meas tran y FIND V(out) AT={TDECIDE}
+.meas tran ecap PARAM='0.5*CINT*vint*vint'
+
+.control
+setseed {SEED}
+run
+print vint y ecap
+.endc
+.end

@@ -1,0 +1,22 @@
+{
+  "simulator": "ngspice-46 : Circuit level simulation program",
+  "dataset": "MNIST, area-downsampled for tractable ngspice netlist size",
+  "train_samples": 10000,
+  "test_samples": 50,
+  "image_size": 14,
+  "features": 196,
+  "hidden": 64,
+  "classes": 10,
+  "model": "offline-trained one-hidden-layer tanh MLP, SPICE-evaluated forward inference",
+  "eval_mode": "per-sample",
+  "python_accuracy": 0.94,
+  "spice_accuracy": 0.94,
+  "python_spice_prediction_agreement": 1.0,
+  "netlist": "/Users/ahle/kode/stochastic-local-computer/spice/generated/spice_mnist_mlp14x14_h64_50_op_inference.cir",
+  "trace": "/Users/ahle/kode/stochastic-local-computer/spice/results/spice_mnist_mlp14x14_h64_50_op_inference_trace.csv",
+  "predictions": "/Users/ahle/kode/stochastic-local-computer/spice/results/spice_mnist_mlp14x14_h64_50_op_inference_predictions.csv",
+  "confusion": "/Users/ahle/kode/stochastic-local-computer/spice/results/spice_mnist_mlp14x14_h64_50_op_inference_confusion.csv",
+  "weights": "/Users/ahle/kode/stochastic-local-computer/spice/results/spice_mnist_mlp14x14_h64_50_op_inference_weights.npz",
+  "sample_period_s": 5e-08,
+  "note": "Forward inference is evaluated inside ngspice. Training is offline, and MNIST is downsampled to keep the transient netlist tractable."
+}

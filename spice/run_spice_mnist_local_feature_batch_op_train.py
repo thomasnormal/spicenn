@@ -1,0 +1,476 @@
+from __future__ import annotations
+
+import argparse
+import json
+import subprocess
+import time
+from pathlib import Path
+
+import matplotlib.pyplot as plt
+import numpy as np
+import pandas as pd
+
+from run_spice_mnist_batch_op_train import read_wrdata_row
+from run_spice_mnist_local_block_batch_op_train import add_local_activation, add_local_activation_deriv, block_indices
+from run_spice_mnist_train import load_mnist_sequence
+from run_spice_sweep import ROOT, detect_spice, run_tiny_test
+
+
+def feature_node(sample: int, block: int, channel: int, channels: int) -> str:
+    return f"h{sample}_0_{block * channels + channel}"
+
+
+def feature_expr(sample: int, block: int, channel: int, channels: int) -> str:
+    return f"V({feature_node(sample, block, channel, channels)})"
+
+
+def make_train_netlist(
+    x_batch,
+    y_batch,
+    w,
+    hb,
+    v,
+    ob,
+    blocks,
+    lr,
+    out_path,
+    linear_output,
+    softmax_output,
+    local_activation,
+    relu_clip,
+):
+    batch = len(y_batch)
+    n_blocks, channels, block_len = w.shape
+    n_classes = v.shape[0]
+    lines = [
+        "* Local feature batch operating-point SPICE training.",
+        "* Local learned features feed trainable class evidence; ngspice computes backprop/update.",
+        f".param LR={lr:.12g}",
+        f".param BS={batch}",
+        "",
+    ]
+    for s in range(batch):
+        for i, val in enumerate(x_batch[s]):
+            lines.append(f"Vx{s}_{i} x{s}_{i} 0 DC {float(val):.12g}")
+        if softmax_output:
+            target = np.zeros(n_classes)
+            target[int(y_batch[s])] = 1.0
+        else:
+            target = -np.ones(n_classes)
+            target[int(y_batch[s])] = 1.0
+        for k in range(n_classes):
+            lines.append(f"Vt{s}_{k} t{s}_{k} 0 DC {target[k]:.12g}")
+    lines.append("")
+    for b in range(n_blocks):
+        for c in range(channels):
+            for p in range(block_len):
+                lines.append(f"Vw{b}_{c}_{p} w{b}_{c}_{p} 0 DC {w[b, c, p]:.12g}")
+            lines.append(f"Vhb{b}_{c} hb{b}_{c} 0 DC {hb[b, c]:.12g}")
+    for k in range(n_classes):
+        for b in range(n_blocks):
+            for c in range(channels):
+                lines.append(f"Vv{k}_{b}_{c} v{k}_{b}_{c} 0 DC {v[k, b, c]:.12g}")
+        lines.append(f"Vob{k} ob{k} 0 DC {ob[k]:.12g}")
+    lines.append("")
+    for s in range(batch):
+        for b, idxs in enumerate(blocks):
+            for c in range(channels):
+                terms = [f"V(w{b}_{c}_{p})*V(x{s}_{idx})" for p, idx in enumerate(idxs)]
+                terms.append(f"V(hb{b}_{c})")
+                add_local_activation(lines, s, 0, b * channels + c, " + ".join(terms), local_activation, relu_clip)
+        for k in range(n_classes):
+            terms = [f"V(v{k}_{b}_{c})*{feature_expr(s, b, c, channels)}" for b in range(n_blocks) for c in range(channels)]
+            terms.append(f"V(ob{k})")
+            out_sum = " + ".join(terms)
+            if softmax_output:
+                lines.append(f"Bz{s}_{k} z{s}_{k} 0 V = {out_sum}")
+            elif linear_output:
+                lines.append(f"By{s}_{k} y{s}_{k} 0 V = {out_sum}")
+            else:
+                lines.append(f"By{s}_{k} y{s}_{k} 0 V = 2/(1+exp(-2*({out_sum})))-1")
+        if softmax_output:
+            denom = " + ".join(f"exp(V(z{s}_{k}))" for k in range(n_classes))
+            for k in range(n_classes):
+                lines.append(f"By{s}_{k} y{s}_{k} 0 V = exp(V(z{s}_{k}))/({denom})")
+                lines.append(f"Be{s}_{k} e{s}_{k} 0 V = V(t{s}_{k})-V(y{s}_{k})")
+                lines.append(f"Bd{s}_{k} d{s}_{k} 0 V = V(e{s}_{k})")
+        else:
+            for k in range(n_classes):
+                lines.append(f"Be{s}_{k} e{s}_{k} 0 V = V(t{s}_{k})-V(y{s}_{k})")
+                if linear_output:
+                    lines.append(f"Bd{s}_{k} d{s}_{k} 0 V = V(e{s}_{k})")
+                else:
+                    lines.append(f"Bd{s}_{k} d{s}_{k} 0 V = V(e{s}_{k})*(1-V(y{s}_{k})*V(y{s}_{k}))")
+        for b in range(n_blocks):
+            for c in range(channels):
+                fb = " + ".join(f"V(v{k}_{b}_{c})*V(d{s}_{k})" for k in range(n_classes))
+                deriv = add_local_activation_deriv(local_activation, relu_clip, s, 0, b * channels + c)
+                lines.append(f"Bdh{s}_{b}_{c} dh{s}_{b}_{c} 0 V = ({fb})*{deriv}")
+    lines.append("")
+    for b, idxs in enumerate(blocks):
+        for c in range(channels):
+            for p, idx in enumerate(idxs):
+                grad = " + ".join(f"V(dh{s}_{b}_{c})*V(x{s}_{idx})" for s in range(batch))
+                lines.append(f"Bnw{b}_{c}_{p} nw{b}_{c}_{p} 0 V = V(w{b}_{c}_{p}) + {{LR}}*(({grad})/{{BS}})")
+            grad_b = " + ".join(f"V(dh{s}_{b}_{c})" for s in range(batch))
+            lines.append(f"Bnhb{b}_{c} nhb{b}_{c} 0 V = V(hb{b}_{c}) + {{LR}}*(({grad_b})/{{BS}})")
+    for k in range(n_classes):
+        for b in range(n_blocks):
+            for c in range(channels):
+                grad = " + ".join(f"V(d{s}_{k})*{feature_expr(s, b, c, channels)}" for s in range(batch))
+                lines.append(f"Bnv{k}_{b}_{c} nv{k}_{b}_{c} 0 V = V(v{k}_{b}_{c}) + {{LR}}*(({grad})/{{BS}})")
+        grad_o = " + ".join(f"V(d{s}_{k})" for s in range(batch))
+        lines.append(f"Bnob{k} nob{k} 0 V = V(ob{k}) + {{LR}}*(({grad_o})/{{BS}})")
+    vectors = [f"V(nw{b}_{c}_{p})" for b in range(n_blocks) for c in range(channels) for p in range(block_len)]
+    vectors += [f"V(nhb{b}_{c})" for b in range(n_blocks) for c in range(channels)]
+    vectors += [f"V(nv{k}_{b}_{c})" for k in range(n_classes) for b in range(n_blocks) for c in range(channels)]
+    vectors += [f"V(nob{k})" for k in range(n_classes)]
+    lines += ["", ".control", "op", f"wrdata {out_path} " + " ".join(vectors), ".endc", ".end", ""]
+    return "\n".join(lines)
+
+
+def make_eval_netlist(x_batch, w, hb, v, ob, blocks, out_path, linear_output, softmax_output, local_activation, relu_clip):
+    batch = len(x_batch)
+    n_blocks, channels, _block_len = w.shape
+    n_classes = v.shape[0]
+    lines = ["* Local feature batch operating-point SPICE inference.", ""]
+    for s in range(batch):
+        for i, val in enumerate(x_batch[s]):
+            lines.append(f"Vx{s}_{i} x{s}_{i} 0 DC {float(val):.12g}")
+    lines.append("")
+    for b in range(n_blocks):
+        for c in range(channels):
+            for p in range(w.shape[2]):
+                lines.append(f"Vw{b}_{c}_{p} w{b}_{c}_{p} 0 DC {w[b, c, p]:.12g}")
+            lines.append(f"Vhb{b}_{c} hb{b}_{c} 0 DC {hb[b, c]:.12g}")
+    for k in range(n_classes):
+        for b in range(n_blocks):
+            for c in range(channels):
+                lines.append(f"Vv{k}_{b}_{c} v{k}_{b}_{c} 0 DC {v[k, b, c]:.12g}")
+        lines.append(f"Vob{k} ob{k} 0 DC {ob[k]:.12g}")
+    lines.append("")
+    for s in range(batch):
+        for b, idxs in enumerate(blocks):
+            for c in range(channels):
+                terms = [f"V(w{b}_{c}_{p})*V(x{s}_{idx})" for p, idx in enumerate(idxs)]
+                terms.append(f"V(hb{b}_{c})")
+                add_local_activation(lines, s, 0, b * channels + c, " + ".join(terms), local_activation, relu_clip)
+        for k in range(n_classes):
+            terms = [f"V(v{k}_{b}_{c})*{feature_expr(s, b, c, channels)}" for b in range(n_blocks) for c in range(channels)]
+            terms.append(f"V(ob{k})")
+            out_sum = " + ".join(terms)
+            if softmax_output:
+                lines.append(f"Bz{s}_{k} z{s}_{k} 0 V = {out_sum}")
+            elif linear_output:
+                lines.append(f"By{s}_{k} y{s}_{k} 0 V = {out_sum}")
+            else:
+                lines.append(f"By{s}_{k} y{s}_{k} 0 V = 2/(1+exp(-2*({out_sum})))-1")
+        if softmax_output:
+            denom = " + ".join(f"exp(V(z{s}_{k}))" for k in range(n_classes))
+            for k in range(n_classes):
+                lines.append(f"By{s}_{k} y{s}_{k} 0 V = exp(V(z{s}_{k}))/({denom})")
+    vectors = [f"V(y{s}_{k})" for s in range(batch) for k in range(n_classes)]
+    lines += ["", ".control", "op", f"wrdata {out_path} " + " ".join(vectors), ".endc", ".end", ""]
+    return "\n".join(lines)
+
+
+def run_train_batch(
+    spice_bin,
+    netlist_path,
+    data_path,
+    x,
+    y,
+    w,
+    hb,
+    v,
+    ob,
+    blocks,
+    lr,
+    timeout,
+    linear_output,
+    softmax_output,
+    local_activation,
+    relu_clip,
+):
+    netlist_path.write_text(
+        make_train_netlist(
+            x,
+            y,
+            w,
+            hb,
+            v,
+            ob,
+            blocks,
+            lr,
+            data_path,
+            linear_output,
+            softmax_output,
+            local_activation,
+            relu_clip,
+        )
+    )
+    proc = subprocess.run([spice_bin, "-b", str(netlist_path)], text=True, capture_output=True, timeout=timeout)
+    if proc.returncode != 0:
+        raise RuntimeError(proc.stderr[-3000:] or proc.stdout[-3000:])
+    n_blocks, channels, block_len = w.shape
+    n_classes = v.shape[0]
+    n = n_blocks * channels * block_len + n_blocks * channels + n_classes * n_blocks * channels + n_classes
+    vals = read_wrdata_row(data_path, n)
+    offset = 0
+    nw = vals[offset : offset + n_blocks * channels * block_len].reshape(w.shape)
+    offset += n_blocks * channels * block_len
+    nhb = vals[offset : offset + n_blocks * channels].reshape(hb.shape)
+    offset += n_blocks * channels
+    nv = vals[offset : offset + n_classes * n_blocks * channels].reshape(v.shape)
+    offset += n_classes * n_blocks * channels
+    nob = vals[offset : offset + n_classes]
+    return nw, nhb, nv, nob
+
+
+def run_eval(
+    spice_bin,
+    netlist_path,
+    data_path,
+    x_eval,
+    y_eval,
+    w,
+    hb,
+    v,
+    ob,
+    blocks,
+    batch_size,
+    timeout,
+    linear_output,
+    softmax_output,
+    local_activation,
+    relu_clip,
+):
+    correct = 0
+    for start in range(0, len(y_eval), batch_size):
+        x = x_eval[start : start + batch_size]
+        y = y_eval[start : start + batch_size]
+        netlist_path.write_text(make_eval_netlist(x, w, hb, v, ob, blocks, data_path, linear_output, softmax_output, local_activation, relu_clip))
+        proc = subprocess.run([spice_bin, "-b", str(netlist_path)], text=True, capture_output=True, timeout=timeout)
+        if proc.returncode != 0:
+            raise RuntimeError(proc.stderr[-3000:] or proc.stdout[-3000:])
+        vals = read_wrdata_row(data_path, len(y) * v.shape[0]).reshape(len(y), v.shape[0])
+        correct += int((np.argmax(vals, axis=1) == y).sum())
+    return correct / max(len(y_eval), 1)
+
+
+def plot_curve(df, out):
+    out.parent.mkdir(parents=True, exist_ok=True)
+    plt.figure(figsize=(6, 4))
+    plt.plot(df["epoch"], df["heldout_accuracy"], marker="o")
+    plt.xlabel("epoch")
+    plt.ylabel("held-out accuracy")
+    plt.ylim(-0.05, 1.05)
+    plt.tight_layout()
+    plt.savefig(out, dpi=160)
+    plt.close()
+
+
+def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--train-samples", type=int, default=200)
+    ap.add_argument("--test-samples", type=int, default=200)
+    ap.add_argument("--image-size", type=int, default=8)
+    ap.add_argument("--block-size", type=int, default=4)
+    ap.add_argument("--stride", type=int, default=None)
+    ap.add_argument("--channels", type=int, default=4)
+    ap.add_argument("--epochs", type=int, default=20)
+    ap.add_argument("--epoch-train-samples", type=int, default=0)
+    ap.add_argument("--epoch-train-offset", type=int, default=0)
+    ap.add_argument("--batch-size", type=int, default=50)
+    ap.add_argument("--lr", type=float, default=0.2)
+    ap.add_argument("--linear-output", action="store_true")
+    ap.add_argument("--softmax-output", action="store_true")
+    ap.add_argument(
+        "--local-activation",
+        choices=["tanh", "relu", "clipped-relu", "diff-clipped-relu", "differential-clipped-relu"],
+        default="tanh",
+    )
+    ap.add_argument("--relu-clip", type=float, default=1.0)
+    ap.add_argument("--init-weights", default="")
+    ap.add_argument(
+        "--import-extra-readout-scale",
+        type=float,
+        default=0.0,
+        help="Stddev for class readout weights into channels above 10 when importing a class-evidence checkpoint.",
+    )
+    ap.add_argument("--eval-only", action="store_true")
+    ap.add_argument("--seed", type=int, default=0)
+    ap.add_argument("--timeout", type=float, default=90)
+    ap.add_argument("--tag", default="local_feature")
+    args = ap.parse_args()
+    if args.linear_output and args.softmax_output:
+        raise ValueError("--linear-output and --softmax-output are mutually exclusive")
+
+    stride = args.block_size if args.stride is None else args.stride
+    blocks = block_indices(args.image_size, args.block_size, stride)
+    x_train, y_train, x_test, y_test = load_mnist_sequence(args.train_samples, args.test_samples, args.image_size, args.seed)
+    spice_bin, version = detect_spice(None)
+    generated = ROOT / "spice/generated"
+    generated.mkdir(parents=True, exist_ok=True)
+    run_tiny_test(spice_bin, generated)
+    safe_tag = "".join(ch if ch.isalnum() or ch in {"_", "-"} else "_" for ch in args.tag)
+    stem = f"spice_mnist_local_feature_{safe_tag}"
+    netlist_path = generated / f"{stem}_step.cir"
+    eval_netlist = generated / f"{stem}_eval.cir"
+    data_path = ROOT / f"spice/results/{stem}_step.dat"
+    rng = np.random.default_rng(args.seed)
+    w = rng.normal(0.0, 0.05, size=(len(blocks), args.channels, args.block_size * args.block_size))
+    hb = np.zeros((len(blocks), args.channels))
+    v = rng.normal(0.0, 0.05, size=(10, len(blocks), args.channels))
+    ob = np.zeros(10)
+    if args.init_weights:
+        init = np.load(args.init_weights)
+        expected_shapes = (
+            (len(blocks), args.channels, args.block_size * args.block_size),
+            (len(blocks), args.channels),
+            (10, len(blocks), args.channels),
+            (10,),
+        )
+        if {"local_weights", "local_bias", "readout", "output_bias"}.issubset(init.files):
+            w = init["local_weights"]
+            hb = init["local_bias"]
+            v = init["readout"]
+            ob = init["output_bias"]
+            actual_shapes = (w.shape, hb.shape, v.shape, ob.shape)
+            if actual_shapes != expected_shapes:
+                raise ValueError(f"initial weight shapes {actual_shapes} do not match expected {expected_shapes}")
+        elif {"weights", "local_bias", "gains", "output_bias"}.issubset(init.files):
+            class_weights = init["weights"]
+            class_bias = init["local_bias"]
+            class_gains = init["gains"]
+            class_ob = init["output_bias"]
+            expected_class_shapes = (
+                (10, len(blocks), args.block_size * args.block_size),
+                (10, len(blocks)),
+                (10, len(blocks)),
+                (10,),
+            )
+            actual_class_shapes = (class_weights.shape, class_bias.shape, class_gains.shape, class_ob.shape)
+            if actual_class_shapes != expected_class_shapes:
+                raise ValueError(f"class-evidence checkpoint shapes {actual_class_shapes} do not match expected {expected_class_shapes}")
+            if args.channels < 10:
+                raise ValueError("importing a class-evidence checkpoint needs --channels >= 10")
+            w[:, :10, :] = np.transpose(class_weights, (1, 0, 2))
+            hb[:, :10] = class_bias.T
+            v[:, :, :] = 0.0
+            for k in range(10):
+                v[k, :, k] = class_gains[k]
+            if args.channels > 10 and args.import_extra_readout_scale > 0.0:
+                v[:, :, 10:] = rng.normal(
+                    0.0,
+                    args.import_extra_readout_scale,
+                    size=(10, len(blocks), args.channels - 10),
+                )
+            ob = class_ob
+        else:
+            raise ValueError(f"unrecognized checkpoint keys: {init.files}")
+    rows = []
+    best_acc = -1.0
+    best_state = None
+    t0 = time.perf_counter()
+    if args.eval_only or args.epochs == 0:
+        epoch_start = time.perf_counter()
+        heldout = run_eval(
+            spice_bin, eval_netlist, data_path, x_test, y_test,
+            w, hb, v, ob, blocks, args.batch_size, args.timeout,
+            args.linear_output,
+            args.softmax_output,
+            args.local_activation,
+            args.relu_clip,
+        )
+        rows.append({"epoch": 0, "heldout_accuracy": heldout, "epoch_wall_time_s": time.perf_counter() - epoch_start})
+        best_acc = heldout
+        best_state = (w.copy(), hb.copy(), v.copy(), ob.copy())
+        print(json.dumps(rows[-1]), flush=True)
+    else:
+        for epoch in range(args.epochs):
+            order = np.arange(len(y_train))
+            rng.shuffle(order)
+            if args.epoch_train_samples > 0:
+                start = min(max(args.epoch_train_offset, 0), len(order))
+                stop = min(start + args.epoch_train_samples, len(order))
+                order = order[start:stop]
+            epoch_start = time.perf_counter()
+            for start in range(0, len(order), args.batch_size):
+                idx = order[start : start + args.batch_size]
+                w, hb, v, ob = run_train_batch(
+                    spice_bin, netlist_path, data_path, x_train[idx], y_train[idx],
+                    w, hb, v, ob, blocks, args.lr, args.timeout,
+                    args.linear_output,
+                    args.softmax_output,
+                    args.local_activation,
+                    args.relu_clip,
+                )
+            heldout = run_eval(
+                spice_bin, eval_netlist, data_path, x_test, y_test,
+                w, hb, v, ob, blocks, args.batch_size, args.timeout,
+                args.linear_output,
+                args.softmax_output,
+                args.local_activation,
+                args.relu_clip,
+            )
+            row = {"epoch": epoch + 1, "heldout_accuracy": heldout, "epoch_wall_time_s": time.perf_counter() - epoch_start}
+            rows.append(row)
+            if heldout > best_acc:
+                best_acc = heldout
+                best_state = (w.copy(), hb.copy(), v.copy(), ob.copy())
+            print(json.dumps(row), flush=True)
+    curve = pd.DataFrame(rows)
+    curve_path = ROOT / f"spice/results/{stem}_learning_curve.csv"
+    curve.to_csv(curve_path, index=False)
+    fig = ROOT / f"spice/results/{stem}_learning_curve.png"
+    plot_curve(curve, fig)
+    weights_path = ROOT / f"spice/results/{stem}_final_weights.npz"
+    best_weights_path = ROOT / f"spice/results/{stem}_best_weights.npz"
+    np.savez_compressed(weights_path, local_weights=w, local_bias=hb, readout=v, output_bias=ob)
+    if best_state is not None:
+        bw, bhb, bv, bob = best_state
+        np.savez_compressed(best_weights_path, local_weights=bw, local_bias=bhb, readout=bv, output_bias=bob)
+    summary = {
+        "simulator": version,
+        "dataset": "MNIST train/test split, downsampled",
+        "architecture": "local_feature_readout",
+        "local_activation": args.local_activation,
+        "relu_clip": args.relu_clip,
+        "output_mode": "softmax_class_evidence" if args.softmax_output else ("linear_class_evidence" if args.linear_output else "tanh_class_evidence"),
+        "image_size": args.image_size,
+        "block_size": args.block_size,
+        "stride": stride,
+        "blocks": len(blocks),
+        "channels": args.channels,
+        "local": True,
+        "inputs": int(x_train.shape[1]),
+        "classes": 10,
+        "train_samples": args.train_samples,
+        "epoch_train_samples": int(args.epoch_train_samples) if args.epoch_train_samples > 0 else int(args.train_samples),
+        "epoch_train_offset": int(args.epoch_train_offset),
+        "test_samples": args.test_samples,
+        "epochs": args.epochs,
+        "eval_only": bool(args.eval_only),
+        "batch_size": args.batch_size,
+        "lr": args.lr,
+        "init_weights": args.init_weights,
+        "import_extra_readout_scale": args.import_extra_readout_scale,
+        "linear_output": bool(args.linear_output),
+        "softmax_output": bool(args.softmax_output),
+        "wall_time_s": time.perf_counter() - t0,
+        "learning_curve": str(curve_path),
+        "figure": str(fig),
+        "final_weights": str(weights_path),
+        "best_weights": str(best_weights_path) if best_state is not None else None,
+        "heldout_test_accuracy": float(curve.iloc[-1]["heldout_accuracy"]),
+        "best_heldout_accuracy": float(curve["heldout_accuracy"].max()),
+        "note": "Local feature/readout batch-op all-SPICE training with SPICE-computed backprop updates.",
+    }
+    out = ROOT / f"spice/results/{stem}_summary.json"
+    out.write_text(json.dumps(summary, indent=2) + "\n")
+    print(json.dumps(summary, indent=2))
+
+
+if __name__ == "__main__":
+    main()

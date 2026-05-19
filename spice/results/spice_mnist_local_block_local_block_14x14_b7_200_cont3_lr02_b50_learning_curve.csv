@@ -1,0 +1,4 @@
+epoch,heldout_accuracy,heldout_accuracy_std,epoch_wall_time_s
+1,0.69,0.0,100.81199808299999
+2,0.7,0.0,99.52542000000001
+3,0.71,0.0,102.63397904099998

@@ -342,6 +342,34 @@ def test_direct_flow_readout_bounded_write_uses_local_selected_rails() -> None:
     assert "Mvbo0p_ch_b whigh bwd vbo0p_ch_b" in updates
 
 
+def test_direct_flow_readout_can_bound_discharge_only() -> None:
+    updates = direct_flow.readout_flow_updates(
+        readout_update_width_u=0.02,
+        output_bias_update_width_u=0.0003,
+        flow_pre_store="shared_node",
+        readout_flow_polarity="normal",
+        readout_flow_write_mode="bounded_discharge",
+    )
+
+    assert "Mvw00n_flow_d vw00n_flow_a dp0 wlow 0 NSENSE" in updates
+    assert "Mvw00p_flow_d vw00p_flow_a dn0 wlow 0 NSENSE" in updates
+    assert "_ch_b whigh" not in updates
+
+
+def test_direct_flow_readout_can_bound_charge_only() -> None:
+    updates = direct_flow.readout_flow_updates(
+        readout_update_width_u=0.02,
+        output_bias_update_width_u=0.0003,
+        flow_pre_store="shared_node",
+        readout_flow_polarity="normal",
+        readout_flow_write_mode="bounded_charge_only",
+    )
+
+    assert "Mvw00p_ch_b whigh bwd vw00p_ch_b" in updates
+    assert "Mvw00n_ch_b whigh bwd vw00n_ch_b" in updates
+    assert "_flow_d" not in updates
+
+
 def test_direct_flow_readout_center_pull_is_a_transistor_state_path() -> None:
     updates = direct_flow.readout_flow_updates(
         readout_update_width_u=0.0,

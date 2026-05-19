@@ -1287,13 +1287,38 @@ selected-branch write width changes the learned effective separator
 substantially, even though the input and hidden features remain linearly
 separable.
 
-The first scale probes are negative.  Reusing the best 16-sample bounded-write
-setting on 32 fixed8 examples reaches only 50\%, and a quick 64-example
-three-epoch probe reaches 53.125\%.  Both runs still report linearly separable
-input and hidden feature matrices.  So bounded selected-branch rails are a real
-16-sample improvement, but not yet a general linear-readout solution; the
-remaining problem is a larger-sample interaction between target-mistake gate
-selectivity, output-bias motion, and the state-dependent effective mobility.
+The first scale probes were negative.  Reusing the best 16-sample
+bounded-charge-discharge setting on 32 fixed8 examples reached only 50\%, and a
+quick 64-example three-epoch probe reached 53.125\%.  Both runs still reported
+linearly separable input and hidden feature matrices, so this was not a feature
+representation failure.
+
+The follow-up split the selected-branch write primitive into charge only,
+discharge only, and the combined charge/discharge mode.  This changed the
+diagnosis.  With
+output-bias writes disabled and the same \(0.70/0.24\ \mathrm{V}\) bounded rails,
+charge/discharge reached 71.875\% on 64 fixed8 examples, charge only reached
+65.625\%, but discharge only reached 90.625\%.  The corresponding 32-example
+controls show the same ordering: charge only reached 75\%, while discharge only
+reached 90.625\%.  Adding even a very small output-bias write collapsed the
+64-example charge/discharge run back to 50\%.
+
+This is direct evidence that the linear-readout trouble is tied to the
+hardware state map.  The sign of the write can be locally sensible, but the
+effective update is still
+\[
+  \dot w_{\mathrm{eff}}
+  =
+  \eta\,\delta a\,G'_{\mathrm{eff}}(\theta)s_{\mathrm{MOS}}(\theta),
+\]
+and the one-sided discharge primitive appears to keep that product better
+conditioned than the charge-only or symmetric charge+discharge primitive in the
+current operating range.  A short width sweep reinforces that interpretation:
+on the same 64-example task, bounded discharge with a smaller
+\(0.00015\,\mu\mathrm{m}\) selected-stack width reached 93.75\%, and
+\(0.00035\,\mu\mathrm{m}\) reached 95.3125\%.  We should therefore treat the
+linear-readout bug as a state-dependent mobility problem first, and only then
+scale the representation or depth.
 
 \subsection{Local-Feature Phase-Training Path}
 

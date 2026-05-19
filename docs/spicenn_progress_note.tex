@@ -1327,11 +1327,12 @@ rails, \(0.00035\,\mu\mathrm{m}\) reached 83.59375\%, while the weaker
 \(0.0005\,\mu\mathrm{m}\) setting again reached only 83.59375\%.  A stronger
 two-epoch \(0.0008\,\mu\mathrm{m}\) setting improved the same 128-example
 subset to 85.9375\%, while \(0.0012\,\mu\mathrm{m}\) slipped to 85.15625\% with
-a worse final margin.  So \(0.0008\,\mu\mathrm{m}\) is currently the best
-128-example readout-only point, but it still does not clear 90\%.  The initial
-and final hidden feature diagnostics still find a linear separator, so the
-remaining readout issue is still a hardware update-field problem rather than a
-reason to immediately complicate preprocessing.
+a worse final margin.  Repeating \(0.0008\,\mu\mathrm{m}\) for four epochs also
+regressed to 83.59375\%.  So \(0.0008\,\mu\mathrm{m}\) for two epochs remains
+the best 128-example readout-only point, but it still does not clear 90\%.
+The initial and final hidden feature diagnostics still find a linear separator,
+so the remaining readout issue is still a hardware update-field problem rather
+than a reason to immediately complicate preprocessing.
 
 The generator now mirrors this control on the lower-layer synapses through
 \code{--hidden-flow-write-mode}.  When hidden direct flow is enabled, hidden
@@ -1350,7 +1351,12 @@ Scaling the same bounded-hidden-write configuration to 64 examples reached
 92.1875\% with about \(26.7\ \mathrm{mV}\) of hidden signed-weight motion.  That
 64-example run does not beat the best readout-only accuracy, but it confirms
 that the newly bounded lower-layer write path is usable at the next scale and
-does not collapse the trained readout.
+does not collapse the trained readout.  Scaling that exact all-layer
+configuration to 128 examples failed, however: the run reached only 70.3125\%
+while moving hidden signed-weight capacitors by about \(55.5\ \mathrm{mV}\).
+The target-mistake gate match fell to 73.8\%, so the larger all-layer failure
+looks like a hidden-delta/event-quality problem coupled to mobility, not a lack
+of hidden-weight motion.
 
 \subsection{Local-Feature Phase-Training Path}
 

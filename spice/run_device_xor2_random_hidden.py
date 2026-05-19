@@ -83,6 +83,8 @@ SYNAPSE_DESIGNS: dict[str, SynapseDesign] = {
 
 HIDDEN_ERROR_RULES = ["backprop", "dfa"]
 HIDDEN_DELTA_RELU_GATES = ["act_nrel", "act_nsense", "none"]
+HIDDEN_DELTA_WEIGHT_DEVICES = ["nmos", "nrel", "nsense"]
+HIDDEN_DELTA_OUTPUT_MODES = ["raw", "senseamp"]
 HIDDEN_GRADIENT_ACT_GATES = ["act_nrel", "act_nsense", "none"]
 HIDDEN_APPLY_MODES = ["direct", "grad_senseamp"]
 LEARNING_MODES = ["accumulate_apply", "flow"]
@@ -686,6 +688,7 @@ def feedback_caps(feedback: dict[str, float], cap_f: float) -> str:
 def temporary_caps(
     gradient_cap_f: float,
     hidden_gradient_cap_f: float,
+    hidden_delta_cap_f: float,
     lead_cap_f: float,
     include_gradient_caps: bool,
 ) -> str:
@@ -694,8 +697,8 @@ def temporary_caps(
         lines += [
             f"Cpre{h} pre{h} 0 10f IC=0",
             f"Cact{h} act{h} 0 20f IC=0",
-            f"Chdp{h} hdp{h} 0 12f IC=0",
-            f"Chdn{h} hdn{h} 0 12f IC=0",
+            f"Chdp{h} hdp{h} 0 {hidden_delta_cap_f:.12g}f IC=0",
+            f"Chdn{h} hdn{h} 0 {hidden_delta_cap_f:.12g}f IC=0",
             f"Rpre{h} pre{h} 0 1G",
             f"Ract{h} act{h} 0 1G",
             f"Rhdp{h} hdp{h} 0 1G",
@@ -1174,6 +1177,7 @@ def error_cells(error_rule: str, latch_boost_width_u: float) -> str:
 def hidden_delta(
     hidden_error_rule: str,
     hidden_delta_relu_gate: str,
+    hidden_delta_weight_device: str,
     design: SynapseDesign,
     internal_cap_f: float,
     internal_leak_ohm: float,
@@ -1182,6 +1186,13 @@ def hidden_delta(
         raise ValueError(f"unknown hidden error rule: {hidden_error_rule}")
     if hidden_delta_relu_gate not in HIDDEN_DELTA_RELU_GATES:
         raise ValueError(f"unknown hidden delta ReLU gate: {hidden_delta_relu_gate}")
+    if hidden_delta_weight_device not in HIDDEN_DELTA_WEIGHT_DEVICES:
+        raise ValueError(f"unknown hidden delta weight device: {hidden_delta_weight_device}")
+    weight_model = {
+        "nmos": "NMOS",
+        "nrel": "NREL",
+        "nsense": "NSENSE",
+    }[hidden_delta_weight_device]
     lines: list[str] = []
     for h in range(HIDDEN):
         if hidden_error_rule == "backprop":
@@ -1208,7 +1219,7 @@ def hidden_delta(
                 n1 = f"{stem}_1"
                 lines += [
                     f"M{stem}_d vdd {delta_node} {n0} 0 NSENSE W={w:.12g}u L=180n",
-                    f"M{stem}_w {n0} {weight_node} {n1} 0 NMOS W={w:.12g}u L=180n",
+                    f"M{stem}_w {n0} {weight_node} {n1} 0 {weight_model} W={w:.12g}u L=180n",
                 ]
                 internal_nodes = [n0, n1]
                 if hidden_delta_relu_gate == "none":
@@ -1225,6 +1236,36 @@ def hidden_delta(
                         lines.append(f"Rhdpar_{node} {node} 0 {internal_leak_ohm:.12g}")
                     if internal_cap_f > 0:
                         lines.append(f"Chdpar_{node} {node} 0 {internal_cap_f:.12g}f IC=0")
+    return "\n".join(lines)
+
+
+def hidden_delta_senseamps(mode: str, width_u: float, cap_f: float) -> str:
+    if mode not in HIDDEN_DELTA_OUTPUT_MODES:
+        raise ValueError(f"unknown hidden delta output mode: {mode}")
+    if mode == "raw":
+        return "* Hidden delta output mode: raw hdp/hdn nodes directly gate hidden writes."
+    if width_u <= 0 or cap_f <= 0:
+        raise ValueError("hidden delta sense width and capacitance must be positive.")
+    keeper_width_u = max(1.0, width_u / 64.0)
+    lines: list[str] = [
+        "* Hidden delta output mode: local sense amps amplify hdp/hdn before the hidden write path."
+    ]
+    for h in range(HIDDEN):
+        lines += [
+            f"Chdpg{h} hdpg{h} 0 {cap_f:.12g}f IC=0",
+            f"Chdng{h} hdng{h} 0 {cap_f:.12g}f IC=0",
+            f"Rhdpg{h} hdpg{h} 0 1G",
+            f"Rhdng{h} hdng{h} 0 1G",
+            f"Mreset_hdpg{h}_high vdd rste hdpg{h} 0 NSENSE W=32u L=180n",
+            f"Mreset_hdng{h}_high vdd rste hdng{h} 0 NSENSE W=32u L=180n",
+            f"Mhdpg{h}_dis_s hdpg{h} hdn{h} hdpg{h}_dn 0 NSENSE W={width_u:.12g}u L=180n",
+            f"Mhdpg{h}_dis_e hdpg{h}_dn bwd 0 0 NSENSE W={width_u:.12g}u L=180n",
+            f"Mhdng{h}_dis_s hdng{h} hdp{h} hdng{h}_dn 0 NSENSE W={width_u:.12g}u L=180n",
+            f"Mhdng{h}_dis_e hdng{h}_dn bwd 0 0 NSENSE W={width_u:.12g}u L=180n",
+            f"Mhdpg{h}_keep hdpg{h} hdng{h} vdd vdd PMOS W={keeper_width_u:.12g}u L=180n",
+            f"Mhdng{h}_keep hdng{h} hdpg{h} vdd vdd PMOS W={keeper_width_u:.12g}u L=180n",
+        ]
+        lines += node_parasitics(f"hdpg{h}_dn", f"hdng{h}_dn")
     return "\n".join(lines)
 
 
@@ -1407,27 +1448,51 @@ def hidden_gradients_and_updates(
     return "\n".join(lines)
 
 
-def hidden_flow_updates(update_width_u: float, flow_pre_store: str) -> str:
+def hidden_flow_updates(update_width_u: float, flow_pre_store: str, hidden_delta_output_mode: str) -> str:
     if flow_pre_store not in FLOW_PRE_STORES:
         raise ValueError(f"unknown flow pre-store mode: {flow_pre_store}")
+    if hidden_delta_output_mode not in HIDDEN_DELTA_OUTPUT_MODES:
+        raise ValueError(f"unknown hidden delta output mode: {hidden_delta_output_mode}")
     lines: list[str] = []
     for h in range(HIDDEN):
+        pos_delta_gate = f"hdpg{h}" if hidden_delta_output_mode == "senseamp" else f"hdp{h}"
+        neg_delta_gate = f"hdng{h}" if hidden_delta_output_mode == "senseamp" else f"hdn{h}"
         for rail in HIDDEN_RAILS:
             pre_gate = f"fphi{h}_{rail}" if flow_pre_store != "shared_node" else rail
-            lines += [
-                f"Mwh{h}_{rail}n_flow_b wh{h}_{rail}n bwd wh{h}_{rail}n_flow_b 0 NREL W={update_width_u:.12g}u L=180n",
-                f"Mwh{h}_{rail}n_flow_x wh{h}_{rail}n_flow_b {pre_gate} wh{h}_{rail}n_flow_x 0 NMOS W={update_width_u:.12g}u L=180n",
-                f"Mwh{h}_{rail}n_flow_d wh{h}_{rail}n_flow_x hdp{h} 0 0 NSENSE W={update_width_u:.12g}u L=180n",
-                f"Mwh{h}_{rail}p_flow_b wh{h}_{rail}p bwd wh{h}_{rail}p_flow_b 0 NREL W={update_width_u:.12g}u L=180n",
-                f"Mwh{h}_{rail}p_flow_x wh{h}_{rail}p_flow_b {pre_gate} wh{h}_{rail}p_flow_x 0 NMOS W={update_width_u:.12g}u L=180n",
-                f"Mwh{h}_{rail}p_flow_d wh{h}_{rail}p_flow_x hdn{h} 0 0 NSENSE W={update_width_u:.12g}u L=180n",
-            ]
-            lines += node_parasitics(
-                f"wh{h}_{rail}n_flow_b",
-                f"wh{h}_{rail}n_flow_x",
-                f"wh{h}_{rail}p_flow_b",
-                f"wh{h}_{rail}p_flow_x",
-            )
+            if hidden_delta_output_mode == "raw":
+                lines += [
+                    f"Mwh{h}_{rail}n_flow_b wh{h}_{rail}n bwd wh{h}_{rail}n_flow_b 0 NREL W={update_width_u:.12g}u L=180n",
+                    f"Mwh{h}_{rail}n_flow_x wh{h}_{rail}n_flow_b {pre_gate} wh{h}_{rail}n_flow_x 0 NMOS W={update_width_u:.12g}u L=180n",
+                    f"Mwh{h}_{rail}n_flow_d wh{h}_{rail}n_flow_x {pos_delta_gate} 0 0 NSENSE W={update_width_u:.12g}u L=180n",
+                    f"Mwh{h}_{rail}p_flow_b wh{h}_{rail}p bwd wh{h}_{rail}p_flow_b 0 NREL W={update_width_u:.12g}u L=180n",
+                    f"Mwh{h}_{rail}p_flow_x wh{h}_{rail}p_flow_b {pre_gate} wh{h}_{rail}p_flow_x 0 NMOS W={update_width_u:.12g}u L=180n",
+                    f"Mwh{h}_{rail}p_flow_d wh{h}_{rail}p_flow_x {neg_delta_gate} 0 0 NSENSE W={update_width_u:.12g}u L=180n",
+                ]
+                lines += node_parasitics(
+                    f"wh{h}_{rail}n_flow_b",
+                    f"wh{h}_{rail}n_flow_x",
+                    f"wh{h}_{rail}p_flow_b",
+                    f"wh{h}_{rail}p_flow_x",
+                )
+            else:
+                lines += [
+                    f"Mwh{h}_{rail}n_flow_b wh{h}_{rail}n bwd wh{h}_{rail}n_flow_b 0 NREL W={update_width_u:.12g}u L=180n",
+                    f"Mwh{h}_{rail}n_flow_x wh{h}_{rail}n_flow_b {pre_gate} wh{h}_{rail}n_flow_x 0 NMOS W={update_width_u:.12g}u L=180n",
+                    f"Mwh{h}_{rail}n_flow_d wh{h}_{rail}n_flow_x {pos_delta_gate} wh{h}_{rail}n_flow_d 0 NSENSE W={update_width_u:.12g}u L=180n",
+                    f"Mwh{h}_{rail}n_flow_a wh{h}_{rail}n_flow_d apply 0 0 NREL W={update_width_u:.12g}u L=180n",
+                    f"Mwh{h}_{rail}p_flow_b wh{h}_{rail}p bwd wh{h}_{rail}p_flow_b 0 NREL W={update_width_u:.12g}u L=180n",
+                    f"Mwh{h}_{rail}p_flow_x wh{h}_{rail}p_flow_b {pre_gate} wh{h}_{rail}p_flow_x 0 NMOS W={update_width_u:.12g}u L=180n",
+                    f"Mwh{h}_{rail}p_flow_d wh{h}_{rail}p_flow_x {neg_delta_gate} wh{h}_{rail}p_flow_d 0 NSENSE W={update_width_u:.12g}u L=180n",
+                    f"Mwh{h}_{rail}p_flow_a wh{h}_{rail}p_flow_d apply 0 0 NREL W={update_width_u:.12g}u L=180n",
+                ]
+                lines += node_parasitics(
+                    f"wh{h}_{rail}n_flow_b",
+                    f"wh{h}_{rail}n_flow_x",
+                    f"wh{h}_{rail}n_flow_d",
+                    f"wh{h}_{rail}p_flow_b",
+                    f"wh{h}_{rail}p_flow_x",
+                    f"wh{h}_{rail}p_flow_d",
+                )
     return "\n".join(lines)
 
 
@@ -1435,6 +1500,7 @@ def measure_lines(
     samples: list[dict[str, Any]],
     hidden_apply_mode: str,
     learning_mode: str,
+    hidden_delta_output_mode: str,
     measure_detail: str,
     readout_sample_offsets_ns: list[float],
 ) -> tuple[str, str]:
@@ -1442,6 +1508,8 @@ def measure_lines(
         raise ValueError(f"unknown hidden apply mode: {hidden_apply_mode}")
     if learning_mode not in LEARNING_MODES:
         raise ValueError(f"unknown learning mode: {learning_mode}")
+    if hidden_delta_output_mode not in HIDDEN_DELTA_OUTPUT_MODES:
+        raise ValueError(f"unknown hidden delta output mode: {hidden_delta_output_mode}")
     if measure_detail not in MEASURE_DETAILS:
         raise ValueError(f"unknown measurement detail level: {measure_detail}")
     if not readout_sample_offsets_ns:
@@ -1531,6 +1599,12 @@ def measure_lines(
                         f".meas tran hdn{h}_update_{idx} FIND V(hdn{h}) AT={base + 10.50:.2f}n",
                         f".meas tran hidden_delta_update_net_{h}_{idx} PARAM='hdp{h}_update_{idx}-hdn{h}_update_{idx}'",
                     ]
+                    if hidden_delta_output_mode == "senseamp":
+                        lines += [
+                            f".meas tran hdpg{h}_{idx} FIND V(hdpg{h}) AT={base + 10.50:.2f}n",
+                            f".meas tran hdng{h}_{idx} FIND V(hdng{h}) AT={base + 10.50:.2f}n",
+                            f".meas tran hidden_delta_gate_net_{h}_{idx} PARAM='hdpg{h}_{idx}-hdng{h}_{idx}'",
+                        ]
                     for rail in HIDDEN_RAILS:
                         if include_hidden_grad_measures:
                             lines += [
@@ -1608,6 +1682,10 @@ def random_hidden_netlist(
     readout_gradient_width_scale: float,
     hidden_error_rule: str,
     hidden_delta_relu_gate: str,
+    hidden_delta_weight_device: str,
+    hidden_delta_output_mode: str,
+    hidden_delta_sense_width_u: float,
+    hidden_delta_sense_cap_f: float,
     hidden_delta_internal_cap_f: float,
     hidden_delta_internal_leak_ohm: float,
     hidden_gradient_act_gate: str,
@@ -1638,6 +1716,7 @@ def random_hidden_netlist(
     train_charge_noise_pulse_ns: float,
     gradient_cap_f: float,
     hidden_gradient_cap_f: float,
+    hidden_delta_cap_f: float,
     lead_cap_f: float,
     readout_update_width_u: float,
     output_bias_update_width_u: float,
@@ -1673,6 +1752,7 @@ def random_hidden_netlist(
         samples,
         hidden_apply_mode,
         learning_mode,
+        hidden_delta_output_mode,
         measure_detail,
         readout_sample_offsets_ns,
     )
@@ -1680,13 +1760,20 @@ def random_hidden_netlist(
         hidden_delta_block = hidden_delta(
             hidden_error_rule,
             hidden_delta_relu_gate,
+            hidden_delta_weight_device,
             design,
             hidden_delta_internal_cap_f,
             hidden_delta_internal_leak_ohm,
         )
+        hidden_delta_sense_block = hidden_delta_senseamps(
+            hidden_delta_output_mode,
+            hidden_delta_sense_width_u,
+            hidden_delta_sense_cap_f,
+        )
         learning_block = "\n".join(
             [
                 readout_gradients_and_updates(readout_update_width_u, output_bias_update_width_u, design),
+                hidden_delta_sense_block,
                 hidden_gradients_and_updates(
                     hidden_update_width_u,
                     hidden_gradient_act_gate,
@@ -1706,6 +1793,7 @@ def random_hidden_netlist(
             hidden_delta(
                 hidden_error_rule,
                 hidden_delta_relu_gate,
+                hidden_delta_weight_device,
                 design,
                 hidden_delta_internal_cap_f,
                 hidden_delta_internal_leak_ohm,
@@ -1713,12 +1801,22 @@ def random_hidden_netlist(
             if flow_hidden_write == "direct"
             else "* Hidden delta network omitted: flow hidden writes disabled for readout-only direct-flow test."
         )
+        hidden_delta_sense_block = (
+            hidden_delta_senseamps(
+                hidden_delta_output_mode,
+                hidden_delta_sense_width_u,
+                hidden_delta_sense_cap_f,
+            )
+            if flow_hidden_write == "direct"
+            else "* Hidden delta output omitted: flow hidden writes disabled for readout-only direct-flow test."
+        )
         flow_blocks = [
             "* Direct backward/write flow: no gradient accumulator caps are used in the weight update path.",
             readout_flow_updates(readout_update_width_u, output_bias_update_width_u, flow_pre_store),
+            hidden_delta_sense_block,
         ]
         if flow_hidden_write == "direct":
-            flow_blocks.append(hidden_flow_updates(hidden_update_width_u, flow_pre_store))
+            flow_blocks.append(hidden_flow_updates(hidden_update_width_u, flow_pre_store, hidden_delta_output_mode))
         else:
             flow_blocks.append("* Hidden weight capacitors are held during this direct-flow run.")
         learning_block = "\n".join(
@@ -1772,7 +1870,7 @@ Vt1 t1 0 {target_wave(samples, 1, stop)}
 
 {persistent_caps(hidden_state, readout_state, hidden_cap_f)}
 {feedback_block}
-{temporary_caps(gradient_cap_f, hidden_gradient_cap_f, lead_cap_f, include_gradient_caps)}
+{temporary_caps(gradient_cap_f, hidden_gradient_cap_f, hidden_delta_cap_f, lead_cap_f, include_gradient_caps)}
 {resets(lead_mode, include_gradient_caps)}
 {flow_pre_activation_stores(flow_pre_store, flow_pre_cap_f, flow_pre_consume_width_u) if learning_mode == "flow" else ""}
 {train_charge_noise(samples, stop, train_charge_noise_width_u, train_charge_noise_probability, train_charge_noise_seed, train_charge_noise_scope, train_charge_noise_pulse_ns, bwd_start_ns)}
@@ -1842,6 +1940,15 @@ def main() -> None:
     ap.add_argument("--readout-gradient-width-scale", type=float, default=1.0)
     ap.add_argument("--hidden-error-rule", choices=HIDDEN_ERROR_RULES, default="backprop")
     ap.add_argument("--hidden-delta-relu-gate", choices=HIDDEN_DELTA_RELU_GATES, default="act_nrel")
+    ap.add_argument(
+        "--hidden-delta-weight-device",
+        choices=HIDDEN_DELTA_WEIGHT_DEVICES,
+        default="nmos",
+        help="MOS model used by the readout-weight-gated transistor in the hidden-delta backprop path.",
+    )
+    ap.add_argument("--hidden-delta-output-mode", choices=HIDDEN_DELTA_OUTPUT_MODES, default="raw")
+    ap.add_argument("--hidden-delta-sense-width-u", type=float, default=512.0)
+    ap.add_argument("--hidden-delta-sense-cap-f", type=float, default=2.0)
     ap.add_argument("--hidden-delta-internal-cap-f", type=float, default=0.0)
     ap.add_argument("--hidden-delta-internal-leak-ohm", type=float, default=0.0)
     ap.add_argument("--hidden-gradient-act-gate", choices=HIDDEN_GRADIENT_ACT_GATES, default="act_nrel")
@@ -1889,6 +1996,7 @@ def main() -> None:
     ap.add_argument("--train-charge-noise-pulse-ns", type=float, default=0.20)
     ap.add_argument("--gradient-cap-f", type=float, default=4.0)
     ap.add_argument("--hidden-gradient-cap-f", type=float)
+    ap.add_argument("--hidden-delta-cap-f", type=float, default=12.0)
     ap.add_argument("--lead-cap-f", type=float, default=2.0)
     ap.add_argument("--update-width-u", type=float, default=120.0)
     ap.add_argument("--readout-update-width-u", type=float)
@@ -1940,9 +2048,13 @@ def main() -> None:
         raise SystemExit("synapse width scales must be positive.")
     if args.hidden_delta_internal_cap_f < 0 or args.hidden_delta_internal_leak_ohm < 0:
         raise SystemExit("hidden delta internal damping values must be nonnegative.")
+    if args.hidden_delta_sense_width_u <= 0 or args.hidden_delta_sense_cap_f <= 0:
+        raise SystemExit("hidden delta sense width and capacitance must be positive.")
     hidden_gradient_cap_f = args.hidden_gradient_cap_f if args.hidden_gradient_cap_f is not None else args.gradient_cap_f
     if args.gradient_cap_f <= 0 or hidden_gradient_cap_f <= 0:
         raise SystemExit("gradient capacitances must be positive.")
+    if args.hidden_delta_cap_f <= 0:
+        raise SystemExit("hidden delta capacitance must be positive.")
     if args.hidden_grad_sense_width_u <= 0 or args.hidden_grad_sense_cap_f <= 0:
         raise SystemExit("hidden gradient sense width and capacitance must be positive.")
     if args.flow_pre_cap_f <= 0 or args.flow_pre_consume_width_u <= 0:
@@ -2015,6 +2127,10 @@ def main() -> None:
         args.readout_gradient_width_scale,
         args.hidden_error_rule,
         args.hidden_delta_relu_gate,
+        args.hidden_delta_weight_device,
+        args.hidden_delta_output_mode,
+        args.hidden_delta_sense_width_u,
+        args.hidden_delta_sense_cap_f,
         args.hidden_delta_internal_cap_f,
         args.hidden_delta_internal_leak_ohm,
         args.hidden_gradient_act_gate,
@@ -2045,6 +2161,7 @@ def main() -> None:
         args.train_charge_noise_pulse_ns,
         args.gradient_cap_f,
         hidden_gradient_cap_f,
+        args.hidden_delta_cap_f,
         args.lead_cap_f,
         args.readout_update_width_u if args.readout_update_width_u is not None else args.update_width_u,
         args.output_bias_update_width_u
@@ -2127,6 +2244,14 @@ def main() -> None:
                 max(abs(parsed[f"hdp{h}_update_{idx}"]), abs(parsed[f"hdn{h}_update_{idx}"]))
                 for h in range(HIDDEN)
             )
+            if args.hidden_delta_output_mode == "senseamp":
+                row["max_abs_hidden_delta_gate_signal"] = max(
+                    abs(parsed[f"hidden_delta_gate_net_{h}_{idx}"]) for h in range(HIDDEN)
+                )
+                row["max_hidden_delta_gate_node"] = max(
+                    max(abs(parsed[f"hdpg{h}_{idx}"]), abs(parsed[f"hdng{h}_{idx}"]))
+                    for h in range(HIDDEN)
+                )
             if args.learning_mode == "accumulate_apply":
                 row["max_abs_hidden_grad_signal"] = max(
                     abs(parsed[f"hidden_grad_net_{h}_{rail}_{idx}"])
@@ -2237,6 +2362,9 @@ def main() -> None:
     has_hidden_delta_update_metrics = (
         not train.empty and "max_abs_hidden_delta_update_signal" in train.columns
     )
+    has_hidden_delta_gate_metrics = (
+        not train.empty and "max_abs_hidden_delta_gate_signal" in train.columns
+    )
     has_bwd_metrics = not train.empty and "bwd_signal" in train.columns
     hidden_delta_network_enabled = args.learning_mode != "flow" or args.flow_hidden_write == "direct"
     hidden_weight_updates_enabled = args.epochs > 0 and not (
@@ -2277,6 +2405,14 @@ def main() -> None:
         "effective_readout_gradient_width_u": effective_design.readout_gradient_width_u,
         "hidden_error_rule": args.hidden_error_rule,
         "hidden_delta_relu_gate": args.hidden_delta_relu_gate,
+        "hidden_delta_weight_device": args.hidden_delta_weight_device,
+        "hidden_delta_output_mode": args.hidden_delta_output_mode,
+        "hidden_delta_sense_width_u": args.hidden_delta_sense_width_u
+        if args.hidden_delta_output_mode == "senseamp"
+        else None,
+        "hidden_delta_sense_cap_f": args.hidden_delta_sense_cap_f
+        if args.hidden_delta_output_mode == "senseamp"
+        else None,
         "hidden_delta_internal_cap_f": args.hidden_delta_internal_cap_f or None,
         "hidden_delta_internal_leak_ohm": args.hidden_delta_internal_leak_ohm or None,
         "hidden_gradient_act_gate": args.hidden_gradient_act_gate,
@@ -2306,6 +2442,8 @@ def main() -> None:
         ),
         "hidden_delta_passes_through_activation_gate": hidden_delta_network_enabled
         and args.hidden_delta_relu_gate != "none",
+        "hidden_delta_output_latched": hidden_delta_network_enabled
+        and args.hidden_delta_output_mode == "senseamp",
         "direct_weight_write_path": args.learning_mode == "flow",
         "hidden_grad_sense_width_u": args.hidden_grad_sense_width_u
         if args.learning_mode == "accumulate_apply" and args.hidden_apply_mode == "grad_senseamp"
@@ -2391,6 +2529,7 @@ def main() -> None:
         else None,
         "gradient_cap_f": args.gradient_cap_f if args.learning_mode == "accumulate_apply" else None,
         "hidden_gradient_cap_f": hidden_gradient_cap_f if args.learning_mode == "accumulate_apply" else None,
+        "hidden_delta_cap_f": args.hidden_delta_cap_f,
         "lead_cap_f": args.lead_cap_f,
         "update_width_u": args.update_width_u,
         "readout_update_width_u": args.readout_update_width_u if args.readout_update_width_u is not None else args.update_width_u,
@@ -2453,6 +2592,12 @@ def main() -> None:
         else 0.0,
         "max_train_hidden_delta_update_node_v": float(train["max_hidden_delta_update_node"].max())
         if has_hidden_delta_update_metrics
+        else 0.0,
+        "max_train_hidden_delta_gate_signal_v": float(train["max_abs_hidden_delta_gate_signal"].max())
+        if has_hidden_delta_gate_metrics
+        else 0.0,
+        "max_train_hidden_delta_gate_node_v": float(train["max_hidden_delta_gate_node"].max())
+        if has_hidden_delta_gate_metrics
         else 0.0,
         "max_train_hidden_grad_signal_v": float(train["max_abs_hidden_grad_signal"].max())
         if has_hidden_grad_metrics

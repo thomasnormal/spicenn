@@ -2914,6 +2914,26 @@ def main() -> None:
                 "finding": "A short full-measure smoke validates the new diagnostics. It reports output-delta node magnitude around 64 mV but hidden-delta node magnitude around 1.35e-10 V while hidden weight caps still move by millivolts, strengthening the feedthrough-vs-backprop concern.",
             },
             {
+                "artifact": "spice/results/device_xor2_random_hidden_v174_diag_hdelta_nogate_summary.json",
+                "finding": "A follow-up raw hidden-delta transport probe showed that the path is mostly common-mode: output-delta nodes were about 64 mV, hdp/hdn reached about 36 mV common-mode, but the useful differential hidden-delta signal was only about 34 uV even with the activation gate removed.",
+            },
+            {
+                "artifact": "spice/run_device_xor2_random_hidden.py",
+                "finding": "Adds --hidden-delta-weight-device, --hidden-delta-cap-f, and --hidden-delta-output-mode senseamp. These are circuit-topology knobs: the hidden-delta path still flows through output-error caps, capacitor-held readout weights, and optional activation gating before any local latch amplifies it.",
+            },
+            {
+                "artifact": "spice/results/device_xor2_random_hidden_v180_diag_hdelta_senseamp_nogate_summary.json",
+                "finding": "The new hidden-delta senseamp converted a raw hidden-delta differential of only about 34 uV into about 1.2 V of local hdpg/hdng write-gate separation in ngspice. This proves a transistor-level local amplification option for the real readout-weight-transport path, though the one-epoch four-hidden XOR run itself stayed at 50%.",
+            },
+            {
+                "artifact": "spice/results/device_xor2_random_hidden_v181_senseamp_h8_e8_summary.json",
+                "finding": "Using the local hidden-delta senseamp on the eight-hidden direct-flow XOR setting solved XOR after 8 epochs: 100% final accuracy, +3.76 mV final margin, hidden writes enabled, real readout-weight transport into hidden deltas, no gradient accumulator caps, and no behavioral gradient math.",
+            },
+            {
+                "artifact": "spice/results/device_mnist01_12_random_hidden_v99_passact_targetmistake_h8_cap024_hdnsense_e2_summary.json",
+                "finding": "Repeating the 8-hidden 0.24 fF 12-sample MNIST01 bridge with the stronger activation-gated hidden-delta probe setting preserved 91.67% final accuracy and -106 uV worst margin, confirming the prior narrow charge/balance ridge rather than solving the remaining sample.",
+            },
+            {
                 "artifact": "spice/run_device_xor2_random_hidden.py",
                 "finding": "Adds --train-charge-noise-* controls for transistor-gated stochastic charge bleed during training. Python only seeds the random pulse rails; actual perturbation current must pass through bwd and a MOS discharge path into a selected signed weight-cap branch.",
             },

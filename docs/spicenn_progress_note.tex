@@ -242,8 +242,59 @@ output-sense comparison and a lead-or backward gate.  The main caveat is that
 this run used \code{flow\_pre\_store=shared\_node}; the per-synapse pre-trace
 versions are the next fidelity step.  Full-measurement reruns of the
 shared-node, \code{synapse\_gate}, and \code{synapse\_consume} variants timed
-out at the current diagnostic settings, so those variants should be rerun with
-light/scalar measurement output before being treated as evidence.
+out at the current diagnostic settings, so the harness now has a
+\code{probe} measurement mode.  \code{probe} keeps the output deltas, hidden
+deltas, hidden-delta sense-amp gates, and final signed weight-capacitor
+movement, while dropping the expensive per-training-cycle before/after
+measurements for every weight.  This is the right diagnostic level for the
+current shared-node versus per-synapse-trace XOR comparisons.
+
+\subsection{Pre-Activation Trace Variants}
+
+The open architectural question is where the forward pre-activation evidence
+lives before the backward/write window:
+\begin{description}
+  \item[\code{shared\_node}] the completed XOR path; a compact source-node
+    trace is reused during the backward/write event.
+  \item[\code{synapse\_gate}] each synapse charges its own trace capacitor
+    during forward flow and uses that stored voltage as a local write gate.
+  \item[\code{synapse\_consume}] each synapse also stores its own trace, but
+    the backward/write path destructively reads or bleeds the trace while using
+    it.  This is closer to the ``activation capacitor is emptied as it is used''
+    idea, and may simplify reset/update sequencing if it remains stable.
+\end{description}
+The latter two are more faithful to a physical synapse that carries its own
+pre-activation state, but they add capacitance and write-path loading.  The
+first \code{probe} reruns used 4 hidden cells and 8 training epochs:
+
+\begin{table}[h]
+  \centering
+  \caption{Direct-flow XOR pre-trace comparison, h4/e8 probe runs.}
+  \label{tab:pretrace}
+  \begin{tabular}{p{0.24\linewidth}p{0.17\linewidth}p{0.18\linewidth}p{0.29\linewidth}}
+    \toprule
+    Variant & Final accuracy & Final min margin & Interpretation \\
+    \midrule
+    \code{shared\_node} &
+    100\% & 12.1 mV &
+    Confirms the compact baseline under the cheaper probe diagnostics. \\
+    \addlinespace
+    \code{synapse\_gate} &
+    100\% & 10.6 mV &
+    Non-destructive per-synapse stored traces are viable on XOR. \\
+    \addlinespace
+    \code{synapse\_consume} &
+    50\% & -1.15 mV &
+    The destructive trace-read circuit moves weights and produces deltas, but
+    did not solve this setting. \\
+    \bottomrule
+  \end{tabular}
+\end{table}
+
+The key result is that \code{synapse\_gate} preserves the full direct-flow
+learning behavior while moving the pre-activation state into each synapse.  The
+destructive trace-read idea remains interesting, but needs a different sizing
+or timing experiment before it should be considered stable.
 
 \section{MNIST Architectures That Have Worked}
 

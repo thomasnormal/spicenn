@@ -100,7 +100,7 @@ LEARNING_MODES = ["accumulate_apply", "flow"]
 FLOW_HIDDEN_WRITES = ["direct", "off"]
 FLOW_PRE_STORES = ["shared_node", "synapse_gate", "synapse_consume"]
 HIDDEN_INIT_MODES = ["random", "input_identity"]
-MEASURE_DETAILS = ["full", "light"]
+MEASURE_DETAILS = ["full", "probe", "light"]
 BACKWARD_GATE_MODES = ["scheduled", "lead_or", "target_mistake"]
 CAP_DITHER_SCOPES = ["none", "hidden", "readout", "all"]
 TRAIN_CHARGE_NOISE_SCOPES = CAP_DITHER_SCOPES
@@ -1698,6 +1698,7 @@ def measure_lines(
         raise ValueError("at least one readout sample offset is required.")
     include_hidden_grad_measures = learning_mode == "accumulate_apply"
     include_train_detail = measure_detail == "full"
+    include_signal_probe = measure_detail in {"full", "probe"}
     default_offset = readout_sample_offsets_ns[0]
     lines: list[str] = []
     prints: list[str] = []
@@ -1765,7 +1766,7 @@ def measure_lines(
                             f".meas tran vw{out}{h}_signed_after_{idx} PARAM='vw{out}{h}p_after_{idx}-vw{out}{h}n_after_{idx}'",
                             f".meas tran d_vw{out}{h}_signed_{idx} PARAM='vw{out}{h}_signed_after_{idx}-vw{out}{h}_signed_before_{idx}'",
                         ]
-            if include_train_detail:
+            if include_signal_probe:
                 for out in range(OUTPUTS):
                     lines += [
                         f".meas tran dp{out}_{idx} FIND V(dp{out}) AT={base + 7.95:.2f}n",
@@ -1787,6 +1788,8 @@ def measure_lines(
                             f".meas tran hdng{h}_{idx} FIND V(hdng{h}) AT={base + 10.50:.2f}n",
                             f".meas tran hidden_delta_gate_net_{h}_{idx} PARAM='hdpg{h}_{idx}-hdng{h}_{idx}'",
                         ]
+                    if not include_train_detail:
+                        continue
                     for rail in HIDDEN_RAILS:
                         if include_hidden_grad_measures:
                             lines += [
@@ -2421,7 +2424,7 @@ def main() -> None:
         row["lead10"] = parsed[f"lead10_{idx}"]
         if phase == "train":
             row["bwd_signal"] = parsed[f"bwd_signal_{idx}"]
-        if phase == "train" and args.measure_detail == "full":
+        if phase == "train" and args.measure_detail in {"full", "probe"}:
             row["max_abs_output_delta_signal"] = max(
                 abs(parsed[f"output_delta_net_{out}_{idx}"]) for out in range(OUTPUTS)
             )
@@ -2449,6 +2452,7 @@ def main() -> None:
                     max(abs(parsed[f"hdpg{h}_{idx}"]), abs(parsed[f"hdng{h}_{idx}"]))
                     for h in range(HIDDEN)
                 )
+        if phase == "train" and args.measure_detail == "full":
             if args.learning_mode == "accumulate_apply":
                 row["max_abs_hidden_grad_signal"] = max(
                     abs(parsed[f"hidden_grad_net_{h}_{rail}_{idx}"])

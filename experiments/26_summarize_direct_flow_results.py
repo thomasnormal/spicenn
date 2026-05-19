@@ -25,6 +25,9 @@ FIELDS = [
     "order_mode",
     "error_rule",
     "backward_gate_mode",
+    "target_mistake_bwd_match_fraction",
+    "target_mistake_bwd_false_positive_count",
+    "target_mistake_bwd_false_negative_count",
     "residual_target_width_u",
     "residual_output_width_u",
     "readout_flow_polarity",
@@ -77,6 +80,13 @@ def row_from_summary(path: Path) -> dict[str, Any]:
         "order_mode": data.get("order_mode"),
         "error_rule": data.get("error_rule"),
         "backward_gate_mode": data.get("backward_gate_mode"),
+        "target_mistake_bwd_match_fraction": data.get("target_mistake_bwd_match_fraction"),
+        "target_mistake_bwd_false_positive_count": data.get(
+            "target_mistake_bwd_false_positive_count"
+        ),
+        "target_mistake_bwd_false_negative_count": data.get(
+            "target_mistake_bwd_false_negative_count"
+        ),
         "residual_target_width_u": data.get("residual_target_width_u"),
         "residual_output_width_u": data.get("residual_output_width_u"),
         "readout_flow_polarity": data.get("readout_flow_polarity"),
@@ -119,6 +129,7 @@ def print_markdown(rows: list[dict[str, Any]]) -> None:
         "flow_hidden_write",
         "error_rule",
         "backward_gate_mode",
+        "target_mistake_bwd_match_fraction",
         "residual_output_width_u",
         "hidden_update_width_u",
         "final_eval_accuracy",

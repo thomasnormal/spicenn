@@ -5,6 +5,7 @@ import sys
 from pathlib import Path
 
 import numpy as np
+import pandas as pd
 import pytest
 
 
@@ -528,6 +529,25 @@ def test_target_mistake_gate_can_use_score_senseamp_polarity() -> None:
     assert "Mbwd_t0_l bwd_t0_a lead10 bwd_t0_l" in gate
     assert "Mbwd_t1_p vdd lead10 bwd_t1_p" in gate
     assert "Mbwd_t1_l bwd_t1_a lead01 bwd_t1_l" in gate
+
+
+def test_target_mistake_gate_stats_count_false_opens_and_misses() -> None:
+    train = pd.DataFrame(
+        [
+            {"label": 0, "score0_cmp": 0.10, "score1_cmp": 0.20, "bwd_signal": 1.05},
+            {"label": 1, "score0_cmp": 0.10, "score1_cmp": 0.20, "bwd_signal": 0.02},
+            {"label": 0, "score0_cmp": 0.20, "score1_cmp": 0.10, "bwd_signal": 1.05},
+            {"label": 1, "score0_cmp": 0.20, "score1_cmp": 0.10, "bwd_signal": 0.02},
+        ]
+    )
+
+    stats = direct_flow.target_mistake_gate_stats(train, bwd_threshold_v=0.5)
+
+    assert stats["target_mistake_score_loses_count"] == 2
+    assert stats["target_mistake_bwd_open_count"] == 2
+    assert stats["target_mistake_bwd_false_positive_count"] == 1
+    assert stats["target_mistake_bwd_false_negative_count"] == 1
+    assert stats["target_mistake_bwd_match_fraction"] == pytest.approx(0.5)
 
 
 def test_out_residual_error_uses_each_outputs_own_stored_score() -> None:

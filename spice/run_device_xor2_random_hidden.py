@@ -688,6 +688,34 @@ def lead_win_gate(lead_mode: str, class_index: int) -> str:
     raise ValueError(f"unknown lead mode: {lead_mode}")
 
 
+def target_mistake_gate_stats(train: pd.DataFrame, bwd_threshold_v: float = 0.5) -> dict[str, Any]:
+    required = {"label", "score0_cmp", "score1_cmp", "bwd_signal"}
+    if train.empty or not required.issubset(train.columns):
+        return {
+            "target_mistake_bwd_threshold_v": bwd_threshold_v,
+            "target_mistake_bwd_match_fraction": None,
+            "target_mistake_bwd_false_positive_count": None,
+            "target_mistake_bwd_false_negative_count": None,
+            "target_mistake_score_loses_count": None,
+            "target_mistake_bwd_open_count": None,
+        }
+    score0_wins = train["score0_cmp"] > train["score1_cmp"]
+    target_is_class0 = train["label"].astype(int) == 0
+    target_loses = np.where(target_is_class0, ~score0_wins, score0_wins)
+    bwd_open = train["bwd_signal"] > bwd_threshold_v
+    match = bwd_open.to_numpy() == target_loses
+    false_positive = bwd_open.to_numpy() & ~target_loses
+    false_negative = ~bwd_open.to_numpy() & target_loses
+    return {
+        "target_mistake_bwd_threshold_v": bwd_threshold_v,
+        "target_mistake_bwd_match_fraction": float(match.mean()),
+        "target_mistake_bwd_false_positive_count": int(false_positive.sum()),
+        "target_mistake_bwd_false_negative_count": int(false_negative.sum()),
+        "target_mistake_score_loses_count": int(target_loses.sum()),
+        "target_mistake_bwd_open_count": int(bwd_open.sum()),
+    }
+
+
 def readout_init(
     seed: int,
     mode: str,
@@ -3006,6 +3034,7 @@ def main() -> None:
         not train.empty and "max_abs_hidden_delta_gate_signal" in train.columns
     )
     has_bwd_metrics = not train.empty and "bwd_signal" in train.columns
+    mistake_gate_stats = target_mistake_gate_stats(train) if args.backward_gate_mode == "target_mistake" else {}
     hidden_delta_network_enabled = args.learning_mode != "flow" or args.flow_hidden_write == "direct"
     hidden_weight_updates_enabled = args.epochs > 0 and not (
         args.learning_mode == "flow" and args.flow_hidden_write == "off"
@@ -3194,6 +3223,7 @@ def main() -> None:
         "mean_abs_train_lead_diff_v": mean_abs_train_lead_diff,
         "max_train_bwd_signal_v": float(train["bwd_signal"].max()) if has_bwd_metrics else 0.0,
         "mean_train_bwd_signal_v": float(train["bwd_signal"].mean()) if has_bwd_metrics else 0.0,
+        **mistake_gate_stats,
         "max_train_mistake_latch_v": float(train[["merr0", "merr1"]].max().max())
         if has_mistake_latch_metrics
         else None,

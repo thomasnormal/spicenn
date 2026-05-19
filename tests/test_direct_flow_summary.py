@@ -36,6 +36,9 @@ def test_direct_flow_summary_extracts_nested_separability(tmp_path: Path) -> Non
                 "order_mode": "interleave",
                 "error_rule": "out_residual",
                 "backward_gate_mode": "target_mistake",
+                "target_mistake_bwd_match_fraction": 0.875,
+                "target_mistake_bwd_false_positive_count": 2,
+                "target_mistake_bwd_false_negative_count": 1,
                 "readout_flow_polarity": "normal",
                 "final_eval_accuracy": 0.9166666667,
                 "best_final_transient_accuracy": 0.9166666667,
@@ -67,6 +70,9 @@ def test_direct_flow_summary_extracts_nested_separability(tmp_path: Path) -> Non
     assert row["order_mode"] == "interleave"
     assert row["error_rule"] == "out_residual"
     assert row["backward_gate_mode"] == "target_mistake"
+    assert row["target_mistake_bwd_match_fraction"] == 0.875
+    assert row["target_mistake_bwd_false_positive_count"] == 2
+    assert row["target_mistake_bwd_false_negative_count"] == 1
     assert row["readout_flow_polarity"] == "normal"
     assert row["input_feature_separable"] is True
     assert row["input_feature_min_margin"] == 0.42

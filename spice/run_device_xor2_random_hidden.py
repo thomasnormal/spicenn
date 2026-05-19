@@ -655,12 +655,20 @@ def clamp_cap(v: float) -> float:
     return min(1.15, max(0.01, v))
 
 
+def lead_class0_wins(lead_mode: str, lead01, lead10):
+    if lead_mode == "out_senseamp":
+        return lead10 > lead01
+    return lead01 > lead10
+
+
 def readout_init(
     seed: int,
     mode: str,
     separator_scale: float,
     separator_offset_v: float,
     readout_center_v: float,
+    random_center_v: float | None,
+    random_span_v: float,
     separator_csv: Path | None,
     separator_phase: str,
 ) -> dict[str, float]:
@@ -723,6 +731,24 @@ def readout_init(
     if mode != "random":
         raise ValueError(f"unknown readout init mode: {mode}")
     init: dict[str, float] = {}
+    if random_center_v is not None:
+        half_span = random_span_v / 2.0
+        for out in range(OUTPUTS):
+            kp = out + seed * 7
+            kn = out + seed * 11
+            init[f"vbo{out}p"] = clamp_cap(
+                random_center_v + half_span * (2 * (((17 * kp + 3) % 101) / 100) - 1)
+            )
+            init[f"vbo{out}n"] = clamp_cap(
+                random_center_v + half_span * (2 * (((23 * kn + 13) % 101) / 100) - 1)
+            )
+            for h in range(HIDDEN):
+                k = out * HIDDEN + h + seed * 5
+                p = random_center_v + half_span * (2 * (((29 * k + 5) % 101) / 100) - 1)
+                n = random_center_v + half_span * (2 * (((43 * k + 17) % 101) / 100) - 1)
+                init[f"vw{out}{h}p"] = clamp_cap(p)
+                init[f"vw{out}{h}n"] = clamp_cap(n)
+        return init
     for out in range(OUTPUTS):
         init[f"vbo{out}p"] = 0.66 - 0.02 * ((out + seed) % 2)
         init[f"vbo{out}n"] = 0.52 + 0.02 * (out % 2)
@@ -1955,6 +1981,8 @@ def random_hidden_netlist(
     separator_scale: float,
     separator_offset_v: float,
     readout_center_v: float,
+    readout_random_center_v: float | None,
+    readout_random_span_v: float,
     output_bias_offset_v: float,
     separator_csv: Path | None,
     separator_phase: str,
@@ -2106,6 +2134,8 @@ def random_hidden_netlist(
                 separator_scale,
                 separator_offset_v,
                 readout_center_v,
+                readout_random_center_v,
+                readout_random_span_v,
                 separator_csv,
                 separator_phase,
             ),
@@ -2257,6 +2287,21 @@ def main() -> None:
     ap.add_argument("--separator-offset-v", type=float, default=0.0)
     ap.add_argument("--readout-center-v", type=float, default=0.64)
     ap.add_argument(
+        "--readout-random-center-v",
+        type=float,
+        default=None,
+        help=(
+            "Optional center voltage for random readout capacitor initialization. "
+            "Use this to place random caps in a measured high-slope conductance region."
+        ),
+    )
+    ap.add_argument(
+        "--readout-random-span-v",
+        type=float,
+        default=0.20,
+        help="Peak-to-peak spread around --readout-random-center-v when random readout centering is enabled.",
+    )
+    ap.add_argument(
         "--output-bias-offset-v",
         type=float,
         default=0.0,
@@ -2382,6 +2427,10 @@ def main() -> None:
         raise SystemExit("--latch-boost-width-u must be nonnegative.")
     if not 0.01 <= args.readout_center_v <= 1.15:
         raise SystemExit("--readout-center-v must be in the capacitor-voltage range 0.01..1.15 V.")
+    if args.readout_random_center_v is not None and not 0.01 <= args.readout_random_center_v <= 1.15:
+        raise SystemExit("--readout-random-center-v must be in the capacitor-voltage range 0.01..1.15 V.")
+    if args.readout_random_span_v < 0:
+        raise SystemExit("--readout-random-span-v must be nonnegative.")
     if abs(args.output_bias_offset_v) > 1.0:
         raise SystemExit("--output-bias-offset-v must be within +/-1.0 V.")
     try:
@@ -2464,6 +2513,8 @@ def main() -> None:
         args.separator_scale,
         args.separator_offset_v,
         args.readout_center_v,
+        args.readout_random_center_v,
+        args.readout_random_span_v,
         args.output_bias_offset_v,
         args.separator_csv,
         args.separator_phase,
@@ -2652,8 +2703,8 @@ def main() -> None:
         score0_wins = ((train["label"] == 0) & (train["margin"] > 0)) | (
             (train["label"] == 1) & (train["margin"] < 0)
         )
-        lead01_wins = train["lead01"] > train["lead10"]
-        lead_score_winner_fraction = float((lead01_wins.to_numpy() == score0_wins.to_numpy()).mean())
+        lead0_wins = lead_class0_wins(args.lead_mode, train["lead01"], train["lead10"])
+        lead_score_winner_fraction = float((lead0_wins.to_numpy() == score0_wins.to_numpy()).mean())
         lead_tracks_score_winner = bool(lead_score_winner_fraction >= 0.75)
         mean_train_lead01 = float(train["lead01"].mean())
         mean_train_lead10 = float(train["lead10"].mean())
@@ -2820,6 +2871,12 @@ def main() -> None:
         "separator_scale": args.separator_scale if args.readout_init in SEPARATOR_READOUT_INITS else None,
         "separator_offset_v": args.separator_offset_v if args.readout_init in SEPARATOR_READOUT_INITS else None,
         "readout_center_v": args.readout_center_v if args.readout_init in SEPARATOR_READOUT_INITS else None,
+        "readout_random_center_v": args.readout_random_center_v if args.readout_init == "random" else None,
+        "readout_random_span_v": (
+            args.readout_random_span_v
+            if args.readout_init == "random" and args.readout_random_center_v is not None
+            else None
+        ),
         "output_bias_offset_v": args.output_bias_offset_v,
         "separator_csv": str(args.separator_csv)
         if args.readout_init in {"csv_separator", "csv_rectified_separator", "csv_threshold_separator"}

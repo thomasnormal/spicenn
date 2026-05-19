@@ -341,35 +341,80 @@ shared rail.
 \begin{figure}[h]
   \centering
   \begin{circuitikz}[american, scale=0.9, transform shape, font=\small]
-    %% Input pre node (already charged by many synapses)
-    \draw (0.1,2.0) node[left] {from synapses} -- (1.6,2.0);
-    \node[circ] (pre) at (1.6,2.0) {};
-    \draw (pre) to[C,l_={$C_{\mathrm{pre}}$}] (1.6,0.6) node[ground] {};
+    %% --- V_DD rail (top) ---
+    \draw[thick] (-0.2,5.0) -- (4.0,5.0);
+    \node[left, font=\footnotesize] at (-0.2,5.0) {$V_{DD}$};
 
-    %% Source follower (ReLU)
-    \draw (pre) -- (3.2,2.0);
-    \node[nmos, anchor=G] (mrelu) at (3.2,2.0) {};
-    \draw (mrelu.D) -- (mrelu.D |- 0,3.8) node[above] {$V_{DD}$};
-    \draw (mrelu.S) -- (mrelu.S |- 0,1.3);
-    \draw (mrelu.S |- 0,1.3) -- (5.5,1.3);
-    \node[circ] (act) at (5.5,1.3) {};
-    \draw (act) to[C,l_={$C_{\mathrm{act}}$}] (5.5,-0.1) node[ground] {};
-    \draw (act) -- (6.6,1.3) node[right] {$a_j$};
+    %% --- C_pre summing rail (middle) ---
+    \draw[thick] (-0.2,3.0) -- (5.4,3.0);
+    \node[left, font=\footnotesize] at (-0.2,3.0) {$C_{\mathrm{pre}}$ rail};
 
-    %% Description
-    \node[draw, rounded corners=2pt, fill=lightgray, align=left, text width=5.4cm,
+    %% --- GND rail (bottom) ---
+    \draw[thick] (-0.2,1.0) -- (4.0,1.0);
+    \node[ground] at (-0.2,1.0) {};
+
+    %% --- Synapse 1: signed pair contributing to C_pre ---
+    \draw[-{Latex[length=2mm]}, semithick, forwardblue]
+      (0.6,4.95) -- (0.6,3.05);
+    \node[right, font=\footnotesize, forwardblue] at (0.6,4.0)
+      {$w_1^+\!\cdot x_1$};
+    \draw[-{Latex[length=2mm]}, semithick, backred]
+      (0.6,2.95) -- (0.6,1.05);
+    \node[right, font=\footnotesize, backred] at (0.6,2.0)
+      {$w_1^-\!\cdot x_1$};
+    \node[font=\footnotesize] at (0.6,0.55) {syn 1};
+
+    %% --- Synapse 2 ---
+    \draw[-{Latex[length=2mm]}, semithick, forwardblue]
+      (2.2,4.95) -- (2.2,3.05);
+    \node[right, font=\footnotesize, forwardblue] at (2.2,4.0)
+      {$w_2^+\!\cdot x_2$};
+    \draw[-{Latex[length=2mm]}, semithick, backred]
+      (2.2,2.95) -- (2.2,1.05);
+    \node[right, font=\footnotesize, backred] at (2.2,2.0)
+      {$w_2^-\!\cdot x_2$};
+    \node[font=\footnotesize] at (2.2,0.55) {syn 2};
+
+    %% --- Ellipsis: more synapses fan in ---
+    \node at (3.4,4.0) {$\cdots$};
+    \node at (3.4,2.0) {$\cdots$};
+
+    %% --- C_pre capacitor on the summing rail ---
+    \node[circ] (pre) at (4.4,3.0) {};
+    \draw (pre) to[C,l_={$C_{\mathrm{pre}}$}] (4.4,1.7) node[ground] {};
+
+    %% --- Source follower (ReLU stage) ---
+    \draw (pre) -- (5.8,3.0);
+    \node[nmos, anchor=G] (mrelu) at (5.8,3.0) {};
+    \draw (mrelu.D) -- (mrelu.D |- 0,5.0) -- (4.0,5.0);
+    \draw (mrelu.S) -- (mrelu.S |- 0,2.3);
+    \draw (mrelu.S |- 0,2.3) -- (7.6,2.3);
+    \node[circ] (act) at (7.6,2.3) {};
+    \draw (act) to[C,l_={$C_{\mathrm{act}}$}] (7.6,1.0) node[ground] {};
+    \draw (act) -- (8.6,2.3) node[right] {$a_j$};
+
+    %% --- Description box ---
+    \node[draw, rounded corners=2pt, fill=lightgray, align=left, text width=5.6cm,
           font=\small]
-      at (9.7,2.6)
-      {\textbf{ReLU-like neuron:}\\
-       source-follower NMOS passes
-       $V(C_{\mathrm{pre}}) - V_{\mathrm{th}}$ onto $C_{\mathrm{act}}$ when
-       $V(C_{\mathrm{pre}}) > V_{\mathrm{th}}$;\\
-       below threshold $C_{\mathrm{act}}$ stays at ground.};
+      at (10.3,4.5)
+      {\textbf{ReLU-like neuron:}\\[2pt]
+       each fan-in synapse contributes a signed pair onto
+       $C_{\mathrm{pre}}$ --- a {\color{forwardblue}charge-up} via $w_i^+$ and
+       a {\color{backred}charge-down} via $w_i^-$ --- so
+       $V(C_{\mathrm{pre}})$ accumulates
+       $\sum_i (w_i^+ - w_i^-)\,x_i$.\\[2pt]
+       The source follower then passes $V(C_{\mathrm{pre}}) - V_{\mathrm{th}}$
+       onto $C_{\mathrm{act}}$ when above threshold, else $C_{\mathrm{act}}$
+       stays at ground.};
   \end{circuitikz}
-  \caption{Conceptual ReLU-like neuron.  The $C_{\mathrm{pre}}$ node (driven by
-  many signed synapses as in Fig.~\ref{fig:synapse}) gates a source follower
-  that one-sidedly charges the activation capacitor $C_{\mathrm{act}}$, giving
-  the half-wave rectifying behaviour of a ReLU.}
+  \caption{Conceptual ReLU-like neuron.  Each fan-in synapse drives the shared
+  $C_{\mathrm{pre}}$ node with a signed pair of currents (blue
+  ${\propto}\,w_i^+ x_i$ pushes charge in from $V_{DD}$, red
+  ${\propto}\,w_i^- x_i$ pulls charge out to GND), so the differential weight
+  $w_i^+\!-w_i^-$ sets the per-synapse direction.  The source follower then
+  one-sidedly charges $C_{\mathrm{act}}$ from the summed pre-activation
+  $V(C_{\mathrm{pre}})$, giving the half-wave rectifying behaviour of a
+  ReLU.}
   \label{fig:neuron}
 \end{figure}
 
@@ -1019,6 +1064,74 @@ device sizing and timing.
     \bottomrule
   \end{longtable}
 \end{center}
+
+\subsection{Readout Mobility Diagnosis}
+
+The 64-sample fixed-feature results exposed a simpler blocker than hidden
+representation capacity.  The \code{fixed8}, \code{dct16}, and
+\code{fixed32} input features are linearly separable, but the natural
+discharge-only MOS readout update stalls between 81\% and 84\%.  That makes the
+readout state map itself suspect.
+
+The right local model separates two derivatives.  If a stored capacitor state
+\(\theta\) produces an effective read conductance
+\[
+  w_{\mathrm{eff}} = G_{\mathrm{eff}}(\theta),
+\]
+then backward error flow to the previous neuron uses the forward small-signal
+gain \(G_{\mathrm{eff}}\).  The physical capacitor update, however, changes the
+stored state \(\theta\), so its effect on the usable weight is
+\[
+  \dot w_{\mathrm{eff}}
+  =
+  G'_{\mathrm{eff}}(\theta)\,\dot\theta .
+\]
+For a real MOS write stack, the update is better written as
+\[
+  \dot\theta
+  =
+  \eta\,\delta a\,s_{\mathrm{MOS}}(\theta),
+  \qquad
+  \dot w_{\mathrm{eff}}
+  =
+  \eta\,\delta a\,G'_{\mathrm{eff}}(\theta)s_{\mathrm{MOS}}(\theta).
+\]
+The product \(G'_{\mathrm{eff}}s_{\mathrm{MOS}}\) is the effective learning
+mobility.  If it is tiny, saturated, or asymmetric between the positive and
+negative read branches, a sign-correct update can still fail to move the
+effective classifier enough.
+
+The new \code{device\_readout\_mobility\_v0} sweep characterizes that effect
+directly in ngspice.  At \(a=0.5\), the positive read branch has useful slope
+near \(\theta=0.24\) to \(0.58\ \mathrm{V}\), but is nearly flat by
+\(\theta=0.82\ \mathrm{V}\).  The negative branch in this single-branch probe
+changes abruptly near \(0.10\) to \(0.16\ \mathrm{V}\) and is essentially flat
+above \(0.24\ \mathrm{V}\).  The direct write discharge also changes by about
+an order of magnitude over the same state range.  The current default random
+readout initialization, roughly \(0.56\) to \(0.72\ \mathrm{V}\), therefore
+starts near the high branch's saturation shoulder and far outside the negative
+branch's measured slope window.  That is a plausible explanation for why the
+64-sample readout can move capacitor voltages by roughly \(0.1\ \mathrm{V}\)
+yet still under-correct the effective class separator.
+
+This does not mean the circuit must compute \(G'\) explicitly.  The first
+prototype strategy is to keep \(\theta\) in a measured high-mobility window and
+let the MOS write stack implement its natural state-dependent mobility.  Later
+versions can add state-dependent write pulse width, a local compensation
+transistor, or a damped pseudo-inverse update if the raw mobility remains too
+asymmetric.
+
+Centered-initialization controls show the coupled circuit problem.  Moving the
+random readout down to \(0.24\ \mathrm{V}\) with a \(0.16\ \mathrm{V}\) span
+ended at 40.625\% and produced only \(0.20\ \mathrm{mV}\) of signed readout
+movement; the output sense latch stayed effectively both-high, so the
+mistake-gated backward rail barely opened.  Centering at \(0.16\ \mathrm{V}\)
+with a \(0.08\ \mathrm{V}\) span also barely opened the backward rail and ended
+at 51.5625\%.  Centering at \(0.34\ \mathrm{V}\) gave more write motion
+(\(26.3\ \mathrm{mV}\)) but only 45.3125\% final accuracy.  So the operating
+point must satisfy both conditions at once: useful \(G'_{\mathrm{eff}}\) in the
+weight cells and enough forward score/output swing for the transistor error
+and lead-gate circuits to generate a real backward stream.
 
 \subsection{Local-Feature Phase-Training Path}
 

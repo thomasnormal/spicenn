@@ -385,6 +385,55 @@ def test_mnist_fixed_sensory_frontends_are_python_preprocessors() -> None:
     assert "random_local_relu" in sensory_desc
 
 
+def test_random_readout_init_can_be_centered_in_measured_mobility_window() -> None:
+    original_hidden = direct_flow.HIDDEN
+    try:
+        direct_flow.set_hidden_cells(3)
+        init = direct_flow.readout_init(
+            seed=7,
+            mode="random",
+            separator_scale=0.0,
+            separator_offset_v=0.0,
+            readout_center_v=0.62,
+            random_center_v=0.34,
+            random_span_v=0.20,
+            separator_csv=None,
+            separator_phase="final_eval",
+        )
+    finally:
+        direct_flow.set_hidden_cells(original_hidden)
+
+    assert set(init) == {
+        "vbo0p",
+        "vbo0n",
+        "vbo1p",
+        "vbo1n",
+        "vw00p",
+        "vw00n",
+        "vw01p",
+        "vw01n",
+        "vw02p",
+        "vw02n",
+        "vw10p",
+        "vw10n",
+        "vw11p",
+        "vw11n",
+        "vw12p",
+        "vw12n",
+    }
+    assert min(init.values()) >= 0.24 - 1e-12
+    assert max(init.values()) <= 0.44 + 1e-12
+
+
+def test_lead_score_winner_metric_uses_out_senseamp_polarity() -> None:
+    lead01 = np.array([0.1, 1.0])
+    lead10 = np.array([1.0, 0.1])
+
+    assert direct_flow.lead_class0_wins("score", lead01, lead10).tolist() == [False, True]
+    assert direct_flow.lead_class0_wins("senseamp", lead01, lead10).tolist() == [False, True]
+    assert direct_flow.lead_class0_wins("out_senseamp", lead01, lead10).tolist() == [True, False]
+
+
 def test_input_and_target_pwl_sources_have_strictly_increasing_times() -> None:
     samples = [
         {"phase": "train", "pattern": 0, "label": 0, "apply_update": True},

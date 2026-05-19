@@ -547,6 +547,54 @@ def test_target_mistake_gate_can_use_score_senseamp_polarity() -> None:
     assert "Mbwd_t1_l bwd_t1_a lead01 bwd_t1_l" in gate
 
 
+def test_target_mistake_gate_can_use_scores_directly_without_lead_latch() -> None:
+    lead_cells = direct_flow.score_lead_gate_cells(lead_width_u=64.0, lead_mode="score_direct")
+    gate = direct_flow.backward_gate_cells(
+        "target_mistake",
+        width_u=64.0,
+        cap_f=2.0,
+        lead_mode="score_direct",
+    )
+
+    assert "without an intermediate lead latch" in lead_cells
+    assert "class 0 uses score0; class 1 uses score1" in gate
+    assert "Mbwd_t0_p vdd score0 bwd_t0_p" in gate
+    assert "Mbwd_t0_l bwd_t0_a score1 bwd_t0_l" in gate
+    assert "Mbwd_t1_p vdd score1 bwd_t1_p" in gate
+    assert "Mbwd_t1_l bwd_t1_a score0 bwd_t1_l" in gate
+
+
+def test_score_charge_lead_amplifies_scores_without_discharge_path() -> None:
+    lead_cells = direct_flow.score_lead_gate_cells(lead_width_u=96.0, lead_mode="score_charge")
+    gate = direct_flow.backward_gate_cells(
+        "target_mistake",
+        width_u=64.0,
+        cap_f=2.0,
+        lead_mode="score_charge",
+    )
+
+    assert "Charge-only score lead" in lead_cells
+    assert "Mlead01_up_s vdd score0 lead01_up" in lead_cells
+    assert "Mlead10_up_s vdd score1 lead10_up" in lead_cells
+    assert "lead01_dn" not in lead_cells
+    assert "class 0 uses lead01; class 1 uses lead10" in gate
+
+
+def test_strong_score_senseamp_adds_cross_coupled_nmos_regeneration() -> None:
+    lead_cells = direct_flow.score_lead_gate_cells(lead_width_u=128.0, lead_mode="senseamp_strong")
+    gate = direct_flow.backward_gate_cells(
+        "target_mistake",
+        width_u=64.0,
+        cap_f=2.0,
+        lead_mode="senseamp_strong",
+    )
+
+    assert "cross-coupled NMOS pull-downs" in lead_cells
+    assert "Mlead01_nkeep lead01 lead10 0 0 NMOS" in lead_cells
+    assert "Mlead10_nkeep lead10 lead01 0 0 NMOS" in lead_cells
+    assert "class 0 uses lead01; class 1 uses lead10" in gate
+
+
 def test_target_mistake_gate_stats_count_false_opens_and_misses() -> None:
     train = pd.DataFrame(
         [
@@ -564,6 +612,10 @@ def test_target_mistake_gate_stats_count_false_opens_and_misses() -> None:
     assert stats["target_mistake_bwd_false_positive_count"] == 1
     assert stats["target_mistake_bwd_false_negative_count"] == 1
     assert stats["target_mistake_bwd_match_fraction"] == pytest.approx(0.5)
+    assert stats["target_mistake_bwd_target_loses_mean_v"] == pytest.approx(0.535)
+    assert stats["target_mistake_bwd_target_wins_mean_v"] == pytest.approx(0.535)
+    assert stats["target_mistake_bwd_voltage_separation_v"] == pytest.approx(-1.03)
+    assert stats["target_mistake_bwd_best_threshold_match_fraction"] == pytest.approx(0.5)
 
 
 def test_out_residual_error_uses_each_outputs_own_stored_score() -> None:

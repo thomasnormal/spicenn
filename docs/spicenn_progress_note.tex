@@ -1238,6 +1238,20 @@ and missed openings.  So the \(G'_{\mathrm{eff}}s_{\mathrm{MOS}}\) mobility
 issue is plausibly part of the linear-readout blocker, but it is coupled to the
 comparator and update-gate selectivity; a better state map alone is not enough.
 
+The latest lead/gate sweep separates these two effects more sharply.  Direct
+score-gated and charge-only score-lead variants can identify the winning score
+in the diagnostics, but \code{score\_direct} only generates millivolt-scale
+backward gates and the charge-only lead variants top out at 68.75\%.  The new
+\code{senseamp\_strong} lead adds cross-coupled NMOS regeneration.  Its
+width-64 five-epoch run improves target-mistake gate agreement to 83.75\% and
+the best transient margin to about \(-0.65\ \mathrm{mV}\), but seven-epoch
+extensions settle at 81.25\%; the old senseamp control reaches 75\%.  Thus the
+remaining linear-readout blocker is not just representation separability or
+whether the error is generated in Python.  The hardware update map itself must
+be better conditioned: the target-mistake event has to be rail-level and
+selective, and the selected write path has to move the effective conductance
+through a useful \(G'_{\mathrm{eff}}(\theta)s_{\mathrm{MOS}}(\theta)\) region.
+
 \subsection{Local-Feature Phase-Training Path}
 
 The strongest MNIST evidence uses local feature cells rather than dense

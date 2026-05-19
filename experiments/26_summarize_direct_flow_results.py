@@ -28,6 +28,9 @@ FIELDS = [
     "target_mistake_bwd_match_fraction",
     "target_mistake_bwd_false_positive_count",
     "target_mistake_bwd_false_negative_count",
+    "target_mistake_bwd_voltage_separation_v",
+    "target_mistake_bwd_best_threshold_v",
+    "target_mistake_bwd_best_threshold_match_fraction",
     "residual_target_width_u",
     "residual_output_width_u",
     "readout_flow_polarity",
@@ -90,6 +93,13 @@ def row_from_summary(path: Path) -> dict[str, Any]:
         "target_mistake_bwd_false_negative_count": data.get(
             "target_mistake_bwd_false_negative_count"
         ),
+        "target_mistake_bwd_voltage_separation_v": data.get(
+            "target_mistake_bwd_voltage_separation_v"
+        ),
+        "target_mistake_bwd_best_threshold_v": data.get("target_mistake_bwd_best_threshold_v"),
+        "target_mistake_bwd_best_threshold_match_fraction": data.get(
+            "target_mistake_bwd_best_threshold_match_fraction"
+        ),
         "residual_target_width_u": data.get("residual_target_width_u"),
         "residual_output_width_u": data.get("residual_output_width_u"),
         "readout_flow_polarity": data.get("readout_flow_polarity"),
@@ -136,6 +146,8 @@ def print_markdown(rows: list[dict[str, Any]]) -> None:
         "error_rule",
         "backward_gate_mode",
         "target_mistake_bwd_match_fraction",
+        "target_mistake_bwd_voltage_separation_v",
+        "target_mistake_bwd_best_threshold_match_fraction",
         "residual_output_width_u",
         "readout_center_pull_width_u",
         "hidden_update_width_u",

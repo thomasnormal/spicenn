@@ -39,6 +39,9 @@ def test_direct_flow_summary_extracts_nested_separability(tmp_path: Path) -> Non
                 "target_mistake_bwd_match_fraction": 0.875,
                 "target_mistake_bwd_false_positive_count": 2,
                 "target_mistake_bwd_false_negative_count": 1,
+                "target_mistake_bwd_voltage_separation_v": -0.03,
+                "target_mistake_bwd_best_threshold_v": 0.42,
+                "target_mistake_bwd_best_threshold_match_fraction": 0.9375,
                 "readout_flow_polarity": "normal",
                 "readout_center_pull_width_u": 0.0002,
                 "output_bias_center_pull_width_u": 0.0001,
@@ -76,6 +79,9 @@ def test_direct_flow_summary_extracts_nested_separability(tmp_path: Path) -> Non
     assert row["target_mistake_bwd_match_fraction"] == 0.875
     assert row["target_mistake_bwd_false_positive_count"] == 2
     assert row["target_mistake_bwd_false_negative_count"] == 1
+    assert row["target_mistake_bwd_voltage_separation_v"] == -0.03
+    assert row["target_mistake_bwd_best_threshold_v"] == 0.42
+    assert row["target_mistake_bwd_best_threshold_match_fraction"] == 0.9375
     assert row["readout_flow_polarity"] == "normal"
     assert row["readout_center_pull_width_u"] == 0.0002
     assert row["output_bias_center_pull_width_u"] == 0.0001

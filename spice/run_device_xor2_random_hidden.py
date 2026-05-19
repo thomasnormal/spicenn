@@ -681,9 +681,11 @@ def lead_class0_wins(lead_mode: str, lead01, lead10):
 def lead_win_gate(lead_mode: str, class_index: int) -> str:
     if class_index not in {0, 1}:
         raise ValueError(f"unknown class index: {class_index}")
+    if lead_mode == "score_direct":
+        return "score0" if class_index == 0 else "score1"
     if lead_mode == "out_senseamp":
         return "lead10" if class_index == 0 else "lead01"
-    if lead_mode in {"score", "lose", "senseamp"}:
+    if lead_mode in {"score", "score_charge", "lose", "senseamp", "senseamp_strong"}:
         return "lead01" if class_index == 0 else "lead10"
     raise ValueError(f"unknown lead mode: {lead_mode}")
 
@@ -698,14 +700,34 @@ def target_mistake_gate_stats(train: pd.DataFrame, bwd_threshold_v: float = 0.5)
             "target_mistake_bwd_false_negative_count": None,
             "target_mistake_score_loses_count": None,
             "target_mistake_bwd_open_count": None,
+            "target_mistake_bwd_target_loses_mean_v": None,
+            "target_mistake_bwd_target_wins_mean_v": None,
+            "target_mistake_bwd_target_loses_min_v": None,
+            "target_mistake_bwd_target_wins_max_v": None,
+            "target_mistake_bwd_voltage_separation_v": None,
+            "target_mistake_bwd_best_threshold_v": None,
+            "target_mistake_bwd_best_threshold_match_fraction": None,
         }
     score0_wins = train["score0_cmp"] > train["score1_cmp"]
     target_is_class0 = train["label"].astype(int) == 0
     target_loses = np.where(target_is_class0, ~score0_wins, score0_wins)
-    bwd_open = train["bwd_signal"] > bwd_threshold_v
-    match = bwd_open.to_numpy() == target_loses
-    false_positive = bwd_open.to_numpy() & ~target_loses
-    false_negative = ~bwd_open.to_numpy() & target_loses
+    bwd_signal = train["bwd_signal"].to_numpy()
+    bwd_open = bwd_signal > bwd_threshold_v
+    match = bwd_open == target_loses
+    false_positive = bwd_open & ~target_loses
+    false_negative = ~bwd_open & target_loses
+    loses_signal = bwd_signal[target_loses]
+    wins_signal = bwd_signal[~target_loses]
+    thresholds = [-1.0]
+    unique_signal = np.unique(bwd_signal)
+    if len(unique_signal) > 1:
+        thresholds.extend(float((a + b) / 2) for a, b in zip(unique_signal[:-1], unique_signal[1:]))
+    thresholds.append(2.0)
+    best_threshold = max(
+        thresholds,
+        key=lambda threshold: float(((bwd_signal > threshold) == target_loses).mean()),
+    )
+    best_match = float(((bwd_signal > best_threshold) == target_loses).mean())
     return {
         "target_mistake_bwd_threshold_v": bwd_threshold_v,
         "target_mistake_bwd_match_fraction": float(match.mean()),
@@ -713,6 +735,15 @@ def target_mistake_gate_stats(train: pd.DataFrame, bwd_threshold_v: float = 0.5)
         "target_mistake_bwd_false_negative_count": int(false_negative.sum()),
         "target_mistake_score_loses_count": int(target_loses.sum()),
         "target_mistake_bwd_open_count": int(bwd_open.sum()),
+        "target_mistake_bwd_target_loses_mean_v": float(loses_signal.mean()) if len(loses_signal) else None,
+        "target_mistake_bwd_target_wins_mean_v": float(wins_signal.mean()) if len(wins_signal) else None,
+        "target_mistake_bwd_target_loses_min_v": float(loses_signal.min()) if len(loses_signal) else None,
+        "target_mistake_bwd_target_wins_max_v": float(wins_signal.max()) if len(wins_signal) else None,
+        "target_mistake_bwd_voltage_separation_v": (
+            float(loses_signal.min() - wins_signal.max()) if len(loses_signal) and len(wins_signal) else None
+        ),
+        "target_mistake_bwd_best_threshold_v": float(best_threshold),
+        "target_mistake_bwd_best_threshold_match_fraction": best_match,
     }
 
 
@@ -1068,7 +1099,7 @@ def resets(lead_mode: str, include_gradient_resets: bool, score_reset_v: float) 
                     f"Mreset_gvp{out}{h} gvp{out}{h} rstg 0 0 NMOS W=4u L=180n",
                     f"Mreset_gvn{out}{h} gvn{out}{h} rstg 0 0 NMOS W=4u L=180n",
                 ]
-    if lead_mode in {"senseamp", "out_senseamp"}:
+    if lead_mode in {"senseamp", "senseamp_strong", "out_senseamp"}:
         lines += [
             "Mreset_lead01_high vdd rste lead01 0 NSENSE W=32u L=180n",
             "Mreset_lead10_high vdd rste lead10 0 NSENSE W=32u L=180n",
@@ -1206,6 +1237,25 @@ def node_parasitics(*nodes: str) -> list[str]:
 
 
 def score_lead_gate_cells(lead_width_u: float, lead_mode: str) -> str:
+    if lead_mode == "score_direct":
+        return "\n".join(
+            [
+                "* Direct score lead mode: target-mistake stacks use score0/score1",
+                "* capacitor voltages as their winner gates, without an intermediate lead latch.",
+            ]
+        )
+    if lead_mode == "score_charge":
+        return "\n".join(
+            [
+                "* Charge-only score lead: lead01/lead10 start low and are charged by score0/score1 during compare.",
+                "* This avoids the score-mode discharge path that can cancel small score voltages.",
+                f"Mlead01_up_s vdd score0 lead01_up 0 NSENSE W={lead_width_u:.12g}u L=180n",
+                f"Mlead01_up_e lead01_up cmp lead01 0 NSENSE W={lead_width_u:.12g}u L=180n",
+                f"Mlead10_up_s vdd score1 lead10_up 0 NSENSE W={lead_width_u:.12g}u L=180n",
+                f"Mlead10_up_e lead10_up cmp lead10 0 NSENSE W={lead_width_u:.12g}u L=180n",
+            ]
+            + node_parasitics("lead01_up", "lead10_up")
+        )
     if lead_mode == "score":
         return "\n".join(
             [
@@ -1238,20 +1288,24 @@ def score_lead_gate_cells(lead_width_u: float, lead_mode: str) -> str:
             ]
             + node_parasitics("lead01_up", "lead01_dn", "lead10_up", "lead10_dn")
         )
-    if lead_mode == "senseamp":
+    if lead_mode in {"senseamp", "senseamp_strong"}:
         keeper_width_u = max(1.0, lead_width_u / 64.0)
-        return "\n".join(
-            [
-                "* Dynamic score sense amp: rste precharges both lead nodes high; cmp discharges the losing side.",
-                f"Mlead01_dis_s lead01 score1 lead01_dn 0 NSENSE W={lead_width_u:.12g}u L=180n",
-                f"Mlead01_dis_e lead01_dn cmp 0 0 NSENSE W={lead_width_u:.12g}u L=180n",
-                f"Mlead10_dis_s lead10 score0 lead10_dn 0 NSENSE W={lead_width_u:.12g}u L=180n",
-                f"Mlead10_dis_e lead10_dn cmp 0 0 NSENSE W={lead_width_u:.12g}u L=180n",
-                f"Mlead01_keep lead01 lead10 vdd vdd PMOS W={keeper_width_u:.12g}u L=180n",
-                f"Mlead10_keep lead10 lead01 vdd vdd PMOS W={keeper_width_u:.12g}u L=180n",
+        lines = [
+            "* Dynamic score sense amp: rste precharges both lead nodes high; cmp discharges the losing side.",
+            f"Mlead01_dis_s lead01 score1 lead01_dn 0 NSENSE W={lead_width_u:.12g}u L=180n",
+            f"Mlead01_dis_e lead01_dn cmp 0 0 NSENSE W={lead_width_u:.12g}u L=180n",
+            f"Mlead10_dis_s lead10 score0 lead10_dn 0 NSENSE W={lead_width_u:.12g}u L=180n",
+            f"Mlead10_dis_e lead10_dn cmp 0 0 NSENSE W={lead_width_u:.12g}u L=180n",
+            f"Mlead01_keep lead01 lead10 vdd vdd PMOS W={keeper_width_u:.12g}u L=180n",
+            f"Mlead10_keep lead10 lead01 vdd vdd PMOS W={keeper_width_u:.12g}u L=180n",
+        ]
+        if lead_mode == "senseamp_strong":
+            lines += [
+                "* Strong variant adds cross-coupled NMOS pull-downs for regenerative lead separation.",
+                f"Mlead01_nkeep lead01 lead10 0 0 NMOS W={keeper_width_u:.12g}u L=180n",
+                f"Mlead10_nkeep lead10 lead01 0 0 NMOS W={keeper_width_u:.12g}u L=180n",
             ]
-            + node_parasitics("lead01_dn", "lead10_dn")
-        )
+        return "\n".join(lines + node_parasitics("lead01_dn", "lead10_dn"))
     if lead_mode == "out_senseamp":
         keeper_width_u = max(1.0, lead_width_u / 64.0)
         return "\n".join(
@@ -2682,7 +2736,19 @@ def main() -> None:
     )
     ap.add_argument("--lose-pull-kohm", type=float, default=100.0)
     ap.add_argument("--lose-width-u", type=float, default=24.0)
-    ap.add_argument("--lead-mode", choices=["score", "lose", "senseamp", "out_senseamp"], default="score")
+    ap.add_argument(
+        "--lead-mode",
+        choices=[
+            "score",
+            "score_charge",
+            "score_direct",
+            "lose",
+            "senseamp",
+            "senseamp_strong",
+            "out_senseamp",
+        ],
+        default="score",
+    )
     ap.add_argument("--lead-width-u", type=float, default=96.0)
     ap.add_argument("--backward-gate-mode", choices=BACKWARD_GATE_MODES, default="scheduled")
     ap.add_argument("--backward-gate-width-u", type=float, default=64.0)
@@ -3047,7 +3113,10 @@ def main() -> None:
         score0_wins = ((train["label"] == 0) & (train["margin"] > 0)) | (
             (train["label"] == 1) & (train["margin"] < 0)
         )
-        lead0_wins = lead_class0_wins(args.lead_mode, train["lead01"], train["lead10"])
+        if args.lead_mode == "score_direct":
+            lead0_wins = train["score0_cmp"] > train["score1_cmp"]
+        else:
+            lead0_wins = lead_class0_wins(args.lead_mode, train["lead01"], train["lead10"])
         lead_score_winner_fraction = float((lead0_wins.to_numpy() == score0_wins.to_numpy()).mean())
         lead_tracks_score_winner = bool(lead_score_winner_fraction >= 0.75)
         mean_train_lead01 = float(train["lead01"].mean())

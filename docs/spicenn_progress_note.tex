@@ -1133,6 +1133,25 @@ point must satisfy both conditions at once: useful \(G'_{\mathrm{eff}}\) in the
 weight cells and enough forward score/output swing for the transistor error
 and lead-gate circuits to generate a real backward stream.
 
+Separate output-head controls support the same conclusion.  Scaling the output
+forward path did not rescue the low-state readout window: the
+\code{center024\_outgain4} run ended at 40.625\% with only
+\(10.3\ \mu\mathrm{V}\) mean backward signal, and the
+\code{center034\_outgain3} run ended at 43.75\% even though the backward stream
+opened to \(0.382\ \mathrm{V}\).  A \(2\times\) output-gain run with the
+default random readout moved the signed readout by \(163\ \mathrm{mV}\), but
+fell to 67.1875\%.  More movement is therefore not sufficient unless the
+movement is aligned with the effective separator and the output decision
+circuit remains in range.
+
+Naively precharging the score capacitors to \(0.30\ \mathrm{V}\) also failed:
+three score-common-mode controls ended at 0\% with zero final margin.  The
+single-ended output follower currently treats score common-mode as signal
+rather than rejecting it.  The next readout head should therefore be
+differential, or include an explicit common-mode-rejecting subtract stage, so
+negative readout branches get discharge headroom without collapsing the class
+comparison.
+
 \subsection{Local-Feature Phase-Training Path}
 
 The strongest MNIST evidence uses local feature cells rather than dense

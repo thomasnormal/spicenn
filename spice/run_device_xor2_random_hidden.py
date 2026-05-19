@@ -157,6 +157,9 @@ def scaled_synapse_design(
     hidden_delta_width_scale: float,
     hidden_gradient_width_scale: float,
     readout_gradient_width_scale: float,
+    output_forward_width_scale: float = 1.0,
+    output_bias_forward_width_scale: float = 1.0,
+    output_relu_width_scale: float = 1.0,
 ) -> SynapseDesign:
     base = SYNAPSE_DESIGNS[name]
     return replace(
@@ -164,6 +167,11 @@ def scaled_synapse_design(
         hidden_delta_width_u=base.hidden_delta_width_u * hidden_delta_width_scale,
         hidden_gradient_width_u=base.hidden_gradient_width_u * hidden_gradient_width_scale,
         readout_gradient_width_u=base.readout_gradient_width_u * readout_gradient_width_scale,
+        output_forward_pos_width_u=base.output_forward_pos_width_u * output_forward_width_scale,
+        output_forward_neg_width_u=base.output_forward_neg_width_u * output_forward_width_scale,
+        output_bias_forward_pos_width_u=base.output_bias_forward_pos_width_u * output_bias_forward_width_scale,
+        output_bias_forward_neg_width_u=base.output_bias_forward_neg_width_u * output_bias_forward_width_scale,
+        output_relu_width_u=base.output_relu_width_u * output_relu_width_scale,
     )
 
 
@@ -925,6 +933,7 @@ def temporary_caps(
     hidden_delta_cap_f: float,
     lead_cap_f: float,
     include_gradient_caps: bool,
+    score_reset_v: float,
 ) -> str:
     lines: list[str] = []
     for h in range(HIDDEN):
@@ -948,7 +957,7 @@ def temporary_caps(
                 ]
     for out in range(OUTPUTS):
         lines += [
-            f"Cscore{out} score{out} 0 10f IC=0",
+            f"Cscore{out} score{out} 0 10f IC={score_reset_v:.12g}",
             f"Cout{out} out{out} 0 20f IC=0",
             f"Cdp{out} dp{out} 0 20f IC=0",
             f"Cdn{out} dn{out} 0 20f IC=0",
@@ -980,7 +989,7 @@ def temporary_caps(
     return "\n".join(lines)
 
 
-def resets(lead_mode: str, include_gradient_resets: bool) -> str:
+def resets(lead_mode: str, include_gradient_resets: bool, score_reset_v: float) -> str:
     lines: list[str] = []
     for h in range(HIDDEN):
         lines += [
@@ -997,7 +1006,7 @@ def resets(lead_mode: str, include_gradient_resets: bool) -> str:
                 ]
     for out in range(OUTPUTS):
         lines += [
-            f"Mreset_score{out} score{out} rstf 0 0 NMOS W=4u L=180n",
+            f"Mreset_score{out} score{out} rstf scorecm 0 NMOS W=4u L=180n",
             f"Mreset_out{out} out{out} rstf 0 0 NMOS W=4u L=180n",
             f"Mreset_dp{out} dp{out} rste 0 0 NMOS W=4u L=180n",
             f"Mreset_dn{out} dn{out} rste 0 0 NMOS W=4u L=180n",
@@ -1958,6 +1967,9 @@ def random_hidden_netlist(
     hidden_delta_width_scale: float,
     hidden_gradient_width_scale: float,
     readout_gradient_width_scale: float,
+    output_forward_width_scale: float,
+    output_bias_forward_width_scale: float,
+    output_relu_width_scale: float,
     hidden_error_rule: str,
     hidden_delta_relu_gate: str,
     hidden_delta_weight_device: str,
@@ -1999,6 +2011,7 @@ def random_hidden_netlist(
     hidden_gradient_cap_f: float,
     hidden_delta_cap_f: float,
     lead_cap_f: float,
+    score_reset_v: float,
     readout_update_width_u: float,
     output_bias_update_width_u: float,
     readout_flow_polarity: str,
@@ -2026,6 +2039,9 @@ def random_hidden_netlist(
         hidden_delta_width_scale,
         hidden_gradient_width_scale,
         readout_gradient_width_scale,
+        output_forward_width_scale,
+        output_bias_forward_width_scale,
+        output_relu_width_scale,
     )
     include_gradient_caps = learning_mode == "accumulate_apply"
     state_seed = seed if init_seed is None else init_seed
@@ -2157,6 +2173,7 @@ def random_hidden_netlist(
 {mos_models()}
 Vdd vdd 0 {{VDD}}
 Vbias bias 0 {{VDD}}
+Vscorecm scorecm 0 {score_reset_v:.12g}
 {input_sources}
 Vt0 t0 0 {target_wave(samples, 0, stop)}
 Vt1 t1 0 {target_wave(samples, 1, stop)}
@@ -2164,8 +2181,8 @@ Vt1 t1 0 {target_wave(samples, 1, stop)}
 
 {persistent_caps(hidden_state, readout_state, hidden_cap_f)}
 {feedback_block}
-{temporary_caps(gradient_cap_f, hidden_gradient_cap_f, hidden_delta_cap_f, lead_cap_f, include_gradient_caps)}
-{resets(lead_mode, include_gradient_caps)}
+{temporary_caps(gradient_cap_f, hidden_gradient_cap_f, hidden_delta_cap_f, lead_cap_f, include_gradient_caps, score_reset_v)}
+{resets(lead_mode, include_gradient_caps, score_reset_v)}
 {flow_pre_activation_stores(flow_pre_store, flow_pre_cap_f, flow_pre_consume_width_u) if learning_mode == "flow" else ""}
 {train_charge_noise(samples, stop, train_charge_noise_width_u, train_charge_noise_probability, train_charge_noise_seed, train_charge_noise_scope, train_charge_noise_pulse_ns, bwd_start_ns)}
 
@@ -2232,6 +2249,24 @@ def main() -> None:
     ap.add_argument("--hidden-delta-width-scale", type=float, default=1.0)
     ap.add_argument("--hidden-gradient-width-scale", type=float, default=1.0)
     ap.add_argument("--readout-gradient-width-scale", type=float, default=1.0)
+    ap.add_argument(
+        "--output-forward-width-scale",
+        type=float,
+        default=1.0,
+        help="Scale the forward readout synapse devices that integrate hidden activations onto score caps.",
+    )
+    ap.add_argument(
+        "--output-bias-forward-width-scale",
+        type=float,
+        default=1.0,
+        help="Scale the output-bias forward devices independently of the readout synapses.",
+    )
+    ap.add_argument(
+        "--output-relu-width-scale",
+        type=float,
+        default=1.0,
+        help="Scale the output source-follower/ReLU device that charges the class output caps from score caps.",
+    )
     ap.add_argument("--hidden-error-rule", choices=HIDDEN_ERROR_RULES, default="backprop")
     ap.add_argument("--hidden-delta-relu-gate", choices=HIDDEN_DELTA_RELU_GATES, default="act_nrel")
     ap.add_argument(
@@ -2322,6 +2357,15 @@ def main() -> None:
     ap.add_argument("--hidden-gradient-cap-f", type=float)
     ap.add_argument("--hidden-delta-cap-f", type=float, default=12.0)
     ap.add_argument("--lead-cap-f", type=float, default=2.0)
+    ap.add_argument(
+        "--score-reset-v",
+        type=float,
+        default=0.0,
+        help=(
+            "Forward-phase reset/precharge voltage for output score capacitors. "
+            "Nonzero values give negative readout branches discharge headroom."
+        ),
+    )
     ap.add_argument("--update-width-u", type=float, default=120.0)
     ap.add_argument("--readout-update-width-u", type=float)
     ap.add_argument("--output-bias-update-width-u", type=float)
@@ -2390,7 +2434,14 @@ def main() -> None:
         set_hidden_cells(args.hidden_cells)
     except ValueError as exc:
         raise SystemExit(str(exc)) from exc
-    if args.hidden_delta_width_scale <= 0 or args.hidden_gradient_width_scale <= 0 or args.readout_gradient_width_scale <= 0:
+    if (
+        args.hidden_delta_width_scale <= 0
+        or args.hidden_gradient_width_scale <= 0
+        or args.readout_gradient_width_scale <= 0
+        or args.output_forward_width_scale <= 0
+        or args.output_bias_forward_width_scale <= 0
+        or args.output_relu_width_scale <= 0
+    ):
         raise SystemExit("synapse width scales must be positive.")
     if args.hidden_delta_internal_cap_f < 0 or args.hidden_delta_internal_leak_ohm < 0:
         raise SystemExit("hidden delta internal damping values must be nonnegative.")
@@ -2401,6 +2452,8 @@ def main() -> None:
         raise SystemExit("gradient capacitances must be positive.")
     if args.hidden_delta_cap_f <= 0:
         raise SystemExit("hidden delta capacitance must be positive.")
+    if not 0.0 <= args.score_reset_v <= 0.8:
+        raise SystemExit("--score-reset-v must be in 0..0.8 V.")
     if args.hidden_grad_sense_width_u <= 0 or args.hidden_grad_sense_cap_f <= 0:
         raise SystemExit("hidden gradient sense width and capacitance must be positive.")
     if args.flow_pre_cap_f <= 0 or args.flow_pre_consume_width_u <= 0:
@@ -2490,6 +2543,9 @@ def main() -> None:
         args.hidden_delta_width_scale,
         args.hidden_gradient_width_scale,
         args.readout_gradient_width_scale,
+        args.output_forward_width_scale,
+        args.output_bias_forward_width_scale,
+        args.output_relu_width_scale,
         args.hidden_error_rule,
         args.hidden_delta_relu_gate,
         args.hidden_delta_weight_device,
@@ -2531,6 +2587,7 @@ def main() -> None:
         hidden_gradient_cap_f,
         args.hidden_delta_cap_f,
         args.lead_cap_f,
+        args.score_reset_v,
         args.readout_update_width_u if args.readout_update_width_u is not None else args.update_width_u,
         args.output_bias_update_width_u
         if args.output_bias_update_width_u is not None
@@ -2725,6 +2782,9 @@ def main() -> None:
         args.hidden_delta_width_scale,
         args.hidden_gradient_width_scale,
         args.readout_gradient_width_scale,
+        args.output_forward_width_scale,
+        args.output_bias_forward_width_scale,
+        args.output_relu_width_scale,
     )
     has_hidden_apply_gate_metrics = (
         has_applied_train and "max_abs_hidden_apply_gate_signal" in applied_train.columns
@@ -2775,9 +2835,17 @@ def main() -> None:
         "hidden_delta_width_scale": args.hidden_delta_width_scale,
         "hidden_gradient_width_scale": args.hidden_gradient_width_scale,
         "readout_gradient_width_scale": args.readout_gradient_width_scale,
+        "output_forward_width_scale": args.output_forward_width_scale,
+        "output_bias_forward_width_scale": args.output_bias_forward_width_scale,
+        "output_relu_width_scale": args.output_relu_width_scale,
         "effective_hidden_delta_width_u": effective_design.hidden_delta_width_u,
         "effective_hidden_gradient_width_u": effective_design.hidden_gradient_width_u,
         "effective_readout_gradient_width_u": effective_design.readout_gradient_width_u,
+        "effective_output_forward_pos_width_u": effective_design.output_forward_pos_width_u,
+        "effective_output_forward_neg_width_u": effective_design.output_forward_neg_width_u,
+        "effective_output_bias_forward_pos_width_u": effective_design.output_bias_forward_pos_width_u,
+        "effective_output_bias_forward_neg_width_u": effective_design.output_bias_forward_neg_width_u,
+        "effective_output_relu_width_u": effective_design.output_relu_width_u,
         "hidden_error_rule": args.hidden_error_rule,
         "hidden_delta_relu_gate": args.hidden_delta_relu_gate,
         "hidden_delta_weight_device": args.hidden_delta_weight_device,
@@ -2939,6 +3007,7 @@ def main() -> None:
         "hidden_gradient_cap_f": hidden_gradient_cap_f if args.learning_mode == "accumulate_apply" else None,
         "hidden_delta_cap_f": args.hidden_delta_cap_f,
         "lead_cap_f": args.lead_cap_f,
+        "score_reset_v": args.score_reset_v,
         "update_width_u": args.update_width_u,
         "readout_update_width_u": args.readout_update_width_u if args.readout_update_width_u is not None else args.update_width_u,
         "output_bias_update_width_u": args.output_bias_update_width_u

@@ -252,6 +252,44 @@ def test_rail_buffer_hidden_forward_uses_input_pass_gates() -> None:
     assert "Mh2_biasp_x" in forward
 
 
+def test_synapse_design_scaling_separates_forward_readout_from_update_paths() -> None:
+    scaled = direct_flow.scaled_synapse_design(
+        "split_signed_v1",
+        hidden_delta_width_scale=1.5,
+        hidden_gradient_width_scale=2.0,
+        readout_gradient_width_scale=0.5,
+        output_forward_width_scale=3.0,
+        output_bias_forward_width_scale=4.0,
+        output_relu_width_scale=5.0,
+    )
+
+    assert scaled.hidden_delta_width_u == pytest.approx(48.0)
+    assert scaled.hidden_gradient_width_u == pytest.approx(80.0)
+    assert scaled.readout_gradient_width_u == pytest.approx(12.0)
+    assert scaled.output_forward_pos_width_u == pytest.approx(168.0)
+    assert scaled.output_forward_neg_width_u == pytest.approx(144.0)
+    assert scaled.output_bias_forward_pos_width_u == pytest.approx(160.0)
+    assert scaled.output_bias_forward_neg_width_u == pytest.approx(144.0)
+    assert scaled.output_relu_width_u == pytest.approx(120.0)
+
+
+def test_score_caps_can_reset_to_common_mode_for_signed_readout_headroom() -> None:
+    caps = direct_flow.temporary_caps(
+        gradient_cap_f=4.0,
+        hidden_gradient_cap_f=4.0,
+        hidden_delta_cap_f=12.0,
+        lead_cap_f=2.0,
+        include_gradient_caps=False,
+        score_reset_v=0.30,
+    )
+    reset = direct_flow.resets("out_senseamp", include_gradient_resets=False, score_reset_v=0.30)
+
+    assert "Cscore0 score0 0 10f IC=0.3" in caps
+    assert "Cscore1 score1 0 10f IC=0.3" in caps
+    assert "Mreset_score0 score0 rstf scorecm 0 NMOS" in reset
+    assert "Mreset_score1 score1 rstf scorecm 0 NMOS" in reset
+
+
 def test_probe_measurement_keeps_backward_signals_without_full_weight_snapshots() -> None:
     original_hidden = direct_flow.HIDDEN
     original_input_rails = list(direct_flow.INPUT_RAILS)

@@ -2934,6 +2934,38 @@ def main() -> None:
                 "finding": "Repeating the 8-hidden 0.24 fF 12-sample MNIST01 bridge with the stronger activation-gated hidden-delta probe setting preserved 91.67% final accuracy and -106 uV worst margin, confirming the prior narrow charge/balance ridge rather than solving the remaining sample.",
             },
             {
+                "artifact": "results/figures/hidden_delta_senseamp_architecture.png",
+                "finding": "Adds an architecture diagram for the current direct-flow hidden-delta senseamp branch: forward activations charge capacitor nodes, backward error passes through the same readout weight-capacitor gates and activation gate, and a local dynamic latch drives the hidden-weight write path.",
+            },
+            {
+                "artifact": "spice/results/device_mnist01_8_random_hidden_v100_senseamp_leador_e8_summary.json",
+                "finding": "The local hidden-delta senseamp branch also solves the 8-sample MNIST01 bridge from random readout: 100% final accuracy after 8 epochs with +14.8 mV final margin, direct backward/write flow, no gradient accumulator caps, and real readout-weight transport into hidden deltas.",
+            },
+            {
+                "artifact": "spice/results/device_mnist01_12_random_hidden_v100_senseamp_leador_e8_summary.json",
+                "finding": "Promoting the same shared-source direct-flow senseamp branch to the 12-sample MNIST01 bridge reached 91.67% but with -18.0 mV final margin, so the local hidden-delta latch does not by itself solve the larger bridge.",
+            },
+            {
+                "artifact": "spice/results/device_mnist01_12_random_hidden_v101_passact_targetmistake_h8_cap024_senseamp_e2_summary.json",
+                "finding": "On the pass-activation trace-cap branch, adding the hidden-delta senseamp at the prior 0.24 fF ridge stayed at 91.67% final accuracy and -106 uV margin, effectively matching the pre-senseamp result.",
+            },
+            {
+                "artifact": "spice/results/device_mnist01_12_random_hidden_v103_passact_targetmistake_h8_cap0245_senseamp_e2_summary.json",
+                "finding": "A nearby 0.245 fF pass-activation senseamp point also stayed at 91.67%, with -100 uV final margin. This slightly improves the worst margin but still leaves the hard 12-sample bridge unsolved.",
+            },
+            {
+                "artifact": "spice/results/device_mnist01_12_random_hidden_v104_passact_targetmistake_h8_cap025_senseamp_e2_summary.json",
+                "finding": "Increasing the same pass-activation senseamp point to 0.25 fF dropped final accuracy to 83.33%, showing that the narrow charge ridge starts sacrificing digit-0 samples before the hard digit-1 sample is fixed.",
+            },
+            {
+                "artifact": "spice/results/device_mnist01_12_random_hidden_v102_passact_targetmistake_h8_cap026_senseamp_e2_summary.json",
+                "finding": "At 0.26 fF, the pass-activation senseamp point again ended at 83.33% despite a less negative -85 uV worst margin; capacitance alone is not a monotonic fix.",
+            },
+            {
+                "artifact": "spice/results/device_mnist01_12_random_hidden_v105_passact_targetmistake_h8_cap024_senseamp_interleave_e2_summary.json",
+                "finding": "Interleaving zero/one samples at the 0.24 fF pass-activation senseamp point collapsed the 12-sample bridge to 50% and -1.14 mV final margin, so this online direct-flow rule remains order-sensitive.",
+            },
+            {
                 "artifact": "spice/run_device_xor2_random_hidden.py",
                 "finding": "Adds --train-charge-noise-* controls for transistor-gated stochastic charge bleed during training. Python only seeds the random pulse rails; actual perturbation current must pass through bwd and a MOS discharge path into a selected signed weight-cap branch.",
             },

@@ -47,9 +47,12 @@ def test_direct_flow_summary_extracts_nested_separability(tmp_path: Path) -> Non
                 "target_mistake_latch_false_negative_count": 2,
                 "target_mistake_latch_best_threshold_match_fraction": 0.875,
                 "readout_flow_polarity": "normal",
+                "readout_flow_write_mode": "bounded_charge_discharge",
                 "readout_center_pull_width_u": 0.0002,
                 "output_bias_center_pull_width_u": 0.0001,
                 "readout_center_pull_v": 0.64,
+                "readout_write_high_v": 0.58,
+                "readout_write_low_v": 0.16,
                 "final_eval_accuracy": 0.9166666667,
                 "best_final_transient_accuracy": 0.9166666667,
                 "best_final_transient_min_margin_v": -0.0019,
@@ -91,9 +94,12 @@ def test_direct_flow_summary_extracts_nested_separability(tmp_path: Path) -> Non
     assert row["target_mistake_latch_false_negative_count"] == 2
     assert row["target_mistake_latch_best_threshold_match_fraction"] == 0.875
     assert row["readout_flow_polarity"] == "normal"
+    assert row["readout_flow_write_mode"] == "bounded_charge_discharge"
     assert row["readout_center_pull_width_u"] == 0.0002
     assert row["output_bias_center_pull_width_u"] == 0.0001
     assert row["readout_center_pull_v"] == 0.64
+    assert row["readout_write_high_v"] == 0.58
+    assert row["readout_write_low_v"] == 0.16
     assert row["input_feature_separable"] is True
     assert row["input_feature_min_margin"] == 0.42
     assert row["initial_hidden_separable"] is False

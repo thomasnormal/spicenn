@@ -104,7 +104,7 @@ LEARNING_MODES = ["accumulate_apply", "flow"]
 FLOW_HIDDEN_WRITES = ["direct", "off"]
 FLOW_PRE_STORES = ["shared_node", "synapse_gate", "synapse_consume"]
 READOUT_FLOW_POLARITIES = ["normal", "reversed"]
-READOUT_FLOW_WRITE_MODES = ["discharge", "charge_discharge"]
+READOUT_FLOW_WRITE_MODES = ["discharge", "charge_discharge", "bounded_charge_discharge"]
 HIDDEN_INIT_MODES = ["random", "input_identity"]
 MEASURE_DETAILS = ["full", "probe", "light"]
 BACKWARD_GATE_MODES = [
@@ -1893,21 +1893,24 @@ def readout_flow_updates(
     ):
         raise ValueError("readout flow update widths must be nonnegative.")
     n_gate, p_gate = ("dp", "dn") if readout_flow_polarity == "normal" else ("dn", "dp")
+    charge_enabled = readout_flow_write_mode in {"charge_discharge", "bounded_charge_discharge"}
+    high_node = "whigh" if readout_flow_write_mode == "bounded_charge_discharge" else "vdd"
+    low_node = "wlow" if readout_flow_write_mode == "bounded_charge_discharge" else "0"
     lines: list[str] = []
     for out in range(OUTPUTS):
         if output_bias_update_width_u > 0:
             lines += [
                 f"Mvbo{out}n_flow_b vbo{out}n bwd vbo{out}n_flow_b 0 NREL W={output_bias_update_width_u:.12g}u L=180n",
-                f"Mvbo{out}n_flow_d vbo{out}n_flow_b {n_gate}{out} 0 0 NSENSE W={output_bias_update_width_u:.12g}u L=180n",
+                f"Mvbo{out}n_flow_d vbo{out}n_flow_b {n_gate}{out} {low_node} 0 NSENSE W={output_bias_update_width_u:.12g}u L=180n",
                 f"Mvbo{out}p_flow_b vbo{out}p bwd vbo{out}p_flow_b 0 NREL W={output_bias_update_width_u:.12g}u L=180n",
-                f"Mvbo{out}p_flow_d vbo{out}p_flow_b {p_gate}{out} 0 0 NSENSE W={output_bias_update_width_u:.12g}u L=180n",
+                f"Mvbo{out}p_flow_d vbo{out}p_flow_b {p_gate}{out} {low_node} 0 NSENSE W={output_bias_update_width_u:.12g}u L=180n",
             ]
             lines += node_parasitics(f"vbo{out}n_flow_b", f"vbo{out}p_flow_b")
-            if readout_flow_write_mode == "charge_discharge":
+            if charge_enabled:
                 lines += [
-                    f"Mvbo{out}p_ch_b vdd bwd vbo{out}p_ch_b 0 NREL W={output_bias_update_width_u:.12g}u L=180n",
+                    f"Mvbo{out}p_ch_b {high_node} bwd vbo{out}p_ch_b 0 NREL W={output_bias_update_width_u:.12g}u L=180n",
                     f"Mvbo{out}p_ch_d vbo{out}p_ch_b {n_gate}{out} vbo{out}p 0 NSENSE W={output_bias_update_width_u:.12g}u L=180n",
-                    f"Mvbo{out}n_ch_b vdd bwd vbo{out}n_ch_b 0 NREL W={output_bias_update_width_u:.12g}u L=180n",
+                    f"Mvbo{out}n_ch_b {high_node} bwd vbo{out}n_ch_b 0 NREL W={output_bias_update_width_u:.12g}u L=180n",
                     f"Mvbo{out}n_ch_d vbo{out}n_ch_b {p_gate}{out} vbo{out}n 0 NSENSE W={output_bias_update_width_u:.12g}u L=180n",
                 ]
                 lines += node_parasitics(f"vbo{out}p_ch_b", f"vbo{out}n_ch_b")
@@ -1922,17 +1925,17 @@ def readout_flow_updates(
                 lines += [
                     f"Mvw{out}{h}n_flow_b vw{out}{h}n bwd vw{out}{h}n_flow_b 0 NREL W={readout_update_width_u:.12g}u L=180n",
                     f"Mvw{out}{h}n_flow_a vw{out}{h}n_flow_b {pre_gate} vw{out}{h}n_flow_a 0 NREL W={readout_update_width_u:.12g}u L=180n",
-                    f"Mvw{out}{h}n_flow_d vw{out}{h}n_flow_a {n_gate}{out} 0 0 NSENSE W={readout_update_width_u:.12g}u L=180n",
+                    f"Mvw{out}{h}n_flow_d vw{out}{h}n_flow_a {n_gate}{out} {low_node} 0 NSENSE W={readout_update_width_u:.12g}u L=180n",
                     f"Mvw{out}{h}p_flow_b vw{out}{h}p bwd vw{out}{h}p_flow_b 0 NREL W={readout_update_width_u:.12g}u L=180n",
                     f"Mvw{out}{h}p_flow_a vw{out}{h}p_flow_b {pre_gate} vw{out}{h}p_flow_a 0 NREL W={readout_update_width_u:.12g}u L=180n",
-                    f"Mvw{out}{h}p_flow_d vw{out}{h}p_flow_a {p_gate}{out} 0 0 NSENSE W={readout_update_width_u:.12g}u L=180n",
+                    f"Mvw{out}{h}p_flow_d vw{out}{h}p_flow_a {p_gate}{out} {low_node} 0 NSENSE W={readout_update_width_u:.12g}u L=180n",
                 ]
-                if readout_flow_write_mode == "charge_discharge":
+                if charge_enabled:
                     lines += [
-                        f"Mvw{out}{h}p_ch_b vdd bwd vw{out}{h}p_ch_b 0 NREL W={readout_update_width_u:.12g}u L=180n",
+                        f"Mvw{out}{h}p_ch_b {high_node} bwd vw{out}{h}p_ch_b 0 NREL W={readout_update_width_u:.12g}u L=180n",
                         f"Mvw{out}{h}p_ch_a vw{out}{h}p_ch_b {pre_gate} vw{out}{h}p_ch_a 0 NREL W={readout_update_width_u:.12g}u L=180n",
                         f"Mvw{out}{h}p_ch_d vw{out}{h}p_ch_a {n_gate}{out} vw{out}{h}p 0 NSENSE W={readout_update_width_u:.12g}u L=180n",
-                        f"Mvw{out}{h}n_ch_b vdd bwd vw{out}{h}n_ch_b 0 NREL W={readout_update_width_u:.12g}u L=180n",
+                        f"Mvw{out}{h}n_ch_b {high_node} bwd vw{out}{h}n_ch_b 0 NREL W={readout_update_width_u:.12g}u L=180n",
                         f"Mvw{out}{h}n_ch_a vw{out}{h}n_ch_b {pre_gate} vw{out}{h}n_ch_a 0 NREL W={readout_update_width_u:.12g}u L=180n",
                         f"Mvw{out}{h}n_ch_d vw{out}{h}n_ch_a {p_gate}{out} vw{out}{h}n 0 NSENSE W={readout_update_width_u:.12g}u L=180n",
                     ]
@@ -1942,7 +1945,7 @@ def readout_flow_updates(
                     f"vw{out}{h}p_flow_b",
                     f"vw{out}{h}p_flow_a",
                 )
-                if readout_flow_write_mode == "charge_discharge":
+                if charge_enabled:
                     lines += node_parasitics(
                         f"vw{out}{h}p_ch_b",
                         f"vw{out}{h}p_ch_a",
@@ -2373,6 +2376,8 @@ def random_hidden_netlist(
     readout_center_pull_width_u: float,
     output_bias_center_pull_width_u: float,
     readout_center_pull_v: float,
+    readout_write_high_v: float,
+    readout_write_low_v: float,
     readout_flow_polarity: str,
     readout_flow_write_mode: str,
     hidden_update_width_u: float,
@@ -2544,6 +2549,8 @@ Vdd vdd 0 {{VDD}}
 Vbias bias 0 {{VDD}}
 Vscorecm scorecm 0 {score_reset_v:.12g}
 Vwcenter wcenter 0 {readout_center_pull_v:.12g}
+Vwhigh whigh 0 {readout_write_high_v:.12g}
+Vwlow wlow 0 {readout_write_low_v:.12g}
 {input_sources}
 Vt0 t0 0 {target_wave(samples, 0, stop)}
 Vt1 t1 0 {target_wave(samples, 1, stop)}
@@ -2787,8 +2794,21 @@ def main() -> None:
         default="discharge",
         help=(
             "Physical direct-flow readout write primitive. charge_discharge charges the branch "
-            "matching the desired sign while draining the opposite branch."
+            "matching the desired sign while draining the opposite branch. bounded_charge_discharge "
+            "uses --readout-write-high-v/--readout-write-low-v instead of VDD/ground."
         ),
+    )
+    ap.add_argument(
+        "--readout-write-high-v",
+        type=float,
+        default=0.58,
+        help="High rail for bounded_charge_discharge local selected-branch readout writes.",
+    )
+    ap.add_argument(
+        "--readout-write-low-v",
+        type=float,
+        default=0.16,
+        help="Low rail for bounded_charge_discharge local selected-branch readout writes.",
     )
     ap.add_argument("--hidden-update-width-u", type=float)
     ap.add_argument(
@@ -2906,6 +2926,8 @@ def main() -> None:
         raise SystemExit("--readout/output-bias center-pull widths must be nonnegative.")
     if not 0.0 <= args.readout_center_pull_v <= 1.2:
         raise SystemExit("--readout-center-pull-v must be in 0..1.2 V.")
+    if not 0.0 <= args.readout_write_low_v < args.readout_write_high_v <= 1.2:
+        raise SystemExit("--readout-write-low-v must be below --readout-write-high-v, both in 0..1.2 V.")
     if args.hidden_update_width_u is not None and args.hidden_update_width_u < 0:
         raise SystemExit("--hidden-update-width-u must be nonnegative.")
     if args.backward_gate_width_u <= 0 or args.backward_gate_cap_f <= 0:
@@ -3028,6 +3050,8 @@ def main() -> None:
         args.readout_center_pull_width_u,
         args.output_bias_center_pull_width_u,
         args.readout_center_pull_v,
+        args.readout_write_high_v,
+        args.readout_write_low_v,
         args.readout_flow_polarity,
         args.readout_flow_write_mode,
         args.hidden_update_width_u if args.hidden_update_width_u is not None else args.update_width_u,
@@ -3480,6 +3504,16 @@ def main() -> None:
         if args.learning_mode == "flow"
         else None,
         "readout_center_pull_v": args.readout_center_pull_v if args.learning_mode == "flow" else None,
+        "readout_write_high_v": (
+            args.readout_write_high_v
+            if args.learning_mode == "flow" and args.readout_flow_write_mode == "bounded_charge_discharge"
+            else None
+        ),
+        "readout_write_low_v": (
+            args.readout_write_low_v
+            if args.learning_mode == "flow" and args.readout_flow_write_mode == "bounded_charge_discharge"
+            else None
+        ),
         "readout_flow_polarity": args.readout_flow_polarity if args.learning_mode == "flow" else None,
         "readout_flow_write_mode": args.readout_flow_write_mode if args.learning_mode == "flow" else None,
         "hidden_update_width_u": args.hidden_update_width_u if args.hidden_update_width_u is not None else args.update_width_u,

@@ -1267,6 +1267,34 @@ unconditional center pull or a coarse replayed latch does not implement the
 desired state-dependent mobility.  The next useful circuit change should be
 local to the selected write branch, not a global pull on every stored weight.
 
+The first local selected-branch version is
+\code{bounded\_charge\_discharge}.  Instead of pulling selected branches all the
+way to \(V_{DD}\) or ground, it charges through a local \code{whigh} rail and
+discharges through a local \code{wlow} rail.  This is still a transistor write
+path in SPICE, but it crudely constrains the selected capacitor state to a
+chosen mobility window.  On the same 16-sample fixed8 readout task, \code{v345}
+with \(0.58/0.16\ \mathrm{V}\) rails reaches 81.25\%, adding a weak global
+center pull reaches 87.5\%, and the \(0.70/0.24\ \mathrm{V}\) no-center setting
+in \code{v347} reaches 93.75\%.  A lower \(0.50/0.10\ \mathrm{V}\) setting
+falls to 68.75\%.  Tightened controls keep the same pattern:
+\(0.64/0.20\ \mathrm{V}\) reaches 87.5\%, \(0.76/0.28\ \mathrm{V}\) reaches 93.75\%, and
+halving the readout write width at \(0.70/0.24\ \mathrm{V}\) still reaches
+93.75\% while improving the final transient margin to about
+\(-4.2\ \mathrm{mV}\).  That is the clearest current evidence that the
+derivative factor \(G'_{\mathrm{eff}}(\theta)\) and the MOS write mobility are
+related to the linear-readout stall: changing only the physical write rails and
+selected-branch write width changes the learned effective separator
+substantially, even though the input and hidden features remain linearly
+separable.
+
+The first scale probes are negative.  Reusing the best 16-sample bounded-write
+setting on 32 fixed8 examples reaches only 50\%, and a quick 64-example
+three-epoch probe reaches 53.125\%.  Both runs still report linearly separable
+input and hidden feature matrices.  So bounded selected-branch rails are a real
+16-sample improvement, but not yet a general linear-readout solution; the
+remaining problem is a larger-sample interaction between target-mistake gate
+selectivity, output-bias motion, and the state-dependent effective mobility.
+
 \subsection{Local-Feature Phase-Training Path}
 
 The strongest MNIST evidence uses local feature cells rather than dense

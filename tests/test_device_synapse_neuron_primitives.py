@@ -325,6 +325,23 @@ def test_direct_flow_readout_can_charge_and_discharge_signed_weight_branches() -
     assert "Mvbo0n_ch_d vbo0n_ch_b dn0 vbo0n" in updates
 
 
+def test_direct_flow_readout_bounded_write_uses_local_selected_rails() -> None:
+    updates = direct_flow.readout_flow_updates(
+        readout_update_width_u=0.02,
+        output_bias_update_width_u=0.0003,
+        flow_pre_store="shared_node",
+        readout_flow_polarity="normal",
+        readout_flow_write_mode="bounded_charge_discharge",
+    )
+
+    assert "Mvw00n_flow_d vw00n_flow_a dp0 wlow 0 NSENSE" in updates
+    assert "Mvw00p_flow_d vw00p_flow_a dn0 wlow 0 NSENSE" in updates
+    assert "Mvw00p_ch_b whigh bwd vw00p_ch_b" in updates
+    assert "Mvw00n_ch_b whigh bwd vw00n_ch_b" in updates
+    assert "Mvbo0n_flow_d vbo0n_flow_b dp0 wlow 0 NSENSE" in updates
+    assert "Mvbo0p_ch_b whigh bwd vbo0p_ch_b" in updates
+
+
 def test_direct_flow_readout_center_pull_is_a_transistor_state_path() -> None:
     updates = direct_flow.readout_flow_updates(
         readout_update_width_u=0.0,

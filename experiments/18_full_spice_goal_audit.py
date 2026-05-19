@@ -2967,6 +2967,26 @@ def main() -> None:
             },
             {
                 "artifact": "spice/run_device_xor2_random_hidden.py",
+                "finding": "Fixes the flow+senseamp phase accounting: direct-flow readout/output-bias writes still occur on the backward rail, but the latched hidden-delta write stack uses apply as a short write-enable pulse. Summaries now mark this case as uses_separate_apply_phase=true without implying gradient accumulator caps.",
+            },
+            {
+                "artifact": "spice/results/device_xor2_random_hidden_v182_senseamp_applyfix_h8_e8_summary.json",
+                "finding": "After enabling the explicit flow-mode apply/write-enable pulse for the hidden-delta senseamp path, the eight-hidden XOR run still solves: 100% final accuracy, +4.80 mV final margin, no gradient accumulator caps, real readout-weight transport into hidden deltas, and a latched hidden write-enable interval.",
+            },
+            {
+                "artifact": "spice/results/device_mnist01_12_random_hidden_v110_passact_targetmistake_h8_cap0245_senseamp_applyfix_e2_summary.json",
+                "finding": "The corrected h8 0.245 fF pass-activation senseamp run on the 12-sample MNIST01 bridge reproduces the earlier 91.67% result with -100 uV worst margin. The explicit hidden write-enable pulse does not solve the remaining hard label-1 sample.",
+            },
+            {
+                "artifact": "spice/results/device_mnist01_12_random_hidden_v111_passact_targetmistake_h8_cap0245_senseamp_applyfix_hu02e6_e2_summary.json",
+                "finding": "Weakening the corrected hidden senseamp write to 2e-7 u regresses the 12-sample bridge to 75% final accuracy and -75 uV margin, so the current narrow ridge is not simply over-updating hidden weights.",
+            },
+            {
+                "artifact": "spice/results/device_mnist01_12_random_hidden_v112_passact_targetmistake_h10_cap0245_senseamp_applyfix_hu02e6_e2_summary.json",
+                "finding": "Increasing the corrected weak-write senseamp branch to 10 hidden cells collapses to 8.33% final accuracy. Blind hidden-count scaling remains harmful for the current direct-flow/senseamp rule.",
+            },
+            {
+                "artifact": "spice/run_device_xor2_random_hidden.py",
                 "finding": "Adds --train-charge-noise-* controls for transistor-gated stochastic charge bleed during training. Python only seeds the random pulse rails; actual perturbation current must pass through bwd and a MOS discharge path into a selected signed weight-cap branch.",
             },
             {

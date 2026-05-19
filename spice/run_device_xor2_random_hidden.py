@@ -348,6 +348,8 @@ def phases(
                 if learning_mode == "accumulate_apply":
                     gcmp.append((base + 9.05, base + 9.20))
                     apply.append((base + apply_start_ns, base + apply_end_ns))
+                elif learning_mode == "flow":
+                    apply.append((base + apply_start_ns, base + apply_end_ns))
                 rstf.append((base + 12.05, base + 12.55))
                 fwd.append((base + 12.80, base + 15.60))
     return "\n".join(
@@ -2428,7 +2430,12 @@ def main() -> None:
         if args.learning_mode == "flow" and args.flow_pre_store == "synapse_consume"
         else None,
         "uses_gradient_accumulators": args.learning_mode == "accumulate_apply",
-        "uses_separate_apply_phase": args.learning_mode == "accumulate_apply",
+        "uses_separate_apply_phase": args.learning_mode == "accumulate_apply"
+        or (
+            args.learning_mode == "flow"
+            and args.flow_hidden_write == "direct"
+            and args.hidden_delta_output_mode == "senseamp"
+        ),
         "uses_direct_backward_write_flow": args.learning_mode == "flow",
         "uses_hidden_write_flow": args.learning_mode == "flow" and args.flow_hidden_write == "direct",
         "uses_per_synapse_pre_activation_trace": args.learning_mode == "flow"

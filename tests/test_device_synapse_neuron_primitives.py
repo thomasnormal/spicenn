@@ -4,6 +4,7 @@ import re
 import sys
 from pathlib import Path
 
+import numpy as np
 import pytest
 
 
@@ -349,7 +350,12 @@ def test_error_and_target_mistake_backward_gate_are_transistor_generated() -> No
 
 
 def test_out_residual_error_uses_each_outputs_own_stored_score() -> None:
-    error = direct_flow.error_cells("out_residual", latch_boost_width_u=0.0)
+    error = direct_flow.error_cells(
+        "out_residual",
+        latch_boost_width_u=0.0,
+        residual_target_width_u=120.0,
+        residual_output_width_u=80.0,
+    )
 
     assert "Mdp0_t0 vdd t0 dp0_t" in error
     assert "Mdp0_y1 dp0_y out0 0" in error
@@ -359,8 +365,24 @@ def test_out_residual_error_uses_each_outputs_own_stored_score() -> None:
     assert "Mdp1_y1 dp1_y out1 0" in error
     assert "Mdn1_y0 vdd out1 dn1_y" in error
     assert "Mdn1_t1 dn1_t t1 0" in error
+    assert "Mdp0_t0 vdd t0 dp0_t 0 NSENSE W=120u" in error
+    assert "Mdp0_y0 dp0 err dp0_y 0 NSENSE W=80u" in error
     assert "Mdp0_o0 dp0_t out1" not in error
     assert "Mdn1_s0 dn1_t out1" not in error
+
+
+def test_mnist_fixed_sensory_frontends_are_python_preprocessors() -> None:
+    image = np.arange(64, dtype=np.float64).reshape(8, 8) / 63.0
+
+    fixed32, fixed_desc = direct_flow.mnist01_frontend(image, "fixed32")
+    sensory48, sensory_desc = direct_flow.mnist01_frontend(image, "sensory48")
+    sensory64, _ = direct_flow.mnist01_frontend(image, "sensory64")
+
+    assert fixed32.shape == (32,)
+    assert sensory48.shape == (48,)
+    assert sensory64.shape == (64,)
+    assert "dct" in fixed_desc
+    assert "random_local_relu" in sensory_desc
 
 
 def test_input_and_target_pwl_sources_have_strictly_increasing_times() -> None:

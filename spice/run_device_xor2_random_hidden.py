@@ -29,6 +29,8 @@ DATASET_EXAMPLES = [
     "mnist01_12",
     "mnist01pool16_12",
     "mnist01fixed16_12",
+    "mnist01fixed32_12",
+    "mnist01sensory64_12",
     "mnist01rand16_12",
 ]
 
@@ -274,6 +276,25 @@ def mnist01_frontend(image: np.ndarray, frontend: str) -> tuple[np.ndarray, str]
         coeff = dct2_lowfreq(image, 4).reshape(-1)
         coeff[1:] = np.abs(coeff[1:])
         return coeff, "low_frequency_4x4_dct_abs_ac"
+    if frontend == "fixed32":
+        fixed, _fixed_desc = mnist01_frontend(image, "fixed16")
+        dct, _dct_desc = mnist01_frontend(image, "dct16")
+        return np.r_[fixed, dct], "local_haar_pool_plus_low_frequency_dct"
+    sensory_match = re.fullmatch(r"sensory(\d+)", frontend)
+    if sensory_match:
+        feature_count = int(sensory_match.group(1))
+        if not 32 <= feature_count <= 96:
+            raise ValueError("sensory frontend feature count must be in 32..96.")
+        fixed32, _fixed_desc = mnist01_frontend(image, "fixed32")
+        random_count = feature_count - 32
+        if random_count:
+            random_features = random_local_relu_features(image, random_count)
+            features = np.r_[fixed32, random_features]
+            desc = f"local_haar_pool_low_frequency_dct_plus_{random_count}_random_local_relu"
+        else:
+            features = fixed32
+            desc = "local_haar_pool_plus_low_frequency_dct"
+        return features, desc
     random_match = re.fullmatch(r"rand(\d+)", frontend)
     if random_match:
         feature_count = int(random_match.group(1))
@@ -285,7 +306,7 @@ def mnist01_frontend(image: np.ndarray, frontend: str) -> tuple[np.ndarray, str]
         )
     raise ValueError(
         f"unknown MNIST01 frontend: {frontend}. "
-        "Expected pool2, pool16, fixed8, fixed16, haar16, dct16, or randN."
+        "Expected pool2, pool16, fixed8, fixed16, fixed32, haar16, dct16, sensoryN, or randN."
     )
 
 
@@ -347,7 +368,10 @@ def dataset_records(name: str, seed: int) -> list[dict[str, Any]]:
     if mnist_match:
         frontend = mnist_match.group(1) or "pool2"
         return mnist01_records(int(mnist_match.group(2)), seed, frontend)
-    examples = ", ".join(DATASET_EXAMPLES + ["moons16", "mnist01_16", "mnist01fixed8_16", "mnist01rand8_16"])
+    examples = ", ".join(
+        DATASET_EXAMPLES
+        + ["moons16", "mnist01_16", "mnist01fixed8_16", "mnist01fixed32_16", "mnist01rand8_16"]
+    )
     raise ValueError(f"unknown dataset: {name}. Expected one of {examples} or another even-sized counted variant.")
 
 
@@ -1180,7 +1204,12 @@ def backward_gate_cells(mode: str, width_u: float, cap_f: float) -> str:
     )
 
 
-def error_cells(error_rule: str, latch_boost_width_u: float) -> str:
+def error_cells(
+    error_rule: str,
+    latch_boost_width_u: float,
+    residual_target_width_u: float = 96.0,
+    residual_output_width_u: float = 64.0,
+) -> str:
     lines: list[str] = []
     for out in range(OUTPUTS):
         if error_rule == "score":
@@ -1249,15 +1278,17 @@ def error_cells(error_rule: str, latch_boost_width_u: float) -> str:
             ]
             lines += node_parasitics(f"dp{out}_t", f"dp{out}_o", f"dn{out}_t", f"dn{out}_s")
         elif error_rule == "out_residual":
+            tw = residual_target_width_u
+            yw = residual_output_width_u
             lines += [
-                f"Mdp{out}_t0 vdd t{out} dp{out}_t 0 NSENSE W=96u L=180n",
-                f"Mdp{out}_t1 dp{out}_t err dp{out} 0 NSENSE W=96u L=180n",
-                f"Mdp{out}_y0 dp{out} err dp{out}_y 0 NSENSE W=64u L=180n",
-                f"Mdp{out}_y1 dp{out}_y out{out} 0 0 NSENSE W=64u L=180n",
-                f"Mdn{out}_y0 vdd out{out} dn{out}_y 0 NSENSE W=96u L=180n",
-                f"Mdn{out}_y1 dn{out}_y err dn{out} 0 NSENSE W=96u L=180n",
-                f"Mdn{out}_t0 dn{out} err dn{out}_t 0 NSENSE W=64u L=180n",
-                f"Mdn{out}_t1 dn{out}_t t{out} 0 0 NSENSE W=64u L=180n",
+                f"Mdp{out}_t0 vdd t{out} dp{out}_t 0 NSENSE W={tw:.12g}u L=180n",
+                f"Mdp{out}_t1 dp{out}_t err dp{out} 0 NSENSE W={tw:.12g}u L=180n",
+                f"Mdp{out}_y0 dp{out} err dp{out}_y 0 NSENSE W={yw:.12g}u L=180n",
+                f"Mdp{out}_y1 dp{out}_y out{out} 0 0 NSENSE W={yw:.12g}u L=180n",
+                f"Mdn{out}_y0 vdd out{out} dn{out}_y 0 NSENSE W={tw:.12g}u L=180n",
+                f"Mdn{out}_y1 dn{out}_y err dn{out} 0 NSENSE W={tw:.12g}u L=180n",
+                f"Mdn{out}_t0 dn{out} err dn{out}_t 0 NSENSE W={yw:.12g}u L=180n",
+                f"Mdn{out}_t1 dn{out}_t t{out} 0 0 NSENSE W={yw:.12g}u L=180n",
             ]
             lines += node_parasitics(f"dp{out}_t", f"dp{out}_y", f"dn{out}_y", f"dn{out}_t")
         elif error_rule == "out_competitive_latchboost":
@@ -1946,6 +1977,8 @@ def random_hidden_netlist(
     hidden_update_width_u: float,
     error_rule: str,
     latch_boost_width_u: float,
+    residual_target_width_u: float,
+    residual_output_width_u: float,
     lose_pull_kohm: float,
     lose_width_u: float,
     lead_mode: str,
@@ -2111,7 +2144,7 @@ Vt1 t1 0 {target_wave(samples, 1, stop)}
 {low_score_gate_cells(lose_pull_kohm, lose_width_u)}
 {score_lead_gate_cells(lead_width_u, lead_mode)}
 {backward_gate_cells(backward_gate_mode, backward_gate_width_u, backward_gate_cap_f)}
-{error_cells(error_rule, latch_boost_width_u)}
+{error_cells(error_rule, latch_boost_width_u, residual_target_width_u, residual_output_width_u)}
 {hidden_delta_block}
 {learning_block}
 
@@ -2276,6 +2309,18 @@ def main() -> None:
         default="score",
     )
     ap.add_argument("--latch-boost-width-u", type=float, default=64.0)
+    ap.add_argument(
+        "--residual-target-width-u",
+        type=float,
+        default=96.0,
+        help="Target/source device width for the out_residual error cell.",
+    )
+    ap.add_argument(
+        "--residual-output-width-u",
+        type=float,
+        default=64.0,
+        help="Own-output feedback device width for the out_residual error cell.",
+    )
     ap.add_argument("--lose-pull-kohm", type=float, default=100.0)
     ap.add_argument("--lose-width-u", type=float, default=24.0)
     ap.add_argument("--lead-mode", choices=["score", "lose", "senseamp", "out_senseamp"], default="score")
@@ -2372,6 +2417,8 @@ def main() -> None:
         raise SystemExit(f"--readout-init {args.readout_init} requires --separator-csv.")
     if args.backward_gate_mode == "target_mistake" and args.lead_mode != "out_senseamp":
         raise SystemExit("--backward-gate-mode target_mistake requires --lead-mode out_senseamp.")
+    if args.residual_target_width_u <= 0 or args.residual_output_width_u <= 0:
+        raise SystemExit("--residual-target-width-u and --residual-output-width-u must be positive.")
 
     spice_bin, version = detect_spice(None)
     generated = ROOT / "spice/generated"
@@ -2441,6 +2488,8 @@ def main() -> None:
         args.hidden_update_width_u if args.hidden_update_width_u is not None else args.update_width_u,
         args.error_rule,
         args.latch_boost_width_u,
+        args.residual_target_width_u,
+        args.residual_output_width_u,
         args.lose_pull_kohm,
         args.lose_width_u,
         args.lead_mode,
@@ -2791,6 +2840,8 @@ def main() -> None:
         "latch_boost_width_u": args.latch_boost_width_u
         if args.error_rule == "out_competitive_latchboost"
         else None,
+        "residual_target_width_u": args.residual_target_width_u if args.error_rule == "out_residual" else None,
+        "residual_output_width_u": args.residual_output_width_u if args.error_rule == "out_residual" else None,
         "lose_pull_kohm": args.lose_pull_kohm,
         "lose_width_u": args.lose_width_u,
         "lead_mode": args.lead_mode,

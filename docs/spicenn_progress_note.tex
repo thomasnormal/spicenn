@@ -10,6 +10,8 @@
 \usepackage{microtype}
 \usepackage{tikz}
 \usepackage{float}
+\usepackage{array}
+\usepackage{longtable}
 \usetikzlibrary{arrows.meta,calc,fit,positioning,shapes.geometric}
 
 \hypersetup{
@@ -120,105 +122,124 @@ than the final dense direct-flow synapse design.
 \section{Preliminaries}
 
 For readers coming from the machine-learning side, the analog primitives used
-throughout this note are summarised in Fig.~\ref{fig:primitives} and defined
-below.
+throughout this note are listed below.  Each row shows the standard schematic
+symbol next to the text definition so the two stay together on the page.
 
-\begin{figure}[H]
-  \centering
-  \begin{circuitikz}[american, font=\footnotesize, scale=0.8, transform shape]
-    %% Common baseline for row-1 captions (just below the lowest ground) and
-    %% row-2 captions, so all sub-figure labels align.
-    \def\rowonecap{-1.2}
-    \def\rowtwocap{-1.55}
+\renewcommand{\arraystretch}{1.5}
+\begin{longtable}{@{}>{\centering\arraybackslash}p{2.2cm}@{\hspace{0.6cm}}p{13cm}@{}}
+%% --- Capacitor ---
+\begin{circuitikz}[american, scale=0.6, transform shape, font=\scriptsize]
+  \draw (0,1.2) to[C, l_={$C$}] (0,0.1) node[ground]{};
+\end{circuitikz}
+&
+\textbf{Capacitor ($C$).} Stores charge $Q = CV$, so the voltage across a
+capacitor acts as a small, leaky analog memory.  All trainable state in this
+design lives on capacitors: weights $w_{ij}^\pm$, pre-activations $\phi_i$,
+activations $a_i$, deltas $\delta_j$.
+\\
 
-    %% --- Row 1: passive + active two-terminal-ish primitives ---
-    %% (a) Capacitor
-    \begin{scope}[shift={(0,0)}]
-      \draw (0,1.4) to[C, l_={$C$}] (0,0.3) node[ground]{};
-      \node at (0,\rowonecap) {(a) capacitor};
-    \end{scope}
-    %% (b) Resistor
-    \begin{scope}[shift={(2.7,0)}]
-      \draw (0,1.4) to[R, l_={$R$}] (0,0.3) node[ground]{};
-      \node at (0,\rowonecap) {(b) resistor};
-    \end{scope}
-    %% (c) NMOS (gate/drain/source labels next to the body, no extra stubs)
-    \begin{scope}[shift={(5.5,0)}]
-      \node[nmos] (m) at (0.3,0.85) {};
-      \node[anchor=east, font=\scriptsize] at ($(m.G)+(-0.05,0)$) {G};
-      \node[anchor=south, font=\scriptsize] at ($(m.D)+(0,0.02)$) {D};
-      \node[anchor=north, font=\scriptsize] at ($(m.S)+(0,-0.02)$) {S};
-      \node at (0.3,\rowonecap) {(c) NMOS};
-    \end{scope}
-    %% (d) Source follower
-    \begin{scope}[shift={(8.6,0)}]
-      \draw (0,2.0) node[above]{$V_{DD}$} -- (0,1.65);
-      \node[nmos, anchor=D] (m) at (0,1.65) {};
-      \draw (m.G) -- ++(-0.4,0) node[left]{in};
-      \draw (m.S) -- ++(0.7,0) node[circ](o){};
-      \draw (o) -- ++(0,-0.55) node[ground]{};
-      \draw (o) -- ++(0.5,0) node[right]{out};
-      \node at (0.45,\rowonecap) {(d) source follower};
-    \end{scope}
+%% --- Resistor ---
+\begin{circuitikz}[american, scale=0.6, transform shape, font=\scriptsize]
+  \draw (0,1.2) to[R, l_={$R$}] (0,0.1) node[ground]{};
+\end{circuitikz}
+&
+\textbf{Resistor ($R$).} Sets a current $I=V/R$ and, when paired with a
+capacitor, gives a leakage time constant $\tau=RC$.  Used here as a slow
+discharge path on stored voltages, e.g.\ $R_{\mathrm{leak}}$ on
+$C_{\mathrm{pre}}$.
+\\
 
-    %% --- Row 2: composite / signal primitives ---
-    %% (e) Signed differential pair
-    \begin{scope}[shift={(0.5,-3.2)}]
-      \draw (0,1.4) to[C, l_={$C^+$}] (0,0.3) node[ground]{};
-      \draw (1.1,1.4) to[C, l={$C^-$}] (1.1,0.3) node[ground]{};
-      \node at (0.55,\rowtwocap) {(e) differential pair};
-    \end{scope}
-    %% (f) Sense amplifier (comparator triangle)
-    \begin{scope}[shift={(4.6,-2.6)}]
-      \draw (0,0.45) -- (1.3,0) -- (0,-0.45) -- cycle;
-      \node[anchor=west, font=\scriptsize] at (0.05,0.27) {$+$};
-      \node[anchor=west, font=\scriptsize] at (0.05,-0.27) {$-$};
-      \draw (1.3,0) -- ++(0.3,0) node[right]{out};
-      \node at (0.7,-1.25) {(f) sense amplifier};
-    \end{scope}
-    %% (g) Rail / phase signal (digital pulse)
-    \begin{scope}[shift={(8.1,-2.6)}]
-      \draw[semithick] (0,-0.35) -- (0.35,-0.35) -- (0.35,0.45)
-        -- (1.25,0.45) -- (1.25,-0.35) -- (1.7,-0.35);
-      \node[anchor=west, font=\scriptsize] at (0.4,0.72) {fwd window};
-      \node at (0.85,-1.25) {(g) rail / phase signal};
-    \end{scope}
-  \end{circuitikz}
-  \caption{Standard symbols for the analog primitives used throughout this
-  note.}
-  \label{fig:primitives}
-\end{figure}
+%% --- NMOS ---
+\begin{circuitikz}[american, scale=0.6, transform shape, font=\scriptsize]
+  \node[nmos] (m) at (0.3,0.55) {};
+  \node[anchor=east, font=\scriptsize] at ($(m.G)+(-0.05,0)$) {G};
+  \node[anchor=south, font=\scriptsize] at ($(m.D)+(0,0.02)$) {D};
+  \node[anchor=north, font=\scriptsize] at ($(m.S)+(0,-0.02)$) {S};
+\end{circuitikz}
+&
+\textbf{NMOS transistor.} A voltage-controlled switch: when the gate voltage
+exceeds the threshold, drain and source are connected.  Stacking NMOS devices
+realises a logical AND of their gate signals, which is how we gate the
+forward, backward, and write paths.
+\\
+
+%% --- Source follower ---
+\begin{circuitikz}[american, scale=0.55, transform shape, font=\scriptsize]
+  \draw (0,2.0) node[above]{$V_{DD}$} -- (0,1.65);
+  \node[nmos, anchor=D] (m) at (0,1.65) {};
+  \draw (m.G) -- ++(-0.4,0) node[left]{in};
+  \draw (m.S) -- ++(0.7,0) node[circ](o){};
+  \draw (o) -- ++(0,-0.55) node[ground]{};
+  \draw (o) -- ++(0.5,0) node[right]{out};
+\end{circuitikz}
+&
+\textbf{Source follower.} An NMOS biased so that the source voltage tracks
+the gate (minus a threshold drop).  Used as the ReLU-like neuron: a positive
+$V(C_{\mathrm{pre}})$ above threshold charges $C_{\mathrm{act}}$, a
+sub-threshold pre-activation leaves it at ground.  ($V_{DD}$ is the chip's
+positive supply rail; $\mathrm{GND}$ is the ground reference.)
+\\
+
+%% --- Differential pair ---
+\begin{circuitikz}[american, scale=0.6, transform shape, font=\scriptsize]
+  \draw (0,1.2) to[C, l_={$C^+$}] (0,0.1) node[ground]{};
+  \draw (1.1,1.2) to[C, l={$C^-$}] (1.1,0.1) node[ground]{};
+\end{circuitikz}
+&
+\textbf{Signed differential pair.} A signed quantity $x$ is encoded as
+$V(C^+) - V(C^-)$.  Sign-aware updates push charge onto whichever rail
+matches the sign of the local error.
+\\
+
+%% --- Sense amplifier ---
+\begin{tikzpicture}[scale=0.65, transform shape, font=\scriptsize]
+  \draw (0,0.45) -- (1.3,0) -- (0,-0.45) -- cycle;
+  \node[anchor=west] at (0.05,0.27) {$+$};
+  \node[anchor=west] at (0.05,-0.27) {$-$};
+  \draw (1.3,0) -- ++(0.3,0) node[right]{out};
+\end{tikzpicture}
+&
+\textbf{Sense amplifier.} A small regenerative cell that latches a noisy
+differential voltage into a clean logic level; here it converts the tiny
+hidden-delta voltage difference into a gate signal for the write path.
+\\
+
+%% --- Rail / phase signal ---
+\begin{tikzpicture}[scale=0.65, transform shape, font=\scriptsize]
+  \draw[semithick] (0,-0.35) -- (0.35,-0.35) -- (0.35,0.45)
+    -- (1.25,0.45) -- (1.25,-0.35) -- (1.7,-0.35);
+  \node[anchor=south, font=\scriptsize] at (0.8,0.45) {fwd};
+\end{tikzpicture}
+&
+\textbf{Rail / phase signal.} A globally driven voltage (from Python in this
+work) that opens or closes circuit-wide gates --- e.g.\ the
+\texttt{fwd}/\texttt{bwd}/\texttt{apply} phase rails or the per-sample input
+rail $x_i$.
+\\
+\end{longtable}
+
+\section{Datasets}
+
+The experiments in this note use three benchmarks of increasing difficulty.
 
 \begin{description}
-  \item[Capacitor ($C$, Fig.~\ref{fig:primitives}a).] Stores charge $Q = CV$,
-    so the voltage across a capacitor acts as a small, leaky analog memory.
-    All trainable state in this design lives on capacitors: weights
-    $w_{ij}^\pm$, pre-activations $\phi_i$, activations $a_i$, deltas
-    $\delta_j$.
-  \item[Resistor ($R$, Fig.~\ref{fig:primitives}b).] Sets a current $I=V/R$
-    and, when paired with a capacitor, gives a leakage time constant
-    $\tau=RC$.  Used here as a slow discharge path on stored voltages, e.g.\
-    \(R_{\mathrm{leak}}\) on \(C_{\mathrm{pre}}\).
-  \item[NMOS transistor (Fig.~\ref{fig:primitives}c).] A voltage-controlled
-    switch: when the gate voltage exceeds the threshold, drain and source are
-    connected.  Stacking NMOS devices realises a logical AND of their gate
-    signals, which is how we gate the forward, backward, and write paths.
-  \item[Source follower (Fig.~\ref{fig:primitives}d).] An NMOS biased so that
-    the source voltage tracks the gate (minus a threshold drop).  Used as the
-    ReLU-like neuron: a positive \(V(C_{\mathrm{pre}})\) above threshold
-    charges \(C_{\mathrm{act}}\), a sub-threshold pre-activation leaves it at
-    ground.
-  \item[Signed differential pair (Fig.~\ref{fig:primitives}e).] A signed
-    quantity \(x\) is encoded as \(V(C^+) - V(C^-)\).  Sign-aware updates push
-    charge onto whichever rail matches the sign of the local error.
-  \item[Sense amplifier (Fig.~\ref{fig:primitives}f).] A small regenerative
-    cell that latches a noisy differential voltage into a clean logic level;
-    here it converts the tiny hidden-delta voltage difference into a gate
-    signal for the write path.
-  \item[Rail / phase signal (Fig.~\ref{fig:primitives}g).] A globally driven
-    voltage (from Python in this work) that opens or closes circuit-wide gates
-    --- e.g.\ the \texttt{fwd}/\texttt{bwd}/\texttt{apply} phase rails or the
-    per-sample input rail \(x_i\).
+  \item[XOR.] The 4-sample 2-input boolean XOR function.  Smallest task that
+    is not linearly separable, so any working result is evidence that a real
+    hidden layer is being trained.  Used as the canonical proof-of-concept for
+    the direct-flow architecture.
+  \item[Tiny MNIST (\code{mnist01\_N}).] A balanced binary subset of MNIST
+    restricted to digit classes 0 and 1, with $N$ training samples
+    ($N = 16, 24, 32$ in the current runs).  Pixels are either flattened or
+    passed through a fixed sensory front-end (pooled pixels, Haar-like local
+    contrast, DCT features, or random-retina ReLU features).  These subsets
+    are usually linearly separable at the input level, which lets us isolate
+    whether the readout and hidden-write dynamics can converge from whether
+    the representation is rich enough.  Test accuracy is reported on the
+    held-out MNIST-0-vs-1 split.
+  \item[MNIST.] The standard 10-class handwritten-digit dataset (60k training
+    / 10k test, $28{\times}28$ grayscale).  Used for the local-feature
+    phase-training track; the headline number is test accuracy on the full
+    10k test set.
 \end{description}
 
 \section{Primitive Circuit Model}
@@ -300,6 +321,22 @@ the backward/write window itself as the local update event:
   elements for readability.}
   \label{fig:synapse}
 \end{figure}
+
+\paragraph{Compact form (planned density step).}
+The same logic can be packed into 4 MOS per synapse by pre-computing
+$x_{\mathrm{active},i} = x_i \wedge \mathrm{fwd}$ once per input rail and
+driving every fan-out synapse from that shared node.  The synapse then
+collapses to a $(w^+,\, x_{\mathrm{active}})$ stack from $V_{DD}$ and a
+symmetric $(x_{\mathrm{active}},\, w^-)$ stack to ground, cutting transistor
+count by roughly $30\%$ at typical fan-outs (4$NM + N$ vs.\ $6NM$ for an
+$N{\to}M$ layer).  The tradeoff is that $x_{\mathrm{active}}$ becomes a
+layer-level analog rail whose edge timing and amplitude --- charge-injection
+glitches, fan-out loading --- have to be characterised before the local
+phase isolation of the 6-MOS form can be safely traded for the density.  For
+that reason the 6-MOS-per-synapse circuit in Fig.~\ref{fig:synapse} remains
+the tutorial default and matches the current netlists; the 4-MOS shared-rail
+form is the planned next density step after buffer/sizing checks on the
+shared rail.
 
 \begin{figure}[h]
   \centering
@@ -552,7 +589,10 @@ architecture, the direct-flow harness supports fixed sensory transforms as
 externally driven input rails: pooled pixels, Haar-like local contrast, DCT
 features, and random local ReLU features.  These are not trainable shared
 weights.  They are a retina-like fixed encoder feeding ordinary voltage rails
-into the trainable silicon block.  Small MNIST-0-vs-1 subsets are often
+into the trainable silicon block.  Following the preprocessing note, the harness
+now includes composite \code{fixed32} and \code{sensoryN} front ends.  The former
+concatenates local Haar/pool features with low-frequency DCT features; the latter
+adds fixed sparse random local ReLU filters.  Small MNIST-0-vs-1 subsets are often
 linearly separable after this front end.  The latest per-synapse trace bridge
 improves that story: on a 16-sample MNIST-0-vs-1 subset, \code{synapse\_gate}
 with readout-only flow reached 93.75\%, and the full hidden-delta path reached
@@ -582,6 +622,16 @@ failure into scale and margin calibration rather than basic representational
 capacity, readout sign, or the existence of a transistor-level hidden backprop
 path.
 
+The historical \code{pool2} name means a fixed two-by-two spatial pooling
+encoder, not a pooling layer inside the trainable SPICE network.  Python first
+area-resizes MNIST to \(8\times 8\), splits it into four \(4\times 4\) quadrants,
+and drives the four quadrant-average voltages as input rails.  A transistor-level
+version of this front end can be implemented as a switched-capacitor average:
+sample pixel voltages onto equal capacitors, short the local capacitor bank onto
+a pool capacitor, then present the pooled voltage to the synapse array.  A
+resistive/conductive summing node plus integration capacitor is the current-mode
+alternative.
+
 \subsection{Relation To The Rigorous Gradient-Flow Contract}
 
 The intended mathematical target for the dense path is the usual one-hidden-layer
@@ -595,10 +645,169 @@ with local gradient-flow writes
 \dot A_{ji}=\eta \delta_{h,j}x_i,\qquad
 \delta_h=\rho'(u)\odot B^T e.
 \]
-The clean circuit contract is therefore: reciprocal signed synapses implement
-\(W\) forward and \(W^T\) backward, output-error cells form \(e=t-y\), ReLU
-neurons store and reuse the active mask, and each synapse writer injects charge
-proportional to a local pre-value times a local post-error.
+The clean reference contract is therefore: signed synapses implement \(W\)
+forward and the corresponding weight-transport relation backward, output-error
+cells form \(e=t-y\), ReLU neurons store and reuse the active mask, and each
+synapse writer injects charge proportional to a local pre-value times a local
+post-error.  The backward path does not have to reuse the literal same wires as
+the forward path.  What matters mathematically is that the backward branch is
+controlled by the same stored weight state and has a matched transfer function.
+In a hardware-native model this means
+\[
+g^{\mathrm{bwd}}_{ji}(V_w^+,V_w^-)
+\approx
+\kappa\, g^{\mathrm{fwd}}_{ji}(V_w^+,V_w^-)
+\]
+for a known layer gain \(\kappa\).  If that matching is assumed or measured, the
+separate backward stack is a valid \(W^T\)-like transport path for the hardware
+model.
+
+\subsection{Hardware-Defined MOS Learning ODE}
+
+The more rigorous model does not make the mathematical weight \(w\)
+fundamental.  The fundamental object is the MOS current law.  A synapse read is
+a kernel
+\[
+I^{\mathrm{read}}_{ji}
+=
+E_{\mathrm{MOS}}(\theta_{ji}, v_{\mathrm{pre},i}, v_{\mathrm{post},j}, q),
+\]
+where \(\theta_{ji}\) is the physical capacitor state and \(q\) is the active
+clock phase.  Ordinary multiplication by a weight appears only as a small-signal
+approximation, for example
+\[
+E_{\mathrm{MOS}}(\theta,v_{\mathrm{pre}},v_{\mathrm{post}})
+\approx
+G_{\mathrm{eff}}(\theta)\,v_{\mathrm{pre}}
+\]
+under controlled common-mode, swing, and timing assumptions.
+
+The forward hidden phase is therefore better written as a capacitor ODE,
+\[
+C_u\dot u_j
+=
+-g_u u_j
++
+\sum_i E^F_{A,\mathrm{MOS}}(\theta^A_{ji},x_i,u_j)
++
+I_{b,j},
+\]
+followed by a MOS activation \(h_j=\Phi_{\mathrm{MOS}}(u_j)\).  The output phase
+uses the same form,
+\[
+C_y\dot y_k
+=
+-g_y y_k
++
+\sum_j E^F_{B,\mathrm{MOS}}(\theta^B_{kj},h_j,y_k)
++
+I_{o,k}.
+\]
+After a fixed forward window, the circuit computes
+\(y(T_F)=f_\Theta^{\mathrm{MOS}}(x)\).
+
+The error and backward phases are likewise hardware-defined:
+\[
+e_k=\Psi_{\mathrm{MOS}}(t_k-y_k),
+\qquad
+C_r\dot r_j
+=
+-g_r r_j
++
+\sum_k E^B_{B,\mathrm{MOS}}(\theta^B_{kj},e_k,r_j),
+\]
+\[
+\delta_j=D_{\mathrm{MOS}}(u_j,r_j).
+\]
+If \(\Psi_{\mathrm{MOS}}\) is linear near zero but saturates at large residuals,
+then the circuit is training a robust MOS-shaped loss, not the textbook squared
+loss.  If \(D_{\mathrm{MOS}}\) differs from \(\Phi'_{\mathrm{MOS}}\), then the
+hidden rule is a surrogate-gradient hardware rule.
+
+Finally, each writable state evolves by a MOS update kernel,
+\[
+C_\theta\dot\theta_{ji}
+=
+U_{\mathrm{MOS}}(\theta_{ji},p_i,\delta_j,q),
+\]
+where \(p_i\) is the stored pre-synaptic trace.  For differential signed storage,
+\[
+w_{\mathrm{eff},ji}
+=
+R(\theta^+_{ji})-R(\theta^-_{ji}),
+\]
+and coincidence write stacks define potentiating and depressing currents rather
+than exact analog products.  In this framing the chip implements the stochastic
+approximation
+\[
+\Theta_{n+1}
+=
+\Theta_n+\Delta t\,U_{\mathrm{MOS}}(\Theta_n,x_n,t_n).
+\]
+
+The exact-gradient yardstick for the continuous circuit is the adjoint of the
+forward MOS ODE.  If \(\dot z=f_{\mathrm{MOS}}(z,\Theta,x)\) and
+\(L=\ell(z(T),t)\), then exact gradients would require the reverse circuit to
+implement
+\[
+-\dot a =
+\left(\frac{\partial f_{\mathrm{MOS}}}{\partial z}\right)^T a,
+\qquad
+\nabla_\Theta L =
+\int_0^T
+\left(\frac{\partial f_{\mathrm{MOS}}}{\partial \Theta}\right)^T a(t)\,dt.
+\]
+The current hardware is not claiming that exact adjoint.  The practical
+requirement is weaker: forward/backward signal alignment and update sign
+alignment in the operating region.  The key characterization targets are:
+\[
+\frac{\partial E_{\mathrm{MOS}}}{\partial \theta^+}\ge 0,\qquad
+\frac{\partial E_{\mathrm{MOS}}}{\partial \theta^-}\le 0,
+\]
+\[
+G^B_{ij}
+=
+\frac{\partial E^B_{\mathrm{MOS}}}{\partial v_{\mathrm{err},j}}
+\approx
+\kappa
+\frac{\partial E^F_{\mathrm{MOS}}}{\partial v_{\mathrm{pre},i}}
+=
+\kappa G^F_{ji},
+\]
+or at least a positive alignment
+\(\langle G^B e,(G^F)^T e\rangle>0\).  The write kernel should also satisfy
+\[
+\operatorname{sign}(\dot w_{\mathrm{eff},ji})
+\approx
+\operatorname{sign}(p_i\delta_j)
+\]
+over the useful voltage range, with bounded state dynamics and tolerable read
+disturb.  These are the SPICE characterization plots to add next: forward read
+current, reverse read current, update sign/magnitude versus state, read disturb,
+and retention.
+
+\subsection{Compact Forward Synapse Candidate}
+
+The running netlists keep the forward phase gate inside every signed synapse
+branch.  For the hidden forward path this gives a tutorial-clean six-MOS cell:
+input gate, weight gate, and \code{fwd} gate on the positive branch, mirrored by
+\code{fwd}, input gate, and negative-weight gate on the negative branch.  A
+reasonable density step is to precompute a shared active input rail
+\[
+x^{\mathrm{active}}_i = x_i \wedge \mathrm{fwd}
+\]
+once per input rail, then feed that rail to every fan-out synapse.  The per-cell
+forward stack becomes weight plus \(x^{\mathrm{active}}\) on each signed branch,
+so the count changes from roughly \(6NM\) devices to \(4NM+N\) devices for an
+\(N\)-input, \(M\)-hidden layer.
+
+This is a good compact form, but it changes what must be characterized.  The
+shared \(x^{\mathrm{active}}\) rail now carries fan-out load, edge timing,
+charge injection, and any \code{fwd} glitch to every postsynaptic cell.  The
+current six-MOS form keeps phase isolation local and is easier to debug.  The
+compact form should therefore be introduced as an area-optimized variant after
+the shared active-rail amplitude, delay, and backward-window leakage paths are
+measured.
 
 The 96.875\% \code{mnist01\_32} rail-buffer result is only a partial match to
 that contract.  It does use capacitor-held signed weights, ngspice-generated
@@ -608,12 +817,47 @@ gating, and local direct-flow writes.  It does not yet use learned
 rails into hidden activation capacitors through MOS pass gates.  Its error rule,
 \code{out\_competitive} plus target-mistake gating, is closer to a margin/mistake
 update than exact analog \(e=t-y\).  The backward transport is implemented by
-transistor stacks controlled by the same readout weight-capacitor voltages, not
-yet by a single proven reciprocal two-port driven literally in reverse.  The
-local write cell is also a series-gated charge/discharge product approximation,
-not an ideal four-quadrant analog multiplier.  This is why the result should be
-read as a strong device-level bridge rather than a completed proof of exact
-analog SGD.
+separate transistor stacks controlled by the same readout weight-capacitor
+voltages.  That is architecturally acceptable; the remaining rigor gap is that
+we have not yet measured or constrained the forward and backward MOS transfer
+functions enough to claim an exact gain-matched \(W^T\) operator.  The local
+write cell is also a series-gated charge/discharge product approximation, not an
+ideal four-quadrant analog multiplier.  This is why the result should be read as
+a strong device-level bridge and hardware-native learning rule rather than a
+completed proof of exact textbook analog SGD.
+
+This distinction is mathematical, not a sign that the circuit is doing
+non-physical or behavioral arithmetic.  The ideal reference rule is
+\[
+e_k=t_k-y_k,\qquad \dot w_{ji}=\eta\,\delta_j a_i.
+\]
+The MOS implementation instead defines hardware transfer functions.  A compact
+way to write the actual learning rule is
+\[
+e^{\mathrm{hw}}_k =
+E_{\mathrm{MOS}}\!\left(t_k,y_k,V_{dp,k},V_{dn,k};\theta_E,T_E\right),
+\]
+\[
+\dot V^{+}_{w,ji}-\dot V^{-}_{w,ji}
+=
+U_{\mathrm{MOS}}\!\left(a_i,e^{\mathrm{hw}}_j,V^+_{w,ji},V^-_{w,ji};
+\theta_U,T_U\right),
+\]
+where \(E_{\mathrm{MOS}}\) and \(U_{\mathrm{MOS}}\) are set by threshold
+voltages, stack headroom, capacitances, device widths, and integration windows.
+In the small-signal limit they are intended to be monotone approximations to
+\(t_k-y_k\) and \(a_i\delta_j\), but at full swing they are saturating,
+state-dependent nonlinear maps.  This is acceptable if it trains well: the chip
+is better viewed as training a hardware-native neural model with MOS-shaped
+forward, error, backward, and update functions, rather than as exact gradient
+descent on the textbook squared-error ReLU network.
+
+Similarly, not every signal needs a differential pair.  Signed quantities such
+as weights and errors benefit from positive/negative capacitor rails.  ReLU
+activations and score capacitors can be single-ended nonnegative voltages without
+breaking the model; that simply means the implemented network is a rectified,
+single-ended hardware model wherever the mathematical variable is constrained to
+be nonnegative.
 
 To test the specific error-generation gap, the generator now has an
 \code{out\_residual} mode.  Unlike \code{out\_competitive}, which gates the target
@@ -626,21 +870,28 @@ task at 100\% with a \(+12.2\ \mathrm{mV}\) margin.  On the 32-sample
 MNIST-0-vs-1 rail-buffer bridge, scheduled residual updates collapse to 50\%.
 Reusing the target-mistake backward gate recovers 93.75\% for both the
 readout-only control and the all-layer per-synapse-trace run, but still trails
-the 96.875\% \code{out\_competitive} bridge.  Thus the residual cell is wired and
-useful, but not yet sized or timed well enough to replace the more margin-like
-competitive rule.
+the 96.875\% \code{out\_competitive} bridge.  A first sizing sweep then raised
+the residual output-feedback stack from \(64\,\mu\mathrm{m}\) to
+\(128\,\mu\mathrm{m}\), keeping the target/source stack at \(96\,\mu\mathrm{m}\).
+That readout-only run recovered 96.875\%, matching the competitive bridge.  Thus
+the residual cell is wired and useful, but its MOS error shape is sensitive to
+device sizing and timing.
 
-\begin{table}[h]
-  \centering
+\begin{center}
   \footnotesize
   \setlength{\tabcolsep}{3pt}
   \renewcommand{\arraystretch}{0.92}
-  \caption{Current tiny-MNIST direct-flow bridge results.}
-  \label{tab:mnist-direct-flow}
-  \begin{tabular}{p{0.24\linewidth}p{0.17\linewidth}p{0.14\linewidth}p{0.34\linewidth}}
+  \begin{longtable}{p{0.30\linewidth}p{0.21\linewidth}p{0.10\linewidth}p{0.31\linewidth}}
+    \caption{Current tiny-MNIST direct-flow bridge results.}
+    \label{tab:mnist-direct-flow}\\
     \toprule
-    Run & Hidden-write path & Final accuracy & What it shows \\
+    Run & Hidden-write path & Accuracy & What it shows \\
     \midrule
+    \endfirsthead
+    \toprule
+    Run & Hidden-write path & Accuracy & What it shows \\
+    \midrule
+    \endhead
     \code{mnist01\_16}, e2 &
     off & 93.75\% &
     Readout-only flow works when the hidden code is preserved. \\
@@ -713,6 +964,51 @@ competitive rule.
     93.75\% &
     Residual error plus mistake gate works end to end, but trails the competitive rule. \\
     \addlinespace
+    \code{mnist01\_32}, \code{rail\_buffer}, \code{out\_residual} \(96/128\,\mu\mathrm{m}\), e1 &
+    off, target-mistake readout flow &
+    96.875\% &
+    Stronger output-feedback residual stack matches the competitive bridge. \\
+    \addlinespace
+    \code{mnist01\_32}, \code{rail\_buffer}, \code{out\_residual} \(96/128\,\mu\mathrm{m}\), e1 &
+    full backprop, per-synapse pre-trace, \code{1e-6 u} hidden write &
+    96.875\% &
+    Tuned residual cell also preserves the full hidden-write bridge. \\
+    \addlinespace
+    \code{mnist01\_40}, \code{rail\_buffer}, target-mistake/interleaved, e1 &
+    full backprop, per-synapse pre-trace, \code{1e-6 u} hidden write &
+    95.00\% &
+    Pool2 front end still clears 95\% on 40 samples with real hidden writes. \\
+    \addlinespace
+    \code{mnist01\_64}, \code{rail\_buffer}, target-mistake/interleaved, e1 &
+    off, random readout &
+    50.00\% &
+    The 4-rail pool2 input is no longer linearly separable at this subset size. \\
+    \addlinespace
+    \code{mnist01dct16\_64}, \code{rail\_buffer}, target-mistake/interleaved, e1 &
+    off, random readout &
+    84.375\% &
+    DCT features are separable, but the one-epoch MOS readout update is not yet tuned. \\
+    \addlinespace
+    \code{mnist01fixed8\_64}, \code{rail\_buffer}, target-mistake/interleaved, e1 &
+    off, random readout &
+    84.375\% &
+    Fixed Haar/pool features are also separable at 64 samples; the readout schedule is now the limiter. \\
+    \addlinespace
+    \code{mnist01fixed32\_64}, \code{rail\_buffer}, target-mistake/interleaved, e1 &
+    off, random readout &
+    81.25\% &
+    More fixed features are separable but do not fix the current MOS write balance. \\
+    \addlinespace
+    \code{mnist01fixed8\_40}, \code{rail\_buffer}, target-mistake/interleaved, e1 &
+    off, random readout &
+    97.50\% &
+    Eight fixed Haar/pool features improve scaling without learned weight sharing. \\
+    \addlinespace
+    \code{mnist01fixed8\_40}, \code{rail\_buffer}, target-mistake/interleaved, e1 &
+    full backprop, per-synapse pre-trace, \code{1e-6 u} hidden write &
+    97.50\% &
+    Fixed8 bridge survives enabling hidden writes; hidden caps move 9.47 mV. \\
+    \addlinespace
     \code{mnist01\_32}, \code{rail\_buffer}, \code{csv\_separator} &
     off, programmed readout & 100.00\% &
     Buffered code is usable by the MOS readout from fitted capacitor ICs. \\
@@ -721,8 +1017,8 @@ competitive rule.
     off, weak mistake-gated flow & 100.00\% &
     Programmed state is stable; random discovery is the blocker. \\
     \bottomrule
-  \end{tabular}
-\end{table}
+  \end{longtable}
+\end{center}
 
 \subsection{Local-Feature Phase-Training Path}
 

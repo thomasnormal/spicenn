@@ -130,42 +130,60 @@ the backward/write window itself as the local update event:
 
 \begin{figure}[h]
   \centering
-  \begin{circuitikz}[american, scale=0.9, transform shape]
-    \draw (0,3.0) node[left] {$V_{DD}$} to[short,o-] (1.0,3.0);
-    \draw (0,2.1) node[left] {$x_i$} to[short,o-] (1.0,2.1);
-    \draw (1.7,2.55) node[nmos, anchor=S] (mxp) {};
-    \draw (mxp.G) -- ++(-0.75,0) node[left] {$w^+$};
-    \draw (mxp.D) -- (1.7,3.0);
-    \draw (mxp.S) -- (2.35,2.1);
-    \draw (1.0,2.1) -- (mxp.S);
-    \draw (2.35,2.1) node[nmos, anchor=S] (mfp) {};
-    \draw (mfp.G) -- ++(0,-0.65) node[below] {fwd};
-    \draw (mfp.D) -- (3.15,2.1);
+  \begin{circuitikz}[american, scale=0.85, transform shape, font=\small]
+    %% Positive branch (top stack): VDD - w+ - x_i - fwd - pre
+    \draw (2,7.4) node[above] {$V_{DD}$} -- (2,7.0);
+    \node[nmos, anchor=D] (mwp) at (2,7.0) {};
+    \draw (mwp.G) -- ++(-0.5,0) node[left] {$w^+$};
 
-    \draw (3.15,2.1) -- (4.05,2.1) node[circ] (pre) {};
-    \draw (pre) to[C,l_={$C_{\mathrm{pre}}$}] (4.05,0.6) node[ground] {};
-    \draw (pre) to[R,l={$R_{\mathrm{leak}}$}] (5.2,0.6) node[ground] {};
+    \draw (mwp.S) -- (2,5.6);
+    \node[nmos, anchor=D] (mxp) at (2,5.6) {};
+    \draw (mxp.G) -- ++(-0.5,0) node[left] {$x_i$};
 
-    \draw (pre) -- ++(1.4,0) node[nmos, anchor=G] (mrelu) {};
-    \draw (mrelu.D) -- ++(0,0.9) node[vcc] {$V_{DD}$};
-    \draw (mrelu.S) -- ++(0.9,0) node[circ] (act) {};
-    \draw (act) to[C,l_={$C_{\mathrm{act}}$}] ++(0,-1.5) node[ground] {};
-    \draw (act) -- ++(0.9,0) node[right] {$a_j$};
+    \draw (mxp.S) -- (2,4.2);
+    \node[nmos, anchor=D] (mfp) at (2,4.2) {};
+    \draw (mfp.G) -- ++(-0.5,0) node[left] {fwd};
 
-    \draw (3.15,2.1) -- (3.15,1.25) node[nmos, anchor=D] (mfn) {};
-    \draw (mfn.G) -- ++(-0.65,0) node[left] {fwd};
-    \draw (mfn.S) -- ++(0,-0.45) node[nmos, anchor=D] (mxn) {};
-    \draw (mxn.G) -- ++(-0.65,0) node[left] {$x_i$};
-    \draw (mxn.S) -- ++(0,-0.45) node[nmos, anchor=D] (mwn) {};
-    \draw (mwn.G) -- ++(-0.65,0) node[left] {$w^-$};
-    \draw (mwn.S) -- ++(0,-0.25) node[ground] {};
+    %% pre node and storage branch
+    \draw (mfp.S) -- (2,3.2);
+    \node[circ] (pre) at (2,3.2) {};
+    \draw (pre) -- (3.6,3.2);
+    \draw (3.6,3.2) to[C,l_={$C_{\mathrm{pre}}$}] (3.6,1.8) node[ground] {};
+    \draw (3.6,3.2) -- (4.9,3.2);
+    \draw (4.9,3.2) to[R,l_={$R_{\mathrm{leak}}$}] (4.9,1.8) node[ground] {};
 
-    \node[draw, rounded corners=2pt, fill=lightgray, align=left, text width=4.1cm]
-      at (6.35,3.05)
-      {Forward primitive:\\
+    %% Negative branch (bottom stack): pre - fwd - x_i - w- - GND
+    \draw (pre) -- (2,2.4);
+    \node[nmos, anchor=D] (mfn) at (2,2.4) {};
+    \draw (mfn.G) -- ++(-0.5,0) node[left] {fwd};
+
+    \draw (mfn.S) -- (2,1.0);
+    \node[nmos, anchor=D] (mxn) at (2,1.0) {};
+    \draw (mxn.G) -- ++(-0.5,0) node[left] {$x_i$};
+
+    \draw (mxn.S) -- (2,-0.4);
+    \node[nmos, anchor=D] (mwn) at (2,-0.4) {};
+    \draw (mwn.G) -- ++(-0.5,0) node[left] {$w^-$};
+    \draw (mwn.S) -- (2,-1.4) node[ground] {};
+
+    %% ReLU source follower to the right of pre
+    \draw (pre) -- (6.6,3.2);
+    \node[nmos, anchor=G] (mrelu) at (6.6,3.2) {};
+    \draw (mrelu.D) -- (mrelu.D |- 0,5.0) node[above] {$V_{DD}$};
+    \draw (mrelu.S) -- (mrelu.S |- 0,2.3);
+    \draw (mrelu.S |- 0,2.3) -- (8.4,2.3);
+    \node[circ] (act) at (8.4,2.3) {};
+    \draw (act) to[C,l_={$C_{\mathrm{act}}$}] (8.4,0.9) node[ground] {};
+    \draw (act) -- (9.4,2.3) node[right] {$a_j$};
+
+    %% Description box, positioned in the empty area above the ReLU stage
+    \node[draw, rounded corners=2pt, fill=lightgray, align=left, text width=5.4cm,
+          font=\small]
+      at (9.0,7.2)
+      {\textbf{Forward primitive:}\\
        positive branch charges $C_{\mathrm{pre}}$;\\
        negative branch discharges it;\\
-       ReLU-like source follower charges $C_{\mathrm{act}}$.};
+       ReLU source follower charges $C_{\mathrm{act}}$.};
   \end{circuitikz}
   \caption{Conceptual signed conductance synapse and ReLU-like neuron.  The
   actual generated netlists use MOS stacks, capacitor state, leakage resistors,
@@ -187,41 +205,59 @@ capacitor through stacks gated by the saved pre-activation trace.
   \centering
   \begin{tikzpicture}[
       font=\small,
-      block/.style={draw, rounded corners=2pt, minimum height=1.0cm, align=center, fill=lightgray},
-      capnode/.style={draw, cylinder, shape border rotate=90, aspect=0.25, minimum height=0.8cm,
-        minimum width=0.45cm, align=center, fill=green!8},
-      arr/.style={-{Latex[length=2.5mm]}, thick},
+      block/.style={draw, rounded corners=2pt, minimum height=0.95cm,
+        minimum width=2.0cm, align=center, fill=lightgray, inner sep=2.5pt},
+      capn/.style={draw, cylinder, shape border rotate=90, aspect=0.3,
+        minimum height=0.75cm, minimum width=0.55cm, align=center, fill=green!10},
+      sa/.style={draw, rounded corners=2pt, minimum height=0.85cm,
+        minimum width=1.5cm, align=center, fill=yellow!12, inner sep=2pt},
+      arr/.style={-{Latex[length=2mm]}, semithick},
       fwd/.style={arr, forwardblue},
       bwd/.style={arr, backred},
-      wr/.style={arr, writeorange}
+      wr/.style={arr, writeorange},
+      lbl/.style={font=\footnotesize, fill=white, inner sep=1.5pt}
     ]
-    \node[block, minimum width=2.4cm] (inputs) {input rails\\$x_i$};
-    \node[block, minimum width=2.5cm, right=1.2cm of inputs] (hidden) {hidden\\synapses + ReLU};
-    \node[block, minimum width=2.5cm, right=1.2cm of hidden] (readout) {readout\\synapses + outputs};
-    \node[block, minimum width=2.0cm, right=1.2cm of readout] (err) {compare\\error nodes};
+    %% --- Top row: forward dataflow, four columns ---
+    \node[block] (inputs) {input rails\\$x_i$};
+    \node[block, right=1.5cm of inputs] (hidden) {hidden\\synapses + ReLU};
+    \node[block, right=1.5cm of hidden] (readout) {readout\\outputs};
+    \node[block, right=1.5cm of readout] (err) {compare\\error nodes};
 
-    \node[capnode, below=0.75cm of hidden, xshift=-0.7cm] (cphi) {$C_\phi$};
-    \node[capnode, below=0.75cm of hidden, xshift=0.7cm] (cact) {$C_a$};
-    \node[capnode, below=0.75cm of readout, xshift=-0.7cm] (cw) {$C_w$};
-    \node[block, below=0.75cm of readout, xshift=1.0cm, minimum width=1.6cm] (sense) {hidden\\delta SA};
+    \draw[fwd] (inputs) -- node[lbl, above] {fwd} (hidden);
+    \draw[fwd] (hidden) -- node[lbl, above] {$a_j$} (readout);
+    \draw[fwd] (readout) -- node[lbl, above] {scores} (err);
 
-    \draw[fwd] (inputs) -- node[above] {forward charge} (hidden);
-    \draw[fwd] (hidden) -- node[above] {activation voltage} (readout);
-    \draw[fwd] (readout) -- node[above] {scores} (err);
-    \draw[fwd] (hidden) -- (cact);
-    \draw[fwd] (inputs.south east) to[bend right=20] node[below, sloped] {store pre trace} (cphi);
+    %% --- Lower row: capacitors aligned under their columns ---
+    \node[capn, below=2.6cm of inputs]  (cphi)  {$C_\phi$};
+    \node[capn, below=2.6cm of hidden]  (cact)  {$C_a$};
+    \node[sa,  below=2.6cm of readout] (sense) {hidden\\$\delta$ SA};
+    \node[capn, below=2.6cm of err]     (cw)    {$C_w$};
 
-    \draw[bwd] (err.south) to[out=-90,in=10] node[right] {$\delta_{\mathrm{out}}$} (cw.east);
-    \draw[bwd] (cw.west) to[out=180,in=-40] node[below] {through readout $C_w$} (sense.east);
-    \draw[bwd] (cact) -- node[below] {activation gate} (sense);
-    \draw[wr] (sense.west) to[out=180,in=-30] node[below] {$\delta_h$} (hidden.south);
-    \draw[wr] (cphi.east) -- node[below] {local write gate} (hidden.south west);
+    %% --- Forward capture: vertical down (blue) ---
+    \draw[fwd] (inputs.south) -- node[lbl, right] {store $\phi$} (cphi.north);
+    \draw[fwd] (hidden.south) -- node[lbl, right] {store $a$}    (cact.north);
 
-    \node[draw, rounded corners=2pt, align=left, fill=white, text width=12.5cm,
-      below=1.4cm of cact, xshift=2.0cm] (legend)
-      {\textcolor{forwardblue}{blue}: forward settling and capacitor capture.
-       \quad \textcolor{backred}{red}: backward error current through readout synapses.
-       \quad \textcolor{writeorange}{orange}: local weight-capacitor write path.};
+    %% --- Backward path (red) ---
+    \draw[bwd] (err.south)  -- node[lbl, right] {$\delta_{\mathrm{out}}$} (cw.north);
+    \draw[bwd] (cw.west)    -- node[lbl, above] {via $C_w$}                (sense.east);
+    \draw[bwd] (cact.east)  -- node[lbl, above] {act gate}                 (sense.west);
+
+    %% --- Write path (orange) ---
+    %% delta_h: sense -> hidden.south east, via a clean up-and-over route
+    \draw[wr] (sense.north) -- ++(0,0.55) coordinate (sa)
+      -- (hidden.south east |- sa)
+      node[lbl, above, pos=0.6] {$\delta_h$}
+      -- (hidden.south east);
+    %% write gate: cphi -> hidden.south west, route via the left
+    \draw[wr] (cphi.west) -- ++(-0.45,0) |- ($(hidden.south west)+(0,-0.55)$)
+      -- node[lbl, left, pos=0.5] {write} (hidden.south west);
+
+    %% --- Legend, centered below the diagram ---
+    \node[draw, rounded corners=2pt, align=center, fill=white, font=\footnotesize,
+      text width=15cm, below=1.6cm of cact.south, xshift=4.5cm]
+      {\textcolor{forwardblue}{\textbf{blue}}: forward settling and capacitor capture.\quad
+       \textcolor{backred}{\textbf{red}}: backward error through readout synapses.\quad
+       \textcolor{writeorange}{\textbf{orange}}: local weight-capacitor write path.};
   \end{tikzpicture}
   \caption{Direct backward/write flow.  This is the architecture we want to
   scale: Python provides rails and timing windows, while hidden deltas and
@@ -306,9 +342,13 @@ externally driven input rails: pooled pixels, Haar-like local contrast, DCT
 features, and random local ReLU features.  These are not trainable shared
 weights.  They are a retina-like fixed encoder feeding ordinary voltage rails
 into the trainable silicon block.  Small MNIST-0-vs-1 subsets are often
-linearly separable after this front end, but the current direct-flow readout and
-hidden write dynamics have not yet reliably converted that separability into
-high accuracy.
+linearly separable after this front end.  The latest per-synapse trace bridge
+improves that story: on a 16-sample MNIST-0-vs-1 subset, \code{synapse\_gate}
+with readout-only flow reached 93.75\%, and the full hidden-delta path reached
+the same 93.75\% when hidden writes were weakened to \code{2e-7 u}.  The
+standard hidden-write strength stayed at 87.5\%, and a readout charge-noise
+trial collapsed, so the current bottleneck is hidden/write calibration rather
+than missing front-end separability.
 
 \subsection{Local-Feature Phase-Training Path}
 

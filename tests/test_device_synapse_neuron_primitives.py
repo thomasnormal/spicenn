@@ -206,3 +206,38 @@ def test_direct_flow_generator_wires_backward_path_through_saved_pre_traces_and_
     assert "Mwh0_x0n_flow_a wh0_x0n_flow_d apply 0 0" in hidden_updates
     assert "Mwh0_x0p_flow_x wh0_x0p_flow_b fphi0_x0" in hidden_updates
     assert "Mwh0_x0p_flow_d wh0_x0p_flow_x hdng0" in hidden_updates
+
+
+def test_probe_measurement_keeps_backward_signals_without_full_weight_snapshots() -> None:
+    original_hidden = direct_flow.HIDDEN
+    original_input_rails = list(direct_flow.INPUT_RAILS)
+    try:
+        direct_flow.set_hidden_cells(2)
+        direct_flow.set_input_rails(["x0", "x1"])
+        samples = [
+            {"phase": "train", "label": 0, "pattern": 0, "apply_update": True},
+        ]
+
+        measures, prints = direct_flow.measure_lines(
+            samples=samples,
+            hidden_apply_mode="direct",
+            learning_mode="flow",
+            hidden_delta_output_mode="senseamp",
+            measure_detail="probe",
+            readout_sample_offsets_ns=[2.95],
+        )
+    finally:
+        direct_flow.set_hidden_cells(original_hidden)
+        direct_flow.set_input_rails(original_input_rails)
+
+    assert "print target_out_0 other_out_0 margin_0" in prints
+    assert "output_delta_net_0_0" in measures
+    assert "hidden_delta_net_0_0" in measures
+    assert "hidden_delta_gate_net_0_0" in measures
+    assert "d_vw00_signed_total" in measures
+    assert "d_wh0_x0_signed_total" in measures
+
+    assert "vw00p_before_0" not in measures
+    assert "wh0_x0p_before_0" not in measures
+    assert "hidden_grad_net_0_x0_0" not in measures
+    assert "hidden_apply_gate_net_0_x0_0" not in measures

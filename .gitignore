@@ -5,10 +5,16 @@ __pycache__/
 .mplcache/
 *.pyc
 
+# LaTeX build intermediates. Keep source .tex and committed PDFs.
+*.aux
+*.fdb_latexmk
+*.fls
+*.log
+*.out
+
 # Local datasets and bulky simulator artifacts.
 data/MNIST/raw/
 spice/generated/
 spice/results/*.dat
 spice/results/*_trace.csv
 spice/results/*trace.csv
-

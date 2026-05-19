@@ -41,10 +41,11 @@ propagation, and weight writes run inside SPICE using transistor, resistor, and
 capacitor primitives.  Python is allowed to provide sample rails, target rails,
 and coarse guiding waveforms, but not to compute hidden activations or
 gradients.  The current evidence splits into two tracks: a chip-faithful
-device-level direct-flow track that now solves XOR, and a higher-accuracy
-MNIST local-feature phase-training track that has crossed 90\% but still uses
-a more structured local-feature rule and is not yet the final pure direct-flow
-dense architecture.
+device-level direct-flow track that now solves XOR with per-synapse stored
+pre-activation traces, an emerging tiny-MNIST direct-flow bridge, and a
+higher-accuracy MNIST local-feature phase-training track that has crossed
+90\% but still uses a more structured local-feature rule and is not yet the
+final pure direct-flow dense architecture.
 \end{abstract}
 
 \section{Goal And Current Status}
@@ -60,6 +61,13 @@ The desired hardware contract is:
   \item Weight capacitors are updated by local transistor stacks gated by
     backward error and saved pre-activation traces.
 \end{enumerate}
+
+Equivalently, Python is the experiment controller, not the neural arithmetic
+engine.  It may choose the next sample, set the target rails, and open or close
+guide windows.  It must not compute hidden activations, sample hidden
+pre-activations, compute hidden deltas, or calculate weight updates.  In the
+direct-flow decks those quantities are voltages produced by ngspice transient
+simulation and stored on circuit capacitors.
 
 Table~\ref{tab:status} gives the shortest honest summary of where the work is.
 The direct-flow XOR result is the closest to the target architecture.  The
@@ -84,14 +92,18 @@ than the final dense direct-flow synapse design.
     XOR reached 100\% with flow-mode training, backprop through readout
     weight capacitors, hidden-delta sense amps, and no gradient accumulators
     in the main write path. &
-    Best completed run used shared source nodes for pre-activations; per-synapse
-    trace variants are under active test. \\
+    Non-destructive per-synapse trace storage also reaches 100\% on XOR; the
+    remaining question is scale and hidden-write calibration. \\
     \addlinespace
     Tiny MNIST01 direct-flow &
-    Fixed sensory front-ends and random-retina rails are implemented; small
-    binary subsets are linearly separable at the input level. &
-    Training readout/write dynamics have not reliably exploited that
-    separability yet. \\
+    Per-synapse trace runs now bridge beyond XOR.  The 16-sample
+    MNIST-0-vs-1 subset reaches 93.75\% with readout-only flow, and also
+    93.75\% with the real hidden-delta path when hidden writes are weakened.
+    The 24-sample bridge reaches 91.67\% both with readout-only flow and with
+    the real weak hidden-write path. &
+    This is still a tiny binary subset; the remaining question is whether the
+    same calibration survives richer front ends, larger sample counts, and
+    different hidden initializations. \\
     \addlinespace
     Local-feature MNIST phase path &
     A private/local 7x7 block model with 796 phase-state values stays above
@@ -261,7 +273,9 @@ capacitor through stacks gated by the saved pre-activation trace.
   \end{tikzpicture}
   \caption{Direct backward/write flow.  This is the architecture we want to
   scale: Python provides rails and timing windows, while hidden deltas and
-  weight writes are produced by local circuit paths.}
+  weight writes are produced by local circuit paths.  The red path is not a
+  bypass around the hidden neuron: the hidden activation capacitor gates the
+  local neuron/derivative path that forms the hidden delta.}
   \label{fig:direct-flow}
 \end{figure}
 
@@ -274,16 +288,19 @@ The strongest completed XOR run before this note was:
 It reached 100\% XOR final accuracy from 50\% initial accuracy with flow-mode
 training, backprop through the readout weights, hidden-delta sense amps, and no
 explicit gradient accumulator capacitors in the main write path.  It also used
-output-sense comparison and a lead-or backward gate.  The main caveat is that
-this run used \code{flow\_pre\_store=shared\_node}; the per-synapse pre-trace
-versions are the next fidelity step.  Full-measurement reruns of the
+output-sense comparison and a lead-or backward gate.  That run used
+\code{flow\_pre\_store=shared\_node}, so it proved the direct backward/write
+loop before proving local pre-trace storage inside each synapse.  The current
+fidelity step is therefore the \code{synapse\_gate} path, where each synapse
+stores its own forward trace on a local capacitor and reuses that voltage as
+the write gate in the backward window.  Full-measurement reruns of the
 shared-node, \code{synapse\_gate}, and \code{synapse\_consume} variants timed
-out at the current diagnostic settings, so the harness now has a
-\code{probe} measurement mode.  \code{probe} keeps the output deltas, hidden
+out at the current diagnostic settings, so the harness now has a \code{probe}
+measurement mode.  \code{probe} keeps the output deltas, hidden
 deltas, hidden-delta sense-amp gates, and final signed weight-capacitor
 movement, while dropping the expensive per-training-cycle before/after
 measurements for every weight.  This is the right diagnostic level for the
-current shared-node versus per-synapse-trace XOR comparisons.
+shared-node versus per-synapse-trace XOR comparisons.
 
 \subsection{Pre-Activation Trace Variants}
 
@@ -302,6 +319,58 @@ lives before the backward/write window:
 The latter two are more faithful to a physical synapse that carries its own
 pre-activation state, but they add capacitance and write-path loading.  The
 first \code{probe} reruns used 4 hidden cells and 8 training epochs:
+
+\begin{figure}[h]
+  \centering
+  \begin{tikzpicture}[
+      font=\small,
+      block/.style={draw, rounded corners=2pt, align=center, minimum height=0.85cm,
+        minimum width=2.1cm, fill=lightgray, inner sep=2.5pt},
+      tracecap/.style={draw, cylinder, shape border rotate=90, aspect=0.32,
+        minimum height=0.8cm, minimum width=0.55cm, align=center, fill=green!10},
+      arr/.style={-{Latex[length=2mm]}, semithick},
+      fwd/.style={arr, forwardblue},
+      bwd/.style={arr, backred},
+      wr/.style={arr, writeorange},
+      lbl/.style={font=\footnotesize, fill=white, inner sep=1.5pt}
+    ]
+    \node[block] (xin) {input rail\\$x_i$};
+    \node[block, right=1.1cm of xin] (syn) {synapse\\MOS stack};
+    \node[block, right=1.1cm of syn] (neu) {neuron\\ReLU gate};
+    \node[block, right=1.1cm of neu] (out) {next layer\\error node};
+
+    \node[tracecap, below=1.15cm of syn] (cphi) {$C_{\phi,i}$};
+    \node[tracecap, below=1.15cm of neu] (cact) {$C_{a,j}$};
+    \node[tracecap, below=2.45cm of syn] (cw) {$C_{w,ij}$};
+    \node[block, below=2.45cm of neu, minimum width=2.35cm] (writer) {local write\\transistor stack};
+
+    \draw[fwd] (xin) -- node[lbl, above] {forward current} (syn);
+    \draw[fwd] (syn) -- node[lbl, above] {$z_j$} (neu);
+    \draw[fwd] (neu) -- node[lbl, above] {$a_j$} (out);
+    \draw[fwd] (syn) -- node[lbl, right] {store} (cphi);
+    \draw[fwd] (neu) -- node[lbl, right] {store} (cact);
+
+    \draw[bwd] (out.south) |- node[lbl, pos=0.28, right] {$\delta_{\mathrm{next}}$} (neu.south);
+    \draw[bwd] (cact.east) -- node[lbl, above] {activation gate} (neu.south east);
+    \draw[bwd] (neu.south) -- node[lbl, right] {$\delta_j$} (writer.north);
+
+    \draw[wr] (cphi.south) |- node[lbl, pos=0.35, left] {pre trace} (writer.west);
+    \draw[wr] (writer.west) -- (writer);
+    \draw[wr] (writer.west) -- node[lbl, above] {signed write} (cw.east);
+
+    \node[draw, rounded corners=2pt, align=left, fill=white, text width=12.1cm,
+      below=0.65cm of cw, xshift=2.5cm, font=\footnotesize]
+      {In \code{synapse\_gate}, the pre-activation trace is a local capacitor
+       charged during forward flow.  In the backward/write window, the output
+       error passes through the neuron activation gate to form $\delta_j$; the
+       local writer then combines $\delta_j$ with $C_{\phi,i}$ to move the
+       signed weight capacitor pair.};
+  \end{tikzpicture}
+  \caption{Non-destructive per-synapse trace storage.  This is the physical
+  interpretation of the successful \code{synapse\_gate} XOR result and the
+  tiny-MNIST bridge experiments.}
+  \label{fig:synapse-gate}
+\end{figure}
 
 \begin{table}[h]
   \centering
@@ -349,6 +418,46 @@ the same 93.75\% when hidden writes were weakened to \code{2e-7 u}.  The
 standard hidden-write strength stayed at 87.5\%, and a readout charge-noise
 trial collapsed, so the current bottleneck is hidden/write calibration rather
 than missing front-end separability.
+
+\begin{table}[h]
+  \centering
+  \caption{Current tiny-MNIST direct-flow bridge results using per-synapse
+  stored traces and 8 hidden cells.}
+  \label{tab:mnist-direct-flow}
+  \begin{tabular}{p{0.25\linewidth}p{0.18\linewidth}p{0.18\linewidth}p{0.27\linewidth}}
+    \toprule
+    Run & Hidden-write path & Final accuracy & What it shows \\
+    \midrule
+    \code{mnist01\_16}, e2 &
+    off & 93.75\% &
+    The fixed front end plus measured hidden activations are readout
+    separable when hidden weights are not disturbed. \\
+    \addlinespace
+    \code{mnist01\_16}, e2 &
+    real hidden-delta path, \code{2e-7 u} write &
+    93.75\% &
+    Weak real hidden writes preserve the separable hidden code on the
+    16-sample bridge. \\
+    \addlinespace
+    \code{mnist01\_24}, e2 &
+    off & 91.67\% &
+    The 24-sample readout-only control is already above 90\%; the matching
+    full hidden-write run checks whether hidden updates destroy this code. \\
+    \addlinespace
+    \code{mnist01\_24}, e2 &
+    real hidden-delta path, \code{2e-7 u} write &
+    91.67\% &
+    The weak hidden-write path also clears 90\% and leaves the final hidden
+    activations linearly separable. \\
+    \addlinespace
+    \code{mnist01\_24}, e2, \code{input\_identity} &
+    real hidden-delta path, \code{2e-7 u} write &
+    50.00\% &
+    Negative control: the final hidden activations are separable, but the
+    readout/update polarity or balance is wrong for this initialization. \\
+    \bottomrule
+  \end{tabular}
+\end{table}
 
 \subsection{Local-Feature Phase-Training Path}
 

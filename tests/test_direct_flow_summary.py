@@ -33,6 +33,8 @@ def test_direct_flow_summary_extracts_nested_separability(tmp_path: Path) -> Non
                 "flow_hidden_write": "direct",
                 "hidden_update_width_u": 2e-7,
                 "epochs": 2,
+                "order_mode": "interleave",
+                "readout_flow_polarity": "normal",
                 "final_eval_accuracy": 0.9166666667,
                 "best_final_transient_accuracy": 0.9166666667,
                 "best_final_transient_min_margin_v": -0.0019,
@@ -60,6 +62,8 @@ def test_direct_flow_summary_extracts_nested_separability(tmp_path: Path) -> Non
     assert row["hidden_forward_mode"] == "rail_buffer"
     assert row["flow_pre_store"] == "synapse_gate"
     assert row["flow_hidden_write"] == "direct"
+    assert row["order_mode"] == "interleave"
+    assert row["readout_flow_polarity"] == "normal"
     assert row["input_feature_separable"] is True
     assert row["input_feature_min_margin"] == 0.42
     assert row["initial_hidden_separable"] is False

@@ -1,0 +1,873 @@
+{
+  "simulator": "ngspice-46 : Circuit level simulation program",
+  "architecture": "device_level_binary_general_random_hidden",
+  "status": "tiny_general_hidden_device_experiment",
+  "benchmark": "mnist01_32",
+  "dataset": "mnist01_32",
+  "dataset_records": [
+    {
+      "pattern": 0,
+      "label": 0,
+      "source_index": 15692,
+      "source_digit": 0,
+      "input_frontend": "2x2_area_downsample_per_feature_selected_subset_minmax_to_0p08_0p92",
+      "input_frontend_key": "pool2",
+      "input_rails": [
+        "x0",
+        "nx0",
+        "x1",
+        "nx1"
+      ],
+      "inputs": {
+        "x0": 0.5317473141217951,
+        "nx0": 0.5134964625688582,
+        "x1": 0.5358932759311102,
+        "nx1": 0.5174262497894779
+      }
+    },
+    {
+      "pattern": 1,
+      "label": 0,
+      "source_index": 37663,
+      "source_digit": 0,
+      "input_frontend": "2x2_area_downsample_per_feature_selected_subset_minmax_to_0p08_0p92",
+      "input_frontend_key": "pool2",
+      "input_rails": [
+        "x0",
+        "nx0",
+        "x1",
+        "nx1"
+      ],
+      "inputs": {
+        "x0": 0.6999193928416476,
+        "nx0": 0.41756768235512626,
+        "x1": 0.49665319684980913,
+        "nx1": 0.7213940758473476
+      }
+    },
+    {
+      "pattern": 2,
+      "label": 0,
+      "source_index": 5627,
+      "source_digit": 0,
+      "input_frontend": "2x2_area_downsample_per_feature_selected_subset_minmax_to_0p08_0p92",
+      "input_frontend_key": "pool2",
+      "input_rails": [
+        "x0",
+        "nx0",
+        "x1",
+        "nx1"
+      ],
+      "inputs": {
+        "x0": 0.42167837524251756,
+        "nx0": 0.9199999999999999,
+        "x1": 0.8710590222811111,
+        "nx1": 0.598713136111486
+      }
+    },
+    {
+      "pattern": 3,
+      "label": 0,
+      "source_index": 28824,
+      "source_digit": 0,
+      "input_frontend": "2x2_area_downsample_per_feature_selected_subset_minmax_to_0p08_0p92",
+      "input_frontend_key": "pool2",
+      "input_rails": [
+        "x0",
+        "nx0",
+        "x1",
+        "nx1"
+      ],
+      "inputs": {
+        "x0": 0.6925202676476843,
+        "nx0": 0.6901446155486542,
+        "x1": 0.7224413885652673,
+        "nx1": 0.7468632829126349
+      }
+    },
+    {
+      "pattern": 4,
+      "label": 0,
+      "source_index": 10531,
+      "source_digit": 0,
+      "input_frontend": "2x2_area_downsample_per_feature_selected_subset_minmax_to_0p08_0p92",
+      "input_frontend_key": "pool2",
+      "input_rails": [
+        "x0",
+        "nx0",
+        "x1",
+        "nx1"
+      ],
+      "inputs": {
+        "x0": 0.5162608337010832,
+        "nx0": 0.7446496411510419,
+        "x1": 0.9199999999999999,
+        "nx1": 0.6669705077775799
+      }
+    },
+    {
+      "pattern": 5,
+      "label": 0,
+      "source_index": 52048,
+      "source_digit": 0,
+      "input_frontend": "2x2_area_downsample_per_feature_selected_subset_minmax_to_0p08_0p92",
+      "input_frontend_key": "pool2",
+      "input_rails": [
+        "x0",
+        "nx0",
+        "x1",
+        "nx1"
+      ],
+      "inputs": {
+        "x0": 0.350727187976353,
+        "nx0": 0.48634778794953615,
+        "x1": 0.4535812370934738,
+        "nx1": 0.4636997243246085
+      }
+    },
+    {
+      "pattern": 6,
+      "label": 0,
+      "source_index": 35074,
+      "source_digit": 0,
+      "input_frontend": "2x2_area_downsample_per_feature_selected_subset_minmax_to_0p08_0p92",
+      "input_frontend_key": "pool2",
+      "input_rails": [
+        "x0",
+        "nx0",
+        "x1",
+        "nx1"
+      ],
+      "inputs": {
+        "x0": 0.6746247757167607,
+        "nx0": 0.5256952174004601,
+        "x1": 0.6626353807408983,
+        "nx1": 0.5339946165295476
+      }
+    },
+    {
+      "pattern": 7,
+      "label": 0,
+      "source_index": 13918,
+      "source_digit": 0,
+      "input_frontend": "2x2_area_downsample_per_feature_selected_subset_minmax_to_0p08_0p92",
+      "input_frontend_key": "pool2",
+      "input_rails": [
+        "x0",
+        "nx0",
+        "x1",
+        "nx1"
+      ],
+      "inputs": {
+        "x0": 0.34126321209822896,
+        "nx0": 0.43402300774361885,
+        "x1": 0.5186257045480323,
+        "nx1": 0.4371045590432062
+      }
+    },
+    {
+      "pattern": 8,
+      "label": 0,
+      "source_index": 19774,
+      "source_digit": 0,
+      "input_frontend": "2x2_area_downsample_per_feature_selected_subset_minmax_to_0p08_0p92",
+      "input_frontend_key": "pool2",
+      "input_rails": [
+        "x0",
+        "nx0",
+        "x1",
+        "nx1"
+      ],
+      "inputs": {
+        "x0": 0.5324356219070424,
+        "nx0": 0.4980793658378587,
+        "x1": 0.6504607529490555,
+        "nx1": 0.6412332408007986
+      }
+    },
+    {
+      "pattern": 9,
+      "label": 0,
+      "source_index": 2493,
+      "source_digit": 0,
+      "input_frontend": "2x2_area_downsample_per_feature_selected_subset_minmax_to_0p08_0p92",
+      "input_frontend_key": "pool2",
+      "input_rails": [
+        "x0",
+        "nx0",
+        "x1",
+        "nx1"
+      ],
+      "inputs": {
+        "x0": 0.4834523589881416,
+        "nx0": 0.711219890394929,
+        "x1": 0.8652869708658292,
+        "nx1": 0.5658444808287216
+      }
+    },
+    {
+      "pattern": 10,
+      "label": 0,
+      "source_index": 10700,
+      "source_digit": 0,
+      "input_frontend": "2x2_area_downsample_per_feature_selected_subset_minmax_to_0p08_0p92",
+      "input_frontend_key": "pool2",
+      "input_rails": [
+        "x0",
+        "nx0",
+        "x1",
+        "nx1"
+      ],
+      "inputs": {
+        "x0": 0.43119971046599,
+        "nx0": 0.3761957771083908,
+        "x1": 0.44548099112030154,
+        "nx1": 0.4974798575807469
+      }
+    },
+    {
+      "pattern": 11,
+      "label": 0,
+      "source_index": 48128,
+      "source_digit": 0,
+      "input_frontend": "2x2_area_downsample_per_feature_selected_subset_minmax_to_0p08_0p92",
+      "input_frontend_key": "pool2",
+      "input_rails": [
+        "x0",
+        "nx0",
+        "x1",
+        "nx1"
+      ],
+      "inputs": {
+        "x0": 0.6685448548630227,
+        "nx0": 0.4668298051508195,
+        "x1": 0.48190783082760086,
+        "nx1": 0.7070777393296418
+      }
+    },
+    {
+      "pattern": 12,
+      "label": 0,
+      "source_index": 5228,
+      "source_digit": 0,
+      "input_frontend": "2x2_area_downsample_per_feature_selected_subset_minmax_to_0p08_0p92",
+      "input_frontend_key": "pool2",
+      "input_rails": [
+        "x0",
+        "nx0",
+        "x1",
+        "nx1"
+      ],
+      "inputs": {
+        "x0": 0.7205107209203155,
+        "nx0": 0.7288171789702128,
+        "x1": 0.652934494140861,
+        "nx1": 0.8126541236375121
+      }
+    },
+    {
+      "pattern": 13,
+      "label": 0,
+      "source_index": 48631,
+      "source_digit": 0,
+      "input_frontend": "2x2_area_downsample_per_feature_selected_subset_minmax_to_0p08_0p92",
+      "input_frontend_key": "pool2",
+      "input_rails": [
+        "x0",
+        "nx0",
+        "x1",
+        "nx1"
+      ],
+      "inputs": {
+        "x0": 0.503240670970574,
+        "nx0": 0.5253318370202266,
+        "x1": 0.48995956641673044,
+        "nx1": 0.4884718458972211
+      }
+    },
+    {
+      "pattern": 14,
+      "label": 0,
+      "source_index": 9485,
+      "source_digit": 0,
+      "input_frontend": "2x2_area_downsample_per_feature_selected_subset_minmax_to_0p08_0p92",
+      "input_frontend_key": "pool2",
+      "input_rails": [
+        "x0",
+        "nx0",
+        "x1",
+        "nx1"
+      ],
+      "inputs": {
+        "x0": 0.9199999999999999,
+        "nx0": 0.6605043028850403,
+        "x1": 0.7804041834766354,
+        "nx1": 0.9199999999999999
+      }
+    },
+    {
+      "pattern": 15,
+      "label": 0,
+      "source_index": 26038,
+      "source_digit": 0,
+      "input_frontend": "2x2_area_downsample_per_feature_selected_subset_minmax_to_0p08_0p92",
+      "input_frontend_key": "pool2",
+      "input_rails": [
+        "x0",
+        "nx0",
+        "x1",
+        "nx1"
+      ],
+      "inputs": {
+        "x0": 0.6846049453284055,
+        "nx0": 0.46771226943466265,
+        "x1": 0.5708649521156467,
+        "nx1": 0.6845039977138961
+      }
+    },
+    {
+      "pattern": 16,
+      "label": 1,
+      "source_index": 4657,
+      "source_digit": 1,
+      "input_frontend": "2x2_area_downsample_per_feature_selected_subset_minmax_to_0p08_0p92",
+      "input_frontend_key": "pool2",
+      "input_rails": [
+        "x0",
+        "nx0",
+        "x1",
+        "nx1"
+      ],
+      "inputs": {
+        "x0": 0.09996039417308523,
+        "nx0": 0.4127920082686867,
+        "x1": 0.4495068511739726,
+        "nx1": 0.18407506702452858
+      }
+    },
+    {
+      "pattern": 17,
+      "label": 1,
+      "source_index": 8275,
+      "source_digit": 1,
+      "input_frontend": "2x2_area_downsample_per_feature_selected_subset_minmax_to_0p08_0p92",
+      "input_frontend_key": "pool2",
+      "input_rails": [
+        "x0",
+        "nx0",
+        "x1",
+        "nx1"
+      ],
+      "inputs": {
+        "x0": 0.09124206232321347,
+        "nx0": 0.6672525179953284,
+        "x1": 0.7345189655930617,
+        "nx1": 0.21490616433078052
+      }
+    },
+    {
+      "pattern": 18,
+      "label": 1,
+      "source_index": 56117,
+      "source_digit": 1,
+      "input_frontend": "2x2_area_downsample_per_feature_selected_subset_minmax_to_0p08_0p92",
+      "input_frontend_key": "pool2",
+      "input_rails": [
+        "x0",
+        "nx0",
+        "x1",
+        "nx1"
+      ],
+      "inputs": {
+        "x0": 0.08,
+        "nx0": 0.4743047863472067,
+        "x1": 0.46827809051995556,
+        "nx1": 0.19522787746810022
+      }
+    },
+    {
+      "pattern": 19,
+      "label": 1,
+      "source_index": 72,
+      "source_digit": 1,
+      "input_frontend": "2x2_area_downsample_per_feature_selected_subset_minmax_to_0p08_0p92",
+      "input_frontend_key": "pool2",
+      "input_rails": [
+        "x0",
+        "nx0",
+        "x1",
+        "nx1"
+      ],
+      "inputs": {
+        "x0": 0.17567223854868252,
+        "nx0": 0.2260215153644664,
+        "x1": 0.23865803918653716,
+        "nx1": 0.226702400527508
+      }
+    },
+    {
+      "pattern": 20,
+      "label": 1,
+      "source_index": 56537,
+      "source_digit": 1,
+      "input_frontend": "2x2_area_downsample_per_feature_selected_subset_minmax_to_0p08_0p92",
+      "input_frontend_key": "pool2",
+      "input_rails": [
+        "x0",
+        "nx0",
+        "x1",
+        "nx1"
+      ],
+      "inputs": {
+        "x0": 0.29904813422898624,
+        "nx0": 0.16315906459814744,
+        "x1": 0.18496361878865675,
+        "nx1": 0.39463806208816327
+      }
+    },
+    {
+      "pattern": 21,
+      "label": 1,
+      "source_index": 17685,
+      "source_digit": 1,
+      "input_frontend": "2x2_area_downsample_per_feature_selected_subset_minmax_to_0p08_0p92",
+      "input_frontend_key": "pool2",
+      "input_rails": [
+        "x0",
+        "nx0",
+        "x1",
+        "nx1"
+      ],
+      "inputs": {
+        "x0": 0.09141413380723774,
+        "nx0": 0.5070596977021129,
+        "x1": 0.5357962627656885,
+        "nx1": 0.11270777258717282
+      }
+    },
+    {
+      "pattern": 22,
+      "label": 1,
+      "source_index": 18886,
+      "source_digit": 1,
+      "input_frontend": "2x2_area_downsample_per_feature_selected_subset_minmax_to_0p08_0p92",
+      "input_frontend_key": "pool2",
+      "input_rails": [
+        "x0",
+        "nx0",
+        "x1",
+        "nx1"
+      ],
+      "inputs": {
+        "x0": 0.17314851066345713,
+        "nx0": 0.2408157290646175,
+        "x1": 0.156831036963351,
+        "nx1": 0.34466487760924247
+      }
+    },
+    {
+      "pattern": 23,
+      "label": 1,
+      "source_index": 41073,
+      "source_digit": 1,
+      "input_frontend": "2x2_area_downsample_per_feature_selected_subset_minmax_to_0p08_0p92",
+      "input_frontend_key": "pool2",
+      "input_rails": [
+        "x0",
+        "nx0",
+        "x1",
+        "nx1"
+      ],
+      "inputs": {
+        "x0": 0.2645189464193749,
+        "nx0": 0.1453541012370851,
+        "x1": 0.2356992720240101,
+        "nx1": 0.27646111515455063
+      }
+    },
+    {
+      "pattern": 24,
+      "label": 1,
+      "source_index": 46433,
+      "source_digit": 1,
+      "input_frontend": "2x2_area_downsample_per_feature_selected_subset_minmax_to_0p08_0p92",
+      "input_frontend_key": "pool2",
+      "input_rails": [
+        "x0",
+        "nx0",
+        "x1",
+        "nx1"
+      ],
+      "inputs": {
+        "x0": 0.10196790496363484,
+        "nx0": 0.6367815915959539,
+        "x1": 0.6491996360309054,
+        "nx1": 0.11335120414698727
+      }
+    },
+    {
+      "pattern": 25,
+      "label": 1,
+      "source_index": 38415,
+      "source_digit": 1,
+      "input_frontend": "2x2_area_downsample_per_feature_selected_subset_minmax_to_0p08_0p92",
+      "input_frontend_key": "pool2",
+      "input_rails": [
+        "x0",
+        "nx0",
+        "x1",
+        "nx1"
+      ],
+      "inputs": {
+        "x0": 0.10007510992150233,
+        "nx0": 0.3319688367698749,
+        "x1": 0.39542439564660786,
+        "nx1": 0.08
+      }
+    },
+    {
+      "pattern": 26,
+      "label": 1,
+      "source_index": 16887,
+      "source_digit": 1,
+      "input_frontend": "2x2_area_downsample_per_feature_selected_subset_minmax_to_0p08_0p92",
+      "input_frontend_key": "pool2",
+      "input_rails": [
+        "x0",
+        "nx0",
+        "x1",
+        "nx1"
+      ],
+      "inputs": {
+        "x0": 0.08,
+        "nx0": 0.5243974654801847,
+        "x1": 0.5347776565751385,
+        "nx1": 0.13731903097252923
+      }
+    },
+    {
+      "pattern": 27,
+      "label": 1,
+      "source_index": 51724,
+      "source_digit": 1,
+      "input_frontend": "2x2_area_downsample_per_feature_selected_subset_minmax_to_0p08_0p92",
+      "input_frontend_key": "pool2",
+      "input_rails": [
+        "x0",
+        "nx0",
+        "x1",
+        "nx1"
+      ],
+      "inputs": {
+        "x0": 0.20136838050357814,
+        "nx0": 0.08,
+        "x1": 0.08,
+        "nx1": 0.2591420855960907
+      }
+    },
+    {
+      "pattern": 28,
+      "label": 1,
+      "source_index": 17394,
+      "source_digit": 1,
+      "input_frontend": "2x2_area_downsample_per_feature_selected_subset_minmax_to_0p08_0p92",
+      "input_frontend_key": "pool2",
+      "input_rails": [
+        "x0",
+        "nx0",
+        "x1",
+        "nx1"
+      ],
+      "inputs": {
+        "x0": 0.15462205041862576,
+        "nx0": 0.3611939387228489,
+        "x1": 0.21498786613076348,
+        "nx1": 0.45383378433539234
+      }
+    },
+    {
+      "pattern": 29,
+      "label": 1,
+      "source_index": 58286,
+      "source_digit": 1,
+      "input_frontend": "2x2_area_downsample_per_feature_selected_subset_minmax_to_0p08_0p92",
+      "input_frontend_key": "pool2",
+      "input_rails": [
+        "x0",
+        "nx0",
+        "x1",
+        "nx1"
+      ],
+      "inputs": {
+        "x0": 0.10185319005976096,
+        "nx0": 0.5635372812914726,
+        "x1": 0.5833791443019731,
+        "nx1": 0.1137265402422577
+      }
+    },
+    {
+      "pattern": 30,
+      "label": 1,
+      "source_index": 57170,
+      "source_digit": 1,
+      "input_frontend": "2x2_area_downsample_per_feature_selected_subset_minmax_to_0p08_0p92",
+      "input_frontend_key": "pool2",
+      "input_rails": [
+        "x0",
+        "nx0",
+        "x1",
+        "nx1"
+      ],
+      "inputs": {
+        "x0": 0.08,
+        "nx0": 0.21480905491150892,
+        "x1": 0.20960388322757,
+        "nx1": 0.16219839073095943
+      }
+    },
+    {
+      "pattern": 31,
+      "label": 1,
+      "source_index": 38480,
+      "source_digit": 1,
+      "input_frontend": "2x2_area_downsample_per_feature_selected_subset_minmax_to_0p08_0p92",
+      "input_frontend_key": "pool2",
+      "input_rails": [
+        "x0",
+        "nx0",
+        "x1",
+        "nx1"
+      ],
+      "inputs": {
+        "x0": 0.10690064675648493,
+        "nx0": 0.5071635333197916,
+        "x1": 0.3895553650014294,
+        "nx1": 0.1800536159045827
+      }
+    }
+  ],
+  "model_level": "ngspice built-in LEVEL=1 MOS models; not a foundry PDK.",
+  "synapse_design": "split_signed_v1",
+  "synapse_design_description": "Differential positive/negative weight capacitors drive separate MOS conductance paths; the same readout weight capacitor nodes can also gate the hidden-delta path.",
+  "hidden_delta_width_scale": 1.0,
+  "hidden_gradient_width_scale": 1.0,
+  "readout_gradient_width_scale": 1.0,
+  "effective_hidden_delta_width_u": 32.0,
+  "effective_hidden_gradient_width_u": 40.0,
+  "effective_readout_gradient_width_u": 24.0,
+  "hidden_error_rule": "backprop",
+  "hidden_delta_relu_gate": "act_nsense",
+  "hidden_delta_weight_device": "nmos",
+  "hidden_delta_output_mode": "senseamp",
+  "hidden_delta_sense_width_u": 512.0,
+  "hidden_delta_sense_cap_f": 2.0,
+  "hidden_delta_internal_cap_f": null,
+  "hidden_delta_internal_leak_ohm": null,
+  "hidden_gradient_act_gate": "act_nrel",
+  "hidden_apply_mode": "direct",
+  "learning_mode": "flow",
+  "measure_detail": "light",
+  "flow_hidden_write": "off",
+  "flow_pre_store": "synapse_gate",
+  "flow_pre_cap_f": 2.0,
+  "flow_pre_consume_width_u": null,
+  "uses_gradient_accumulators": false,
+  "uses_separate_apply_phase": false,
+  "uses_direct_backward_write_flow": true,
+  "uses_hidden_write_flow": false,
+  "uses_per_synapse_pre_activation_trace": true,
+  "uses_destructive_pre_activation_trace_read": false,
+  "pre_activation_capture_path": "mos_store_trace_caps",
+  "hidden_delta_passes_through_activation_gate": false,
+  "hidden_delta_output_latched": false,
+  "direct_weight_write_path": true,
+  "hidden_grad_sense_width_u": null,
+  "hidden_grad_sense_cap_f": null,
+  "hidden_delta_network_enabled": false,
+  "real_backprop_through_readout_synapses": false,
+  "uses_readout_weight_transport_for_hidden_delta": false,
+  "fixed_feedback_caps": false,
+  "feedback_scale": null,
+  "input_rails": [
+    "x0",
+    "nx0",
+    "x1",
+    "nx1"
+  ],
+  "input_count": 4,
+  "input_frontend": "2x2_area_downsample_per_feature_selected_subset_minmax_to_0p08_0p92",
+  "input_frontend_key": "pool2",
+  "hidden_forward_mode": "rail_buffer",
+  "signal_path": "4 hidden activation capacitors are MOS pass-gate buffered from externally driven input rails; any remaining hidden cells use signed conductance from 4 input rails plus a bias rail. Readout, output-bias, and hidden weights are capacitor-held signed states and update through discharge-only signed updates.",
+  "no_behavioral_signal_math": true,
+  "uses_behavioral_tanh": false,
+  "uses_behavioral_multipliers": false,
+  "hidden_topology_programmed_as_literals": false,
+  "hidden_bias_rail": true,
+  "hidden_cells": 4,
+  "output_bias_weights_trained": true,
+  "hidden_weight_initialization": "deterministic_pseudorandom_dense_signed",
+  "hidden_init": "random",
+  "readout_initialization": "random",
+  "separator_scale": null,
+  "separator_offset_v": null,
+  "readout_center_v": null,
+  "output_bias_offset_v": 0.0,
+  "separator_csv": null,
+  "separator_phase": null,
+  "readout_weights_trained": true,
+  "hidden_feature_weights_trained": false,
+  "epochs": 4,
+  "seed": 3,
+  "dataset_seed": 3,
+  "initialization_seed": 3,
+  "order_mode": "interleave",
+  "train_order": [
+    0,
+    16,
+    1,
+    17,
+    2,
+    18,
+    3,
+    19,
+    4,
+    20,
+    5,
+    21,
+    6,
+    22,
+    7,
+    23,
+    8,
+    24,
+    9,
+    25,
+    10,
+    26,
+    11,
+    27,
+    12,
+    28,
+    13,
+    29,
+    14,
+    30,
+    15,
+    31
+  ],
+  "batch_apply": false,
+  "error_rule": "out_competitive",
+  "latch_boost_width_u": null,
+  "lose_pull_kohm": 100.0,
+  "lose_width_u": 24.0,
+  "lead_mode": "out_senseamp",
+  "lead_width_u": 96.0,
+  "backward_gate_mode": "target_mistake",
+  "backward_gate_width_u": 64.0,
+  "backward_gate_cap_f": 2.0,
+  "bwd_start_ns": 6.75,
+  "cmp_end_ns": 4.4,
+  "lead_gate_tracks_score_winner": false,
+  "lead_gate_score_winner_fraction": 0.0703125,
+  "mean_train_lead01_v": 0.7788168527671484,
+  "mean_train_lead10_v": 0.441323995770625,
+  "mean_abs_train_lead_diff_v": 1.1798588389622264,
+  "max_train_bwd_signal_v": 1.04498,
+  "mean_train_bwd_signal_v": 0.33681612890625,
+  "train_cycles": 128,
+  "train_apply_cycles": 128,
+  "hidden_cap_f": 4.0,
+  "cap_dither_v": 0.0,
+  "cap_dither_seed": null,
+  "cap_dither_scope": null,
+  "uses_train_charge_noise": false,
+  "train_charge_noise_width_u": 0.0,
+  "train_charge_noise_prob": 0.0,
+  "train_charge_noise_seed": null,
+  "train_charge_noise_scope": null,
+  "train_charge_noise_pulse_ns": null,
+  "gradient_cap_f": null,
+  "hidden_gradient_cap_f": null,
+  "hidden_delta_cap_f": 12.0,
+  "lead_cap_f": 2.0,
+  "update_width_u": 120.0,
+  "readout_update_width_u": 0.02,
+  "output_bias_update_width_u": 0.0003,
+  "readout_flow_polarity": "normal",
+  "hidden_update_width_u": 120.0,
+  "apply_start_ns": 9.25,
+  "apply_end_ns": 11.2,
+  "apply_duration_ns": 1.9499999999999993,
+  "readout_sample_offsets_ns": [
+    2.95
+  ],
+  "readout_offset_stats": [
+    {
+      "offset_ns": 2.95,
+      "key": "2950ps",
+      "initial_accuracy": 0.5625,
+      "final_accuracy": 0.5,
+      "initial_min_margin_v": -0.0108343,
+      "final_min_margin_v": -0.0105506
+    }
+  ],
+  "best_final_transient_offset_ns": 2.95,
+  "best_final_transient_accuracy": 0.5,
+  "best_final_transient_min_margin_v": -0.0105506,
+  "initial_eval_accuracy": 0.5625,
+  "final_eval_accuracy": 0.5,
+  "input_feature_separability": {
+    "input_count": 4,
+    "input_rails": [
+      "x0",
+      "nx0",
+      "x1",
+      "nx1"
+    ],
+    "linearly_separable": true,
+    "perceptron_epochs": 8,
+    "min_margin": 0.8286559664059325
+  },
+  "initial_hidden_feature_separability": {
+    "linearly_separable": true,
+    "perceptron_epochs": 7,
+    "min_margin": 0.6375418022140007
+  },
+  "final_hidden_feature_separability": {
+    "linearly_separable": true,
+    "perceptron_epochs": 7,
+    "min_margin": 0.6375442339549995
+  },
+  "initial_min_margin_v": -0.0108343,
+  "final_min_margin_v": -0.0105506,
+  "min_margin_gain_v": -0.01605059,
+  "mean_hidden_activation_initial_v": 0.43266173828125,
+  "mean_hidden_activation_final_v": 0.43266170703124995,
+  "all_train_cycles_update_readout": null,
+  "all_train_cycles_update_hidden": false,
+  "max_train_readout_signed_delta_v": 0.0,
+  "max_train_readout_weight_signed_delta_v": 0.0,
+  "max_train_output_bias_signed_delta_v": 0.0,
+  "max_train_hidden_signed_delta_v": 0.0,
+  "max_train_output_delta_signal_v": 0.0,
+  "max_train_output_delta_node_v": 0.0,
+  "max_train_hidden_delta_signal_v": 0.0,
+  "max_train_hidden_delta_node_v": 0.0,
+  "max_train_hidden_delta_update_signal_v": 0.0,
+  "max_train_hidden_delta_update_node_v": 0.0,
+  "max_train_hidden_delta_gate_signal_v": 0.0,
+  "max_train_hidden_delta_gate_node_v": 0.0,
+  "max_train_hidden_grad_signal_v": 0.0,
+  "max_train_hidden_grad_node_v": 0.0,
+  "max_train_hidden_apply_gate_signal_v": 0.0,
+  "max_train_hidden_apply_gate_node_v": 0.0,
+  "max_abs_total_readout_weight_signed_delta_v": 0.097255,
+  "max_abs_total_output_bias_signed_delta_v": 0.0259714,
+  "max_abs_total_readout_signed_delta_v": 0.097255,
+  "max_abs_total_hidden_signed_delta_v": 0.000375661,
+  "curve": "/Users/ahle/kode/stochastic-local-computer/spice/results/device_mnist01_32_v211_tm_interleave_rw02_b0003_h4_e4.csv",
+  "table_curve": "/Users/ahle/kode/stochastic-local-computer/results/tables/device_mnist01_32_v211_tm_interleave_rw02_b0003_h4_e4.csv",
+  "wall_time_s": 304.927965375,
+  "interpretation": "This removes literal-detector hidden topology and tests whether a general dense hidden layer can run and update at device level on tiny binary datasets before moving to 8x8 MNIST."
+}

@@ -414,18 +414,21 @@ first \code{probe} reruns used 4 hidden cells and 8 training epochs:
     \node[tracecap, below=2.8cm of syn] (cw) {$C_{w,ij}$};
     \node[block, below=2.8cm of neu, minimum width=2.35cm] (writer) {local write\\transistor stack};
 
+    %% forward (blue)
     \draw[fwd] (xin) -- node[lbl, above] {$x_i$} (syn);
     \draw[fwd] (syn) -- node[lbl, above] {$z_j$} (neu);
     \draw[fwd] (neu) -- node[lbl, above] {$a_j$} (out);
-    \draw[fwd] (syn.south) -- node[lbl, right] {store $\phi$} (cphi.north);
-    \draw[fwd] (neu.south) -- node[lbl, right] {store $a$} (cact.north);
+    \draw[fwd] (syn.south) -- node[lbl, left] {store $\phi$} (cphi.north);
+    \draw[fwd] (neu.south) -- node[lbl, left] {store $a$} (cact.north);
 
-    \draw[bwd] (out.south) |- node[lbl, pos=0.75, above] {$\delta_{\mathrm{next}}$} (neu.east);
-    \draw[bwd] (cact.west) -- node[lbl, above] {act gate} (neu.south east);
-    \draw[bwd] (neu.south) -- node[lbl, right] {$\delta_j$} (writer.north);
+    %% backward (red): distinct anchors and label sides keep arrows visually separate
+    \draw[bwd] (out.north west) -- node[lbl, above] {$\delta_{\mathrm{next}}$} (neu.north east);
+    \draw[bwd] (cact.east)      -- node[lbl, right, pos=0.6] {gate} (neu.south east);
+    \draw[bwd] (neu.south west) -- node[lbl, left]  {$\delta_j$} (writer.north west);
 
-    \draw[wr] (cphi.south) -- node[lbl, left] {pre trace} (cw.north);
-    \draw[wr] (writer.west) -- node[lbl, above] {signed write} (cw.east);
+    %% write (orange)
+    \draw[wr] (cphi.south)   -- node[lbl, left]  {pre trace}    (cw.north);
+    \draw[wr] (writer.west)  -- node[lbl, above] {signed write} (cw.east);
 
     \node[draw, rounded corners=2pt, align=left, fill=white, text width=13cm,
       below=0.9cm of cw, xshift=3.0cm, font=\footnotesize]
@@ -495,18 +498,26 @@ lands at the same 78.12\% accuracy as the readout-only control.  A follow-up
 rail-buffer mode now bypasses that compression by charging hidden activation
 capacitors directly from input rails through MOS pass gates during the forward
 window.  On the 32-sample pool2 bridge, this produces linearly separable hidden
-activations.  Random readout learning still falls to 50\%, but a programmed
+activations.  The first random-readout rail-buffer runs still fell to 50\%,
+but the later target-mistake/interleaved runs reached 96.875\% on the
+32-sample bridge with readout-only direct flow.  The same setup with reversed
+readout-flow polarity collapsed to 50\%, so the sign convention is now partly
+calibrated.  Adding the real hidden-delta path back in with damped hidden-delta
+transport nodes keeps the same 96.875\% result while moving hidden weight
+capacitors by about 8.1 mV; both shared activation nodes and per-synapse stored
+pre-traces work in this one-epoch diagnostic.  A programmed
 \code{csv\_separator} readout reaches 100\% with a positive 14.9 mV margin and
 stays at 100\% after two mistake-gated flow epochs.  This separates the present
-failure into readout-discovery dynamics rather than representational capacity.
+failure into scale and margin calibration rather than basic representational
+capacity, readout sign, or the existence of a transistor-level hidden backprop
+path.
 
 \begin{table}[h]
   \centering
   \footnotesize
   \setlength{\tabcolsep}{3pt}
   \renewcommand{\arraystretch}{0.92}
-  \caption{Current tiny-MNIST direct-flow bridge results using per-synapse
-  stored traces.}
+  \caption{Current tiny-MNIST direct-flow bridge results.}
   \label{tab:mnist-direct-flow}
   \begin{tabular}{p{0.24\linewidth}p{0.17\linewidth}p{0.14\linewidth}p{0.34\linewidth}}
     \toprule
@@ -551,6 +562,28 @@ failure into readout-discovery dynamics rather than representational capacity.
     \code{mnist01\_32}, \code{rail\_buffer}, e2 &
     off, random readout & 50.00\% &
     MOS-buffered hidden code is separable; random readout overshoots. \\
+    \addlinespace
+    \code{mnist01\_32}, \code{rail\_buffer}, target-mistake/interleaved, e8 &
+    off, random readout & 96.875\% &
+    Normal-polarity readout-only direct flow can discover a usable separator. \\
+    \addlinespace
+    \code{mnist01\_32}, \code{rail\_buffer}, reversed polarity, e4 &
+    off, random readout & 50.00\% &
+    Swapped readout-flow sign collapses, confirming the normal sign convention. \\
+    \addlinespace
+    \code{mnist01\_32}, \code{rail\_buffer}, target-mistake/interleaved, e1 &
+    off, random readout & 96.875\% &
+    Full diagnostic run; strong but still readout-only, not full hidden backprop. \\
+    \addlinespace
+    \code{mnist01\_32}, \code{rail\_buffer}, target-mistake/interleaved, e1 &
+    full backprop, shared activation node, \code{1e-6 u} hidden write &
+    96.875\% &
+    Real hidden-delta flow through readout weights is enabled; hidden caps move 8.1 mV. \\
+    \addlinespace
+    \code{mnist01\_32}, \code{rail\_buffer}, target-mistake/interleaved, e1 &
+    full backprop, per-synapse pre-trace, \code{1e-6 u} hidden write &
+    96.875\% &
+    Per-synapse stored pre-activation traces preserve the same result. \\
     \addlinespace
     \code{mnist01\_32}, \code{rail\_buffer}, \code{csv\_separator} &
     off, programmed readout & 100.00\% &

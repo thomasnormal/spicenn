@@ -31,8 +31,19 @@ def mos_models() -> str:
 """.strip()
 
 
+def compact_pwl_points(points: list[tuple[float, float]]) -> list[tuple[float, float]]:
+    compact: list[tuple[float, float]] = []
+    for t, v in sorted(points):
+        if compact and abs(compact[-1][0] - t) < 1e-12:
+            compact[-1] = (t, v)
+        else:
+            compact.append((t, v))
+    return compact
+
+
 def pwl(points: list[tuple[float, float]]) -> str:
-    return "PWL(" + " ".join(f"{t:.12g}n {v:.12g}" for t, v in points) + ")"
+    compact = compact_pwl_points(points)
+    return "PWL(" + " ".join(f"{t:.12g}n {v:.12g}" for t, v in compact) + ")"
 
 
 def pulse_wave(pulses: list[tuple[float, float]], stop_ns: float, high: float = VDD) -> str:
@@ -43,13 +54,7 @@ def pulse_wave(pulses: list[tuple[float, float]], stop_ns: float, high: float = 
         points.append((end, high))
         points.append((min(stop_ns, end + 0.05), 0.0))
     points.append((stop_ns, 0.0))
-    compact: list[tuple[float, float]] = []
-    for t, v in sorted(points):
-        if compact and abs(compact[-1][0] - t) < 1e-12:
-            compact[-1] = (t, v)
-        else:
-            compact.append((t, v))
-    return pwl(compact)
+    return pwl(points)
 
 
 def sample_wave(samples: list[dict[str, float]], key: str, stop_ns: float) -> str:

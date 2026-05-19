@@ -100,6 +100,7 @@ HIDDEN_FORWARD_MODES = ["weighted_relu", "rail_buffer"]
 LEARNING_MODES = ["accumulate_apply", "flow"]
 FLOW_HIDDEN_WRITES = ["direct", "off"]
 FLOW_PRE_STORES = ["shared_node", "synapse_gate", "synapse_consume"]
+READOUT_FLOW_POLARITIES = ["normal", "reversed"]
 HIDDEN_INIT_MODES = ["random", "input_identity"]
 MEASURE_DETAILS = ["full", "probe", "light"]
 BACKWARD_GATE_MODES = ["scheduled", "lead_or", "target_mistake"]
@@ -1502,34 +1503,42 @@ def readout_flow_updates(
     readout_update_width_u: float,
     output_bias_update_width_u: float,
     flow_pre_store: str,
+    readout_flow_polarity: str,
 ) -> str:
     if flow_pre_store not in FLOW_PRE_STORES:
         raise ValueError(f"unknown flow pre-store mode: {flow_pre_store}")
+    if readout_flow_polarity not in READOUT_FLOW_POLARITIES:
+        raise ValueError(f"unknown readout flow polarity: {readout_flow_polarity}")
+    if readout_update_width_u < 0 or output_bias_update_width_u < 0:
+        raise ValueError("readout flow update widths must be nonnegative.")
+    n_gate, p_gate = ("dp", "dn") if readout_flow_polarity == "normal" else ("dn", "dp")
     lines: list[str] = []
     for out in range(OUTPUTS):
-        lines += [
-            f"Mvbo{out}n_flow_b vbo{out}n bwd vbo{out}n_flow_b 0 NREL W={output_bias_update_width_u:.12g}u L=180n",
-            f"Mvbo{out}n_flow_d vbo{out}n_flow_b dp{out} 0 0 NSENSE W={output_bias_update_width_u:.12g}u L=180n",
-            f"Mvbo{out}p_flow_b vbo{out}p bwd vbo{out}p_flow_b 0 NREL W={output_bias_update_width_u:.12g}u L=180n",
-            f"Mvbo{out}p_flow_d vbo{out}p_flow_b dn{out} 0 0 NSENSE W={output_bias_update_width_u:.12g}u L=180n",
-        ]
-        lines += node_parasitics(f"vbo{out}n_flow_b", f"vbo{out}p_flow_b")
+        if output_bias_update_width_u > 0:
+            lines += [
+                f"Mvbo{out}n_flow_b vbo{out}n bwd vbo{out}n_flow_b 0 NREL W={output_bias_update_width_u:.12g}u L=180n",
+                f"Mvbo{out}n_flow_d vbo{out}n_flow_b {n_gate}{out} 0 0 NSENSE W={output_bias_update_width_u:.12g}u L=180n",
+                f"Mvbo{out}p_flow_b vbo{out}p bwd vbo{out}p_flow_b 0 NREL W={output_bias_update_width_u:.12g}u L=180n",
+                f"Mvbo{out}p_flow_d vbo{out}p_flow_b {p_gate}{out} 0 0 NSENSE W={output_bias_update_width_u:.12g}u L=180n",
+            ]
+            lines += node_parasitics(f"vbo{out}n_flow_b", f"vbo{out}p_flow_b")
         for h in range(HIDDEN):
             pre_gate = f"fpro{out}{h}" if flow_pre_store != "shared_node" else f"act{h}"
-            lines += [
-                f"Mvw{out}{h}n_flow_b vw{out}{h}n bwd vw{out}{h}n_flow_b 0 NREL W={readout_update_width_u:.12g}u L=180n",
-                f"Mvw{out}{h}n_flow_a vw{out}{h}n_flow_b {pre_gate} vw{out}{h}n_flow_a 0 NREL W={readout_update_width_u:.12g}u L=180n",
-                f"Mvw{out}{h}n_flow_d vw{out}{h}n_flow_a dp{out} 0 0 NSENSE W={readout_update_width_u:.12g}u L=180n",
-                f"Mvw{out}{h}p_flow_b vw{out}{h}p bwd vw{out}{h}p_flow_b 0 NREL W={readout_update_width_u:.12g}u L=180n",
-                f"Mvw{out}{h}p_flow_a vw{out}{h}p_flow_b {pre_gate} vw{out}{h}p_flow_a 0 NREL W={readout_update_width_u:.12g}u L=180n",
-                f"Mvw{out}{h}p_flow_d vw{out}{h}p_flow_a dn{out} 0 0 NSENSE W={readout_update_width_u:.12g}u L=180n",
-            ]
-            lines += node_parasitics(
-                f"vw{out}{h}n_flow_b",
-                f"vw{out}{h}n_flow_a",
-                f"vw{out}{h}p_flow_b",
-                f"vw{out}{h}p_flow_a",
-            )
+            if readout_update_width_u > 0:
+                lines += [
+                    f"Mvw{out}{h}n_flow_b vw{out}{h}n bwd vw{out}{h}n_flow_b 0 NREL W={readout_update_width_u:.12g}u L=180n",
+                    f"Mvw{out}{h}n_flow_a vw{out}{h}n_flow_b {pre_gate} vw{out}{h}n_flow_a 0 NREL W={readout_update_width_u:.12g}u L=180n",
+                    f"Mvw{out}{h}n_flow_d vw{out}{h}n_flow_a {n_gate}{out} 0 0 NSENSE W={readout_update_width_u:.12g}u L=180n",
+                    f"Mvw{out}{h}p_flow_b vw{out}{h}p bwd vw{out}{h}p_flow_b 0 NREL W={readout_update_width_u:.12g}u L=180n",
+                    f"Mvw{out}{h}p_flow_a vw{out}{h}p_flow_b {pre_gate} vw{out}{h}p_flow_a 0 NREL W={readout_update_width_u:.12g}u L=180n",
+                    f"Mvw{out}{h}p_flow_d vw{out}{h}p_flow_a {p_gate}{out} 0 0 NSENSE W={readout_update_width_u:.12g}u L=180n",
+                ]
+                lines += node_parasitics(
+                    f"vw{out}{h}n_flow_b",
+                    f"vw{out}{h}n_flow_a",
+                    f"vw{out}{h}p_flow_b",
+                    f"vw{out}{h}p_flow_a",
+                )
     return "\n".join(lines)
 
 
@@ -1696,6 +1705,7 @@ def measure_lines(
     hidden_delta_output_mode: str,
     measure_detail: str,
     readout_sample_offsets_ns: list[float],
+    hidden_delta_network_enabled: bool = True,
 ) -> tuple[str, str]:
     if hidden_apply_mode not in HIDDEN_APPLY_MODES:
         raise ValueError(f"unknown hidden apply mode: {hidden_apply_mode}")
@@ -1746,7 +1756,7 @@ def measure_lines(
         if sample["phase"] == "train":
             lines.append(f".meas tran bwd_signal_{idx} FIND V(bwd) AT={base + 7.95:.2f}n")
             applies_update = sample.get("apply_update", True)
-            if include_train_detail:
+            if include_train_detail and hidden_delta_network_enabled:
                 lines += [
                     f".meas tran hdp0_guard_{idx} FIND V(hdp0) AT={base + 7.95:.2f}n",
                 ]
@@ -1784,21 +1794,23 @@ def measure_lines(
                         f".meas tran dn{out}_{idx} FIND V(dn{out}) AT={base + 7.95:.2f}n",
                         f".meas tran output_delta_net_{out}_{idx} PARAM='dp{out}_{idx}-dn{out}_{idx}'",
                     ]
-                for h in range(HIDDEN):
-                    lines += [
-                        f".meas tran hdp{h}_{idx} FIND V(hdp{h}) AT={base + 7.95:.2f}n",
-                        f".meas tran hdn{h}_{idx} FIND V(hdn{h}) AT={base + 7.95:.2f}n",
-                        f".meas tran hidden_delta_net_{h}_{idx} PARAM='hdp{h}_{idx}-hdn{h}_{idx}'",
-                        f".meas tran hdp{h}_update_{idx} FIND V(hdp{h}) AT={base + 10.50:.2f}n",
-                        f".meas tran hdn{h}_update_{idx} FIND V(hdn{h}) AT={base + 10.50:.2f}n",
-                        f".meas tran hidden_delta_update_net_{h}_{idx} PARAM='hdp{h}_update_{idx}-hdn{h}_update_{idx}'",
-                    ]
-                    if hidden_delta_output_mode == "senseamp":
+                if hidden_delta_network_enabled:
+                    for h in range(HIDDEN):
                         lines += [
-                            f".meas tran hdpg{h}_{idx} FIND V(hdpg{h}) AT={base + 10.50:.2f}n",
-                            f".meas tran hdng{h}_{idx} FIND V(hdng{h}) AT={base + 10.50:.2f}n",
-                            f".meas tran hidden_delta_gate_net_{h}_{idx} PARAM='hdpg{h}_{idx}-hdng{h}_{idx}'",
+                            f".meas tran hdp{h}_{idx} FIND V(hdp{h}) AT={base + 7.95:.2f}n",
+                            f".meas tran hdn{h}_{idx} FIND V(hdn{h}) AT={base + 7.95:.2f}n",
+                            f".meas tran hidden_delta_net_{h}_{idx} PARAM='hdp{h}_{idx}-hdn{h}_{idx}'",
+                            f".meas tran hdp{h}_update_{idx} FIND V(hdp{h}) AT={base + 10.50:.2f}n",
+                            f".meas tran hdn{h}_update_{idx} FIND V(hdn{h}) AT={base + 10.50:.2f}n",
+                            f".meas tran hidden_delta_update_net_{h}_{idx} PARAM='hdp{h}_update_{idx}-hdn{h}_update_{idx}'",
                         ]
+                        if hidden_delta_output_mode == "senseamp":
+                            lines += [
+                                f".meas tran hdpg{h}_{idx} FIND V(hdpg{h}) AT={base + 10.50:.2f}n",
+                                f".meas tran hdng{h}_{idx} FIND V(hdng{h}) AT={base + 10.50:.2f}n",
+                                f".meas tran hidden_delta_gate_net_{h}_{idx} PARAM='hdpg{h}_{idx}-hdng{h}_{idx}'",
+                            ]
+                for h in range(HIDDEN):
                     if not include_train_detail:
                         continue
                     for rail in HIDDEN_RAILS:
@@ -1918,6 +1930,7 @@ def random_hidden_netlist(
     lead_cap_f: float,
     readout_update_width_u: float,
     output_bias_update_width_u: float,
+    readout_flow_polarity: str,
     hidden_update_width_u: float,
     error_rule: str,
     latch_boost_width_u: float,
@@ -1947,6 +1960,7 @@ def random_hidden_netlist(
     set_input_rails(input_rails_for_records(records))
     samples = make_samples(records, epochs, train_order, batch_apply)
     stop = len(samples) * CYCLE_NS
+    hidden_delta_network_enabled = learning_mode != "flow" or flow_hidden_write == "direct"
     input_sources = "\n".join(
         f"V{rail} {rail} 0 {sample_wave(samples, rail, stop)}" for rail in INPUT_RAILS
     )
@@ -1957,6 +1971,7 @@ def random_hidden_netlist(
         hidden_delta_output_mode,
         measure_detail,
         readout_sample_offsets_ns,
+        hidden_delta_network_enabled,
     )
     if learning_mode == "accumulate_apply":
         hidden_delta_block = hidden_delta(
@@ -2014,7 +2029,12 @@ def random_hidden_netlist(
         )
         flow_blocks = [
             "* Direct backward/write flow: no gradient accumulator caps are used in the weight update path.",
-            readout_flow_updates(readout_update_width_u, output_bias_update_width_u, flow_pre_store),
+            readout_flow_updates(
+                readout_update_width_u,
+                output_bias_update_width_u,
+                flow_pre_store,
+                readout_flow_polarity,
+            ),
             hidden_delta_sense_block,
         ]
         if flow_hidden_write == "direct":
@@ -2215,6 +2235,15 @@ def main() -> None:
     ap.add_argument("--update-width-u", type=float, default=120.0)
     ap.add_argument("--readout-update-width-u", type=float)
     ap.add_argument("--output-bias-update-width-u", type=float)
+    ap.add_argument(
+        "--readout-flow-polarity",
+        choices=READOUT_FLOW_POLARITIES,
+        default="normal",
+        help=(
+            "Polarity of direct-flow readout discharges. normal drains negative caps on dp "
+            "and positive caps on dn; reversed swaps those gates for sign-control experiments."
+        ),
+    )
     ap.add_argument("--hidden-update-width-u", type=float)
     ap.add_argument(
         "--error-rule",
@@ -2283,6 +2312,12 @@ def main() -> None:
         raise SystemExit("--train-charge-noise-prob must be in 0..1.")
     if args.train_charge_noise_pulse_ns <= 0:
         raise SystemExit("--train-charge-noise-pulse-ns must be positive.")
+    if args.readout_update_width_u is not None and args.readout_update_width_u < 0:
+        raise SystemExit("--readout-update-width-u must be nonnegative.")
+    if args.output_bias_update_width_u is not None and args.output_bias_update_width_u < 0:
+        raise SystemExit("--output-bias-update-width-u must be nonnegative.")
+    if args.hidden_update_width_u is not None and args.hidden_update_width_u < 0:
+        raise SystemExit("--hidden-update-width-u must be nonnegative.")
     if args.backward_gate_width_u <= 0 or args.backward_gate_cap_f <= 0:
         raise SystemExit("backward gate width and capacitance must be positive.")
     if args.latch_boost_width_u < 0:
@@ -2389,6 +2424,7 @@ def main() -> None:
         args.output_bias_update_width_u
         if args.output_bias_update_width_u is not None
         else (args.readout_update_width_u if args.readout_update_width_u is not None else args.update_width_u),
+        args.readout_flow_polarity,
         args.hidden_update_width_u if args.hidden_update_width_u is not None else args.update_width_u,
         args.error_rule,
         args.latch_boost_width_u,
@@ -2409,6 +2445,7 @@ def main() -> None:
     t0 = time.perf_counter()
     parsed = run_netlist(spice_bin, generated / f"{safe_tag}.cir", netlist, args.timeout)
 
+    hidden_delta_network_enabled = args.learning_mode != "flow" or args.flow_hidden_write == "direct"
     rows: list[dict[str, Any]] = []
     for idx, sample in enumerate(samples):
         phase = str(sample["phase"])
@@ -2453,27 +2490,28 @@ def main() -> None:
             row["max_output_delta_node"] = max(
                 max(abs(parsed[f"dp{out}_{idx}"]), abs(parsed[f"dn{out}_{idx}"])) for out in range(OUTPUTS)
             )
-            row["max_abs_hidden_delta_signal"] = max(
-                abs(parsed[f"hidden_delta_net_{h}_{idx}"]) for h in range(HIDDEN)
-            )
-            row["max_hidden_delta_node"] = max(
-                max(abs(parsed[f"hdp{h}_{idx}"]), abs(parsed[f"hdn{h}_{idx}"])) for h in range(HIDDEN)
-            )
-            row["max_abs_hidden_delta_update_signal"] = max(
-                abs(parsed[f"hidden_delta_update_net_{h}_{idx}"]) for h in range(HIDDEN)
-            )
-            row["max_hidden_delta_update_node"] = max(
-                max(abs(parsed[f"hdp{h}_update_{idx}"]), abs(parsed[f"hdn{h}_update_{idx}"]))
-                for h in range(HIDDEN)
-            )
-            if args.hidden_delta_output_mode == "senseamp":
-                row["max_abs_hidden_delta_gate_signal"] = max(
-                    abs(parsed[f"hidden_delta_gate_net_{h}_{idx}"]) for h in range(HIDDEN)
+            if hidden_delta_network_enabled:
+                row["max_abs_hidden_delta_signal"] = max(
+                    abs(parsed[f"hidden_delta_net_{h}_{idx}"]) for h in range(HIDDEN)
                 )
-                row["max_hidden_delta_gate_node"] = max(
-                    max(abs(parsed[f"hdpg{h}_{idx}"]), abs(parsed[f"hdng{h}_{idx}"]))
+                row["max_hidden_delta_node"] = max(
+                    max(abs(parsed[f"hdp{h}_{idx}"]), abs(parsed[f"hdn{h}_{idx}"])) for h in range(HIDDEN)
+                )
+                row["max_abs_hidden_delta_update_signal"] = max(
+                    abs(parsed[f"hidden_delta_update_net_{h}_{idx}"]) for h in range(HIDDEN)
+                )
+                row["max_hidden_delta_update_node"] = max(
+                    max(abs(parsed[f"hdp{h}_update_{idx}"]), abs(parsed[f"hdn{h}_update_{idx}"]))
                     for h in range(HIDDEN)
                 )
+                if args.hidden_delta_output_mode == "senseamp":
+                    row["max_abs_hidden_delta_gate_signal"] = max(
+                        abs(parsed[f"hidden_delta_gate_net_{h}_{idx}"]) for h in range(HIDDEN)
+                    )
+                    row["max_hidden_delta_gate_node"] = max(
+                        max(abs(parsed[f"hdpg{h}_{idx}"]), abs(parsed[f"hdng{h}_{idx}"]))
+                        for h in range(HIDDEN)
+                    )
         if phase == "train" and args.measure_detail == "full":
             if args.learning_mode == "accumulate_apply":
                 row["max_abs_hidden_grad_signal"] = max(
@@ -2732,6 +2770,7 @@ def main() -> None:
         "seed": args.seed,
         "dataset_seed": args.seed,
         "initialization_seed": args.seed if args.init_seed is None else args.init_seed,
+        "order_mode": args.order,
         "train_order": train_order,
         "batch_apply": args.batch_apply,
         "error_rule": args.error_rule,
@@ -2783,6 +2822,7 @@ def main() -> None:
         "output_bias_update_width_u": args.output_bias_update_width_u
         if args.output_bias_update_width_u is not None
         else (args.readout_update_width_u if args.readout_update_width_u is not None else args.update_width_u),
+        "readout_flow_polarity": args.readout_flow_polarity if args.learning_mode == "flow" else None,
         "hidden_update_width_u": args.hidden_update_width_u if args.hidden_update_width_u is not None else args.update_width_u,
         "apply_start_ns": args.apply_start_ns,
         "apply_end_ns": args.apply_end_ns,

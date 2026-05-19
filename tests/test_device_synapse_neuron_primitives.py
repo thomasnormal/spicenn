@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 import sys
 from pathlib import Path
 
@@ -15,6 +16,13 @@ import run_device_relu_synapse_sweep as relu_primitives  # noqa: E402
 import run_device_signed_learning_cell as signed_primitives  # noqa: E402
 import run_device_xor2_random_hidden as direct_flow  # noqa: E402
 from run_spice_sweep import detect_spice, run_tiny_test  # noqa: E402
+
+
+PWL_TIME_RE = re.compile(r"([-+0-9.eE]+)n")
+
+
+def pwl_times(wave: str) -> list[float]:
+    return [float(match) for match in PWL_TIME_RE.findall(wave)]
 
 
 @pytest.fixture(scope="session")
@@ -175,6 +183,13 @@ def test_direct_flow_generator_wires_backward_path_through_saved_pre_traces_and_
             readout_update_width_u=0.04,
             output_bias_update_width_u=0.04,
             flow_pre_store="synapse_consume",
+            readout_flow_polarity="normal",
+        )
+        reversed_readout_updates = direct_flow.readout_flow_updates(
+            readout_update_width_u=0.04,
+            output_bias_update_width_u=0.0,
+            flow_pre_store="synapse_consume",
+            readout_flow_polarity="reversed",
         )
         hidden_updates = direct_flow.hidden_flow_updates(
             update_width_u=0.04,
@@ -199,6 +214,9 @@ def test_direct_flow_generator_wires_backward_path_through_saved_pre_traces_and_
     assert "Mvw00n_flow_a vw00n_flow_b fpro00" in readout_updates
     assert "Mvw00n_flow_d vw00n_flow_a dp0 0 0" in readout_updates
     assert "Mvw00p_flow_d vw00p_flow_a dn0 0 0" in readout_updates
+    assert "Mvw00n_flow_d vw00n_flow_a dn0 0 0" in reversed_readout_updates
+    assert "Mvw00p_flow_d vw00p_flow_a dp0 0 0" in reversed_readout_updates
+    assert "Mvbo0n_flow_b" not in reversed_readout_updates
 
     assert "Mwh0_x0n_flow_b wh0_x0n bwd" in hidden_updates
     assert "Mwh0_x0n_flow_x wh0_x0n_flow_b fphi0_x0" in hidden_updates
@@ -266,3 +284,80 @@ def test_probe_measurement_keeps_backward_signals_without_full_weight_snapshots(
     assert "wh0_x0p_before_0" not in measures
     assert "hidden_grad_net_0_x0_0" not in measures
     assert "hidden_apply_gate_net_0_x0_0" not in measures
+
+
+def test_readout_only_probe_measurement_omits_hidden_delta_nodes() -> None:
+    original_hidden = direct_flow.HIDDEN
+    original_input_rails = list(direct_flow.INPUT_RAILS)
+    try:
+        direct_flow.set_hidden_cells(2)
+        direct_flow.set_input_rails(["x0", "x1"])
+        samples = [
+            {"phase": "train", "label": 0, "pattern": 0, "apply_update": True},
+        ]
+
+        measures, _prints = direct_flow.measure_lines(
+            samples=samples,
+            hidden_apply_mode="direct",
+            learning_mode="flow",
+            hidden_delta_output_mode="senseamp",
+            measure_detail="full",
+            readout_sample_offsets_ns=[2.95],
+            hidden_delta_network_enabled=False,
+        )
+    finally:
+        direct_flow.set_hidden_cells(original_hidden)
+        direct_flow.set_input_rails(original_input_rails)
+
+    assert "output_delta_net_0_0" in measures
+    assert "d_vw00_signed_0" in measures
+    assert "hidden_delta_net_0_0" not in measures
+    assert "hidden_delta_gate_net_0_0" not in measures
+    assert "hdp0_guard_0" not in measures
+
+
+def test_error_and_target_mistake_backward_gate_are_transistor_generated() -> None:
+    error = direct_flow.error_cells("out_competitive", latch_boost_width_u=0.0)
+    gate = direct_flow.backward_gate_cells("target_mistake", width_u=64.0, cap_f=2.0)
+    phases = direct_flow.phases(
+        samples=[{"phase": "train", "apply_update": True}],
+        bwd_start_ns=6.75,
+        apply_start_ns=9.25,
+        apply_end_ns=11.20,
+        cmp_end_ns=4.10,
+        learning_mode="flow",
+        backward_gate_mode="target_mistake",
+    )
+
+    assert "Mdp0_t0 vdd t0 dp0_t" in error
+    assert "Mdp0_o0 dp0_t out1 dp0_o" in error
+    assert "Mdp0_e0 dp0_o err dp0" in error
+    assert "Mdn0_t0 vdd t1 dn0_t" in error
+    assert "Mdn0_s0 dn0_t out0 dn0_s" in error
+    assert "Mdn0_e0 dn0_s err dn0" in error
+
+    assert "Cbwd_gate bwd 0 2f" in gate
+    assert "Mbwd_t0_a bwd_t0_p t0 bwd_t0_a" in gate
+    assert "Mbwd_t0_l bwd_t0_a lead01 bwd_t0_l" in gate
+    assert "Mbwd_t0_b bwd_t0_l bwd_src bwd" in gate
+    assert "Mbwd_t1_a bwd_t1_p t1 bwd_t1_a" in gate
+    assert "Mbwd_t1_l bwd_t1_a lead10 bwd_t1_l" in gate
+    assert "Mbwd_t1_b bwd_t1_l bwd_src bwd" in gate
+
+    assert "Vbwd_src bwd_src 0" in phases
+    assert "Vbwd bwd 0" not in phases
+
+
+def test_input_and_target_pwl_sources_have_strictly_increasing_times() -> None:
+    samples = [
+        {"phase": "train", "pattern": 0, "label": 0, "apply_update": True},
+        {"phase": "train", "pattern": 1, "label": 1, "apply_update": True},
+        {"phase": "train", "pattern": 2, "label": 1, "apply_update": True},
+    ]
+    stop_ns = len(samples) * direct_flow.CYCLE_NS
+
+    input_times = pwl_times(direct_flow.sample_wave(samples, "x0", stop_ns))
+    target_times = pwl_times(direct_flow.target_wave(samples, 0, stop_ns))
+
+    assert all(right > left for left, right in zip(input_times, input_times[1:]))
+    assert all(right > left for left, right in zip(target_times, target_times[1:]))

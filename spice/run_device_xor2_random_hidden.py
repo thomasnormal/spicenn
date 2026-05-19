@@ -99,10 +99,12 @@ HIDDEN_DELTA_OUTPUT_MODES = ["raw", "senseamp"]
 HIDDEN_GRADIENT_ACT_GATES = ["act_nrel", "act_nsense", "none"]
 HIDDEN_APPLY_MODES = ["direct", "grad_senseamp"]
 HIDDEN_FORWARD_MODES = ["weighted_relu", "rail_buffer"]
+OUTPUT_HEAD_MODES = ["source_follower", "score_diff"]
 LEARNING_MODES = ["accumulate_apply", "flow"]
 FLOW_HIDDEN_WRITES = ["direct", "off"]
 FLOW_PRE_STORES = ["shared_node", "synapse_gate", "synapse_consume"]
 READOUT_FLOW_POLARITIES = ["normal", "reversed"]
+READOUT_FLOW_WRITE_MODES = ["discharge", "charge_discharge"]
 HIDDEN_INIT_MODES = ["random", "input_identity"]
 MEASURE_DETAILS = ["full", "probe", "light"]
 BACKWARD_GATE_MODES = ["scheduled", "lead_or", "target_mistake"]
@@ -1070,7 +1072,9 @@ def hidden_forward(design: SynapseDesign, hidden_forward_mode: str) -> str:
     return "\n".join(lines)
 
 
-def output_forward(design: SynapseDesign) -> str:
+def output_forward(design: SynapseDesign, output_head: str) -> str:
+    if output_head not in OUTPUT_HEAD_MODES:
+        raise ValueError(f"unknown output head: {output_head}")
     lines: list[str] = []
     for out in range(OUTPUTS):
         lines.append(f"* Output {out}: signed readout from all general hidden activations.")
@@ -1110,7 +1114,20 @@ def output_forward(design: SynapseDesign) -> str:
             f"Mo{out}bneg_a o{out}bn0 bias o{out}bn1 0 NSENSE W={design.output_bias_forward_neg_width_u:.12g}u L=180n",
             f"Mo{out}bneg_w o{out}bn1 vbo{out}n 0 0 NREL W={design.output_bias_forward_neg_width_u:.12g}u L=180n",
         ]
-        lines.append(f"Mrelu_o{out} vdd score{out} out{out} 0 NSENSE W={design.output_relu_width_u:.12g}u L=180n")
+        if output_head == "source_follower":
+            lines.append(f"Mrelu_o{out} vdd score{out} out{out} 0 NSENSE W={design.output_relu_width_u:.12g}u L=180n")
+        elif output_head == "score_diff":
+            other = 1 - out
+            pos_mid = f"out{out}_diff_pos"
+            neg_mid = f"out{out}_diff_neg"
+            lines += [
+                f"* Common-mode rejecting output head: score{out} charges out{out}; score{other} discharges it.",
+                f"Mout{out}_diff_pos_s vdd score{out} {pos_mid} 0 NSENSE W={design.output_relu_width_u:.12g}u L=180n",
+                f"Mout{out}_diff_pos_f {pos_mid} fwd out{out} 0 NREL W={design.output_relu_width_u:.12g}u L=180n",
+                f"Mout{out}_diff_neg_f out{out} fwd {neg_mid} 0 NREL W={design.output_relu_width_u:.12g}u L=180n",
+                f"Mout{out}_diff_neg_s {neg_mid} score{other} 0 0 NSENSE W={design.output_relu_width_u:.12g}u L=180n",
+            ]
+            lines += node_parasitics(pos_mid, neg_mid)
     return "\n".join(lines)
 
 
@@ -1582,11 +1599,14 @@ def readout_flow_updates(
     output_bias_update_width_u: float,
     flow_pre_store: str,
     readout_flow_polarity: str,
+    readout_flow_write_mode: str = "discharge",
 ) -> str:
     if flow_pre_store not in FLOW_PRE_STORES:
         raise ValueError(f"unknown flow pre-store mode: {flow_pre_store}")
     if readout_flow_polarity not in READOUT_FLOW_POLARITIES:
         raise ValueError(f"unknown readout flow polarity: {readout_flow_polarity}")
+    if readout_flow_write_mode not in READOUT_FLOW_WRITE_MODES:
+        raise ValueError(f"unknown readout flow write mode: {readout_flow_write_mode}")
     if readout_update_width_u < 0 or output_bias_update_width_u < 0:
         raise ValueError("readout flow update widths must be nonnegative.")
     n_gate, p_gate = ("dp", "dn") if readout_flow_polarity == "normal" else ("dn", "dp")
@@ -1600,6 +1620,14 @@ def readout_flow_updates(
                 f"Mvbo{out}p_flow_d vbo{out}p_flow_b {p_gate}{out} 0 0 NSENSE W={output_bias_update_width_u:.12g}u L=180n",
             ]
             lines += node_parasitics(f"vbo{out}n_flow_b", f"vbo{out}p_flow_b")
+            if readout_flow_write_mode == "charge_discharge":
+                lines += [
+                    f"Mvbo{out}p_ch_b vdd bwd vbo{out}p_ch_b 0 NREL W={output_bias_update_width_u:.12g}u L=180n",
+                    f"Mvbo{out}p_ch_d vbo{out}p_ch_b {n_gate}{out} vbo{out}p 0 NSENSE W={output_bias_update_width_u:.12g}u L=180n",
+                    f"Mvbo{out}n_ch_b vdd bwd vbo{out}n_ch_b 0 NREL W={output_bias_update_width_u:.12g}u L=180n",
+                    f"Mvbo{out}n_ch_d vbo{out}n_ch_b {p_gate}{out} vbo{out}n 0 NSENSE W={output_bias_update_width_u:.12g}u L=180n",
+                ]
+                lines += node_parasitics(f"vbo{out}p_ch_b", f"vbo{out}n_ch_b")
         for h in range(HIDDEN):
             pre_gate = f"fpro{out}{h}" if flow_pre_store != "shared_node" else f"act{h}"
             if readout_update_width_u > 0:
@@ -1611,12 +1639,28 @@ def readout_flow_updates(
                     f"Mvw{out}{h}p_flow_a vw{out}{h}p_flow_b {pre_gate} vw{out}{h}p_flow_a 0 NREL W={readout_update_width_u:.12g}u L=180n",
                     f"Mvw{out}{h}p_flow_d vw{out}{h}p_flow_a {p_gate}{out} 0 0 NSENSE W={readout_update_width_u:.12g}u L=180n",
                 ]
+                if readout_flow_write_mode == "charge_discharge":
+                    lines += [
+                        f"Mvw{out}{h}p_ch_b vdd bwd vw{out}{h}p_ch_b 0 NREL W={readout_update_width_u:.12g}u L=180n",
+                        f"Mvw{out}{h}p_ch_a vw{out}{h}p_ch_b {pre_gate} vw{out}{h}p_ch_a 0 NREL W={readout_update_width_u:.12g}u L=180n",
+                        f"Mvw{out}{h}p_ch_d vw{out}{h}p_ch_a {n_gate}{out} vw{out}{h}p 0 NSENSE W={readout_update_width_u:.12g}u L=180n",
+                        f"Mvw{out}{h}n_ch_b vdd bwd vw{out}{h}n_ch_b 0 NREL W={readout_update_width_u:.12g}u L=180n",
+                        f"Mvw{out}{h}n_ch_a vw{out}{h}n_ch_b {pre_gate} vw{out}{h}n_ch_a 0 NREL W={readout_update_width_u:.12g}u L=180n",
+                        f"Mvw{out}{h}n_ch_d vw{out}{h}n_ch_a {p_gate}{out} vw{out}{h}n 0 NSENSE W={readout_update_width_u:.12g}u L=180n",
+                    ]
                 lines += node_parasitics(
                     f"vw{out}{h}n_flow_b",
                     f"vw{out}{h}n_flow_a",
                     f"vw{out}{h}p_flow_b",
                     f"vw{out}{h}p_flow_a",
                 )
+                if readout_flow_write_mode == "charge_discharge":
+                    lines += node_parasitics(
+                        f"vw{out}{h}p_ch_b",
+                        f"vw{out}{h}p_ch_a",
+                        f"vw{out}{h}n_ch_b",
+                        f"vw{out}{h}n_ch_a",
+                    )
     return "\n".join(lines)
 
 
@@ -1970,6 +2014,7 @@ def random_hidden_netlist(
     output_forward_width_scale: float,
     output_bias_forward_width_scale: float,
     output_relu_width_scale: float,
+    output_head: str,
     hidden_error_rule: str,
     hidden_delta_relu_gate: str,
     hidden_delta_weight_device: str,
@@ -2015,6 +2060,7 @@ def random_hidden_netlist(
     readout_update_width_u: float,
     output_bias_update_width_u: float,
     readout_flow_polarity: str,
+    readout_flow_write_mode: str,
     hidden_update_width_u: float,
     error_rule: str,
     latch_boost_width_u: float,
@@ -2123,6 +2169,7 @@ def random_hidden_netlist(
                 output_bias_update_width_u,
                 flow_pre_store,
                 readout_flow_polarity,
+                readout_flow_write_mode,
             ),
             hidden_delta_sense_block,
         ]
@@ -2187,7 +2234,7 @@ Vt1 t1 0 {target_wave(samples, 1, stop)}
 {train_charge_noise(samples, stop, train_charge_noise_width_u, train_charge_noise_probability, train_charge_noise_seed, train_charge_noise_scope, train_charge_noise_pulse_ns, bwd_start_ns)}
 
     {hidden_forward(design, hidden_forward_mode)}
-{output_forward(design)}
+{output_forward(design, output_head)}
 {low_score_gate_cells(lose_pull_kohm, lose_width_u)}
 {score_lead_gate_cells(lead_width_u, lead_mode)}
 {backward_gate_cells(backward_gate_mode, backward_gate_width_u, backward_gate_cap_f)}
@@ -2266,6 +2313,15 @@ def main() -> None:
         type=float,
         default=1.0,
         help="Scale the output source-follower/ReLU device that charges the class output caps from score caps.",
+    )
+    ap.add_argument(
+        "--output-head",
+        choices=OUTPUT_HEAD_MODES,
+        default="source_follower",
+        help=(
+            "Output cell driven by score caps. score_diff cross-couples the two scores so "
+            "score common-mode is rejected before the output/lead path."
+        ),
     )
     ap.add_argument("--hidden-error-rule", choices=HIDDEN_ERROR_RULES, default="backprop")
     ap.add_argument("--hidden-delta-relu-gate", choices=HIDDEN_DELTA_RELU_GATES, default="act_nrel")
@@ -2376,6 +2432,15 @@ def main() -> None:
         help=(
             "Polarity of direct-flow readout discharges. normal drains negative caps on dp "
             "and positive caps on dn; reversed swaps those gates for sign-control experiments."
+        ),
+    )
+    ap.add_argument(
+        "--readout-flow-write-mode",
+        choices=READOUT_FLOW_WRITE_MODES,
+        default="discharge",
+        help=(
+            "Physical direct-flow readout write primitive. charge_discharge charges the branch "
+            "matching the desired sign while draining the opposite branch."
         ),
     )
     ap.add_argument("--hidden-update-width-u", type=float)
@@ -2546,6 +2611,7 @@ def main() -> None:
         args.output_forward_width_scale,
         args.output_bias_forward_width_scale,
         args.output_relu_width_scale,
+        args.output_head,
         args.hidden_error_rule,
         args.hidden_delta_relu_gate,
         args.hidden_delta_weight_device,
@@ -2593,6 +2659,7 @@ def main() -> None:
         if args.output_bias_update_width_u is not None
         else (args.readout_update_width_u if args.readout_update_width_u is not None else args.update_width_u),
         args.readout_flow_polarity,
+        args.readout_flow_write_mode,
         args.hidden_update_width_u if args.hidden_update_width_u is not None else args.update_width_u,
         args.error_rule,
         args.latch_boost_width_u,
@@ -2838,6 +2905,7 @@ def main() -> None:
         "output_forward_width_scale": args.output_forward_width_scale,
         "output_bias_forward_width_scale": args.output_bias_forward_width_scale,
         "output_relu_width_scale": args.output_relu_width_scale,
+        "output_head": args.output_head,
         "effective_hidden_delta_width_u": effective_design.hidden_delta_width_u,
         "effective_hidden_gradient_width_u": effective_design.hidden_gradient_width_u,
         "effective_readout_gradient_width_u": effective_design.readout_gradient_width_u,
@@ -3014,6 +3082,7 @@ def main() -> None:
         if args.output_bias_update_width_u is not None
         else (args.readout_update_width_u if args.readout_update_width_u is not None else args.update_width_u),
         "readout_flow_polarity": args.readout_flow_polarity if args.learning_mode == "flow" else None,
+        "readout_flow_write_mode": args.readout_flow_write_mode if args.learning_mode == "flow" else None,
         "hidden_update_width_u": args.hidden_update_width_u if args.hidden_update_width_u is not None else args.update_width_u,
         "apply_start_ns": args.apply_start_ns,
         "apply_end_ns": args.apply_end_ns,

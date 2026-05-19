@@ -290,6 +290,40 @@ def test_score_caps_can_reset_to_common_mode_for_signed_readout_headroom() -> No
     assert "Mreset_score1 score1 rstf scorecm 0 NMOS" in reset
 
 
+def test_score_diff_output_head_rejects_score_common_mode_before_class_output() -> None:
+    design = direct_flow.scaled_synapse_design(
+        "split_signed_v1",
+        hidden_delta_width_scale=1.0,
+        hidden_gradient_width_scale=1.0,
+        readout_gradient_width_scale=1.0,
+    )
+
+    forward = direct_flow.output_forward(design, "score_diff")
+
+    assert "Mrelu_o0" not in forward
+    assert "Mout0_diff_pos_s vdd score0 out0_diff_pos" in forward
+    assert "Mout0_diff_neg_s out0_diff_neg score1 0" in forward
+    assert "Mout1_diff_pos_s vdd score1 out1_diff_pos" in forward
+    assert "Mout1_diff_neg_s out1_diff_neg score0 0" in forward
+
+
+def test_direct_flow_readout_can_charge_and_discharge_signed_weight_branches() -> None:
+    updates = direct_flow.readout_flow_updates(
+        readout_update_width_u=0.02,
+        output_bias_update_width_u=0.0003,
+        flow_pre_store="shared_node",
+        readout_flow_polarity="normal",
+        readout_flow_write_mode="charge_discharge",
+    )
+
+    assert "Mvw00n_flow_d vw00n_flow_a dp0 0" in updates
+    assert "Mvw00p_flow_d vw00p_flow_a dn0 0" in updates
+    assert "Mvw00p_ch_d vw00p_ch_a dp0 vw00p" in updates
+    assert "Mvw00n_ch_d vw00n_ch_a dn0 vw00n" in updates
+    assert "Mvbo0p_ch_d vbo0p_ch_b dp0 vbo0p" in updates
+    assert "Mvbo0n_ch_d vbo0n_ch_b dn0 vbo0n" in updates
+
+
 def test_probe_measurement_keeps_backward_signals_without_full_weight_snapshots() -> None:
     original_hidden = direct_flow.HIDDEN
     original_input_rails = list(direct_flow.INPUT_RAILS)

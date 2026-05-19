@@ -1152,6 +1152,34 @@ differential, or include an explicit common-mode-rejecting subtract stage, so
 negative readout branches get discharge headroom without collapsing the class
 comparison.
 
+The next prototype adds two circuit options.  The
+\code{score\_diff} output head charges each class output from its own score
+and discharges it through the competing score, giving a small
+common-mode-rejecting output stage.  The
+\code{charge\_discharge} direct-flow write mode makes a positive local update
+charge \(w^+\) while draining \(w^-\), and a negative update do the reverse.
+This matters because the previous direct-flow readout update was
+discharge-only: balanced training data can drain both signed branches until the
+effective classifier collapses.
+
+On the 8-sample \code{fixed8} MNIST-0-vs-1 subset, score-diff alone remained at
+50\% with only \(14.2\ \mu\mathrm{V}\) mean backward signal.  A scheduled
+perceptron error with the old discharge-only write moved the caps by
+\(99.2\ \mathrm{mV}\), but collapsed both score nodes to the same value and
+ended at 12.5\%.  With the bidirectional charge+discharge write, the same
+score-diff/perceptron setting reached 100\% final accuracy with
+\(+8.08\ \mathrm{mV}\) minimum margin.  This is not yet the MNIST solution, but
+it is strong evidence that signed capacitor writes need a bidirectional
+physical update, not only selective discharge.
+
+Scaling that same setting to 16 samples exposes the next blocker.  The
+\code{rw002/e2} run dropped from 62.5\% initial accuracy to 50\% with a
+\(-121\ \mathrm{mV}\) final margin.  Reducing the write width to
+\code{0.0005u} and one epoch ended at 56.25\%, and interleaving the class order
+still ended at 50\%.  So charge+discharge fixes the signed-storage collapse, but
+the linear readout still needs better step-size, state-mobility, or error-gating
+control before it is stable on larger separable subsets.
+
 \subsection{Local-Feature Phase-Training Path}
 
 The strongest MNIST evidence uses local feature cells rather than dense

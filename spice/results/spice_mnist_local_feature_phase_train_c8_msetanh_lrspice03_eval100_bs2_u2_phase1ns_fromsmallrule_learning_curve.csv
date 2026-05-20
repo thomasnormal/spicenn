@@ -1,3 +1,0 @@
-chunk,samples_seen,heldout_accuracy,phase_wall_time_s,eval_wall_time_s,note
-0,0,0.94,0.0,5.882905583,initial_spice_eval
-1,4,0.87,36.825870125,5.866908041000002,post_phase_chunk_eval

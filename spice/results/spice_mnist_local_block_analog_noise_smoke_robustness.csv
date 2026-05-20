@@ -1,5 +1,0 @@
-noise_sigma,repeat,heldout_accuracy,mean_heldout_accuracy,std_heldout_accuracy
-0.0,0,0.05,0.05,0.0
-0.0,1,0.05,0.05,0.0
-0.02,0,0.05,0.05,0.0
-0.02,1,0.05,0.05,0.0

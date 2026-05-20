@@ -1,3 +1,0 @@
-epoch,heldout_accuracy,epoch_wall_time_s,eval_trace
-1,0.38,164.076920417,/Users/ahle/kode/stochastic-local-computer/spice/results/spice_mnist_stream_stream_8x8_100_e2_lr80k_epoch01_eval_trace.csv
-2,0.42,164.881524792,/Users/ahle/kode/stochastic-local-computer/spice/results/spice_mnist_stream_stream_8x8_100_e2_lr80k_epoch02_eval_trace.csv

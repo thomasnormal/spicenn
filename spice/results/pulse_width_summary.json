@@ -1,7 +1,0 @@
-{
-  "csv": "/Users/ahle/kode/stochastic-local-computer/spice/results/pulse_width_sweep.csv",
-  "plot": "/Users/ahle/kode/stochastic-local-computer/spice/results/pulse_width_transfer.png",
-  "rows": 126,
-  "source": "spice",
-  "best_code_span": 0.7807416666666668
-}

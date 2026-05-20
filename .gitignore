@@ -15,6 +15,11 @@ __pycache__/
 # Local datasets and bulky simulator artifacts.
 data/MNIST/raw/
 spice/generated/
+spice/results/
 spice/results/*.dat
 spice/results/*_trace.csv
 spice/results/*trace.csv
+
+# Mirrored per-run experiment tables. Curated aggregate tables may still be
+# committed explicitly when they are worth keeping.
+results/tables/*_v*.csv

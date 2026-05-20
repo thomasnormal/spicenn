@@ -105,6 +105,7 @@ FLOW_HIDDEN_WRITES = ["direct", "off"]
 FLOW_PRE_STORES = ["shared_node", "synapse_gate", "synapse_consume"]
 READOUT_FLOW_POLARITIES = ["normal", "reversed"]
 READOUT_CENTER_PULL_GATES = ["bwd", "apply"]
+READOUT_CENTER_PULL_MODES = ["always", "state_high"]
 READOUT_FLOW_WRITE_MODES = [
     "discharge",
     "bounded_discharge",
@@ -2014,6 +2015,7 @@ def readout_flow_updates(
     readout_center_pull_width_u: float = 0.0,
     output_bias_center_pull_width_u: float = 0.0,
     readout_center_pull_gate: str = "bwd",
+    readout_center_pull_mode: str = "always",
     readout_pos_write_high_node: str = "whigh",
     readout_pos_write_low_node: str = "wlow",
     readout_neg_write_high_node: str = "whigh",
@@ -2031,6 +2033,8 @@ def readout_flow_updates(
         raise ValueError(f"unknown readout flow write mode: {readout_flow_write_mode}")
     if readout_center_pull_gate not in READOUT_CENTER_PULL_GATES:
         raise ValueError(f"unknown readout center-pull gate: {readout_center_pull_gate}")
+    if readout_center_pull_mode not in READOUT_CENTER_PULL_MODES:
+        raise ValueError(f"unknown readout center-pull mode: {readout_center_pull_mode}")
     pos_update_width_u = (
         readout_update_width_u if readout_pos_update_width_u is None else readout_pos_update_width_u
     )
@@ -2101,10 +2105,19 @@ def readout_flow_updates(
             ]
             lines += node_parasitics(f"vbo{out}p_ch_b", f"vbo{out}n_ch_b")
         if output_bias_center_pull_width_u > 0:
-            lines += [
-                f"Mvbo{out}p_center vbo{out}p {readout_center_pull_gate} {output_bias_pos_center_pull_node} 0 NREL W={output_bias_center_pull_width_u:.12g}u L=180n",
-                f"Mvbo{out}n_center vbo{out}n {readout_center_pull_gate} {output_bias_neg_center_pull_node} 0 NREL W={output_bias_center_pull_width_u:.12g}u L=180n",
-            ]
+            if readout_center_pull_mode == "always":
+                lines += [
+                    f"Mvbo{out}p_center vbo{out}p {readout_center_pull_gate} {output_bias_pos_center_pull_node} 0 NREL W={output_bias_center_pull_width_u:.12g}u L=180n",
+                    f"Mvbo{out}n_center vbo{out}n {readout_center_pull_gate} {output_bias_neg_center_pull_node} 0 NREL W={output_bias_center_pull_width_u:.12g}u L=180n",
+                ]
+            else:
+                lines += [
+                    f"Mvbo{out}p_center_g vbo{out}p {readout_center_pull_gate} vbo{out}p_center_g 0 NREL W={output_bias_center_pull_width_u:.12g}u L=180n",
+                    f"Mvbo{out}p_center_s vbo{out}p_center_g vbo{out}p {output_bias_pos_center_pull_node} 0 NREL W={output_bias_center_pull_width_u:.12g}u L=180n",
+                    f"Mvbo{out}n_center_g vbo{out}n {readout_center_pull_gate} vbo{out}n_center_g 0 NREL W={output_bias_center_pull_width_u:.12g}u L=180n",
+                    f"Mvbo{out}n_center_s vbo{out}n_center_g vbo{out}n {output_bias_neg_center_pull_node} 0 NREL W={output_bias_center_pull_width_u:.12g}u L=180n",
+                ]
+                lines += node_parasitics(f"vbo{out}p_center_g", f"vbo{out}n_center_g")
         for h in range(HIDDEN):
             pre_gate = f"fpro{out}{h}" if flow_pre_store != "shared_node" else f"act{h}"
             if (pos_discharge_width_u > 0 or neg_discharge_width_u > 0) and discharge_enabled:
@@ -2138,10 +2151,19 @@ def readout_flow_updates(
                     f"vw{out}{h}n_ch_a",
                 )
             if readout_center_pull_width_u > 0:
-                lines += [
-                    f"Mvw{out}{h}p_center vw{out}{h}p {readout_center_pull_gate} {readout_pos_center_pull_node} 0 NREL W={readout_center_pull_width_u:.12g}u L=180n",
-                    f"Mvw{out}{h}n_center vw{out}{h}n {readout_center_pull_gate} {readout_neg_center_pull_node} 0 NREL W={readout_center_pull_width_u:.12g}u L=180n",
-                ]
+                if readout_center_pull_mode == "always":
+                    lines += [
+                        f"Mvw{out}{h}p_center vw{out}{h}p {readout_center_pull_gate} {readout_pos_center_pull_node} 0 NREL W={readout_center_pull_width_u:.12g}u L=180n",
+                        f"Mvw{out}{h}n_center vw{out}{h}n {readout_center_pull_gate} {readout_neg_center_pull_node} 0 NREL W={readout_center_pull_width_u:.12g}u L=180n",
+                    ]
+                else:
+                    lines += [
+                        f"Mvw{out}{h}p_center_g vw{out}{h}p {readout_center_pull_gate} vw{out}{h}p_center_g 0 NREL W={readout_center_pull_width_u:.12g}u L=180n",
+                        f"Mvw{out}{h}p_center_s vw{out}{h}p_center_g vw{out}{h}p {readout_pos_center_pull_node} 0 NREL W={readout_center_pull_width_u:.12g}u L=180n",
+                        f"Mvw{out}{h}n_center_g vw{out}{h}n {readout_center_pull_gate} vw{out}{h}n_center_g 0 NREL W={readout_center_pull_width_u:.12g}u L=180n",
+                        f"Mvw{out}{h}n_center_s vw{out}{h}n_center_g vw{out}{h}n {readout_neg_center_pull_node} 0 NREL W={readout_center_pull_width_u:.12g}u L=180n",
+                    ]
+                    lines += node_parasitics(f"vw{out}{h}p_center_g", f"vw{out}{h}n_center_g")
     return "\n".join(lines)
 
 
@@ -2641,6 +2663,7 @@ def random_hidden_netlist(
     output_bias_pos_center_pull_v: float | None,
     output_bias_neg_center_pull_v: float | None,
     readout_center_pull_gate: str,
+    readout_center_pull_mode: str,
     readout_write_high_v: float,
     readout_write_low_v: float,
     readout_pos_write_high_v: float | None,
@@ -2790,6 +2813,7 @@ def random_hidden_netlist(
                 readout_center_pull_width_u,
                 output_bias_center_pull_width_u,
                 readout_center_pull_gate,
+                readout_center_pull_mode,
                 "wphigh",
                 "wplow",
                 "wnhigh",
@@ -3195,6 +3219,16 @@ def main() -> None:
         ),
     )
     ap.add_argument(
+        "--readout-center-pull-mode",
+        choices=READOUT_CENTER_PULL_MODES,
+        default="always",
+        help=(
+            "Topology for optional readout center-pull devices. 'always' is a direct pass to the "
+            "center rail; 'state_high' adds a second pass device gated by the weight cap itself, "
+            "so centering only turns on after the state rises above the center rail."
+        ),
+    )
+    ap.add_argument(
         "--readout-flow-polarity",
         choices=READOUT_FLOW_POLARITIES,
         default="normal",
@@ -3573,6 +3607,7 @@ def main() -> None:
         args.output_bias_pos_center_pull_v,
         args.output_bias_neg_center_pull_v,
         args.readout_center_pull_gate,
+        args.readout_center_pull_mode,
         args.readout_write_high_v,
         args.readout_write_low_v,
         readout_pos_write_high_v,
@@ -4124,6 +4159,7 @@ def main() -> None:
             else None
         ),
         "readout_center_pull_gate": args.readout_center_pull_gate if args.learning_mode == "flow" else None,
+        "readout_center_pull_mode": args.readout_center_pull_mode if args.learning_mode == "flow" else None,
         "readout_write_high_v": (
             args.readout_write_high_v
             if args.learning_mode == "flow"

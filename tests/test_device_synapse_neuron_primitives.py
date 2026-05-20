@@ -521,6 +521,27 @@ def test_direct_flow_readout_center_pull_can_use_apply_gate() -> None:
     assert "Mvbo0p_center vbo0p apply wcenter 0 NREL W=0.0001u" in updates
 
 
+def test_direct_flow_readout_center_pull_can_be_state_high_gated() -> None:
+    updates = direct_flow.readout_flow_updates(
+        readout_update_width_u=0.0,
+        output_bias_update_width_u=0.0,
+        flow_pre_store="shared_node",
+        readout_flow_polarity="normal",
+        readout_center_pull_width_u=0.0002,
+        output_bias_center_pull_width_u=0.0001,
+        readout_center_pull_gate="apply",
+        readout_center_pull_mode="state_high",
+        readout_pos_center_pull_node="pcenter",
+        readout_neg_center_pull_node="ncenter",
+    )
+
+    assert "Mvw00p_center_g vw00p apply vw00p_center_g 0 NREL W=0.0002u" in updates
+    assert "Mvw00p_center_s vw00p_center_g vw00p pcenter 0 NREL W=0.0002u" in updates
+    assert "Mvw00n_center_g vw00n apply vw00n_center_g 0 NREL W=0.0002u" in updates
+    assert "Mvw00n_center_s vw00n_center_g vw00n ncenter 0 NREL W=0.0002u" in updates
+    assert "Mvbo0p_center_g vbo0p apply vbo0p_center_g 0 NREL W=0.0001u" in updates
+
+
 def test_target_mistake_latch_stores_compare_result_for_late_backward_window() -> None:
     gate = direct_flow.backward_gate_cells("target_mistake_latch", width_u=64.0, cap_f=2.0)
 

@@ -1488,6 +1488,23 @@ weak pull fights the signed update more than it helps.  The next write-kernel
 work should make centering conditional or state-windowed, rather than applying
 a uniform pull on every training example.
 
+A state-windowed center-pull variant was then added as a more local version of
+the same idea.  In \code{state\_high} mode, the center path is a two-device
+stack: the global write or backward rail first gates an intermediate node, and
+the stored weight capacitor itself gates the final path to its branch-specific
+center rail.  Thus the weak pull is only strong when the state is already high
+enough to turn on the second device.  This is closer to a MOS mobility-window
+mechanism than the always-on pull, but it was still a negative control on the
+64-example fixed8 task.  With the same \((0.34,0.10)\ \mathrm{V}\) branch
+centers, charge-only write, \(2\,\mathrm{fF}\) mistake rail, and \code{apply}
+gating, \code{0.00002u} state-high center pull reached 57.8125\%, and
+\code{0.00008u} collapsed to 50\%.  The measured output-row movement was still
+badly asymmetric, with output 1 moving by about \(-0.97\) to
+\(-1.01\,\mathrm{V}\) in signed state.  So the failure is not just that the
+old center pull was unconditional; a useful fix likely has to be
+write-direction-aware or explicitly mobility-aware, not merely state-high
+clamping.
+
 Mistake-latch gates do not yet fix the 64-example readout either.  Replacing
 the continuous target-mistake backward gate with
 \code{target\_mistake\_latch\_simple} at charge-only widths

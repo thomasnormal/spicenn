@@ -1334,6 +1334,52 @@ The initial and final hidden feature diagnostics still find a linear separator,
 so the remaining readout issue is still a hardware update-field problem rather
 than a reason to immediately complicate preprocessing.
 
+A direct read/write mobility sweep explains the 128-example stall more sharply.
+The old shared \(0.70/0.24\ \mathrm{V}\) bounded-discharge window leaves the
+negative read branch saturated over the entire operating band.  In the
+\code{device\_readout\_mobility\_v1} sweep, the estimated signed mobility for a
+desired positive effective-weight update was essentially zero at
+\(\theta=0.24,0.34,0.46,0.58,0.70\ \mathrm{V}\), while the desired negative
+update still had nonzero mobility through the positive branch.  This means the
+readout can reduce effective weights but often cannot increase them in the
+state range where the random readout was initialized.  Moving the negative
+branch into its measured high-slope range fixes the sign alignment in the
+cell-level sweep: \code{device\_readout\_mobility\_v12} used a
+\(0.16/0.10\ \mathrm{V}\) bounded-discharge range and showed nonzero
+increase/decrease mobility throughout that narrower band.  The generator
+therefore now supports branch-specific readout initialization centers and
+branch-specific bounded write rails.  This is not a new algorithm; it is a
+hardware-state-map correction so that the same local error/pre trace can move
+both signs of the effective readout weight.
+
+A stricter two-dimensional branch-pair mobility analysis now combines a
+positive-branch sweep and a negative-branch sweep without forcing the two
+branches to share the same \(\theta\).  The
+branch-pair table combining the \(v1\) positive sweep with the \(v12\) negative
+sweep is sign-aligned over the tested \(0.24\)--\(0.70\ \mathrm{V}\) positive
+window and \(0.10\)--\(0.16\ \mathrm{V}\) negative window.  Its best-balanced
+representative pair is near
+\((\theta^+,\theta^-)=(0.24,0.10)\ \mathrm{V}\), with nearly equal positive
+and negative signed-update mobility but very small mobility.  The
+\((0.46,0.16)\ \mathrm{V}\) pair has stronger mobility but only a small
+signed read gain, so it needs score-path calibration in addition to write-path
+calibration.
+
+The first branch-pair training probes confirm that distinction.  On
+\code{mnist01fixed8\_64}, \((0.24,0.10)\ \mathrm{V}\) stayed at 50\% with a
+74.2\% target-mistake gate match, while \((0.70,0.10)\ \mathrm{V}\) inverted
+the score lead and produced a 0\% target-mistake match.  The
+\((0.46,0.16)\ \mathrm{V}\) pair had a good 90.6\% gate match, but only
+56.25\% final accuracy at \(0.00025\,\mu\mathrm{m}\).  Adding independent
+forward-read branch-width controls gave more information: halving the negative
+forward read width improved the gate match to 96.1\% but still collapsed to
+50\%, while increasing the positive forward read width by \(1.5\times\) reached
+76.5625\%.  So branch-specific storage fixes a real
+\(G'_{\mathrm{eff}}s_{\mathrm{MOS}}\) problem locally, but the useful circuit
+still needs a joint score-common-mode/read-gain calibration.  The old shared
+\(0.70/0.24\ \mathrm{V}\) bounded-discharge window remains the best 64-example
+readout result despite its one-sided mobility defect.
+
 The generator now mirrors this control on the lower-layer synapses through
 \code{--hidden-flow-write-mode}.  When hidden direct flow is enabled, hidden
 synapse capacitors can use the same discharge-only, charge-only,

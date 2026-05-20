@@ -305,6 +305,8 @@ def test_synapse_design_scaling_separates_forward_readout_from_update_paths() ->
         hidden_gradient_width_scale=2.0,
         readout_gradient_width_scale=0.5,
         output_forward_width_scale=3.0,
+        output_forward_pos_width_scale=0.5,
+        output_forward_neg_width_scale=2.0,
         output_bias_forward_width_scale=4.0,
         output_relu_width_scale=5.0,
     )
@@ -312,8 +314,8 @@ def test_synapse_design_scaling_separates_forward_readout_from_update_paths() ->
     assert scaled.hidden_delta_width_u == pytest.approx(48.0)
     assert scaled.hidden_gradient_width_u == pytest.approx(80.0)
     assert scaled.readout_gradient_width_u == pytest.approx(12.0)
-    assert scaled.output_forward_pos_width_u == pytest.approx(168.0)
-    assert scaled.output_forward_neg_width_u == pytest.approx(144.0)
+    assert scaled.output_forward_pos_width_u == pytest.approx(84.0)
+    assert scaled.output_forward_neg_width_u == pytest.approx(288.0)
     assert scaled.output_bias_forward_pos_width_u == pytest.approx(160.0)
     assert scaled.output_bias_forward_neg_width_u == pytest.approx(144.0)
     assert scaled.output_relu_width_u == pytest.approx(120.0)
@@ -413,6 +415,25 @@ def test_direct_flow_readout_can_bound_charge_only() -> None:
     assert "Mvw00p_ch_b whigh bwd vw00p_ch_b" in updates
     assert "Mvw00n_ch_b whigh bwd vw00n_ch_b" in updates
     assert "_flow_d" not in updates
+
+
+def test_direct_flow_readout_bounded_write_accepts_branch_specific_rails() -> None:
+    updates = direct_flow.readout_flow_updates(
+        readout_update_width_u=0.02,
+        output_bias_update_width_u=0.0003,
+        flow_pre_store="shared_node",
+        readout_flow_polarity="normal",
+        readout_flow_write_mode="bounded_charge_discharge",
+        readout_pos_write_high_node="pos_hi",
+        readout_pos_write_low_node="pos_lo",
+        readout_neg_write_high_node="neg_hi",
+        readout_neg_write_low_node="neg_lo",
+    )
+
+    assert "Mvw00n_flow_d vw00n_flow_a dp0 neg_lo 0 NSENSE" in updates
+    assert "Mvw00p_flow_d vw00p_flow_a dn0 pos_lo 0 NSENSE" in updates
+    assert "Mvw00p_ch_b pos_hi bwd vw00p_ch_b" in updates
+    assert "Mvw00n_ch_b neg_hi bwd vw00n_ch_b" in updates
 
 
 def test_direct_flow_readout_center_pull_is_a_transistor_state_path() -> None:
@@ -795,6 +816,10 @@ def test_random_readout_init_can_be_centered_in_measured_mobility_window() -> No
             readout_center_v=0.62,
             random_center_v=0.34,
             random_span_v=0.20,
+            random_pos_center_v=None,
+            random_neg_center_v=None,
+            random_pos_span_v=None,
+            random_neg_span_v=None,
             separator_csv=None,
             separator_phase="final_eval",
         )
@@ -821,6 +846,36 @@ def test_random_readout_init_can_be_centered_in_measured_mobility_window() -> No
     }
     assert min(init.values()) >= 0.24 - 1e-12
     assert max(init.values()) <= 0.44 + 1e-12
+
+
+def test_random_readout_init_can_center_positive_and_negative_branches_separately() -> None:
+    original_hidden = direct_flow.HIDDEN
+    try:
+        direct_flow.set_hidden_cells(2)
+        init = direct_flow.readout_init(
+            seed=2,
+            mode="random",
+            separator_scale=0.0,
+            separator_offset_v=0.0,
+            readout_center_v=0.62,
+            random_center_v=None,
+            random_span_v=0.20,
+            random_pos_center_v=0.44,
+            random_neg_center_v=0.13,
+            random_pos_span_v=0.08,
+            random_neg_span_v=0.04,
+            separator_csv=None,
+            separator_phase="final_eval",
+        )
+    finally:
+        direct_flow.set_hidden_cells(original_hidden)
+
+    positive_values = [value for key, value in init.items() if key.endswith("p")]
+    negative_values = [value for key, value in init.items() if key.endswith("n")]
+    assert min(positive_values) >= 0.40 - 1e-12
+    assert max(positive_values) <= 0.48 + 1e-12
+    assert min(negative_values) >= 0.11 - 1e-12
+    assert max(negative_values) <= 0.15 + 1e-12
 
 
 def test_lead_score_winner_metric_uses_out_senseamp_polarity() -> None:

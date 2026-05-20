@@ -175,6 +175,8 @@ def scaled_synapse_design(
     hidden_gradient_width_scale: float,
     readout_gradient_width_scale: float,
     output_forward_width_scale: float = 1.0,
+    output_forward_pos_width_scale: float = 1.0,
+    output_forward_neg_width_scale: float = 1.0,
     output_bias_forward_width_scale: float = 1.0,
     output_relu_width_scale: float = 1.0,
 ) -> SynapseDesign:
@@ -184,8 +186,12 @@ def scaled_synapse_design(
         hidden_delta_width_u=base.hidden_delta_width_u * hidden_delta_width_scale,
         hidden_gradient_width_u=base.hidden_gradient_width_u * hidden_gradient_width_scale,
         readout_gradient_width_u=base.readout_gradient_width_u * readout_gradient_width_scale,
-        output_forward_pos_width_u=base.output_forward_pos_width_u * output_forward_width_scale,
-        output_forward_neg_width_u=base.output_forward_neg_width_u * output_forward_width_scale,
+        output_forward_pos_width_u=base.output_forward_pos_width_u
+        * output_forward_width_scale
+        * output_forward_pos_width_scale,
+        output_forward_neg_width_u=base.output_forward_neg_width_u
+        * output_forward_width_scale
+        * output_forward_neg_width_scale,
         output_bias_forward_pos_width_u=base.output_bias_forward_pos_width_u * output_bias_forward_width_scale,
         output_bias_forward_neg_width_u=base.output_bias_forward_neg_width_u * output_bias_forward_width_scale,
         output_relu_width_u=base.output_relu_width_u * output_relu_width_scale,
@@ -814,6 +820,10 @@ def readout_init(
     readout_center_v: float,
     random_center_v: float | None,
     random_span_v: float,
+    random_pos_center_v: float | None,
+    random_neg_center_v: float | None,
+    random_pos_span_v: float | None,
+    random_neg_span_v: float | None,
     separator_csv: Path | None,
     separator_phase: str,
 ) -> dict[str, float]:
@@ -876,21 +886,38 @@ def readout_init(
     if mode != "random":
         raise ValueError(f"unknown readout init mode: {mode}")
     init: dict[str, float] = {}
-    if random_center_v is not None:
-        half_span = random_span_v / 2.0
+    if random_center_v is not None or random_pos_center_v is not None or random_neg_center_v is not None:
+        pos_center = random_pos_center_v if random_pos_center_v is not None else random_center_v
+        neg_center = random_neg_center_v if random_neg_center_v is not None else random_center_v
+        pos_half_span = (random_pos_span_v if random_pos_span_v is not None else random_span_v) / 2.0
+        neg_half_span = (random_neg_span_v if random_neg_span_v is not None else random_span_v) / 2.0
         for out in range(OUTPUTS):
             kp = out + seed * 7
             kn = out + seed * 11
-            init[f"vbo{out}p"] = clamp_cap(
-                random_center_v + half_span * (2 * (((17 * kp + 3) % 101) / 100) - 1)
+            init[f"vbo{out}p"] = (
+                clamp_cap(pos_center + pos_half_span * (2 * (((17 * kp + 3) % 101) / 100) - 1))
+                if pos_center is not None
+                else 0.66 - 0.02 * ((out + seed) % 2)
             )
-            init[f"vbo{out}n"] = clamp_cap(
-                random_center_v + half_span * (2 * (((23 * kn + 13) % 101) / 100) - 1)
+            init[f"vbo{out}n"] = (
+                clamp_cap(neg_center + neg_half_span * (2 * (((23 * kn + 13) % 101) / 100) - 1))
+                if neg_center is not None
+                else 0.52 + 0.02 * (out % 2)
             )
             for h in range(HIDDEN):
                 k = out * HIDDEN + h + seed * 5
-                p = random_center_v + half_span * (2 * (((29 * k + 5) % 101) / 100) - 1)
-                n = random_center_v + half_span * (2 * (((43 * k + 17) % 101) / 100) - 1)
+                default_p = 0.56 + 0.16 * (((29 * k + 5) % 101) / 100)
+                default_n = 0.56 + 0.16 * (((43 * k + 17) % 101) / 100)
+                p = (
+                    pos_center + pos_half_span * (2 * (((29 * k + 5) % 101) / 100) - 1)
+                    if pos_center is not None
+                    else default_p
+                )
+                n = (
+                    neg_center + neg_half_span * (2 * (((43 * k + 17) % 101) / 100) - 1)
+                    if neg_center is not None
+                    else default_n
+                )
                 init[f"vw{out}{h}p"] = clamp_cap(p)
                 init[f"vw{out}{h}n"] = clamp_cap(n)
         return init
@@ -1886,6 +1913,10 @@ def readout_flow_updates(
     readout_flow_write_mode: str = "discharge",
     readout_center_pull_width_u: float = 0.0,
     output_bias_center_pull_width_u: float = 0.0,
+    readout_pos_write_high_node: str = "whigh",
+    readout_pos_write_low_node: str = "wlow",
+    readout_neg_write_high_node: str = "whigh",
+    readout_neg_write_low_node: str = "wlow",
 ) -> str:
     if flow_pre_store not in FLOW_PRE_STORES:
         raise ValueError(f"unknown flow pre-store mode: {flow_pre_store}")
@@ -1916,21 +1947,25 @@ def readout_flow_updates(
     }
     high_node = "whigh" if bounded_write else "vdd"
     low_node = "wlow" if bounded_write else "0"
+    pos_high_node = readout_pos_write_high_node if bounded_write else high_node
+    pos_low_node = readout_pos_write_low_node if bounded_write else low_node
+    neg_high_node = readout_neg_write_high_node if bounded_write else high_node
+    neg_low_node = readout_neg_write_low_node if bounded_write else low_node
     lines: list[str] = []
     for out in range(OUTPUTS):
         if output_bias_update_width_u > 0 and discharge_enabled:
             lines += [
                 f"Mvbo{out}n_flow_b vbo{out}n bwd vbo{out}n_flow_b 0 NREL W={output_bias_update_width_u:.12g}u L=180n",
-                f"Mvbo{out}n_flow_d vbo{out}n_flow_b {n_gate}{out} {low_node} 0 NSENSE W={output_bias_update_width_u:.12g}u L=180n",
+                f"Mvbo{out}n_flow_d vbo{out}n_flow_b {n_gate}{out} {neg_low_node} 0 NSENSE W={output_bias_update_width_u:.12g}u L=180n",
                 f"Mvbo{out}p_flow_b vbo{out}p bwd vbo{out}p_flow_b 0 NREL W={output_bias_update_width_u:.12g}u L=180n",
-                f"Mvbo{out}p_flow_d vbo{out}p_flow_b {p_gate}{out} {low_node} 0 NSENSE W={output_bias_update_width_u:.12g}u L=180n",
+                f"Mvbo{out}p_flow_d vbo{out}p_flow_b {p_gate}{out} {pos_low_node} 0 NSENSE W={output_bias_update_width_u:.12g}u L=180n",
             ]
             lines += node_parasitics(f"vbo{out}n_flow_b", f"vbo{out}p_flow_b")
         if output_bias_update_width_u > 0 and charge_enabled:
             lines += [
-                f"Mvbo{out}p_ch_b {high_node} bwd vbo{out}p_ch_b 0 NREL W={output_bias_update_width_u:.12g}u L=180n",
+                f"Mvbo{out}p_ch_b {pos_high_node} bwd vbo{out}p_ch_b 0 NREL W={output_bias_update_width_u:.12g}u L=180n",
                 f"Mvbo{out}p_ch_d vbo{out}p_ch_b {n_gate}{out} vbo{out}p 0 NSENSE W={output_bias_update_width_u:.12g}u L=180n",
-                f"Mvbo{out}n_ch_b {high_node} bwd vbo{out}n_ch_b 0 NREL W={output_bias_update_width_u:.12g}u L=180n",
+                f"Mvbo{out}n_ch_b {neg_high_node} bwd vbo{out}n_ch_b 0 NREL W={output_bias_update_width_u:.12g}u L=180n",
                 f"Mvbo{out}n_ch_d vbo{out}n_ch_b {p_gate}{out} vbo{out}n 0 NSENSE W={output_bias_update_width_u:.12g}u L=180n",
             ]
             lines += node_parasitics(f"vbo{out}p_ch_b", f"vbo{out}n_ch_b")
@@ -1945,10 +1980,10 @@ def readout_flow_updates(
                 lines += [
                     f"Mvw{out}{h}n_flow_b vw{out}{h}n bwd vw{out}{h}n_flow_b 0 NREL W={readout_update_width_u:.12g}u L=180n",
                     f"Mvw{out}{h}n_flow_a vw{out}{h}n_flow_b {pre_gate} vw{out}{h}n_flow_a 0 NREL W={readout_update_width_u:.12g}u L=180n",
-                    f"Mvw{out}{h}n_flow_d vw{out}{h}n_flow_a {n_gate}{out} {low_node} 0 NSENSE W={readout_update_width_u:.12g}u L=180n",
+                    f"Mvw{out}{h}n_flow_d vw{out}{h}n_flow_a {n_gate}{out} {neg_low_node} 0 NSENSE W={readout_update_width_u:.12g}u L=180n",
                     f"Mvw{out}{h}p_flow_b vw{out}{h}p bwd vw{out}{h}p_flow_b 0 NREL W={readout_update_width_u:.12g}u L=180n",
                     f"Mvw{out}{h}p_flow_a vw{out}{h}p_flow_b {pre_gate} vw{out}{h}p_flow_a 0 NREL W={readout_update_width_u:.12g}u L=180n",
-                    f"Mvw{out}{h}p_flow_d vw{out}{h}p_flow_a {p_gate}{out} {low_node} 0 NSENSE W={readout_update_width_u:.12g}u L=180n",
+                    f"Mvw{out}{h}p_flow_d vw{out}{h}p_flow_a {p_gate}{out} {pos_low_node} 0 NSENSE W={readout_update_width_u:.12g}u L=180n",
                 ]
                 lines += node_parasitics(
                     f"vw{out}{h}n_flow_b",
@@ -1958,10 +1993,10 @@ def readout_flow_updates(
                 )
             if readout_update_width_u > 0 and charge_enabled:
                 lines += [
-                    f"Mvw{out}{h}p_ch_b {high_node} bwd vw{out}{h}p_ch_b 0 NREL W={readout_update_width_u:.12g}u L=180n",
+                    f"Mvw{out}{h}p_ch_b {pos_high_node} bwd vw{out}{h}p_ch_b 0 NREL W={readout_update_width_u:.12g}u L=180n",
                     f"Mvw{out}{h}p_ch_a vw{out}{h}p_ch_b {pre_gate} vw{out}{h}p_ch_a 0 NREL W={readout_update_width_u:.12g}u L=180n",
                     f"Mvw{out}{h}p_ch_d vw{out}{h}p_ch_a {n_gate}{out} vw{out}{h}p 0 NSENSE W={readout_update_width_u:.12g}u L=180n",
-                    f"Mvw{out}{h}n_ch_b {high_node} bwd vw{out}{h}n_ch_b 0 NREL W={readout_update_width_u:.12g}u L=180n",
+                    f"Mvw{out}{h}n_ch_b {neg_high_node} bwd vw{out}{h}n_ch_b 0 NREL W={readout_update_width_u:.12g}u L=180n",
                     f"Mvw{out}{h}n_ch_a vw{out}{h}n_ch_b {pre_gate} vw{out}{h}n_ch_a 0 NREL W={readout_update_width_u:.12g}u L=180n",
                     f"Mvw{out}{h}n_ch_d vw{out}{h}n_ch_a {p_gate}{out} vw{out}{h}n 0 NSENSE W={readout_update_width_u:.12g}u L=180n",
                 ]
@@ -2401,6 +2436,8 @@ def random_hidden_netlist(
     hidden_gradient_width_scale: float,
     readout_gradient_width_scale: float,
     output_forward_width_scale: float,
+    output_forward_pos_width_scale: float,
+    output_forward_neg_width_scale: float,
     output_bias_forward_width_scale: float,
     output_relu_width_scale: float,
     output_head: str,
@@ -2429,6 +2466,10 @@ def random_hidden_netlist(
     readout_center_v: float,
     readout_random_center_v: float | None,
     readout_random_span_v: float,
+    readout_random_pos_center_v: float | None,
+    readout_random_neg_center_v: float | None,
+    readout_random_pos_span_v: float | None,
+    readout_random_neg_span_v: float | None,
     output_bias_offset_v: float,
     separator_csv: Path | None,
     separator_phase: str,
@@ -2453,6 +2494,10 @@ def random_hidden_netlist(
     readout_center_pull_v: float,
     readout_write_high_v: float,
     readout_write_low_v: float,
+    readout_pos_write_high_v: float | None,
+    readout_pos_write_low_v: float | None,
+    readout_neg_write_high_v: float | None,
+    readout_neg_write_low_v: float | None,
     readout_flow_polarity: str,
     readout_flow_write_mode: str,
     hidden_update_width_u: float,
@@ -2482,9 +2527,15 @@ def random_hidden_netlist(
         hidden_gradient_width_scale,
         readout_gradient_width_scale,
         output_forward_width_scale,
+        output_forward_pos_width_scale,
+        output_forward_neg_width_scale,
         output_bias_forward_width_scale,
         output_relu_width_scale,
     )
+    readout_pos_write_high = readout_write_high_v if readout_pos_write_high_v is None else readout_pos_write_high_v
+    readout_pos_write_low = readout_write_low_v if readout_pos_write_low_v is None else readout_pos_write_low_v
+    readout_neg_write_high = readout_write_high_v if readout_neg_write_high_v is None else readout_neg_write_high_v
+    readout_neg_write_low = readout_write_low_v if readout_neg_write_low_v is None else readout_neg_write_low_v
     include_gradient_caps = learning_mode == "accumulate_apply"
     state_seed = seed if init_seed is None else init_seed
     records = dataset_records(dataset_name, seed)
@@ -2573,6 +2624,10 @@ def random_hidden_netlist(
                 readout_flow_write_mode,
                 readout_center_pull_width_u,
                 output_bias_center_pull_width_u,
+                "wphigh",
+                "wplow",
+                "wnhigh",
+                "wnlow",
             ),
             hidden_delta_sense_block,
         ]
@@ -2609,6 +2664,10 @@ def random_hidden_netlist(
                 readout_center_v,
                 readout_random_center_v,
                 readout_random_span_v,
+                readout_random_pos_center_v,
+                readout_random_neg_center_v,
+                readout_random_pos_span_v,
+                readout_random_neg_span_v,
                 separator_csv,
                 separator_phase,
             ),
@@ -2634,6 +2693,10 @@ Vscorecm scorecm 0 {score_reset_v:.12g}
 Vwcenter wcenter 0 {readout_center_pull_v:.12g}
 Vwhigh whigh 0 {readout_write_high_v:.12g}
 Vwlow wlow 0 {readout_write_low_v:.12g}
+Vwphigh wphigh 0 {readout_pos_write_high:.12g}
+Vwplow wplow 0 {readout_pos_write_low:.12g}
+Vwnhigh wnhigh 0 {readout_neg_write_high:.12g}
+Vwnlow wnlow 0 {readout_neg_write_low:.12g}
 {input_sources}
 Vt0 t0 0 {target_wave(samples, 0, stop)}
 Vt1 t1 0 {target_wave(samples, 1, stop)}
@@ -2714,6 +2777,18 @@ def main() -> None:
         type=float,
         default=1.0,
         help="Scale the forward readout synapse devices that integrate hidden activations onto score caps.",
+    )
+    ap.add_argument(
+        "--output-forward-pos-width-scale",
+        type=float,
+        default=1.0,
+        help="Additional scale for positive-branch forward readout devices.",
+    )
+    ap.add_argument(
+        "--output-forward-neg-width-scale",
+        type=float,
+        default=1.0,
+        help="Additional scale for negative-branch forward readout devices.",
     )
     ap.add_argument(
         "--output-bias-forward-width-scale",
@@ -2806,6 +2881,30 @@ def main() -> None:
         help="Peak-to-peak spread around --readout-random-center-v when random readout centering is enabled.",
     )
     ap.add_argument(
+        "--readout-random-pos-center-v",
+        type=float,
+        default=None,
+        help="Optional random initialization center for positive readout branch capacitors.",
+    )
+    ap.add_argument(
+        "--readout-random-neg-center-v",
+        type=float,
+        default=None,
+        help="Optional random initialization center for negative readout branch capacitors.",
+    )
+    ap.add_argument(
+        "--readout-random-pos-span-v",
+        type=float,
+        default=None,
+        help="Optional peak-to-peak random span for positive readout branch capacitors.",
+    )
+    ap.add_argument(
+        "--readout-random-neg-span-v",
+        type=float,
+        default=None,
+        help="Optional peak-to-peak random span for negative readout branch capacitors.",
+    )
+    ap.add_argument(
         "--output-bias-offset-v",
         type=float,
         default=0.0,
@@ -2892,6 +2991,30 @@ def main() -> None:
         type=float,
         default=0.16,
         help="Low rail for bounded_* local selected-branch readout/hidden writes.",
+    )
+    ap.add_argument(
+        "--readout-pos-write-high-v",
+        type=float,
+        default=None,
+        help="Optional high rail for bounded positive readout-branch writes; defaults to --readout-write-high-v.",
+    )
+    ap.add_argument(
+        "--readout-pos-write-low-v",
+        type=float,
+        default=None,
+        help="Optional low rail for bounded positive readout-branch writes; defaults to --readout-write-low-v.",
+    )
+    ap.add_argument(
+        "--readout-neg-write-high-v",
+        type=float,
+        default=None,
+        help="Optional high rail for bounded negative readout-branch writes; defaults to --readout-write-high-v.",
+    )
+    ap.add_argument(
+        "--readout-neg-write-low-v",
+        type=float,
+        default=None,
+        help="Optional low rail for bounded negative readout-branch writes; defaults to --readout-write-low-v.",
     )
     ap.add_argument("--hidden-update-width-u", type=float)
     ap.add_argument(
@@ -2981,6 +3104,8 @@ def main() -> None:
         or args.hidden_gradient_width_scale <= 0
         or args.readout_gradient_width_scale <= 0
         or args.output_forward_width_scale <= 0
+        or args.output_forward_pos_width_scale <= 0
+        or args.output_forward_neg_width_scale <= 0
         or args.output_bias_forward_width_scale <= 0
         or args.output_relu_width_scale <= 0
     ):
@@ -3020,6 +3145,22 @@ def main() -> None:
         raise SystemExit("--readout-center-pull-v must be in 0..1.2 V.")
     if not 0.0 <= args.readout_write_low_v < args.readout_write_high_v <= 1.2:
         raise SystemExit("--readout-write-low-v must be below --readout-write-high-v, both in 0..1.2 V.")
+    readout_pos_write_high_v = (
+        args.readout_write_high_v if args.readout_pos_write_high_v is None else args.readout_pos_write_high_v
+    )
+    readout_pos_write_low_v = (
+        args.readout_write_low_v if args.readout_pos_write_low_v is None else args.readout_pos_write_low_v
+    )
+    readout_neg_write_high_v = (
+        args.readout_write_high_v if args.readout_neg_write_high_v is None else args.readout_neg_write_high_v
+    )
+    readout_neg_write_low_v = (
+        args.readout_write_low_v if args.readout_neg_write_low_v is None else args.readout_neg_write_low_v
+    )
+    if not 0.0 <= readout_pos_write_low_v < readout_pos_write_high_v <= 1.2:
+        raise SystemExit("positive readout write rails must be ordered within 0..1.2 V.")
+    if not 0.0 <= readout_neg_write_low_v < readout_neg_write_high_v <= 1.2:
+        raise SystemExit("negative readout write rails must be ordered within 0..1.2 V.")
     if args.hidden_update_width_u is not None and args.hidden_update_width_u < 0:
         raise SystemExit("--hidden-update-width-u must be nonnegative.")
     if args.backward_gate_width_u <= 0 or args.backward_gate_cap_f <= 0:
@@ -3030,8 +3171,16 @@ def main() -> None:
         raise SystemExit("--readout-center-v must be in the capacitor-voltage range 0.01..1.15 V.")
     if args.readout_random_center_v is not None and not 0.01 <= args.readout_random_center_v <= 1.15:
         raise SystemExit("--readout-random-center-v must be in the capacitor-voltage range 0.01..1.15 V.")
+    if args.readout_random_pos_center_v is not None and not 0.01 <= args.readout_random_pos_center_v <= 1.15:
+        raise SystemExit("--readout-random-pos-center-v must be in the capacitor-voltage range 0.01..1.15 V.")
+    if args.readout_random_neg_center_v is not None and not 0.01 <= args.readout_random_neg_center_v <= 1.15:
+        raise SystemExit("--readout-random-neg-center-v must be in the capacitor-voltage range 0.01..1.15 V.")
     if args.readout_random_span_v < 0:
         raise SystemExit("--readout-random-span-v must be nonnegative.")
+    if args.readout_random_pos_span_v is not None and args.readout_random_pos_span_v < 0:
+        raise SystemExit("--readout-random-pos-span-v must be nonnegative.")
+    if args.readout_random_neg_span_v is not None and args.readout_random_neg_span_v < 0:
+        raise SystemExit("--readout-random-neg-span-v must be nonnegative.")
     if abs(args.output_bias_offset_v) > 1.0:
         raise SystemExit("--output-bias-offset-v must be within +/-1.0 V.")
     try:
@@ -3090,6 +3239,8 @@ def main() -> None:
         args.hidden_gradient_width_scale,
         args.readout_gradient_width_scale,
         args.output_forward_width_scale,
+        args.output_forward_pos_width_scale,
+        args.output_forward_neg_width_scale,
         args.output_bias_forward_width_scale,
         args.output_relu_width_scale,
         args.output_head,
@@ -3118,6 +3269,10 @@ def main() -> None:
         args.readout_center_v,
         args.readout_random_center_v,
         args.readout_random_span_v,
+        args.readout_random_pos_center_v,
+        args.readout_random_neg_center_v,
+        args.readout_random_pos_span_v,
+        args.readout_random_neg_span_v,
         args.output_bias_offset_v,
         args.separator_csv,
         args.separator_phase,
@@ -3144,6 +3299,10 @@ def main() -> None:
         args.readout_center_pull_v,
         args.readout_write_high_v,
         args.readout_write_low_v,
+        readout_pos_write_high_v,
+        readout_pos_write_low_v,
+        readout_neg_write_high_v,
+        readout_neg_write_low_v,
         args.readout_flow_polarity,
         args.readout_flow_write_mode,
         args.hidden_update_width_u if args.hidden_update_width_u is not None else args.update_width_u,
@@ -3344,6 +3503,8 @@ def main() -> None:
         args.hidden_gradient_width_scale,
         args.readout_gradient_width_scale,
         args.output_forward_width_scale,
+        args.output_forward_pos_width_scale,
+        args.output_forward_neg_width_scale,
         args.output_bias_forward_width_scale,
         args.output_relu_width_scale,
     )
@@ -3402,6 +3563,8 @@ def main() -> None:
         "hidden_gradient_width_scale": args.hidden_gradient_width_scale,
         "readout_gradient_width_scale": args.readout_gradient_width_scale,
         "output_forward_width_scale": args.output_forward_width_scale,
+        "output_forward_pos_width_scale": args.output_forward_pos_width_scale,
+        "output_forward_neg_width_scale": args.output_forward_neg_width_scale,
         "output_bias_forward_width_scale": args.output_bias_forward_width_scale,
         "output_relu_width_scale": args.output_relu_width_scale,
         "output_head": args.output_head,
@@ -3516,6 +3679,10 @@ def main() -> None:
             if args.readout_init == "random" and args.readout_random_center_v is not None
             else None
         ),
+        "readout_random_pos_center_v": args.readout_random_pos_center_v if args.readout_init == "random" else None,
+        "readout_random_neg_center_v": args.readout_random_neg_center_v if args.readout_init == "random" else None,
+        "readout_random_pos_span_v": args.readout_random_pos_span_v if args.readout_init == "random" else None,
+        "readout_random_neg_span_v": args.readout_random_neg_span_v if args.readout_init == "random" else None,
         "output_bias_offset_v": args.output_bias_offset_v,
         "separator_csv": str(args.separator_csv)
         if args.readout_init in {"csv_separator", "csv_rectified_separator", "csv_threshold_separator"}
@@ -3610,6 +3777,10 @@ def main() -> None:
             and (args.readout_flow_write_mode.startswith("bounded_") or args.hidden_flow_write_mode.startswith("bounded_"))
             else None
         ),
+        "readout_pos_write_high_v": readout_pos_write_high_v if args.learning_mode == "flow" else None,
+        "readout_pos_write_low_v": readout_pos_write_low_v if args.learning_mode == "flow" else None,
+        "readout_neg_write_high_v": readout_neg_write_high_v if args.learning_mode == "flow" else None,
+        "readout_neg_write_low_v": readout_neg_write_low_v if args.learning_mode == "flow" else None,
         "readout_flow_polarity": args.readout_flow_polarity if args.learning_mode == "flow" else None,
         "readout_flow_write_mode": args.readout_flow_write_mode if args.learning_mode == "flow" else None,
         "hidden_update_width_u": args.hidden_update_width_u if args.hidden_update_width_u is not None else args.update_width_u,

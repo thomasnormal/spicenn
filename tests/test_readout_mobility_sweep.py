@@ -176,3 +176,63 @@ def test_branch_pair_summary_reports_best_operating_pair() -> None:
     assert summary["branch_pair_best_theta_p_v"] == pytest.approx(0.46)
     assert summary["branch_pair_best_theta_n_v"] == pytest.approx(0.16)
     assert summary["branch_pair_best_signed_mobility_balance"] == pytest.approx(0.8)
+    assert summary["branch_pair_all_act_negative_signed_read_gain_fraction"] == pytest.approx(0.0)
+
+
+def test_branch_pair_summary_reports_gain_safe_pair_across_activations() -> None:
+    pair = pd.DataFrame(
+        [
+            {
+                "theta_p": 0.46,
+                "theta_n": 0.16,
+                "act": 0.25,
+                "signed_read_gain": -0.2,
+                "signed_increase_mobility": 0.08,
+                "signed_decrease_mobility": 0.04,
+                "signed_update_sign_aligned": True,
+                "signed_mobility_balance": 0.5,
+            },
+            {
+                "theta_p": 0.46,
+                "theta_n": 0.16,
+                "act": 0.5,
+                "signed_read_gain": 0.2,
+                "signed_increase_mobility": 0.08,
+                "signed_decrease_mobility": 0.04,
+                "signed_update_sign_aligned": True,
+                "signed_mobility_balance": 0.5,
+            },
+            {
+                "theta_p": 0.34,
+                "theta_n": 0.10,
+                "act": 0.25,
+                "signed_read_gain": 0.1,
+                "signed_increase_mobility": 0.02,
+                "signed_decrease_mobility": 0.01,
+                "signed_update_sign_aligned": True,
+                "signed_mobility_balance": 0.5,
+            },
+            {
+                "theta_p": 0.34,
+                "theta_n": 0.10,
+                "act": 0.5,
+                "signed_read_gain": 0.3,
+                "signed_increase_mobility": 0.02,
+                "signed_decrease_mobility": 0.01,
+                "signed_update_sign_aligned": True,
+                "signed_mobility_balance": 0.5,
+            },
+        ]
+    )
+
+    summary = mobility.summarize_branch_pair_mobility(pair, 0.24, 0.70, 0.10, 0.16, summary_act_v=0.5)
+
+    # The single-activation best can still be the high-mobility pair, but the
+    # gain-safe summary rejects it because its low-activation read gain flips sign.
+    assert summary["branch_pair_best_theta_p_v"] == pytest.approx(0.46)
+    assert summary["branch_pair_best_theta_n_v"] == pytest.approx(0.16)
+    assert summary["branch_pair_all_act_negative_signed_read_gain_fraction"] == pytest.approx(0.25)
+    assert summary["branch_pair_gain_safe_pair_count"] == 1
+    assert summary["branch_pair_best_gain_safe_theta_p_v"] == pytest.approx(0.34)
+    assert summary["branch_pair_best_gain_safe_theta_n_v"] == pytest.approx(0.10)
+    assert summary["branch_pair_best_gain_safe_min_signed_read_gain"] == pytest.approx(0.1)

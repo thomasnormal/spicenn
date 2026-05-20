@@ -366,14 +366,19 @@ def summarize_branch_pair_mobility(
     neg_high_v: float,
     summary_act_v: float | None = None,
 ) -> dict[str, Any]:
-    operating = pair[
+    operating_all_act = pair[
         (pair["theta_p"] >= pos_low_v)
         & (pair["theta_p"] <= pos_high_v)
         & (pair["theta_n"] >= neg_low_v)
         & (pair["theta_n"] <= neg_high_v)
     ]
+    if operating_all_act.empty:
+        operating_all_act = pair
+    operating = operating_all_act
     if summary_act_v is not None:
-        operating = operating[np.isclose(operating["act"], summary_act_v)]
+        at_summary_act = operating_all_act[np.isclose(operating_all_act["act"], summary_act_v)]
+        if not at_summary_act.empty:
+            operating = at_summary_act
     if operating.empty:
         operating = pair
     aligned = operating[operating["signed_update_sign_aligned"]]
@@ -381,6 +386,33 @@ def summarize_branch_pair_mobility(
     best = best_source.sort_values(
         ["signed_mobility_balance", "signed_increase_mobility", "signed_decrease_mobility"],
         ascending=[False, False, False],
+    ).iloc[0]
+    gain_safe = (
+        operating_all_act.groupby(["theta_p", "theta_n"], as_index=False)
+        .agg(
+            min_signed_read_gain=("signed_read_gain", "min"),
+            mean_signed_read_gain=("signed_read_gain", "mean"),
+            min_signed_mobility_balance=("signed_mobility_balance", "min"),
+            mean_signed_mobility_balance=("signed_mobility_balance", "mean"),
+            aligned_fraction=("signed_update_sign_aligned", "mean"),
+            min_signed_increase_mobility=("signed_increase_mobility", "min"),
+            min_signed_decrease_mobility=("signed_decrease_mobility", "min"),
+        )
+        .copy()
+    )
+    gain_safe["gain_sign_safe"] = gain_safe["min_signed_read_gain"] > 0
+    gain_safe["mobility_sign_safe"] = gain_safe["aligned_fraction"] >= 1.0
+    fully_safe = gain_safe[gain_safe["gain_sign_safe"] & gain_safe["mobility_sign_safe"]]
+    gain_safe_source = fully_safe if not fully_safe.empty else gain_safe
+    best_gain_safe = gain_safe_source.sort_values(
+        [
+            "gain_sign_safe",
+            "mobility_sign_safe",
+            "min_signed_read_gain",
+            "min_signed_mobility_balance",
+            "mean_signed_read_gain",
+        ],
+        ascending=[False, False, False, False, False],
     ).iloc[0]
     return {
         "branch_pair_mobility_csv": None,
@@ -392,7 +424,18 @@ def summarize_branch_pair_mobility(
         "branch_pair_neg_operating_theta_max_v": neg_high_v,
         "branch_pair_rows": int(len(pair)),
         "branch_pair_operating_rows": int(len(operating)),
+        "branch_pair_operating_all_act_rows": int(len(operating_all_act)),
         "branch_pair_update_sign_aligned_fraction": float(operating["signed_update_sign_aligned"].mean()),
+        "branch_pair_all_act_update_sign_aligned_fraction": float(
+            operating_all_act["signed_update_sign_aligned"].mean()
+        ),
+        "branch_pair_min_signed_read_gain": float(operating["signed_read_gain"].min()),
+        "branch_pair_max_signed_read_gain": float(operating["signed_read_gain"].max()),
+        "branch_pair_mean_signed_read_gain": float(operating["signed_read_gain"].mean()),
+        "branch_pair_all_act_min_signed_read_gain": float(operating_all_act["signed_read_gain"].min()),
+        "branch_pair_all_act_negative_signed_read_gain_fraction": float(
+            (operating_all_act["signed_read_gain"] <= 0).mean()
+        ),
         "branch_pair_min_signed_increase_mobility": float(operating["signed_increase_mobility"].min()),
         "branch_pair_max_signed_increase_mobility": float(operating["signed_increase_mobility"].max()),
         "branch_pair_min_signed_decrease_mobility": float(operating["signed_decrease_mobility"].min()),
@@ -403,6 +446,18 @@ def summarize_branch_pair_mobility(
         "branch_pair_best_signed_increase_mobility": float(best["signed_increase_mobility"]),
         "branch_pair_best_signed_decrease_mobility": float(best["signed_decrease_mobility"]),
         "branch_pair_best_signed_mobility_balance": float(best["signed_mobility_balance"]),
+        "branch_pair_gain_safe_pair_count": int(len(fully_safe)),
+        "branch_pair_best_gain_safe_theta_p_v": float(best_gain_safe["theta_p"]),
+        "branch_pair_best_gain_safe_theta_n_v": float(best_gain_safe["theta_n"]),
+        "branch_pair_best_gain_safe_min_signed_read_gain": float(best_gain_safe["min_signed_read_gain"]),
+        "branch_pair_best_gain_safe_mean_signed_read_gain": float(best_gain_safe["mean_signed_read_gain"]),
+        "branch_pair_best_gain_safe_min_signed_mobility_balance": float(
+            best_gain_safe["min_signed_mobility_balance"]
+        ),
+        "branch_pair_best_gain_safe_mean_signed_mobility_balance": float(
+            best_gain_safe["mean_signed_mobility_balance"]
+        ),
+        "branch_pair_best_gain_safe_aligned_fraction": float(best_gain_safe["aligned_fraction"]),
     }
 
 

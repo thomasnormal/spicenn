@@ -1365,6 +1365,21 @@ and negative signed-update mobility but very small mobility.  The
 signed read gain, so it needs score-path calibration in addition to write-path
 calibration.
 
+The branch-pair summary now also reports a gain-safe operating pair across the
+whole activation sweep, rather than only the mobility-balanced pair at a single
+representative activation.  This matters because the backward/update mobility
+depends on \(G'_{\mathrm{eff}}(\theta)s_{\mathrm{MOS}}(\theta)\), while the
+forward and reverse error-flow sign depends on \(G_{\mathrm{eff}}(\theta)\).
+The old \((0.46,0.16)\ \mathrm{V}\) candidate is sign-aligned in mobility, but
+its signed read gain flips sign at low activity in the measured table.  The
+stricter summary selects \((0.46,0.10)\ \mathrm{V}\) as the best gain-safe
+branch pair over the current sweep: its minimum measured signed read gain is
+positive, although its worst-case mobility balance is much poorer than the
+\((0.24,0.10)\ \mathrm{V}\) pair.  That gives a concrete circuit-level
+hypothesis for the linear-readout failures: the cell can move in the locally
+correct state direction while presenting the wrong or too-small effective
+conductance to low-activation samples.
+
 The first branch-pair training probes confirm that distinction.  On
 \code{mnist01fixed8\_64}, \((0.24,0.10)\ \mathrm{V}\) stayed at 50\% with a
 74.2\% target-mistake gate match, while \((0.70,0.10)\ \mathrm{V}\) inverted
@@ -1379,6 +1394,50 @@ forward read width improved the gate match to 96.1\% but still collapsed to
 still needs a joint score-common-mode/read-gain calibration.  The old shared
 \(0.70/0.24\ \mathrm{V}\) bounded-discharge window remains the best 64-example
 readout result despite its one-sided mobility defect.
+
+A more direct error-node diagnostic narrows the failure.  With the
+\((0.34,0.10)\ \mathrm{V}\) branch pair, interleaved examples, and
+bounded-discharge writes, the target-mistake backward gate was correct on the
+training rows, and the error rails had the expected signs.  For class-0 rows,
+for example, the measured output error was approximately
+\(\delta_0=+1.043\) and \(\delta_1=-1.043\).  Nevertheless the accumulated
+signed readout state changes were negative for both output heads, and the
+classifier collapsed to class 1.  The physical reason is that the negative
+branch was initialized at its bounded-discharge low rail, \(0.10\ \mathrm{V}\).
+For an update that should increase a signed weight by lowering the negative
+branch, the intended write path is already saturated.  Small inactive-side
+leakage can still lower the positive branch, so the effective signed weight can
+move opposite the useful direction even though the error signal itself is
+correct.
+
+Branch-specific write widths do not fix that rail-pinning failure, because a
+wider transistor cannot discharge a capacitor below its selected low rail.  In
+\code{v401} and \code{v402}, increasing the negative-branch write width from
+\(0.0008\,\mu\mathrm{m}\) to \(0.0024\) and \(0.0032\,\mu\mathrm{m}\) still
+left the 64-example readout at 50\%.  Switching to
+\code{bounded\_charge\_discharge} opened the missing target-increase path, but
+then the collapse flipped to class 0 at write widths
+\(0.0002\)--\(0.0008\,\mu\mathrm{m}\).  That is the current best evidence that
+the linear-model blocker is a hardware write-kernel balance problem, not a
+Python-side gradient-computation problem: the circuit needs a branch/action
+write primitive whose induced mobility is sign-aligned and not rail-pinned
+over the operating window.
+
+The first reduced write primitive is \code{bounded\_charge\_only}: instead of
+both charging the desired branch and discharging the opposite branch, the
+backward window only charges the branch that should make the signed weight move
+in the selected direction.  On the same 64-example fixed8 readout, a
+\(0.00035\,\mu\mathrm{m}\) charge-only width still collapsed to class 0, but
+\(0.0008\,\mu\mathrm{m}\) reached 75\% final accuracy.  Increasing the same
+charge-only width further was not monotone: \(0.0012\,\mu\mathrm{m}\) fell back
+to 53.125\%, while \(0.0016\,\mu\mathrm{m}\) reached 71.875\%.  Separately,
+starting the negative branch above its low rail, at \(0.13\ \mathrm{V}\), did
+not rescue bounded-discharge training; both \((0.34,0.13)\ \mathrm{V}\) and
+\((0.46,0.13)\ \mathrm{V}\) stayed at 50\%.  This is not yet a good readout
+learner, but it is a useful sanity check: removing the over-aggressive
+discharge component improves the one-layer circuit without adding any Python
+gradient computation, and the remaining nonmonotonicity is exactly what the
+hardware-mobility view predicts.
 
 The generator now mirrors this control on the lower-layer synapses through
 \code{--hidden-flow-write-mode}.  When hidden direct flow is enabled, hidden

@@ -436,6 +436,23 @@ def test_direct_flow_readout_bounded_write_accepts_branch_specific_rails() -> No
     assert "Mvw00n_ch_b neg_hi bwd vw00n_ch_b" in updates
 
 
+def test_direct_flow_readout_accepts_branch_specific_update_widths() -> None:
+    updates = direct_flow.readout_flow_updates(
+        readout_update_width_u=0.02,
+        readout_pos_update_width_u=0.003,
+        readout_neg_update_width_u=0.007,
+        output_bias_update_width_u=0.0003,
+        flow_pre_store="shared_node",
+        readout_flow_polarity="normal",
+        readout_flow_write_mode="bounded_charge_discharge",
+    )
+
+    assert "Mvw00n_flow_b vw00n bwd vw00n_flow_b 0 NREL W=0.007u" in updates
+    assert "Mvw00p_flow_b vw00p bwd vw00p_flow_b 0 NREL W=0.003u" in updates
+    assert "Mvw00p_ch_b whigh bwd vw00p_ch_b 0 NREL W=0.003u" in updates
+    assert "Mvw00n_ch_b whigh bwd vw00n_ch_b 0 NREL W=0.007u" in updates
+
+
 def test_direct_flow_readout_center_pull_is_a_transistor_state_path() -> None:
     updates = direct_flow.readout_flow_updates(
         readout_update_width_u=0.0,

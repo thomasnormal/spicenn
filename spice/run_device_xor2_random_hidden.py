@@ -1911,6 +1911,8 @@ def readout_flow_updates(
     flow_pre_store: str,
     readout_flow_polarity: str,
     readout_flow_write_mode: str = "discharge",
+    readout_pos_update_width_u: float | None = None,
+    readout_neg_update_width_u: float | None = None,
     readout_center_pull_width_u: float = 0.0,
     output_bias_center_pull_width_u: float = 0.0,
     readout_pos_write_high_node: str = "whigh",
@@ -1924,8 +1926,16 @@ def readout_flow_updates(
         raise ValueError(f"unknown readout flow polarity: {readout_flow_polarity}")
     if readout_flow_write_mode not in READOUT_FLOW_WRITE_MODES:
         raise ValueError(f"unknown readout flow write mode: {readout_flow_write_mode}")
+    pos_update_width_u = (
+        readout_update_width_u if readout_pos_update_width_u is None else readout_pos_update_width_u
+    )
+    neg_update_width_u = (
+        readout_update_width_u if readout_neg_update_width_u is None else readout_neg_update_width_u
+    )
     if (
         readout_update_width_u < 0
+        or pos_update_width_u < 0
+        or neg_update_width_u < 0
         or output_bias_update_width_u < 0
         or readout_center_pull_width_u < 0
         or output_bias_center_pull_width_u < 0
@@ -1976,14 +1986,14 @@ def readout_flow_updates(
             ]
         for h in range(HIDDEN):
             pre_gate = f"fpro{out}{h}" if flow_pre_store != "shared_node" else f"act{h}"
-            if readout_update_width_u > 0 and discharge_enabled:
+            if (pos_update_width_u > 0 or neg_update_width_u > 0) and discharge_enabled:
                 lines += [
-                    f"Mvw{out}{h}n_flow_b vw{out}{h}n bwd vw{out}{h}n_flow_b 0 NREL W={readout_update_width_u:.12g}u L=180n",
-                    f"Mvw{out}{h}n_flow_a vw{out}{h}n_flow_b {pre_gate} vw{out}{h}n_flow_a 0 NREL W={readout_update_width_u:.12g}u L=180n",
-                    f"Mvw{out}{h}n_flow_d vw{out}{h}n_flow_a {n_gate}{out} {neg_low_node} 0 NSENSE W={readout_update_width_u:.12g}u L=180n",
-                    f"Mvw{out}{h}p_flow_b vw{out}{h}p bwd vw{out}{h}p_flow_b 0 NREL W={readout_update_width_u:.12g}u L=180n",
-                    f"Mvw{out}{h}p_flow_a vw{out}{h}p_flow_b {pre_gate} vw{out}{h}p_flow_a 0 NREL W={readout_update_width_u:.12g}u L=180n",
-                    f"Mvw{out}{h}p_flow_d vw{out}{h}p_flow_a {p_gate}{out} {pos_low_node} 0 NSENSE W={readout_update_width_u:.12g}u L=180n",
+                    f"Mvw{out}{h}n_flow_b vw{out}{h}n bwd vw{out}{h}n_flow_b 0 NREL W={neg_update_width_u:.12g}u L=180n",
+                    f"Mvw{out}{h}n_flow_a vw{out}{h}n_flow_b {pre_gate} vw{out}{h}n_flow_a 0 NREL W={neg_update_width_u:.12g}u L=180n",
+                    f"Mvw{out}{h}n_flow_d vw{out}{h}n_flow_a {n_gate}{out} {neg_low_node} 0 NSENSE W={neg_update_width_u:.12g}u L=180n",
+                    f"Mvw{out}{h}p_flow_b vw{out}{h}p bwd vw{out}{h}p_flow_b 0 NREL W={pos_update_width_u:.12g}u L=180n",
+                    f"Mvw{out}{h}p_flow_a vw{out}{h}p_flow_b {pre_gate} vw{out}{h}p_flow_a 0 NREL W={pos_update_width_u:.12g}u L=180n",
+                    f"Mvw{out}{h}p_flow_d vw{out}{h}p_flow_a {p_gate}{out} {pos_low_node} 0 NSENSE W={pos_update_width_u:.12g}u L=180n",
                 ]
                 lines += node_parasitics(
                     f"vw{out}{h}n_flow_b",
@@ -1991,14 +2001,14 @@ def readout_flow_updates(
                     f"vw{out}{h}p_flow_b",
                     f"vw{out}{h}p_flow_a",
                 )
-            if readout_update_width_u > 0 and charge_enabled:
+            if (pos_update_width_u > 0 or neg_update_width_u > 0) and charge_enabled:
                 lines += [
-                    f"Mvw{out}{h}p_ch_b {pos_high_node} bwd vw{out}{h}p_ch_b 0 NREL W={readout_update_width_u:.12g}u L=180n",
-                    f"Mvw{out}{h}p_ch_a vw{out}{h}p_ch_b {pre_gate} vw{out}{h}p_ch_a 0 NREL W={readout_update_width_u:.12g}u L=180n",
-                    f"Mvw{out}{h}p_ch_d vw{out}{h}p_ch_a {n_gate}{out} vw{out}{h}p 0 NSENSE W={readout_update_width_u:.12g}u L=180n",
-                    f"Mvw{out}{h}n_ch_b {neg_high_node} bwd vw{out}{h}n_ch_b 0 NREL W={readout_update_width_u:.12g}u L=180n",
-                    f"Mvw{out}{h}n_ch_a vw{out}{h}n_ch_b {pre_gate} vw{out}{h}n_ch_a 0 NREL W={readout_update_width_u:.12g}u L=180n",
-                    f"Mvw{out}{h}n_ch_d vw{out}{h}n_ch_a {p_gate}{out} vw{out}{h}n 0 NSENSE W={readout_update_width_u:.12g}u L=180n",
+                    f"Mvw{out}{h}p_ch_b {pos_high_node} bwd vw{out}{h}p_ch_b 0 NREL W={pos_update_width_u:.12g}u L=180n",
+                    f"Mvw{out}{h}p_ch_a vw{out}{h}p_ch_b {pre_gate} vw{out}{h}p_ch_a 0 NREL W={pos_update_width_u:.12g}u L=180n",
+                    f"Mvw{out}{h}p_ch_d vw{out}{h}p_ch_a {n_gate}{out} vw{out}{h}p 0 NSENSE W={pos_update_width_u:.12g}u L=180n",
+                    f"Mvw{out}{h}n_ch_b {neg_high_node} bwd vw{out}{h}n_ch_b 0 NREL W={neg_update_width_u:.12g}u L=180n",
+                    f"Mvw{out}{h}n_ch_a vw{out}{h}n_ch_b {pre_gate} vw{out}{h}n_ch_a 0 NREL W={neg_update_width_u:.12g}u L=180n",
+                    f"Mvw{out}{h}n_ch_d vw{out}{h}n_ch_a {p_gate}{out} vw{out}{h}n 0 NSENSE W={neg_update_width_u:.12g}u L=180n",
                 ]
                 lines += node_parasitics(
                     f"vw{out}{h}p_ch_b",
@@ -2488,6 +2498,8 @@ def random_hidden_netlist(
     lead_cap_f: float,
     score_reset_v: float,
     readout_update_width_u: float,
+    readout_pos_update_width_u: float | None,
+    readout_neg_update_width_u: float | None,
     output_bias_update_width_u: float,
     readout_center_pull_width_u: float,
     output_bias_center_pull_width_u: float,
@@ -2622,6 +2634,8 @@ def random_hidden_netlist(
                 flow_pre_store,
                 readout_flow_polarity,
                 readout_flow_write_mode,
+                readout_pos_update_width_u,
+                readout_neg_update_width_u,
                 readout_center_pull_width_u,
                 output_bias_center_pull_width_u,
                 "wphigh",
@@ -2936,6 +2950,16 @@ def main() -> None:
     )
     ap.add_argument("--update-width-u", type=float, default=120.0)
     ap.add_argument("--readout-update-width-u", type=float)
+    ap.add_argument(
+        "--readout-pos-update-width-u",
+        type=float,
+        help="Optional direct-flow update width for positive readout weight branches.",
+    )
+    ap.add_argument(
+        "--readout-neg-update-width-u",
+        type=float,
+        help="Optional direct-flow update width for negative readout weight branches.",
+    )
     ap.add_argument("--output-bias-update-width-u", type=float)
     ap.add_argument(
         "--readout-center-pull-width-u",
@@ -3137,6 +3161,10 @@ def main() -> None:
         raise SystemExit("--train-charge-noise-pulse-ns must be positive.")
     if args.readout_update_width_u is not None and args.readout_update_width_u < 0:
         raise SystemExit("--readout-update-width-u must be nonnegative.")
+    if args.readout_pos_update_width_u is not None and args.readout_pos_update_width_u < 0:
+        raise SystemExit("--readout-pos-update-width-u must be nonnegative.")
+    if args.readout_neg_update_width_u is not None and args.readout_neg_update_width_u < 0:
+        raise SystemExit("--readout-neg-update-width-u must be nonnegative.")
     if args.output_bias_update_width_u is not None and args.output_bias_update_width_u < 0:
         raise SystemExit("--output-bias-update-width-u must be nonnegative.")
     if args.readout_center_pull_width_u < 0 or args.output_bias_center_pull_width_u < 0:
@@ -3225,6 +3253,19 @@ def main() -> None:
         directory.mkdir(parents=True, exist_ok=True)
     run_tiny_test(spice_bin, generated)
 
+    readout_update_width = args.readout_update_width_u if args.readout_update_width_u is not None else args.update_width_u
+    readout_pos_update_width = (
+        readout_update_width if args.readout_pos_update_width_u is None else args.readout_pos_update_width_u
+    )
+    readout_neg_update_width = (
+        readout_update_width if args.readout_neg_update_width_u is None else args.readout_neg_update_width_u
+    )
+    output_bias_update_width = (
+        args.output_bias_update_width_u
+        if args.output_bias_update_width_u is not None
+        else readout_update_width
+    )
+
     safe_tag = "".join(ch if ch.isalnum() or ch in {"_", "-"} else "_" for ch in args.tag)
     netlist, samples = random_hidden_netlist(
         args.epochs,
@@ -3290,10 +3331,10 @@ def main() -> None:
         args.hidden_delta_cap_f,
         args.lead_cap_f,
         args.score_reset_v,
-        args.readout_update_width_u if args.readout_update_width_u is not None else args.update_width_u,
-        args.output_bias_update_width_u
-        if args.output_bias_update_width_u is not None
-        else (args.readout_update_width_u if args.readout_update_width_u is not None else args.update_width_u),
+        readout_update_width,
+        args.readout_pos_update_width_u,
+        args.readout_neg_update_width_u,
+        output_bias_update_width,
         args.readout_center_pull_width_u,
         args.output_bias_center_pull_width_u,
         args.readout_center_pull_v,
@@ -3371,6 +3412,10 @@ def main() -> None:
                 row["merr0"] = parsed[f"merr0_{idx}"]
                 row["merr1"] = parsed[f"merr1_{idx}"]
         if phase == "train" and args.measure_detail in {"full", "probe"}:
+            for out in range(OUTPUTS):
+                row[f"dp{out}"] = parsed[f"dp{out}_{idx}"]
+                row[f"dn{out}"] = parsed[f"dn{out}_{idx}"]
+                row[f"output_delta_net_{out}"] = parsed[f"output_delta_net_{out}_{idx}"]
             row["max_abs_output_delta_signal"] = max(
                 abs(parsed[f"output_delta_net_{out}_{idx}"]) for out in range(OUTPUTS)
             )
@@ -3427,6 +3472,16 @@ def main() -> None:
                     for rail in HIDDEN_RAILS
                 )
         if phase == "train" and sample.get("apply_update", True) and args.measure_detail == "full":
+            readout_weight_delta_by_out = {
+                f"sum_d_readout_out{out}_signed": sum(
+                    parsed[f"d_vw{out}{h}_signed_{idx}"] for h in range(HIDDEN)
+                )
+                for out in range(OUTPUTS)
+            }
+            output_bias_delta_by_out = {
+                f"d_output_bias_out{out}_signed": parsed[f"d_vbo{out}_signed_{idx}"]
+                for out in range(OUTPUTS)
+            }
             row.update(
                 {
                     "post_update_margin": parsed[f"train_margin_after_{idx}"],
@@ -3453,6 +3508,8 @@ def main() -> None:
                         for rail in HIDDEN_RAILS
                     ),
                 }
+                | readout_weight_delta_by_out
+                | output_bias_delta_by_out
             )
         rows.append(row)
 
@@ -3491,7 +3548,17 @@ def main() -> None:
         for out in range(OUTPUTS)
         for h in range(HIDDEN)
     ]
+    total_readout_deltas_by_out = {
+        f"total_readout_out{out}_signed_delta_v": sum(
+            parsed[f"d_vw{out}{h}_signed_total"] for h in range(HIDDEN)
+        )
+        for out in range(OUTPUTS)
+    }
     total_output_bias_deltas = [parsed[f"d_vbo{out}_signed_total"] for out in range(OUTPUTS)]
+    total_output_bias_deltas_by_out = {
+        f"total_output_bias_out{out}_signed_delta_v": parsed[f"d_vbo{out}_signed_total"]
+        for out in range(OUTPUTS)
+    }
     total_hidden_deltas = [
         parsed[f"d_wh{h}_{rail}_signed_total"]
         for h in range(HIDDEN)
@@ -3756,10 +3823,10 @@ def main() -> None:
         "lead_cap_f": args.lead_cap_f,
         "score_reset_v": args.score_reset_v,
         "update_width_u": args.update_width_u,
-        "readout_update_width_u": args.readout_update_width_u if args.readout_update_width_u is not None else args.update_width_u,
-        "output_bias_update_width_u": args.output_bias_update_width_u
-        if args.output_bias_update_width_u is not None
-        else (args.readout_update_width_u if args.readout_update_width_u is not None else args.update_width_u),
+        "readout_update_width_u": readout_update_width,
+        "readout_pos_update_width_u": readout_pos_update_width if args.learning_mode == "flow" else None,
+        "readout_neg_update_width_u": readout_neg_update_width if args.learning_mode == "flow" else None,
+        "output_bias_update_width_u": output_bias_update_width,
         "readout_center_pull_width_u": args.readout_center_pull_width_u if args.learning_mode == "flow" else None,
         "output_bias_center_pull_width_u": args.output_bias_center_pull_width_u
         if args.learning_mode == "flow"
@@ -3869,6 +3936,8 @@ def main() -> None:
         "max_abs_total_readout_signed_delta_v": float(
             max([abs(x) for x in total_readout_deltas] + [abs(x) for x in total_output_bias_deltas])
         ),
+        **total_readout_deltas_by_out,
+        **total_output_bias_deltas_by_out,
         "max_abs_total_hidden_signed_delta_v": float(max(abs(x) for x in total_hidden_deltas)),
         "curve": str(curve_path),
         "table_curve": str(table_path),

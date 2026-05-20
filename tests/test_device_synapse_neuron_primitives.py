@@ -534,6 +534,24 @@ def test_target_output_mistake_latch_samples_output_caps_during_error_window() -
     assert "Mbwd_merr0_b bwd_merr0_a bwd_src bwd" in gate
 
 
+def test_restored_target_output_mistake_latch_regenerates_backward_rail() -> None:
+    gate = direct_flow.backward_gate_cells(
+        "target_out_mistake_latch_restore",
+        width_u=64.0,
+        cap_f=2.0,
+    )
+
+    assert "Restored output-capacitor mistake latch" in gate
+    assert "Cmerr0_bar merr0_bar 0 2f IC=1.2" in gate
+    assert "Mreset_merr0_bar vdd rste merr0_bar 0 NREL W=4u" in gate
+    assert "Mmerr0_restore merr0_bar merr0 0 0 NREL W=64u" in gate
+    assert "Mbwd_merr0_p bwd_merr0_p merr0_bar vdd vdd PMOS W=64u" in gate
+    assert "Mbwd_merr0_b bwd_merr0_p bwd_src bwd" in gate
+    assert "Mmerr1_restore merr1_bar merr1 0 0 NREL W=64u" in gate
+    assert "Mbwd_merr1_p bwd_merr1_p merr1_bar vdd vdd PMOS W=64u" in gate
+    assert "Mbwd_merr1_b bwd_merr1_p bwd_src bwd" in gate
+
+
 def test_probe_measurement_keeps_backward_signals_without_full_weight_snapshots() -> None:
     original_hidden = direct_flow.HIDDEN
     original_input_rails = list(direct_flow.INPUT_RAILS)

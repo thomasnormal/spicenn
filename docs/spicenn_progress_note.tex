@@ -1466,6 +1466,23 @@ best-threshold match fraction was 75.8--81.25\%.  The latch signal therefore
 contains useful analog information, but its current gain/threshold is badly
 sized for this low-voltage branch-pair operating point.
 
+The next latch variant sampled the output capacitors directly during the error
+window.  This made the event variable itself much cleaner:
+\code{target\_out\_mistake\_latch} had a best-threshold match fraction of
+100\% on the 64-example fixed8 run.  However, the stored event topped out near
+\(0.21\,\mathrm{V}\), so it still could not directly open the backward rail at
+the fixed \(0.5\,\mathrm{V}\) threshold and final accuracy remained 50\%.  A
+restored version then added a dynamic inverter and PMOS pull-up to regenerate a
+full backward rail from the low-voltage event capacitor.  That circuit proved
+the rail-strength problem is solvable: the backward rail reached about
+\(1.15\,\mathrm{V}\).  It also over-opened on every training cycle, producing
+57 false positive mistake windows and only 57.8125\% final accuracy.  The
+remaining event-circuit problem is therefore discriminator selectivity, not
+rail strength.  In the language above, this is the error-gate side of the same
+hardware-defined learning rule: even if \(G'_{\mathrm{eff}}s_{\mathrm{MOS}}\)
+is usable, a nonselective backward gate changes which examples receive the
+update and can still prevent a linearly separable readout from converging.
+
 The generator also mirrors the write-mode choice on the lower-layer synapses.
 The corresponding option is
 \code{--hidden-flow-}\allowbreak\code{write-mode}.  When hidden direct flow is enabled, hidden

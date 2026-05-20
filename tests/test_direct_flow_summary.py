@@ -54,6 +54,8 @@ def test_direct_flow_summary_extracts_nested_separability(tmp_path: Path) -> Non
                 "readout_center_pull_v": 0.64,
                 "readout_write_high_v": 0.58,
                 "readout_write_low_v": 0.16,
+                "readout_charge_update_width_u": 0.0008,
+                "readout_discharge_update_width_u": 0.0001,
                 "final_eval_accuracy": 0.9166666667,
                 "best_final_transient_accuracy": 0.9166666667,
                 "best_final_transient_min_margin_v": -0.0019,
@@ -102,6 +104,8 @@ def test_direct_flow_summary_extracts_nested_separability(tmp_path: Path) -> Non
     assert row["readout_center_pull_v"] == 0.64
     assert row["readout_write_high_v"] == 0.58
     assert row["readout_write_low_v"] == 0.16
+    assert row["readout_charge_update_width_u"] == 0.0008
+    assert row["readout_discharge_update_width_u"] == 0.0001
     assert row["input_feature_separable"] is True
     assert row["input_feature_min_margin"] == 0.42
     assert row["initial_hidden_separable"] is False

@@ -1439,8 +1439,36 @@ discharge component improves the one-layer circuit without adding any Python
 gradient computation, and the remaining nonmonotonicity is exactly what the
 hardware-mobility view predicts.
 
-The generator now mirrors this control on the lower-layer synapses through
-\code{--hidden-flow-write-mode}.  When hidden direct flow is enabled, hidden
+The generator now exposes action-specific readout widths:
+\code{--readout-charge-update-width-u} and
+\code{--readout-discharge-update-width-u}.  This separates a charge path that
+raises the selected branch from a discharge path that lowers the opposite
+branch, while preserving the older positive/negative branch-width controls for
+single-action runs.  The first focused 64-example probes show that simply
+adding back a weak discharge path is not enough.  With charge fixed at
+\(0.0008\,\mu\mathrm{m}\), discharge widths of \(0.0001\),
+\(0.0002\), and \(0.0004\,\mu\mathrm{m}\) all collapsed to 50\% final
+accuracy; the output-1 readout row moved by roughly
+\(-0.98\) to \(-1.02\,\mathrm{V}\) in total signed state, far more than the
+output-0 row.  Increasing charge to \(0.0012\,\mu\mathrm{m}\) with
+\(0.0001\,\mu\mathrm{m}\) discharge recovered only 64.0625\%.  Thus the
+charge-only result is not just missing a little opposite-branch cleanup; the
+two-action write primitive is still badly row/asymmetry conditioned.
+
+Mistake-latch gates do not yet fix the 64-example readout either.  Replacing
+the continuous target-mistake backward gate with
+\code{target\_mistake\_latch\_simple} at charge-only widths
+\(0.0008\) and \(0.0016\,\mu\mathrm{m}\), and with the fuller
+\code{target\_mistake\_latch} at \(0.0008\,\mu\mathrm{m}\), all stayed at
+50\% final accuracy.  The reason is visible in the instrumentation: the latch
+open count was zero at the fixed \(0.5\ \mathrm{V}\) threshold, even though the
+best-threshold match fraction was 75.8--81.25\%.  The latch signal therefore
+contains useful analog information, but its current gain/threshold is badly
+sized for this low-voltage branch-pair operating point.
+
+The generator also mirrors the write-mode choice on the lower-layer synapses.
+The corresponding option is
+\code{--hidden-flow-}\allowbreak\code{write-mode}.  When hidden direct flow is enabled, hidden
 synapse capacitors can use the same discharge-only, charge-only,
 charge/discharge, and bounded variants as the readout.  This gives the
 all-layer backprop path the same state-window knob that fixed the readout

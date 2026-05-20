@@ -1913,6 +1913,8 @@ def readout_flow_updates(
     readout_flow_write_mode: str = "discharge",
     readout_pos_update_width_u: float | None = None,
     readout_neg_update_width_u: float | None = None,
+    readout_charge_update_width_u: float | None = None,
+    readout_discharge_update_width_u: float | None = None,
     readout_center_pull_width_u: float = 0.0,
     output_bias_center_pull_width_u: float = 0.0,
     readout_pos_write_high_node: str = "whigh",
@@ -1932,10 +1934,26 @@ def readout_flow_updates(
     neg_update_width_u = (
         readout_update_width_u if readout_neg_update_width_u is None else readout_neg_update_width_u
     )
+    pos_discharge_width_u = (
+        pos_update_width_u if readout_discharge_update_width_u is None else readout_discharge_update_width_u
+    )
+    neg_discharge_width_u = (
+        neg_update_width_u if readout_discharge_update_width_u is None else readout_discharge_update_width_u
+    )
+    pos_charge_width_u = (
+        pos_update_width_u if readout_charge_update_width_u is None else readout_charge_update_width_u
+    )
+    neg_charge_width_u = (
+        neg_update_width_u if readout_charge_update_width_u is None else readout_charge_update_width_u
+    )
     if (
         readout_update_width_u < 0
         or pos_update_width_u < 0
         or neg_update_width_u < 0
+        or pos_discharge_width_u < 0
+        or neg_discharge_width_u < 0
+        or pos_charge_width_u < 0
+        or neg_charge_width_u < 0
         or output_bias_update_width_u < 0
         or readout_center_pull_width_u < 0
         or output_bias_center_pull_width_u < 0
@@ -1986,14 +2004,14 @@ def readout_flow_updates(
             ]
         for h in range(HIDDEN):
             pre_gate = f"fpro{out}{h}" if flow_pre_store != "shared_node" else f"act{h}"
-            if (pos_update_width_u > 0 or neg_update_width_u > 0) and discharge_enabled:
+            if (pos_discharge_width_u > 0 or neg_discharge_width_u > 0) and discharge_enabled:
                 lines += [
-                    f"Mvw{out}{h}n_flow_b vw{out}{h}n bwd vw{out}{h}n_flow_b 0 NREL W={neg_update_width_u:.12g}u L=180n",
-                    f"Mvw{out}{h}n_flow_a vw{out}{h}n_flow_b {pre_gate} vw{out}{h}n_flow_a 0 NREL W={neg_update_width_u:.12g}u L=180n",
-                    f"Mvw{out}{h}n_flow_d vw{out}{h}n_flow_a {n_gate}{out} {neg_low_node} 0 NSENSE W={neg_update_width_u:.12g}u L=180n",
-                    f"Mvw{out}{h}p_flow_b vw{out}{h}p bwd vw{out}{h}p_flow_b 0 NREL W={pos_update_width_u:.12g}u L=180n",
-                    f"Mvw{out}{h}p_flow_a vw{out}{h}p_flow_b {pre_gate} vw{out}{h}p_flow_a 0 NREL W={pos_update_width_u:.12g}u L=180n",
-                    f"Mvw{out}{h}p_flow_d vw{out}{h}p_flow_a {p_gate}{out} {pos_low_node} 0 NSENSE W={pos_update_width_u:.12g}u L=180n",
+                    f"Mvw{out}{h}n_flow_b vw{out}{h}n bwd vw{out}{h}n_flow_b 0 NREL W={neg_discharge_width_u:.12g}u L=180n",
+                    f"Mvw{out}{h}n_flow_a vw{out}{h}n_flow_b {pre_gate} vw{out}{h}n_flow_a 0 NREL W={neg_discharge_width_u:.12g}u L=180n",
+                    f"Mvw{out}{h}n_flow_d vw{out}{h}n_flow_a {n_gate}{out} {neg_low_node} 0 NSENSE W={neg_discharge_width_u:.12g}u L=180n",
+                    f"Mvw{out}{h}p_flow_b vw{out}{h}p bwd vw{out}{h}p_flow_b 0 NREL W={pos_discharge_width_u:.12g}u L=180n",
+                    f"Mvw{out}{h}p_flow_a vw{out}{h}p_flow_b {pre_gate} vw{out}{h}p_flow_a 0 NREL W={pos_discharge_width_u:.12g}u L=180n",
+                    f"Mvw{out}{h}p_flow_d vw{out}{h}p_flow_a {p_gate}{out} {pos_low_node} 0 NSENSE W={pos_discharge_width_u:.12g}u L=180n",
                 ]
                 lines += node_parasitics(
                     f"vw{out}{h}n_flow_b",
@@ -2001,14 +2019,14 @@ def readout_flow_updates(
                     f"vw{out}{h}p_flow_b",
                     f"vw{out}{h}p_flow_a",
                 )
-            if (pos_update_width_u > 0 or neg_update_width_u > 0) and charge_enabled:
+            if (pos_charge_width_u > 0 or neg_charge_width_u > 0) and charge_enabled:
                 lines += [
-                    f"Mvw{out}{h}p_ch_b {pos_high_node} bwd vw{out}{h}p_ch_b 0 NREL W={pos_update_width_u:.12g}u L=180n",
-                    f"Mvw{out}{h}p_ch_a vw{out}{h}p_ch_b {pre_gate} vw{out}{h}p_ch_a 0 NREL W={pos_update_width_u:.12g}u L=180n",
-                    f"Mvw{out}{h}p_ch_d vw{out}{h}p_ch_a {n_gate}{out} vw{out}{h}p 0 NSENSE W={pos_update_width_u:.12g}u L=180n",
-                    f"Mvw{out}{h}n_ch_b {neg_high_node} bwd vw{out}{h}n_ch_b 0 NREL W={neg_update_width_u:.12g}u L=180n",
-                    f"Mvw{out}{h}n_ch_a vw{out}{h}n_ch_b {pre_gate} vw{out}{h}n_ch_a 0 NREL W={neg_update_width_u:.12g}u L=180n",
-                    f"Mvw{out}{h}n_ch_d vw{out}{h}n_ch_a {p_gate}{out} vw{out}{h}n 0 NSENSE W={neg_update_width_u:.12g}u L=180n",
+                    f"Mvw{out}{h}p_ch_b {pos_high_node} bwd vw{out}{h}p_ch_b 0 NREL W={pos_charge_width_u:.12g}u L=180n",
+                    f"Mvw{out}{h}p_ch_a vw{out}{h}p_ch_b {pre_gate} vw{out}{h}p_ch_a 0 NREL W={pos_charge_width_u:.12g}u L=180n",
+                    f"Mvw{out}{h}p_ch_d vw{out}{h}p_ch_a {n_gate}{out} vw{out}{h}p 0 NSENSE W={pos_charge_width_u:.12g}u L=180n",
+                    f"Mvw{out}{h}n_ch_b {neg_high_node} bwd vw{out}{h}n_ch_b 0 NREL W={neg_charge_width_u:.12g}u L=180n",
+                    f"Mvw{out}{h}n_ch_a vw{out}{h}n_ch_b {pre_gate} vw{out}{h}n_ch_a 0 NREL W={neg_charge_width_u:.12g}u L=180n",
+                    f"Mvw{out}{h}n_ch_d vw{out}{h}n_ch_a {p_gate}{out} vw{out}{h}n 0 NSENSE W={neg_charge_width_u:.12g}u L=180n",
                 ]
                 lines += node_parasitics(
                     f"vw{out}{h}p_ch_b",
@@ -2500,6 +2518,8 @@ def random_hidden_netlist(
     readout_update_width_u: float,
     readout_pos_update_width_u: float | None,
     readout_neg_update_width_u: float | None,
+    readout_charge_update_width_u: float | None,
+    readout_discharge_update_width_u: float | None,
     output_bias_update_width_u: float,
     readout_center_pull_width_u: float,
     output_bias_center_pull_width_u: float,
@@ -2636,6 +2656,8 @@ def random_hidden_netlist(
                 readout_flow_write_mode,
                 readout_pos_update_width_u,
                 readout_neg_update_width_u,
+                readout_charge_update_width_u,
+                readout_discharge_update_width_u,
                 readout_center_pull_width_u,
                 output_bias_center_pull_width_u,
                 "wphigh",
@@ -2960,6 +2982,22 @@ def main() -> None:
         type=float,
         help="Optional direct-flow update width for negative readout weight branches.",
     )
+    ap.add_argument(
+        "--readout-charge-update-width-u",
+        type=float,
+        help=(
+            "Optional direct-flow update width for readout charge devices. "
+            "When set, it overrides branch widths for the charge half of charge/discharge write modes."
+        ),
+    )
+    ap.add_argument(
+        "--readout-discharge-update-width-u",
+        type=float,
+        help=(
+            "Optional direct-flow update width for readout discharge devices. "
+            "When set, it overrides branch widths for the discharge half of discharge/charge_discharge write modes."
+        ),
+    )
     ap.add_argument("--output-bias-update-width-u", type=float)
     ap.add_argument(
         "--readout-center-pull-width-u",
@@ -3165,6 +3203,10 @@ def main() -> None:
         raise SystemExit("--readout-pos-update-width-u must be nonnegative.")
     if args.readout_neg_update_width_u is not None and args.readout_neg_update_width_u < 0:
         raise SystemExit("--readout-neg-update-width-u must be nonnegative.")
+    if args.readout_charge_update_width_u is not None and args.readout_charge_update_width_u < 0:
+        raise SystemExit("--readout-charge-update-width-u must be nonnegative.")
+    if args.readout_discharge_update_width_u is not None and args.readout_discharge_update_width_u < 0:
+        raise SystemExit("--readout-discharge-update-width-u must be nonnegative.")
     if args.output_bias_update_width_u is not None and args.output_bias_update_width_u < 0:
         raise SystemExit("--output-bias-update-width-u must be nonnegative.")
     if args.readout_center_pull_width_u < 0 or args.output_bias_center_pull_width_u < 0:
@@ -3260,6 +3302,12 @@ def main() -> None:
     readout_neg_update_width = (
         readout_update_width if args.readout_neg_update_width_u is None else args.readout_neg_update_width_u
     )
+    readout_charge_update_width = (
+        None if args.readout_charge_update_width_u is None else args.readout_charge_update_width_u
+    )
+    readout_discharge_update_width = (
+        None if args.readout_discharge_update_width_u is None else args.readout_discharge_update_width_u
+    )
     output_bias_update_width = (
         args.output_bias_update_width_u
         if args.output_bias_update_width_u is not None
@@ -3334,6 +3382,8 @@ def main() -> None:
         readout_update_width,
         args.readout_pos_update_width_u,
         args.readout_neg_update_width_u,
+        args.readout_charge_update_width_u,
+        args.readout_discharge_update_width_u,
         output_bias_update_width,
         args.readout_center_pull_width_u,
         args.output_bias_center_pull_width_u,
@@ -3826,6 +3876,8 @@ def main() -> None:
         "readout_update_width_u": readout_update_width,
         "readout_pos_update_width_u": readout_pos_update_width if args.learning_mode == "flow" else None,
         "readout_neg_update_width_u": readout_neg_update_width if args.learning_mode == "flow" else None,
+        "readout_charge_update_width_u": readout_charge_update_width if args.learning_mode == "flow" else None,
+        "readout_discharge_update_width_u": readout_discharge_update_width if args.learning_mode == "flow" else None,
         "output_bias_update_width_u": output_bias_update_width,
         "readout_center_pull_width_u": args.readout_center_pull_width_u if args.learning_mode == "flow" else None,
         "output_bias_center_pull_width_u": args.output_bias_center_pull_width_u

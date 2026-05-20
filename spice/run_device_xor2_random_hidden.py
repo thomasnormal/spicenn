@@ -106,6 +106,7 @@ FLOW_PRE_STORES = ["shared_node", "synapse_gate", "synapse_consume"]
 READOUT_FLOW_POLARITIES = ["normal", "reversed"]
 READOUT_CENTER_PULL_GATES = ["bwd", "apply"]
 READOUT_CENTER_PULL_MODES = ["always", "state_high"]
+READOUT_WRITE_STATE_GATE_MODES = ["none", "state_high_discharge", "state_window"]
 READOUT_FLOW_WRITE_MODES = [
     "discharge",
     "bounded_discharge",
@@ -2016,6 +2017,7 @@ def readout_flow_updates(
     output_bias_center_pull_width_u: float = 0.0,
     readout_center_pull_gate: str = "bwd",
     readout_center_pull_mode: str = "always",
+    readout_write_state_gate_mode: str = "none",
     readout_pos_write_high_node: str = "whigh",
     readout_pos_write_low_node: str = "wlow",
     readout_neg_write_high_node: str = "whigh",
@@ -2035,6 +2037,8 @@ def readout_flow_updates(
         raise ValueError(f"unknown readout center-pull gate: {readout_center_pull_gate}")
     if readout_center_pull_mode not in READOUT_CENTER_PULL_MODES:
         raise ValueError(f"unknown readout center-pull mode: {readout_center_pull_mode}")
+    if readout_write_state_gate_mode not in READOUT_WRITE_STATE_GATE_MODES:
+        raise ValueError(f"unknown readout write state-gate mode: {readout_write_state_gate_mode}")
     pos_update_width_u = (
         readout_update_width_u if readout_pos_update_width_u is None else readout_pos_update_width_u
     )
@@ -2086,24 +2090,58 @@ def readout_flow_updates(
     pos_low_node = readout_pos_write_low_node if bounded_write else low_node
     neg_high_node = readout_neg_write_high_node if bounded_write else high_node
     neg_low_node = readout_neg_write_low_node if bounded_write else low_node
+    state_gate_discharge = readout_write_state_gate_mode in {"state_high_discharge", "state_window"}
+    state_gate_charge = readout_write_state_gate_mode == "state_window"
     lines: list[str] = []
     for out in range(OUTPUTS):
         if output_bias_update_width_u > 0 and discharge_enabled:
-            lines += [
-                f"Mvbo{out}n_flow_b vbo{out}n bwd vbo{out}n_flow_b 0 NREL W={output_bias_update_width_u:.12g}u L=180n",
-                f"Mvbo{out}n_flow_d vbo{out}n_flow_b {n_gate}{out} {neg_low_node} 0 NSENSE W={output_bias_update_width_u:.12g}u L=180n",
-                f"Mvbo{out}p_flow_b vbo{out}p bwd vbo{out}p_flow_b 0 NREL W={output_bias_update_width_u:.12g}u L=180n",
-                f"Mvbo{out}p_flow_d vbo{out}p_flow_b {p_gate}{out} {pos_low_node} 0 NSENSE W={output_bias_update_width_u:.12g}u L=180n",
-            ]
-            lines += node_parasitics(f"vbo{out}n_flow_b", f"vbo{out}p_flow_b")
+            if state_gate_discharge:
+                lines += [
+                    f"Mvbo{out}n_flow_s vbo{out}n vbo{out}n vbo{out}n_flow_s 0 NREL W={output_bias_update_width_u:.12g}u L=180n",
+                    f"Mvbo{out}n_flow_b vbo{out}n_flow_s bwd vbo{out}n_flow_b 0 NREL W={output_bias_update_width_u:.12g}u L=180n",
+                    f"Mvbo{out}n_flow_d vbo{out}n_flow_b {n_gate}{out} {neg_low_node} 0 NSENSE W={output_bias_update_width_u:.12g}u L=180n",
+                    f"Mvbo{out}p_flow_s vbo{out}p vbo{out}p vbo{out}p_flow_s 0 NREL W={output_bias_update_width_u:.12g}u L=180n",
+                    f"Mvbo{out}p_flow_b vbo{out}p_flow_s bwd vbo{out}p_flow_b 0 NREL W={output_bias_update_width_u:.12g}u L=180n",
+                    f"Mvbo{out}p_flow_d vbo{out}p_flow_b {p_gate}{out} {pos_low_node} 0 NSENSE W={output_bias_update_width_u:.12g}u L=180n",
+                ]
+                lines += node_parasitics(
+                    f"vbo{out}n_flow_s",
+                    f"vbo{out}n_flow_b",
+                    f"vbo{out}p_flow_s",
+                    f"vbo{out}p_flow_b",
+                )
+            else:
+                lines += [
+                    f"Mvbo{out}n_flow_b vbo{out}n bwd vbo{out}n_flow_b 0 NREL W={output_bias_update_width_u:.12g}u L=180n",
+                    f"Mvbo{out}n_flow_d vbo{out}n_flow_b {n_gate}{out} {neg_low_node} 0 NSENSE W={output_bias_update_width_u:.12g}u L=180n",
+                    f"Mvbo{out}p_flow_b vbo{out}p bwd vbo{out}p_flow_b 0 NREL W={output_bias_update_width_u:.12g}u L=180n",
+                    f"Mvbo{out}p_flow_d vbo{out}p_flow_b {p_gate}{out} {pos_low_node} 0 NSENSE W={output_bias_update_width_u:.12g}u L=180n",
+                ]
+                lines += node_parasitics(f"vbo{out}n_flow_b", f"vbo{out}p_flow_b")
         if output_bias_update_width_u > 0 and charge_enabled:
-            lines += [
-                f"Mvbo{out}p_ch_b {pos_high_node} bwd vbo{out}p_ch_b 0 NREL W={output_bias_update_width_u:.12g}u L=180n",
-                f"Mvbo{out}p_ch_d vbo{out}p_ch_b {n_gate}{out} vbo{out}p 0 NSENSE W={output_bias_update_width_u:.12g}u L=180n",
-                f"Mvbo{out}n_ch_b {neg_high_node} bwd vbo{out}n_ch_b 0 NREL W={output_bias_update_width_u:.12g}u L=180n",
-                f"Mvbo{out}n_ch_d vbo{out}n_ch_b {p_gate}{out} vbo{out}n 0 NSENSE W={output_bias_update_width_u:.12g}u L=180n",
-            ]
-            lines += node_parasitics(f"vbo{out}p_ch_b", f"vbo{out}n_ch_b")
+            if state_gate_charge:
+                lines += [
+                    f"Mvbo{out}p_ch_s {pos_high_node} vbo{out}p vbo{out}p_ch_s vdd PMOS W={output_bias_update_width_u:.12g}u L=180n",
+                    f"Mvbo{out}p_ch_b vbo{out}p_ch_s bwd vbo{out}p_ch_b 0 NREL W={output_bias_update_width_u:.12g}u L=180n",
+                    f"Mvbo{out}p_ch_d vbo{out}p_ch_b {n_gate}{out} vbo{out}p 0 NSENSE W={output_bias_update_width_u:.12g}u L=180n",
+                    f"Mvbo{out}n_ch_s {neg_high_node} vbo{out}n vbo{out}n_ch_s vdd PMOS W={output_bias_update_width_u:.12g}u L=180n",
+                    f"Mvbo{out}n_ch_b vbo{out}n_ch_s bwd vbo{out}n_ch_b 0 NREL W={output_bias_update_width_u:.12g}u L=180n",
+                    f"Mvbo{out}n_ch_d vbo{out}n_ch_b {p_gate}{out} vbo{out}n 0 NSENSE W={output_bias_update_width_u:.12g}u L=180n",
+                ]
+                lines += node_parasitics(
+                    f"vbo{out}p_ch_s",
+                    f"vbo{out}p_ch_b",
+                    f"vbo{out}n_ch_s",
+                    f"vbo{out}n_ch_b",
+                )
+            else:
+                lines += [
+                    f"Mvbo{out}p_ch_b {pos_high_node} bwd vbo{out}p_ch_b 0 NREL W={output_bias_update_width_u:.12g}u L=180n",
+                    f"Mvbo{out}p_ch_d vbo{out}p_ch_b {n_gate}{out} vbo{out}p 0 NSENSE W={output_bias_update_width_u:.12g}u L=180n",
+                    f"Mvbo{out}n_ch_b {neg_high_node} bwd vbo{out}n_ch_b 0 NREL W={output_bias_update_width_u:.12g}u L=180n",
+                    f"Mvbo{out}n_ch_d vbo{out}n_ch_b {p_gate}{out} vbo{out}n 0 NSENSE W={output_bias_update_width_u:.12g}u L=180n",
+                ]
+                lines += node_parasitics(f"vbo{out}p_ch_b", f"vbo{out}n_ch_b")
         if output_bias_center_pull_width_u > 0:
             if readout_center_pull_mode == "always":
                 lines += [
@@ -2121,35 +2159,75 @@ def readout_flow_updates(
         for h in range(HIDDEN):
             pre_gate = f"fpro{out}{h}" if flow_pre_store != "shared_node" else f"act{h}"
             if (pos_discharge_width_u > 0 or neg_discharge_width_u > 0) and discharge_enabled:
-                lines += [
-                    f"Mvw{out}{h}n_flow_b vw{out}{h}n bwd vw{out}{h}n_flow_b 0 NREL W={neg_discharge_width_u:.12g}u L=180n",
-                    f"Mvw{out}{h}n_flow_a vw{out}{h}n_flow_b {pre_gate} vw{out}{h}n_flow_a 0 NREL W={neg_discharge_width_u:.12g}u L=180n",
-                    f"Mvw{out}{h}n_flow_d vw{out}{h}n_flow_a {n_gate}{out} {neg_low_node} 0 NSENSE W={neg_discharge_width_u:.12g}u L=180n",
-                    f"Mvw{out}{h}p_flow_b vw{out}{h}p bwd vw{out}{h}p_flow_b 0 NREL W={pos_discharge_width_u:.12g}u L=180n",
-                    f"Mvw{out}{h}p_flow_a vw{out}{h}p_flow_b {pre_gate} vw{out}{h}p_flow_a 0 NREL W={pos_discharge_width_u:.12g}u L=180n",
-                    f"Mvw{out}{h}p_flow_d vw{out}{h}p_flow_a {p_gate}{out} {pos_low_node} 0 NSENSE W={pos_discharge_width_u:.12g}u L=180n",
-                ]
-                lines += node_parasitics(
-                    f"vw{out}{h}n_flow_b",
-                    f"vw{out}{h}n_flow_a",
-                    f"vw{out}{h}p_flow_b",
-                    f"vw{out}{h}p_flow_a",
-                )
+                if state_gate_discharge:
+                    lines += [
+                        f"Mvw{out}{h}n_flow_s vw{out}{h}n vw{out}{h}n vw{out}{h}n_flow_s 0 NREL W={neg_discharge_width_u:.12g}u L=180n",
+                        f"Mvw{out}{h}n_flow_b vw{out}{h}n_flow_s bwd vw{out}{h}n_flow_b 0 NREL W={neg_discharge_width_u:.12g}u L=180n",
+                        f"Mvw{out}{h}n_flow_a vw{out}{h}n_flow_b {pre_gate} vw{out}{h}n_flow_a 0 NREL W={neg_discharge_width_u:.12g}u L=180n",
+                        f"Mvw{out}{h}n_flow_d vw{out}{h}n_flow_a {n_gate}{out} {neg_low_node} 0 NSENSE W={neg_discharge_width_u:.12g}u L=180n",
+                        f"Mvw{out}{h}p_flow_s vw{out}{h}p vw{out}{h}p vw{out}{h}p_flow_s 0 NREL W={pos_discharge_width_u:.12g}u L=180n",
+                        f"Mvw{out}{h}p_flow_b vw{out}{h}p_flow_s bwd vw{out}{h}p_flow_b 0 NREL W={pos_discharge_width_u:.12g}u L=180n",
+                        f"Mvw{out}{h}p_flow_a vw{out}{h}p_flow_b {pre_gate} vw{out}{h}p_flow_a 0 NREL W={pos_discharge_width_u:.12g}u L=180n",
+                        f"Mvw{out}{h}p_flow_d vw{out}{h}p_flow_a {p_gate}{out} {pos_low_node} 0 NSENSE W={pos_discharge_width_u:.12g}u L=180n",
+                    ]
+                    lines += node_parasitics(
+                        f"vw{out}{h}n_flow_s",
+                        f"vw{out}{h}n_flow_b",
+                        f"vw{out}{h}n_flow_a",
+                        f"vw{out}{h}p_flow_s",
+                        f"vw{out}{h}p_flow_b",
+                        f"vw{out}{h}p_flow_a",
+                    )
+                else:
+                    lines += [
+                        f"Mvw{out}{h}n_flow_b vw{out}{h}n bwd vw{out}{h}n_flow_b 0 NREL W={neg_discharge_width_u:.12g}u L=180n",
+                        f"Mvw{out}{h}n_flow_a vw{out}{h}n_flow_b {pre_gate} vw{out}{h}n_flow_a 0 NREL W={neg_discharge_width_u:.12g}u L=180n",
+                        f"Mvw{out}{h}n_flow_d vw{out}{h}n_flow_a {n_gate}{out} {neg_low_node} 0 NSENSE W={neg_discharge_width_u:.12g}u L=180n",
+                        f"Mvw{out}{h}p_flow_b vw{out}{h}p bwd vw{out}{h}p_flow_b 0 NREL W={pos_discharge_width_u:.12g}u L=180n",
+                        f"Mvw{out}{h}p_flow_a vw{out}{h}p_flow_b {pre_gate} vw{out}{h}p_flow_a 0 NREL W={pos_discharge_width_u:.12g}u L=180n",
+                        f"Mvw{out}{h}p_flow_d vw{out}{h}p_flow_a {p_gate}{out} {pos_low_node} 0 NSENSE W={pos_discharge_width_u:.12g}u L=180n",
+                    ]
+                    lines += node_parasitics(
+                        f"vw{out}{h}n_flow_b",
+                        f"vw{out}{h}n_flow_a",
+                        f"vw{out}{h}p_flow_b",
+                        f"vw{out}{h}p_flow_a",
+                    )
             if (pos_charge_width_u > 0 or neg_charge_width_u > 0) and charge_enabled:
-                lines += [
-                    f"Mvw{out}{h}p_ch_b {pos_high_node} bwd vw{out}{h}p_ch_b 0 NREL W={pos_charge_width_u:.12g}u L=180n",
-                    f"Mvw{out}{h}p_ch_a vw{out}{h}p_ch_b {pre_gate} vw{out}{h}p_ch_a 0 NREL W={pos_charge_width_u:.12g}u L=180n",
-                    f"Mvw{out}{h}p_ch_d vw{out}{h}p_ch_a {n_gate}{out} vw{out}{h}p 0 NSENSE W={pos_charge_width_u:.12g}u L=180n",
-                    f"Mvw{out}{h}n_ch_b {neg_high_node} bwd vw{out}{h}n_ch_b 0 NREL W={neg_charge_width_u:.12g}u L=180n",
-                    f"Mvw{out}{h}n_ch_a vw{out}{h}n_ch_b {pre_gate} vw{out}{h}n_ch_a 0 NREL W={neg_charge_width_u:.12g}u L=180n",
-                    f"Mvw{out}{h}n_ch_d vw{out}{h}n_ch_a {p_gate}{out} vw{out}{h}n 0 NSENSE W={neg_charge_width_u:.12g}u L=180n",
-                ]
-                lines += node_parasitics(
-                    f"vw{out}{h}p_ch_b",
-                    f"vw{out}{h}p_ch_a",
-                    f"vw{out}{h}n_ch_b",
-                    f"vw{out}{h}n_ch_a",
-                )
+                if state_gate_charge:
+                    lines += [
+                        f"Mvw{out}{h}p_ch_s {pos_high_node} vw{out}{h}p vw{out}{h}p_ch_s vdd PMOS W={pos_charge_width_u:.12g}u L=180n",
+                        f"Mvw{out}{h}p_ch_b vw{out}{h}p_ch_s bwd vw{out}{h}p_ch_b 0 NREL W={pos_charge_width_u:.12g}u L=180n",
+                        f"Mvw{out}{h}p_ch_a vw{out}{h}p_ch_b {pre_gate} vw{out}{h}p_ch_a 0 NREL W={pos_charge_width_u:.12g}u L=180n",
+                        f"Mvw{out}{h}p_ch_d vw{out}{h}p_ch_a {n_gate}{out} vw{out}{h}p 0 NSENSE W={pos_charge_width_u:.12g}u L=180n",
+                        f"Mvw{out}{h}n_ch_s {neg_high_node} vw{out}{h}n vw{out}{h}n_ch_s vdd PMOS W={neg_charge_width_u:.12g}u L=180n",
+                        f"Mvw{out}{h}n_ch_b vw{out}{h}n_ch_s bwd vw{out}{h}n_ch_b 0 NREL W={neg_charge_width_u:.12g}u L=180n",
+                        f"Mvw{out}{h}n_ch_a vw{out}{h}n_ch_b {pre_gate} vw{out}{h}n_ch_a 0 NREL W={neg_charge_width_u:.12g}u L=180n",
+                        f"Mvw{out}{h}n_ch_d vw{out}{h}n_ch_a {p_gate}{out} vw{out}{h}n 0 NSENSE W={neg_charge_width_u:.12g}u L=180n",
+                    ]
+                    lines += node_parasitics(
+                        f"vw{out}{h}p_ch_s",
+                        f"vw{out}{h}p_ch_b",
+                        f"vw{out}{h}p_ch_a",
+                        f"vw{out}{h}n_ch_s",
+                        f"vw{out}{h}n_ch_b",
+                        f"vw{out}{h}n_ch_a",
+                    )
+                else:
+                    lines += [
+                        f"Mvw{out}{h}p_ch_b {pos_high_node} bwd vw{out}{h}p_ch_b 0 NREL W={pos_charge_width_u:.12g}u L=180n",
+                        f"Mvw{out}{h}p_ch_a vw{out}{h}p_ch_b {pre_gate} vw{out}{h}p_ch_a 0 NREL W={pos_charge_width_u:.12g}u L=180n",
+                        f"Mvw{out}{h}p_ch_d vw{out}{h}p_ch_a {n_gate}{out} vw{out}{h}p 0 NSENSE W={pos_charge_width_u:.12g}u L=180n",
+                        f"Mvw{out}{h}n_ch_b {neg_high_node} bwd vw{out}{h}n_ch_b 0 NREL W={neg_charge_width_u:.12g}u L=180n",
+                        f"Mvw{out}{h}n_ch_a vw{out}{h}n_ch_b {pre_gate} vw{out}{h}n_ch_a 0 NREL W={neg_charge_width_u:.12g}u L=180n",
+                        f"Mvw{out}{h}n_ch_d vw{out}{h}n_ch_a {p_gate}{out} vw{out}{h}n 0 NSENSE W={neg_charge_width_u:.12g}u L=180n",
+                    ]
+                    lines += node_parasitics(
+                        f"vw{out}{h}p_ch_b",
+                        f"vw{out}{h}p_ch_a",
+                        f"vw{out}{h}n_ch_b",
+                        f"vw{out}{h}n_ch_a",
+                    )
             if readout_center_pull_width_u > 0:
                 if readout_center_pull_mode == "always":
                     lines += [
@@ -2664,6 +2742,7 @@ def random_hidden_netlist(
     output_bias_neg_center_pull_v: float | None,
     readout_center_pull_gate: str,
     readout_center_pull_mode: str,
+    readout_write_state_gate_mode: str,
     readout_write_high_v: float,
     readout_write_low_v: float,
     readout_pos_write_high_v: float | None,
@@ -2814,6 +2893,7 @@ def random_hidden_netlist(
                 output_bias_center_pull_width_u,
                 readout_center_pull_gate,
                 readout_center_pull_mode,
+                readout_write_state_gate_mode,
                 "wphigh",
                 "wplow",
                 "wnhigh",
@@ -3229,6 +3309,16 @@ def main() -> None:
         ),
     )
     ap.add_argument(
+        "--readout-write-state-gate-mode",
+        choices=READOUT_WRITE_STATE_GATE_MODES,
+        default="none",
+        help=(
+            "Optional state-dependent gating inside the direct-flow readout write stack. "
+            "'state_high_discharge' lets discharge flow only from high stored states; "
+            "'state_window' also turns charge paths off as the stored state approaches the high rail."
+        ),
+    )
+    ap.add_argument(
         "--readout-flow-polarity",
         choices=READOUT_FLOW_POLARITIES,
         default="normal",
@@ -3608,6 +3698,7 @@ def main() -> None:
         args.output_bias_neg_center_pull_v,
         args.readout_center_pull_gate,
         args.readout_center_pull_mode,
+        args.readout_write_state_gate_mode,
         args.readout_write_high_v,
         args.readout_write_low_v,
         readout_pos_write_high_v,
@@ -4160,6 +4251,9 @@ def main() -> None:
         ),
         "readout_center_pull_gate": args.readout_center_pull_gate if args.learning_mode == "flow" else None,
         "readout_center_pull_mode": args.readout_center_pull_mode if args.learning_mode == "flow" else None,
+        "readout_write_state_gate_mode": (
+            args.readout_write_state_gate_mode if args.learning_mode == "flow" else None
+        ),
         "readout_write_high_v": (
             args.readout_write_high_v
             if args.learning_mode == "flow"

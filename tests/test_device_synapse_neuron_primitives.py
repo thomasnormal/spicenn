@@ -472,6 +472,44 @@ def test_direct_flow_readout_accepts_action_specific_update_widths() -> None:
     assert "Mvw00n_ch_b whigh bwd vw00n_ch_b 0 NREL W=0.011u" in updates
 
 
+def test_direct_flow_readout_write_can_gate_discharge_by_stored_state() -> None:
+    updates = direct_flow.readout_flow_updates(
+        readout_update_width_u=0.02,
+        readout_discharge_update_width_u=0.005,
+        output_bias_update_width_u=0.0003,
+        flow_pre_store="shared_node",
+        readout_flow_polarity="normal",
+        readout_flow_write_mode="bounded_discharge",
+        readout_write_state_gate_mode="state_high_discharge",
+    )
+
+    assert "Mvw00n_flow_s vw00n vw00n vw00n_flow_s 0 NREL W=0.005u" in updates
+    assert "Mvw00n_flow_b vw00n_flow_s bwd vw00n_flow_b 0 NREL W=0.005u" in updates
+    assert "Mvw00p_flow_s vw00p vw00p vw00p_flow_s 0 NREL W=0.005u" in updates
+    assert "Mvbo0n_flow_s vbo0n vbo0n vbo0n_flow_s 0 NREL W=0.0003u" in updates
+    assert "_ch_s" not in updates
+
+
+def test_direct_flow_readout_write_can_gate_charge_by_stored_state_window() -> None:
+    updates = direct_flow.readout_flow_updates(
+        readout_update_width_u=0.02,
+        readout_charge_update_width_u=0.011,
+        output_bias_update_width_u=0.0003,
+        flow_pre_store="shared_node",
+        readout_flow_polarity="normal",
+        readout_flow_write_mode="bounded_charge_only",
+        readout_write_state_gate_mode="state_window",
+        readout_pos_write_high_node="pos_hi",
+        readout_neg_write_high_node="neg_hi",
+    )
+
+    assert "Mvw00p_ch_s pos_hi vw00p vw00p_ch_s vdd PMOS W=0.011u" in updates
+    assert "Mvw00p_ch_b vw00p_ch_s bwd vw00p_ch_b 0 NREL W=0.011u" in updates
+    assert "Mvw00n_ch_s neg_hi vw00n vw00n_ch_s vdd PMOS W=0.011u" in updates
+    assert "Mvbo0p_ch_s pos_hi vbo0p vbo0p_ch_s vdd PMOS W=0.0003u" in updates
+    assert "_flow_s" not in updates
+
+
 def test_direct_flow_readout_center_pull_is_a_transistor_state_path() -> None:
     updates = direct_flow.readout_flow_updates(
         readout_update_width_u=0.0,

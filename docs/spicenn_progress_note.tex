@@ -1534,6 +1534,41 @@ old center pull was unconditional; a useful fix likely has to be
 write-direction-aware or explicitly mobility-aware, not merely state-high
 clamping.
 
+The same \(G_{\mathrm{eff}}\) versus \(G'_{\mathrm{eff}}\) distinction also
+suggests a better place to put the state dependence: inside the selected write
+stack itself, not as a separate pull applied after the fact.  The generator now
+has a \code{readout\_write\_state\_gate\_mode} control.  In
+\code{state\_high\_discharge} mode, a discharge path must first pass through an
+NMOS gated by the stored branch capacitor, so a branch that is already near its
+low rail has much less discharge mobility.  In \code{state\_window} mode, the
+charge path also passes through a PMOS gated by the stored branch capacitor, so
+charging naturally weakens as the branch approaches the high rail.  This does
+not make the chip compute \(G'_{\mathrm{eff}}\) explicitly.  It implements a
+more plausible hardware mobility factor \(s_{\mathrm{MOS}}(\theta)\), chosen so
+the induced effective-weight mobility
+\[
+  G'_{\mathrm{eff}}(\theta)s_{\mathrm{MOS}}(\theta)
+\]
+vanishes near the rails instead of letting inactive leakage dominate a pinned
+selected branch.  If the 64-example linear readout improves under this mode,
+that is evidence that the failure was a physical-state mobility problem; if it
+does not, the next suspect is the event/error gate or the forward read
+common-mode calibration.
+
+The first two state-gated write probes were negative controls, but useful
+ones.  On the 64-example fixed8 readout with \((0.34,0.10)\ \mathrm{V}\)
+branch centers and a perfect target-mistake gate, \code{state\_window} plus
+\code{bounded\_charge\_discharge} stayed at 50\% final accuracy.  The signed
+readout movement was still negative for both output heads
+\((-0.755,-0.744)\ \mathrm{V}\).  The \code{state\_high\_discharge} plus
+\code{bounded\_discharge} run also stayed at 50\%, with total output-row
+movements \((-1.093,-0.899)\ \mathrm{V}\).  Thus the self-gated write stack is
+not enough by itself.  It did reduce or reshape the total movement, but it did
+not solve the selected-action balance problem.  The current interpretation is
+that the \(G'_{\mathrm{eff}}s_{\mathrm{MOS}}\) diagnosis is still right, but
+the write primitive needs action-specific mobility characterization rather than
+only a generic state-high or state-window gate.
+
 Mistake-latch gates do not yet fix the 64-example readout either.  Replacing
 the continuous target-mistake backward gate with
 \code{target\_mistake\_latch\_simple} at charge-only widths

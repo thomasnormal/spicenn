@@ -1105,10 +1105,41 @@ def summarize_error_rule_action_mobility(error_rule_action: pd.DataFrame) -> dic
         ["both_rows_aligned_fraction", "min_both_desired_signed_read_delta", "mean_abs_signed_read_delta"],
         ascending=[False, False, False],
     ).iloc[0]
+    by_act: list[dict[str, Any]] = []
+    if "act" in out:
+        act_grouped = (
+            out.groupby("act", as_index=False)
+            .agg(
+                rows=("both_rows_action_sign_aligned", "size"),
+                both_rows_aligned_fraction=("both_rows_action_sign_aligned", "mean"),
+                min_row0_desired_signed_read_delta=("row0_desired_signed_read_delta", "min"),
+                min_row1_desired_signed_read_delta=("row1_desired_signed_read_delta", "min"),
+                mean_row0_desired_signed_read_delta=("row0_desired_signed_read_delta", "mean"),
+                mean_row1_desired_signed_read_delta=("row1_desired_signed_read_delta", "mean"),
+            )
+            .copy()
+        )
+        act_grouped["min_both_desired_signed_read_delta"] = act_grouped[
+            ["min_row0_desired_signed_read_delta", "min_row1_desired_signed_read_delta"]
+        ].min(axis=1)
+        act_grouped["mean_both_desired_signed_read_delta"] = act_grouped[
+            ["mean_row0_desired_signed_read_delta", "mean_row1_desired_signed_read_delta"]
+        ].mean(axis=1)
+        by_act = [
+            {
+                "act": float(row["act"]),
+                "rows": int(row["rows"]),
+                "both_rows_aligned_fraction": float(row["both_rows_aligned_fraction"]),
+                "min_both_desired_signed_read_delta": float(row["min_both_desired_signed_read_delta"]),
+                "mean_both_desired_signed_read_delta": float(row["mean_both_desired_signed_read_delta"]),
+            }
+            for _, row in act_grouped.sort_values("act").iterrows()
+        ]
     return {
         "error_rule_action_mobility_csv": None,
         "error_rule_action_mobility_table_csv": None,
         "error_rule_action_rows": int(len(out)),
+        "error_rule_action_by_act": by_act,
         "error_rule_action_both_rows_sign_aligned_fraction": float(out["both_rows_action_sign_aligned"].mean()),
         "error_rule_action_row0_sign_aligned_fraction": float(out["row0_action_sign_aligned"].mean()),
         "error_rule_action_row1_sign_aligned_fraction": float(out["row1_action_sign_aligned"].mean()),

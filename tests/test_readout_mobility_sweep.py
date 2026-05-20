@@ -400,6 +400,7 @@ def test_error_rule_action_summary_requires_both_rows_aligned() -> None:
                 "theta_p": 0.34,
                 "theta_n": 0.13,
                 "error_rule": "out_competitive",
+                "act": 0.08,
                 "row0_signed_read_delta": 0.02,
                 "row0_desired_signed_read_delta": 0.02,
                 "row1_signed_read_delta": -0.01,
@@ -413,6 +414,7 @@ def test_error_rule_action_summary_requires_both_rows_aligned() -> None:
                 "theta_p": 0.46,
                 "theta_n": 0.13,
                 "error_rule": "out_competitive",
+                "act": 0.50,
                 "row0_signed_read_delta": -0.03,
                 "row0_desired_signed_read_delta": -0.03,
                 "row1_signed_read_delta": -0.02,
@@ -431,6 +433,22 @@ def test_error_rule_action_summary_requires_both_rows_aligned() -> None:
     assert summary["error_rule_action_both_rows_sign_aligned_fraction"] == pytest.approx(0.5)
     assert summary["error_rule_action_best_theta_p_v"] == pytest.approx(0.34)
     assert summary["error_rule_action_best_theta_n_v"] == pytest.approx(0.13)
+    assert summary["error_rule_action_by_act"] == [
+        {
+            "act": pytest.approx(0.08),
+            "rows": 1,
+            "both_rows_aligned_fraction": pytest.approx(1.0),
+            "min_both_desired_signed_read_delta": pytest.approx(0.01),
+            "mean_both_desired_signed_read_delta": pytest.approx(0.015),
+        },
+        {
+            "act": pytest.approx(0.50),
+            "rows": 1,
+            "both_rows_aligned_fraction": pytest.approx(0.0),
+            "min_both_desired_signed_read_delta": pytest.approx(-0.03),
+            "mean_both_desired_signed_read_delta": pytest.approx(-0.005),
+        },
+    ]
 
 
 def test_pair_action_summary_prefers_sign_aligned_direct_effect() -> None:

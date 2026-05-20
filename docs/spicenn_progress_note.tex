@@ -1772,13 +1772,68 @@ tracked the score winner 82.8\% of the time.  The next knobs are therefore
 smaller write pulses and a stronger or cleaner winner-sense path, not a larger
 dataset.
 
+The state-dependent write gates need to be checked at the actual action level,
+not only in the branch-only mobility table.  A new grouped-by-activation
+summary makes this visible.  With no state gate, \code{lead\_mistake} remains
+sign-aligned for all 24 probed action cases, but the minimum desired signed
+movement is only \(1.3\cdot10^{-8}\) at \(a=0.08\), compared with
+\(2.37\,\mathrm{mV}\) or more at \(a=0.5\).  This is the clearest
+low-activation starvation measurement so far.
+
+\code{state\_window} is not a safe fix in this topology.  Its branch-only
+signed mobility is positive, but the full actual-rail \code{lead\_mistake}
+probe has 0/24 both-row sign alignment.  The extra state devices interact with
+the real \(\mathrm{dp}/\mathrm{dn}\), pre-trace, and charge/discharge stacks
+enough to change the selected update action.  \code{state\_high\_discharge} is
+less destructive: it keeps 24/24 action signs correct, but it suppresses the
+action-level movement severely.  At \(a=0.5\), the minimum desired signed
+movement falls from \(2.37\,\mathrm{mV}\) without the gate to only
+\(29.4\,\mu\mathrm{V}\).  So the next useful mobility control should not be the
+current full \code{state\_window} stack.  Better candidates are smaller ordinary
+write pulses, asymmetric branch widths, or a gentler state-dependent write path
+whose action-level sign and magnitude are characterized before training.
+
+The matched training runs agree with that action-level diagnosis.  On the
+16-sample interleaved fixed8 readout, \code{state\_window} reached only 50\%
+even though its lead rails matched the desired mistake events perfectly; the
+total row-0 signed readout motion was negative, consistent with the failed
+action probe.  The plain no-state-gate run at \(0.0004\,\mu\mathrm{m}\) reached
+68.75\%, slightly better than the previous \(0.0008\,\mu\mathrm{m}\) no-gate
+run but still with negative final margin.  \code{state\_high\_discharge} at
+\(0.0008\,\mu\mathrm{m}\) reached 75\%, the best result in this lead-mistake
+interleaved readout family so far, although its lead winner tracking was only
+78.9\%.  That makes \code{state\_high\_discharge} a useful current direction,
+but not yet a solved readout trainer.  The immediate follow-ups are stronger
+lead sensing and lower \code{state\_high\_discharge} pulse width.
+
+Those follow-ups reject the simplest lead-strength explanation.  Raising the
+lead sense width from \(96\) to \(256\,\mu\mathrm{m}\) improved the score-winner
+tracking only slightly, from 78.9\% to 80.5\%, but final accuracy fell from
+75\% to 56.25\%.  Lowering the \code{state\_high\_discharge} pulse width to
+\(0.0004\,\mu\mathrm{m}\) kept final accuracy at 75\% and improved the final
+margin from \(-11.7\) to \(-6.7\,\mathrm{mV}\).  So the current best
+lead-mistake readout setting is the gentler \code{state\_high\_discharge}
+write, not a stronger lead latch.  The next experiments should sweep still
+smaller pulses and longer training windows before scaling the dataset.
+
+The first of those sweeps shows a narrow useful pulse range.  Halving the
+\code{state\_high\_discharge} pulse again to \(0.0002\,\mu\mathrm{m}\) reduced
+the total signed readout motion and fell back to 50\% final accuracy.  Keeping
+\(0.0004\,\mu\mathrm{m}\) but extending training from 8 to 12 epochs also fell
+back to 50\%, with all digit-1 samples wrong at the final evaluation.  This
+looks like transient useful learning followed by overshoot or class-drift, not
+a monotone convergent readout optimizer.  A self-timed stop rule, per-example
+margin-sensitive update suppression, or a less binary mistake rail may be more
+important than simply changing the global pulse width.
+
 The generator also mirrors the write-mode choice on the lower-layer synapses.
 The corresponding option is
 \code{--hidden-flow-}\allowbreak\code{write-mode}.  When hidden direct flow is enabled, hidden
 synapse capacitors can use the same discharge-only, charge-only,
 charge/discharge, and bounded variants as the readout.  This gives the
-all-layer backprop path the same state-window knob that fixed the readout
-bridge.
+all-layer backprop path the same bounded-write and state-gating knobs as the
+readout, although the action-level probes above show that the current full
+\code{state\_window} stack is not a safe default.
 
 The first bounded-hidden-write all-layer check is positive.  On
 \code{mnist01fixed8\_32}, with per-synapse pre-activation trace gates,

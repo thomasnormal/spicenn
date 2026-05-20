@@ -1380,6 +1380,21 @@ hypothesis for the linear-readout failures: the cell can move in the locally
 correct state direction while presenting the wrong or too-small effective
 conductance to low-activation samples.
 
+The branch-pair analysis now separates two parameterizations of the same
+physical state.  The raw hardware-update columns estimate
+\(G'_{\mathrm{eff}}(\theta)s_{\mathrm{MOS}}(\theta)\), while the new
+physical-state-gradient columns estimate what would happen if the local write
+current gained an additional \(G'_{\mathrm{eff}}(\theta)\) factor.  Re-analyzing
+the \(v1\) positive and \(v12\) negative sweeps with these columns shows why
+this distinction matters.  At the representative activation, the best raw
+mobility-balanced pair remains \((0.24,0.10)\ \mathrm{V}\), with raw balance
+0.994, but its physical-gradient balance is only 0.418.  The best gain-safe
+pair, \((0.46,0.10)\ \mathrm{V}\), is worse: raw worst-case mobility balance is
+0.080 and physical-gradient worst-case balance is only 0.0037.  So a naive
+``multiply the write by \(G'\)'' correction is not automatically better for the
+current cell.  It can amplify the branch-slope asymmetry unless the operating
+window is chosen for both \(G_{\mathrm{eff}}\) and \(G'_{\mathrm{eff}}\).
+
 The first branch-pair training probes confirm that distinction.  On
 \code{mnist01fixed8\_64}, \((0.24,0.10)\ \mathrm{V}\) stayed at 50\% with a
 74.2\% target-mistake gate match, while \((0.70,0.10)\ \mathrm{V}\) inverted
@@ -1438,6 +1453,20 @@ learner, but it is a useful sanity check: removing the over-aggressive
 discharge component improves the one-layer circuit without adding any Python
 gradient computation, and the remaining nonmonotonicity is exactly what the
 hardware-mobility view predicts.
+
+Two branch-width probes tested whether the charge-only result was simply
+over-charging the negative branch.  Keeping the positive branch at
+\(0.0008\,\mu\mathrm{m}\) and reducing the negative branch to
+\(0.0004\,\mu\mathrm{m}\) reached only 53.125\%; reducing it further to
+\(0.0002\,\mu\mathrm{m}\) collapsed to 50\%.  The first probe did reduce the
+output-1 signed-state drift from about \(-0.97\,\mathrm{V}\) in the
+state-high center-pull run to \(-0.52\,\mathrm{V}\), but the
+target-mistake backward-gate match fell to 49.2\%.  The second probe made the
+gate worse still, with only 20.3\% match.  Thus static branch-width scaling can
+change the state trajectory, but it does not preserve the error-gating
+contract.  The next useful write primitive should be conditional on update
+direction and local state, rather than a single fixed positive/negative branch
+width.
 
 The generator now exposes action-specific readout widths:
 \code{--readout-charge-update-width-u} and

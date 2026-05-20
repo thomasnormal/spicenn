@@ -242,12 +242,39 @@ def signed_mobility_table(df: pd.DataFrame, write_mode: str, write_low_v: float,
         signed["read_positive_slope"] * signed["write_discharge_v"]
         + signed["read_negative_slope"] * signed["write_charge_v"]
     )
+    # If a write primitive also multiplies its state update by G_eff'(theta),
+    # the induced effective-weight mobility gains another slope factor.  These
+    # columns are a diagnostic for physical-state-gradient-style writes; the raw
+    # columns above remain the actual measured hardware update.
+    signed["physical_gradient_increase_mobility"] = (
+        signed["read_negative_slope"] ** 2 * signed["write_discharge_v"]
+        + signed["read_positive_slope"] ** 2 * signed["write_charge_v"]
+    )
+    signed["physical_gradient_decrease_mobility"] = (
+        signed["read_positive_slope"] ** 2 * signed["write_discharge_v"]
+        + signed["read_negative_slope"] ** 2 * signed["write_charge_v"]
+    )
     signed["signed_update_sign_aligned"] = (
         (signed["signed_increase_mobility"] > 0) & (signed["signed_decrease_mobility"] > 0)
+    )
+    signed["physical_gradient_sign_aligned"] = (
+        (signed["physical_gradient_increase_mobility"] > 0)
+        & (signed["physical_gradient_decrease_mobility"] > 0)
     )
     max_mobility = signed[["signed_increase_mobility", "signed_decrease_mobility"]].max(axis=1)
     min_mobility = signed[["signed_increase_mobility", "signed_decrease_mobility"]].min(axis=1)
     signed["signed_mobility_balance"] = np.where(max_mobility > 0, min_mobility / max_mobility, np.nan)
+    physical_max = signed[
+        ["physical_gradient_increase_mobility", "physical_gradient_decrease_mobility"]
+    ].max(axis=1)
+    physical_min = signed[
+        ["physical_gradient_increase_mobility", "physical_gradient_decrease_mobility"]
+    ].min(axis=1)
+    signed["physical_gradient_mobility_balance"] = np.where(
+        physical_max > 0,
+        physical_min / physical_max,
+        np.nan,
+    )
     return signed
 
 
@@ -325,12 +352,35 @@ def branch_pair_signed_mobility_table(
         pair["read_p_slope"] * pair["write_p_discharge_v"]
         + pair["read_n_slope"] * pair["write_n_charge_v"]
     )
+    pair["physical_gradient_increase_mobility"] = (
+        pair["read_n_slope"] ** 2 * pair["write_n_discharge_v"]
+        + pair["read_p_slope"] ** 2 * pair["write_p_charge_v"]
+    )
+    pair["physical_gradient_decrease_mobility"] = (
+        pair["read_p_slope"] ** 2 * pair["write_p_discharge_v"]
+        + pair["read_n_slope"] ** 2 * pair["write_n_charge_v"]
+    )
     pair["signed_update_sign_aligned"] = (
         (pair["signed_increase_mobility"] > 0) & (pair["signed_decrease_mobility"] > 0)
+    )
+    pair["physical_gradient_sign_aligned"] = (
+        (pair["physical_gradient_increase_mobility"] > 0)
+        & (pair["physical_gradient_decrease_mobility"] > 0)
     )
     max_mobility = pair[["signed_increase_mobility", "signed_decrease_mobility"]].max(axis=1)
     min_mobility = pair[["signed_increase_mobility", "signed_decrease_mobility"]].min(axis=1)
     pair["signed_mobility_balance"] = np.where(max_mobility > 0, min_mobility / max_mobility, np.nan)
+    physical_max = pair[
+        ["physical_gradient_increase_mobility", "physical_gradient_decrease_mobility"]
+    ].max(axis=1)
+    physical_min = pair[
+        ["physical_gradient_increase_mobility", "physical_gradient_decrease_mobility"]
+    ].min(axis=1)
+    pair["physical_gradient_mobility_balance"] = np.where(
+        physical_max > 0,
+        physical_min / physical_max,
+        np.nan,
+    )
     return pair
 
 
@@ -353,6 +403,22 @@ def summarize_signed_mobility(signed: pd.DataFrame, write_mode: str, write_low_v
         "min_signed_decrease_mobility": float(operating["signed_decrease_mobility"].min()),
         "max_signed_decrease_mobility": float(operating["signed_decrease_mobility"].max()),
         "min_signed_mobility_balance": float(operating["signed_mobility_balance"].min(skipna=True)),
+        "physical_gradient_sign_aligned_fraction": float(operating["physical_gradient_sign_aligned"].mean()),
+        "min_physical_gradient_increase_mobility": float(
+            operating["physical_gradient_increase_mobility"].min()
+        ),
+        "max_physical_gradient_increase_mobility": float(
+            operating["physical_gradient_increase_mobility"].max()
+        ),
+        "min_physical_gradient_decrease_mobility": float(
+            operating["physical_gradient_decrease_mobility"].min()
+        ),
+        "max_physical_gradient_decrease_mobility": float(
+            operating["physical_gradient_decrease_mobility"].max()
+        ),
+        "min_physical_gradient_mobility_balance": float(
+            operating["physical_gradient_mobility_balance"].min(skipna=True)
+        ),
         "near_zero_signed_increase_count": int((operating["signed_increase_mobility"].abs() < near_zero).sum()),
         "near_zero_signed_decrease_count": int((operating["signed_decrease_mobility"].abs() < near_zero).sum()),
     }
@@ -397,6 +463,8 @@ def summarize_branch_pair_mobility(
             aligned_fraction=("signed_update_sign_aligned", "mean"),
             min_signed_increase_mobility=("signed_increase_mobility", "min"),
             min_signed_decrease_mobility=("signed_decrease_mobility", "min"),
+            min_physical_gradient_mobility_balance=("physical_gradient_mobility_balance", "min"),
+            physical_gradient_aligned_fraction=("physical_gradient_sign_aligned", "mean"),
         )
         .copy()
     )
@@ -440,12 +508,39 @@ def summarize_branch_pair_mobility(
         "branch_pair_max_signed_increase_mobility": float(operating["signed_increase_mobility"].max()),
         "branch_pair_min_signed_decrease_mobility": float(operating["signed_decrease_mobility"].min()),
         "branch_pair_max_signed_decrease_mobility": float(operating["signed_decrease_mobility"].max()),
+        "branch_pair_physical_gradient_sign_aligned_fraction": float(
+            operating["physical_gradient_sign_aligned"].mean()
+        ),
+        "branch_pair_min_physical_gradient_increase_mobility": float(
+            operating["physical_gradient_increase_mobility"].min()
+        ),
+        "branch_pair_max_physical_gradient_increase_mobility": float(
+            operating["physical_gradient_increase_mobility"].max()
+        ),
+        "branch_pair_min_physical_gradient_decrease_mobility": float(
+            operating["physical_gradient_decrease_mobility"].min()
+        ),
+        "branch_pair_max_physical_gradient_decrease_mobility": float(
+            operating["physical_gradient_decrease_mobility"].max()
+        ),
+        "branch_pair_min_physical_gradient_mobility_balance": float(
+            operating["physical_gradient_mobility_balance"].min(skipna=True)
+        ),
         "branch_pair_best_theta_p_v": float(best["theta_p"]),
         "branch_pair_best_theta_n_v": float(best["theta_n"]),
         "branch_pair_best_signed_read_gain": float(best["signed_read_gain"]),
         "branch_pair_best_signed_increase_mobility": float(best["signed_increase_mobility"]),
         "branch_pair_best_signed_decrease_mobility": float(best["signed_decrease_mobility"]),
         "branch_pair_best_signed_mobility_balance": float(best["signed_mobility_balance"]),
+        "branch_pair_best_physical_gradient_increase_mobility": float(
+            best["physical_gradient_increase_mobility"]
+        ),
+        "branch_pair_best_physical_gradient_decrease_mobility": float(
+            best["physical_gradient_decrease_mobility"]
+        ),
+        "branch_pair_best_physical_gradient_mobility_balance": float(
+            best["physical_gradient_mobility_balance"]
+        ),
         "branch_pair_gain_safe_pair_count": int(len(fully_safe)),
         "branch_pair_best_gain_safe_theta_p_v": float(best_gain_safe["theta_p"]),
         "branch_pair_best_gain_safe_theta_n_v": float(best_gain_safe["theta_n"]),
@@ -454,10 +549,16 @@ def summarize_branch_pair_mobility(
         "branch_pair_best_gain_safe_min_signed_mobility_balance": float(
             best_gain_safe["min_signed_mobility_balance"]
         ),
+        "branch_pair_best_gain_safe_min_physical_gradient_mobility_balance": float(
+            best_gain_safe["min_physical_gradient_mobility_balance"]
+        ),
         "branch_pair_best_gain_safe_mean_signed_mobility_balance": float(
             best_gain_safe["mean_signed_mobility_balance"]
         ),
         "branch_pair_best_gain_safe_aligned_fraction": float(best_gain_safe["aligned_fraction"]),
+        "branch_pair_best_gain_safe_physical_gradient_aligned_fraction": float(
+            best_gain_safe["physical_gradient_aligned_fraction"]
+        ),
     }
 
 

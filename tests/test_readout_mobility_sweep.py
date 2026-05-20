@@ -59,6 +59,10 @@ def test_signed_mobility_uses_opposite_branch_for_bounded_discharge() -> None:
     assert row["signed_decrease_mobility"] == pytest.approx(0.10)
     assert row["signed_update_sign_aligned"]
     assert row["signed_mobility_balance"] == pytest.approx(2.0 / 3.0)
+    assert row["physical_gradient_increase_mobility"] == pytest.approx(0.45)
+    assert row["physical_gradient_decrease_mobility"] == pytest.approx(0.20)
+    assert row["physical_gradient_sign_aligned"]
+    assert row["physical_gradient_mobility_balance"] == pytest.approx(4.0 / 9.0)
 
 
 def test_signed_mobility_uses_same_branch_for_charge_only() -> None:
@@ -96,6 +100,10 @@ def test_signed_mobility_uses_same_branch_for_charge_only() -> None:
     assert row["signed_decrease_mobility"] == pytest.approx(0.12)
     assert row["signed_update_sign_aligned"]
     assert row["signed_mobility_balance"] == pytest.approx(2.0 / 3.0)
+    assert row["physical_gradient_increase_mobility"] == pytest.approx(0.16)
+    assert row["physical_gradient_decrease_mobility"] == pytest.approx(0.36)
+    assert row["physical_gradient_sign_aligned"]
+    assert row["physical_gradient_mobility_balance"] == pytest.approx(4.0 / 9.0)
 
 
 def test_branch_pair_mobility_allows_independent_positive_and_negative_windows() -> None:
@@ -142,6 +150,10 @@ def test_branch_pair_mobility_allows_independent_positive_and_negative_windows()
     assert row["signed_decrease_mobility"] == pytest.approx(0.06)
     assert row["signed_update_sign_aligned"]
     assert row["signed_mobility_balance"] == pytest.approx(5.0 / 6.0)
+    assert row["physical_gradient_increase_mobility"] == pytest.approx(0.25)
+    assert row["physical_gradient_decrease_mobility"] == pytest.approx(0.12)
+    assert row["physical_gradient_sign_aligned"]
+    assert row["physical_gradient_mobility_balance"] == pytest.approx(0.12 / 0.25)
 
 
 def test_branch_pair_summary_reports_best_operating_pair() -> None:
@@ -156,6 +168,10 @@ def test_branch_pair_summary_reports_best_operating_pair() -> None:
                 "signed_decrease_mobility": 0.08,
                 "signed_update_sign_aligned": True,
                 "signed_mobility_balance": 0.125,
+                "physical_gradient_increase_mobility": 0.03,
+                "physical_gradient_decrease_mobility": 0.09,
+                "physical_gradient_sign_aligned": True,
+                "physical_gradient_mobility_balance": 1.0 / 3.0,
             },
             {
                 "theta_p": 0.46,
@@ -166,6 +182,10 @@ def test_branch_pair_summary_reports_best_operating_pair() -> None:
                 "signed_decrease_mobility": 0.04,
                 "signed_update_sign_aligned": True,
                 "signed_mobility_balance": 0.8,
+                "physical_gradient_increase_mobility": 0.05,
+                "physical_gradient_decrease_mobility": 0.10,
+                "physical_gradient_sign_aligned": True,
+                "physical_gradient_mobility_balance": 0.5,
             },
         ]
     )
@@ -176,6 +196,8 @@ def test_branch_pair_summary_reports_best_operating_pair() -> None:
     assert summary["branch_pair_best_theta_p_v"] == pytest.approx(0.46)
     assert summary["branch_pair_best_theta_n_v"] == pytest.approx(0.16)
     assert summary["branch_pair_best_signed_mobility_balance"] == pytest.approx(0.8)
+    assert summary["branch_pair_best_physical_gradient_mobility_balance"] == pytest.approx(0.5)
+    assert summary["branch_pair_min_physical_gradient_mobility_balance"] == pytest.approx(1.0 / 3.0)
     assert summary["branch_pair_all_act_negative_signed_read_gain_fraction"] == pytest.approx(0.0)
 
 
@@ -191,6 +213,10 @@ def test_branch_pair_summary_reports_gain_safe_pair_across_activations() -> None
                 "signed_decrease_mobility": 0.04,
                 "signed_update_sign_aligned": True,
                 "signed_mobility_balance": 0.5,
+                "physical_gradient_increase_mobility": 0.08,
+                "physical_gradient_decrease_mobility": 0.04,
+                "physical_gradient_sign_aligned": True,
+                "physical_gradient_mobility_balance": 0.5,
             },
             {
                 "theta_p": 0.46,
@@ -201,6 +227,10 @@ def test_branch_pair_summary_reports_gain_safe_pair_across_activations() -> None
                 "signed_decrease_mobility": 0.04,
                 "signed_update_sign_aligned": True,
                 "signed_mobility_balance": 0.5,
+                "physical_gradient_increase_mobility": 0.08,
+                "physical_gradient_decrease_mobility": 0.04,
+                "physical_gradient_sign_aligned": True,
+                "physical_gradient_mobility_balance": 0.5,
             },
             {
                 "theta_p": 0.34,
@@ -211,6 +241,10 @@ def test_branch_pair_summary_reports_gain_safe_pair_across_activations() -> None
                 "signed_decrease_mobility": 0.01,
                 "signed_update_sign_aligned": True,
                 "signed_mobility_balance": 0.5,
+                "physical_gradient_increase_mobility": 0.02,
+                "physical_gradient_decrease_mobility": 0.01,
+                "physical_gradient_sign_aligned": True,
+                "physical_gradient_mobility_balance": 0.5,
             },
             {
                 "theta_p": 0.34,
@@ -221,6 +255,10 @@ def test_branch_pair_summary_reports_gain_safe_pair_across_activations() -> None
                 "signed_decrease_mobility": 0.01,
                 "signed_update_sign_aligned": True,
                 "signed_mobility_balance": 0.5,
+                "physical_gradient_increase_mobility": 0.02,
+                "physical_gradient_decrease_mobility": 0.01,
+                "physical_gradient_sign_aligned": True,
+                "physical_gradient_mobility_balance": 0.5,
             },
         ]
     )
@@ -236,3 +274,4 @@ def test_branch_pair_summary_reports_gain_safe_pair_across_activations() -> None
     assert summary["branch_pair_best_gain_safe_theta_p_v"] == pytest.approx(0.34)
     assert summary["branch_pair_best_gain_safe_theta_n_v"] == pytest.approx(0.10)
     assert summary["branch_pair_best_gain_safe_min_signed_read_gain"] == pytest.approx(0.1)
+    assert summary["branch_pair_best_gain_safe_min_physical_gradient_mobility_balance"] == pytest.approx(0.5)

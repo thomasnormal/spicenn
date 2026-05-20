@@ -1749,6 +1749,29 @@ stacks still have to produce a sign-aligned and well-scaled
 \(G'_{\mathrm{eff}}(\theta)s_{\mathrm{MOS}}(\theta)\) update over the actual
 training trajectory.
 
+The actual-rail mobility probe now covers this lead-driven case directly.  With
+\code{lead\_mistake}, \code{out\_senseamp} lead polarity, the
+\(1.2\,\mathrm{V}\) bootstrapped pre-trace gate, and the
+\((\theta^+,\theta^-) \approx (0.34,0.13)\,\mathrm{V}\) branch point, all 24
+probed label/action cases were sign-aligned.  The rail generation and write
+polarity are therefore correct at the local-cell level.  The limiting detail is
+scale: for very small activations, the desired signed-read movement was only
+about \(10^{-8}\), while ordinary \(0.5\) to \(0.75\) activations moved by a few
+millivolts in signed read response.  This is consistent with a
+state-dependent mobility problem rather than a simple sign bug.
+
+Changing the training order exposed a second online-learning effect.  The
+original runs used the dataset order, all zeros followed by all ones, so the
+last support-vector update in each epoch was always a class-1 update.  An
+interleaved order removes that artifact but does not solve the circuit: at
+width \(0.0016\,\mu\mathrm{m}\), accuracy stayed at 37.5\% and every training
+cycle opened a lead-mistake update.  Reducing the width to
+\(0.0008\,\mu\mathrm{m}\) improved the same interleaved run to 62.5\%, but
+still opened 114 target-loss updates out of 128 cycles and the lead latch only
+tracked the score winner 82.8\% of the time.  The next knobs are therefore
+smaller write pulses and a stronger or cleaner winner-sense path, not a larger
+dataset.
+
 The generator also mirrors the write-mode choice on the lower-layer synapses.
 The corresponding option is
 \code{--hidden-flow-}\allowbreak\code{write-mode}.  When hidden direct flow is enabled, hidden

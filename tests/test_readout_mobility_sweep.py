@@ -352,6 +352,47 @@ def test_error_rule_action_netlist_can_generate_boosted_pre_gate() -> None:
     assert ".meas tran pre_probe FIND V(pre) AT=3.00n" in netlist
 
 
+def test_error_rule_action_netlist_can_drive_lead_mistake_polarity() -> None:
+    label0_netlist = mobility.error_rule_action_mobility_netlist(
+        theta_p=0.34,
+        theta_n=0.13,
+        act=0.5,
+        error_action="label0_mistake",
+        error_rule="lead_mistake",
+        write_mode="bounded_charge_discharge",
+        width_u=0.0008,
+        pos_write_high_v=0.70,
+        pos_write_low_v=0.24,
+        neg_write_high_v=0.16,
+        neg_write_low_v=0.10,
+        lead_mode="out_senseamp",
+    )
+    label1_netlist = mobility.error_rule_action_mobility_netlist(
+        theta_p=0.34,
+        theta_n=0.13,
+        act=0.5,
+        error_action="label1_mistake",
+        error_rule="lead_mistake",
+        write_mode="bounded_charge_discharge",
+        width_u=0.0008,
+        pos_write_high_v=0.70,
+        pos_write_low_v=0.24,
+        neg_write_high_v=0.16,
+        neg_write_low_v=0.10,
+        lead_mode="out_senseamp",
+    )
+
+    assert "Vlead01 lead01 0 1.2" in label0_netlist
+    assert "Vlead10 lead10 0 0" in label0_netlist
+    assert "Mdp0_l0 dp0_t lead01 dp0_l" in label0_netlist
+    assert "Mdn1_l0 dn1_t lead01 dn1_l" in label0_netlist
+
+    assert "Vlead01 lead01 0 0" in label1_netlist
+    assert "Vlead10 lead10 0 1.2" in label1_netlist
+    assert "Mdp1_l0 dp1_t lead10 dp1_l" in label1_netlist
+    assert "Mdn0_l0 dn0_t lead10 dn0_l" in label1_netlist
+
+
 def test_error_rule_action_summary_requires_both_rows_aligned() -> None:
     rows = pd.DataFrame(
         [

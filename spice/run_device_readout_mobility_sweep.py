@@ -420,6 +420,7 @@ def error_rule_action_mobility_netlist(
     pre_gate_mode: str = "raw",
     pre_boost_v: float = 0.75,
     pre_boost_cap_f: float = 2.0,
+    lead_mode: str = "out_senseamp",
 ) -> str:
     """Probe the actual training error rails and readout write stacks.
 
@@ -538,6 +539,23 @@ def error_rule_action_mobility_netlist(
     score1 = target_score_v if target_label == 1 else other_score_v
     t0 = VDD if target_label == 0 else 0.0
     t1 = VDD if target_label == 1 else 0.0
+    winning_label = other_label
+    if lead_mode == "score_direct":
+        lead_sources = ""
+    elif lead_mode == "out_senseamp":
+        lead_sources = "\n".join(
+            [
+                f"Vlead01 lead01 0 {VDD if winning_label == 1 else 0.0:.12g}",
+                f"Vlead10 lead10 0 {VDD if winning_label == 0 else 0.0:.12g}",
+            ]
+        )
+    else:
+        lead_sources = "\n".join(
+            [
+                f"Vlead01 lead01 0 {VDD if winning_label == 0 else 0.0:.12g}",
+                f"Vlead10 lead10 0 {VDD if winning_label == 1 else 0.0:.12g}",
+            ]
+        )
     desired0 = "row0_signed_read_delta" if target_label == 0 else "-row0_signed_read_delta"
     desired1 = "row1_signed_read_delta" if target_label == 1 else "-row1_signed_read_delta"
     if pre_gate_mode == "raw":
@@ -560,6 +578,7 @@ Vout0 out0 0 {out0:.12g}
 Vout1 out1 0 {out1:.12g}
 Vscore0 score0 0 {score0:.12g}
 Vscore1 score1 0 {score1:.12g}
+{lead_sources}
 Verr err 0 PULSE(0 {{VDD}} 2.30n 20p 20p 2.00n 8n)
 Vbwd bwd 0 PULSE(0 {{VDD}} 2.30n 20p 20p 2.00n 8n)
 {pre_gate_block}
@@ -581,7 +600,7 @@ Rdp1 dp1 0 1G
 Rdn1 dn1 0 1G
 {chr(10).join(read_caps)}
 {chr(10).join(read_devices)}
-{error_cells(error_rule, latch_boost_width_u=0.0)}
+{error_cells(error_rule, latch_boost_width_u=0.0, lead_mode=lead_mode)}
 {chr(10).join(write_devices)}
 .tran 5p 7.0n uic
 .meas tran dp0_probe FIND V(dp0) AT=3.00n
@@ -1159,6 +1178,7 @@ def main() -> None:
     )
     ap.add_argument("--error-rule-action-pre-boost-v", type=float, default=0.75)
     ap.add_argument("--error-rule-action-pre-boost-cap-f", type=float, default=2.0)
+    ap.add_argument("--error-rule-action-lead-mode", default="out_senseamp")
     args = ap.parse_args()
 
     spice_bin, version = detect_spice(None)
@@ -1332,6 +1352,7 @@ def main() -> None:
                                     args.error_rule_action_pre_gate_mode,
                                     args.error_rule_action_pre_boost_v,
                                     args.error_rule_action_pre_boost_cap_f,
+                                    args.error_rule_action_lead_mode,
                                 ),
                                 args.timeout,
                             )
@@ -1346,6 +1367,7 @@ def main() -> None:
                                     "write_width_u": args.write_width_u,
                                     "write_mode": args.write_mode,
                                     "write_state_gate_mode": args.write_state_gate_mode,
+                                    "lead_mode": args.error_rule_action_lead_mode,
                                     "pre_gate_mode": args.error_rule_action_pre_gate_mode,
                                     "pre_boost_v": (
                                         args.error_rule_action_pre_boost_v
@@ -1441,6 +1463,9 @@ def main() -> None:
         "read_negative_width_u": args.neg_width_u,
         "negative_read_score_initial_v": args.negative_score_ic_v,
         "score_cap_f": args.score_cap_f,
+        "error_rule_action_lead_mode": args.error_rule_action_lead_mode
+        if args.error_rule_action_sweep
+        else None,
         "min_read_slope": float(read_rows["read_slope"].min()),
         "max_read_slope": float(read_rows["read_slope"].max()),
         "min_write_state_delta_v": float(write_rows["state_delta_v"].min()),

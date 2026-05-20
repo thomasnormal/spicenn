@@ -102,7 +102,7 @@ HIDDEN_FORWARD_MODES = ["weighted_relu", "rail_buffer"]
 OUTPUT_HEAD_MODES = ["source_follower", "score_diff"]
 LEARNING_MODES = ["accumulate_apply", "flow"]
 FLOW_HIDDEN_WRITES = ["direct", "off"]
-FLOW_PRE_STORES = ["shared_node", "synapse_gate", "synapse_consume"]
+FLOW_PRE_STORES = ["shared_node", "synapse_gate", "synapse_consume", "synapse_boost"]
 READOUT_FLOW_POLARITIES = ["normal", "reversed"]
 READOUT_CENTER_PULL_GATES = ["bwd", "apply"]
 READOUT_CENTER_PULL_MODES = ["always", "state_high"]
@@ -548,6 +548,7 @@ def phases(
     cmp_end_ns: float,
     learning_mode: str,
     backward_gate_mode: str,
+    preboost_high_v: float | None = None,
 ) -> str:
     if learning_mode not in LEARNING_MODES:
         raise ValueError(f"unknown learning mode: {learning_mode}")
@@ -588,24 +589,25 @@ def phases(
                     apply.append((base + apply_start_ns, base + apply_end_ns))
                 rstf.append((base + 12.05, base + 12.55))
                 fwd.append((base + 12.80, base + 15.60))
-    return "\n".join(
-        [
-            f"Vrstf rstf 0 {pulse_wave(rstf, stop)}",
-            f"Vrste rste 0 {pulse_wave(rste, stop)}",
-            f"Vrstg rstg 0 {pulse_wave(rstg, stop)}",
-            f"Vfwd fwd 0 {pulse_wave(fwd, stop)}",
-            f"Vcmp cmp 0 {pulse_wave(cmp, stop)}",
-            f"Verr err 0 {pulse_wave(err, stop)}",
-            (
-                f"Vbwd bwd 0 {pulse_wave(bwd, stop)}"
-                if backward_gate_mode == "scheduled"
-                else f"Vbwd_src bwd_src 0 {pulse_wave(bwd, stop)}"
-            ),
-            f"Vacc acc 0 {pulse_wave(acc, stop)}",
-            f"Vgcmp gcmp 0 {pulse_wave(gcmp, stop)}",
-            f"Vapply apply 0 {pulse_wave(apply, stop)}",
-        ]
-    )
+    sources = [
+        f"Vrstf rstf 0 {pulse_wave(rstf, stop)}",
+        f"Vrste rste 0 {pulse_wave(rste, stop)}",
+        f"Vrstg rstg 0 {pulse_wave(rstg, stop)}",
+        f"Vfwd fwd 0 {pulse_wave(fwd, stop)}",
+        f"Vcmp cmp 0 {pulse_wave(cmp, stop)}",
+        f"Verr err 0 {pulse_wave(err, stop)}",
+        (
+            f"Vbwd bwd 0 {pulse_wave(bwd, stop)}"
+            if backward_gate_mode == "scheduled"
+            else f"Vbwd_src bwd_src 0 {pulse_wave(bwd, stop)}"
+        ),
+        f"Vacc acc 0 {pulse_wave(acc, stop)}",
+        f"Vgcmp gcmp 0 {pulse_wave(gcmp, stop)}",
+        f"Vapply apply 0 {pulse_wave(apply, stop)}",
+    ]
+    if preboost_high_v is not None:
+        sources.insert(7, f"Vpreboost preboost 0 {pulse_wave(bwd, stop, preboost_high_v)}")
+    return "\n".join(sources)
 
 
 def make_samples(records: list[dict[str, Any]], epochs: int, order: list[int], batch_apply: bool) -> list[dict[str, Any]]:
@@ -2157,7 +2159,12 @@ def readout_flow_updates(
                 ]
                 lines += node_parasitics(f"vbo{out}p_center_g", f"vbo{out}n_center_g")
         for h in range(HIDDEN):
-            pre_gate = f"fpro{out}{h}" if flow_pre_store != "shared_node" else f"act{h}"
+            if flow_pre_store == "shared_node":
+                pre_gate = f"act{h}"
+            elif flow_pre_store == "synapse_boost":
+                pre_gate = f"fprb{out}{h}"
+            else:
+                pre_gate = f"fpro{out}{h}"
             if (pos_discharge_width_u > 0 or neg_discharge_width_u > 0) and discharge_enabled:
                 if state_gate_discharge:
                     lines += [
@@ -2249,6 +2256,7 @@ def flow_pre_activation_stores(
     mode: str,
     cap_f: float,
     consume_width_u: float,
+    boost_width_u: float = 4.0,
 ) -> str:
     if mode not in FLOW_PRE_STORES:
         raise ValueError(f"unknown flow pre-store mode: {mode}")
@@ -2256,10 +2264,13 @@ def flow_pre_activation_stores(
         return "* Flow pre-activation storage: using shared source activation/input nodes."
     if cap_f <= 0 or consume_width_u <= 0:
         raise ValueError("flow pre-store capacitance and consume width must be positive.")
+    if mode == "synapse_boost" and boost_width_u <= 0:
+        raise ValueError("flow pre-store boost width must be positive for synapse_boost mode.")
     lines: list[str] = [
         "* Per-synapse pre-activation traces are charged through MOS store paths during fwd for local direct-flow writes."
     ]
     consume = mode == "synapse_consume"
+    boost = mode == "synapse_boost"
     for out in range(OUTPUTS):
         for h in range(HIDDEN):
             node = f"fpro{out}{h}"
@@ -2271,6 +2282,15 @@ def flow_pre_activation_stores(
             ]
             if consume:
                 lines.append(f"Mconsume_{node} {node} bwd 0 0 NREL W={consume_width_u:.12g}u L=180n")
+            if boost:
+                boosted = f"fprb{out}{h}"
+                lines += [
+                    f"C{boosted} {boosted} 0 {cap_f:.12g}f IC=0",
+                    f"Cboost_{boosted} preboost {boosted} {cap_f:.12g}f",
+                    f"R{boosted} {boosted} 0 1G",
+                    f"Mreset_{boosted} {boosted} rstf 0 0 NMOS W=4u L=180n",
+                    f"Mstore_{boosted} {boosted} fwd act{h} 0 NREL W={boost_width_u:.12g}u L=180n",
+                ]
     for h in range(HIDDEN):
         for rail in HIDDEN_RAILS:
             node = f"fphi{h}_{rail}"
@@ -2282,6 +2302,15 @@ def flow_pre_activation_stores(
             ]
             if consume:
                 lines.append(f"Mconsume_{node} {node} bwd 0 0 NREL W={consume_width_u:.12g}u L=180n")
+            if boost:
+                boosted = f"fphib{h}_{rail}"
+                lines += [
+                    f"C{boosted} {boosted} 0 {cap_f:.12g}f IC=0",
+                    f"Cboost_{boosted} preboost {boosted} {cap_f:.12g}f",
+                    f"R{boosted} {boosted} 0 1G",
+                    f"Mreset_{boosted} {boosted} rstf 0 0 NMOS W=4u L=180n",
+                    f"Mstore_{boosted} {boosted} fwd {rail} 0 NREL W={boost_width_u:.12g}u L=180n",
+                ]
     return "\n".join(lines)
 
 
@@ -2385,7 +2414,12 @@ def hidden_flow_updates(
         pos_delta_gate = f"hdpg{h}" if hidden_delta_output_mode == "senseamp" else f"hdp{h}"
         neg_delta_gate = f"hdng{h}" if hidden_delta_output_mode == "senseamp" else f"hdn{h}"
         for rail in HIDDEN_RAILS:
-            pre_gate = f"fphi{h}_{rail}" if flow_pre_store != "shared_node" else rail
+            if flow_pre_store == "shared_node":
+                pre_gate = rail
+            elif flow_pre_store == "synapse_boost":
+                pre_gate = f"fphib{h}_{rail}"
+            else:
+                pre_gate = f"fphi{h}_{rail}"
             if hidden_delta_output_mode == "raw" and discharge_enabled:
                 lines += [
                     f"Mwh{h}_{rail}n_flow_b wh{h}_{rail}n bwd wh{h}_{rail}n_flow_b 0 NREL W={update_width_u:.12g}u L=180n",
@@ -2696,6 +2730,8 @@ def random_hidden_netlist(
     flow_pre_store: str,
     flow_pre_cap_f: float,
     flow_pre_consume_width_u: float,
+    flow_pre_boost_v: float,
+    flow_pre_boost_width_u: float,
     hidden_grad_sense_width_u: float,
     hidden_grad_sense_cap_f: float,
     feedback_scale: float,
@@ -2978,13 +3014,13 @@ Vwnlow wnlow 0 {readout_neg_write_low:.12g}
 {input_sources}
 Vt0 t0 0 {target_wave(samples, 0, stop)}
 Vt1 t1 0 {target_wave(samples, 1, stop)}
-{phases(samples, bwd_start_ns, apply_start_ns, apply_end_ns, cmp_start_ns, cmp_end_ns, learning_mode, backward_gate_mode)}
+{phases(samples, bwd_start_ns, apply_start_ns, apply_end_ns, cmp_start_ns, cmp_end_ns, learning_mode, backward_gate_mode, flow_pre_boost_v if learning_mode == "flow" and flow_pre_store == "synapse_boost" else None)}
 
 {persistent_caps(hidden_state, readout_state, hidden_cap_f)}
 {feedback_block}
 {temporary_caps(gradient_cap_f, hidden_gradient_cap_f, hidden_delta_cap_f, lead_cap_f, include_gradient_caps, score_reset_v)}
 {resets(lead_mode, include_gradient_caps, score_reset_v)}
-{flow_pre_activation_stores(flow_pre_store, flow_pre_cap_f, flow_pre_consume_width_u) if learning_mode == "flow" else ""}
+{flow_pre_activation_stores(flow_pre_store, flow_pre_cap_f, flow_pre_consume_width_u, flow_pre_boost_width_u) if learning_mode == "flow" else ""}
 {train_charge_noise(samples, stop, train_charge_noise_width_u, train_charge_noise_probability, train_charge_noise_seed, train_charge_noise_scope, train_charge_noise_pulse_ns, bwd_start_ns)}
 
     {hidden_forward(design, hidden_forward_mode)}
@@ -3118,6 +3154,21 @@ def main() -> None:
     ap.add_argument("--flow-pre-store", choices=FLOW_PRE_STORES, default="shared_node")
     ap.add_argument("--flow-pre-cap-f", type=float, default=2.0)
     ap.add_argument("--flow-pre-consume-width-u", type=float, default=0.05)
+    ap.add_argument(
+        "--flow-pre-boost-v",
+        type=float,
+        default=0.75,
+        help=(
+            "Boost rail used by flow-pre-store=synapse_boost to generate a stronger "
+            "backward/write pre-gate from the stored forward activation trace."
+        ),
+    )
+    ap.add_argument(
+        "--flow-pre-boost-width-u",
+        type=float,
+        default=4.0,
+        help="Forward-store pass width for the bootstrapped write gate used by flow-pre-store=synapse_boost.",
+    )
     ap.add_argument("--hidden-grad-sense-width-u", type=float, default=512.0)
     ap.add_argument("--hidden-grad-sense-cap-f", type=float, default=2.0)
     ap.add_argument("--feedback-scale", type=float, default=0.3)
@@ -3482,6 +3533,10 @@ def main() -> None:
         raise SystemExit("hidden gradient sense width and capacitance must be positive.")
     if args.flow_pre_cap_f <= 0 or args.flow_pre_consume_width_u <= 0:
         raise SystemExit("flow pre-store capacitance and consume width must be positive.")
+    if not 0.0 <= args.flow_pre_boost_v <= 1.2:
+        raise SystemExit("--flow-pre-boost-v must be in 0..1.2 V.")
+    if args.flow_pre_boost_width_u <= 0:
+        raise SystemExit("--flow-pre-boost-width-u must be positive.")
     if args.hidden_cap_f <= 0:
         raise SystemExit("--hidden-cap-f must be positive.")
     if args.cap_dither_v < 0:
@@ -3652,6 +3707,8 @@ def main() -> None:
         args.flow_pre_store,
         args.flow_pre_cap_f,
         args.flow_pre_consume_width_u,
+        args.flow_pre_boost_v,
+        args.flow_pre_boost_width_u,
         args.hidden_grad_sense_width_u,
         args.hidden_grad_sense_cap_f,
         args.feedback_scale,
@@ -4048,6 +4105,12 @@ def main() -> None:
         "flow_pre_consume_width_u": args.flow_pre_consume_width_u
         if args.learning_mode == "flow" and args.flow_pre_store == "synapse_consume"
         else None,
+        "flow_pre_boost_v": args.flow_pre_boost_v
+        if args.learning_mode == "flow" and args.flow_pre_store == "synapse_boost"
+        else None,
+        "flow_pre_boost_width_u": args.flow_pre_boost_width_u
+        if args.learning_mode == "flow" and args.flow_pre_store == "synapse_boost"
+        else None,
         "uses_gradient_accumulators": args.learning_mode == "accumulate_apply",
         "uses_separate_apply_phase": args.learning_mode == "accumulate_apply"
         or (
@@ -4061,10 +4124,16 @@ def main() -> None:
         and args.flow_pre_store != "shared_node",
         "uses_destructive_pre_activation_trace_read": args.learning_mode == "flow"
         and args.flow_pre_store == "synapse_consume",
+        "uses_boosted_pre_activation_write_gate": args.learning_mode == "flow"
+        and args.flow_pre_store == "synapse_boost",
         "pre_activation_capture_path": (
-            "mos_store_trace_caps"
-            if args.learning_mode == "flow" and args.flow_pre_store != "shared_node"
-            else "shared_source_nodes"
+            "mos_store_trace_caps_plus_boosted_write_gate"
+            if args.learning_mode == "flow" and args.flow_pre_store == "synapse_boost"
+            else (
+                "mos_store_trace_caps"
+                if args.learning_mode == "flow" and args.flow_pre_store != "shared_node"
+                else "shared_source_nodes"
+            )
         ),
         "hidden_delta_passes_through_activation_gate": hidden_delta_network_enabled
         and args.hidden_delta_relu_gate != "none",

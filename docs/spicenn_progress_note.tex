@@ -537,9 +537,15 @@ lives before the backward/write window:
     the backward/write path destructively reads or bleeds the trace while using
     it.  This is closer to the ``activation capacitor is emptied as it is used''
     idea, and may simplify reset/update sequencing if it remains stable.
+  \item[\code{synapse\_boost}] each synapse stores the ordinary forward trace,
+    and also stores a second write-gate trace that is capacitively bootstrapped
+    during the backward/write window.  This is not Python sampling: the
+    capacitor is charged by a MOS pass path during \code{fwd}, then the
+    \code{preboost} guide rail lifts that local stored gate so low and middle
+    activations can still open the write stack.
 \end{description}
-The latter two are more faithful to a physical synapse that carries its own
-pre-activation state, but they add capacitance and write-path loading.  The
+The per-synapse variants are more faithful to a physical synapse that carries
+its own pre-activation state, but they add capacitance and write-path loading.  The
 first \code{probe} reruns used 4 hidden cells and 8 training epochs:
 
 \begin{figure}[h]
@@ -1649,6 +1655,36 @@ linear-readout blocker is directly related to the
 \(G'_{\mathrm{eff}}s_{\mathrm{MOS}}\) issue, but the immediate circuit symptom
 is even more specific: the write stack needs a sign-aligned mobility region for
 ordinary activation voltages, not only for an artificially boosted pre gate.
+
+The new \code{synapse\_boost} path tests that hypothesis inside the actual
+netlist style.  A MOS store transistor charges a local pre-trace capacitor during
+the forward window, then a small capacitive bootstrap from the \code{preboost}
+guide rail raises that stored gate only during the backward/write window.  In the
+actual-rail action probe at
+\((\theta^+,\theta^-)=(0.34,0.13)\,\mathrm{V}\), a \(0.75\,\mathrm{V}\)
+bootstrap remained too weak: only \(1/6\) perceptron action cases moved both
+rows correctly.  Raising the bootstrap to \(1.0\,\mathrm{V}\) improved the
+perceptron action probe to \(4/6\), and \(1.2\,\mathrm{V}\) reached \(6/6\) with
+a minimum desired signed-read movement of about \(1.46\,\mathrm{mV}\).  Sweeping
+the error rule at the same \(1.2\,\mathrm{V}\) setting showed that
+\code{perceptron} and \code{out\_residual} are locally sign-aligned, while
+\code{competitive} and \code{margin} still move at least one row the wrong way.
+This is the clearest direct evidence so far that the linear readout trouble was
+partly a pre-gate/write-mobility problem, not only a feature-separability
+problem.
+
+The full training loop is not solved yet.  On \code{mnist01fixed8\_16}, scheduled
+\code{perceptron} with the \(1.2\,\mathrm{V}\) bootstrapped pre-gate improved from
+37.5\% initial accuracy to 68.75\%, and the same setting on
+\code{mnist01fixed8\_64} improved from 40.625\% to 79.6875\%.  Reducing the write
+width to \(0.0002\,\mu\mathrm{m}\) fell back to 50\%, and the scheduled
+\code{out\_residual} version also fell to 50\% while both output rows moved
+negative.  Adding the analog \code{target\_mistake} backward gate gave a useful
+gate signal (92.1875\% match, no false positives, five false negatives) but only
+62.5\% final accuracy.  The updated diagnosis is therefore: the boosted
+pre-gate fixes the local action sign for some error rules, but the training
+system still needs a selective full-swing event/error circuit and better
+step-size control before the linearly separable readout consistently converges.
 
 Mistake-latch gates do not yet fix the 64-example readout either.  Replacing
 the continuous target-mistake backward gate with

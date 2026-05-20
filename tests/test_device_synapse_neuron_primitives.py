@@ -250,6 +250,45 @@ def test_direct_flow_hidden_can_bound_discharge_only() -> None:
     assert "_ch_b whigh" not in updates
 
 
+def test_direct_flow_synapse_boost_creates_mos_generated_write_gates() -> None:
+    original_hidden = direct_flow.HIDDEN
+    original_input_rails = list(direct_flow.INPUT_RAILS)
+    try:
+        direct_flow.set_hidden_cells(1)
+        direct_flow.set_input_rails(["x0"])
+        stores = direct_flow.flow_pre_activation_stores(
+            mode="synapse_boost",
+            cap_f=2.0,
+            consume_width_u=0.05,
+            boost_width_u=3.5,
+        )
+        readout_updates = direct_flow.readout_flow_updates(
+            readout_update_width_u=0.02,
+            output_bias_update_width_u=0.0,
+            flow_pre_store="synapse_boost",
+            readout_flow_polarity="normal",
+        )
+        hidden_updates = direct_flow.hidden_flow_updates(
+            update_width_u=0.02,
+            flow_pre_store="synapse_boost",
+            hidden_delta_output_mode="senseamp",
+            hidden_flow_write_mode="discharge",
+        )
+    finally:
+        direct_flow.set_hidden_cells(original_hidden)
+        direct_flow.set_input_rails(original_input_rails)
+
+    assert "Mstore_fpro00 fpro00 fwd act0 0 NREL" in stores
+    assert "Cfprb00 fprb00 0 2f IC=0" in stores
+    assert "Cboost_fprb00 preboost fprb00 2f" in stores
+    assert "Mstore_fprb00 fprb00 fwd act0 0 NREL W=3.5u" in stores
+    assert "Cboost_fphib0_x0 preboost fphib0_x0 2f" in stores
+    assert "Mstore_fphib0_x0 fphib0_x0 fwd x0 0 NREL W=3.5u" in stores
+    assert "Mconsume_fpro00" not in stores
+    assert "Mvw00n_flow_a vw00n_flow_b fprb00" in readout_updates
+    assert "Mwh0_x0n_flow_x wh0_x0n_flow_b fphib0_x0" in hidden_updates
+
+
 def test_direct_flow_hidden_can_bound_charge_only_with_latched_delta() -> None:
     original_hidden = direct_flow.HIDDEN
     original_input_rails = list(direct_flow.INPUT_RAILS)

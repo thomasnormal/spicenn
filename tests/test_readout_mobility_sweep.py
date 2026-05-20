@@ -328,6 +328,30 @@ def test_error_rule_action_netlist_uses_real_dp_dn_write_stacks() -> None:
     assert ".meas tran row1_desired_signed_read_delta PARAM='-row1_signed_read_delta'" in netlist
 
 
+def test_error_rule_action_netlist_can_generate_boosted_pre_gate() -> None:
+    netlist = mobility.error_rule_action_mobility_netlist(
+        theta_p=0.34,
+        theta_n=0.13,
+        act=0.5,
+        error_action="label0_mistake",
+        error_rule="perceptron",
+        write_mode="bounded_charge_discharge",
+        width_u=0.0008,
+        pos_write_high_v=0.70,
+        pos_write_low_v=0.24,
+        neg_write_high_v=0.16,
+        neg_write_low_v=0.10,
+        pre_gate_mode="boosted",
+        pre_boost_v=0.75,
+    )
+
+    assert "Vpreboost preboost 0 PULSE(0 0.75 2.30n" in netlist
+    assert "Cpre pre 0 2f IC=0.5" in netlist
+    assert "Cpre_kick preboost pre 2f" in netlist
+    assert "Vpre pre 0 PULSE" not in netlist
+    assert ".meas tran pre_probe FIND V(pre) AT=3.00n" in netlist
+
+
 def test_error_rule_action_summary_requires_both_rows_aligned() -> None:
     rows = pd.DataFrame(
         [

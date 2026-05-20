@@ -29,6 +29,7 @@ WRITE_MODES = [
 WRITE_STATE_GATE_MODES = ["none", "state_high_discharge", "state_window"]
 SIGNED_ACTIONS = ["increase", "decrease"]
 ERROR_RULE_ACTIONS = ["label0_mistake", "label1_mistake"]
+ERROR_RULE_ACTION_PRE_GATE_MODES = ["raw", "boosted"]
 
 
 def parse_float_list(text: str) -> list[float]:
@@ -416,6 +417,9 @@ def error_rule_action_mobility_netlist(
     other_out_v: float = 0.08,
     target_score_v: float = 0.18,
     other_score_v: float = 0.22,
+    pre_gate_mode: str = "raw",
+    pre_boost_v: float = 0.75,
+    pre_boost_cap_f: float = 2.0,
 ) -> str:
     """Probe the actual training error rails and readout write stacks.
 
@@ -431,6 +435,10 @@ def error_rule_action_mobility_netlist(
         raise ValueError(f"unknown write mode: {write_mode}")
     if write_state_gate_mode not in WRITE_STATE_GATE_MODES:
         raise ValueError(f"unknown write state-gate mode: {write_state_gate_mode}")
+    if pre_gate_mode not in ERROR_RULE_ACTION_PRE_GATE_MODES:
+        raise ValueError(f"unknown error-rule action pre-gate mode: {pre_gate_mode}")
+    if pre_gate_mode == "boosted" and pre_boost_cap_f <= 0:
+        raise ValueError("boosted pre-gate mode requires positive capacitance")
     target_label = 0 if error_action == "label0_mistake" else 1
     other_label = 1 - target_label
     bounded_write = write_mode.startswith("bounded_")
@@ -532,6 +540,17 @@ def error_rule_action_mobility_netlist(
     t1 = VDD if target_label == 1 else 0.0
     desired0 = "row0_signed_read_delta" if target_label == 0 else "-row0_signed_read_delta"
     desired1 = "row1_signed_read_delta" if target_label == 1 else "-row1_signed_read_delta"
+    if pre_gate_mode == "raw":
+        pre_gate_block = f"Vpre pre 0 PULSE(0 {act:.12g} 2.30n 20p 20p 2.00n 8n)"
+    else:
+        pre_gate_block = "\n".join(
+            [
+                f"Vpreboost preboost 0 PULSE(0 {pre_boost_v:.12g} 2.30n 20p 20p 2.00n 8n)",
+                f"Cpre pre 0 {pre_boost_cap_f:.12g}f IC={act:.12g}",
+                f"Cpre_kick preboost pre {pre_boost_cap_f:.12g}f",
+                "Rpre pre 0 1G",
+            ]
+        )
     return f"""
 {common_header()}
 {rail_sources}
@@ -543,7 +562,7 @@ Vscore0 score0 0 {score0:.12g}
 Vscore1 score1 0 {score1:.12g}
 Verr err 0 PULSE(0 {{VDD}} 2.30n 20p 20p 2.00n 8n)
 Vbwd bwd 0 PULSE(0 {{VDD}} 2.30n 20p 20p 2.00n 8n)
-Vpre pre 0 PULSE(0 {act:.12g} 2.30n 20p 20p 2.00n 8n)
+{pre_gate_block}
 Cwp0 wp0 0 20f IC={theta_p:.12g}
 Cwn0 wn0 0 20f IC={theta_n:.12g}
 Cwp1 wp1 0 20f IC={theta_p:.12g}
@@ -569,6 +588,7 @@ Rdn1 dn1 0 1G
 .meas tran dn0_probe FIND V(dn0) AT=3.00n
 .meas tran dp1_probe FIND V(dp1) AT=3.00n
 .meas tran dn1_probe FIND V(dn1) AT=3.00n
+.meas tran pre_probe FIND V(pre) AT=3.00n
 .meas tran row0_initial_pos FIND V(score_i0p) AT=1.90n
 .meas tran row0_initial_neg_score FIND V(score_i0n) AT=1.90n
 .meas tran row0_initial_neg PARAM='{score_ic:.12g}-row0_initial_neg_score'
@@ -591,7 +611,7 @@ Rdn1 dn1 0 1G
 .meas tran row1_desired_signed_read_delta PARAM='{desired1}'
 .control
 run
-print dp0_probe dn0_probe dp1_probe dn1_probe row0_signed_read_delta row0_desired_signed_read_delta row1_signed_read_delta row1_desired_signed_read_delta
+print dp0_probe dn0_probe dp1_probe dn1_probe pre_probe row0_signed_read_delta row0_desired_signed_read_delta row1_signed_read_delta row1_desired_signed_read_delta
 .endc
 .end
 """.lstrip()
@@ -1083,6 +1103,9 @@ def summarize_error_rule_action_mobility(error_rule_action: pd.DataFrame) -> dic
         "error_rule_action_max_dn0_v": float(out["dn0_probe"].max()),
         "error_rule_action_max_dp1_v": float(out["dp1_probe"].max()),
         "error_rule_action_max_dn1_v": float(out["dn1_probe"].max()),
+        "error_rule_action_max_pre_probe_v": float(out["pre_probe"].max())
+        if "pre_probe" in out
+        else None,
         "error_rule_action_best_error_rule": str(best["error_rule"]),
         "error_rule_action_best_theta_p_v": float(best["theta_p"]),
         "error_rule_action_best_theta_n_v": float(best["theta_n"]),
@@ -1129,6 +1152,13 @@ def main() -> None:
     ap.add_argument("--error-rule-action-other-out-v", type=float, default=0.08)
     ap.add_argument("--error-rule-action-target-score-v", type=float, default=0.18)
     ap.add_argument("--error-rule-action-other-score-v", type=float, default=0.22)
+    ap.add_argument(
+        "--error-rule-action-pre-gate-mode",
+        choices=ERROR_RULE_ACTION_PRE_GATE_MODES,
+        default="raw",
+    )
+    ap.add_argument("--error-rule-action-pre-boost-v", type=float, default=0.75)
+    ap.add_argument("--error-rule-action-pre-boost-cap-f", type=float, default=2.0)
     args = ap.parse_args()
 
     spice_bin, version = detect_spice(None)
@@ -1299,6 +1329,9 @@ def main() -> None:
                                     args.error_rule_action_other_out_v,
                                     args.error_rule_action_target_score_v,
                                     args.error_rule_action_other_score_v,
+                                    args.error_rule_action_pre_gate_mode,
+                                    args.error_rule_action_pre_boost_v,
+                                    args.error_rule_action_pre_boost_cap_f,
                                 ),
                                 args.timeout,
                             )
@@ -1313,6 +1346,17 @@ def main() -> None:
                                     "write_width_u": args.write_width_u,
                                     "write_mode": args.write_mode,
                                     "write_state_gate_mode": args.write_state_gate_mode,
+                                    "pre_gate_mode": args.error_rule_action_pre_gate_mode,
+                                    "pre_boost_v": (
+                                        args.error_rule_action_pre_boost_v
+                                        if args.error_rule_action_pre_gate_mode == "boosted"
+                                        else None
+                                    ),
+                                    "pre_boost_cap_f": (
+                                        args.error_rule_action_pre_boost_cap_f
+                                        if args.error_rule_action_pre_gate_mode == "boosted"
+                                        else None
+                                    ),
                                     **measures,
                                 }
                             )

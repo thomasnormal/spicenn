@@ -1455,6 +1455,39 @@ output-0 row.  Increasing charge to \(0.0012\,\mu\mathrm{m}\) with
 charge-only result is not just missing a little opposite-branch cleanup; the
 two-action write primitive is still badly row/asymmetry conditioned.
 
+The next density-preserving correction is a branch-specific center-pull path.
+The previous optional center pull used one rail for both branches, which is a
+poor match for the measured mobility windows: the positive branch has useful
+read slope in a much higher voltage range than the negative branch.  The
+generator now has independent weak transistor pulls to
+\code{wcenterp}/\code{wcentern} for readout weights and
+\code{wbocenterp}/\code{wbocentern} for output-bias weights.  This is not a
+Python regularizer; it is a local MOS state path active during the
+backward/write window.  The pull can be gated either by the analog
+\code{bwd} rail or by the later scheduled \code{apply} waveform; the latter is
+useful when the extra center-pull gates load or capacitively disturb the
+self-timed mistake rail.  Its intended role is to keep
+\(\theta^+\) and \(\theta^-\) near their own measured
+\(G'_{\mathrm{eff}}s_{\mathrm{MOS}}\) operating regions while the normal
+pre/error-gated write stack supplies the signed update.
+
+The first center-pull probes are useful negative controls.  Re-running the
+\((0.34,0.10)\ \mathrm{V}\) branch-pair charge-only readout with a
+\(2\,\mathrm{fF}\) mistake-rail capacitor reproduced the earlier 75\% result
+on \code{mnist01fixed8\_64}; the same setup with a \(0.5\,\mathrm{fF}\)
+mistake-rail capacitor reached only 59.375\%, so the analog \code{bwd} rail
+capacitance is part of the learning primitive.  Adding a
+\(0.00002\,\mu\mathrm{m}\) branch-specific center pull gated directly by
+\code{bwd} dropped the cap-\(2\,\mathrm{fF}\) run to 53.125\%, with the
+backward rail opening on 96 of 128 training cycles.  Moving the center pull to
+the later \code{apply} waveform avoids direct loading of \code{bwd}, but did
+not improve accuracy: \(0.00002\,\mu\mathrm{m}\) reached 54.6875\%, and
+\(0.000005\,\mu\mathrm{m}\) reached 67.1875\%.  The conclusion is that
+branch-centering is now expressible as hardware, but this simple always-on
+weak pull fights the signed update more than it helps.  The next write-kernel
+work should make centering conditional or state-windowed, rather than applying
+a uniform pull on every training example.
+
 Mistake-latch gates do not yet fix the 64-example readout either.  Replacing
 the continuous target-mistake backward gate with
 \code{target\_mistake\_latch\_simple} at charge-only widths

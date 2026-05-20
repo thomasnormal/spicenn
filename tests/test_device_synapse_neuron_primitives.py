@@ -488,6 +488,39 @@ def test_direct_flow_readout_center_pull_is_a_transistor_state_path() -> None:
     assert "Mvbo0n_center vbo0n bwd wcenter 0 NREL W=0.0001u" in updates
 
 
+def test_direct_flow_readout_center_pull_can_use_branch_specific_rails() -> None:
+    updates = direct_flow.readout_flow_updates(
+        readout_update_width_u=0.0,
+        output_bias_update_width_u=0.0,
+        flow_pre_store="shared_node",
+        readout_flow_polarity="normal",
+        readout_center_pull_width_u=0.0002,
+        readout_pos_center_pull_node="pcenter",
+        readout_neg_center_pull_node="ncenter",
+    )
+
+    assert "Mvw00p_center vw00p bwd pcenter 0 NREL W=0.0002u" in updates
+    assert "Mvw00n_center vw00n bwd ncenter 0 NREL W=0.0002u" in updates
+
+
+def test_direct_flow_readout_center_pull_can_use_apply_gate() -> None:
+    updates = direct_flow.readout_flow_updates(
+        readout_update_width_u=0.0,
+        output_bias_update_width_u=0.0,
+        flow_pre_store="shared_node",
+        readout_flow_polarity="normal",
+        readout_center_pull_width_u=0.0002,
+        output_bias_center_pull_width_u=0.0001,
+        readout_center_pull_gate="apply",
+        readout_pos_center_pull_node="pcenter",
+        readout_neg_center_pull_node="ncenter",
+    )
+
+    assert "Mvw00p_center vw00p apply pcenter 0 NREL W=0.0002u" in updates
+    assert "Mvw00n_center vw00n apply ncenter 0 NREL W=0.0002u" in updates
+    assert "Mvbo0p_center vbo0p apply wcenter 0 NREL W=0.0001u" in updates
+
+
 def test_target_mistake_latch_stores_compare_result_for_late_backward_window() -> None:
     gate = direct_flow.backward_gate_cells("target_mistake_latch", width_u=64.0, cap_f=2.0)
 

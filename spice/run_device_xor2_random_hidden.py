@@ -104,6 +104,7 @@ LEARNING_MODES = ["accumulate_apply", "flow"]
 FLOW_HIDDEN_WRITES = ["direct", "off"]
 FLOW_PRE_STORES = ["shared_node", "synapse_gate", "synapse_consume"]
 READOUT_FLOW_POLARITIES = ["normal", "reversed"]
+READOUT_CENTER_PULL_GATES = ["bwd", "apply"]
 READOUT_FLOW_WRITE_MODES = [
     "discharge",
     "bounded_discharge",
@@ -2012,10 +2013,15 @@ def readout_flow_updates(
     readout_discharge_update_width_u: float | None = None,
     readout_center_pull_width_u: float = 0.0,
     output_bias_center_pull_width_u: float = 0.0,
+    readout_center_pull_gate: str = "bwd",
     readout_pos_write_high_node: str = "whigh",
     readout_pos_write_low_node: str = "wlow",
     readout_neg_write_high_node: str = "whigh",
     readout_neg_write_low_node: str = "wlow",
+    readout_pos_center_pull_node: str = "wcenter",
+    readout_neg_center_pull_node: str = "wcenter",
+    output_bias_pos_center_pull_node: str = "wcenter",
+    output_bias_neg_center_pull_node: str = "wcenter",
 ) -> str:
     if flow_pre_store not in FLOW_PRE_STORES:
         raise ValueError(f"unknown flow pre-store mode: {flow_pre_store}")
@@ -2023,6 +2029,8 @@ def readout_flow_updates(
         raise ValueError(f"unknown readout flow polarity: {readout_flow_polarity}")
     if readout_flow_write_mode not in READOUT_FLOW_WRITE_MODES:
         raise ValueError(f"unknown readout flow write mode: {readout_flow_write_mode}")
+    if readout_center_pull_gate not in READOUT_CENTER_PULL_GATES:
+        raise ValueError(f"unknown readout center-pull gate: {readout_center_pull_gate}")
     pos_update_width_u = (
         readout_update_width_u if readout_pos_update_width_u is None else readout_pos_update_width_u
     )
@@ -2094,8 +2102,8 @@ def readout_flow_updates(
             lines += node_parasitics(f"vbo{out}p_ch_b", f"vbo{out}n_ch_b")
         if output_bias_center_pull_width_u > 0:
             lines += [
-                f"Mvbo{out}p_center vbo{out}p bwd wcenter 0 NREL W={output_bias_center_pull_width_u:.12g}u L=180n",
-                f"Mvbo{out}n_center vbo{out}n bwd wcenter 0 NREL W={output_bias_center_pull_width_u:.12g}u L=180n",
+                f"Mvbo{out}p_center vbo{out}p {readout_center_pull_gate} {output_bias_pos_center_pull_node} 0 NREL W={output_bias_center_pull_width_u:.12g}u L=180n",
+                f"Mvbo{out}n_center vbo{out}n {readout_center_pull_gate} {output_bias_neg_center_pull_node} 0 NREL W={output_bias_center_pull_width_u:.12g}u L=180n",
             ]
         for h in range(HIDDEN):
             pre_gate = f"fpro{out}{h}" if flow_pre_store != "shared_node" else f"act{h}"
@@ -2131,8 +2139,8 @@ def readout_flow_updates(
                 )
             if readout_center_pull_width_u > 0:
                 lines += [
-                    f"Mvw{out}{h}p_center vw{out}{h}p bwd wcenter 0 NREL W={readout_center_pull_width_u:.12g}u L=180n",
-                    f"Mvw{out}{h}n_center vw{out}{h}n bwd wcenter 0 NREL W={readout_center_pull_width_u:.12g}u L=180n",
+                    f"Mvw{out}{h}p_center vw{out}{h}p {readout_center_pull_gate} {readout_pos_center_pull_node} 0 NREL W={readout_center_pull_width_u:.12g}u L=180n",
+                    f"Mvw{out}{h}n_center vw{out}{h}n {readout_center_pull_gate} {readout_neg_center_pull_node} 0 NREL W={readout_center_pull_width_u:.12g}u L=180n",
                 ]
     return "\n".join(lines)
 
@@ -2628,6 +2636,11 @@ def random_hidden_netlist(
     readout_center_pull_width_u: float,
     output_bias_center_pull_width_u: float,
     readout_center_pull_v: float,
+    readout_pos_center_pull_v: float | None,
+    readout_neg_center_pull_v: float | None,
+    output_bias_pos_center_pull_v: float | None,
+    output_bias_neg_center_pull_v: float | None,
+    readout_center_pull_gate: str,
     readout_write_high_v: float,
     readout_write_low_v: float,
     readout_pos_write_high_v: float | None,
@@ -2672,6 +2685,18 @@ def random_hidden_netlist(
     readout_pos_write_low = readout_write_low_v if readout_pos_write_low_v is None else readout_pos_write_low_v
     readout_neg_write_high = readout_write_high_v if readout_neg_write_high_v is None else readout_neg_write_high_v
     readout_neg_write_low = readout_write_low_v if readout_neg_write_low_v is None else readout_neg_write_low_v
+    readout_pos_center_pull = (
+        readout_center_pull_v if readout_pos_center_pull_v is None else readout_pos_center_pull_v
+    )
+    readout_neg_center_pull = (
+        readout_center_pull_v if readout_neg_center_pull_v is None else readout_neg_center_pull_v
+    )
+    output_bias_pos_center_pull = (
+        readout_center_pull_v if output_bias_pos_center_pull_v is None else output_bias_pos_center_pull_v
+    )
+    output_bias_neg_center_pull = (
+        readout_center_pull_v if output_bias_neg_center_pull_v is None else output_bias_neg_center_pull_v
+    )
     include_gradient_caps = learning_mode == "accumulate_apply"
     state_seed = seed if init_seed is None else init_seed
     records = dataset_records(dataset_name, seed)
@@ -2764,10 +2789,15 @@ def random_hidden_netlist(
                 readout_discharge_update_width_u,
                 readout_center_pull_width_u,
                 output_bias_center_pull_width_u,
+                readout_center_pull_gate,
                 "wphigh",
                 "wplow",
                 "wnhigh",
                 "wnlow",
+                "wcenterp",
+                "wcentern",
+                "wbocenterp",
+                "wbocentern",
             ),
             hidden_delta_sense_block,
         ]
@@ -2831,6 +2861,10 @@ Vdd vdd 0 {{VDD}}
 Vbias bias 0 {{VDD}}
 Vscorecm scorecm 0 {score_reset_v:.12g}
 Vwcenter wcenter 0 {readout_center_pull_v:.12g}
+Vwcenterp wcenterp 0 {readout_pos_center_pull:.12g}
+Vwcentern wcentern 0 {readout_neg_center_pull:.12g}
+Vwbocenterp wbocenterp 0 {output_bias_pos_center_pull:.12g}
+Vwbocentern wbocentern 0 {output_bias_neg_center_pull:.12g}
 Vwhigh whigh 0 {readout_write_high_v:.12g}
 Vwlow wlow 0 {readout_write_low_v:.12g}
 Vwphigh wphigh 0 {readout_pos_write_high:.12g}
@@ -3128,6 +3162,39 @@ def main() -> None:
         help="Global center rail used by the optional readout/output-bias center-pull pass devices.",
     )
     ap.add_argument(
+        "--readout-pos-center-pull-v",
+        type=float,
+        default=None,
+        help="Optional positive-branch center-pull rail; defaults to --readout-center-pull-v.",
+    )
+    ap.add_argument(
+        "--readout-neg-center-pull-v",
+        type=float,
+        default=None,
+        help="Optional negative-branch center-pull rail; defaults to --readout-center-pull-v.",
+    )
+    ap.add_argument(
+        "--output-bias-pos-center-pull-v",
+        type=float,
+        default=None,
+        help="Optional positive output-bias center-pull rail; defaults to --readout-center-pull-v.",
+    )
+    ap.add_argument(
+        "--output-bias-neg-center-pull-v",
+        type=float,
+        default=None,
+        help="Optional negative output-bias center-pull rail; defaults to --readout-center-pull-v.",
+    )
+    ap.add_argument(
+        "--readout-center-pull-gate",
+        choices=READOUT_CENTER_PULL_GATES,
+        default="bwd",
+        help=(
+            "Waveform gate for optional readout center-pull devices. 'bwd' couples the pull to the "
+            "analog mistake rail; 'apply' uses the later scheduled write window to avoid loading bwd."
+        ),
+    )
+    ap.add_argument(
         "--readout-flow-polarity",
         choices=READOUT_FLOW_POLARITIES,
         default="normal",
@@ -3317,6 +3384,15 @@ def main() -> None:
         raise SystemExit("--readout/output-bias center-pull widths must be nonnegative.")
     if not 0.0 <= args.readout_center_pull_v <= 1.2:
         raise SystemExit("--readout-center-pull-v must be in 0..1.2 V.")
+    for name in [
+        "readout_pos_center_pull_v",
+        "readout_neg_center_pull_v",
+        "output_bias_pos_center_pull_v",
+        "output_bias_neg_center_pull_v",
+    ]:
+        value = getattr(args, name)
+        if value is not None and not 0.0 <= value <= 1.2:
+            raise SystemExit(f"--{name.replace('_', '-')} must be in 0..1.2 V.")
     if not 0.0 <= args.readout_write_low_v < args.readout_write_high_v <= 1.2:
         raise SystemExit("--readout-write-low-v must be below --readout-write-high-v, both in 0..1.2 V.")
     readout_pos_write_high_v = (
@@ -3492,6 +3568,11 @@ def main() -> None:
         args.readout_center_pull_width_u,
         args.output_bias_center_pull_width_u,
         args.readout_center_pull_v,
+        args.readout_pos_center_pull_v,
+        args.readout_neg_center_pull_v,
+        args.output_bias_pos_center_pull_v,
+        args.output_bias_neg_center_pull_v,
+        args.readout_center_pull_gate,
         args.readout_write_high_v,
         args.readout_write_low_v,
         readout_pos_write_high_v,
@@ -4014,6 +4095,35 @@ def main() -> None:
         if args.learning_mode == "flow"
         else None,
         "readout_center_pull_v": args.readout_center_pull_v if args.learning_mode == "flow" else None,
+        "readout_pos_center_pull_v": (
+            (args.readout_pos_center_pull_v if args.readout_pos_center_pull_v is not None else args.readout_center_pull_v)
+            if args.learning_mode == "flow"
+            else None
+        ),
+        "readout_neg_center_pull_v": (
+            (args.readout_neg_center_pull_v if args.readout_neg_center_pull_v is not None else args.readout_center_pull_v)
+            if args.learning_mode == "flow"
+            else None
+        ),
+        "output_bias_pos_center_pull_v": (
+            (
+                args.output_bias_pos_center_pull_v
+                if args.output_bias_pos_center_pull_v is not None
+                else args.readout_center_pull_v
+            )
+            if args.learning_mode == "flow"
+            else None
+        ),
+        "output_bias_neg_center_pull_v": (
+            (
+                args.output_bias_neg_center_pull_v
+                if args.output_bias_neg_center_pull_v is not None
+                else args.readout_center_pull_v
+            )
+            if args.learning_mode == "flow"
+            else None
+        ),
+        "readout_center_pull_gate": args.readout_center_pull_gate if args.learning_mode == "flow" else None,
         "readout_write_high_v": (
             args.readout_write_high_v
             if args.learning_mode == "flow"

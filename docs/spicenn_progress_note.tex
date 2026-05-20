@@ -1101,6 +1101,18 @@ mobility.  If it is tiny, saturated, or asymmetric between the positive and
 negative read branches, a sign-correct update can still fail to move the
 effective classifier enough.
 
+There are two different derivatives here.  The backward error sent to the
+previous neuron is controlled by the read kernel's small-signal gain with
+respect to the pre-activation.  In the linearized case
+\(E_{\mathrm{MOS}}(\theta,a)\approx G_{\mathrm{eff}}(\theta)a\), this gain is
+\(\partial E_{\mathrm{MOS}}/\partial a=G_{\mathrm{eff}}(\theta)\), so reverse
+error flow should use the effective conductance itself.  The physical state
+update is controlled by the read kernel's sensitivity to the stored state:
+\(\partial E_{\mathrm{MOS}}/\partial\theta
+=aG'_{\mathrm{eff}}(\theta)\).  Thus \(G_{\mathrm{eff}}\) belongs in the
+backward path, while \(G'_{\mathrm{eff}}\) belongs in the state-mobility or
+write-compensation analysis.
+
 The present charge+discharge readout write does not explicitly implement
 \(S(\theta)=G'_{\mathrm{eff}}(\theta)\), and it also does not implement a
 damped pseudo-inverse of \(G'_{\mathrm{eff}}\).  It is closer to the raw
@@ -1622,6 +1634,21 @@ run is especially useful: once the event gate is nearly correct, the remaining
 failure is the induced effective write field, i.e. the realised
 \(G'_{\mathrm{eff}}(\theta)s_{\mathrm{MOS}}(\theta)\) under the selected
 \(\mathrm{dp}/\mathrm{dn}\) rails.
+
+The new actual-rail action probe makes this more concrete.  At the
+\((\theta^+,\theta^-)=(0.34,0.13)\ \mathrm{V}\) readout point, the ideal
+pair-action write remains sign-aligned when the write pre-gate is high
+(\(0.65\) to \(0.75\ \mathrm{V}\)), but falls to only 50\% sign alignment when
+the pre-gate is \(0.25\) or \(0.50\ \mathrm{V}\).  The full-swing
+\code{perceptron} error rails therefore still fail for low and middle
+activations, while the \code{out\_competitive} rails are also much too weak:
+they reach only about \(48\ \mathrm{mV}\) on the selected \(\mathrm{dp}/
+\mathrm{dn}\) rail in the probe.  Across twelve actual-rail action cases,
+only two moved both output rows in the desired signed direction.  So the
+linear-readout blocker is directly related to the
+\(G'_{\mathrm{eff}}s_{\mathrm{MOS}}\) issue, but the immediate circuit symptom
+is even more specific: the write stack needs a sign-aligned mobility region for
+ordinary activation voltages, not only for an artificially boosted pre gate.
 
 Mistake-latch gates do not yet fix the 64-example readout either.  Replacing
 the continuous target-mistake backward gate with

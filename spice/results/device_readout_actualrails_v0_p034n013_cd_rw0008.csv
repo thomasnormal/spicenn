@@ -1,0 +1,5 @@
+experiment,theta,act,pre,delta,write_width_u,score_initial,score_final,read_response,w_final,w_before,w_after,discharge,charge,state_delta_v,signed_state_delta_v,read_slope,read_gain,write_discharge_v,effective_mobility
+read_positive,0.34,0.5,,,,0.0,0.2075,0.2075,0.34,,,,,,,,0.415,0.00507491,
+read_negative,0.34,0.5,,,,0.299982,0.0,0.299982,0.34,,,,,,,,0.599964,0.00507491,
+write_discharge,0.34,,0.65,1.0,0.0008,,,,,0.34,0.334925,0.00507491,-0.00507491,0.00507491,-0.00507491,,,0.00507491,
+write_charge,0.34,,0.65,1.0,0.0008,,,,,0.34,0.34098,-0.000980208,0.000980208,0.000980208,0.000980208,,,0.00507491,

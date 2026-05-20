@@ -11,6 +11,7 @@ from typing import Any
 import numpy as np
 import pandas as pd
 
+from run_device_xor2_random_hidden import error_cells
 from run_device_multicell_classifier import mos_models
 from run_spice_sweep import ROOT, detect_spice, run_tiny_test
 
@@ -27,6 +28,7 @@ WRITE_MODES = [
 ]
 WRITE_STATE_GATE_MODES = ["none", "state_high_discharge", "state_window"]
 SIGNED_ACTIONS = ["increase", "decrease"]
+ERROR_RULE_ACTIONS = ["label0_mistake", "label1_mistake"]
 
 
 def parse_float_list(text: str) -> list[float]:
@@ -393,6 +395,208 @@ print initial_signed_response final_signed_response signed_read_delta desired_si
 """.lstrip()
 
 
+def error_rule_action_mobility_netlist(
+    theta_p: float,
+    theta_n: float,
+    act: float,
+    error_action: str,
+    error_rule: str,
+    write_mode: str,
+    width_u: float,
+    pos_write_high_v: float,
+    pos_write_low_v: float,
+    neg_write_high_v: float,
+    neg_write_low_v: float,
+    write_state_gate_mode: str = "none",
+    pos_width_u: float = 56.0,
+    neg_width_u: float = 48.0,
+    score_ic: float = 0.30,
+    score_cap_f: float = 10.0,
+    target_out_v: float = 0.04,
+    other_out_v: float = 0.08,
+    target_score_v: float = 0.18,
+    other_score_v: float = 0.22,
+) -> str:
+    """Probe the actual training error rails and readout write stacks.
+
+    pair_action_mobility_netlist drives one ideal select gate named ``delta``.
+    This diagnostic instead instantiates the same dp/dn error cells used by the
+    random-hidden training deck, then connects those rails to the real readout
+    flow write topology for both output rows.  It measures whether a simulated
+    class-0 or class-1 mistake moves the target row up and the other row down.
+    """
+    if error_action not in ERROR_RULE_ACTIONS:
+        raise ValueError(f"unknown error-rule action: {error_action}")
+    if write_mode not in WRITE_MODES:
+        raise ValueError(f"unknown write mode: {write_mode}")
+    if write_state_gate_mode not in WRITE_STATE_GATE_MODES:
+        raise ValueError(f"unknown write state-gate mode: {write_state_gate_mode}")
+    target_label = 0 if error_action == "label0_mistake" else 1
+    other_label = 1 - target_label
+    bounded_write = write_mode.startswith("bounded_")
+    pos_high_node = "wphigh" if bounded_write else "vdd"
+    pos_low_node = "wplow" if bounded_write else "0"
+    neg_high_node = "wnhigh" if bounded_write else "vdd"
+    neg_low_node = "wnlow" if bounded_write else "0"
+    rail_sources = (
+        "\n".join(
+            [
+                f"Vwphigh wphigh 0 {pos_write_high_v:.12g}",
+                f"Vwplow wplow 0 {pos_write_low_v:.12g}",
+                f"Vwnhigh wnhigh 0 {neg_write_high_v:.12g}",
+                f"Vwnlow wnlow 0 {neg_write_low_v:.12g}",
+            ]
+        )
+        if bounded_write
+        else ""
+    )
+    discharge_enabled, charge_enabled = write_actions(write_mode)
+    write_devices: list[str] = []
+    for out in range(2):
+        if discharge_enabled:
+            write_devices += _write_stack(
+                f"wn{out}",
+                f"w{out}n_dis",
+                width_u,
+                "discharge",
+                f"dp{out}",
+                neg_high_node,
+                neg_low_node,
+                write_state_gate_mode,
+            )
+            write_devices += _write_stack(
+                f"wp{out}",
+                f"w{out}p_dis",
+                width_u,
+                "discharge",
+                f"dn{out}",
+                pos_high_node,
+                pos_low_node,
+                write_state_gate_mode,
+            )
+        if charge_enabled:
+            write_devices += _write_stack(
+                f"wp{out}",
+                f"w{out}p_ch",
+                width_u,
+                "charge",
+                f"dp{out}",
+                pos_high_node,
+                pos_low_node,
+                write_state_gate_mode,
+            )
+            write_devices += _write_stack(
+                f"wn{out}",
+                f"w{out}n_ch",
+                width_u,
+                "charge",
+                f"dn{out}",
+                neg_high_node,
+                neg_low_node,
+                write_state_gate_mode,
+            )
+    if not write_devices:
+        raise ValueError(f"write mode {write_mode} enables no write paths")
+    read_devices: list[str] = []
+    read_caps: list[str] = []
+    for phase, prefix, start_ns, at_ns in [("initial", "i", 0.60, 1.90), ("final", "f", 5.00, 6.30)]:
+        del phase, at_ns
+        read_caps += [
+            f"Vact_{prefix} act_{prefix} 0 PULSE(0 {act:.12g} {start_ns:.2f}n 20p 20p 1.20n 8n)",
+            f"Vfwd_{prefix} fwd_{prefix} 0 PULSE(0 {{VDD}} {start_ns:.2f}n 20p 20p 1.20n 8n)",
+        ]
+        for out in range(2):
+            read_caps += [
+                f"Cscore_{prefix}{out}p score_{prefix}{out}p 0 {score_cap_f:.12g}f IC=0",
+                f"Cscore_{prefix}{out}n score_{prefix}{out}n 0 {score_cap_f:.12g}f IC={score_ic:.12g}",
+                f"Rscore_{prefix}{out}p score_{prefix}{out}p 0 1G",
+                f"Rscore_{prefix}{out}n score_{prefix}{out}n 0 1G",
+            ]
+            read_devices += [
+                f"M{prefix}{out}p_a vdd act_{prefix} {prefix}{out}p0 0 NSENSE W={pos_width_u:.12g}u L=180n",
+                f"M{prefix}{out}p_w {prefix}{out}p0 wp{out} {prefix}{out}p1 0 NREL W={pos_width_u:.12g}u L=180n",
+                f"M{prefix}{out}p_f {prefix}{out}p1 fwd_{prefix} score_{prefix}{out}p 0 NREL W={pos_width_u:.12g}u L=180n",
+                f"M{prefix}{out}n_f score_{prefix}{out}n fwd_{prefix} {prefix}{out}n0 0 NREL W={neg_width_u:.12g}u L=180n",
+                f"M{prefix}{out}n_a {prefix}{out}n0 act_{prefix} {prefix}{out}n1 0 NSENSE W={neg_width_u:.12g}u L=180n",
+                f"M{prefix}{out}n_w {prefix}{out}n1 wn{out} 0 0 NREL W={neg_width_u:.12g}u L=180n",
+                f"R{prefix}{out}p0 {prefix}{out}p0 0 1G",
+                f"R{prefix}{out}p1 {prefix}{out}p1 0 1G",
+                f"R{prefix}{out}n0 {prefix}{out}n0 0 1G",
+                f"R{prefix}{out}n1 {prefix}{out}n1 0 1G",
+            ]
+    out0 = target_out_v if target_label == 0 else other_out_v
+    out1 = target_out_v if target_label == 1 else other_out_v
+    score0 = target_score_v if target_label == 0 else other_score_v
+    score1 = target_score_v if target_label == 1 else other_score_v
+    t0 = VDD if target_label == 0 else 0.0
+    t1 = VDD if target_label == 1 else 0.0
+    desired0 = "row0_signed_read_delta" if target_label == 0 else "-row0_signed_read_delta"
+    desired1 = "row1_signed_read_delta" if target_label == 1 else "-row1_signed_read_delta"
+    return f"""
+{common_header()}
+{rail_sources}
+Vt0 t0 0 {t0:.12g}
+Vt1 t1 0 {t1:.12g}
+Vout0 out0 0 {out0:.12g}
+Vout1 out1 0 {out1:.12g}
+Vscore0 score0 0 {score0:.12g}
+Vscore1 score1 0 {score1:.12g}
+Verr err 0 PULSE(0 {{VDD}} 2.30n 20p 20p 2.00n 8n)
+Vbwd bwd 0 PULSE(0 {{VDD}} 2.30n 20p 20p 2.00n 8n)
+Vpre pre 0 PULSE(0 {act:.12g} 2.30n 20p 20p 2.00n 8n)
+Cwp0 wp0 0 20f IC={theta_p:.12g}
+Cwn0 wn0 0 20f IC={theta_n:.12g}
+Cwp1 wp1 0 20f IC={theta_p:.12g}
+Cwn1 wn1 0 20f IC={theta_n:.12g}
+Rwp0 wp0 0 1e15
+Rwn0 wn0 0 1e15
+Rwp1 wp1 0 1e15
+Rwn1 wn1 0 1e15
+Cdp0 dp0 0 20f IC=0
+Cdn0 dn0 0 20f IC=0
+Cdp1 dp1 0 20f IC=0
+Cdn1 dn1 0 20f IC=0
+Rdp0 dp0 0 1G
+Rdn0 dn0 0 1G
+Rdp1 dp1 0 1G
+Rdn1 dn1 0 1G
+{chr(10).join(read_caps)}
+{chr(10).join(read_devices)}
+{error_cells(error_rule, latch_boost_width_u=0.0)}
+{chr(10).join(write_devices)}
+.tran 5p 7.0n uic
+.meas tran dp0_probe FIND V(dp0) AT=3.00n
+.meas tran dn0_probe FIND V(dn0) AT=3.00n
+.meas tran dp1_probe FIND V(dp1) AT=3.00n
+.meas tran dn1_probe FIND V(dn1) AT=3.00n
+.meas tran row0_initial_pos FIND V(score_i0p) AT=1.90n
+.meas tran row0_initial_neg_score FIND V(score_i0n) AT=1.90n
+.meas tran row0_initial_neg PARAM='{score_ic:.12g}-row0_initial_neg_score'
+.meas tran row0_final_pos FIND V(score_f0p) AT=6.30n
+.meas tran row0_final_neg_score FIND V(score_f0n) AT=6.30n
+.meas tran row0_final_neg PARAM='{score_ic:.12g}-row0_final_neg_score'
+.meas tran row0_initial_signed PARAM='row0_initial_pos-row0_initial_neg'
+.meas tran row0_final_signed PARAM='row0_final_pos-row0_final_neg'
+.meas tran row0_signed_read_delta PARAM='row0_final_signed-row0_initial_signed'
+.meas tran row0_desired_signed_read_delta PARAM='{desired0}'
+.meas tran row1_initial_pos FIND V(score_i1p) AT=1.90n
+.meas tran row1_initial_neg_score FIND V(score_i1n) AT=1.90n
+.meas tran row1_initial_neg PARAM='{score_ic:.12g}-row1_initial_neg_score'
+.meas tran row1_final_pos FIND V(score_f1p) AT=6.30n
+.meas tran row1_final_neg_score FIND V(score_f1n) AT=6.30n
+.meas tran row1_final_neg PARAM='{score_ic:.12g}-row1_final_neg_score'
+.meas tran row1_initial_signed PARAM='row1_initial_pos-row1_initial_neg'
+.meas tran row1_final_signed PARAM='row1_final_pos-row1_final_neg'
+.meas tran row1_signed_read_delta PARAM='row1_final_signed-row1_initial_signed'
+.meas tran row1_desired_signed_read_delta PARAM='{desired1}'
+.control
+run
+print dp0_probe dn0_probe dp1_probe dn1_probe row0_signed_read_delta row0_desired_signed_read_delta row1_signed_read_delta row1_desired_signed_read_delta
+.endc
+.end
+""".lstrip()
+
+
 def run_netlist(spice_bin: str, path: Path, netlist: str, timeout: float) -> dict[str, float]:
     path.write_text(netlist)
     cmd = [spice_bin, "-b", str(path)] if "ngspice" in Path(spice_bin).name.lower() else [spice_bin, str(path)]
@@ -416,7 +620,10 @@ def add_slopes(df: pd.DataFrame) -> pd.DataFrame:
             continue
         ordered_idx = list(idx)
         sub = out.loc[ordered_idx].sort_values("theta")
-        slopes = np.gradient(sub["read_response"].to_numpy(), sub["theta"].to_numpy())
+        if len(sub) < 2:
+            slopes = np.full(len(sub), np.nan)
+        else:
+            slopes = np.gradient(sub["read_response"].to_numpy(), sub["theta"].to_numpy())
         out.loc[sub.index, "read_slope"] = slopes
     return out
 
@@ -825,6 +1032,68 @@ def summarize_pair_action_mobility(pair_action: pd.DataFrame) -> dict[str, Any]:
     }
 
 
+def summarize_error_rule_action_mobility(error_rule_action: pd.DataFrame) -> dict[str, Any]:
+    if error_rule_action.empty:
+        return {
+            "error_rule_action_mobility_csv": None,
+            "error_rule_action_mobility_table_csv": None,
+            "error_rule_action_rows": 0,
+        }
+    out = error_rule_action.copy()
+    out["row0_action_sign_aligned"] = out["row0_desired_signed_read_delta"] > 0
+    out["row1_action_sign_aligned"] = out["row1_desired_signed_read_delta"] > 0
+    out["both_rows_action_sign_aligned"] = out["row0_action_sign_aligned"] & out["row1_action_sign_aligned"]
+    grouped = (
+        out.groupby(["theta_p", "theta_n", "error_rule"], as_index=False)
+        .agg(
+            both_rows_aligned_fraction=("both_rows_action_sign_aligned", "mean"),
+            row0_aligned_fraction=("row0_action_sign_aligned", "mean"),
+            row1_aligned_fraction=("row1_action_sign_aligned", "mean"),
+            min_row0_desired_signed_read_delta=("row0_desired_signed_read_delta", "min"),
+            min_row1_desired_signed_read_delta=("row1_desired_signed_read_delta", "min"),
+            mean_abs_row0_signed_read_delta=("row0_signed_read_delta", lambda s: float(np.abs(s).mean())),
+            mean_abs_row1_signed_read_delta=("row1_signed_read_delta", lambda s: float(np.abs(s).mean())),
+        )
+        .copy()
+    )
+    grouped["min_both_desired_signed_read_delta"] = grouped[
+        ["min_row0_desired_signed_read_delta", "min_row1_desired_signed_read_delta"]
+    ].min(axis=1)
+    grouped["mean_abs_signed_read_delta"] = grouped[
+        ["mean_abs_row0_signed_read_delta", "mean_abs_row1_signed_read_delta"]
+    ].mean(axis=1)
+    best = grouped.sort_values(
+        ["both_rows_aligned_fraction", "min_both_desired_signed_read_delta", "mean_abs_signed_read_delta"],
+        ascending=[False, False, False],
+    ).iloc[0]
+    return {
+        "error_rule_action_mobility_csv": None,
+        "error_rule_action_mobility_table_csv": None,
+        "error_rule_action_rows": int(len(out)),
+        "error_rule_action_both_rows_sign_aligned_fraction": float(out["both_rows_action_sign_aligned"].mean()),
+        "error_rule_action_row0_sign_aligned_fraction": float(out["row0_action_sign_aligned"].mean()),
+        "error_rule_action_row1_sign_aligned_fraction": float(out["row1_action_sign_aligned"].mean()),
+        "error_rule_action_min_row0_desired_signed_read_delta": float(
+            out["row0_desired_signed_read_delta"].min()
+        ),
+        "error_rule_action_min_row1_desired_signed_read_delta": float(
+            out["row1_desired_signed_read_delta"].min()
+        ),
+        "error_rule_action_max_dp0_v": float(out["dp0_probe"].max()),
+        "error_rule_action_max_dn0_v": float(out["dn0_probe"].max()),
+        "error_rule_action_max_dp1_v": float(out["dp1_probe"].max()),
+        "error_rule_action_max_dn1_v": float(out["dn1_probe"].max()),
+        "error_rule_action_best_error_rule": str(best["error_rule"]),
+        "error_rule_action_best_theta_p_v": float(best["theta_p"]),
+        "error_rule_action_best_theta_n_v": float(best["theta_n"]),
+        "error_rule_action_best_both_rows_aligned_fraction": float(best["both_rows_aligned_fraction"]),
+        "error_rule_action_best_min_both_desired_signed_read_delta": float(
+            best["min_both_desired_signed_read_delta"]
+        ),
+        "error_rule_action_best_mean_abs_signed_read_delta": float(best["mean_abs_signed_read_delta"]),
+    }
+
+
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--tag", default="device_readout_mobility_sweep")
@@ -850,6 +1119,16 @@ def main() -> None:
     ap.add_argument("--pair-theta-p-values", type=parse_float_list)
     ap.add_argument("--pair-theta-n-values", type=parse_float_list)
     ap.add_argument("--pair-act-values", type=parse_float_list)
+    ap.add_argument("--error-rule-action-sweep", action="store_true")
+    ap.add_argument("--error-rule-actions", choices=ERROR_RULE_ACTIONS, nargs="+", default=ERROR_RULE_ACTIONS)
+    ap.add_argument("--error-rule-action-rules", nargs="+", default=["perceptron", "out_competitive"])
+    ap.add_argument("--error-rule-action-theta-p-values", type=parse_float_list)
+    ap.add_argument("--error-rule-action-theta-n-values", type=parse_float_list)
+    ap.add_argument("--error-rule-action-act-values", type=parse_float_list)
+    ap.add_argument("--error-rule-action-target-out-v", type=float, default=0.04)
+    ap.add_argument("--error-rule-action-other-out-v", type=float, default=0.08)
+    ap.add_argument("--error-rule-action-target-score-v", type=float, default=0.18)
+    ap.add_argument("--error-rule-action-other-score-v", type=float, default=0.22)
     args = ap.parse_args()
 
     spice_bin, version = detect_spice(None)
@@ -869,6 +1148,7 @@ def main() -> None:
     neg_write_low_v = args.write_low_v if args.neg_write_low_v is None else args.neg_write_low_v
     rows: list[dict[str, Any]] = []
     pair_action_rows: list[dict[str, Any]] = []
+    error_rule_action_rows: list[dict[str, Any]] = []
     t0 = time.perf_counter()
 
     for act in act_values:
@@ -983,6 +1263,60 @@ def main() -> None:
                             }
                         )
 
+    if args.error_rule_action_sweep:
+        action_theta_p_values = args.error_rule_action_theta_p_values or args.pair_theta_p_values or theta_values
+        action_theta_n_values = args.error_rule_action_theta_n_values or args.pair_theta_n_values or theta_values
+        action_act_values = args.error_rule_action_act_values or args.pair_act_values or act_values
+        for error_rule in args.error_rule_action_rules:
+            for act in action_act_values:
+                for theta_p in action_theta_p_values:
+                    for theta_n in action_theta_n_values:
+                        for error_action in args.error_rule_actions:
+                            measures = run_netlist(
+                                spice_bin,
+                                generated / (
+                                    f"{safe_tag}_errail_{error_rule}_{error_action}_"
+                                    f"a{act:.2f}_tp{theta_p:.2f}_tn{theta_n:.2f}.cir"
+                                ),
+                                error_rule_action_mobility_netlist(
+                                    theta_p,
+                                    theta_n,
+                                    act,
+                                    error_action,
+                                    error_rule,
+                                    args.write_mode,
+                                    args.write_width_u,
+                                    pos_write_high_v,
+                                    pos_write_low_v,
+                                    neg_write_high_v,
+                                    neg_write_low_v,
+                                    args.write_state_gate_mode,
+                                    args.pos_width_u,
+                                    args.neg_width_u,
+                                    args.negative_score_ic_v,
+                                    args.score_cap_f,
+                                    args.error_rule_action_target_out_v,
+                                    args.error_rule_action_other_out_v,
+                                    args.error_rule_action_target_score_v,
+                                    args.error_rule_action_other_score_v,
+                                ),
+                                args.timeout,
+                            )
+                            error_rule_action_rows.append(
+                                {
+                                    "experiment": f"error_rule_action_{error_action}",
+                                    "error_rule": error_rule,
+                                    "theta_p": theta_p,
+                                    "theta_n": theta_n,
+                                    "act": act,
+                                    "error_action": error_action,
+                                    "write_width_u": args.write_width_u,
+                                    "write_mode": args.write_mode,
+                                    "write_state_gate_mode": args.write_state_gate_mode,
+                                    **measures,
+                                }
+                            )
+
     df = add_slopes(pd.DataFrame(rows))
     write = df[df["experiment"] == "write_discharge"][["theta", "state_delta_v"]].rename(
         columns={"state_delta_v": "write_discharge_v"}
@@ -996,6 +1330,17 @@ def main() -> None:
     pair_action = pd.DataFrame(pair_action_rows)
     if not pair_action.empty:
         pair_action["pair_action_sign_aligned"] = pair_action["desired_signed_read_delta"] > 0
+    error_rule_action = pd.DataFrame(error_rule_action_rows)
+    if not error_rule_action.empty:
+        error_rule_action["row0_action_sign_aligned"] = (
+            error_rule_action["row0_desired_signed_read_delta"] > 0
+        )
+        error_rule_action["row1_action_sign_aligned"] = (
+            error_rule_action["row1_desired_signed_read_delta"] > 0
+        )
+        error_rule_action["both_rows_action_sign_aligned"] = (
+            error_rule_action["row0_action_sign_aligned"] & error_rule_action["row1_action_sign_aligned"]
+        )
 
     csv_path = results / f"{safe_tag}.csv"
     table_path = tables / f"{safe_tag}.csv"
@@ -1003,6 +1348,8 @@ def main() -> None:
     signed_table_path = tables / f"{safe_tag}_signed_mobility.csv"
     pair_action_csv_path = results / f"{safe_tag}_pair_action_mobility.csv"
     pair_action_table_path = tables / f"{safe_tag}_pair_action_mobility.csv"
+    error_rule_action_csv_path = results / f"{safe_tag}_error_rule_action_mobility.csv"
+    error_rule_action_table_path = tables / f"{safe_tag}_error_rule_action_mobility.csv"
     df.to_csv(csv_path, index=False)
     df.to_csv(table_path, index=False)
     signed.to_csv(signed_csv_path, index=False)
@@ -1010,6 +1357,9 @@ def main() -> None:
     if not pair_action.empty:
         pair_action.to_csv(pair_action_csv_path, index=False)
         pair_action.to_csv(pair_action_table_path, index=False)
+    if not error_rule_action.empty:
+        error_rule_action.to_csv(error_rule_action_csv_path, index=False)
+        error_rule_action.to_csv(error_rule_action_table_path, index=False)
 
     read_rows = df[df["experiment"].str.startswith("read_")]
     write_rows = df[df["experiment"].str.startswith("write_")]
@@ -1020,6 +1370,10 @@ def main() -> None:
     if not pair_action.empty:
         pair_action_summary["pair_action_mobility_csv"] = str(pair_action_csv_path)
         pair_action_summary["pair_action_mobility_table_csv"] = str(pair_action_table_path)
+    error_rule_action_summary = summarize_error_rule_action_mobility(error_rule_action)
+    if not error_rule_action.empty:
+        error_rule_action_summary["error_rule_action_mobility_csv"] = str(error_rule_action_csv_path)
+        error_rule_action_summary["error_rule_action_mobility_table_csv"] = str(error_rule_action_table_path)
     summary = {
         "tag": safe_tag,
         "simulator": version,
@@ -1057,6 +1411,7 @@ def main() -> None:
         "max_effective_mobility": float(read_rows["effective_mobility"].max()),
         **signed_summary,
         **pair_action_summary,
+        **error_rule_action_summary,
         "wall_time_s": time.perf_counter() - t0,
         "interpretation": (
             "Read-response slopes approximate G_eff'(theta); write state deltas approximate the natural "

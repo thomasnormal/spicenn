@@ -1,0 +1,2 @@
+theta,act,read_positive_gain,read_positive_slope,read_negative_gain,read_negative_slope,write_mode,write_low_v,write_high_v,write_discharge_v,write_charge_v,signed_increase_mobility,signed_decrease_mobility,physical_gradient_increase_mobility,physical_gradient_decrease_mobility,signed_update_sign_aligned,physical_gradient_sign_aligned,signed_mobility_balance,physical_gradient_mobility_balance
+0.34,0.5,0.415,,0.599964,,bounded_charge_discharge,0.1,0.7,0.0034276,-0.000323971,,,,,False,False,,

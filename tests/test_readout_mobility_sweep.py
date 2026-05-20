@@ -303,6 +303,71 @@ def test_pair_action_netlist_uses_state_window_write_stacks() -> None:
     assert ".meas tran desired_signed_read_delta PARAM='signed_read_delta'" in netlist
 
 
+def test_error_rule_action_netlist_uses_real_dp_dn_write_stacks() -> None:
+    netlist = mobility.error_rule_action_mobility_netlist(
+        theta_p=0.34,
+        theta_n=0.13,
+        act=0.5,
+        error_action="label0_mistake",
+        error_rule="out_competitive",
+        write_mode="bounded_charge_discharge",
+        width_u=0.0008,
+        pos_write_high_v=0.70,
+        pos_write_low_v=0.24,
+        neg_write_high_v=0.16,
+        neg_write_low_v=0.10,
+    )
+
+    assert "Mdp0_o0 dp0_t out1 dp0_o 0 NSENSE W=96u" in netlist
+    assert "Mdn1_s0 dn1_t out1 dn1_s 0 NSENSE W=96u" in netlist
+    assert "Mw0p_ch_d w0p_ch_a dp0 wp0 0 NSENSE W=0.0008u" in netlist
+    assert "Mw0n_dis_d w0n_dis_a dp0 wnlow 0 NSENSE W=0.0008u" in netlist
+    assert "Mw1p_dis_d w1p_dis_a dn1 wplow 0 NSENSE W=0.0008u" in netlist
+    assert "Mw1n_ch_d w1n_ch_a dn1 wn1 0 NSENSE W=0.0008u" in netlist
+    assert ".meas tran row0_desired_signed_read_delta PARAM='row0_signed_read_delta'" in netlist
+    assert ".meas tran row1_desired_signed_read_delta PARAM='-row1_signed_read_delta'" in netlist
+
+
+def test_error_rule_action_summary_requires_both_rows_aligned() -> None:
+    rows = pd.DataFrame(
+        [
+            {
+                "theta_p": 0.34,
+                "theta_n": 0.13,
+                "error_rule": "out_competitive",
+                "row0_signed_read_delta": 0.02,
+                "row0_desired_signed_read_delta": 0.02,
+                "row1_signed_read_delta": -0.01,
+                "row1_desired_signed_read_delta": 0.01,
+                "dp0_probe": 0.9,
+                "dn0_probe": 0.0,
+                "dp1_probe": 0.0,
+                "dn1_probe": 0.8,
+            },
+            {
+                "theta_p": 0.46,
+                "theta_n": 0.13,
+                "error_rule": "out_competitive",
+                "row0_signed_read_delta": -0.03,
+                "row0_desired_signed_read_delta": -0.03,
+                "row1_signed_read_delta": -0.02,
+                "row1_desired_signed_read_delta": 0.02,
+                "dp0_probe": 0.9,
+                "dn0_probe": 0.0,
+                "dp1_probe": 0.0,
+                "dn1_probe": 0.8,
+            },
+        ]
+    )
+
+    summary = mobility.summarize_error_rule_action_mobility(rows)
+
+    assert summary["error_rule_action_rows"] == 2
+    assert summary["error_rule_action_both_rows_sign_aligned_fraction"] == pytest.approx(0.5)
+    assert summary["error_rule_action_best_theta_p_v"] == pytest.approx(0.34)
+    assert summary["error_rule_action_best_theta_n_v"] == pytest.approx(0.13)
+
+
 def test_pair_action_summary_prefers_sign_aligned_direct_effect() -> None:
     pair_action = pd.DataFrame(
         [

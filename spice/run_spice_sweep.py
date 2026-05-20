@@ -23,8 +23,11 @@ def detect_spice(preferred: str | None = None) -> tuple[str, str]:
         if not name:
             continue
         path = shutil.which(name)
+        if path is None and Path(name).exists():
+            path = str(Path(name).resolve())
         if path:
-            version = subprocess.run([path, "--version"], text=True, capture_output=True, timeout=10)
+            version_arg = "-v" if "xyce" in Path(path).name.lower() else "--version"
+            version = subprocess.run([path, version_arg], text=True, capture_output=True, timeout=10)
             lines = (version.stdout or version.stderr).strip().splitlines()
             useful = next((line.strip("* ").strip() for line in lines if "ngspice" in line.lower() or "xyce" in line.lower()), None)
             return path, useful or (lines[0] if lines else Path(path).name)
@@ -33,9 +36,12 @@ def detect_spice(preferred: str | None = None) -> tuple[str, str]:
 
 def run_tiny_test(spice_bin: str, workdir: Path) -> None:
     netlist = workdir / "tiny_test.cir"
-    netlist.write_text(
-        "* tiny test\nV1 in 0 DC 1\nR1 in 0 1k\n.op\n.control\nrun\nprint v(in)\n.endc\n.end\n"
-    )
+    if "ngspice" in Path(spice_bin).name.lower():
+        netlist.write_text(
+            "* tiny test\nV1 in 0 DC 1\nR1 in 0 1k\n.op\n.control\nrun\nprint v(in)\n.endc\n.end\n"
+        )
+    else:
+        netlist.write_text("* tiny test\nV1 in 0 DC 1\nR1 in 0 1k\n.op\n.print DC V(in)\n.end\n")
     cmd = [spice_bin, "-b", str(netlist)] if "ngspice" in Path(spice_bin).name.lower() else [spice_bin, str(netlist)]
     proc = subprocess.run(cmd, text=True, capture_output=True, timeout=20)
     if proc.returncode != 0:

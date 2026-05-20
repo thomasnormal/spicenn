@@ -70,12 +70,30 @@ def signed_learning_cell_netlist(
     delta_n: float,
     wp_init: float,
     wn_init: float,
+    exclusive_delta_gate: bool = False,
 ) -> str:
+    if exclusive_delta_gate:
+        positive_source = "gp_src"
+        negative_source = "gn_src"
+        exclusive_gate = """
+* Mutually inhibit conflicting error rails: dp writes only when dn is low, and conversely.
+Mgp_inhibit vdd dn gp_src vdd PMOS W=8u L=180n
+Mgn_inhibit vdd dp gn_src vdd PMOS W=8u L=180n
+Mgp_kill gp dn 0 0 NMOS W=8u L=180n
+Mgn_kill gn dp 0 0 NMOS W=8u L=180n
+""".strip()
+        exclusive_comment = " with PMOS mutual-inhibit gates"
+    else:
+        positive_source = "vdd"
+        negative_source = "vdd"
+        exclusive_gate = ""
+        exclusive_comment = ""
     return f"""
 * Device-level signed ReLU learning cell.
 * No behavioral tanh or arithmetic multiplier appears in the signal path.
 * Signed weight is represented by two nonnegative capacitor states: Cwp-Cwn.
 * Data-derived gradient caps Cgp/Cgn are charged by input/delta transistor stacks.
+* Error-rail selectivity: {exclusive_delta_gate}{exclusive_comment}.
 .param VDD=1.2
 {mos_models()}
 Vdd vdd 0 {{VDD}}
@@ -106,13 +124,15 @@ Mrelu vdd pre act 0 NMOS W=16u L=180n
 Cact act 0 20f IC=0
 Ract act 0 1G
 
+{exclusive_gate}
+
 * Positive data-derived gradient accumulator: pix AND positive-delta AND acc.
-Mgp_x vdd pix gp_x 0 NMOS W=8u L=180n
+Mgp_x {positive_source} pix gp_x 0 NMOS W=8u L=180n
 Mgp_d gp_x dp gp_d 0 NMOS W=8u L=180n
 Mgp_a gp_d acc gp 0 NMOS W=8u L=180n
 
 * Negative data-derived gradient accumulator: pix AND negative-delta AND acc.
-Mgn_x vdd pix gn_x 0 NMOS W=8u L=180n
+Mgn_x {negative_source} pix gn_x 0 NMOS W=8u L=180n
 Mgn_d gn_x dn gn_d 0 NMOS W=8u L=180n
 Mgn_a gn_d acc gn 0 NMOS W=8u L=180n
 
@@ -176,6 +196,11 @@ def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--timeout", type=float, default=30.0)
     ap.add_argument("--tag", default="device_signed_learning_cell")
+    ap.add_argument(
+        "--exclusive-delta-gate",
+        action="store_true",
+        help="Add PMOS mutual-inhibit gates so overlapping positive/negative error rails become a no-write event.",
+    )
     args = ap.parse_args()
 
     spice_bin, version = detect_spice(None)
@@ -209,7 +234,14 @@ def main() -> None:
         measures = run_netlist(
             spice_bin,
             generated / f"{safe_tag}_{idx:03d}.cir",
-            signed_learning_cell_netlist(vin, delta_p, delta_n, 0.95, 0.25),
+            signed_learning_cell_netlist(
+                vin,
+                delta_p,
+                delta_n,
+                0.95,
+                0.25,
+                exclusive_delta_gate=args.exclusive_delta_gate,
+            ),
             args.timeout,
         )
         rows.append(
@@ -234,6 +266,7 @@ def main() -> None:
     neg_delta = df[df["experiment"] == "negative_delta_sweep"].sort_values("delta_n")
     pos_effect = pos_input[pos_input["gp_after_acc"] > 0.35]
     neg_effect = neg_input[neg_input["gn_after_acc"] > 0.35]
+    balanced_high = df[df["experiment"] == "balanced_high"].iloc[0]
 
     summary = {
         "simulator": version,
@@ -248,6 +281,7 @@ def main() -> None:
         "no_behavioral_signal_math": True,
         "uses_behavioral_tanh": False,
         "uses_behavioral_multipliers": False,
+        "exclusive_delta_gate": args.exclusive_delta_gate,
         "curve": str(curve_path),
         "table_curve": str(table_path),
         "rows": len(df),
@@ -268,6 +302,9 @@ def main() -> None:
         "max_negative_activation_delta_v": float(neg_input["d_act"].min()),
         "max_gp_after_acc_v": float(df["gp_after_acc"].max()),
         "max_gn_after_acc_v": float(df["gn_after_acc"].max()),
+        "balanced_high_signed_delta_v": float(balanced_high["d_signed"]),
+        "balanced_high_gp_after_acc_v": float(balanced_high["gp_after_acc"]),
+        "balanced_high_gn_after_acc_v": float(balanced_high["gn_after_acc"]),
         "wall_time_s": time.perf_counter() - t0,
         "interpretation": (
             "This extends the device-level primitive from preset gradient caps to data-derived gradient accumulation. "

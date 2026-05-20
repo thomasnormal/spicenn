@@ -228,19 +228,86 @@ The experiments in this note use three benchmarks of increasing difficulty.
     hidden layer is being trained.  Used as the canonical proof-of-concept for
     the direct-flow architecture.
   \item[Tiny MNIST (\code{mnist01\_N}).] A balanced binary subset of MNIST
-    restricted to digit classes 0 and 1, with $N$ training samples
-    ($N = 16, 24, 32$ in the current runs).  Pixels are either flattened or
-    passed through a fixed sensory front-end (pooled pixels, Haar-like local
-    contrast, DCT features, or random-retina ReLU features).  These subsets
-    are usually linearly separable at the input level, which lets us isolate
-    whether the readout and hidden-write dynamics can converge from whether
-    the representation is rich enough.  Test accuracy is reported on the
+    restricted to digit classes 0 and 1, with $N$ training samples.  Earlier
+    runs tried several fixed sensory front ends, but the current circuit
+    architecture work is pinned to \code{mnist01fixed8\_64}: one reasonable
+    fixed Haar/pool feature option, held constant while the synapse, neuron,
+    backward-flow, and write blocks are improved.  The goal of this benchmark
+    is to isolate whether the readout and hidden-write dynamics can converge,
+    not to keep optimizing preprocessing.  Test accuracy is reported on the
     held-out MNIST-0-vs-1 split.
+  \item[Small multiclass MNIST (\code{mnistKfixed8\_N}).] A balanced
+    \(K\)-class subset using digit classes \(0,\ldots,K-1\), e.g.\
+    \code{mnist3fixed8\_30} for ten samples each from classes 0, 1, and 2.
+    This benchmark is now used as the gate before full 10-class MNIST: it
+    exercises the multi-row output/error/write code without changing the fixed
+    input frontend.
   \item[MNIST.] The standard 10-class handwritten-digit dataset (60k training
     / 10k test, $28{\times}28$ grayscale).  Used for the local-feature
     phase-training track; the headline number is test accuracy on the full
     10k test set.
 \end{description}
+
+\section{Simulation Cost Controls}
+
+The current SPICE decks are slow for two separate reasons: the transient
+window is long, and the measurement harness asks for many voltages at many
+cycle offsets.  The generator now exposes two explicit simulator knobs:
+\code{--tran-step-ps} and \code{--spice-accuracy-preset}, and two cycle-shape
+screening knobs: \code{--cycle-ns} and \code{--skip-train-refire}.  The default
+remains the historical setting,
+\[
+  \code{.tran 10p Tstop uic},
+  \qquad
+  \code{method=gear maxord=2 rshunt=1e12 gmin=1e-12}.
+\]
+This is deliberate: the write dynamics are currently sensitive to integration
+granularity.  On a 20-sample \code{mnist01fixed8} readout-only calibration, the
+10 ps standard run reached 90\% final accuracy in about 42 s.  Relaxing the
+tolerance preset at 10 ps preserved the 90\% result but gave essentially no
+speedup.  Coarsening the transient step did speed up the deck, but changed the
+learning outcome:
+\[
+\begin{array}{ccl}
+10\mathrm{ps}\ \mathrm{standard} &:& 90\%,\ 42.3\mathrm{s},\\
+10\mathrm{ps}\ \mathrm{fast} &:& 90\%,\ 41.2\mathrm{s},\\
+7.5\mathrm{ps}\ \mathrm{standard} &:& 90\%,\ 53.6\mathrm{s},\\
+5\mathrm{ps}\ \mathrm{standard} &:& 95\%,\ 78.0\mathrm{s},\\
+12.5\mathrm{ps}\ \mathrm{standard} &:& 50\%,\ 38.1\mathrm{s},\\
+15\mathrm{ps}\ \mathrm{standard} &:& 50\%,\ 29.7\mathrm{s},\\
+20\mathrm{ps}\ \mathrm{standard} &:& 55\%,\ 23.9\mathrm{s},\\
+25\mathrm{ps}\ \mathrm{standard} &:& 50\%,\ 20.0\mathrm{s}.
+\end{array}
+\]
+So timestep choice is not a harmless runtime flag for the current circuits; it
+is a circuit experiment because it changes the effective charge delivered by
+narrow switching/write events.  Coarser steps can destroy the learning
+trajectory, while a finer 5 ps run improved this calibration from 90\% to
+95\%.  The safer speed policy for screening is therefore:
+\begin{enumerate}
+  \item use \code{--measure-detail light};
+  \item use one readout offset, usually \code{--readout-sample-offsets-ns 2.95};
+  \item disable \code{--eval-each-epoch} unless the run is specifically looking
+    for transient optima;
+  \item use smaller sample counts and fewer epochs for architecture smoke
+    tests;
+  \item use \code{--cycle-ns} with \code{--skip-train-refire} to remove the
+    diagnostic post-write refire window only after a matched 16 ns control is
+    available;
+  \item only use a coarser \code{--tran-step-ps} after a matched standard-step
+    control shows the same direction, accuracy, and class histogram.
+\end{enumerate}
+For confirmation runs, 5--7.5 ps is now a better default than 10 ps when wall
+time is acceptable.
+
+The first Xyce comparison is promising for throughput but not yet calibrated
+as a drop-in oracle.  A user-local Xyce 7.10 serial install runs the same
+20-sample calibration roughly twice as fast as ngspice: about 20 s instead of
+42 s at the 10 ps setting.  However, the measured learning outcome was 85\%
+at both 10 ps and 5 ps, while ngspice gave 90\% at 10 ps and 95\% at 5 ps.
+That makes Xyce useful for fast smoke tests and convergence screening, but
+ngspice remains the reference simulator until we characterize which MOS
+options, timestep controls, or numerical tolerances explain the discrepancy.
 
 \section{Primitive Circuit Model}
 
@@ -265,6 +332,66 @@ the backward/write window itself as the local update event:
 \[
   \Delta V(C_{w^\pm}) \approx F(\phi_i,\delta_j,\mathrm{bwd},\mathrm{apply}).
 \]
+The update primitive must also define what happens when both signed error rails
+are partially on.  A raw two-rail MOS stack can move the signed weight even
+when \(\delta^+\) and \(\delta^-\) are both high; in the isolated signed
+learning-cell test, equal high rails produced a large negative update.  The
+newer isolated cell adds a mutually inhibited write-rail primitive so that a
+positive update path is enabled only when the negative error rail is low, and
+conversely.  The robust version uses two pieces: a PMOS source inhibit and an
+NMOS conflict-kill device that actively discharges the generated write rail
+when the opposite raw error rail is high.  That turns conflicting rails into
+``no local write'' rather than an accidental depression/potentiation event.
+
+The same idea is now available in the composed direct-flow generator as
+\code{--write-error-exclusion pmos\_inhibit}.  It creates transistor-generated
+\(\mathrm{rwpos}/\mathrm{rwneg}\) rails for readout writes and
+\(\mathrm{hwpos}/\mathrm{hwneg}\) rails for hidden writes:
+\[
+  \mathrm{rwpos}_k \approx \mathrm{dp}_k \land \neg \mathrm{dn}_k,
+  \qquad
+  \mathrm{rwneg}_k \approx \mathrm{dn}_k \land \neg \mathrm{dp}_k.
+\]
+For diagnosis the generator also accepts independent readout-write and
+hidden-write exclusion overrides, each with its own width override.  This lets
+the readout and hidden-write paths be tested without forcing the same extra
+loading onto both.
+The hidden write rails use the same construction with
+\(\mathrm{hdp}/\mathrm{hdn}\).  This is still a MOS-shaped rule, not ideal
+logic; the point is to make ambiguous error states weak/no-write states before
+they touch persistent weight capacitors.
+The standalone primitive sweep can now be run with
+\code{--exclusive-delta-gate}; in that mode the balanced high-error case moved
+the signed weight by only \(8.2\times10^{-7}\,\mathrm{V}\), while the monotone
+positive/negative input and delta sweeps still passed.  This makes the
+mutual-inhibit block a good isolated synapse primitive, even though the
+composed network still has to decide whether the added gating delay and loading
+help or hurt a given write path.
+
+A separate write-rail-only sweep exposed why the first composed exclusive runs
+were weak: the PMOS-only source inhibit left the generated rails floating high
+under balanced high \(\mathrm{dp}/\mathrm{dn}\).  Adding the NMOS kill devices
+fixed the isolated block.  With \(0.1\,\mathrm{fF}\) rail capacitance and
+widths from \(2\) to \(32\,\mu\mathrm{m}\), the selected rail reached at least
+\(1.04\,\mathrm{V}\), the unselected rail stayed below \(10^{-9}\,\mathrm{V}\),
+and balanced high conflict also stayed below \(10^{-9}\,\mathrm{V}\).
+
+The next readout-write primitive is
+\code{--write-error-exclusion pmos\_inhibit\_decay}.  It keeps the exclusive
+signed rails above, but adds a third transistor-generated overlap rail:
+\[
+  \mathrm{rwov}_k \approx \mathrm{dp}_k \land \mathrm{dn}_k .
+\]
+That rail does not choose a signed update.  Instead it opens a symmetric
+common-mode discharge path on both readout weight branches.  The hypothesis is
+that the old raw readout stack used ambiguous high-high error states as useful
+weight decay/mobility, while the hard exclusive rail removed that behavior.
+In the isolated sweep, the signed rails remained exclusive and the overlap
+rail appeared only for high-high conflict: \(\mathrm{rwov}\) was about
+\(0.678\,\mathrm{V}\) under \(\mathrm{dp}=\mathrm{dn}=1.1\,\mathrm{V}\), and
+effectively zero for one-sided \(1.1/0.2\,\mathrm{V}\) cases.  The overlap
+detector uses ordinary-threshold NMOS devices so weak opposite rails do not
+accidentally trigger common-mode decay.
 
 \begin{figure}[h]
   \centering
@@ -323,98 +450,325 @@ the backward/write window itself as the local update event:
 \end{figure}
 
 \paragraph{Compact form (planned density step).}
-The same logic can be packed into 4 MOS per synapse by pre-computing
-$x_{\mathrm{active},i} = x_i \wedge \mathrm{fwd}$ once per input rail and
-driving every fan-out synapse from that shared node.  The synapse then
-collapses to a $(w^+,\, x_{\mathrm{active}})$ stack from $V_{DD}$ and a
-symmetric $(x_{\mathrm{active}},\, w^-)$ stack to ground, cutting transistor
-count by roughly $30\%$ at typical fan-outs (4$NM + N$ vs.\ $6NM$ for an
-$N{\to}M$ layer).  The tradeoff is that $x_{\mathrm{active}}$ becomes a
-layer-level analog rail whose edge timing and amplitude --- charge-injection
-glitches, fan-out loading --- have to be characterised before the local
-phase isolation of the 6-MOS form can be safely traded for the density.  For
-that reason the 6-MOS-per-synapse circuit in Fig.~\ref{fig:synapse} remains
-the tutorial default and matches the current netlists; the 4-MOS shared-rail
-form is the planned next density step after buffer/sizing checks on the
-shared rail.
+The same logic can be packed into a smaller per-layer device count by
+pre-computing $x_{\mathrm{active},i} = x_i \wedge \mathrm{fwd}$ once per
+input rail and driving every fan-out synapse from that shared node.  The
+synapse drops the in-stack fwd gates and collapses to a
+$(w^+,\, x_{\mathrm{active}})$ stack from $V_{DD}$ and a symmetric
+$(x_{\mathrm{active}},\, w^-)$ stack to ground, plus one pass-gate NMOS per
+input rail to realise the AND.  The total device count for an $N{\to}M$
+layer goes from $6NM$ (tutorial form) to $4NM + N$ (compact form, accounting
+for the AND), which is a strict win for any $M \geq 1$ and around a $30\%$
+saving at typical fan-outs.  The tradeoff is that $x_{\mathrm{active},i}$
+becomes a layer-level analog rail whose edge timing and amplitude ---
+charge-injection glitches, fan-out loading --- have to be characterised
+before the local phase isolation of the in-stack-fwd form can be safely
+traded for the density.  For that reason the tutorial circuit in
+Fig.~\ref{fig:synapse} remains the default and matches the current netlists;
+the shared-rail form is the planned next density step after buffer/sizing
+checks on the shared rail.  Figure~\ref{fig:synapse-compact} shows the
+compact synapse with the pass-gate AND drawn explicitly so the full device
+count is visible.
 
 \begin{figure}[h]
   \centering
-  \begin{circuitikz}[american, scale=0.9, transform shape, font=\small]
-    %% --- V_DD rail (top) ---
-    \draw[thick] (-0.2,5.0) -- (4.0,5.0);
-    \node[left, font=\footnotesize] at (-0.2,5.0) {$V_{DD}$};
+  \begin{circuitikz}[american, scale=0.85, transform shape, font=\small]
+    %% ===== Pass-gate AND: 1 NMOS + leak pull-down =====
+    %% gate = fwd, drain = x_i, source = x_{a,i}
+    \node[nmos, anchor=D] (mand) at (-0.4,6.4) {};
+    \draw (mand.D) -- ++(0,0.4) node[above, font=\footnotesize] {$x_i$};
+    \draw (mand.G) -- ++(-0.5,0) node[left] {fwd};
+    \coordinate (xa) at ($(mand.S)+(0,-0.4)$);
+    \draw (mand.S) -- (xa);
+    \node[circ] at (xa) {};
+    \node[above right, font=\footnotesize] at (xa) {$x_{\mathrm{a},i}$};
+    %% leak pull-down so x_a goes to 0 when the pass gate is off
+    \draw (xa) -- ++(0.0,-0.4) coordinate (xa_below);
+    \draw (xa_below) to[R, l_={$R_{\ell}$}] ++(0,-1.0) node[ground]{};
 
-    %% --- C_pre summing rail (middle) ---
-    \draw[thick] (-0.2,3.0) -- (5.4,3.0);
-    \node[left, font=\footnotesize] at (-0.2,3.0) {$C_{\mathrm{pre}}$ rail};
+    %% ===== 4-MOS synapse stack at x=2.4 =====
+    \node[above, font=\small] at (2.4,6.9) {$V_{DD}$};
+    \draw (2.4,6.9) -- (2.4,6.4);
+    \node[nmos, anchor=D] (mwp) at (2.4,6.4) {};
+    \draw (mwp.G) -- ++(-0.45,0) node[left] {$w^+$};
 
-    %% --- GND rail (bottom) ---
-    \draw[thick] (-0.2,1.0) -- (4.0,1.0);
-    \node[ground] at (-0.2,1.0) {};
+    \draw (mwp.S) -- (2.4,5.0);
+    \node[nmos, anchor=D] (mxp) at (2.4,5.0) {};
+    \coordinate (xag_up) at ($(mxp.G)+(-0.5,0)$);
+    \draw (mxp.G) -- (xag_up);
 
-    %% --- Synapse 1: signed pair contributing to C_pre ---
-    \draw[-{Latex[length=2mm]}, semithick, forwardblue]
-      (0.6,4.95) -- (0.6,3.05);
-    \node[right, font=\footnotesize, forwardblue] at (0.6,4.0)
-      {$w_1^+\!\cdot x_1$};
-    \draw[-{Latex[length=2mm]}, semithick, backred]
-      (0.6,2.95) -- (0.6,1.05);
-    \node[right, font=\footnotesize, backred] at (0.6,2.0)
-      {$w_1^-\!\cdot x_1$};
-    \node[font=\footnotesize] at (0.6,0.55) {syn 1};
+    \draw (mxp.S) -- (2.4,3.6);
+    \node[circ] (tap) at (2.4,3.6) {};
+    \draw (tap) -- (4.2,3.6) node[right] {to $C_{\mathrm{pre}}$ rail};
 
-    %% --- Synapse 2 ---
-    \draw[-{Latex[length=2mm]}, semithick, forwardblue]
-      (2.2,4.95) -- (2.2,3.05);
-    \node[right, font=\footnotesize, forwardblue] at (2.2,4.0)
-      {$w_2^+\!\cdot x_2$};
-    \draw[-{Latex[length=2mm]}, semithick, backred]
-      (2.2,2.95) -- (2.2,1.05);
-    \node[right, font=\footnotesize, backred] at (2.2,2.0)
-      {$w_2^-\!\cdot x_2$};
-    \node[font=\footnotesize] at (2.2,0.55) {syn 2};
+    \draw (tap) -- (2.4,3.2);
+    \node[nmos, anchor=D] (mxn) at (2.4,3.2) {};
+    \coordinate (xag_dn) at ($(mxn.G)+(-0.5,0)$);
+    \draw (mxn.G) -- (xag_dn);
 
-    %% --- Ellipsis: more synapses fan in ---
-    \node at (3.4,4.0) {$\cdots$};
-    \node at (3.4,2.0) {$\cdots$};
+    \draw (mxn.S) -- (2.4,1.8);
+    \node[nmos, anchor=D] (mwn) at (2.4,1.8) {};
+    \draw (mwn.G) -- ++(-0.45,0) node[left] {$w^-$};
 
-    %% --- C_pre capacitor on the summing rail ---
-    \node[circ] (pre) at (4.4,3.0) {};
-    \draw (pre) to[C,l_={$C_{\mathrm{pre}}$}] (4.4,1.7) node[ground] {};
+    \draw (mwn.S) -- (2.4,0.5) node[ground]{};
 
-    %% --- Source follower (ReLU stage) ---
-    \draw (pre) -- (5.8,3.0);
-    \node[nmos, anchor=G] (mrelu) at (5.8,3.0) {};
-    \draw (mrelu.D) -- (mrelu.D |- 0,5.0) -- (4.0,5.0);
-    \draw (mrelu.S) -- (mrelu.S |- 0,2.3);
-    \draw (mrelu.S |- 0,2.3) -- (7.6,2.3);
-    \node[circ] (act) at (7.6,2.3) {};
-    \draw (act) to[C,l_={$C_{\mathrm{act}}$}] (7.6,1.0) node[ground] {};
-    \draw (act) -- (8.6,2.3) node[right] {$a_j$};
+    %% ===== Shared x_{a,i} rail from pass-gate to both gates =====
+    \draw (xa) -- (1.4,5.0) coordinate (railtop) -- (xag_up);
+    \draw (railtop) -- (1.4,3.2) -- (xag_dn);
+    \node[circ] at (railtop) {};
 
-    %% --- Description box ---
-    \node[draw, rounded corners=2pt, fill=lightgray, align=left, text width=5.6cm,
+    %% ===== Description box =====
+    \node[draw, rounded corners=2pt, fill=lightgray, align=left, text width=5.4cm,
           font=\small]
-      at (10.3,4.5)
-      {\textbf{ReLU-like neuron:}\\[2pt]
-       each fan-in synapse contributes a signed pair onto
-       $C_{\mathrm{pre}}$ --- a {\color{forwardblue}charge-up} via $w_i^+$ and
-       a {\color{backred}charge-down} via $w_i^-$ --- so
-       $V(C_{\mathrm{pre}})$ accumulates
-       $\sum_i (w_i^+ - w_i^-)\,x_i$.\\[2pt]
-       The source follower then passes $V(C_{\mathrm{pre}}) - V_{\mathrm{th}}$
-       onto $C_{\mathrm{act}}$ when above threshold, else $C_{\mathrm{act}}$
-       stays at ground.};
+      at (7.7,5.0)
+      {\textbf{Shared-rail compact form, every transistor shown:}\\[2pt]
+       The AND is a single pass-gate NMOS (gate=fwd, drain=$x_i$,
+       source=$x_{\mathrm{a},i}$) plus a leak resistor $R_\ell$ that
+       pulls $x_{\mathrm{a},i}$ to GND when fwd is low.\\[2pt]
+       The synapse itself is two 2-NMOS stacks:
+       $(w^+,\,x_{\mathrm{a},i})$ pulling $V_{DD}\!\to\!C_{\mathrm{pre}}$ and
+       $(x_{\mathrm{a},i},\,w^-)$ pulling
+       $C_{\mathrm{pre}}\!\to\!\mathrm{GND}$.\\[2pt]
+       Per-layer total: $4NM + N$ NMOS, vs.\ $6NM$ for the tutorial form.};
   \end{circuitikz}
-  \caption{Conceptual ReLU-like neuron.  Each fan-in synapse drives the shared
-  $C_{\mathrm{pre}}$ node with a signed pair of currents (blue
-  ${\propto}\,w_i^+ x_i$ pushes charge in from $V_{DD}$, red
-  ${\propto}\,w_i^- x_i$ pulls charge out to GND), so the differential weight
-  $w_i^+\!-w_i^-$ sets the per-synapse direction.  The source follower then
-  one-sidedly charges $C_{\mathrm{act}}$ from the summed pre-activation
-  $V(C_{\mathrm{pre}})$, giving the half-wave rectifying behaviour of a
-  ReLU.}
+  \caption{Shared-rail compact synapse form with every transistor drawn.
+  Per input rail, one pass-gate NMOS (gate~=~fwd, drain~=~$x_i$) plus a leak
+  resistor $R_\ell$ produces the shared $x_{\mathrm{a},i}$ signal.  Per
+  synapse, two 2-NMOS stacks (top: $w^+\!,\,x_{\mathrm{a},i}$; bottom:
+  $x_{\mathrm{a},i},\,w^-$) drive the $C_{\mathrm{pre}}$ tap.  Compared to
+  Fig.~\ref{fig:synapse} the total device count for an $N{\to}M$ layer goes
+  from $6NM$ to $4NM + N$ NMOS (plus $N$ leak resistors), at the cost of
+  $x_{\mathrm{a},i}$ becoming a layer-level analog signal whose buffering and
+  edge cleanliness must be characterised.}
+  \label{fig:synapse-compact}
+\end{figure}
+
+\paragraph{Whole cell including the backward path.}
+The figures above show only the forward (sample $\to$ activation) path.  A
+full SPICENN cell has two more analog paths sharing the same state: the
+backward path that turns the output error into a per-synapse update signal,
+and the write path that nudges the weight capacitors.  Figure~\ref{fig:cell}
+puts all three on one diagram for a single input-layer signed-pair cell.
+
+\begin{figure}[H]
+  \centering
+  \begin{circuitikz}[american, scale=0.7, transform shape, font=\footnotesize]
+    %% =============== Pass-gate AND ===============
+    \node[nmos, anchor=D] (mand) at (-1.0,8.6) {};
+    \draw (mand.D) -- ++(0,0.4) node[above, font=\footnotesize] {$x_i$};
+    \draw (mand.G) -- ++(-0.55,0) node[left] {fwd};
+    \coordinate (xa) at ($(mand.S)+(0,-0.4)$);
+    \draw (mand.S) -- (xa);
+    \node[circ] at (xa) {};
+    \node[above right, font=\footnotesize] at (xa) {$x_{\mathrm{a},i}$};
+    \draw (xa) to[R, l_={$R_\ell$}] ($(xa)+(0,-1.0)$) node[ground]{};
+
+    %% =============== Weight capacitor Cw+ ===============
+    \coordinate (cwp_top) at (-3.0,7.5);
+    \node[circ] at (cwp_top) {};
+    \node[above, font=\footnotesize] at (cwp_top) {$C_{w^+}$};
+    \draw (cwp_top) to[C] ($(cwp_top)+(0,-1.4)$) node[ground]{};
+
+    %% =============== Weight capacitor Cw- ===============
+    \coordinate (cwm_top) at (-3.0,2.9);
+    \node[circ] at (cwm_top) {};
+    \node[above, font=\footnotesize] at (cwm_top) {$C_{w^-}$};
+    \draw (cwm_top) to[C] ($(cwm_top)+(0,-1.4)$) node[ground]{};
+
+    %% =============== 4-NMOS forward synapse stack at x=1.5 ===============
+    \node[above, font=\footnotesize] at (1.5,8.6) {$V_{DD}$};
+    \draw (1.5,8.6) -- (1.5,8.1);
+    \node[nmos, anchor=D] (mwp) at (1.5,8.1) {};
+    \coordinate (mwp_g) at ($(mwp.G)+(-0.45,0)$);
+    \draw (mwp.G) -- (mwp_g);
+
+    \draw (mwp.S) -- (1.5,6.6);
+    \node[nmos, anchor=D] (mxp) at (1.5,6.6) {};
+    \coordinate (mxp_g) at ($(mxp.G)+(-0.45,0)$);
+    \draw (mxp.G) -- (mxp_g);
+
+    \draw (mxp.S) -- (1.5,5.2);
+    \node[circ] (tap) at (1.5,5.2) {};
+
+    \draw (tap) -- (1.5,4.8);
+    \node[nmos, anchor=D] (mxn) at (1.5,4.8) {};
+    \coordinate (mxn_g) at ($(mxn.G)+(-0.45,0)$);
+    \draw (mxn.G) -- (mxn_g);
+
+    \draw (mxn.S) -- (1.5,3.4);
+    \node[nmos, anchor=D] (mwn) at (1.5,3.4) {};
+    \coordinate (mwn_g) at ($(mwn.G)+(-0.45,0)$);
+    \draw (mwn.G) -- (mwn_g);
+
+    \draw (mwn.S) -- (1.5,2.0) node[ground]{};
+
+    %% =============== Cw+ -> mwp gate wiring ===============
+    \draw (cwp_top) -- (cwp_top -| -1.6,0) -- (mwp_g -| -1.6,0) -- (mwp_g);
+
+    %% =============== Cw- -> mwn gate wiring ===============
+    \draw (cwm_top) -- (cwm_top -| -1.6,0) -- (mwn_g -| -1.6,0) -- (mwn_g);
+
+    %% =============== Shared x_a rail to both x_a gates ===============
+    \draw (xa) -| (0.3,6.6) -- (mxp_g);
+    \draw (0.3,6.6) |- (mxn_g);
+    \node[circ] at (0.3,6.6) {};
+
+    %% =============== C_pre on tap ===============
+    \draw (tap) -- (2.8,5.2);
+    \draw (2.8,5.2) to[C, l_={$C_{\mathrm{pre}}$}] (2.8,3.7) node[ground]{};
+
+    %% =============== Source follower (neuron) ===============
+    \draw (2.8,5.2) -- (4.2,5.2);
+    \node[nmos, anchor=G] (msf) at (4.2,5.2) {};
+    \draw (msf.D) -- (msf.D |- 0,7.2) node[above, font=\footnotesize] {$V_{DD}$};
+    \draw (msf.S) -- (msf.S |- 0,4.2);
+    \draw (msf.S |- 0,4.2) -- (5.8,4.2);
+    \node[circ] (act) at (5.8,4.2) {};
+    \draw (act) to[C, l_={$C_{\mathrm{act}}$}] (5.8,2.7) node[ground]{};
+    \draw (act) -- (6.8,4.2) node[right] {$a_j$};
+
+    %% =============== Sense amp (compare a_j to target -> delta) ===============
+    \draw[backred, thick] (7.6,5.0) -- (7.6,4.0) -- (8.6,4.5) -- cycle;
+    \node[anchor=west, font=\scriptsize] at (7.6,4.85) {$+$};
+    \node[anchor=west, font=\scriptsize] at (7.6,4.15) {$-$};
+    \draw[backred] (7.6,5.0) -- (6.5,5.0) node[left, font=\footnotesize] {target$_j$};
+    \draw[backred] (7.6,4.0) -- (6.5,4.0) -- (6.5,4.2) -- (act);
+    \draw[backred] (8.6,4.5) -- (9.6,4.5);
+    \node[above, font=\footnotesize, backred] at (9.0,4.5) {$\delta_j$};
+
+    %% =============== Writer block ===============
+    \node[draw, rounded corners=2pt, fill=lightgray, align=center,
+          minimum width=2.4cm, minimum height=1.0cm, font=\footnotesize]
+      (writer) at (4.0,0.4) {writer\\(apply $\cdot\,\mathrm{sign}(\delta_j)\cdot x_{\mathrm{a},i}$)};
+
+    %% writer input: delta_j from sense amp
+    \draw[backred, thick, -{Latex[length=2mm]}]
+      (9.6,4.5) -- (9.6,0.4) -- (writer.east);
+    %% writer input: x_a (the saved pre-trace; here the live x_a rail stands in)
+    \draw[forwardblue, -{Latex[length=2mm]}]
+      (0.3,6.6) -- (0.3,1.8) -- (writer.north -| 0.3,0) -- (writer.north);
+    %% writer outputs (write path, orange dashed) -> Cw+ and Cw-
+    \draw[writeorange, dashed, -{Latex[length=2mm]}]
+      (writer.west) -- (writer.west -| -3.0,0) -- (cwp_top);
+    \draw[writeorange, dashed, -{Latex[length=2mm]}]
+      (writer.west) -- (writer.west -| -3.0,0) -- (cwm_top);
+
+    %% =============== Caption / legend box ===============
+    \node[draw, rounded corners=2pt, fill=white, align=left, text width=5.0cm,
+          font=\footnotesize, inner sep=4pt] at (12.4,6.2)
+      {\textbf{Whole signed-pair cell:}\\[2pt]
+       \textbf{black} = forward path (synapse stack + neuron SF + $C_{\mathrm{act}}$);\\[1pt]
+       \textcolor{backred}{\textbf{red}} = backward path (sense amp produces $\delta_j$
+       from $a_j$ vs.\ target);\\[1pt]
+       \textcolor{writeorange}{\textbf{orange dashed}} = write path (writer
+       discharges $C_{w^+}$ if $\delta_j>0$, $C_{w^-}$ if $\delta_j<0$,
+       gated by saved $x_{\mathrm{a},i}$ and the apply window).\\[2pt]
+       The $C_{w^\pm}$ caps are both \emph{state} (gating the forward stack)
+       and \emph{output} (the writer's targets), closing the local learning
+       loop.};
+  \end{circuitikz}
+  \caption{Complete signed-pair cell on one diagram: the same $C_{w^+}$ and
+  $C_{w^-}$ capacitors that gate the forward synapse are also the targets of
+  the local writer, with $\delta_j$ produced by a sense amp comparing $a_j$
+  to the target rail.  Forward path in black, backward path in red, write
+  path in dashed orange.  The writer is shown as a block here; the
+  per-synapse details of its transistor stack are covered in
+  \S\ref{fig:synapse-gate}.}
+  \label{fig:cell}
+\end{figure}
+
+\begin{figure}[h]
+  \centering
+  \begin{circuitikz}[american, scale=0.7, transform shape, font=\footnotesize]
+    %% ====== Synapse 1 (full 6-NMOS stack) at x=1.5 ======
+    \node[above, font=\footnotesize] at (1.5,9.0) {$V_{DD}$};
+    \draw (1.5,9.0) -- (1.5,8.4);
+    \node[nmos, anchor=D] (s1mwp) at (1.5,8.4) {};
+    \draw (s1mwp.G) -- ++(-0.45,0) node[left] {$w_1^+$};
+    \draw (s1mwp.S) -- (1.5,6.9);
+    \node[nmos, anchor=D] (s1mxp) at (1.5,6.9) {};
+    \draw (s1mxp.G) -- ++(-0.45,0) node[left] {$x_1$};
+    \draw (s1mxp.S) -- (1.5,5.4);
+    \node[nmos, anchor=D] (s1mfp) at (1.5,5.4) {};
+    \draw (s1mfp.G) -- ++(-0.45,0) node[left] {fwd};
+    \draw (s1mfp.S) -- (1.5,4.0);
+    \node[circ] (s1tap) at (1.5,4.0) {};
+    \draw (s1tap) -- (1.5,3.6);
+    \node[nmos, anchor=D] (s1mfn) at (1.5,3.6) {};
+    \draw (s1mfn.G) -- ++(-0.45,0) node[left] {fwd};
+    \draw (s1mfn.S) -- (1.5,2.1);
+    \node[nmos, anchor=D] (s1mxn) at (1.5,2.1) {};
+    \draw (s1mxn.G) -- ++(-0.45,0) node[left] {$x_1$};
+    \draw (s1mxn.S) -- (1.5,0.6);
+    \node[nmos, anchor=D] (s1mwn) at (1.5,0.6) {};
+    \draw (s1mwn.G) -- ++(-0.45,0) node[left] {$w_1^-$};
+    \draw (s1mwn.S) -- (1.5,-0.6) node[ground]{};
+
+    %% ====== Synapse 2 (full 6-NMOS stack) at x=4.0 ======
+    \node[above, font=\footnotesize] at (4.0,9.0) {$V_{DD}$};
+    \draw (4.0,9.0) -- (4.0,8.4);
+    \node[nmos, anchor=D] (s2mwp) at (4.0,8.4) {};
+    \draw (s2mwp.G) -- ++(-0.45,0) node[left] {$w_2^+$};
+    \draw (s2mwp.S) -- (4.0,6.9);
+    \node[nmos, anchor=D] (s2mxp) at (4.0,6.9) {};
+    \draw (s2mxp.G) -- ++(-0.45,0) node[left] {$x_2$};
+    \draw (s2mxp.S) -- (4.0,5.4);
+    \node[nmos, anchor=D] (s2mfp) at (4.0,5.4) {};
+    \draw (s2mfp.G) -- ++(-0.45,0) node[left] {fwd};
+    \draw (s2mfp.S) -- (4.0,4.0);
+    \node[circ] (s2tap) at (4.0,4.0) {};
+    \draw (s2tap) -- (4.0,3.6);
+    \node[nmos, anchor=D] (s2mfn) at (4.0,3.6) {};
+    \draw (s2mfn.G) -- ++(-0.45,0) node[left] {fwd};
+    \draw (s2mfn.S) -- (4.0,2.1);
+    \node[nmos, anchor=D] (s2mxn) at (4.0,2.1) {};
+    \draw (s2mxn.G) -- ++(-0.45,0) node[left] {$x_2$};
+    \draw (s2mxn.S) -- (4.0,0.6);
+    \node[nmos, anchor=D] (s2mwn) at (4.0,0.6) {};
+    \draw (s2mwn.G) -- ++(-0.45,0) node[left] {$w_2^-$};
+    \draw (s2mwn.S) -- (4.0,-0.6) node[ground]{};
+
+    %% ====== C_pre summing rail ======
+    \draw (s1tap) -- (s2tap);
+    \node at (4.8,4.0) {$\cdots$};
+    \draw (s2tap) -- (5.7,4.0);
+    \node[circ] (pre) at (5.7,4.0) {};
+    \draw (pre) to[C,l_={$C_{\mathrm{pre}}$}] (5.7,2.3) node[ground]{};
+
+    %% ====== Source follower (ReLU stage) ======
+    \draw (pre) -- (7.4,4.0);
+    \node[nmos, anchor=G] (mrelu) at (7.4,4.0) {};
+    \draw (mrelu.D) -- (mrelu.D |- 0,6.5) node[above, font=\footnotesize] {$V_{DD}$};
+    \draw (mrelu.S) -- (mrelu.S |- 0,2.9);
+    \draw (mrelu.S |- 0,2.9) -- (9.2,2.9);
+    \node[circ] (act) at (9.2,2.9) {};
+    \draw (act) to[C,l_={$C_{\mathrm{act}}$}] (9.2,1.2) node[ground]{};
+    \draw (act) -- (10.2,2.9) node[right] {$a_j$};
+
+    %% ====== Description box ======
+    \node[draw, rounded corners=2pt, fill=lightgray, align=left, text width=5.2cm,
+          font=\footnotesize]
+      at (13.4,6.5)
+      {\textbf{ReLU-like neuron:}\\[2pt]
+       Each fan-in synapse is a full 6-NMOS signed pair.  The top stack
+       ($w_i^+$, $x_i$, fwd) pushes $V_{DD}\!\to\!C_{\mathrm{pre}}$; the
+       bottom stack (fwd, $x_i$, $w_i^-$) pulls $C_{\mathrm{pre}}\!\to\!
+       \mathrm{GND}$.  All taps share the $C_{\mathrm{pre}}$ rail, so charge
+       sums.\\[2pt]
+       The summed $V(C_{\mathrm{pre}})$ gates the source follower, which
+       passes $V(C_{\mathrm{pre}}) - V_{\mathrm{th}}$ onto $C_{\mathrm{act}}$
+       when above threshold; otherwise $C_{\mathrm{act}}$ stays at ground.};
+  \end{circuitikz}
+  \caption{Conceptual ReLU-like neuron with explicit signed-pair fan-in.
+  Each synapse contributes a top NMOS stack
+  ($V_{DD}\!\to\!w_i^+\!\to\!x_i\!\to\!\mathrm{fwd}\!\to\!C_{\mathrm{pre}}$)
+  and a symmetric bottom stack
+  ($C_{\mathrm{pre}}\!\to\!\mathrm{fwd}\!\to\!x_i\!\to\!w_i^-\!\to\!\mathrm{GND}$).
+  When fwd is open and $x_i$ is high, the two stacks form a signed current
+  divider whose net direction is set by $\mathrm{sign}(V(C_{w_i^+})-V(C_{w_i^-}))$.
+  Many such synapses share the $C_{\mathrm{pre}}$ rail; the source follower
+  on the right reads the accumulated voltage and one-sidedly charges
+  $C_{\mathrm{act}}$.}
   \label{fig:neuron}
 \end{figure}
 
@@ -837,6 +1191,457 @@ disturb.  These are the SPICE characterization plots to add next: forward read
 current, reverse read current, update sign/magnitude versus state, read disturb,
 and retention.
 
+\subsection{Analytic Parameter-Range Framework}
+
+The experiment loop should not choose damping and write parameters by blind
+trial and error.  The SPICE netlists remain the ground truth, but a useful
+first-pass theory screens parameters by four local constraints:
+\[
+  \text{signal margin},\qquad
+  \text{transient damping},\qquad
+  \text{write mobility},\qquad
+  \text{gradient stability}.
+\]
+The helper module \code{spice/parameter\_theory.py} implements the arithmetic in
+the same units as the device runner flags: femtofarads, nanoseconds,
+microamps, and ohms.
+
+For any capacitor integration node,
+\[
+  \Delta V = \frac{I T}{C}.
+\]
+With \(I\) in microamps, \(T\) in nanoseconds, and \(C\) in femtofarads, the
+numeric value is already in volts.  This gives immediate cap-sizing rules.  If
+the largest expected current \(I_{\max}\) should not move the node by more than
+\(V_{\max}\), then
+\[
+  C \ge \frac{I_{\max}T}{V_{\max}}.
+\]
+If the smallest useful current \(I_{\min}\) must still create at least
+\(V_{\min}\), then
+\[
+  C \le \frac{I_{\min}T}{V_{\min}}.
+\]
+The feasible interval
+\[
+  \frac{I_{\max}T}{V_{\max}}
+  \le C \le
+  \frac{I_{\min}T}{V_{\min}}
+\]
+is the basic signal-margin test for hidden pre-activation caps, hidden-delta
+caps, output score caps, pre-trace caps, and future spike-arrival storage nodes.
+A larger capacitance is more numerically calm but reduces useful voltage swing
+for a fixed current pulse; a smaller capacitance gives more swing but is more
+sensitive to charge injection, noise, and ngspice timestep collapse.
+
+For a damping capacitor with a weak leak resistor, the time constant is
+\[
+  \tau = RC.
+\]
+In the device-runner units this is
+\[
+  \tau_{\mathrm{ns}}
+  =
+  R_{\Omega} C_{\mathrm{fF}} 10^{-6}.
+\]
+If the node is active for \(T_a\) and leakage should remove at most fraction
+\(\epsilon_a\) during that active window, then
+\[
+  \tau \ge \frac{T_a}{-\log(1-\epsilon_a)}.
+\]
+If old charge must passively decay to residue \(\epsilon_i\) during an idle
+window \(T_i\), then
+\[
+  \tau \le \frac{T_i}{-\log(\epsilon_i)}.
+\]
+Together they imply
+\[
+  \frac{T_a}{-\log(1-\epsilon_a)}
+  \le
+  RC
+  \le
+  \frac{T_i}{-\log(\epsilon_i)}.
+\]
+If this interval is empty, a passive leak cannot both preserve the active
+signal and reset the node; the circuit needs an explicit reset or bleed phase.
+
+This immediately explains the hidden-delta damping scale that recently worked.
+The stabilized runs used
+\[
+  C_{\mathrm{hd,int}}=0.02\,\mathrm{fF},
+  \qquad
+  R_{\mathrm{hd,int}}=1\,\mathrm{G}\Omega,
+\]
+so
+\[
+  \tau = 20\,\mathrm{ns}.
+\]
+For a \(2\,\mathrm{ns}\) useful backward/write segment, the passive loss is
+\[
+  1-\exp(-2/20) \approx 9.5\%.
+\]
+That is enough leakage to give each hidden-delta stack node a DC path and enough
+capacitance to tame fast internal-node jumps, but it does not strongly erase
+the backward signal during the active window.  It also shows a risk: if the
+only reset mechanism were passive leakage over an \(11.2\,\mathrm{ns}\) sample
+cycle, the residual would still be \(\exp(-11.2/20)\approx 57\%\).  Therefore
+this damping choice is valid as a stabilization element only if phase devices
+or explicit reset paths prevent stale internal-node charge from becoming state.
+That should be measured directly in the next hidden-delta probes.
+
+The generator now exposes that distinction explicitly.  The internal
+hidden-delta damping nodes can be given three independent physical elements:
+\[
+  C_{\mathrm{hd,int}}, \qquad
+  R_{\mathrm{hd,int}}, \qquad
+  M_{\mathrm{reset,int}}(\mathrm{rste}).
+\]
+The capacitor and leak resistor stabilize floating MOS-stack nodes during the
+backward window.  The optional \(\mathrm{rste}\)-gated reset transistor clears
+those same internal nodes during the error/reset phase.  This is analytically
+different from making the leak stronger: a stronger leak lowers \(\tau\) and
+therefore attenuates the active backward signal, while a reset transistor can be
+strong during reset and off during the useful backward/write interval.  The
+current theory-guided pool therefore compares: damped/no internal reset,
+damped/explicit internal reset, and damped/reset with weaker hidden writes.
+
+The second analytic constraint is write size.  A local hardware update induces
+\[
+  \Delta w_{\mathrm{eff}}
+  \approx
+  \mu_{\mathrm{HW}}(\theta,a,\delta)\,a\delta,
+\]
+where
+\[
+  \mu_{\mathrm{HW}}
+  =
+  G'_{\mathrm{eff}}(\theta)s_{\mathrm{MOS}}(\theta)T_{\mathrm{write}}
+\]
+for the raw state-dependent write model.  For a linear readout trained with
+squared error, fixed-step gradient descent is stable in the batch idealization
+when
+\[
+  0 < \eta_{\mathrm{eff}} < \frac{2}{\lambda_{\max}(X^T X)}.
+\]
+For a single sample this reduces to
+\[
+  \eta_{\mathrm{eff}} < \frac{2}{\|a\|^2}.
+\]
+The hardware is not exact SGD, but this bound is still a useful scale test: if
+the measured per-example \(\Delta w_{\mathrm{eff}}/(a\delta)\) is above this
+range, the write path is likely to overshoot or destroy margins; if it is far
+below the noise and read-disturb floor, the classifier will stall even on a
+linearly separable feature set.  This is a better way to choose
+\code{readout-update-width-u}, \code{hidden-update-width-u}, write-window
+duration, and branch-specific write rails.
+
+The third constraint is backward alignment.  Let \(G^F\) be the forward
+small-signal read gain and \(G^B\) the backward error-flow gain produced by the
+same stored capacitor states or by a matched backward stack.  The ideal target
+is
+\[
+  G^B \approx \kappa (G^F)^T,
+\]
+but useful learning only needs positive alignment,
+\[
+  \cos\alpha
+  =
+  \frac{\langle G^B e,(G^F)^T e\rangle}
+       {\|G^B e\|\|(G^F)^T e\|}
+  > 0
+\]
+over the error vectors that actually occur.  This gives a quantitative
+criterion for deciding whether a separate backward stack is good enough: sweep
+stored weight states, drive representative error rails, measure \(G^B\), and
+compare it with the forward small-signal transpose.  If the cosine is negative
+or near zero, scaling hidden training will not work no matter how carefully the
+write cap is tuned.
+
+The fourth constraint is mobility conditioning.  For signed differential
+branches,
+\[
+  w_{\mathrm{eff}}=G^+(\theta^+)-G^-(\theta^-),
+\]
+the useful update mobilities are
+\[
+  \mu_+ =
+  G^{+\prime}(\theta^+)s^+_{\mathrm{MOS}}(\theta^+),
+  \qquad
+  \mu_- =
+  G^{-\prime}(\theta^-)s^-_{\mathrm{MOS}}(\theta^-).
+\]
+The operating window should satisfy sign alignment and a bounded condition
+ratio,
+\[
+  \mu_+>0,\quad \mu_->0,\quad
+  \frac{\min(\mu_+,\mu_-)}{\max(\mu_+,\mu_-)}
+  \ge \rho_{\min}.
+\]
+This does not require the chip to compute \(G'\).  It says that the chosen
+capacitor-voltage window and write primitive must place the physical cell in a
+region where the natural MOS mobility is not rail-pinned, one-sided, or
+unmeasurably small.
+
+The resulting workflow is:
+\begin{enumerate}
+  \item Use the signal-margin inequalities to choose candidate caps and clock
+    windows before running full training.
+  \item Use the RC bounds to choose damping that preserves active signals and
+    either passively clears stale charge or forces an explicit reset.
+  \item Use cell sweeps to measure \(G^F\), \(G^B\), and
+    \(G'_{\mathrm{eff}}s_{\mathrm{MOS}}\) in the candidate state window.
+  \item Convert measured write motion into an effective \(\eta_{\mathrm{eff}}\)
+    and compare it with \(2/\lambda_{\max}(X^TX)\) for the current task.
+  \item Only then launch the full training pool.
+\end{enumerate}
+
+\subsection{Controls Before Trusting Accuracy}
+
+A high transient accuracy is not by itself evidence of hardware-native
+learning.  Every promising result should be paired with controls that can
+falsify the easiest misleading explanations:
+\begin{center}
+  \begin{tabular}{p{0.30\linewidth}p{0.58\linewidth}}
+    \toprule
+    Control & What it tests \\
+    \midrule
+    Reversed-polarity negative control &
+    The update sign matters; reversing \(\mathrm{dp}/\mathrm{dn}\) should
+    collapse or clearly degrade. \\
+    Readout-only vs full-hidden &
+    Hidden writes help only if full-hidden beats or changes the readout-only
+    anchor for the right reason. \\
+    Per-synapse trace, hidden writes off &
+    Separates trace-cap loading from actual lower-layer learning. \\
+    Programmed separator &
+    Confirms the readout circuit can express the target separator before
+    blaming training. \\
+    No-write checkpoint evaluation &
+    Detects transient optima, drift, and overtraining of capacitor states. \\
+    Multiple seeds and sample orders &
+    Prevents claiming a lucky seed or class ordering as a circuit result. \\
+    Label shuffle &
+    Should not train; if it does, the metric or leakage path is suspect. \\
+    Device perturbation &
+    Checks that the result survives mismatch/noise rather than only nominal
+    LEVEL=1 parameters. \\
+    \bottomrule
+  \end{tabular}
+\end{center}
+
+The experiment runner now has a binary-readout control pool,
+\code{v569\_v574\_controls}, that instantiates the first version of this gate:
+nominal readout-only, reversed readout-flow polarity, shuffled labels,
+interleaved sample order, a second seed, and per-synapse trace storage with
+hidden writes still disabled.  A run should only be promoted if the negative
+controls fail in the expected direction and the robustness controls stay in the
+same accuracy family.
+
+The first completed control pass is encouraging but not yet robust.  On
+\code{mnist01fixed8\_64}, the nominal readout-only run reached \(79.69\%\),
+reversed-polarity stayed at \(50\%\), and label-shuffle ended at \(51.56\%\).
+Interleaving the same samples improved to \(85.94\%\), while seed 4 collapsed
+back to \(50\%\).  Enabling per-synapse trace storage with hidden writes still
+off reached \(90.625\%\).  This says the update sign and trace locality are
+real, but the operating range is still seed/order sensitive.
+
+The follow-up exclusive-write pool \code{v575\_v577\_exclusive} keeps the same
+fixed input option and tests the PMOS mutual-inhibit rails in the composed
+network.  It is useful but not a universal improvement at the first sizing.
+The shared-node readout improved to \(85.94\%\), which is better than the
+\code{v569} shared-node anchor.  The per-synapse-gated readout fell to
+\(81.25\%\), and enabling hidden writes with the same exclusive rails also
+ended at \(81.25\%\), with hidden signed-weight capacitors moving only about
+\(6.1\,\mathrm{mV}\) at maximum.  The conclusion is narrow: mutual inhibition
+is a good primitive for suppressing ambiguous local writes, but the
+per-synapse/full-hidden path needs sizing or timing work before this block
+should replace the previous non-exclusive readout anchor.
+
+The first corrected write-rail generator adds explicit NMOS kill devices to
+the PMOS-inhibit rails.  Isolated behavior is now clean, but readout-only
+width checks \code{v580} and \code{v581} still ended at \(81.25\%\) for
+\(16\,\mu\mathrm{m}\) and \(2\,\mu\mathrm{m}\) exclusion devices.  The
+full-hidden run with corrected exclusive rails on both readout and hidden
+writes, \code{v582}, also ended at \(81.25\%\).  In contrast,
+\code{v583} kept readout writes plain, applied the corrected exclusive rail
+only to hidden writes, and recovered \(90.625\%\).  That means the present
+readout write block benefits from a MOS-shaped ambiguous-error region that the
+hard exclusive rail removes, while the hidden-write path can use mutual
+inhibition without destroying the readout operating point.  The next
+architecture work should therefore treat readout write mobility and hidden
+write rail selection as separate building blocks.
+
+The overlap-decay readout primitive partially recovers the lost ambiguous-error
+behavior.  Retesting hard readout exclusivity with explicit rail resets in
+\code{v584} reached \(85.94\%\), so stale generated rails were part of the
+problem but not the whole problem.  Adding the high-high overlap rail in
+\code{v585} improved the same readout-only setup to \(89.06\%\).  This is still
+below the \(90.625\%\) per-synapse trace anchor, but it supports the model that
+the readout block needs a controlled common-mode decay/mobility path rather
+than a pure winner-take-all signed write selector.
+A small tuning pool then showed that overlap rail device width is not the
+active knob: \(4\), \(8\), and \(16\,\mu\mathrm{m}\) all stayed at
+\(89.06\%\).  Increasing the readout write width from \(0.00035\) to
+\(0.00045\,\mu\mathrm{m}\) in \code{v589} recovered \(90.625\%\), while
+reducing it to \(0.00025\,\mu\mathrm{m}\) in \code{v590} fell to about
+\(70\%\).  The present model is therefore that overlap-decay fixed the write
+direction/ambiguity problem, and the remaining readout-only operating point is
+mostly write-mobility scale.
+The same primitive composes with the hidden backward/write path.  With the
+original \(0.00035\,\mu\mathrm{m}\) readout write width, \code{v586} matched
+the readout-only overlap result at \(89.06\%\) while moving hidden weights by
+about \(9\,\mathrm{mV}\).  Raising the readout write width to
+\(0.00045\,\mu\mathrm{m}\) in \code{v591} reached \(92.1875\%\), with hidden
+weights moving \(9.27\,\mathrm{mV}\).  This is the strongest fixed-input
+full-hidden result in the current direct-flow branch until the next overshoot
+check, \code{v592}, pushed the same architecture to \(93.75\%\) at
+\(0.00055\,\mu\mathrm{m}\) readout write width.  The next useful experiment is
+therefore not new preprocessing; it is a mobility-bracketing sweep around the
+overlap-decay readout write block, followed by a larger fixed-input sample
+count once the best mobility window is stable.
+Two negative controls support that this is real learning rather than an
+accuracy artifact.  Keeping the same overlap-decay readout but reversing the
+write polarity in \code{v593} collapsed to \(50\%\), and shuffling labels in
+\code{v594} reached only \(59.375\%\).  Those controls are not sufficient for
+full robustness, but they rule out the most obvious sign-convention and metric
+failures for the new readout block.
+
+The first larger fixed-input scale check is mixed.  With the same overlap-decay
+readout and \(0.00055\,\mu\mathrm{m}\) write width, the 128-sample readout-only
+run \code{v595} reached only \(80.47\%\), worse than earlier 128-sample
+anchors near \(91\%\).  The corresponding 128-sample full-hidden run
+\code{v596} did not finish within the \(1800\,\mathrm{s}\) runner limit.  This
+means the \(0.00055\,\mu\mathrm{m}\) overlap-decay setting is a good
+64-sample mobility point, not yet a scalable default.  The next scale test
+should bracket mobility again on 128 samples and should not assume that the
+64-sample optimum transfers.
+
+\subsection{Two-Hidden and Spiking XOR Probes}
+
+Two small architecture probes test whether the same component language extends
+past the one-hidden-layer fixed-input runs.  These are intentionally XOR-scale
+SPICE experiments, not MNIST preprocessing experiments.
+
+The two-hidden-layer probe
+\code{device\_xor2\_two\_hidden\_v1\_score} uses:
+\[
+  \text{literal feature layer}
+  \to
+  \text{trainable hidden layer 2}
+  \to
+  \text{trainable readout}.
+\]
+Layer 1 is still a fixed literal detector bank, so this is not a free
+feature-discovery MLP.  It is a transport and composition test.  The circuit
+computed nonzero hidden-2 deltas and nonzero hidden-1 deltas on every training
+cycle, and the hidden-2/readout score caps separated all four XOR patterns.
+The initial score accuracy was \(100\%\), the final score accuracy was
+\(100\%\), and training increased the minimum score margin from
+\(29.3\,\mathrm{mV}\) to \(45.4\,\mathrm{mV}\).  The first buffered-output
+version used an \code{NREL} output follower, and the score voltages
+(\(\approx 3.8\)--\(49\,\mathrm{mV}\)) sat below that follower's threshold, so
+the output nodes tied at \(0\%\).  Re-running the same circuit with an
+\code{NSENSE} output follower in
+\code{device\_xor2\_two\_hidden\_v2\_nsense\_out} fixed that scale mismatch:
+initial and final output-node accuracy were both \(100\%\), and the final
+minimum output margin was \(17.9\,\mathrm{mV}\).  The interpretation is still
+narrow, but now cleaner: deeper forward/backward/update plumbing works on this
+XOR probe, and the remaining lesson is that each additional layer needs an
+explicit gain/threshold budget for the next stage.
+
+The spiking/timed-output probe
+\code{device\_xor2\_spiking\_v1\_weak} replaces the steady output buffer with
+a leaky spike capacitor:
+\[
+  C_{\mathrm{spk}}\dot v_{\mathrm{spk}}
+  =
+  I_{\mathrm{score}\to\mathrm{spk}}(v_{\mathrm{score}})
+  -
+  g_{\mathrm{leak}}v_{\mathrm{spk}}.
+\]
+Accuracy is measured at fixed offsets in the forward window, so the correct
+class only has to produce the larger transient spike voltage at the selected
+time.  With weak class-coded readout initialization, timed-spike XOR started at
+\(25\%\) and trained to \(100\%\) after four epochs.  A reversed-write control
+\code{device\_xor2\_spiking\_v2\_weak\_reversed} started from the same weak
+condition but reached only \(50\%\), with the final mean score margin negative.
+This is the expected sign-control failure: swapping the local \(\mathrm{dp}\)
+and \(\mathrm{dn}\) write rails makes the update fight the target.
+
+These probes do not prove MNIST-scale depth or spiking training.  They do show
+that the present MOS-stack primitives can express a deeper hidden transport
+path and a transient output code without introducing Python-computed
+activations, deltas, or multiplications in the signal path.
+
+\subsection{Softmax-Like Error Normalization}
+
+For classification, the desired cross-entropy descent signal is
+\[
+  e_k = t_k - p_k,
+  \qquad
+  p_k = \frac{\exp(s_k)}{\sum_j \exp(s_j)} .
+\]
+The elegant hardware version is current-mode rather than voltage-mode.  In
+subthreshold CMOS, a score voltage naturally creates an exponential current,
+\[
+  I_k \approx I_0 \exp(\kappa V_{s,k}/U_T),
+\]
+and a shared source/tail or log-domain normalizer makes the branch currents
+compete for a limited total current.  The branch current fraction
+\(I_k/\sum_j I_j\) is then the softmax probability.  For a binary classifier
+this is just a differential pair; for \(K\) classes it becomes a
+source-coupled or soft-winner-take-all array.
+
+The current LEVEL=1 ngspice models used in these notes do not model
+subthreshold exponentials well, so the first primitive is deliberately weaker:
+\code{device\_softmax\_current\_competition\_v1\_smallmargin} uses three
+source-coupled \code{NREL} branches and a shared NMOS tail device.  There is
+no behavioral \(\exp\) or divide in the signal path.  Python computes current
+shares only after the run for characterization.  With equal scores, the three
+shares are exactly one third in the measured operating point.  With small
+score offsets, the shares move smoothly and preserve the argmax:
+\[
+  (0.38,0.35,0.35)\,\mathrm{V}
+  \mapsto
+  (0.457,0.271,0.271),
+\]
+\[
+  (0.42,0.38,0.35)\,\mathrm{V}
+  \mapsto
+  (0.551,0.295,0.155).
+\]
+Large score differences collapse toward winner-take-all, which is also useful
+to know: with these strong-inversion toy models, the normalizer is a
+softmax-like positive-current competition only in the small-margin range.  A
+real subthreshold/PDK model should be characterized before using this as the
+multiclass error block.
+
+For the direct-flow learner, the intended cross-entropy-style write rails are:
+\[
+  \mathrm{dn}_k \propto p_k \quad (k \ne y),
+  \qquad
+  \mathrm{dp}_y \propto 1 - p_y.
+\]
+That replaces the present score/L2-like residual rail with a normalized
+competition rail while keeping the local synapse update unchanged:
+\(\dot w_{ki}\propto (t_k-p_k)a_i\).
+
+The score used to select circuit variants should therefore combine accuracy
+with hardware-native learning quality:
+\begin{align*}
+  \text{score}
+  ={}& \text{accuracy}
+  - \lambda_1 \text{(bad negative controls)}
+  - \lambda_2 \text{(wrong update sign)} \\
+  &- \lambda_3 \text{(poor backward alignment)}
+  - \lambda_4 \text{(rail-pinned mobility)}
+  - \lambda_5 \text{(ngspice failures)}.
+\end{align*}
+In practice the diagnostic gates are: local update sign is correct, write
+magnitude is in range, event gates open only when they should, backward
+transport is positively aligned, state remains in a useful mobility window,
+ngspice converges, and performance survives scale and variation.
+
 \subsection{Compact Forward Synapse Candidate}
 
 The running netlists keep the forward phase gate inside every signed synapse
@@ -1044,6 +1849,61 @@ device sizing and timing.
     off, random readout &
     84.375\% &
     Fixed Haar/pool features are also separable at 64 samples; the readout schedule is now the limiter. \\
+    \addlinespace
+    \code{mnist01fixed8\_64}, corrected exclusive readout rails, e2 &
+    off, random readout &
+    81.25\% &
+    \code{v580}/\code{v581}; explicit NMOS rail-kill fixes the primitive, but hard readout exclusivity still hurts the composed learner. \\
+    \addlinespace
+    \code{mnist01fixed8\_64}, corrected exclusive readout rails plus reset, e2 &
+    off, random readout &
+    85.9375\% &
+    \code{v584}; resetting generated write rails helps, but pure hard exclusivity remains below the trace anchor. \\
+    \addlinespace
+    \code{mnist01fixed8\_64}, exclusive readout rails plus overlap decay, e2 &
+    off, random readout &
+    89.0625\% &
+    \code{v585}; restoring symmetric high-high decay improves the composed readout block without changing preprocessing. \\
+    \addlinespace
+    \code{mnist01fixed8\_64}, overlap decay, \(0.00045\,\mu\mathrm{m}\) readout write, e2 &
+    off, random readout &
+    90.625\% &
+    \code{v589}; overlap-decay plus enough write mobility recovers the previous per-synapse trace anchor. \\
+    \addlinespace
+    \code{mnist01fixed8\_64}, corrected exclusive readout+hidden rails, e2 &
+    full backprop, per-synapse pre-trace, \code{2e-7 u} hidden write &
+    81.25\% &
+    \code{v582}; applying the exclusive rail to readout writes keeps the run in the same stalled family. \\
+    \addlinespace
+    \code{mnist01fixed8\_64}, plain readout + corrected hidden-exclusive rails, e2 &
+    full backprop, per-synapse pre-trace, \code{2e-7 u} hidden write &
+    90.625\% &
+    \code{v583}; hidden mutual inhibition composes with the good readout path, so the readout and hidden write blocks should be tuned separately. \\
+    \addlinespace
+    \code{mnist01fixed8\_64}, overlap decay, \(0.00035\,\mu\mathrm{m}\) readout write, e2 &
+    full backprop, per-synapse pre-trace, \code{2e-7 u} hidden write &
+    89.0625\% &
+    \code{v586}; hidden writes compose without destroying the overlap-decay readout behavior; hidden weights move about 9 mV. \\
+    \addlinespace
+    \code{mnist01fixed8\_64}, overlap decay, \(0.00045\,\mu\mathrm{m}\) readout write, e2 &
+    full backprop, per-synapse pre-trace, \code{2e-7 u} hidden write &
+    92.1875\% &
+    \code{v591}; best fixed-input full-hidden direct-flow result in this branch so far. \\
+    \addlinespace
+    \code{mnist01fixed8\_64}, overlap decay, \(0.00055\,\mu\mathrm{m}\) readout write, e2 &
+    full backprop, per-synapse pre-trace, \code{2e-7 u} hidden write &
+    93.75\% &
+    \code{v592}; stronger readout mobility improves the same circuit without changing the fixed input. \\
+    \addlinespace
+    \code{mnist01fixed8\_128}, overlap decay, \(0.00055\,\mu\mathrm{m}\) readout write, e2 &
+    off, random readout &
+    80.46875\% &
+    \code{v595}; the 64-sample mobility point does not transfer cleanly to 128 samples. \\
+    \addlinespace
+    \code{mnist01fixed8\_128}, overlap decay, \(0.00055\,\mu\mathrm{m}\) readout write, e2 &
+    full backprop, per-synapse pre-trace, \code{2e-7 u} hidden write &
+    timeout &
+    \code{v596}; 128-sample full-hidden netlist exceeded the 1800 s runner limit. \\
     \addlinespace
     \code{mnist01fixed32\_64}, \code{rail\_buffer}, target-mistake/interleaved, e1 &
     off, random readout &
@@ -1909,15 +2769,273 @@ The follow-up sweep around the \code{v492} recipe gives a clearer empirical
 direction.  Scaling the same readout-only recipe to \code{mnist01fixed8\_128}
 for two epochs in \code{v495} reached 92.96875\%, even though the raw eight
 fixed8 input features for that 128-example subset were not linearly separable.
-Sampling the 64-example four-epoch run at several output times in \code{v497}
-gave the same 93.75\% accuracy at 2.55, 2.75, 2.95, 3.15, and 3.35 ns, so this
-particular recipe is not fragile to the exact readout-sampling instant.  Adding
-small random readout charge pulses in \code{v496} reduced the result to
-92.1875\%, and enabling a small trained output-bias write in \code{v498} also
-reduced it to 92.1875\%.  The next useful experiments are therefore:
-stabilize the hidden-delta/write nodes, scale the readout-only recipe beyond
-128 fixed8 examples, and try margin-sensitive update suppression instead of
-extra output-bias or noise.
+Scaling further to \code{mnist01fixed8\_256} for two epochs in \code{v500}
+reached 96.09375\%, the best dense device-level fixed8 result so far.  The same
+recipe is not a steady-state classifier, however.  A four-epoch 128-example run
+\code{v501} fell to 90.625\%.  Adding explicit no-write checkpoint evaluations
+in \code{v515} showed the transient optimum directly: 91.40625\% after epoch 1,
+92.96875\% after epoch 2, 89.84375\% after epoch 3, and 89.0625\% after epoch 4.
+An interleaved-order checkpoint run, \code{v516}, also peaked around epoch 2
+(92.1875\%) but collapsed to 75\% by epoch 4, so interleaving is not a cure for
+the drift in the current circuit.  The checkpoint cycles themselves add extra
+read/eval exposure, so their final number should be compared cautiously with
+non-checkpoint runs, but they confirm that the useful region is transient.
+
+Several broad controls also narrowed the design space.  The old high-width
+\code{out\_competitive} discharge recipe did not scale: \code{v505} and
+\code{v506} stayed at 50\% on 64 examples, and \code{v507} reached only
+69.53125\% on 128 examples.  Combining \code{out\_competitive} with the newer
+bounded-discharge write in \code{v508} also stayed at 50\%.  The two new
+lead-mistake variants, \code{v509} and \code{v510}, each reached 92.1875\% on 64
+examples, below the \code{v492} 93.75\% baseline.  The pass-activation readout
+synapse \code{v511} fell to 42.1875\%.  Sampling the 64-example four-epoch run
+at several output times in \code{v497} gave the same 93.75\% accuracy at 2.55,
+2.75, 2.95, 3.15, and 3.35 ns, so this particular recipe is not fragile to the
+exact readout-sampling instant.  Adding small random readout charge pulses in
+\code{v496} reduced the result to 92.1875\%, and enabling a small trained
+output-bias write in \code{v498} also reduced it to 92.1875\%.
+
+Hidden writes are now numerically better conditioned but still not useful at
+scale.  Stabilized 32-example runs with hidden writes enabled, \code{v503} and
+\code{v504}, both reached 96.875\%.  Scaling the same stabilized hidden-write
+recipe to 64 examples in \code{v512} reached 90.625\%, below the readout-only
+baseline.  True weighted-ReLU hidden-layer training remains unsolved: the
+weighted-ReLU MNIST and XOR probes \code{v513}, \code{v514}, \code{v517},
+\code{v518}, and \code{v519} all stayed at 50\%, even after disabling output-bias
+writes, reducing the hidden capacitance, and increasing write strength.  CSV
+separator diagnostics \code{v520}--\code{v523} also stayed at 50\%, even though
+some hidden states were linearly separable in the measured CSV.  That points to
+a hidden/readout interface problem in the weighted-ReLU path, not merely an
+insufficient number of training iterations.
+
+A cleanup replay separated two effects that had been conflated in the old
+result tables.  The current readout-only anchor still works when it uses the
+default bounded-discharge rails: \code{v551} reached 92.1875\% best accuracy on
+\code{mnist01fixed8\_64}, and \code{v552} reached 93.75\% best and 91.40625\%
+final accuracy on \code{mnist01fixed8\_128}.  Replaying the same idea with
+explicit \(0.70/0.24\) write rails in \code{v545} reached only 76.5625\% best
+and 65.625\% final accuracy, so the rail window itself is an active circuit
+parameter rather than a harmless notation change.  The full-hidden replay
+\code{v550} again failed at a hidden-delta internal node, but adding explicit
+hidden-delta parasitic damping in \code{v555}
+\[
+  C_{\mathrm{hd,int}}=0.02\,\mathrm{fF}, \qquad
+  R_{\mathrm{hd,int}}=1\,\mathrm{G}\Omega
+\]
+made the 64-example full-hidden run complete at 90.625\% accuracy, with hidden
+weight capacitors moving by 13.8 mV.  That makes the hidden-delta capacitance
+and leakage a required stabilization knob for the real hidden-write path.
+Raising the damping capacitance to \(0.05\,\mathrm{fF}\) in \code{v558} still
+completed and again reached 90.625\% on the 64-example subset, with hidden
+weights moving 13.3 mV, but the first epoch was weaker.  Scaling the damped
+full-hidden path to 128 examples in \code{v557} did not yet work: the one-epoch
+run fell from 63.3\% initial accuracy to 61.7\%, even though hidden weights
+moved 7.4 mV.  The current interpretation is that damping fixes the numerical
+stability problem, but the hidden-write path still perturbs the 128-example
+readout dynamics rather than improving them.
+A direct isolation run supports that interpretation.  \code{v565} used the
+same 128-example readout recipe with per-synapse pre-activation trace gates
+enabled, but kept hidden writes off.  It reached 91.40625\% after two epochs,
+close to the \code{v552} shared-node readout anchor.  Therefore the
+per-synapse trace storage is not by itself the 128-example blocker; the problem
+appears when the hidden-delta/write path is allowed to change the lower-layer
+weights.
+
+The first ten-class readout bring-up exposed a different blocker.  The new
+\code{mnistfixed8\_20} subset uses ten classes with two samples per class and
+eight fixed input features buffered into hidden activation capacitors.  A
+software perceptron on the exact input features is linearly separable, so this
+is a readout-circuit test rather than a representation test.  The first
+multiclass SPICE runs, \code{v535}--\code{v543}, kept the circuit at 5\%
+accuracy.  Changing bounded-discharge polarity, enabling
+\code{bounded\_charge\_discharge}, or replacing \code{out\_residual} with the
+existing \code{score} error rails did not fix it.  Probe measurements showed
+that \code{score} mostly generated a full-swing \(\mathrm{dp}\) rail for the
+target class but almost no useful \(\mathrm{dn}\) rail for competing classes,
+while \code{out\_residual} generated many non-target \(\mathrm{dn}\) rails that
+still did not create a separating row movement.
+
+To make the next test more circuit-local, the generator now also drives
+complement target rails \(\code{nt0},\ldots,\code{nt9}\).  A new
+\code{onehot} error cell uses the ordinary target rail to open
+\(\mathrm{dp}_k\) for the target class and the complement target rail to open
+\(\mathrm{dn}_k\) for every non-target class:
+\[
+  \mathrm{dp}_k \leftarrow \mathbf{1}_{k=y},
+  \qquad
+  \mathrm{dn}_k \leftarrow \mathbf{1}_{k\ne y}.
+\]
+The target and non-target stack widths are independent, reusing
+\code{--residual-target-width-u} and \code{--residual-output-width-u}.  This is
+not textbook softmax or exact squared-error gradient descent; it is a
+MOS-defined one-vs-rest local update.  It is useful because it removes the
+analog score/output subtraction from the first multiclass readout test while
+still updating the same capacitor-held readout weights through local
+pre-activation and error rails.
+
+The first \code{onehot} sweeps show that multiclass failure is not simply target
+rail availability.  Runs \code{v546} and \code{v547}, with \(96/12\) and
+\(96/24\) target/non-target write widths, reached 30\% transient accuracy but
+fell back to 10\% final accuracy; the row-wise signed weight deltas all drifted
+negative and the classifier collapsed toward a few classes.  Making the target
+rail much stronger in \code{v553} worsened the result to 20\% best and 10\%
+final accuracy.  Charge-only writing in \code{v554} stayed at 5\% with all rows
+moving positive.  The mixed \code{bounded\_charge\_discharge} write in
+\code{v556} reduced the row drift and reached 25\% final accuracy, but did not
+solve the one-vs-rest balance.  The next multiclass issue is therefore row
+mobility and competition in the write primitive, not fixed-feature separability.
+
+The next one-hot balance checks sharpened this diagnosis.  Reducing the
+non-target stack to \(4\,\mu\mathrm{m}\) in \code{v559} still made all ten
+readout rows drift negative; it peaked at 30\% and ended at 20\%.  Making charge
+devices twelve times wider than discharge devices in \code{v560} reduced the
+negative drift magnitude, but every row still moved negative and accuracy
+peaked at only 20\%.  A new \code{onehot\_out} error cell gates each non-target
+\(\mathrm{dn}_k\) rail by that class's own output voltage, so inactive
+non-target rows should be suppressed by circuit dynamics rather than by Python.
+This flipped the drift sign: \code{v561} and \code{v562} both moved all rows
+positive, but they still collapsed mostly to a single class and peaked at 20\%.
+Increasing the output-gated non-target width to \(192\,\mu\mathrm{m}\) in
+\code{v563}, or reducing the target width to \(32\,\mu\mathrm{m}\) in
+\code{v564}, barely changed the result: both stayed at 20\% and moved all rows
+positive.  So the ten-class blocker is not only branch width; the current
+error/write topology lacks a balanced class-competition mechanism, or the
+width changes are being hidden by a downstream bottleneck such as the
+\(\mathrm{err}/\mathrm{bwd}\) gate or output-gated write-stack headroom.
+
+Before returning to full ten-class MNIST, the generator now supports small
+counted multiclass datasets such as \code{mnist3fixed8\_30} and
+\code{mnist5fixed8\_50}.  The first three-class standard-accuracy smoke run,
+\code{device\_mnist3fixed8\_30\_v601\_onehot\_e2\_std}, confirms that the
+multiclass SPICE path runs end-to-end with three output rows.  It also confirms
+that the present one-vs-rest write rule is not yet balanced: the fixed8 input
+features are linearly separable for classes 0, 1, and 2, and the initial random
+readout was already at 66.7\%, but two epochs of \code{onehot} writing reduced
+final accuracy to 40\% and collapsed the prediction histogram toward class 2.
+Weakening the same \code{onehot} write by \(4\times\) in \code{v602} improved
+the final result to 50\%, but still reduced accuracy below the initial random
+readout and kept the class-2 bias.  The output-gated \code{onehot\_out} variant
+\code{v603} reached 60\% final accuracy with the same weak write, better but
+still below the 66.7\% initial state.  This makes the next small-multiclass
+experiments a row-competition and write-balance problem, not a reason to change
+the fixed input transform.
+
+The \code{ce\_out} cell is the first softmax-cross-entropy-inspired
+multiclass primitive.  It does not compute exponentials or textbook softmax;
+instead, it uses target-low and non-target-own-output MOS stacks to form a
+normalized-positive-current style competition.  On
+\code{device\_mnist3fixed8\_30\_v604\_ce\_out\_weak\_e2\_std} it matched the
+best \code{onehot\_out} result at 60\% final accuracy, so the current benefit is
+architectural cleanliness rather than solved training.  A programmed
+three-row hidden-space separator control,
+\code{device\_mnist3fixed8\_30\_v605\_csv\_separator\_e0}, reached only
+66.7\% with the initial separator scale.  Because this run has zero training
+epochs, that is a readout-expression/scaling control: before interpreting
+multiclass learning failures, the score head must first express a measured
+separator with adequate margin.
+
+A scale sweep on the same programmed separator showed that simply increasing
+the capacitor split does not solve this.  The original gate-stack readout gave
+66.7\%, 63.3\%, 56.7\%, and 60.0\% at separator scales 1, 5, 10, and 20,
+respectively, with margins becoming more negative as the scale increased.
+Measured hidden activations still evaluate to 100\% under the ideal linear
+separator, so this is a mismatch between the ideal row logits and the MOS
+readout transfer.  A voltage-mode \code{passact} readout was also tested; it
+loaded the stored activation capacitors and destroyed hidden separability.
+The new \code{split\_signed\_passact\_buffered\_v1} variant inserts a
+source-follower replica \(\mathrm{actbuf}_j\) so readout fan-out does not drain
+\(\mathrm{act}_j\).  That preserves hidden separability, but the first scale-1
+and scale-5 controls still stayed at 66.7\%.  The next readout task is
+therefore not preprocessing or hidden representation; it is to characterize
+and redesign the synapse/output-head transfer so a programmed separator maps to
+the intended score ordering.
+
+An isolated readout-transfer harness now makes that failure measurable without
+rerunning training.  It holds the measured hidden activations on the
+\(\mathrm{act}_j\) capacitors, programs the readout capacitor states from the
+CSV separator, and compares ideal logits with the SPICE score trajectories.
+For the original single-ended score cap, the ideal hidden-space separator is
+100\% accurate, but the SPICE score rows remain only 66.7\% accurate and rows 0
+and 1 are anti-correlated with their intended logits.  Sweeping readout center
+voltage from \(0.35\ \mathrm{V}\) to \(0.80\ \mathrm{V}\), changing the
+negative-branch width, and precharging the score cap does not remove this
+pathology.  The plausible circuit reason is simple: positive and negative
+terms are being integrated onto one single-ended capacitor.  Near ground the
+negative branch has almost no discharge headroom; at higher common-mode the
+output follower treats common-mode as class evidence.  A transfer-only
+\code{split\_score\_caps} probe therefore separates the two accumulators:
+\(\mathrm{scorep}_k\) integrates all positive branches,
+\(\mathrm{scoren}_k\) integrates all negative branches, and the diagnostic
+score is \(\mathrm{scorep}_k-\mathrm{scoren}_k\).  This makes all three row
+correlations positive, reaching about 0.64, 0.74, and 0.81 at separator scale
+10, but argmax accuracy is still 63.3\%.  So differential score storage fixes
+the sign/headroom bug, but we still need either a calibrated differential
+output/error head or a readout training rule that learns the hardware-distorted
+separator directly.
+
+The same split-score storage has now been moved into the full device generator
+as \code{--output-head split\_score\_caps}.  In this mode each class has
+physical \(\mathrm{scorep}_k\) and \(\mathrm{scoren}_k\) capacitors, and the
+ordinary \(\mathrm{out}_k\) capacitor is driven by a transistor differential
+head.  Programmed-separator controls confirm the diagnosis rather than solving
+the problem: with the 3-class \code{mnist3fixed8\_30} separator, the internal
+\(\mathrm{scorep}-\mathrm{scoren}\) argmax reaches 66.7\% at scales 5 and 10,
+but the physical \(\mathrm{out}\) argmax reaches only 60.0--63.3\%.  Resetting
+\(\mathrm{out}\) to the same common-mode rail as the split score capacitors and
+trying \(0.30\ \mathrm{V}\) and \(0.50\ \mathrm{V}\) common modes does not
+change this.  The next output primitive should therefore compare split-score
+currents directly, or generate the error rails from the split score caps,
+rather than forcing the evidence through the present single output capacitor.
+
+We also tested the first such error-rail variant,
+\code{ce\_split\_score}.  This keeps the split score storage and generates the
+target/non-target write rails from \(\mathrm{scorep}_k\), so the error circuit
+does not depend on the final \(\mathrm{out}_k\) capacitor.  With the earlier
+bounded write rails \((V_{\mathrm{high}},V_{\mathrm{low}})
+=(0.58,0.16)\ \mathrm{V}\), all three output rows moved in the negative signed
+direction and the 3-class run collapsed to 33.3\% final accuracy.  This exposed
+a simpler parameter bug: the nominal ``charge'' rail was below the usual random
+readout center of \(0.64\ \mathrm{V}\), so the positive write path had little
+or no upward headroom.  The necessary screen is therefore:
+\[
+  V_{\mathrm{low}} < \theta_{\mathrm{init}} < V_{\mathrm{high}}
+\]
+but this is not sufficient.
+
+A new readout-write-selectivity harness now bypasses the output and error
+circuits and drives the production \code{direct\_flow.readout\_flow\_updates}
+fragment with explicit one-hot \(\mathrm{dp}/\mathrm{dn}\) rails.  With
+\(V_{\mathrm{high}}=1.00\ \mathrm{V}\), \(V_{\mathrm{low}}=0.16\ \mathrm{V}\),
+initial readout state \(0.64\ \mathrm{V}\), and hidden activations
+\((0.8,0.45)\), the normal multiclass polarity moves the target row down by
+about \(4.845\,\mathrm{mV}\) and each non-target row up by the same amount.
+The reversed polarity gives the desired one-vs-rest motion: target row
+\(+4.845\,\mathrm{mV}\), non-target rows \(-4.845\,\mathrm{mV}\).  This means
+the older binary reversed-polarity control does not transfer directly to the
+explicit multiclass one-hot rail convention.
+
+Using the locally correct reversed polarity in the full 3-class circuit still
+does not solve learning.  High-rail \code{onehot}, \code{ce\_out}, and
+\code{ce\_split\_score} runs all collapse to 33.3\%; target-heavy one-hot
+rails also collapse, and a smaller readout step only reaches 36.7\%.  The
+local readout-write sign is now characterized, but the full loop still needs a
+better error/output/readout primitive.  The next readout primitive should
+measure and balance local target and non-target write currents per row, then
+feed a differential score comparator or current competition directly instead
+of the present single-ended \(\mathrm{out}\) storage.
+
+The next useful experiments are therefore: keep the default-rail
+bounded-discharge readout anchor
+\[
+  \code{source\_follower}
+  + \code{out\_senseamp}
+  + \code{target\_mistake},
+\]
+use checkpoint runs to tune the stop time, keep hidden-delta cap/leak damping
+enabled for full-hidden runs, and characterize row-wise one-vs-rest write
+mobility before scaling the ten-class readout.  The true weighted hidden layer
+should still be brought up separately with a simpler readout interface before
+recombining it with the full training loop.
 
 \subsection{Local-Feature Phase-Training Path}
 

@@ -1913,6 +1913,52 @@ def error_cells(
                 f"Mdn{out}_e0 dn{out}_l err dn{out} 0 NSENSE W=128u L=180n",
             ]
             lines += node_parasitics(f"dp{out}_t", f"dp{out}_l", f"dn{out}_t", f"dn{out}_l")
+        elif error_rule == "lead_mistake_lowtarget":
+            other = 1 - out
+            self_wins_gate = lead_win_gate(lead_mode, out)
+            other_wins_gate = lead_win_gate(lead_mode, other)
+            lines += [
+                f"* Soft lead-mistake rails: class {out} updates only when the target loses and the target score is low.",
+                f"Mdp{out}_t0 vdd t{out} dp{out}_t 0 NSENSE W=128u L=180n",
+                f"Mdp{out}_l0 dp{out}_t {other_wins_gate} dp{out}_l 0 NSENSE W=128u L=180n",
+                f"Mdp{out}_s0 dp{out}_l lose{out} dp{out}_s 0 NSENSE W=128u L=180n",
+                f"Mdp{out}_e0 dp{out}_s err dp{out} 0 NSENSE W=128u L=180n",
+                f"Mdn{out}_t0 vdd t{other} dn{out}_t 0 NSENSE W=128u L=180n",
+                f"Mdn{out}_l0 dn{out}_t {self_wins_gate} dn{out}_l 0 NSENSE W=128u L=180n",
+                f"Mdn{out}_s0 dn{out}_l lose{other} dn{out}_s 0 NSENSE W=128u L=180n",
+                f"Mdn{out}_e0 dn{out}_s err dn{out} 0 NSENSE W=128u L=180n",
+            ]
+            lines += node_parasitics(
+                f"dp{out}_t",
+                f"dp{out}_l",
+                f"dp{out}_s",
+                f"dn{out}_t",
+                f"dn{out}_l",
+                f"dn{out}_s",
+            )
+        elif error_rule == "lead_mistake_outlow":
+            other = 1 - out
+            self_wins_gate = lead_win_gate(lead_mode, out)
+            other_wins_gate = lead_win_gate(lead_mode, other)
+            lines += [
+                f"* Soft lead-mistake rails: class {out} updates through an analog target-output-low PMOS source gate.",
+                f"Mdp{out}_p0 vdd out{out} dp{out}_p vdd PMOS W=128u L=180n",
+                f"Mdp{out}_t0 dp{out}_p t{out} dp{out}_t 0 NSENSE W=128u L=180n",
+                f"Mdp{out}_l0 dp{out}_t {other_wins_gate} dp{out}_l 0 NSENSE W=128u L=180n",
+                f"Mdp{out}_e0 dp{out}_l err dp{out} 0 NSENSE W=128u L=180n",
+                f"Mdn{out}_p0 vdd out{other} dn{out}_p vdd PMOS W=128u L=180n",
+                f"Mdn{out}_t0 dn{out}_p t{other} dn{out}_t 0 NSENSE W=128u L=180n",
+                f"Mdn{out}_l0 dn{out}_t {self_wins_gate} dn{out}_l 0 NSENSE W=128u L=180n",
+                f"Mdn{out}_e0 dn{out}_l err dn{out} 0 NSENSE W=128u L=180n",
+            ]
+            lines += node_parasitics(
+                f"dp{out}_p",
+                f"dp{out}_t",
+                f"dp{out}_l",
+                f"dn{out}_p",
+                f"dn{out}_t",
+                f"dn{out}_l",
+            )
         elif error_rule == "local_loss":
             other = 1 - out
             lines += [
@@ -3504,6 +3550,8 @@ def main() -> None:
             "lowtarget",
             "mistake",
             "lead_mistake",
+            "lead_mistake_lowtarget",
+            "lead_mistake_outlow",
             "local_loss",
         ],
         default="score",

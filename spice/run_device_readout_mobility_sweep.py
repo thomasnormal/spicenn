@@ -11,7 +11,7 @@ from typing import Any
 import numpy as np
 import pandas as pd
 
-from run_device_xor2_random_hidden import error_cells
+from run_device_xor2_random_hidden import error_cells, low_score_gate_cells
 from run_device_multicell_classifier import mos_models
 from run_spice_sweep import ROOT, detect_spice, run_tiny_test
 
@@ -579,6 +579,7 @@ Vout1 out1 0 {out1:.12g}
 Vscore0 score0 0 {score0:.12g}
 Vscore1 score1 0 {score1:.12g}
 {lead_sources}
+{low_score_gate_cells(lose_pull_kohm=100.0, lose_width_u=24.0)}
 Verr err 0 PULSE(0 {{VDD}} 2.30n 20p 20p 2.00n 8n)
 Vbwd bwd 0 PULSE(0 {{VDD}} 2.30n 20p 20p 2.00n 8n)
 {pre_gate_block}

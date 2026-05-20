@@ -1852,6 +1852,73 @@ The target-mistake gate match fell to 73.8\%, so the larger all-layer failure
 looks like a hidden-delta/event-quality problem coupled to mobility, not a lack
 of hidden-weight motion.
 
+A broader replay sweep clarified why the recent accuracy appeared to drop.  The
+old high-scoring 40-example bridge still reproduces under the current generator:
+\code{v481}, the readout-only out-competitive target-mistake run, reaches
+97.5\%, and \code{v480}, the per-synapse pre-trace hidden-write version, also
+reaches 97.5\% while moving hidden signed-weight capacitors by about
+\(9.46\,\mathrm{mV}\).  So the old result was not lost.  It was a friendlier
+40-example bridge with a strong out-competitive readout update, not the newer
+strict lead-mistake/branch-pair circuit.  Scaling that same out-competitive
+readout-only recipe to 64 examples in \code{v483} reaches 84.375\%, which is
+useful but below the 90\% target.
+
+The soft lead-mistake variants are useful negative results.  Adding a
+\code{lose[target]} NMOS in series with the lead-mistake rail
+\(\left(\code{lead\_mistake\_lowtarget}\right)\) starved the rail in the
+actual-action probe: all 24 action cases failed, with essentially zero
+\(\mathrm{dp}/\mathrm{dn}\) drive.  Replacing that with an analog PMOS
+output-low source gate
+\(\left(\code{lead\_mistake\_outlow}\right)\) fixed the local action signs:
+both the plain and state-high variants were 24/24 sign-aligned in the
+actual-rail probe.  But training did not improve.  On the 16-example
+interleaved fixed8 readout, \code{v477} reached 68.75\%, \code{v478} reached
+75\%, and the identity-feature plus output-bias run \code{v484} also reached
+75\%.  The lesson is practical: locally correct rail polarity is necessary, but
+the lead-mistake family is not yet the best training rule.
+
+The better current direction came from replaying past winners rather than
+tightening the new lead-mistake design.  The old 64-example bounded-discharge
+\code{senseamp\_strong} replay \code{v485} reached only 60.9375\% under the
+current generator because the target-mistake gate matched poorly.  Changing
+only the lead source to \code{out\_senseamp} recovered the useful behavior:
+\code{v487} reached 90.625\% on \code{mnist01fixed8\_64}, and extending the
+same setting to four epochs in \code{v492} reached 93.75\%.  Reducing the
+write width to \(0.00025\,\mu\mathrm{m}\) in \code{v493} stayed at 90.625\%.
+Nearby controls failed: raw \code{score} lead stayed at 50\%, scheduled gating
+stayed at 50\%, \code{lead\_or} reached only 51.5625\%, and the
+\code{out\_residual} scheduled run stayed at 50\%.  Thus the best stable
+readout-only recipe is now:
+\[
+  \code{source\_follower}
+  + \code{out\_senseamp}
+  + \code{target\_mistake}
+  + \code{bounded\_discharge}.
+\]
+
+The hidden-write version of that recipe is not yet stable.  Two 64-example
+full-hidden replays with bounded hidden writes, \code{v486} and \code{v494},
+hit ngspice timestep failures in hidden-delta/write-stack nodes.  This should
+be treated as a separate circuit robustness task, not as evidence against the
+readout recipe.  A smaller stabilization attempt with a \(0.0000002\,\mu
+\mathrm{m}\) bounded hidden-write stack, \code{v499}, also failed with an
+ngspice timestep collapse at a hidden-delta node, so this is still a numerical
+and circuit-conditioning issue.
+
+The follow-up sweep around the \code{v492} recipe gives a clearer empirical
+direction.  Scaling the same readout-only recipe to \code{mnist01fixed8\_128}
+for two epochs in \code{v495} reached 92.96875\%, even though the raw eight
+fixed8 input features for that 128-example subset were not linearly separable.
+Sampling the 64-example four-epoch run at several output times in \code{v497}
+gave the same 93.75\% accuracy at 2.55, 2.75, 2.95, 3.15, and 3.35 ns, so this
+particular recipe is not fragile to the exact readout-sampling instant.  Adding
+small random readout charge pulses in \code{v496} reduced the result to
+92.1875\%, and enabling a small trained output-bias write in \code{v498} also
+reduced it to 92.1875\%.  The next useful experiments are therefore:
+stabilize the hidden-delta/write nodes, scale the readout-only recipe beyond
+128 fixed8 examples, and try margin-sensitive update suppression instead of
+extra output-bias or noise.
+
 \subsection{Local-Feature Phase-Training Path}
 
 The strongest MNIST evidence uses local feature cells rather than dense

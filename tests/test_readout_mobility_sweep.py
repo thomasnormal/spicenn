@@ -393,6 +393,52 @@ def test_error_rule_action_netlist_can_drive_lead_mistake_polarity() -> None:
     assert "Mdn0_l0 dn0_t lead10 dn0_l" in label1_netlist
 
 
+def test_error_rule_action_netlist_can_gate_lead_mistake_by_low_target_score() -> None:
+    netlist = mobility.error_rule_action_mobility_netlist(
+        theta_p=0.34,
+        theta_n=0.13,
+        act=0.5,
+        error_action="label0_mistake",
+        error_rule="lead_mistake_lowtarget",
+        write_mode="bounded_charge_discharge",
+        width_u=0.0008,
+        pos_write_high_v=0.70,
+        pos_write_low_v=0.24,
+        neg_write_high_v=0.16,
+        neg_write_low_v=0.10,
+        lead_mode="out_senseamp",
+    )
+
+    assert "Mlose0_dn lose0 score0 0 0 NSENSE W=24u" in netlist
+    assert "Mlose1_dn lose1 score1 0 0 NSENSE W=24u" in netlist
+    assert "Mdp0_l0 dp0_t lead01 dp0_l" in netlist
+    assert "Mdp0_s0 dp0_l lose0 dp0_s" in netlist
+    assert "Mdn1_l0 dn1_t lead01 dn1_l" in netlist
+    assert "Mdn1_s0 dn1_l lose0 dn1_s" in netlist
+
+
+def test_error_rule_action_netlist_can_gate_lead_mistake_by_low_output() -> None:
+    netlist = mobility.error_rule_action_mobility_netlist(
+        theta_p=0.34,
+        theta_n=0.13,
+        act=0.5,
+        error_action="label0_mistake",
+        error_rule="lead_mistake_outlow",
+        write_mode="bounded_charge_discharge",
+        width_u=0.0008,
+        pos_write_high_v=0.70,
+        pos_write_low_v=0.24,
+        neg_write_high_v=0.16,
+        neg_write_low_v=0.10,
+        lead_mode="out_senseamp",
+    )
+
+    assert "Mdp0_p0 vdd out0 dp0_p vdd PMOS W=128u" in netlist
+    assert "Mdp0_l0 dp0_t lead01 dp0_l" in netlist
+    assert "Mdn1_p0 vdd out0 dn1_p vdd PMOS W=128u" in netlist
+    assert "Mdn1_l0 dn1_t lead01 dn1_l" in netlist
+
+
 def test_error_rule_action_summary_requires_both_rows_aligned() -> None:
     rows = pd.DataFrame(
         [

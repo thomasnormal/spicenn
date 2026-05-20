@@ -552,6 +552,35 @@ def test_restored_target_output_mistake_latch_regenerates_backward_rail() -> Non
     assert "Mbwd_merr1_b bwd_merr1_p bwd_src bwd" in gate
 
 
+def test_stacked_restored_target_output_mistake_latch_raises_event_threshold() -> None:
+    gate = direct_flow.backward_gate_cells(
+        "target_out_mistake_latch_restore_stacked",
+        width_u=64.0,
+        cap_f=2.0,
+    )
+
+    assert "Restore discriminator: two-device event stack" in gate
+    assert "Mmerr0_restore_a merr0_bar merr0 merr0_bar_a 0 NREL W=64u" in gate
+    assert "Mmerr0_restore_b merr0_bar_a merr0 0 0 NREL W=64u" in gate
+    assert "Mmerr1_restore_a merr1_bar merr1 merr1_bar_a 0 NREL W=64u" in gate
+    assert "Mmerr1_restore_b merr1_bar_a merr1 0 0 NREL W=64u" in gate
+    assert "Cmerr0_bar merr0_bar 0 2f IC=1.2" in gate
+    assert "Mbwd_merr0_p bwd_merr0_p merr0_bar vdd vdd PMOS W=64u" in gate
+
+
+def test_timed_stacked_restored_mistake_latch_evaluates_during_backward_window() -> None:
+    gate = direct_flow.backward_gate_cells(
+        "target_out_mistake_latch_restore_stacked_timed",
+        width_u=64.0,
+        cap_f=2.0,
+    )
+
+    assert "Restore discriminator: two-device event stack gated by bwd_src." in gate
+    assert "Mmerr0_restore_t merr0_bar_b bwd_src 0 0 NREL W=64u" in gate
+    assert "Mmerr1_restore_t merr1_bar_b bwd_src 0 0 NREL W=64u" in gate
+    assert "Mbwd_merr0_b bwd_merr0_p bwd_src bwd" in gate
+
+
 def test_probe_measurement_keeps_backward_signals_without_full_weight_snapshots() -> None:
     original_hidden = direct_flow.HIDDEN
     original_input_rails = list(direct_flow.INPUT_RAILS)
@@ -682,6 +711,30 @@ def test_mistake_latch_measurement_records_latched_event_caps() -> None:
 
     assert "merr0_0 FIND V(merr0)" in measures
     assert "merr1_0 FIND V(merr1)" in measures
+
+
+def test_restored_mistake_latch_measurement_records_inverter_nodes() -> None:
+    samples = [
+        {"phase": "train", "label": 0, "pattern": 0, "apply_update": True},
+    ]
+
+    measures, _prints = direct_flow.measure_lines(
+        samples=samples,
+        hidden_apply_mode="direct",
+        learning_mode="flow",
+        hidden_delta_output_mode="raw",
+        measure_detail="light",
+        readout_sample_offsets_ns=[2.95],
+        cmp_start_ns=3.25,
+        cmp_end_ns=4.10,
+        bwd_start_ns=6.75,
+        apply_end_ns=11.20,
+        backward_gate_mode="target_out_mistake_latch_restore_stacked",
+        hidden_delta_network_enabled=False,
+    )
+
+    assert "merr0_bar_0 FIND V(merr0_bar)" in measures
+    assert "merr1_bar_0 FIND V(merr1_bar)" in measures
 
 
 def test_error_and_target_mistake_backward_gate_are_transistor_generated() -> None:

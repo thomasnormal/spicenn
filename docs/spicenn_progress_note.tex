@@ -1483,6 +1483,23 @@ hardware-defined learning rule: even if \(G'_{\mathrm{eff}}s_{\mathrm{MOS}}\)
 is usable, a nonselective backward gate changes which examples receive the
 update and can still prevent a linearly separable readout from converging.
 
+Two follow-up restored-latch probes tested whether a higher effective event
+threshold would fix the over-open behavior.  A two-device NREL restore stack
+(\code{target\_out\_mistake\_latch\_restore\_stacked}) at widths 256 and
+\(64\,\mu\mathrm{m}\) still reached only 57.8125\% final accuracy.  The
+width-256 run opened the backward rail on all 128 training cycles; the
+width-64 run reduced this to 127 openings and 55 false positives, but still
+did not create a usable mistake gate.  A timed version that gated the restore
+stack with \code{bwd\_src} also opened on all cycles at both widths.  The new
+\code{merr\_bar} instrumentation showed that the inverter can swing, but not
+selectively enough: the minimum restored-bar voltage fell nearly to ground and
+the mean was about \(0.51\,\mathrm{V}\), while the backward rail stayed near
+full supply.  The event capacitor values themselves are separated by only
+millivolts once the always-open write path perturbs the readout, so the next
+event-circuit attempt should use a real full-swing comparator/sense latch or
+the existing full-rail lead signals, not another raw threshold on the
+\code{merr} capacitor.
+
 The generator also mirrors the write-mode choice on the lower-layer synapses.
 The corresponding option is
 \code{--hidden-flow-}\allowbreak\code{write-mode}.  When hidden direct flow is enabled, hidden

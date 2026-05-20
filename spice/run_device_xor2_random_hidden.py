@@ -123,6 +123,8 @@ BACKWARD_GATE_MODES = [
     "target_mistake_latch_simple",
     "target_out_mistake_latch",
     "target_out_mistake_latch_restore",
+    "target_out_mistake_latch_restore_stacked",
+    "target_out_mistake_latch_restore_stacked_timed",
 ]
 CAP_DITHER_SCOPES = ["none", "hidden", "readout", "all"]
 TRAIN_CHARGE_NOISE_SCOPES = CAP_DITHER_SCOPES
@@ -1531,54 +1533,98 @@ def backward_gate_cells(mode: str, width_u: float, cap_f: float, lead_mode: str 
                 "bwd_merr1_a",
             )
         )
-    if mode == "target_out_mistake_latch_restore":
-        return "\n".join(
+    if mode in {
+        "target_out_mistake_latch_restore",
+        "target_out_mistake_latch_restore_stacked",
+        "target_out_mistake_latch_restore_stacked_timed",
+    }:
+        stacked_restore = "stacked" in mode
+        timed_restore = mode.endswith("_timed")
+        lines = [
+            "* Restored output-capacitor mistake latch: captures target-low/other-high during the error window,",
+            "* then inverts the low-voltage event cap into a restored PMOS pull-up during bwd_src.",
+            (
+                "* Restore discriminator: "
+                + ("two-device event stack" if stacked_restore else "single event device")
+                + (" gated by bwd_src." if timed_restore else ".")
+            ),
+            f"Cbwd_gate bwd 0 {cap_f:.12g}f IC=0",
+            "Rbwd_gate bwd 0 1G",
+            "Mreset_bwd_gate bwd rste 0 0 NMOS W=4u L=180n",
+            f"Cmerr0 merr0 0 {cap_f:.12g}f IC=0",
+            f"Cmerr1 merr1 0 {cap_f:.12g}f IC=0",
+            f"Cmerr0_bar merr0_bar 0 {cap_f:.12g}f IC=1.2",
+            f"Cmerr1_bar merr1_bar 0 {cap_f:.12g}f IC=1.2",
+            "Rmerr0 merr0 0 1G",
+            "Rmerr1 merr1 0 1G",
+            "Rmerr0_bar merr0_bar vdd 1G",
+            "Rmerr1_bar merr1_bar vdd 1G",
+            "Mreset_merr0 merr0 rste 0 0 NMOS W=4u L=180n",
+            "Mreset_merr1 merr1 rste 0 0 NMOS W=4u L=180n",
+            "Mreset_merr0_bar vdd rste merr0_bar 0 NREL W=4u L=180n",
+            "Mreset_merr1_bar vdd rste merr1_bar 0 NREL W=4u L=180n",
+            f"Mmerr0_p vdd out0 merr0_p vdd PMOS W={width_u:.12g}u L=180n",
+            f"Mmerr0_t merr0_p t0 merr0_t 0 NSENSE W={width_u:.12g}u L=180n",
+            f"Mmerr0_o merr0_t out1 merr0_o 0 NSENSE W={width_u:.12g}u L=180n",
+            f"Mmerr0_e merr0_o err merr0 0 NSENSE W={width_u:.12g}u L=180n",
+            f"Mmerr1_p vdd out1 merr1_p vdd PMOS W={width_u:.12g}u L=180n",
+            f"Mmerr1_t merr1_p t1 merr1_t 0 NSENSE W={width_u:.12g}u L=180n",
+            f"Mmerr1_o merr1_t out0 merr1_o 0 NSENSE W={width_u:.12g}u L=180n",
+            f"Mmerr1_e merr1_o err merr1 0 NSENSE W={width_u:.12g}u L=180n",
+        ]
+        parasitic_nodes = [
+            "merr0_p",
+            "merr0_t",
+            "merr0_o",
+            "merr1_p",
+            "merr1_t",
+            "merr1_o",
+            "merr0_bar",
+            "merr1_bar",
+            "bwd_merr0_p",
+            "bwd_merr1_p",
+        ]
+        if stacked_restore:
+            lines.extend(
+                [
+                    f"Mmerr0_restore_a merr0_bar merr0 merr0_bar_a 0 NREL W={width_u:.12g}u L=180n",
+                    f"Mmerr1_restore_a merr1_bar merr1 merr1_bar_a 0 NREL W={width_u:.12g}u L=180n",
+                ]
+            )
+            if timed_restore:
+                lines.extend(
+                    [
+                        f"Mmerr0_restore_b merr0_bar_a merr0 merr0_bar_b 0 NREL W={width_u:.12g}u L=180n",
+                        f"Mmerr0_restore_t merr0_bar_b bwd_src 0 0 NREL W={width_u:.12g}u L=180n",
+                        f"Mmerr1_restore_b merr1_bar_a merr1 merr1_bar_b 0 NREL W={width_u:.12g}u L=180n",
+                        f"Mmerr1_restore_t merr1_bar_b bwd_src 0 0 NREL W={width_u:.12g}u L=180n",
+                    ]
+                )
+                parasitic_nodes.extend(["merr0_bar_b", "merr1_bar_b"])
+            else:
+                lines.extend(
+                    [
+                        f"Mmerr0_restore_b merr0_bar_a merr0 0 0 NREL W={width_u:.12g}u L=180n",
+                        f"Mmerr1_restore_b merr1_bar_a merr1 0 0 NREL W={width_u:.12g}u L=180n",
+                    ]
+                )
+            parasitic_nodes.extend(["merr0_bar_a", "merr1_bar_a"])
+        else:
+            lines.extend(
+                [
+                    f"Mmerr0_restore merr0_bar merr0 0 0 NREL W={width_u:.12g}u L=180n",
+                    f"Mmerr1_restore merr1_bar merr1 0 0 NREL W={width_u:.12g}u L=180n",
+                ]
+            )
+        lines.extend(
             [
-                "* Restored output-capacitor mistake latch: captures target-low/other-high during the error window,",
-                "* then inverts the low-voltage event cap into a restored PMOS pull-up during bwd_src.",
-                f"Cbwd_gate bwd 0 {cap_f:.12g}f IC=0",
-                "Rbwd_gate bwd 0 1G",
-                "Mreset_bwd_gate bwd rste 0 0 NMOS W=4u L=180n",
-                f"Cmerr0 merr0 0 {cap_f:.12g}f IC=0",
-                f"Cmerr1 merr1 0 {cap_f:.12g}f IC=0",
-                f"Cmerr0_bar merr0_bar 0 {cap_f:.12g}f IC=1.2",
-                f"Cmerr1_bar merr1_bar 0 {cap_f:.12g}f IC=1.2",
-                "Rmerr0 merr0 0 1G",
-                "Rmerr1 merr1 0 1G",
-                "Rmerr0_bar merr0_bar vdd 1G",
-                "Rmerr1_bar merr1_bar vdd 1G",
-                "Mreset_merr0 merr0 rste 0 0 NMOS W=4u L=180n",
-                "Mreset_merr1 merr1 rste 0 0 NMOS W=4u L=180n",
-                "Mreset_merr0_bar vdd rste merr0_bar 0 NREL W=4u L=180n",
-                "Mreset_merr1_bar vdd rste merr1_bar 0 NREL W=4u L=180n",
-                f"Mmerr0_p vdd out0 merr0_p vdd PMOS W={width_u:.12g}u L=180n",
-                f"Mmerr0_t merr0_p t0 merr0_t 0 NSENSE W={width_u:.12g}u L=180n",
-                f"Mmerr0_o merr0_t out1 merr0_o 0 NSENSE W={width_u:.12g}u L=180n",
-                f"Mmerr0_e merr0_o err merr0 0 NSENSE W={width_u:.12g}u L=180n",
-                f"Mmerr1_p vdd out1 merr1_p vdd PMOS W={width_u:.12g}u L=180n",
-                f"Mmerr1_t merr1_p t1 merr1_t 0 NSENSE W={width_u:.12g}u L=180n",
-                f"Mmerr1_o merr1_t out0 merr1_o 0 NSENSE W={width_u:.12g}u L=180n",
-                f"Mmerr1_e merr1_o err merr1 0 NSENSE W={width_u:.12g}u L=180n",
-                f"Mmerr0_restore merr0_bar merr0 0 0 NREL W={width_u:.12g}u L=180n",
-                f"Mmerr1_restore merr1_bar merr1 0 0 NREL W={width_u:.12g}u L=180n",
                 f"Mbwd_merr0_p bwd_merr0_p merr0_bar vdd vdd PMOS W={width_u:.12g}u L=180n",
                 f"Mbwd_merr0_b bwd_merr0_p bwd_src bwd 0 NSENSE W={width_u:.12g}u L=180n",
                 f"Mbwd_merr1_p bwd_merr1_p merr1_bar vdd vdd PMOS W={width_u:.12g}u L=180n",
                 f"Mbwd_merr1_b bwd_merr1_p bwd_src bwd 0 NSENSE W={width_u:.12g}u L=180n",
             ]
-            + node_parasitics(
-                "merr0_p",
-                "merr0_t",
-                "merr0_o",
-                "merr1_p",
-                "merr1_t",
-                "merr1_o",
-                "merr0_bar",
-                "merr1_bar",
-                "bwd_merr0_p",
-                "bwd_merr1_p",
-            )
         )
+        return "\n".join(lines + node_parasitics(*parasitic_nodes))
     if mode == "target_mistake":
         target0_wins_gate = lead_win_gate(lead_mode, 0)
         target1_wins_gate = lead_win_gate(lead_mode, 1)
@@ -2378,6 +2424,15 @@ def measure_lines(
                     f".meas tran merr0_{idx} FIND V(merr0) AT={base + bwd_probe_offset_ns:.2f}n",
                     f".meas tran merr1_{idx} FIND V(merr1) AT={base + bwd_probe_offset_ns:.2f}n",
                 ]
+                if backward_gate_mode in {
+                    "target_out_mistake_latch_restore",
+                    "target_out_mistake_latch_restore_stacked",
+                    "target_out_mistake_latch_restore_stacked_timed",
+                }:
+                    lines += [
+                        f".meas tran merr0_bar_{idx} FIND V(merr0_bar) AT={base + bwd_probe_offset_ns:.2f}n",
+                        f".meas tran merr1_bar_{idx} FIND V(merr1_bar) AT={base + bwd_probe_offset_ns:.2f}n",
+                    ]
             applies_update = sample.get("apply_update", True)
             if include_train_detail and hidden_delta_network_enabled:
                 lines += [
@@ -3510,6 +3565,13 @@ def main() -> None:
             if "mistake_latch" in args.backward_gate_mode:
                 row["merr0"] = parsed[f"merr0_{idx}"]
                 row["merr1"] = parsed[f"merr1_{idx}"]
+                if args.backward_gate_mode in {
+                    "target_out_mistake_latch_restore",
+                    "target_out_mistake_latch_restore_stacked",
+                    "target_out_mistake_latch_restore_stacked_timed",
+                }:
+                    row["merr0_bar"] = parsed[f"merr0_bar_{idx}"]
+                    row["merr1_bar"] = parsed[f"merr1_bar_{idx}"]
         if phase == "train" and args.measure_detail in {"full", "probe"}:
             for out in range(OUTPUTS):
                 row[f"dp{out}"] = parsed[f"dp{out}_{idx}"]
@@ -3682,6 +3744,7 @@ def main() -> None:
     has_output_delta_metrics = not train.empty and "max_abs_output_delta_signal" in train.columns
     has_hidden_delta_metrics = not train.empty and "max_abs_hidden_delta_signal" in train.columns
     has_mistake_latch_metrics = not train.empty and {"merr0", "merr1"}.issubset(train.columns)
+    has_mistake_latch_bar_metrics = not train.empty and {"merr0_bar", "merr1_bar"}.issubset(train.columns)
     has_hidden_delta_update_metrics = (
         not train.empty and "max_abs_hidden_delta_update_signal" in train.columns
     )
@@ -3697,6 +3760,8 @@ def main() -> None:
             "target_mistake_latch_simple",
             "target_out_mistake_latch",
             "target_out_mistake_latch_restore",
+            "target_out_mistake_latch_restore_stacked",
+            "target_out_mistake_latch_restore_stacked_timed",
         }
         else {}
     )
@@ -3905,6 +3970,12 @@ def main() -> None:
         else None,
         "mean_train_mistake_latch_v": float(train[["merr0", "merr1"]].to_numpy().mean())
         if has_mistake_latch_metrics
+        else None,
+        "min_train_mistake_latch_bar_v": float(train[["merr0_bar", "merr1_bar"]].min().min())
+        if has_mistake_latch_bar_metrics
+        else None,
+        "mean_train_mistake_latch_bar_v": float(train[["merr0_bar", "merr1_bar"]].to_numpy().mean())
+        if has_mistake_latch_bar_metrics
         else None,
         "train_cycles": int(len(train)),
         "train_apply_cycles": int(len(applied_train)),

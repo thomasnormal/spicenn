@@ -275,3 +275,62 @@ def test_branch_pair_summary_reports_gain_safe_pair_across_activations() -> None
     assert summary["branch_pair_best_gain_safe_theta_n_v"] == pytest.approx(0.10)
     assert summary["branch_pair_best_gain_safe_min_signed_read_gain"] == pytest.approx(0.1)
     assert summary["branch_pair_best_gain_safe_min_physical_gradient_mobility_balance"] == pytest.approx(0.5)
+
+
+def test_pair_action_netlist_uses_state_window_write_stacks() -> None:
+    netlist = mobility.pair_action_mobility_netlist(
+        theta_p=0.34,
+        theta_n=0.10,
+        act=0.5,
+        pre=0.65,
+        delta=1.0,
+        width_u=0.0008,
+        signed_action="increase",
+        write_mode="bounded_charge_discharge",
+        pos_write_high_v=0.70,
+        pos_write_low_v=0.24,
+        neg_write_high_v=0.16,
+        neg_write_low_v=0.10,
+        write_state_gate_mode="state_window",
+    )
+
+    assert "Vwphigh wphigh 0 0.7" in netlist
+    assert "Vwnlow wnlow 0 0.1" in netlist
+    assert "Mwp_ch_s wphigh wp wp_ch_s vdd PMOS W=0.0008u" in netlist
+    assert "Mwp_ch_d wp_ch_a delta wp 0 NSENSE W=0.0008u" in netlist
+    assert "Mwn_dis_s wn wn wn_dis_s 0 NREL W=0.0008u" in netlist
+    assert "Mwn_dis_d wn_dis_a delta wnlow 0 NSENSE W=0.0008u" in netlist
+    assert ".meas tran desired_signed_read_delta PARAM='signed_read_delta'" in netlist
+
+
+def test_pair_action_summary_prefers_sign_aligned_direct_effect() -> None:
+    pair_action = pd.DataFrame(
+        [
+            {
+                "theta_p": 0.34,
+                "theta_n": 0.10,
+                "signed_read_delta": 0.04,
+                "desired_signed_read_delta": 0.04,
+            },
+            {
+                "theta_p": 0.34,
+                "theta_n": 0.10,
+                "signed_read_delta": -0.01,
+                "desired_signed_read_delta": 0.01,
+            },
+            {
+                "theta_p": 0.46,
+                "theta_n": 0.16,
+                "signed_read_delta": -0.02,
+                "desired_signed_read_delta": -0.02,
+            },
+        ]
+    )
+
+    summary = mobility.summarize_pair_action_mobility(pair_action)
+
+    assert summary["pair_action_rows"] == 3
+    assert summary["pair_action_sign_aligned_fraction"] == pytest.approx(2.0 / 3.0)
+    assert summary["pair_action_best_theta_p_v"] == pytest.approx(0.34)
+    assert summary["pair_action_best_theta_n_v"] == pytest.approx(0.10)
+    assert summary["pair_action_best_aligned_fraction"] == pytest.approx(1.0)

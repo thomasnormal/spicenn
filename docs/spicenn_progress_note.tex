@@ -1569,6 +1569,60 @@ that the \(G'_{\mathrm{eff}}s_{\mathrm{MOS}}\) diagnosis is still right, but
 the write primitive needs action-specific mobility characterization rather than
 only a generic state-high or state-window gate.
 
+The mobility sweep now has that direct action-specific diagnostic.  Instead of
+inferring the signed update only from separate single-branch slopes, it can
+instantiate a two-branch signed readout cell, read its effective signed
+response, apply one requested signed write action, and read the effective
+response again.  This gives the finite hardware quantity
+\[
+  \Delta r_{\mathrm{signed}}
+  =
+  r_{\mathrm{after}}^{+}-r_{\mathrm{after}}^{-}
+  -
+  \left(r_{\mathrm{before}}^{+}-r_{\mathrm{before}}^{-}\right),
+\]
+and then checks whether it is positive for a requested signed increase and
+negative for a requested signed decrease.  On the branch grid
+\(\theta^+\in\{0.24,0.34,0.46,0.58\}\) and
+\(\theta^-\in\{0.10,0.13,0.16,0.24\}\), the baseline
+\code{bounded\_charge\_discharge} write at \(0.0008\,\mu\mathrm{m}\) is
+sign-aligned on 77.1\% of the sampled action cases.  Its best sampled pair is
+\((\theta^+,\theta^-)=(0.34,0.13)\ \mathrm{V}\), with all sampled
+increase/decrease actions aligned and a minimum desired signed-read movement of
+about \(0.00093\,\mathrm{V}\).  The \code{state\_window} version is worse:
+only 50\% of actions are aligned, and all measured signed-read deltas are
+non-positive, so it can effectively move the separator in only one direction.
+This explains the failed \code{state\_window} training run and gives a concrete
+next probe: use the baseline two-action write, but initialize the negative
+branch around \(0.13\,\mathrm{V}\) rather than pinning it at the low rail.
+
+Running that probe on the 64-example fixed8 readout confirmed that the
+derivative/mobility diagnosis is necessary but not sufficient.  With
+\((\theta^+,\theta^-)=(0.34,0.13)\,\mathrm{V}\), the old source-follower
+output head and raw score sense amp still failed: \code{v448} reached only
+51.56\%, and its lead gate tracked the score winner on only 49.2\% of training
+cycles.  Halving the write width in \code{v449} made the event path even worse,
+ending at 50\%.  Replacing the output head with the common-mode-rejecting
+\code{score\_diff} head and using \code{out\_senseamp} in \code{v450} improved
+the lead-gate winner match to 96.1\% and raised final accuracy to 62.5\%, but
+the target-mistake gate was still only 83.6\% separable at its best threshold.
+So the \((0.34,0.13)\,\mathrm{V}\) branch pair has better local pair-action
+mobility, but the full training loop also needs a calibrated event circuit.
+
+A follow-up split the event problem from the local write-field problem.
+\code{v451} latched the target-mistake event before replaying the backward
+window.  It reached 64.06\%, the best point in this small batch, and the latch
+signal contained good information: the best-threshold match was 97.7\%.
+However, at the fixed \(0.5\,\mathrm{V}\) replay threshold it opened 118 of 128
+cycles, giving many false positives.  \code{v452} instead used
+output-conditioned competitive error rails.  Its event gate was almost perfect
+\((99.2\%\) match, one false positive), but final accuracy fell back to 50\%
+and both output rows moved negative by about \(-0.76\,\mathrm{V}\).  That
+run is especially useful: once the event gate is nearly correct, the remaining
+failure is the induced effective write field, i.e. the realised
+\(G'_{\mathrm{eff}}(\theta)s_{\mathrm{MOS}}(\theta)\) under the selected
+\(\mathrm{dp}/\mathrm{dn}\) rails.
+
 Mistake-latch gates do not yet fix the 64-example readout either.  Replacing
 the continuous target-mistake backward gate with
 \code{target\_mistake\_latch\_simple} at charge-only widths

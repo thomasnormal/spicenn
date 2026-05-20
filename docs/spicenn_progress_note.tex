@@ -1731,6 +1731,24 @@ event-circuit attempt should use a real full-swing comparator/sense latch or
 the existing full-rail lead signals, not another raw threshold on the
 \code{merr} capacitor.
 
+The first such lead-signal event circuit now exists.  The
+\code{lead\_mistake} error rule uses the full-swing output-winner rails, with
+an explicit lead-mode convention, to open \(\mathrm{dp}\) for a target row that
+is currently losing and \(\mathrm{dn}\) for a non-target row that is currently
+winning.  On \code{mnist01fixed8\_16} with the \(1.2\,\mathrm{V}\)
+bootstrapped pre-trace gate, these rails matched the desired target-loss
+actions exactly: 100\% rail-action match, no false positives, no false
+negatives, and full-strength output-error rails near \(1.04\,\mathrm{V}\).
+However, the four-epoch run improved only from 37.5\% to 50\%, and an
+eight-epoch run with twice the write width fell from 37.5\% to 43.75\%.
+This is useful negative evidence.  It says the immediate failure is no longer
+``Python chose the wrong event'' or ``the event rail is too weak.''  The
+remaining readout problem is the induced write field: the selected
+\(\mathrm{dp}/\mathrm{dn}\) rails, pre-trace boost, branch voltages, and MOS
+stacks still have to produce a sign-aligned and well-scaled
+\(G'_{\mathrm{eff}}(\theta)s_{\mathrm{MOS}}(\theta)\) update over the actual
+training trajectory.
+
 The generator also mirrors the write-mode choice on the lower-layer synapses.
 The corresponding option is
 \code{--hidden-flow-}\allowbreak\code{write-mode}.  When hidden direct flow is enabled, hidden

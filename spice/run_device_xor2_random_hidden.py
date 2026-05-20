@@ -820,6 +820,46 @@ def target_mistake_latch_stats(train: pd.DataFrame, latch_threshold_v: float = 0
     }
 
 
+def output_error_rail_stats(
+    train: pd.DataFrame,
+    lead_mode: str,
+    rail_threshold_v: float = 0.5,
+) -> dict[str, Any]:
+    required = {"label", "score0_cmp", "score1_cmp", "dp0", "dn0", "dp1", "dn1"}
+    if train.empty or not required.issubset(train.columns):
+        return {
+            "output_error_rail_threshold_v": rail_threshold_v,
+            "output_error_rail_match_fraction": None,
+            "output_error_rail_false_positive_count": None,
+            "output_error_rail_false_negative_count": None,
+            "output_error_rail_target_loses_count": None,
+            "output_error_rail_open_count": None,
+        }
+    if lead_mode != "score_direct" and {"lead01", "lead10"}.issubset(train.columns):
+        score0_wins = lead_class0_wins(lead_mode, train["lead01"], train["lead10"])
+    else:
+        score0_wins = train["score0_cmp"] > train["score1_cmp"]
+    target_is_class0 = train["label"] == 0
+    target_loses = np.where(target_is_class0, ~score0_wins, score0_wins)
+    expected = pd.DataFrame(index=train.index)
+    expected["dp0"] = target_loses & target_is_class0
+    expected["dn0"] = target_loses & ~target_is_class0
+    expected["dp1"] = target_loses & ~target_is_class0
+    expected["dn1"] = target_loses & target_is_class0
+    observed = train[["dp0", "dn0", "dp1", "dn1"]] > rail_threshold_v
+    match = (observed == expected).all(axis=1)
+    false_positive = observed & ~expected
+    false_negative = expected & ~observed
+    return {
+        "output_error_rail_threshold_v": rail_threshold_v,
+        "output_error_rail_match_fraction": float(match.mean()),
+        "output_error_rail_false_positive_count": int(false_positive.to_numpy().sum()),
+        "output_error_rail_false_negative_count": int(false_negative.to_numpy().sum()),
+        "output_error_rail_target_loses_count": int(target_loses.sum()),
+        "output_error_rail_open_count": int(observed.to_numpy().sum()),
+    }
+
+
 def readout_init(
     seed: int,
     mode: str,
@@ -1672,6 +1712,7 @@ def error_cells(
     latch_boost_width_u: float,
     residual_target_width_u: float = 96.0,
     residual_output_width_u: float = 64.0,
+    lead_mode: str = "out_senseamp",
 ) -> str:
     lines: list[str] = []
     for out in range(OUTPUTS):
@@ -1855,6 +1896,20 @@ def error_cells(
                 f"Mdp{out}_e0 dp{out}_l err dp{out} 0 NSENSE W=128u L=180n",
                 f"Mdn{out}_t0 vdd t{other} dn{out}_t 0 NSENSE W=128u L=180n",
                 f"Mdn{out}_l0 dn{out}_t {winning_gate} dn{out}_l 0 NSENSE W=128u L=180n",
+                f"Mdn{out}_e0 dn{out}_l err dn{out} 0 NSENSE W=128u L=180n",
+            ]
+            lines += node_parasitics(f"dp{out}_t", f"dp{out}_l", f"dn{out}_t", f"dn{out}_l")
+        elif error_rule == "lead_mistake":
+            other = 1 - out
+            self_wins_gate = lead_win_gate(lead_mode, out)
+            other_wins_gate = lead_win_gate(lead_mode, other)
+            lines += [
+                f"* Full-swing lead-mistake rails: class {out} gets dp only when its target loses.",
+                f"Mdp{out}_t0 vdd t{out} dp{out}_t 0 NSENSE W=128u L=180n",
+                f"Mdp{out}_l0 dp{out}_t {other_wins_gate} dp{out}_l 0 NSENSE W=128u L=180n",
+                f"Mdp{out}_e0 dp{out}_l err dp{out} 0 NSENSE W=128u L=180n",
+                f"Mdn{out}_t0 vdd t{other} dn{out}_t 0 NSENSE W=128u L=180n",
+                f"Mdn{out}_l0 dn{out}_t {self_wins_gate} dn{out}_l 0 NSENSE W=128u L=180n",
                 f"Mdn{out}_e0 dn{out}_l err dn{out} 0 NSENSE W=128u L=180n",
             ]
             lines += node_parasitics(f"dp{out}_t", f"dp{out}_l", f"dn{out}_t", f"dn{out}_l")
@@ -3028,7 +3083,7 @@ Vt1 t1 0 {target_wave(samples, 1, stop)}
 {low_score_gate_cells(lose_pull_kohm, lose_width_u)}
 {score_lead_gate_cells(lead_width_u, lead_mode)}
 {backward_gate_cells(backward_gate_mode, backward_gate_width_u, backward_gate_cap_f, lead_mode)}
-{error_cells(error_rule, latch_boost_width_u, residual_target_width_u, residual_output_width_u)}
+{error_cells(error_rule, latch_boost_width_u, residual_target_width_u, residual_output_width_u, lead_mode)}
 {hidden_delta_block}
 {learning_block}
 
@@ -3448,6 +3503,7 @@ def main() -> None:
             "out_latch_mistake",
             "lowtarget",
             "mistake",
+            "lead_mistake",
             "local_loss",
         ],
         default="score",
@@ -4032,6 +4088,7 @@ def main() -> None:
     mistake_latch_stats = (
         target_mistake_latch_stats(train) if "mistake_latch" in args.backward_gate_mode else {}
     )
+    output_error_stats = output_error_rail_stats(train, args.lead_mode) if has_output_delta_metrics else {}
     hidden_delta_network_enabled = args.learning_mode != "flow" or args.flow_hidden_write == "direct"
     hidden_weight_updates_enabled = args.epochs > 0 and not (
         args.learning_mode == "flow" and args.flow_hidden_write == "off"
@@ -4241,6 +4298,7 @@ def main() -> None:
         "mean_train_bwd_signal_v": float(train["bwd_signal"].mean()) if has_bwd_metrics else 0.0,
         **mistake_gate_stats,
         **mistake_latch_stats,
+        **output_error_stats,
         "max_train_mistake_latch_v": float(train[["merr0", "merr1"]].max().max())
         if has_mistake_latch_metrics
         else None,

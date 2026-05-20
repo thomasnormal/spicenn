@@ -916,6 +916,22 @@ def test_target_mistake_gate_can_use_score_senseamp_polarity() -> None:
     assert "Mbwd_t1_l bwd_t1_a lead01 bwd_t1_l" in gate
 
 
+def test_lead_mistake_error_uses_configured_winner_polarity() -> None:
+    score_error = direct_flow.error_cells("lead_mistake", latch_boost_width_u=0.0, lead_mode="senseamp")
+    out_error = direct_flow.error_cells("lead_mistake", latch_boost_width_u=0.0, lead_mode="out_senseamp")
+
+    assert "Full-swing lead-mistake rails" in score_error
+    assert "Mdp0_l0 dp0_t lead10 dp0_l" in score_error
+    assert "Mdn0_l0 dn0_t lead01 dn0_l" in score_error
+    assert "Mdp1_l0 dp1_t lead01 dp1_l" in score_error
+    assert "Mdn1_l0 dn1_t lead10 dn1_l" in score_error
+
+    assert "Mdp0_l0 dp0_t lead01 dp0_l" in out_error
+    assert "Mdn0_l0 dn0_t lead10 dn0_l" in out_error
+    assert "Mdp1_l0 dp1_t lead10 dp1_l" in out_error
+    assert "Mdn1_l0 dn1_t lead01 dn1_l" in out_error
+
+
 def test_target_mistake_gate_can_use_scores_directly_without_lead_latch() -> None:
     lead_cells = direct_flow.score_lead_gate_cells(lead_width_u=64.0, lead_mode="score_direct")
     gate = direct_flow.backward_gate_cells(
@@ -1004,6 +1020,48 @@ def test_target_mistake_latch_stats_count_channel_specific_events() -> None:
     assert stats["target_mistake_latch_false_negative_count"] == 1
     assert stats["target_mistake_latch_match_fraction"] == pytest.approx(0.5)
     assert stats["target_mistake_latch_best_threshold_match_fraction"] == pytest.approx(0.5)
+
+
+def test_output_error_rail_stats_tracks_target_loss_actions() -> None:
+    train = pd.DataFrame(
+        [
+            {
+                "label": 0,
+                "score0_cmp": 0.10,
+                "score1_cmp": 0.20,
+                "dp0": 1.05,
+                "dn0": 0.02,
+                "dp1": 0.02,
+                "dn1": 1.05,
+            },
+            {
+                "label": 1,
+                "score0_cmp": 0.20,
+                "score1_cmp": 0.10,
+                "dp0": 0.02,
+                "dn0": 1.05,
+                "dp1": 1.05,
+                "dn1": 0.02,
+            },
+            {
+                "label": 0,
+                "score0_cmp": 0.20,
+                "score1_cmp": 0.10,
+                "dp0": 1.05,
+                "dn0": 0.02,
+                "dp1": 0.02,
+                "dn1": 0.02,
+            },
+        ]
+    )
+
+    stats = direct_flow.output_error_rail_stats(train, lead_mode="score_direct", rail_threshold_v=0.5)
+
+    assert stats["output_error_rail_target_loses_count"] == 2
+    assert stats["output_error_rail_open_count"] == 5
+    assert stats["output_error_rail_false_positive_count"] == 1
+    assert stats["output_error_rail_false_negative_count"] == 0
+    assert stats["output_error_rail_match_fraction"] == pytest.approx(2 / 3)
 
 
 def test_out_residual_error_uses_each_outputs_own_stored_score() -> None:

@@ -17,11 +17,38 @@ OBJECTIVE = (
 )
 
 
-def load_json(path: str) -> dict[str, Any] | None:
-    p = ROOT / path
-    if not p.exists():
+def summary_path_candidates(path: str, root: Path = ROOT) -> list[Path]:
+    p = Path(path)
+    candidates = [root / p]
+    if len(p.parts) >= 3 and p.parts[0] == "spice" and p.parts[1] == "results":
+        candidates.append(root / "results" / "tables" / p.name)
+    elif len(p.parts) >= 3 and p.parts[0] == "results" and p.parts[1] == "tables":
+        candidates.append(root / "spice" / "results" / p.name)
+    return candidates
+
+
+def resolve_summary_path(path: str, root: Path = ROOT) -> Path | None:
+    for candidate in summary_path_candidates(path, root):
+        if candidate.exists():
+            return candidate
+    return None
+
+
+def load_json(path: str, root: Path = ROOT) -> dict[str, Any] | None:
+    p = resolve_summary_path(path, root)
+    if p is None:
         return None
     return json.loads(p.read_text())
+
+
+def iter_spice_mnist_summary_paths(root: Path = ROOT) -> list[Path]:
+    paths_by_name: dict[str, Path] = {}
+    for summary_dir in (root / "spice" / "results", root / "results" / "tables"):
+        if not summary_dir.exists():
+            continue
+        for path in sorted(summary_dir.glob("spice_mnist*_summary.json")):
+            paths_by_name.setdefault(path.name, path)
+    return sorted(paths_by_name.values(), key=lambda p: p.name)
 
 
 def pct(x: Any) -> str:
@@ -551,7 +578,7 @@ def main() -> None:
     )
 
     spice_train_runs = []
-    for path in sorted((ROOT / "spice/results").glob("spice_mnist*_summary.json")):
+    for path in iter_spice_mnist_summary_paths():
         data = json.loads(path.read_text())
         if "heldout_test_accuracy" not in data:
             continue

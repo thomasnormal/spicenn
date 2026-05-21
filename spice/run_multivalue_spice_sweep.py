@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import subprocess
 from pathlib import Path
 
 import matplotlib.pyplot as plt
@@ -10,7 +9,7 @@ import numpy as np
 import pandas as pd
 
 from parse_ngspice import parse_measure
-from run_spice_sweep import ROOT, detect_spice, run_tiny_test
+from run_spice_sweep import ROOT, detect_spice, prepare_netlist_for_simulator, run_tiny_test, run_simulator_netlist
 
 
 TEMPLATE = ROOT / "spice/templates/multivalue_thermometer_behavioral.cir"
@@ -22,14 +21,14 @@ def therm_expr(levels: int, span: float) -> str:
     return "(" + " + ".join(terms) + f")/{levels - 1}"
 
 
-def render(signal: float, sigma: float, seed: int, bits: int, threshold_span: float, path: Path) -> None:
+def render(signal: float, sigma: float, seed: int, bits: int, threshold_span: float, path: Path, spice_bin: str) -> None:
     levels = 2 ** bits
     text = TEMPLATE.read_text()
     text = text.replace("THERM_EXPR", therm_expr(levels, threshold_span))
     text = text.replace("{S}", f"{signal:.12g}")
     text = text.replace("{SIGMA}", f"{sigma:.12g}")
     text = text.replace("{SEED}", str(seed))
-    path.write_text(text)
+    path.write_text(prepare_netlist_for_simulator(text, spice_bin))
 
 
 def run_sweep(bits: int, trials: int, points: int, sigma: float, signal_span: float, threshold_span: float, seed: int) -> pd.DataFrame:
@@ -44,8 +43,8 @@ def run_sweep(bits: int, trials: int, points: int, sigma: float, signal_span: fl
         for _ in range(trials):
             trial_seed = int(rng.integers(1, 2**30))
             netlist = generated / f"therm_b{bits}_s{signal:+.6e}_seed{trial_seed}.cir"
-            render(float(signal), sigma, trial_seed, bits, threshold_span, netlist)
-            proc = subprocess.run([spice_bin, "-b", str(netlist)], text=True, capture_output=True, timeout=30)
+            render(float(signal), sigma, trial_seed, bits, threshold_span, netlist, spice_bin)
+            proc = run_simulator_netlist(spice_bin, netlist, timeout=30)
             if proc.returncode != 0:
                 raise RuntimeError(proc.stderr[-1000:] or proc.stdout[-1000:])
             y = parse_measure(proc.stdout + "\n" + proc.stderr, "y") / 0.8
@@ -107,4 +106,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-

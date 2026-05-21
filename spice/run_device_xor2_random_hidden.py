@@ -3,7 +3,7 @@ from __future__ import annotations
 import argparse
 import json
 import re
-import subprocess
+import sys
 import time
 from dataclasses import dataclass, replace
 from pathlib import Path
@@ -12,32 +12,202 @@ from typing import Any
 import numpy as np
 import pandas as pd
 
+try:
+    from spicenn import (
+        CapState,
+        CapStateArray,
+        DiffPairBleedWriteSelector,
+        DifferentialCapStateArray,
+        DirectFlowWeightCell,
+        FanInTopology,
+        load_readout_cap_state_csv,
+        NetlistBuilder,
+        NodeParasitics,
+        PreTraceArray,
+    )
+except ModuleNotFoundError:
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+    from spicenn import (
+        CapState,
+        CapStateArray,
+        DiffPairBleedWriteSelector,
+        DifferentialCapStateArray,
+        DirectFlowWeightCell,
+        FanInTopology,
+        load_readout_cap_state_csv,
+        NetlistBuilder,
+        NodeParasitics,
+        PreTraceArray,
+    )
+
 from run_device_multicell_classifier import mos_models, pulse_wave, pwl
 from run_device_xor2_learned_features import CYCLE_NS, input_value, xor_label
-from run_spice_sweep import ROOT, detect_spice, run_tiny_test
+from run_spice_sweep import ROOT, detect_spice, run_text_netlist, run_tiny_test
+from _util import MEAS_RE, parse_measures
+from datasets import (
+    DATASET_EXAMPLES,
+    dataset_records,
+    dct2_lowfreq,
+    mnist01_frontend,
+    mnist01_records,
+    mnist_records,
+    parse_counted_mnist_dataset,
+    random_local_relu_features,
+    two_moons_records,
+)
 
 
-MEAS_RE = re.compile(r"(?im)^\s*([a-zA-Z_][a-zA-Z0-9_]*)\s*=\s*([-+0-9.eE]+)")
 HIDDEN = 8
 OUTPUTS = 2
 INPUT_RAILS = ["x0", "nx0", "x1", "nx1"]
 HIDDEN_RAILS = ["bias", *INPUT_RAILS]
-DATASET_EXAMPLES = [
-    "xor2",
-    "moons8",
-    "moons12",
-    "mnist01_8",
-    "mnist01_12",
-    "mnist01pool16_12",
-    "mnist01fixed16_12",
-    "mnist01fixed32_12",
-    "mnist01sensory64_12",
-    "mnist01rand16_12",
-    "mnist3fixed8_30",
-    "mnist5fixed8_50",
-    "mnistfixed8_20",
-    "mnistsensory64_20",
-]
+ReadoutFanins = dict[int, tuple[int, ...]]
+HiddenFanins = dict[int, tuple[str, ...]]
+
+
+def dense_readout_fanins(hidden_cells: int | None = None, outputs: int | None = None) -> ReadoutFanins:
+    hidden_count = HIDDEN if hidden_cells is None else hidden_cells
+    output_count = OUTPUTS if outputs is None else outputs
+    topology = FanInTopology.dense(tuple(range(hidden_count)), output_count)
+    return {out: tuple(int(src) for src in srcs) for out, srcs in topology.as_fanins().items()}
+
+
+def random_readout_fanins(
+    hidden_cells: int,
+    outputs: int,
+    *,
+    seed: int,
+    fan_in: int | None = None,
+    fan_out: int | None = None,
+) -> ReadoutFanins:
+    """Return random hidden->output connectivity as output-indexed fanins.
+
+    fan_in constrains each output class to sample a fixed number of hidden
+    activation rails. fan_out constrains each hidden activation rail to drive a
+    fixed number of output/class rails, which is the hardware interpretation of
+    "3 output synapses per neuron".
+    """
+    if hidden_cells <= 0 or outputs <= 0:
+        raise ValueError("hidden_cells and outputs must be positive.")
+    if (fan_in is None) == (fan_out is None):
+        raise ValueError("provide exactly one of fan_in or fan_out.")
+    if fan_in is not None:
+        topology = FanInTopology.random_fanin(tuple(range(hidden_cells)), outputs, seed=seed, fan_in=fan_in)
+        return {out: tuple(int(src) for src in srcs) for out, srcs in topology.as_fanins().items()}
+    assert fan_out is not None
+    topology = FanInTopology.random_fanout(tuple(range(hidden_cells)), outputs, seed=seed, fan_out=fan_out)
+    return {out: tuple(int(src) for src in srcs) for out, srcs in topology.as_fanins().items()}
+
+
+def balanced_random_readout_fanins(
+    hidden_cells: int,
+    outputs: int,
+    *,
+    seed: int,
+    fan_out: int,
+) -> ReadoutFanins:
+    topology = FanInTopology.balanced_random_fanout(tuple(range(hidden_cells)), outputs, seed=seed, fan_out=fan_out)
+    return {out: tuple(int(src) for src in srcs) for out, srcs in topology.as_fanins().items()}
+
+
+def readout_fanouts_from_fanins(fanins: ReadoutFanins, hidden_cells: int | None = None) -> dict[int, tuple[int, ...]]:
+    hidden_count = HIDDEN if hidden_cells is None else hidden_cells
+    output_count = max(OUTPUTS, max(fanins.keys(), default=-1) + 1)
+    topology = FanInTopology.from_fanins(tuple(range(hidden_count)), output_count, fanins)
+    return {int(hidden): tuple(int(out) for out in outs) for hidden, outs in topology.fanouts().items()}
+
+
+def effective_readout_fanins(readout_fanins: ReadoutFanins | None = None) -> ReadoutFanins:
+    if readout_fanins is None:
+        return dense_readout_fanins()
+    return {out: tuple(readout_fanins.get(out, ())) for out in range(OUTPUTS)}
+
+
+def readout_topology_summary(fanins: ReadoutFanins) -> dict[str, Any]:
+    topology = FanInTopology.from_fanins(tuple(range(HIDDEN)), OUTPUTS, fanins)
+    return topology.summary(prefix="readout")
+
+
+def build_readout_fanins(
+    mode: str,
+    *,
+    fan_in: int,
+    fan_out: int,
+    seed: int,
+) -> ReadoutFanins:
+    if mode == "dense":
+        return dense_readout_fanins()
+    if mode == "random_fanin":
+        return random_readout_fanins(HIDDEN, OUTPUTS, seed=seed, fan_in=fan_in)
+    if mode == "random_fanout":
+        return random_readout_fanins(HIDDEN, OUTPUTS, seed=seed, fan_out=fan_out)
+    if mode == "balanced_random_fanout":
+        return balanced_random_readout_fanins(HIDDEN, OUTPUTS, seed=seed, fan_out=fan_out)
+    raise ValueError(f"unknown readout topology: {mode}")
+
+
+def dense_hidden_fanins(hidden_cells: int | None = None, input_rails: list[str] | None = None) -> HiddenFanins:
+    hidden_count = HIDDEN if hidden_cells is None else hidden_cells
+    rails = HIDDEN_RAILS if input_rails is None else ["bias", *input_rails]
+    topology = FanInTopology.dense(tuple(rails), hidden_count)
+    return {hidden: tuple(str(src) for src in srcs) for hidden, srcs in topology.as_fanins().items()}
+
+
+def random_hidden_fanins(
+    hidden_cells: int,
+    input_rails: list[str],
+    *,
+    seed: int,
+    fan_in: int,
+) -> HiddenFanins:
+    if hidden_cells <= 0:
+        raise ValueError("hidden_cells must be positive.")
+    topology = FanInTopology.random_fanin(
+        tuple(input_rails),
+        hidden_cells,
+        seed=seed,
+        fan_in=fan_in,
+        always_sources=("bias",),
+    )
+    return {hidden: tuple(str(src) for src in srcs) for hidden, srcs in topology.as_fanins().items()}
+
+
+def effective_hidden_fanins(hidden_fanins: HiddenFanins | None = None) -> HiddenFanins:
+    if hidden_fanins is None:
+        return dense_hidden_fanins()
+    return {hidden: tuple(hidden_fanins.get(hidden, ("bias",))) for hidden in range(HIDDEN)}
+
+
+def hidden_fanouts_from_fanins(fanins: HiddenFanins) -> dict[str, tuple[int, ...]]:
+    topology = FanInTopology.from_fanins(tuple(HIDDEN_RAILS), HIDDEN, fanins)
+    return {str(rail): tuple(int(hidden) for hidden in hidden_ids) for rail, hidden_ids in topology.fanouts().items()}
+
+
+def hidden_topology_summary(fanins: HiddenFanins) -> dict[str, Any]:
+    topology = FanInTopology.from_fanins(tuple(HIDDEN_RAILS), HIDDEN, fanins)
+    fanouts = topology.fanouts()
+    fanin_counts = topology.fanin_counts(exclude_sources=("bias",))
+    fanout_counts = topology.fanout_counts(sources=tuple(INPUT_RAILS))
+    return {
+        "hidden_input_edge_count": int(sum(fanin_counts)),
+        "hidden_input_fanin_counts": fanin_counts,
+        "hidden_input_fanout_counts": fanout_counts,
+        "hidden_fanins": {str(hidden): list(fanins.get(hidden, ())) for hidden in range(HIDDEN)},
+        "hidden_input_fanouts": {rail: list(fanouts.get(rail, ())) for rail in INPUT_RAILS},
+    }
+
+
+def build_hidden_fanins(
+    mode: str,
+    *,
+    fan_in: int,
+    seed: int,
+) -> HiddenFanins:
+    if mode == "dense":
+        return dense_hidden_fanins()
+    if mode == "random_fanin":
+        return random_hidden_fanins(HIDDEN, INPUT_RAILS, seed=seed, fan_in=fan_in)
+    raise ValueError(f"unknown hidden input topology: {mode}")
 
 
 @dataclass(frozen=True)
@@ -121,16 +291,75 @@ HIDDEN_DELTA_WEIGHT_DEVICES = ["nmos", "nrel", "nsense"]
 HIDDEN_DELTA_OUTPUT_MODES = ["raw", "senseamp"]
 HIDDEN_GRADIENT_ACT_GATES = ["act_nrel", "act_nsense", "none"]
 HIDDEN_APPLY_MODES = ["direct", "grad_senseamp"]
-HIDDEN_FORWARD_MODES = ["weighted_relu", "rail_buffer"]
-OUTPUT_HEAD_MODES = ["source_follower", "score_diff", "split_score_caps"]
+HIDDEN_FORWARD_MODES = ["weighted_relu", "weighted_relu_pass_input", "rail_buffer"]
+OUTPUT_HEAD_MODES = [
+    "source_follower",
+    "score_diff",
+    "split_score_none",
+    "split_score_caps",
+    "split_score_diffgate",
+    "split_score_chargegate",
+    "split_score_diffpair",
+    "split_score_diode_diffpair",
+    "split_score_compete_tail",
+    "split_score_diode_mirror_gate_caps",
+    "split_score_diode_mirror_caps",
+]
+SPLIT_SCORE_OUTPUT_HEADS = {
+    "split_score_none",
+    "split_score_caps",
+    "split_score_diffgate",
+    "split_score_chargegate",
+    "split_score_diffpair",
+    "split_score_diode_diffpair",
+    "split_score_compete_tail",
+    "split_score_diode_mirror_gate_caps",
+    "split_score_diode_mirror_caps",
+}
+DIODE_MIRROR_OUTPUT_HEADS = {
+    "split_score_diode_mirror_gate_caps",
+    "split_score_diode_mirror_caps",
+}
+COMMON_MODE_OUT_RESET_HEADS = {"split_score_caps", "split_score_diffgate"}
+LOW_TRUE_OUTPUT_HEADS = {
+    "split_score_diffpair",
+    "split_score_diode_diffpair",
+    "split_score_compete_tail",
+    "split_score_diode_mirror_gate_caps",
+    "split_score_diode_mirror_caps",
+}
+DECISION_SOURCES = ["out", "score"]
+UPDATE_ERROR_RULES = {
+    "out_residual",
+    "onehot",
+    "onehot_limited",
+    "onehot_out",
+    "ce_out",
+    "ce_split_score",
+    "ce_split_diffgate",
+    "ce_split_dpair",
+    "ce_split_compete",
+    "ce_split_current",
+    "ce_split_hybrid",
+    "ce_split_limited",
+    "ce_mirror_limited",
+    "ce_mirror_winner_limited",
+    "ce_mirror_hybrid_limited",
+    "ce_mirror_compete_limited",
+}
 LEARNING_MODES = ["accumulate_apply", "flow"]
 FLOW_HIDDEN_WRITES = ["direct", "off"]
-FLOW_PRE_STORES = ["shared_node", "synapse_gate", "synapse_consume", "synapse_boost"]
+FLOW_PRE_STORES = ["shared_node", "synapse_gate", "synapse_consume", "synapse_boost", "synapse_spike"]
 READOUT_FLOW_POLARITIES = ["normal", "reversed"]
 READOUT_CENTER_PULL_GATES = ["bwd", "apply"]
 READOUT_CENTER_PULL_MODES = ["always", "state_high"]
 READOUT_WRITE_STATE_GATE_MODES = ["none", "state_high_discharge", "state_window"]
-WRITE_ERROR_EXCLUSION_MODES = ["none", "pmos_inhibit", "pmos_inhibit_decay"]
+OUTPUT_BIAS_WRITE_PRE_GATES = ["none", "bias"]
+OUTPUT_BIAS_FLOW_POLARITIES = ["follow_readout", "normal", "reversed"]
+WRITE_ERROR_EXCLUSION_MODES = ["none", "pmos_inhibit", "pmos_inhibit_decay", "diffpair_bleed"]
+WRITE_GATE_DEVICES = ["NSENSE", "NREL", "NMOS"]
+READOUT_TOPOLOGIES = ["dense", "random_fanin", "random_fanout", "balanced_random_fanout"]
+HIDDEN_INPUT_TOPOLOGIES = ["dense", "random_fanin"]
 READOUT_FLOW_WRITE_MODES = [
     "discharge",
     "bounded_discharge",
@@ -138,8 +367,23 @@ READOUT_FLOW_WRITE_MODES = [
     "bounded_charge_only",
     "charge_discharge",
     "bounded_charge_discharge",
+    "bounded_cmos_charge_discharge",
+    "bounded_pmos_charge_only",
+    "bounded_pmos_charge_discharge",
 ]
-HIDDEN_FLOW_WRITE_MODES = list(READOUT_FLOW_WRITE_MODES)
+HIGH_SIDE_PMOS_READOUT_WRITE_MODES = {
+    "bounded_cmos_charge_discharge",
+    "bounded_pmos_charge_only",
+    "bounded_pmos_charge_discharge",
+}
+HIDDEN_FLOW_WRITE_MODES = [
+    "discharge",
+    "bounded_discharge",
+    "charge_only",
+    "bounded_charge_only",
+    "charge_discharge",
+    "bounded_charge_discharge",
+]
 HIDDEN_INIT_MODES = ["random", "input_identity"]
 MEASURE_DETAILS = ["full", "probe", "light"]
 SPICE_ACCURACY_PRESETS = {
@@ -164,8 +408,14 @@ DIFFERENTIAL_SEPARATOR_INITS = {"separator", "csv_separator"}
 RECTIFIED_SEPARATOR_INITS = {"rectified_separator", "csv_rectified_separator"}
 THRESHOLD_SEPARATOR_INITS = {"threshold_separator", "csv_threshold_separator"}
 SEPARATOR_READOUT_INITS = DIFFERENTIAL_SEPARATOR_INITS | RECTIFIED_SEPARATOR_INITS | THRESHOLD_SEPARATOR_INITS
-PROGRAMMED_READOUT_INITS = {"csv_readout"}
-CSV_READOUT_INITS = {"csv_separator", "csv_rectified_separator", "csv_threshold_separator"} | PROGRAMMED_READOUT_INITS
+PROGRAMMED_READOUT_INITS = {"csv_readout", "csv_readout_rectified", "csv_readout_sparse_rectified"}
+CAP_STATE_READOUT_INITS = {"csv_cap_state"}
+CSV_READOUT_INITS = (
+    {"csv_separator", "csv_rectified_separator", "csv_threshold_separator"}
+    | PROGRAMMED_READOUT_INITS
+    | CAP_STATE_READOUT_INITS
+)
+SPARSE_READOUT_INACTIVE_V = 0.16
 
 
 def offset_key(offset_ns: float) -> str:
@@ -190,6 +440,12 @@ def spice_options_for_preset(preset: str) -> str:
     except KeyError as exc:
         allowed = ", ".join(sorted(SPICE_ACCURACY_PRESETS))
         raise ValueError(f"unknown SPICE accuracy preset: {preset}. Expected one of {allowed}.") from exc
+
+
+def default_readout_write_high_v(readout_flow_write_mode: str) -> float:
+    if readout_flow_write_mode in HIGH_SIDE_PMOS_READOUT_WRITE_MODES:
+        return 1.0
+    return 0.58
 
 
 def prediction_histogram_for(df: pd.DataFrame, output_count: int, prediction_column: str) -> dict[str, int]:
@@ -217,6 +473,199 @@ def per_class_accuracy_for(df: pd.DataFrame, output_count: int, correct_column: 
 
 def per_class_accuracy(df: pd.DataFrame, output_count: int) -> dict[str, float | None]:
     return per_class_accuracy_for(df, output_count, "correct")
+
+
+def column_centering_metrics(prefix: str, source: np.ndarray, labels: np.ndarray) -> dict[str, Any]:
+    """Report class accuracy after subtracting each output column's measured mean."""
+    if source.size == 0 or labels.size == 0:
+        return {
+            f"{prefix}_column_centered_accuracy": None,
+            f"{prefix}_column_centered_min_margin_v": None,
+            f"{prefix}_mean_by_output_v": [],
+        }
+    means = source.mean(axis=0)
+    centered = source - means
+    predictions = np.argmax(centered, axis=1)
+    margins = []
+    for row, label in zip(centered, labels):
+        target = row[int(label)]
+        other = max(value for out, value in enumerate(row) if out != int(label))
+        margins.append(float(target - other))
+    return {
+        f"{prefix}_column_centered_accuracy": float((predictions == labels).mean()),
+        f"{prefix}_column_centered_min_margin_v": float(min(margins)) if margins else None,
+        f"{prefix}_mean_by_output_v": [float(value) for value in means],
+    }
+
+
+def score_matrix(rows: pd.DataFrame, output_count: int) -> np.ndarray:
+    cols = [f"score{out}" for out in range(output_count)]
+    if rows.empty or any(col not in rows for col in cols):
+        return np.empty((0, output_count), dtype=float)
+    return rows[cols].to_numpy(dtype=float)
+
+
+def output_decision_matrix(rows: pd.DataFrame, output_count: int, *, low_true_output: bool) -> np.ndarray:
+    out_cols = [f"out{out}" for out in range(output_count)]
+    if not rows.empty and all(col in rows for col in out_cols):
+        values = rows[out_cols].to_numpy(dtype=float)
+        return -values if low_true_output else values
+    if (
+        output_count == 2
+        and not rows.empty
+        and {"label", "output_target", "output_other"}.issubset(rows.columns)
+    ):
+        values = np.empty((len(rows), output_count), dtype=float)
+        for idx, (_row_index, row) in enumerate(rows.iterrows()):
+            label = int(row["label"])
+            other = 1 - label
+            values[idx, label] = float(row["output_target"])
+            values[idx, other] = float(row["output_other"])
+        return values
+    return np.empty((0, output_count), dtype=float)
+
+
+def output_delta_alignment_metrics(train: pd.DataFrame, output_count: int) -> dict[str, float | None]:
+    """Summarize whether measured output error rails match one-vs-rest class updates."""
+    delta_cols = [f"output_delta_net_{out}" for out in range(output_count)]
+    empty = {
+        "train_output_delta_sign_alignment_fraction": None,
+        "train_output_delta_target_gt_all_others_fraction": None,
+        "train_output_delta_target_positive_fraction": None,
+        "train_output_delta_other_negative_fraction": None,
+        "train_output_delta_all_other_negative_fraction": None,
+        "train_output_delta_target_minus_max_other_mean_v": None,
+        "train_output_delta_target_mean_v": None,
+        "train_output_delta_correct_target_mean_v": None,
+        "train_output_delta_wrong_target_mean_v": None,
+        "train_output_delta_target_mistake_gain_v": None,
+        "train_output_delta_wrong_to_correct_target_ratio": None,
+        "train_output_delta_max_other_mean_v": None,
+        "train_output_delta_mean_other_mean_v": None,
+    }
+    if train.empty or "label" not in train or any(col not in train for col in delta_cols):
+        return empty
+
+    rows = train.dropna(subset=["label", *delta_cols])
+    if rows.empty:
+        return empty
+
+    labels = rows["label"].astype(int).to_numpy()
+    deltas = rows[delta_cols].to_numpy(dtype=float)
+    sample_indices = np.arange(len(rows))
+    target_delta = deltas[sample_indices, labels]
+    is_other = np.ones_like(deltas, dtype=bool)
+    is_other[sample_indices, labels] = False
+    other_deltas = deltas[is_other].reshape(len(rows), output_count - 1)
+    desired_sign = np.full_like(deltas, -1.0)
+    desired_sign[sample_indices, labels] = 1.0
+    sign_matches = deltas * desired_sign >= 0.0
+    correct = rows["score_correct"].astype(bool).to_numpy() if "score_correct" in rows else None
+    correct_target = target_delta[correct] if correct is not None else np.array([], dtype=float)
+    wrong_target = target_delta[~correct] if correct is not None else np.array([], dtype=float)
+    correct_mean = float(correct_target.mean()) if correct_target.size else None
+    wrong_mean = float(wrong_target.mean()) if wrong_target.size else None
+    if correct_mean is not None and abs(correct_mean) > 1e-12 and wrong_mean is not None:
+        wrong_to_correct = float(wrong_mean / correct_mean)
+    else:
+        wrong_to_correct = None
+
+    return {
+        "train_output_delta_sign_alignment_fraction": float(sign_matches.mean()),
+        "train_output_delta_target_gt_all_others_fraction": float((target_delta > other_deltas.max(axis=1)).mean()),
+        "train_output_delta_target_positive_fraction": float((target_delta >= 0.0).mean()),
+        "train_output_delta_other_negative_fraction": float((other_deltas <= 0.0).mean()),
+        "train_output_delta_all_other_negative_fraction": float((other_deltas <= 0.0).all(axis=1).mean()),
+        "train_output_delta_target_minus_max_other_mean_v": float((target_delta - other_deltas.max(axis=1)).mean()),
+        "train_output_delta_target_mean_v": float(target_delta.mean()),
+        "train_output_delta_correct_target_mean_v": correct_mean,
+        "train_output_delta_wrong_target_mean_v": wrong_mean,
+        "train_output_delta_target_mistake_gain_v": (
+            float(wrong_mean - correct_mean) if wrong_mean is not None and correct_mean is not None else None
+        ),
+        "train_output_delta_wrong_to_correct_target_ratio": wrong_to_correct,
+        "train_output_delta_max_other_mean_v": float(other_deltas.max(axis=1).mean()),
+        "train_output_delta_mean_other_mean_v": float(other_deltas.mean(axis=1).mean()),
+    }
+
+
+def output_delta_sums_by_out(train: pd.DataFrame, output_count: int) -> list[float] | None:
+    delta_cols = [f"output_delta_net_{out}" for out in range(output_count)]
+    if train.empty or any(col not in train for col in delta_cols):
+        return None
+    rows = train.dropna(subset=delta_cols)
+    if rows.empty:
+        return None
+    return [float(rows[col].sum()) for col in delta_cols]
+
+
+def resolve_error_source_rails(
+    *,
+    error_rule: str,
+    output_count: int,
+    target_high_v: float,
+    error_target_source_v: float | None,
+    error_nontarget_source_v: float | None,
+    error_source_balance: str,
+    error_nontarget_balance_scale: float,
+) -> tuple[float | None, float | None]:
+    if error_source_balance == "none":
+        return error_target_source_v, error_nontarget_source_v
+    if error_rule != "onehot_limited":
+        raise ValueError("--error-source-balance currently applies only to --error-rule onehot_limited.")
+    if output_count < 2:
+        raise ValueError("--error-source-balance requires at least two output classes.")
+    if error_nontarget_balance_scale <= 0.0:
+        raise ValueError("--error-nontarget-balance-scale must be positive.")
+
+    target_source = error_target_source_v if error_target_source_v is not None else target_high_v
+    if error_source_balance == "onehot_average":
+        nontarget_source = (
+            error_nontarget_source_v
+            if error_nontarget_source_v is not None
+            else target_source * error_nontarget_balance_scale / (output_count - 1)
+        )
+        return target_source, nontarget_source
+    raise ValueError(f"unknown --error-source-balance {error_source_balance!r}")
+
+
+def signed_alignment_fraction(a: list[float], b: list[float], *, eps: float = 1e-12) -> float | None:
+    if len(a) != len(b) or not a:
+        return None
+    pairs = [(x, y) for x, y in zip(a, b) if abs(x) > eps and abs(y) > eps]
+    if not pairs:
+        return None
+    return float(np.mean([np.sign(x) == np.sign(y) for x, y in pairs]))
+
+
+def cosine_similarity(a: list[float], b: list[float], *, eps: float = 1e-12) -> float | None:
+    if len(a) != len(b) or not a:
+        return None
+    av = np.array(a, dtype=float)
+    bv = np.array(b, dtype=float)
+    denom = float(np.linalg.norm(av) * np.linalg.norm(bv))
+    if denom <= eps:
+        return None
+    return float(np.dot(av, bv) / denom)
+
+
+def selected_decision(
+    *,
+    decision_source: str,
+    output_target: float,
+    output_other: float,
+    output_predicted_label: int,
+    score_target: float,
+    score_other: float,
+    score_predicted_label: int,
+) -> tuple[float, float, float, int]:
+    """Return the target/other/margin/prediction for the configured analog decision rails."""
+    if decision_source == "score":
+        return score_target, score_other, score_target - score_other, score_predicted_label
+    if decision_source == "out":
+        return output_target, output_other, output_target - output_other, output_predicted_label
+    allowed = ", ".join(DECISION_SOURCES)
+    raise ValueError(f"unknown decision source: {decision_source}. Expected one of {allowed}.")
 
 
 def set_hidden_cells(count: int) -> None:
@@ -277,290 +726,6 @@ def scaled_synapse_design(
     )
 
 
-def parse_measures(text: str) -> dict[str, float]:
-    return {name.lower(): float(value) for name, value in MEAS_RE.findall(text)}
-
-
-def two_moons_records(sample_count: int, seed: int) -> list[dict[str, Any]]:
-    if sample_count % 2 != 0:
-        raise ValueError("two-moons sample count must be even.")
-    rng = np.random.default_rng(seed)
-    half = sample_count // 2
-    angles = np.linspace(0.15 * np.pi, 0.95 * np.pi, half)
-    x0 = np.c_[np.cos(angles), np.sin(angles)]
-    x1 = np.c_[1.0 - np.cos(angles), 1.0 - np.sin(angles) - 0.5]
-    xy = np.vstack([x0, x1])
-    labels = np.array([0] * half + [1] * half, dtype=int)
-    xy += rng.normal(0.0, 0.035, size=xy.shape)
-    lo = xy.min(axis=0)
-    hi = xy.max(axis=0)
-    scaled = 0.08 + 0.84 * (xy - lo) / np.maximum(hi - lo, 1e-9)
-    records: list[dict[str, Any]] = []
-    for idx, ((x, y), label) in enumerate(zip(scaled, labels)):
-        records.append(
-            {
-                "pattern": idx,
-                "label": int(label),
-                "inputs": {
-                    "x0": float(x),
-                    "nx0": float(1.0 - x),
-                    "x1": float(y),
-                    "nx1": float(1.0 - y),
-                },
-            }
-        )
-    return records
-
-
-def dct2_lowfreq(image: np.ndarray, side: int) -> np.ndarray:
-    n = image.shape[0]
-    coords = np.arange(n, dtype=np.float64)
-    basis = []
-    for k in range(side):
-        alpha = np.sqrt(1.0 / n) if k == 0 else np.sqrt(2.0 / n)
-        basis.append(alpha * np.cos(np.pi * (coords + 0.5) * k / n))
-    mat = np.stack(basis)
-    return mat @ image @ mat.T
-
-
-def random_local_relu_features(image: np.ndarray, feature_count: int) -> np.ndarray:
-    rng = np.random.default_rng(17_003 + feature_count)
-    features: list[float] = []
-    for feature_idx in range(feature_count):
-        patch_side = int(rng.choice([3, 4, 5]))
-        row0 = int(rng.integers(0, image.shape[0] - patch_side + 1))
-        col0 = int(rng.integers(0, image.shape[1] - patch_side + 1))
-        patch = image[row0 : row0 + patch_side, col0 : col0 + patch_side]
-        weights = rng.choice([-1.0, 0.0, 1.0], size=patch.shape, p=[0.35, 0.30, 0.35])
-        if not np.any(weights):
-            weights[patch_side // 2, patch_side // 2] = 1.0
-        response = float(np.sum(weights * patch) / max(1, np.count_nonzero(weights)))
-        bias = float(rng.uniform(-0.08, 0.08))
-        if feature_idx % 2:
-            response = -response
-        features.append(max(0.0, response - bias))
-    return np.asarray(features, dtype=np.float64)
-
-
-def mnist01_frontend(image: np.ndarray, frontend: str) -> tuple[np.ndarray, str]:
-    if frontend == "pool2":
-        return image.reshape(2, 4, 2, 4).mean(axis=(1, 3)).reshape(-1), "2x2_area_downsample"
-    if frontend == "pool16":
-        return image.reshape(4, 2, 4, 2).mean(axis=(1, 3)).reshape(-1), "4x4_area_downsample"
-    if frontend == "fixed8":
-        pooled = image.reshape(2, 4, 2, 4).mean(axis=(1, 3)).reshape(-1)
-        lr = abs(float(image[:, :4].mean() - image[:, 4:].mean()))
-        tb = abs(float(image[:4, :].mean() - image[4:, :].mean()))
-        diag = abs(float(np.trace(image) / 8.0 - np.trace(np.fliplr(image)) / 8.0))
-        center = float(image[2:6, 2:6].mean())
-        return np.r_[pooled, [lr, tb, diag, center]], "2x2_pool_plus_global_haar_energy"
-    if frontend == "fixed16":
-        pooled = image.reshape(2, 4, 2, 4).mean(axis=(1, 3)).reshape(-1)
-        features = [*pooled]
-        for br in range(2):
-            for bc in range(2):
-                block = image[br * 4 : (br + 1) * 4, bc * 4 : (bc + 1) * 4]
-                features.extend(
-                    [
-                        abs(float(block[:, :2].mean() - block[:, 2:].mean())),
-                        abs(float(block[:2, :].mean() - block[2:, :].mean())),
-                        abs(float(np.trace(block) / 4.0 - np.trace(np.fliplr(block)) / 4.0)),
-                    ]
-                )
-        return np.asarray(features, dtype=np.float64), "2x2_pool_plus_local_haar_energy"
-    if frontend == "haar16":
-        features = []
-        for br in range(2):
-            for bc in range(2):
-                block = image[br * 4 : (br + 1) * 4, bc * 4 : (bc + 1) * 4]
-                features.extend(
-                    [
-                        float(block.mean()),
-                        abs(float(block[:, :2].mean() - block[:, 2:].mean())),
-                        abs(float(block[:2, :].mean() - block[2:, :].mean())),
-                        abs(float(np.trace(block) / 4.0 - np.trace(np.fliplr(block)) / 4.0)),
-                    ]
-                )
-        return np.asarray(features, dtype=np.float64), "local_haar_dc_and_energy"
-    if frontend == "dct16":
-        coeff = dct2_lowfreq(image, 4).reshape(-1)
-        coeff[1:] = np.abs(coeff[1:])
-        return coeff, "low_frequency_4x4_dct_abs_ac"
-    if frontend == "fixed32":
-        fixed, _fixed_desc = mnist01_frontend(image, "fixed16")
-        dct, _dct_desc = mnist01_frontend(image, "dct16")
-        return np.r_[fixed, dct], "local_haar_pool_plus_low_frequency_dct"
-    sensory_match = re.fullmatch(r"sensory(\d+)", frontend)
-    if sensory_match:
-        feature_count = int(sensory_match.group(1))
-        if not 32 <= feature_count <= 96:
-            raise ValueError("sensory frontend feature count must be in 32..96.")
-        fixed32, _fixed_desc = mnist01_frontend(image, "fixed32")
-        random_count = feature_count - 32
-        if random_count:
-            random_features = random_local_relu_features(image, random_count)
-            features = np.r_[fixed32, random_features]
-            desc = f"local_haar_pool_low_frequency_dct_plus_{random_count}_random_local_relu"
-        else:
-            features = fixed32
-            desc = "local_haar_pool_plus_low_frequency_dct"
-        return features, desc
-    random_match = re.fullmatch(r"rand(\d+)", frontend)
-    if random_match:
-        feature_count = int(random_match.group(1))
-        if not 1 <= feature_count <= 64:
-            raise ValueError("random local ReLU frontend feature count must be in 1..64.")
-        return (
-            random_local_relu_features(image, feature_count),
-            f"{feature_count}_fixed_sparse_random_local_relu_filters",
-        )
-    raise ValueError(
-        f"unknown MNIST01 frontend: {frontend}. "
-        "Expected pool2, pool16, fixed8, fixed16, fixed32, haar16, dct16, sensoryN, or randN."
-    )
-
-
-def mnist01_records(sample_count: int, seed: int, frontend: str = "pool2") -> list[dict[str, Any]]:
-    if sample_count % 2 != 0:
-        raise ValueError("MNIST 0/1 sample count must be even.")
-    from torch.nn import functional as F
-    from torchvision import datasets, transforms
-
-    ds = datasets.MNIST(root=str(ROOT / "data"), train=True, download=False, transform=transforms.ToTensor())
-    labels_np = np.asarray(ds.targets)
-    rng = np.random.default_rng(seed)
-    half = sample_count // 2
-    selected: list[tuple[int, int]] = []
-    for digit in [0, 1]:
-        candidates = np.flatnonzero(labels_np == digit)
-        chosen = rng.choice(candidates, size=half, replace=False)
-        selected.extend((int(idx), digit) for idx in chosen)
-    raw_features: list[np.ndarray] = []
-    frontend_description = ""
-    for idx, _label in selected:
-        x, _digit = ds[idx]
-        x8 = F.interpolate(x.unsqueeze(0), size=(8, 8), mode="area").squeeze().numpy().astype(np.float64)
-        features, frontend_description = mnist01_frontend(x8, frontend)
-        raw_features.append(features)
-    raw = np.stack(raw_features)
-    lo = raw.min(axis=0)
-    hi = raw.max(axis=0)
-    scaled = 0.08 + 0.84 * (raw - lo) / np.maximum(hi - lo, 1e-9)
-    if frontend == "pool2":
-        rail_names = ["x0", "nx0", "x1", "nx1"]
-    else:
-        rail_names = [f"x{i}" for i in range(scaled.shape[1])]
-    records: list[dict[str, Any]] = []
-    for pattern, ((idx, label), features) in enumerate(zip(selected, scaled)):
-        records.append(
-            {
-                "pattern": pattern,
-                "label": int(label),
-                "source_index": idx,
-                "source_digit": int(label),
-                "input_frontend": f"{frontend_description}_per_feature_selected_subset_minmax_to_0p08_0p92",
-                "input_frontend_key": frontend,
-                "input_rails": rail_names,
-                "inputs": {rail: float(value) for rail, value in zip(rail_names, features)},
-            }
-        )
-    return records
-
-
-def parse_counted_mnist_dataset(name: str) -> tuple[int, str, int] | None:
-    if name.startswith("mnist01"):
-        return None
-    counted = re.fullmatch(r"mnist(10|[2-9])([a-z][a-z0-9]*)?_(\d+)", name)
-    if counted:
-        return int(counted.group(1)), counted.group(2) or "fixed8", int(counted.group(3))
-    ten_way = re.fullmatch(r"mnist([a-z0-9]*)_(\d+)", name)
-    if ten_way:
-        return 10, ten_way.group(1) or "fixed8", int(ten_way.group(2))
-    return None
-
-
-def mnist_records(
-    sample_count: int,
-    seed: int,
-    frontend: str = "fixed8",
-    class_count: int = 10,
-) -> list[dict[str, Any]]:
-    if not 2 <= class_count <= 10:
-        raise ValueError("MNIST class count must be in 2..10.")
-    if sample_count % class_count != 0:
-        raise ValueError(f"{class_count}-way MNIST sample count must be divisible by {class_count}.")
-    from torch.nn import functional as F
-    from torchvision import datasets, transforms
-
-    ds = datasets.MNIST(root=str(ROOT / "data"), train=True, download=False, transform=transforms.ToTensor())
-    labels_np = np.asarray(ds.targets)
-    rng = np.random.default_rng(seed)
-    per_digit = sample_count // class_count
-    selected: list[tuple[int, int]] = []
-    for digit in range(class_count):
-        candidates = np.flatnonzero(labels_np == digit)
-        chosen = rng.choice(candidates, size=per_digit, replace=False)
-        selected.extend((int(idx), digit) for idx in chosen)
-    rng.shuffle(selected)
-
-    raw_features: list[np.ndarray] = []
-    frontend_description = ""
-    for idx, _label in selected:
-        x, _digit = ds[idx]
-        x8 = F.interpolate(x.unsqueeze(0), size=(8, 8), mode="area").squeeze().numpy().astype(np.float64)
-        features, frontend_description = mnist01_frontend(x8, frontend)
-        raw_features.append(features)
-    raw = np.stack(raw_features)
-    lo = raw.min(axis=0)
-    hi = raw.max(axis=0)
-    scaled = 0.08 + 0.84 * (raw - lo) / np.maximum(hi - lo, 1e-9)
-    rail_names = [f"x{i}" for i in range(scaled.shape[1])]
-    records: list[dict[str, Any]] = []
-    for pattern, ((idx, label), features) in enumerate(zip(selected, scaled)):
-        records.append(
-            {
-                "pattern": pattern,
-                "label": int(label),
-                "source_index": idx,
-                "source_digit": int(label),
-                "input_frontend": f"{frontend_description}_per_feature_selected_subset_minmax_to_0p08_0p92",
-                "input_frontend_key": frontend,
-                "input_rails": rail_names,
-                "inputs": {rail: float(value) for rail, value in zip(rail_names, features)},
-            }
-        )
-    return records
-
-
-def dataset_records(name: str, seed: int) -> list[dict[str, Any]]:
-    if name == "xor2":
-        return [{"pattern": p, "label": xor_label(p)} for p in range(4)]
-    if name.startswith("moons"):
-        suffix = name.removeprefix("moons").removeprefix("_")
-        if suffix.isdigit():
-            return two_moons_records(int(suffix), seed)
-    mnist_match = re.fullmatch(r"mnist01([a-z0-9]*)_(\d+)", name)
-    if mnist_match:
-        frontend = mnist_match.group(1) or "pool2"
-        return mnist01_records(int(mnist_match.group(2)), seed, frontend)
-    counted_mnist = parse_counted_mnist_dataset(name)
-    if counted_mnist:
-        class_count, frontend, sample_count = counted_mnist
-        return mnist_records(sample_count, seed, frontend, class_count=class_count)
-    examples = ", ".join(
-        DATASET_EXAMPLES
-        + [
-            "moons16",
-            "mnist01_16",
-            "mnist01fixed8_16",
-            "mnist01fixed32_16",
-            "mnist01rand8_16",
-            "mnist3fixed8_60",
-            "mnist5fixed8_100",
-            "mnistfixed8_100",
-        ]
-    )
-    raise ValueError(f"unknown dataset: {name}. Expected one of {examples} or another even-sized counted variant.")
 
 
 def label_shuffled_records(records: list[dict[str, Any]], seed: int) -> list[dict[str, Any]]:
@@ -798,6 +963,7 @@ def phases(
     rste: list[tuple[float, float]] = []
     rstg: list[tuple[float, float]] = []
     fwd: list[tuple[float, float]] = []
+    outg: list[tuple[float, float]] = []
     cmp: list[tuple[float, float]] = []
     err: list[tuple[float, float]] = []
     bwd: list[tuple[float, float]] = []
@@ -813,6 +979,7 @@ def phases(
         ):
             rstg.append((base + 0.00, base + 0.50))
         fwd.append((base + 0.75, base + 3.00))
+        outg.append((base + 2.70, base + 3.00))
         if sample["phase"] == "train":
             cmp.append((base + cmp_start_ns, base + cmp_end_ns))
             err.append((base + 5.25, base + 6.50))
@@ -829,11 +996,13 @@ def phases(
                 if train_refire:
                     rstf.append((base + 12.05, base + 12.55))
                     fwd.append((base + 12.80, base + 15.60))
+                    outg.append((base + 15.30, base + 15.60))
     sources = [
         f"Vrstf rstf 0 {pulse_wave(rstf, stop)}",
         f"Vrste rste 0 {pulse_wave(rste, stop)}",
         f"Vrstg rstg 0 {pulse_wave(rstg, stop)}",
         f"Vfwd fwd 0 {pulse_wave(fwd, stop)}",
+        f"Voutg outg 0 {pulse_wave(outg, stop)}",
         f"Vcmp cmp 0 {pulse_wave(cmp, stop)}",
         f"Verr err 0 {pulse_wave(err, stop)}",
         (
@@ -965,6 +1134,10 @@ def csv_readout_weights(path: Path) -> tuple[list[list[float]], list[float]]:
     return weights, biases
 
 
+def csv_readout_cap_state(path: Path) -> dict[str, float]:
+    return load_readout_cap_state_csv(path, hidden_count=HIDDEN, output_count=OUTPUTS)
+
+
 def clamp_cap(v: float) -> float:
     return min(1.15, max(0.01, v))
 
@@ -987,17 +1160,25 @@ def lead_win_gate(lead_mode: str, class_index: int) -> str:
     raise ValueError(f"unknown lead mode: {lead_mode}")
 
 
-def target_loss_mask(train: pd.DataFrame) -> np.ndarray:
-    score0_wins = train["score0_cmp"] > train["score1_cmp"]
+def target_loss_mask(train: pd.DataFrame, lead_mode: str = "score_direct") -> np.ndarray:
+    if lead_mode != "score_direct" and {"lead01", "lead10"}.issubset(train.columns):
+        score0_wins = lead_class0_wins(lead_mode, train["lead01"], train["lead10"])
+    else:
+        score0_wins = train["score0_cmp"] > train["score1_cmp"]
     target_is_class0 = train["label"].astype(int) == 0
     return np.where(target_is_class0, ~score0_wins, score0_wins)
 
 
-def target_mistake_gate_stats(train: pd.DataFrame, bwd_threshold_v: float = 0.5) -> dict[str, Any]:
+def target_mistake_gate_stats(
+    train: pd.DataFrame,
+    lead_mode: str = "score_direct",
+    bwd_threshold_v: float = 0.5,
+) -> dict[str, Any]:
     required = {"label", "score0_cmp", "score1_cmp", "bwd_signal"}
     if train.empty or not required.issubset(train.columns):
         return {
             "target_mistake_bwd_threshold_v": bwd_threshold_v,
+            "target_mistake_reference": None,
             "target_mistake_bwd_match_fraction": None,
             "target_mistake_bwd_false_positive_count": None,
             "target_mistake_bwd_false_negative_count": None,
@@ -1011,7 +1192,7 @@ def target_mistake_gate_stats(train: pd.DataFrame, bwd_threshold_v: float = 0.5)
             "target_mistake_bwd_best_threshold_v": None,
             "target_mistake_bwd_best_threshold_match_fraction": None,
         }
-    target_loses = target_loss_mask(train)
+    target_loses = target_loss_mask(train, lead_mode)
     bwd_signal = train["bwd_signal"].to_numpy()
     bwd_open = bwd_signal > bwd_threshold_v
     match = bwd_open == target_loses
@@ -1031,6 +1212,7 @@ def target_mistake_gate_stats(train: pd.DataFrame, bwd_threshold_v: float = 0.5)
     best_match = float(((bwd_signal > best_threshold) == target_loses).mean())
     return {
         "target_mistake_bwd_threshold_v": bwd_threshold_v,
+        "target_mistake_reference": lead_mode,
         "target_mistake_bwd_match_fraction": float(match.mean()),
         "target_mistake_bwd_false_positive_count": int(false_positive.sum()),
         "target_mistake_bwd_false_negative_count": int(false_negative.sum()),
@@ -1048,9 +1230,14 @@ def target_mistake_gate_stats(train: pd.DataFrame, bwd_threshold_v: float = 0.5)
     }
 
 
-def target_mistake_latch_stats(train: pd.DataFrame, latch_threshold_v: float = 0.5) -> dict[str, Any]:
+def target_mistake_latch_stats(
+    train: pd.DataFrame,
+    lead_mode: str = "score_direct",
+    latch_threshold_v: float = 0.5,
+) -> dict[str, Any]:
     empty = {
         "target_mistake_latch_threshold_v": latch_threshold_v,
+        "target_mistake_latch_reference": None,
         "target_mistake_latch_match_fraction": None,
         "target_mistake_latch_false_positive_count": None,
         "target_mistake_latch_false_negative_count": None,
@@ -1060,7 +1247,7 @@ def target_mistake_latch_stats(train: pd.DataFrame, latch_threshold_v: float = 0
     }
     if train.empty or not {"label", "score0_cmp", "score1_cmp", "merr0", "merr1"}.issubset(train.columns):
         return empty
-    target_loses = target_loss_mask(train)
+    target_loses = target_loss_mask(train, lead_mode)
     labels = train["label"].astype(int).to_numpy()
     expected0 = target_loses & (labels == 0)
     expected1 = target_loses & (labels == 1)
@@ -1085,6 +1272,7 @@ def target_mistake_latch_stats(train: pd.DataFrame, latch_threshold_v: float = 0
     best_match = float(((latch_signal > best_threshold) == target_loses).mean())
     return {
         "target_mistake_latch_threshold_v": latch_threshold_v,
+        "target_mistake_latch_reference": lead_mode,
         "target_mistake_latch_match_fraction": float(match.mean()),
         "target_mistake_latch_false_positive_count": int(false_positive.sum()),
         "target_mistake_latch_false_negative_count": int(false_negative.sum()),
@@ -1149,6 +1337,10 @@ def readout_init(
     separator_csv: Path | None,
     separator_phase: str,
 ) -> dict[str, float]:
+    if mode in CAP_STATE_READOUT_INITS:
+        if separator_csv is None:
+            raise ValueError(f"--readout-init {mode} requires --separator-csv.")
+        return csv_readout_cap_state(separator_csv)
     if mode in PROGRAMMED_READOUT_INITS:
         if separator_csv is None:
             raise ValueError(f"--readout-init {mode} requires --separator-csv.")
@@ -1157,12 +1349,26 @@ def readout_init(
         center = readout_center_v
         for out in range(OUTPUTS):
             bias_diff = separator_scale * biases[out]
-            init[f"vbo{out}p"] = clamp_cap(center + bias_diff / 2)
-            init[f"vbo{out}n"] = clamp_cap(center - bias_diff / 2)
+            if mode == "csv_readout_rectified":
+                init[f"vbo{out}p"] = clamp_cap(center + max(0.0, bias_diff))
+                init[f"vbo{out}n"] = clamp_cap(center + max(0.0, -bias_diff))
+            elif mode == "csv_readout_sparse_rectified":
+                init[f"vbo{out}p"] = clamp_cap(center + max(0.0, bias_diff)) if bias_diff > 0.0 else SPARSE_READOUT_INACTIVE_V
+                init[f"vbo{out}n"] = clamp_cap(center + max(0.0, -bias_diff)) if bias_diff < 0.0 else SPARSE_READOUT_INACTIVE_V
+            else:
+                init[f"vbo{out}p"] = clamp_cap(center + bias_diff / 2)
+                init[f"vbo{out}n"] = clamp_cap(center - bias_diff / 2)
             for h, weight in enumerate(weights_by_out[out]):
                 diff = separator_scale * weight
-                init[f"vw{out}{h}p"] = clamp_cap(center + diff / 2)
-                init[f"vw{out}{h}n"] = clamp_cap(center - diff / 2)
+                if mode == "csv_readout_rectified":
+                    init[f"vw{out}{h}p"] = clamp_cap(center + max(0.0, diff))
+                    init[f"vw{out}{h}n"] = clamp_cap(center + max(0.0, -diff))
+                elif mode == "csv_readout_sparse_rectified":
+                    init[f"vw{out}{h}p"] = clamp_cap(center + diff) if diff > 0.0 else SPARSE_READOUT_INACTIVE_V
+                    init[f"vw{out}{h}n"] = clamp_cap(center - diff) if diff < 0.0 else SPARSE_READOUT_INACTIVE_V
+                else:
+                    init[f"vw{out}{h}p"] = clamp_cap(center + diff / 2)
+                    init[f"vw{out}{h}n"] = clamp_cap(center - diff / 2)
         return init
     if mode in {"separator", "rectified_separator", "threshold_separator"} and HIDDEN != len(SEPARATOR_WEIGHTS):
         raise ValueError(
@@ -1321,18 +1527,24 @@ def feedback_init(seed: int, scale: float) -> dict[str, float]:
     return init
 
 
-def signed_weight_pairs(scope: str) -> list[tuple[str, str, str]]:
+def signed_weight_pairs(
+    scope: str,
+    readout_fanins: ReadoutFanins | None = None,
+    hidden_fanins: HiddenFanins | None = None,
+) -> list[tuple[str, str, str]]:
     if scope not in TRAIN_CHARGE_NOISE_SCOPES:
         raise ValueError(f"unknown signed-weight scope: {scope}")
+    readout_edges = effective_readout_fanins(readout_fanins)
+    hidden_edges = effective_hidden_fanins(hidden_fanins)
     pairs: list[tuple[str, str, str]] = []
     if scope in {"readout", "all"}:
         for out in range(OUTPUTS):
             pairs.append((f"vbo{out}", f"vbo{out}p", f"vbo{out}n"))
-            for h in range(HIDDEN):
+            for h in readout_edges[out]:
                 pairs.append((f"vw{out}{h}", f"vw{out}{h}p", f"vw{out}{h}n"))
     if scope in {"hidden", "all"}:
         for h in range(HIDDEN):
-            for rail in HIDDEN_RAILS:
+            for rail in hidden_edges[h]:
                 pairs.append((f"wh{h}_{rail}", f"wh{h}_{rail}p", f"wh{h}_{rail}n"))
     return pairs
 
@@ -1346,6 +1558,8 @@ def train_charge_noise(
     scope: str,
     pulse_width_ns: float,
     bwd_start_ns: float,
+    readout_fanins: ReadoutFanins | None = None,
+    hidden_fanins: HiddenFanins | None = None,
 ) -> str:
     if scope not in TRAIN_CHARGE_NOISE_SCOPES:
         raise ValueError(f"unknown train charge noise scope: {scope}")
@@ -1357,7 +1571,7 @@ def train_charge_noise(
         raise ValueError("training charge noise pulse width must be positive.")
     rng = np.random.default_rng(seed)
     pulses_by_node: dict[str, list[tuple[float, float]]] = {}
-    signed_pairs = signed_weight_pairs(scope)
+    signed_pairs = signed_weight_pairs(scope, readout_fanins, hidden_fanins)
     for idx, sample in enumerate(samples):
         if sample["phase"] != "train":
             continue
@@ -1390,37 +1604,53 @@ def train_charge_noise(
     return "\n".join(lines)
 
 
-def persistent_caps(hidden: dict[str, float], readout: dict[str, float], cap_f: float) -> str:
-    lines: list[str] = []
+def persistent_caps(
+    hidden: dict[str, float],
+    readout: dict[str, float],
+    cap_f: float,
+    readout_fanins: ReadoutFanins | None = None,
+    hidden_fanins: HiddenFanins | None = None,
+) -> str:
+    fanins = effective_readout_fanins(readout_fanins)
+    hidden_edges = effective_hidden_fanins(hidden_fanins)
+    deck = NetlistBuilder()
+    hidden_bases: list[str] = []
     for h in range(HIDDEN):
-        for rail in HIDDEN_RAILS:
-            lines += [
-                f"Cwh{h}_{rail}p wh{h}_{rail}p 0 {cap_f:.12g}f IC={hidden[f'wh{h}_{rail}p']:.12g}",
-                f"Cwh{h}_{rail}n wh{h}_{rail}n 0 {cap_f:.12g}f IC={hidden[f'wh{h}_{rail}n']:.12g}",
-                f"Rwh{h}_{rail}p wh{h}_{rail}p 0 1e15",
-                f"Rwh{h}_{rail}n wh{h}_{rail}n 0 1e15",
-            ]
+        for rail in hidden_edges[h]:
+            hidden_bases.append(f"wh{h}_{rail}")
+    deck.render_component(
+        DifferentialCapStateArray(
+            "hidden_weight_caps",
+            tuple(hidden_bases),
+            hidden,
+            cap_f,
+        )
+    )
+    readout_bases: list[str] = []
     for out in range(OUTPUTS):
-        lines += [
-            f"Cvbo{out}p vbo{out}p 0 {cap_f:.12g}f IC={readout[f'vbo{out}p']:.12g}",
-            f"Cvbo{out}n vbo{out}n 0 {cap_f:.12g}f IC={readout[f'vbo{out}n']:.12g}",
-            f"Rvbo{out}p vbo{out}p 0 1e15",
-            f"Rvbo{out}n vbo{out}n 0 1e15",
-        ]
-        for h in range(HIDDEN):
-            lines += [
-                f"Cvw{out}{h}p vw{out}{h}p 0 {cap_f:.12g}f IC={readout[f'vw{out}{h}p']:.12g}",
-                f"Cvw{out}{h}n vw{out}{h}n 0 {cap_f:.12g}f IC={readout[f'vw{out}{h}n']:.12g}",
-                f"Rvw{out}{h}p vw{out}{h}p 0 1e15",
-                f"Rvw{out}{h}n vw{out}{h}n 0 1e15",
-            ]
-    return "\n".join(lines)
+        readout_bases.append(f"vbo{out}")
+        for h in fanins[out]:
+            readout_bases.append(f"vw{out}{h}")
+    deck.render_component(
+        DifferentialCapStateArray(
+            "readout_weight_caps",
+            tuple(readout_bases),
+            readout,
+            cap_f,
+        )
+    )
+    return deck.render_body()
 
 
-def feedback_caps(feedback: dict[str, float], cap_f: float) -> str:
+def feedback_caps(
+    feedback: dict[str, float],
+    cap_f: float,
+    readout_fanins: ReadoutFanins | None = None,
+) -> str:
+    fanins = effective_readout_fanins(readout_fanins)
     lines: list[str] = []
     for out in range(OUTPUTS):
-        for h in range(HIDDEN):
+        for h in fanins[out]:
             lines += [
                 f"Cfb{out}{h}p fb{out}{h}p 0 {cap_f:.12g}f IC={feedback[f'fb{out}{h}p']:.12g}",
                 f"Cfb{out}{h}n fb{out}{h}n 0 {cap_f:.12g}f IC={feedback[f'fb{out}{h}n']:.12g}",
@@ -1437,63 +1667,89 @@ def temporary_caps(
     lead_cap_f: float,
     include_gradient_caps: bool,
     score_reset_v: float,
+    score_cap_f: float = 10.0,
+    output_cap_f: float = 20.0,
+    output_head: str = "source_follower",
+    readout_fanins: ReadoutFanins | None = None,
+    hidden_fanins: HiddenFanins | None = None,
 ) -> str:
-    lines: list[str] = []
+    deck = NetlistBuilder()
+    fanins = effective_readout_fanins(readout_fanins)
+    hidden_edges = effective_hidden_fanins(hidden_fanins)
+    if output_head not in OUTPUT_HEAD_MODES:
+        raise ValueError(f"unknown output head: {output_head}")
+    if output_head in COMMON_MODE_OUT_RESET_HEADS:
+        out_ic = score_reset_v
+        out_leak_node = "scorecm"
+    elif output_head in LOW_TRUE_OUTPUT_HEADS:
+        out_ic = 1.2
+        out_leak_node = "vdd"
+    else:
+        out_ic = 0.0
+        out_leak_node = "0"
     for h in range(HIDDEN):
-        lines += [
-            f"Cpre{h} pre{h} 0 10f IC=0",
-            f"Cact{h} act{h} 0 20f IC=0",
-            f"Chdp{h} hdp{h} 0 {hidden_delta_cap_f:.12g}f IC=0",
-            f"Chdn{h} hdn{h} 0 {hidden_delta_cap_f:.12g}f IC=0",
-            f"Rpre{h} pre{h} 0 1G",
-            f"Ract{h} act{h} 0 1G",
-            f"Rhdp{h} hdp{h} 0 1G",
-            f"Rhdn{h} hdn{h} 0 1G",
-        ]
+        deck.render_component(
+            CapStateArray(
+                f"hidden_dynamic_caps_{h}",
+                (
+                    CapState(f"pre{h}", f"pre{h}", 10.0, 0.0, "0", "1G"),
+                    CapState(f"act{h}", f"act{h}", 20.0, 0.0, "0", "1G"),
+                    CapState(f"hdp{h}", f"hdp{h}", hidden_delta_cap_f, 0.0, "0", "1G"),
+                    CapState(f"hdn{h}", f"hdn{h}", hidden_delta_cap_f, 0.0, "0", "1G"),
+                ),
+            )
+        )
         if include_gradient_caps:
-            for rail in HIDDEN_RAILS:
-                lines += [
-                    f"Cghp{h}_{rail} ghp{h}_{rail} 0 {hidden_gradient_cap_f:.12g}f IC=0",
-                    f"Cghn{h}_{rail} ghn{h}_{rail} 0 {hidden_gradient_cap_f:.12g}f IC=0",
-                    f"Rghp{h}_{rail} ghp{h}_{rail} 0 1G",
-                    f"Rghn{h}_{rail} ghn{h}_{rail} 0 1G",
-                ]
+            deck.render_component(
+                CapStateArray.from_nodes(
+                    f"hidden_gradient_caps_{h}",
+                    tuple(node for rail in hidden_edges[h] for node in (f"ghp{h}_{rail}", f"ghn{h}_{rail}")),
+                    cap_f=hidden_gradient_cap_f,
+                    ic_v=0.0,
+                    leak_to="0",
+                    leak_ohm="1G",
+                )
+            )
     for out in range(OUTPUTS):
-        lines += [
-            f"Cscore{out} score{out} 0 10f IC={score_reset_v:.12g}",
-            f"Cscorep{out} scorep{out} 0 10f IC={score_reset_v:.12g}",
-            f"Cscoren{out} scoren{out} 0 10f IC={score_reset_v:.12g}",
-            f"Cout{out} out{out} 0 20f IC=0",
-            f"Cdp{out} dp{out} 0 20f IC=0",
-            f"Cdn{out} dn{out} 0 20f IC=0",
-            f"Rscore{out} score{out} 0 1G",
-            f"Rscorep{out} scorep{out} 0 1G",
-            f"Rscoren{out} scoren{out} 0 1G",
-            f"Rout{out} out{out} 0 1G",
-            f"Rdp{out} dp{out} 0 1G",
-            f"Rdn{out} dn{out} 0 1G",
-        ]
+        deck.render_component(
+            CapStateArray(
+                f"output_dynamic_caps_{out}",
+                (
+                    CapState(f"score{out}", f"score{out}", score_cap_f, score_reset_v, "0", "1G"),
+                    CapState(f"scorep{out}", f"scorep{out}", score_cap_f, score_reset_v, "0", "1G"),
+                    CapState(f"scoren{out}", f"scoren{out}", score_cap_f, score_reset_v, "0", "1G"),
+                    CapState(f"out{out}", f"out{out}", output_cap_f, out_ic, out_leak_node, "1G"),
+                    CapState(f"dp{out}", f"dp{out}", 20.0, 0.0, "0", "1G"),
+                    CapState(f"dn{out}", f"dn{out}", 20.0, 0.0, "0", "1G"),
+                    CapState(f"ybar{out}", f"ybar{out}", 20.0, 1.2, "0", "1G"),
+                ),
+            )
+        )
         if include_gradient_caps:
-            lines += [
-                f"Cgvpb{out} gvpb{out} 0 {gradient_cap_f:.12g}f IC=0",
-                f"Cgvnb{out} gvnb{out} 0 {gradient_cap_f:.12g}f IC=0",
-                f"Rgvpb{out} gvpb{out} 0 1G",
-                f"Rgvnb{out} gvnb{out} 0 1G",
-            ]
-            for h in range(HIDDEN):
-                lines += [
-                    f"Cgvp{out}{h} gvp{out}{h} 0 {gradient_cap_f:.12g}f IC=0",
-                    f"Cgvn{out}{h} gvn{out}{h} 0 {gradient_cap_f:.12g}f IC=0",
-                    f"Rgvp{out}{h} gvp{out}{h} 0 1G",
-                    f"Rgvn{out}{h} gvn{out}{h} 0 1G",
-                ]
-    lines += [
-        f"Clead01 lead01 0 {lead_cap_f:.12g}f IC=0",
-        f"Clead10 lead10 0 {lead_cap_f:.12g}f IC=0",
-        "Rlead01 lead01 0 1G",
-        "Rlead10 lead10 0 1G",
-    ]
-    return "\n".join(lines)
+            readout_gradient_nodes = [f"gvpb{out}", f"gvnb{out}"]
+            for h in fanins[out]:
+                readout_gradient_nodes.extend([f"gvp{out}{h}", f"gvn{out}{h}"])
+            deck.render_component(
+                CapStateArray.from_nodes(
+                    f"readout_gradient_caps_{out}",
+                    tuple(readout_gradient_nodes),
+                    cap_f=gradient_cap_f,
+                    ic_v=0.0,
+                    leak_to="0",
+                    leak_ohm="1G",
+                )
+            )
+    deck.render_component(
+        CapStateArray.from_nodes(
+            "lead_caps",
+            ("lead01", "lead10"),
+            cap_f=lead_cap_f,
+            ic_v=0.0,
+            leak_to="0",
+            leak_ohm="1G",
+        )
+    )
+    return deck.render_body()
 
 
 def resets(
@@ -1501,11 +1757,20 @@ def resets(
     include_gradient_resets: bool,
     score_reset_v: float,
     output_head: str = "source_follower",
+    readout_fanins: ReadoutFanins | None = None,
+    hidden_fanins: HiddenFanins | None = None,
 ) -> str:
     lines: list[str] = []
+    fanins = effective_readout_fanins(readout_fanins)
+    hidden_edges = effective_hidden_fanins(hidden_fanins)
     if output_head not in OUTPUT_HEAD_MODES:
         raise ValueError(f"unknown output head: {output_head}")
-    out_reset_node = "scorecm" if output_head == "split_score_caps" else "0"
+    if output_head in COMMON_MODE_OUT_RESET_HEADS:
+        out_reset_node = "scorecm"
+    elif output_head in LOW_TRUE_OUTPUT_HEADS:
+        out_reset_node = "vdd"
+    else:
+        out_reset_node = "0"
     for h in range(HIDDEN):
         lines += [
             f"Mreset_pre{h} pre{h} rstf 0 0 NMOS W=4u L=180n",
@@ -1514,7 +1779,7 @@ def resets(
             f"Mreset_hdn{h} hdn{h} rste 0 0 NMOS W=4u L=180n",
         ]
         if include_gradient_resets:
-            for rail in HIDDEN_RAILS:
+            for rail in hidden_edges[h]:
                 lines += [
                     f"Mreset_ghp{h}_{rail} ghp{h}_{rail} rstg 0 0 NMOS W=4u L=180n",
                     f"Mreset_ghn{h}_{rail} ghn{h}_{rail} rstg 0 0 NMOS W=4u L=180n",
@@ -1527,13 +1792,14 @@ def resets(
             f"Mreset_out{out} out{out} rstf {out_reset_node} 0 NMOS W=4u L=180n",
             f"Mreset_dp{out} dp{out} rste 0 0 NMOS W=4u L=180n",
             f"Mreset_dn{out} dn{out} rste 0 0 NMOS W=4u L=180n",
+            f"Mreset_ybar{out}_high vdd rste ybar{out} 0 NSENSE W=32u L=180n",
         ]
         if include_gradient_resets:
             lines += [
                 f"Mreset_gvpb{out} gvpb{out} rstg 0 0 NMOS W=4u L=180n",
                 f"Mreset_gvnb{out} gvnb{out} rstg 0 0 NMOS W=4u L=180n",
             ]
-            for h in range(HIDDEN):
+            for h in fanins[out]:
                 lines += [
                     f"Mreset_gvp{out}{h} gvp{out}{h} rstg 0 0 NMOS W=4u L=180n",
                     f"Mreset_gvn{out}{h} gvn{out}{h} rstg 0 0 NMOS W=4u L=180n",
@@ -1551,9 +1817,14 @@ def resets(
     return "\n".join(lines)
 
 
-def hidden_forward(design: SynapseDesign, hidden_forward_mode: str) -> str:
+def hidden_forward(
+    design: SynapseDesign,
+    hidden_forward_mode: str,
+    hidden_fanins: HiddenFanins | None = None,
+) -> str:
     if hidden_forward_mode not in HIDDEN_FORWARD_MODES:
         raise ValueError(f"unknown hidden forward mode: {hidden_forward_mode}")
+    fanins = effective_hidden_fanins(hidden_fanins)
     lines: list[str] = []
     syn_w = design.hidden_forward_width_u
     for h in range(HIDDEN):
@@ -1565,45 +1836,258 @@ def hidden_forward(design: SynapseDesign, hidden_forward_mode: str) -> str:
                 f"Mhbuf{h}_pre pre{h} fwd {rail} 0 NMOS W={syn_w:.12g}u L=180n",
             ]
             continue
-        lines.append(f"* General hidden {h}: fully connected signed conductance from input rails plus one bias rail.")
-        for rail in HIDDEN_RAILS:
-            lines += [
-                f"Mh{h}_{rail}p_x vdd {rail} h{h}_{rail}p0 0 NMOS W={syn_w:.12g}u L=180n",
-                f"Mh{h}_{rail}p_w h{h}_{rail}p0 wh{h}_{rail}p h{h}_{rail}p1 0 NMOS W={syn_w:.12g}u L=180n",
-                f"Mh{h}_{rail}p_f h{h}_{rail}p1 fwd pre{h} 0 NMOS W={syn_w:.12g}u L=180n",
-                f"Mh{h}_{rail}n_f pre{h} fwd h{h}_{rail}n0 0 NMOS W={syn_w:.12g}u L=180n",
-                f"Mh{h}_{rail}n_x h{h}_{rail}n0 {rail} h{h}_{rail}n1 0 NMOS W={syn_w:.12g}u L=180n",
-                f"Mh{h}_{rail}n_w h{h}_{rail}n1 wh{h}_{rail}n 0 0 NMOS W={syn_w:.12g}u L=180n",
-                f"Rh{h}_{rail}p0 h{h}_{rail}p0 0 1e9",
-                f"Rh{h}_{rail}p1 h{h}_{rail}p1 0 1e9",
-                f"Rh{h}_{rail}n0 h{h}_{rail}n0 0 1e9",
-                f"Rh{h}_{rail}n1 h{h}_{rail}n1 0 1e9",
-                f"Ch{h}_{rail}p0 h{h}_{rail}p0 0 0.02f IC=0",
-                f"Ch{h}_{rail}p1 h{h}_{rail}p1 0 0.02f IC=0",
-                f"Ch{h}_{rail}n0 h{h}_{rail}n0 0 0.02f IC=0",
-                f"Ch{h}_{rail}n1 h{h}_{rail}n1 0 0.02f IC=0",
-            ]
+        lines.append(f"* General hidden {h}: signed conductance from {len(fanins[h])} selected input/bias rails.")
+        for rail in fanins[h]:
+            if hidden_forward_mode == "weighted_relu_pass_input":
+                lines += [
+                    f"Mh{h}_{rail}p_w {rail} wh{h}_{rail}p h{h}_{rail}p1 0 NREL W={syn_w:.12g}u L=180n",
+                    f"Mh{h}_{rail}p_f h{h}_{rail}p1 fwd pre{h} 0 NREL W={syn_w:.12g}u L=180n",
+                    f"Mh{h}_{rail}n_f pre{h} fwd h{h}_{rail}n0 0 NREL W={syn_w:.12g}u L=180n",
+                    f"Mh{h}_{rail}n_x h{h}_{rail}n0 {rail} h{h}_{rail}n1 0 NREL W={syn_w:.12g}u L=180n",
+                    f"Mh{h}_{rail}n_w h{h}_{rail}n1 wh{h}_{rail}n 0 0 NREL W={syn_w:.12g}u L=180n",
+                    f"Rh{h}_{rail}p1 h{h}_{rail}p1 0 1e9",
+                    f"Rh{h}_{rail}n0 h{h}_{rail}n0 0 1e9",
+                    f"Rh{h}_{rail}n1 h{h}_{rail}n1 0 1e9",
+                    f"Ch{h}_{rail}p1 h{h}_{rail}p1 0 0.02f IC=0",
+                    f"Ch{h}_{rail}n0 h{h}_{rail}n0 0 0.02f IC=0",
+                    f"Ch{h}_{rail}n1 h{h}_{rail}n1 0 0.02f IC=0",
+                ]
+            else:
+                lines += [
+                    f"Mh{h}_{rail}p_x vdd {rail} h{h}_{rail}p0 0 NMOS W={syn_w:.12g}u L=180n",
+                    f"Mh{h}_{rail}p_w h{h}_{rail}p0 wh{h}_{rail}p h{h}_{rail}p1 0 NMOS W={syn_w:.12g}u L=180n",
+                    f"Mh{h}_{rail}p_f h{h}_{rail}p1 fwd pre{h} 0 NMOS W={syn_w:.12g}u L=180n",
+                    f"Mh{h}_{rail}n_f pre{h} fwd h{h}_{rail}n0 0 NMOS W={syn_w:.12g}u L=180n",
+                    f"Mh{h}_{rail}n_x h{h}_{rail}n0 {rail} h{h}_{rail}n1 0 NMOS W={syn_w:.12g}u L=180n",
+                    f"Mh{h}_{rail}n_w h{h}_{rail}n1 wh{h}_{rail}n 0 0 NMOS W={syn_w:.12g}u L=180n",
+                    f"Rh{h}_{rail}p0 h{h}_{rail}p0 0 1e9",
+                    f"Rh{h}_{rail}p1 h{h}_{rail}p1 0 1e9",
+                    f"Rh{h}_{rail}n0 h{h}_{rail}n0 0 1e9",
+                    f"Rh{h}_{rail}n1 h{h}_{rail}n1 0 1e9",
+                    f"Ch{h}_{rail}p0 h{h}_{rail}p0 0 0.02f IC=0",
+                    f"Ch{h}_{rail}p1 h{h}_{rail}p1 0 0.02f IC=0",
+                    f"Ch{h}_{rail}n0 h{h}_{rail}n0 0 0.02f IC=0",
+                    f"Ch{h}_{rail}n1 h{h}_{rail}n1 0 0.02f IC=0",
+                ]
         lines.append(f"Mrelu_h{h} vdd pre{h} act{h} 0 NREL W={design.hidden_relu_width_u:.12g}u L=180n")
     return "\n".join(lines)
 
 
-def output_forward(design: SynapseDesign, output_head: str) -> str:
+def output_head_from_scores(
+    design: SynapseDesign,
+    output_head: str,
+    out: int,
+    score_diode_width_u: float = 1024.0,
+    score_mirror_cap_f: float = 20.0,
+) -> str:
+    """Production score-cap to output-cap conversion cell for one class."""
+    lines: list[str] = []
+    if output_head == "source_follower":
+        lines.append(f"Mrelu_o{out} vdd score{out} out{out} 0 NSENSE W={design.output_relu_width_u:.12g}u L=180n")
+    elif output_head == "split_score_none":
+        lines.append(
+            (
+                f"* Score-rail-only split output: scorep{out}/scoren{out} are the class output. "
+                "No score-to-out conversion cell is attached, so the readout score capacitors are not loaded."
+            )
+        )
+    elif output_head == "split_score_caps":
+        pos_mid = f"out{out}_split_pos"
+        neg_mid = f"out{out}_split_neg"
+        lines += [
+            f"* Differential score-cap head: scorep{out} charges out{out}; scoren{out} discharges it.",
+            f"Mout{out}_split_pos_s vdd scorep{out} {pos_mid} 0 NSENSE W={design.output_relu_width_u:.12g}u L=180n",
+            f"Mout{out}_split_pos_f {pos_mid} fwd out{out} 0 NREL W={design.output_relu_width_u:.12g}u L=180n",
+            f"Mout{out}_split_neg_f out{out} fwd {neg_mid} 0 NREL W={design.output_relu_width_u:.12g}u L=180n",
+            f"Mout{out}_split_neg_s {neg_mid} scoren{out} 0 0 NSENSE W={design.output_relu_width_u:.12g}u L=180n",
+        ]
+        lines += node_parasitics(pos_mid, neg_mid)
+    elif output_head == "split_score_diffgate":
+        pos_low = f"out{out}_diffgate_pos_low"
+        pos_mid = f"out{out}_diffgate_pos_mid"
+        neg_low = f"out{out}_diffgate_neg_low"
+        neg_mid = f"out{out}_diffgate_neg_mid"
+        lines += [
+            (
+                f"* Differential-gated split-score head: scorep{out} charges out{out} only when "
+                f"scoren{out} is low; scoren{out} discharges it only when scorep{out} is low."
+            ),
+            f"Mout{out}_dg_pos_inhibit vdd scoren{out} {pos_low} vdd PMOS W={design.output_relu_width_u:.12g}u L=180n",
+            f"Mout{out}_dg_pos_score {pos_low} scorep{out} {pos_mid} 0 NREL W={design.output_relu_width_u:.12g}u L=180n",
+            f"Mout{out}_dg_pos_f {pos_mid} fwd out{out} 0 NREL W={design.output_relu_width_u:.12g}u L=180n",
+            f"Mout{out}_dg_neg_inhibit out{out} scorep{out} {neg_low} vdd PMOS W={design.output_relu_width_u:.12g}u L=180n",
+            f"Mout{out}_dg_neg_score {neg_low} scoren{out} {neg_mid} 0 NREL W={design.output_relu_width_u:.12g}u L=180n",
+            f"Mout{out}_dg_neg_f {neg_mid} fwd 0 0 NREL W={design.output_relu_width_u:.12g}u L=180n",
+        ]
+        lines += node_parasitics(pos_low, pos_mid, neg_low, neg_mid)
+    elif output_head == "split_score_chargegate":
+        pos_low = f"out{out}_chargegate_pos_low"
+        pos_mid = f"out{out}_chargegate_pos_mid"
+        lines += [
+            (
+                f"* Unipolar split-score charge gate: scorep{out} charges out{out} only when "
+                f"scoren{out} is low.  There is no local discharge leg; reset defines the low state."
+            ),
+            f"Mout{out}_cg_inhibit vdd scoren{out} {pos_low} vdd PMOS W={design.output_relu_width_u:.12g}u L=180n",
+            f"Mout{out}_cg_score {pos_low} scorep{out} {pos_mid} 0 NREL W={design.output_relu_width_u:.12g}u L=180n",
+            f"Mout{out}_cg_f {pos_mid} fwd out{out} 0 NREL W={design.output_relu_width_u:.12g}u L=180n",
+        ]
+        lines += node_parasitics(pos_low, pos_mid)
+    elif output_head == "split_score_diffpair":
+        pairsrc = f"out{out}_dpair_src"
+        lines += [
+            (
+                f"* Source-coupled split-score output: scorep{out}/scoren{out} first compete in "
+                f"a local differential pair.  out{out} is active-low: the positive branch discharges "
+                f"it when the signed score is high."
+            ),
+            f"Rout{out}_dpair_pull out{out} vdd 1e12",
+            f"Mout{out}_dpair_pos out{out} scorep{out} {pairsrc} 0 NREL W={design.output_relu_width_u:.12g}u L=180n",
+            f"Mout{out}_dpair_neg vdd scoren{out} {pairsrc} 0 NREL W={design.output_relu_width_u:.12g}u L=180n",
+            f"Mout{out}_dpair_tail {pairsrc} fwd 0 0 NMOS W={design.output_relu_width_u:.12g}u L=180n",
+        ]
+        lines += node_parasitics(pairsrc)
+    elif output_head == "split_score_diode_diffpair":
+        pairsrc = f"out{out}_ddpair_src"
+        lines += [
+            (
+                f"* Diode-loaded source-coupled split-score output: scorep{out}/scoren{out} are "
+                f"loaded by diode-connected MOS devices, approximating a current-mirror input before "
+                f"the local active-low differential output stage."
+            ),
+            f"Mscorep{out}_diode scorep{out} scorep{out} 0 0 NSENSE W={score_diode_width_u:.12g}u L=180n",
+            f"Mscoren{out}_diode scoren{out} scoren{out} 0 0 NSENSE W={score_diode_width_u:.12g}u L=180n",
+            f"Rout{out}_ddpair_pull out{out} vdd 1e12",
+            f"Mout{out}_ddpair_pos out{out} scorep{out} {pairsrc} 0 NREL W={design.output_relu_width_u:.12g}u L=180n",
+            f"Mout{out}_ddpair_neg vdd scoren{out} {pairsrc} 0 NREL W={design.output_relu_width_u:.12g}u L=180n",
+            f"Mout{out}_ddpair_tail {pairsrc} fwd 0 0 NMOS W={design.output_relu_width_u:.12g}u L=180n",
+        ]
+        lines += node_parasitics(pairsrc)
+    elif output_head == "split_score_compete_tail":
+        mid = f"out{out}_ctail_mid"
+        lines += [
+            (
+                f"* Shared-tail split-score current competition output: scorep{out} opens the "
+                f"class branch while scoren{out} inhibits it through a PMOS source device. "
+                f"out{out} is active-low; all classes share one tail current."
+            ),
+            f"Rout{out}_ctail_pull out{out} vdd 1e12",
+            f"Mout{out}_ctail_inhibit {mid} scoren{out} out{out} vdd PMOS W={design.output_relu_width_u:.12g}u L=180n",
+            f"Mout{out}_ctail_score {mid} scorep{out} out_compete_src 0 NREL W={design.output_relu_width_u:.12g}u L=180n",
+        ]
+        lines += node_parasitics(mid)
+    elif output_head == "split_score_diode_mirror_gate_caps":
+        mid = f"out{out}_dmgate_mid"
+        pairsrc = f"out{out}_dmgate_src"
+        lines += [
+            (
+                f"* Diode/mirror gated split-score output: scorep{out}/scoren{out} discharge "
+                f"mirror caps scorepm{out}/scorenm{out}.  out{out} is active-low and discharges "
+                f"only when scorepm{out} is low and scorenm{out} is high, matching the measured "
+                f"current-derived score scorenm-scorepm without a source-coupled dump branch."
+            ),
+            f"Mscorep{out}_diode scorep{out} scorep{out} 0 0 NSENSE W={score_diode_width_u:.12g}u L=180n",
+            f"Mscoren{out}_diode scoren{out} scoren{out} 0 0 NSENSE W={score_diode_width_u:.12g}u L=180n",
+            f"Cscorepm{out} scorepm{out} 0 {score_mirror_cap_f:.12g}f IC=1.2",
+            f"Cscorenm{out} scorenm{out} 0 {score_mirror_cap_f:.12g}f IC=1.2",
+            f"Rscorepm{out} scorepm{out} 0 1e12",
+            f"Rscorenm{out} scorenm{out} 0 1e12",
+            f"Mreset_scorepm{out}_high vdd rstf scorepm{out} 0 NSENSE W=16u L=180n",
+            f"Mreset_scorenm{out}_high vdd rstf scorenm{out} 0 NSENSE W=16u L=180n",
+            f"Mscorep{out}_mirror scorepm{out} scorep{out} 0 0 NSENSE W={score_diode_width_u:.12g}u L=180n",
+            f"Mscoren{out}_mirror scorenm{out} scoren{out} 0 0 NSENSE W={score_diode_width_u:.12g}u L=180n",
+            f"Rout{out}_dmgate_pull out{out} vdd 1e12",
+            f"Mout{out}_dmgate_inhibit out{out} scorepm{out} {mid} vdd PMOS W={design.output_relu_width_u:.12g}u L=180n",
+            f"Mout{out}_dmgate_score {mid} scorenm{out} {pairsrc} 0 NREL W={design.output_relu_width_u:.12g}u L=180n",
+            f"Mout{out}_dmgate_tail {pairsrc} outg 0 0 NMOS W={design.output_relu_width_u:.12g}u L=180n",
+        ]
+        lines += node_parasitics(mid, pairsrc)
+    elif output_head == "split_score_diode_mirror_caps":
+        pairsrc = f"out{out}_dmcap_src"
+        lines += [
+            (
+                f"* Diode/mirror split-score output: scorep{out}/scoren{out} are low-impedance "
+                f"diode input nodes.  Matched mirror sinks discharge local caps scorepm{out}/"
+                f"scorenm{out}; the output pair then classifies from those current-derived "
+                f"mirror-cap voltages instead of directly from the compressed diode voltages."
+            ),
+            f"Mscorep{out}_diode scorep{out} scorep{out} 0 0 NSENSE W={score_diode_width_u:.12g}u L=180n",
+            f"Mscoren{out}_diode scoren{out} scoren{out} 0 0 NSENSE W={score_diode_width_u:.12g}u L=180n",
+            f"Cscorepm{out} scorepm{out} 0 {score_mirror_cap_f:.12g}f IC=1.2",
+            f"Cscorenm{out} scorenm{out} 0 {score_mirror_cap_f:.12g}f IC=1.2",
+            f"Rscorepm{out} scorepm{out} 0 1e12",
+            f"Rscorenm{out} scorenm{out} 0 1e12",
+            f"Mreset_scorepm{out}_high vdd rstf scorepm{out} 0 NSENSE W=16u L=180n",
+            f"Mreset_scorenm{out}_high vdd rstf scorenm{out} 0 NSENSE W=16u L=180n",
+            f"Mscorep{out}_mirror scorepm{out} scorep{out} 0 0 NSENSE W={score_diode_width_u:.12g}u L=180n",
+            f"Mscoren{out}_mirror scorenm{out} scoren{out} 0 0 NSENSE W={score_diode_width_u:.12g}u L=180n",
+            f"Rout{out}_dmcap_pull out{out} vdd 1e12",
+            f"Mout{out}_dmcap_pos out{out} scorenm{out} {pairsrc} 0 NREL W={design.output_relu_width_u:.12g}u L=180n",
+            f"Mout{out}_dmcap_neg vdd scorepm{out} {pairsrc} 0 NREL W={design.output_relu_width_u:.12g}u L=180n",
+            f"Mout{out}_dmcap_tail {pairsrc} outg 0 0 NMOS W={design.output_relu_width_u:.12g}u L=180n",
+        ]
+        lines += node_parasitics(pairsrc)
+    elif output_head == "score_diff":
+        other = 1 - out
+        pos_mid = f"out{out}_diff_pos"
+        neg_mid = f"out{out}_diff_neg"
+        lines += [
+            f"* Common-mode rejecting output head: score{out} charges out{out}; score{other} discharges it.",
+            f"Mout{out}_diff_pos_s vdd score{out} {pos_mid} 0 NSENSE W={design.output_relu_width_u:.12g}u L=180n",
+            f"Mout{out}_diff_pos_f {pos_mid} fwd out{out} 0 NREL W={design.output_relu_width_u:.12g}u L=180n",
+            f"Mout{out}_diff_neg_f out{out} fwd {neg_mid} 0 NREL W={design.output_relu_width_u:.12g}u L=180n",
+            f"Mout{out}_diff_neg_s {neg_mid} score{other} 0 0 NSENSE W={design.output_relu_width_u:.12g}u L=180n",
+        ]
+        lines += node_parasitics(pos_mid, neg_mid)
+    else:
+        raise ValueError(f"unknown output head: {output_head}")
+    return "\n".join(lines)
+
+
+def output_head_shared_cells(design: SynapseDesign, output_head: str) -> str:
+    """Shared score-to-output cells that are emitted once per output layer."""
+    if output_head == "split_score_compete_tail":
+        lines = [
+            "* Shared tail for split-score current competition output head.",
+            f"Mout_ctail_tail out_compete_src outg 0 0 NMOS W={design.output_relu_width_u:.12g}u L=180n",
+        ]
+        lines += node_parasitics("out_compete_src")
+        return "\n".join(lines)
+    return ""
+
+
+def output_forward(
+    design: SynapseDesign,
+    output_head: str,
+    score_diode_width_u: float = 1024.0,
+    score_mirror_cap_f: float = 20.0,
+    readout_fanins: ReadoutFanins | None = None,
+) -> str:
     if output_head not in OUTPUT_HEAD_MODES:
         raise ValueError(f"unknown output head: {output_head}")
     if output_head == "score_diff" and OUTPUTS != 2:
         raise ValueError("score_diff output head is only defined for two output classes.")
+    fanins = effective_readout_fanins(readout_fanins)
+    missing_outputs = [out for out in range(OUTPUTS) if out not in fanins]
+    if missing_outputs:
+        raise ValueError(f"readout fanins missing outputs: {missing_outputs}")
+    for out, srcs in fanins.items():
+        for h in srcs:
+            if h < 0 or h >= HIDDEN:
+                raise ValueError(f"readout fanin hidden index {h} for output {out} is outside 0..{HIDDEN - 1}.")
     lines: list[str] = []
     if design.output_forward_style == "pass_act_buffered":
         lines.append("* Buffered hidden activation replicas for voltage-mode readout.")
-        for h in range(HIDDEN):
+        active_hidden = sorted({h for srcs in fanins.values() for h in srcs})
+        for h in active_hidden:
             lines += [
                 f"Mactbuf{h}_src vdd act{h} actbuf{h} 0 NSENSE W={design.output_forward_pos_width_u:.12g}u L=180n",
                 f"Mactbuf{h}_rst actbuf{h} rstf 0 0 NREL W=4u L=180n",
             ]
             lines += node_parasitics(f"actbuf{h}")
     for out in range(OUTPUTS):
-        lines.append(f"* Output {out}: signed readout from all general hidden activations.")
-        for h in range(HIDDEN):
+        lines.append(f"* Output {out}: signed readout from {len(fanins[out])} general hidden activations.")
+        for h in fanins[out]:
             readout_internal_nodes = [
                 f"o{out}{h}p0",
                 f"o{out}{h}p1",
@@ -1611,7 +2095,7 @@ def output_forward(design: SynapseDesign, output_head: str) -> str:
                 f"o{out}{h}n1",
             ]
             if design.output_forward_style == "gate_stack":
-                if output_head == "split_score_caps":
+                if output_head in SPLIT_SCORE_OUTPUT_HEADS:
                     lines += [
                         f"Mo{out}{h}pos_a vdd act{h} o{out}{h}p0 0 NSENSE W={design.output_forward_pos_width_u:.12g}u L=180n",
                         f"Mo{out}{h}pos_w o{out}{h}p0 vw{out}{h}p o{out}{h}p1 0 NREL W={design.output_forward_pos_width_u:.12g}u L=180n",
@@ -1631,7 +2115,7 @@ def output_forward(design: SynapseDesign, output_head: str) -> str:
                     ]
             elif design.output_forward_style in {"pass_act_source", "pass_act_buffered"}:
                 act_source = f"actbuf{h}" if design.output_forward_style == "pass_act_buffered" else f"act{h}"
-                if output_head == "split_score_caps":
+                if output_head in SPLIT_SCORE_OUTPUT_HEADS:
                     lines += [
                         f"Mo{out}{h}pos_w {act_source} vw{out}{h}p o{out}{h}p1 0 NREL W={design.output_forward_pos_width_u:.12g}u L=180n",
                         f"Mo{out}{h}pos_f o{out}{h}p1 fwd scorep{out} 0 NREL W={design.output_forward_pos_width_u:.12g}u L=180n",
@@ -1649,7 +2133,8 @@ def output_forward(design: SynapseDesign, output_head: str) -> str:
             else:
                 raise ValueError(f"unknown output forward style: {design.output_forward_style}")
             lines += node_parasitics(*readout_internal_nodes)
-        if output_head == "split_score_caps":
+        bias_internal_nodes = [f"o{out}bp0", f"o{out}bp1", f"o{out}bn0", f"o{out}bn1"]
+        if output_head in SPLIT_SCORE_OUTPUT_HEADS:
             if design.output_forward_style == "gate_stack":
                 lines += [
                     f"Mo{out}bpos_a vdd bias o{out}bp0 0 NSENSE W={design.output_bias_forward_pos_width_u:.12g}u L=180n",
@@ -1661,13 +2146,12 @@ def output_forward(design: SynapseDesign, output_head: str) -> str:
                 ]
             else:
                 lines += [
-                    f"Mo{out}bpos_src vdd vbo{out}p o{out}bp0 0 NREL W={design.output_bias_forward_pos_width_u:.12g}u L=180n",
-                    f"Mo{out}bpos_gate o{out}bp0 bias o{out}bp1 0 NSENSE W={design.output_bias_forward_pos_width_u:.12g}u L=180n",
+                    f"Mo{out}bpos_w bias vbo{out}p o{out}bp1 0 NREL W={design.output_bias_forward_pos_width_u:.12g}u L=180n",
                     f"Mo{out}bpos_f o{out}bp1 fwd scorep{out} 0 NREL W={design.output_bias_forward_pos_width_u:.12g}u L=180n",
-                    f"Mo{out}bneg_src vdd vbo{out}n o{out}bn0 0 NREL W={design.output_bias_forward_neg_width_u:.12g}u L=180n",
-                    f"Mo{out}bneg_gate o{out}bn0 bias o{out}bn1 0 NSENSE W={design.output_bias_forward_neg_width_u:.12g}u L=180n",
+                    f"Mo{out}bneg_w bias vbo{out}n o{out}bn1 0 NREL W={design.output_bias_forward_neg_width_u:.12g}u L=180n",
                     f"Mo{out}bneg_f o{out}bn1 fwd scoren{out} 0 NREL W={design.output_bias_forward_neg_width_u:.12g}u L=180n",
                 ]
+                bias_internal_nodes = [f"o{out}bp1", f"o{out}bn1"]
         else:
             lines += [
                 (
@@ -1685,32 +2169,11 @@ def output_forward(design: SynapseDesign, output_head: str) -> str:
                 f"Mo{out}bneg_a o{out}bn0 bias o{out}bn1 0 NSENSE W={design.output_bias_forward_neg_width_u:.12g}u L=180n",
                 f"Mo{out}bneg_w o{out}bn1 vbo{out}n 0 0 NREL W={design.output_bias_forward_neg_width_u:.12g}u L=180n",
             ]
-        lines += node_parasitics(f"o{out}bp0", f"o{out}bp1", f"o{out}bn0", f"o{out}bn1")
-        if output_head == "source_follower":
-            lines.append(f"Mrelu_o{out} vdd score{out} out{out} 0 NSENSE W={design.output_relu_width_u:.12g}u L=180n")
-        elif output_head == "split_score_caps":
-            pos_mid = f"out{out}_split_pos"
-            neg_mid = f"out{out}_split_neg"
-            lines += [
-                f"* Differential score-cap head: scorep{out} charges out{out}; scoren{out} discharges it.",
-                f"Mout{out}_split_pos_s vdd scorep{out} {pos_mid} 0 NSENSE W={design.output_relu_width_u:.12g}u L=180n",
-                f"Mout{out}_split_pos_f {pos_mid} fwd out{out} 0 NREL W={design.output_relu_width_u:.12g}u L=180n",
-                f"Mout{out}_split_neg_f out{out} fwd {neg_mid} 0 NREL W={design.output_relu_width_u:.12g}u L=180n",
-                f"Mout{out}_split_neg_s {neg_mid} scoren{out} 0 0 NSENSE W={design.output_relu_width_u:.12g}u L=180n",
-            ]
-            lines += node_parasitics(pos_mid, neg_mid)
-        elif output_head == "score_diff":
-            other = 1 - out
-            pos_mid = f"out{out}_diff_pos"
-            neg_mid = f"out{out}_diff_neg"
-            lines += [
-                f"* Common-mode rejecting output head: score{out} charges out{out}; score{other} discharges it.",
-                f"Mout{out}_diff_pos_s vdd score{out} {pos_mid} 0 NSENSE W={design.output_relu_width_u:.12g}u L=180n",
-                f"Mout{out}_diff_pos_f {pos_mid} fwd out{out} 0 NREL W={design.output_relu_width_u:.12g}u L=180n",
-                f"Mout{out}_diff_neg_f out{out} fwd {neg_mid} 0 NREL W={design.output_relu_width_u:.12g}u L=180n",
-                f"Mout{out}_diff_neg_s {neg_mid} score{other} 0 0 NSENSE W={design.output_relu_width_u:.12g}u L=180n",
-            ]
-            lines += node_parasitics(pos_mid, neg_mid)
+        lines += node_parasitics(*bias_internal_nodes)
+        lines.append(output_head_from_scores(design, output_head, out, score_diode_width_u, score_mirror_cap_f))
+    shared_head_cells = output_head_shared_cells(design, output_head)
+    if shared_head_cells:
+        lines.append(shared_head_cells)
     return "\n".join(lines)
 
 
@@ -1726,13 +2189,34 @@ def low_score_gate_cells(lose_pull_kohm: float, lose_width_u: float) -> str:
 
 
 def node_parasitics(*nodes: str) -> list[str]:
-    lines: list[str] = []
-    for node in nodes:
-        lines += [
-            f"Rpar_{node} {node} 0 1e9",
-            f"Cpar_{node} {node} 0 0.02f IC=0",
-        ]
-    return lines
+    return NodeParasitics("parasitics", tuple(nodes)).render_lines()
+
+
+def diffpair_bleed_write_selector_lines(
+    prefix: str,
+    positive_error_gate: str,
+    negative_error_gate: str,
+    positive_write_gate: str,
+    negative_write_gate: str,
+    width_u: float,
+    label: str,
+) -> list[str]:
+    """Build high-true write rails from a differential error comparison.
+
+    The older pmos_inhibit selector treats dp and dn mostly as two independent
+    absolute gates.  This cell adds a shared-tail comparison stage: common-mode
+    dp/dn drives both internal bar nodes similarly, and the weak bwd-gated
+    output bleeds keep both write rails low unless one side wins strongly.
+    """
+    return DiffPairBleedWriteSelector(
+        prefix,
+        positive_error_gate,
+        negative_error_gate,
+        positive_write_gate,
+        negative_write_gate,
+        width_u,
+        label,
+    ).render_lines()
 
 
 def score_lead_gate_cells(lead_width_u: float, lead_mode: str) -> str:
@@ -2082,12 +2566,40 @@ def error_cells(
     residual_target_width_u: float = 96.0,
     residual_output_width_u: float = 64.0,
     lead_mode: str = "out_senseamp",
+    error_target_source_v: float | None = None,
+    error_nontarget_source_v: float | None = None,
 ) -> str:
-    if OUTPUTS != 2 and error_rule not in {"score", "out_residual", "onehot", "onehot_out", "ce_out", "ce_split_score"}:
+    if OUTPUTS != 2 and error_rule not in {
+        "score",
+        "out_residual",
+        "onehot",
+        "onehot_limited",
+        "onehot_out",
+        "ce_out",
+        "ce_split_score",
+        "ce_split_diffgate",
+        "ce_split_dpair",
+        "ce_split_compete",
+        "ce_split_current",
+        "ce_split_hybrid",
+        "ce_split_limited",
+        "ce_mirror_limited",
+        "ce_mirror_winner_limited",
+        "ce_mirror_hybrid_limited",
+        "ce_mirror_compete_limited",
+    }:
         raise ValueError(
-            "multi-class direct-flow runs currently require score, out_residual, onehot, onehot_out, ce_out, or ce_split_score error rails."
+            "multi-class direct-flow runs currently require score, out_residual, onehot, onehot_limited, onehot_out, ce_out, ce_split_score, ce_split_diffgate, ce_split_dpair, ce_split_compete, ce_split_current, ce_split_hybrid, ce_split_limited, ce_mirror_limited, ce_mirror_winner_limited, ce_mirror_hybrid_limited, or ce_mirror_compete_limited error rails."
         )
     lines: list[str] = []
+    target_source_node = "vdd"
+    nontarget_source_node = "vdd"
+    if error_target_source_v is not None:
+        target_source_node = "ctsrch"
+        lines.append(f"Vctsrch ctsrch 0 {error_target_source_v:.12g}")
+    if error_nontarget_source_v is not None:
+        nontarget_source_node = "cesrch"
+        lines.append(f"Vcesrch cesrch 0 {error_nontarget_source_v:.12g}")
     for out in range(OUTPUTS):
         if error_rule == "score":
             lines += [
@@ -2110,6 +2622,20 @@ def error_cells(
                 f"Mdp{out}_t1 dp{out}_t err dp{out} 0 NSENSE W={target_w:.12g}u L=180n",
                 f"Mdn{out}_nt0 vdd nt{out} dn{out}_nt 0 NSENSE W={nontarget_w:.12g}u L=180n",
                 f"Mdn{out}_nt1 dn{out}_nt err dn{out} 0 NSENSE W={nontarget_w:.12g}u L=180n",
+            ]
+            lines += node_parasitics(f"dp{out}_t", f"dn{out}_nt")
+        elif error_rule == "onehot_limited":
+            target_w = residual_target_width_u
+            nontarget_w = residual_output_width_u
+            lines += [
+                f"* Current-limited one-vs-rest rails: fixed target dp and complement dn.",
+                f"* This is a hardware-native positive-average surrogate for softmax CE; tune",
+                f"* target/non-target source widths so one target pulse balances OUTPUTS-1",
+                f"* non-target pulses.",
+                f"Mdp{out}_t0 ctsrc t{out} dp{out}_t 0 NSENSE W={target_w:.12g}u L=180n",
+                f"Mdp{out}_err0 dp{out}_t err dp{out} 0 NSENSE W={target_w:.12g}u L=180n",
+                f"Mdn{out}_nt0 cesrc nt{out} dn{out}_nt 0 NSENSE W={nontarget_w:.12g}u L=180n",
+                f"Mdn{out}_err0 dn{out}_nt err dn{out} 0 NSENSE W={nontarget_w:.12g}u L=180n",
             ]
             lines += node_parasitics(f"dp{out}_t", f"dn{out}_nt")
         elif error_rule == "onehot_out":
@@ -2150,6 +2676,209 @@ def error_cells(
                 f"Mdn{out}_err0 dn{out}_score err dn{out} 0 NSENSE W={nontarget_w:.12g}u L=180n",
             ]
             lines += node_parasitics(f"dp{out}_low", f"dp{out}_t", f"dn{out}_nt", f"dn{out}_score")
+        elif error_rule == "ce_split_diffgate":
+            target_w = residual_target_width_u
+            nontarget_w = residual_output_width_u
+            lines += [
+                f"* Differential split-score CE-like rails: target dp needs high scoren and low scorep;",
+                f"* non-target dn needs high scorep and low scoren. This rejects score common-mode before writing.",
+                f"Mdp{out}_low0 vdd scorep{out} dp{out}_low vdd PMOS W={target_w:.12g}u L=180n",
+                f"Mdp{out}_t0 dp{out}_low t{out} dp{out}_t 0 NSENSE W={target_w:.12g}u L=180n",
+                f"Mdp{out}_neg0 dp{out}_t scoren{out} dp{out}_neg 0 NREL W={target_w:.12g}u L=180n",
+                f"Mdp{out}_err0 dp{out}_neg err dp{out} 0 NSENSE W={target_w:.12g}u L=180n",
+                f"Mdn{out}_low0 vdd scoren{out} dn{out}_low vdd PMOS W={nontarget_w:.12g}u L=180n",
+                f"Mdn{out}_nt0 dn{out}_low nt{out} dn{out}_nt 0 NSENSE W={nontarget_w:.12g}u L=180n",
+                f"Mdn{out}_pos0 dn{out}_nt scorep{out} dn{out}_pos 0 NREL W={nontarget_w:.12g}u L=180n",
+                f"Mdn{out}_err0 dn{out}_pos err dn{out} 0 NSENSE W={nontarget_w:.12g}u L=180n",
+            ]
+            lines += node_parasitics(
+                f"dp{out}_low",
+                f"dp{out}_t",
+                f"dp{out}_neg",
+                f"dn{out}_low",
+                f"dn{out}_nt",
+                f"dn{out}_pos",
+            )
+        elif error_rule == "ce_split_dpair":
+            target_w = residual_target_width_u
+            nontarget_w = residual_output_width_u
+            lines += [
+                f"* Differential-pair split-score CE rails: ybar{out} is an active-low predicted-class current rail.",
+                f"Myp{out}_pos ybar{out} scorep{out} ysrc{out} 0 NREL W={nontarget_w:.12g}u L=180n",
+                f"Myp{out}_neg vdd scoren{out} ysrc{out} 0 NREL W={nontarget_w:.12g}u L=180n",
+                f"Myp{out}_tail ysrc{out} err 0 0 NMOS W={nontarget_w:.12g}u L=180n",
+                f"Mdp{out}_t0 vdd t{out} dp{out}_t 0 NSENSE W={target_w:.12g}u L=180n",
+                f"Mdp{out}_yp0 dp{out}_t ybar{out} dp{out}_yp 0 NSENSE W={target_w:.12g}u L=180n",
+                f"Mdp{out}_err0 dp{out}_yp err dp{out} 0 NSENSE W={target_w:.12g}u L=180n",
+                f"Mdn{out}_pred0 vdd ybar{out} dn{out}_pred vdd PMOS W={nontarget_w:.12g}u L=180n",
+                f"Mdn{out}_nt0 dn{out}_pred nt{out} dn{out}_nt 0 NSENSE W={nontarget_w:.12g}u L=180n",
+                f"Mdn{out}_err0 dn{out}_nt err dn{out} 0 NSENSE W={nontarget_w:.12g}u L=180n",
+            ]
+            lines += node_parasitics(f"ysrc{out}", f"dp{out}_t", f"dp{out}_yp", f"dn{out}_pred", f"dn{out}_nt")
+        elif error_rule == "ce_split_compete":
+            target_w = residual_target_width_u
+            nontarget_w = residual_output_width_u
+            lines += [
+                f"* Class-coupled split-score CE rails: ybar{out} is discharged by a shared-tail",
+                f"* scorep/scoren current competition before target/non-target write gates use it.",
+                f"Mcc{out}_inh cc{out}_mid scoren{out} ybar{out} vdd PMOS W={nontarget_w:.12g}u L=180n",
+                f"Mcc{out}_branch cc{out}_mid scorep{out} ccsrc 0 NREL W={nontarget_w:.12g}u L=180n",
+                f"Mdp{out}_t0 vdd t{out} dp{out}_t 0 NSENSE W={target_w:.12g}u L=180n",
+                f"Mdp{out}_yp0 dp{out}_t ybar{out} dp{out}_yp 0 NSENSE W={target_w:.12g}u L=180n",
+                f"Mdp{out}_err0 dp{out}_yp err dp{out} 0 NSENSE W={target_w:.12g}u L=180n",
+                f"Mdn{out}_pred0 vdd ybar{out} dn{out}_pred vdd PMOS W={nontarget_w:.12g}u L=180n",
+                f"Mdn{out}_nt0 dn{out}_pred nt{out} dn{out}_nt 0 NSENSE W={nontarget_w:.12g}u L=180n",
+                f"Mdn{out}_err0 dn{out}_nt err dn{out} 0 NSENSE W={nontarget_w:.12g}u L=180n",
+            ]
+            lines += node_parasitics(f"cc{out}_mid", f"dp{out}_t", f"dp{out}_yp", f"dn{out}_pred", f"dn{out}_nt")
+        elif error_rule == "ce_split_current":
+            target_w = residual_target_width_u
+            nontarget_w = residual_output_width_u
+            lines += [
+                f"* Split-score current CE rails: target dp is one-hot; non-target dn is charged",
+                f"* directly from a shared-source scorep/scoren branch, avoiding a thresholded ybar conversion.",
+                f"Mdp{out}_t0 vdd t{out} dp{out}_t 0 NSENSE W={target_w:.12g}u L=180n",
+                f"Mdp{out}_err0 dp{out}_t err dp{out} 0 NSENSE W={target_w:.12g}u L=180n",
+                f"Mdn{out}_nt0 cesrc nt{out} dn{out}_nt 0 NSENSE W={nontarget_w:.12g}u L=180n",
+                f"Mdn{out}_inh0 dn{out}_nt scoren{out} dn{out}_inh vdd PMOS W={nontarget_w:.12g}u L=180n",
+                f"Mdn{out}_score0 dn{out}_inh scorep{out} dn{out}_score 0 NREL W={nontarget_w:.12g}u L=180n",
+                f"Mdn{out}_err0 dn{out}_score err dn{out} 0 NSENSE W={nontarget_w:.12g}u L=180n",
+            ]
+            lines += node_parasitics(f"dp{out}_t", f"dn{out}_nt", f"dn{out}_inh", f"dn{out}_score")
+        elif error_rule == "ce_split_hybrid":
+            target_w = residual_target_width_u
+            nontarget_w = residual_output_width_u
+            lines += [
+                f"* Hybrid split-score CE rails: shared-tail ybar suppresses target dp when the",
+                f"* target already wins; shared-source score current charges non-target dn directly.",
+                f"Mcc{out}_inh cc{out}_mid scoren{out} ybar{out} vdd PMOS W={nontarget_w:.12g}u L=180n",
+                f"Mcc{out}_branch cc{out}_mid scorep{out} ccsrc 0 NREL W={nontarget_w:.12g}u L=180n",
+                f"Mdp{out}_t0 vdd t{out} dp{out}_t 0 NSENSE W={target_w:.12g}u L=180n",
+                f"Mdp{out}_yp0 dp{out}_t ybar{out} dp{out}_yp 0 NSENSE W={target_w:.12g}u L=180n",
+                f"Mdp{out}_err0 dp{out}_yp err dp{out} 0 NSENSE W={target_w:.12g}u L=180n",
+                f"Mdn{out}_nt0 cesrc nt{out} dn{out}_nt 0 NSENSE W={nontarget_w:.12g}u L=180n",
+                f"Mdn{out}_inh0 dn{out}_nt scoren{out} dn{out}_inh vdd PMOS W={nontarget_w:.12g}u L=180n",
+                f"Mdn{out}_score0 dn{out}_inh scorep{out} dn{out}_score 0 NREL W={nontarget_w:.12g}u L=180n",
+                f"Mdn{out}_err0 dn{out}_score err dn{out} 0 NSENSE W={nontarget_w:.12g}u L=180n",
+            ]
+            lines += node_parasitics(
+                f"cc{out}_mid",
+                f"dp{out}_t",
+                f"dp{out}_yp",
+                f"dn{out}_nt",
+                f"dn{out}_inh",
+                f"dn{out}_score",
+            )
+        elif error_rule == "ce_split_limited":
+            target_w = residual_target_width_u
+            nontarget_w = residual_output_width_u
+            lines += [
+                f"* Current-limited hybrid split-score CE rails: ybar suppresses target dp when",
+                f"* the target already wins, but target dp is fed from ctsrc instead of vdd so",
+                f"* the target correction can be current-starved independently of target logic rails.",
+                f"Mcc{out}_inh cc{out}_mid scoren{out} ybar{out} vdd PMOS W={nontarget_w:.12g}u L=180n",
+                f"Mcc{out}_branch cc{out}_mid scorep{out} ccsrc 0 NREL W={nontarget_w:.12g}u L=180n",
+                f"Mdp{out}_t0 ctsrc t{out} dp{out}_t 0 NSENSE W={target_w:.12g}u L=180n",
+                f"Mdp{out}_yp0 dp{out}_t ybar{out} dp{out}_yp 0 NSENSE W={target_w:.12g}u L=180n",
+                f"Mdp{out}_err0 dp{out}_yp err dp{out} 0 NSENSE W={target_w:.12g}u L=180n",
+                f"Mdn{out}_nt0 cesrc nt{out} dn{out}_nt 0 NSENSE W={nontarget_w:.12g}u L=180n",
+                f"Mdn{out}_inh0 dn{out}_nt scoren{out} dn{out}_inh vdd PMOS W={nontarget_w:.12g}u L=180n",
+                f"Mdn{out}_score0 dn{out}_inh scorep{out} dn{out}_score 0 NREL W={nontarget_w:.12g}u L=180n",
+                f"Mdn{out}_err0 dn{out}_score err dn{out} 0 NSENSE W={nontarget_w:.12g}u L=180n",
+            ]
+            lines += node_parasitics(
+                f"cc{out}_mid",
+                f"dp{out}_t",
+                f"dp{out}_yp",
+                f"dn{out}_nt",
+                f"dn{out}_inh",
+                f"dn{out}_score",
+            )
+        elif error_rule == "ce_mirror_limited":
+            target_w = residual_target_width_u
+            nontarget_w = residual_output_width_u
+            lines += [
+                f"* Diode-mirror CE rails: target dp is current-limited one-hot; non-target dn",
+                f"* is gated by mirror-cap evidence because scorep/scoren diode nodes are too compressed.",
+                f"Mdp{out}_t0 ctsrc t{out} dp{out}_t 0 NSENSE W={target_w:.12g}u L=180n",
+                f"Mdp{out}_err0 dp{out}_t err dp{out} 0 NSENSE W={target_w:.12g}u L=180n",
+                f"Mdn{out}_nt0 cesrc nt{out} dn{out}_nt 0 NSENSE W={nontarget_w:.12g}u L=180n",
+                f"Mdn{out}_pm0 dn{out}_nt scorepm{out} dn{out}_pm vdd PMOS W={nontarget_w:.12g}u L=180n",
+                f"Mdn{out}_nm0 dn{out}_pm scorenm{out} dn{out}_nm 0 NREL W={nontarget_w:.12g}u L=180n",
+                f"Mdn{out}_err0 dn{out}_nm err dn{out} 0 NSENSE W={nontarget_w:.12g}u L=180n",
+            ]
+            lines += node_parasitics(
+                f"dp{out}_t",
+                f"dn{out}_nt",
+                f"dn{out}_pm",
+                f"dn{out}_nm",
+            )
+        elif error_rule == "ce_mirror_winner_limited":
+            target_w = residual_target_width_u
+            nontarget_w = residual_output_width_u
+            lines += [
+                f"* Winner-gated diode-mirror CE rails: out{out} is active-low for the",
+                f"* mirror-derived class winner.  Target dp flows only when the target is not",
+                f"* already active; non-target dn flows only for an active low non-target.",
+                f"Mdp{out}_t0 ctsrc t{out} dp{out}_t 0 NSENSE W={target_w:.12g}u L=180n",
+                f"Mdp{out}_out0 dp{out}_t out{out} dp{out}_out 0 NREL W={target_w:.12g}u L=180n",
+                f"Mdp{out}_err0 dp{out}_out err dp{out} 0 NSENSE W={target_w:.12g}u L=180n",
+                f"Mdn{out}_pred0 cesrc out{out} dn{out}_pred vdd PMOS W={nontarget_w:.12g}u L=180n",
+                f"Mdn{out}_nt0 dn{out}_pred nt{out} dn{out}_nt 0 NSENSE W={nontarget_w:.12g}u L=180n",
+                f"Mdn{out}_err0 dn{out}_nt err dn{out} 0 NSENSE W={nontarget_w:.12g}u L=180n",
+            ]
+            lines += node_parasitics(
+                f"dp{out}_t",
+                f"dp{out}_out",
+                f"dn{out}_pred",
+                f"dn{out}_nt",
+            )
+        elif error_rule == "ce_mirror_hybrid_limited":
+            target_w = residual_target_width_u
+            nontarget_w = residual_output_width_u
+            lines += [
+                f"* Hybrid diode-mirror CE rails: target dp uses the hard active-low",
+                f"* winner output gate to suppress correct-sample target pumping, while",
+                f"* non-target dn still follows analog mirror-cap evidence instead of only",
+                f"* the hard winner. This tests whether soft non-target pressure fixes",
+                f"* mirror-winner sign/ranking loss without reintroducing target overwrite.",
+                f"Mdp{out}_t0 ctsrc t{out} dp{out}_t 0 NSENSE W={target_w:.12g}u L=180n",
+                f"Mdp{out}_out0 dp{out}_t out{out} dp{out}_out 0 NREL W={target_w:.12g}u L=180n",
+                f"Mdp{out}_err0 dp{out}_out err dp{out} 0 NSENSE W={target_w:.12g}u L=180n",
+                f"Mdn{out}_nt0 cesrc nt{out} dn{out}_nt 0 NSENSE W={nontarget_w:.12g}u L=180n",
+                f"Mdn{out}_pm0 dn{out}_nt scorepm{out} dn{out}_pm vdd PMOS W={nontarget_w:.12g}u L=180n",
+                f"Mdn{out}_nm0 dn{out}_pm scorenm{out} dn{out}_nm 0 NREL W={nontarget_w:.12g}u L=180n",
+                f"Mdn{out}_err0 dn{out}_nm err dn{out} 0 NSENSE W={nontarget_w:.12g}u L=180n",
+            ]
+            lines += node_parasitics(
+                f"dp{out}_t",
+                f"dp{out}_out",
+                f"dn{out}_nt",
+                f"dn{out}_pm",
+                f"dn{out}_nm",
+            )
+        elif error_rule == "ce_mirror_compete_limited":
+            target_w = residual_target_width_u
+            nontarget_w = residual_output_width_u
+            lines += [
+                f"* Shared-tail diode-mirror CE rails: scorepm{out}/scorenm{out} form an",
+                f"* active-low ybar{out} competition rail before target/non-target writes.",
+                f"Mmc{out}_inh mc{out}_mid scorepm{out} ybar{out} vdd PMOS W={nontarget_w:.12g}u L=180n",
+                f"Mmc{out}_branch mc{out}_mid scorenm{out} mcsrc 0 NREL W={nontarget_w:.12g}u L=180n",
+                f"Mdp{out}_t0 ctsrc t{out} dp{out}_t 0 NSENSE W={target_w:.12g}u L=180n",
+                f"Mdp{out}_yp0 dp{out}_t ybar{out} dp{out}_yp 0 NSENSE W={target_w:.12g}u L=180n",
+                f"Mdp{out}_err0 dp{out}_yp err dp{out} 0 NSENSE W={target_w:.12g}u L=180n",
+                f"Mdn{out}_pred0 cesrc ybar{out} dn{out}_pred vdd PMOS W={nontarget_w:.12g}u L=180n",
+                f"Mdn{out}_nt0 dn{out}_pred nt{out} dn{out}_nt 0 NSENSE W={nontarget_w:.12g}u L=180n",
+                f"Mdn{out}_err0 dn{out}_nt err dn{out} 0 NSENSE W={nontarget_w:.12g}u L=180n",
+            ]
+            lines += node_parasitics(
+                f"mc{out}_mid",
+                f"dp{out}_t",
+                f"dp{out}_yp",
+                f"dn{out}_pred",
+                f"dn{out}_nt",
+            )
         elif error_rule == "perceptron":
             other = 1 - out
             lines += [
@@ -2394,6 +3123,50 @@ def error_cells(
             lines += node_parasitics(f"dp{out}_t", f"dp{out}_l", f"dn{out}_t", f"dn{out}_s")
         else:
             raise ValueError(f"unknown error rule: {error_rule}")
+    if error_rule in {"ce_split_compete", "ce_split_hybrid", "ce_split_limited", "ce_mirror_compete_limited"}:
+        tail_w = max(residual_output_width_u, 1e-9)
+        tail_node = "mcsrc" if error_rule == "ce_mirror_compete_limited" else "ccsrc"
+        tail_name = "Mmc_tail" if error_rule == "ce_mirror_compete_limited" else "Mcc_tail"
+        lines += [
+            f"* Shared-tail class competition for {error_rule}.",
+            f"R{tail_node} {tail_node} 0 1e12",
+            f"{tail_name} {tail_node} err 0 0 NMOS W={tail_w:.12g}u L=180n",
+        ]
+        lines += node_parasitics(tail_node)
+    if error_rule in {
+        "onehot_limited",
+        "ce_split_limited",
+        "ce_mirror_limited",
+        "ce_mirror_winner_limited",
+        "ce_mirror_hybrid_limited",
+        "ce_mirror_compete_limited",
+    }:
+        source_w = max(residual_target_width_u, 1e-9)
+        lines += [
+            f"* Current-starved target source rail for {error_rule}.",
+            "Cctsrc ctsrc 0 2f IC=0",
+            "Rctsrc ctsrc 0 1G",
+            "Mreset_ctsrc ctsrc rste 0 0 NMOS W=4u L=180n",
+            f"Mctsrc {target_source_node} err ctsrc 0 NSENSE W={source_w:.12g}u L=180n",
+        ]
+    if error_rule in {
+        "onehot_limited",
+        "ce_split_current",
+        "ce_split_hybrid",
+        "ce_split_limited",
+        "ce_mirror_limited",
+        "ce_mirror_winner_limited",
+        "ce_mirror_hybrid_limited",
+        "ce_mirror_compete_limited",
+    }:
+        source_w = max(residual_output_width_u, 1e-9)
+        lines += [
+            f"* Shared source rail for {error_rule} non-target probability current.",
+            "Ccesrc cesrc 0 0.2f IC=0",
+            "Rcesrc cesrc 0 1G",
+            "Mreset_cesrc cesrc rste 0 0 NMOS W=4u L=180n",
+            f"Mcesrc {nontarget_source_node} err cesrc 0 NSENSE W={source_w:.12g}u L=180n",
+        ]
     return "\n".join(lines)
 
 
@@ -2405,6 +3178,7 @@ def hidden_delta(
     internal_cap_f: float,
     internal_leak_ohm: float,
     internal_reset_width_u: float,
+    readout_fanins: ReadoutFanins | None = None,
 ) -> str:
     if hidden_error_rule not in HIDDEN_ERROR_RULES:
         raise ValueError(f"unknown hidden error rule: {hidden_error_rule}")
@@ -2417,6 +3191,7 @@ def hidden_delta(
         "nrel": "NREL",
         "nsense": "NSENSE",
     }[hidden_delta_weight_device]
+    fanouts = readout_fanouts_from_fanins(effective_readout_fanins(readout_fanins))
     lines: list[str] = []
     for h in range(HIDDEN):
         if hidden_error_rule == "backprop":
@@ -2427,7 +3202,7 @@ def hidden_delta(
             lines.append(
                 f"* Hidden delta for general hidden {h}: direct feedback alignment through fixed feedback caps."
             )
-        for out in range(OUTPUTS):
+        for out in fanouts[h]:
             pos_node = f"vw{out}{h}p" if hidden_error_rule == "backprop" else f"fb{out}{h}p"
             neg_node = f"vw{out}{h}n" if hidden_error_rule == "backprop" else f"fb{out}{h}n"
             w = design.hidden_delta_width_u
@@ -2501,8 +3276,10 @@ def readout_gradients_and_updates(
     readout_update_width_u: float,
     output_bias_update_width_u: float,
     design: SynapseDesign,
+    readout_fanins: ReadoutFanins | None = None,
 ) -> str:
     lines: list[str] = []
+    fanins = effective_readout_fanins(readout_fanins)
     for out in range(OUTPUTS):
         grad_w = design.readout_gradient_width_u
         lines += [
@@ -2517,7 +3294,7 @@ def readout_gradients_and_updates(
             f"Mvbo{out}p_dn_a vbo{out}p apply vbo{out}p_dn 0 NREL W={output_bias_update_width_u:.12g}u L=180n",
             f"Mvbo{out}p_dn_g vbo{out}p_dn gvnb{out} 0 0 NSENSE W={output_bias_update_width_u:.12g}u L=180n",
         ]
-        for h in range(HIDDEN):
+        for h in fanins[out]:
             lines += [
                 f"Mgvp{out}{h}_a vdd act{h} gvp{out}{h}_a 0 NREL W={grad_w:.12g}u L=180n",
                 f"Mgvp{out}{h}_d gvp{out}{h}_a dp{out} gvp{out}{h}_d 0 NSENSE W={grad_w:.12g}u L=180n",
@@ -2533,6 +3310,24 @@ def readout_gradients_and_updates(
     return "\n".join(lines)
 
 
+def output_bias_flow_action_widths(
+    output_bias_update_width_u: float,
+    readout_charge_update_width_u: float | None,
+    readout_discharge_update_width_u: float | None,
+) -> tuple[float, float]:
+    discharge_width_u = (
+        output_bias_update_width_u
+        if readout_discharge_update_width_u is None
+        else min(output_bias_update_width_u, readout_discharge_update_width_u)
+    )
+    charge_width_u = (
+        output_bias_update_width_u
+        if readout_charge_update_width_u is None
+        else min(output_bias_update_width_u, readout_charge_update_width_u)
+    )
+    return discharge_width_u, charge_width_u
+
+
 def readout_flow_updates(
     readout_update_width_u: float,
     output_bias_update_width_u: float,
@@ -2543,11 +3338,20 @@ def readout_flow_updates(
     readout_neg_update_width_u: float | None = None,
     readout_charge_update_width_u: float | None = None,
     readout_discharge_update_width_u: float | None = None,
+    readout_dp_gate_update_width_u: float | None = None,
+    readout_dn_gate_update_width_u: float | None = None,
+    readout_dp_discharge_gate_update_width_u: float | None = None,
+    readout_dp_charge_gate_update_width_u: float | None = None,
+    readout_dn_discharge_gate_update_width_u: float | None = None,
+    readout_dn_charge_gate_update_width_u: float | None = None,
     readout_center_pull_width_u: float = 0.0,
     output_bias_center_pull_width_u: float = 0.0,
     readout_center_pull_gate: str = "bwd",
     readout_center_pull_mode: str = "always",
     readout_write_state_gate_mode: str = "none",
+    readout_write_gate_device: str = "NSENSE",
+    output_bias_write_pre_gate: str = "none",
+    output_bias_flow_polarity: str = "follow_readout",
     readout_pos_write_high_node: str = "whigh",
     readout_pos_write_low_node: str = "wlow",
     readout_neg_write_high_node: str = "whigh",
@@ -2558,6 +3362,7 @@ def readout_flow_updates(
     output_bias_neg_center_pull_node: str = "wcenter",
     write_error_exclusion: str = "none",
     write_error_exclusion_width_u: float = 8.0,
+    readout_fanins: ReadoutFanins | None = None,
 ) -> str:
     if flow_pre_store not in FLOW_PRE_STORES:
         raise ValueError(f"unknown flow pre-store mode: {flow_pre_store}")
@@ -2571,6 +3376,12 @@ def readout_flow_updates(
         raise ValueError(f"unknown readout center-pull mode: {readout_center_pull_mode}")
     if readout_write_state_gate_mode not in READOUT_WRITE_STATE_GATE_MODES:
         raise ValueError(f"unknown readout write state-gate mode: {readout_write_state_gate_mode}")
+    if readout_write_gate_device not in WRITE_GATE_DEVICES:
+        raise ValueError(f"unknown readout write-gate device: {readout_write_gate_device}")
+    if output_bias_write_pre_gate not in OUTPUT_BIAS_WRITE_PRE_GATES:
+        raise ValueError(f"unknown output-bias write pre-gate: {output_bias_write_pre_gate}")
+    if output_bias_flow_polarity not in OUTPUT_BIAS_FLOW_POLARITIES:
+        raise ValueError(f"unknown output-bias flow polarity: {output_bias_flow_polarity}")
     if write_error_exclusion not in WRITE_ERROR_EXCLUSION_MODES:
         raise ValueError(f"unknown write error exclusion mode: {write_error_exclusion}")
     pos_update_width_u = (
@@ -2591,6 +3402,11 @@ def readout_flow_updates(
     neg_charge_width_u = (
         neg_update_width_u if readout_charge_update_width_u is None else readout_charge_update_width_u
     )
+    bias_discharge_width_u, bias_charge_width_u = output_bias_flow_action_widths(
+        output_bias_update_width_u,
+        readout_charge_update_width_u,
+        readout_discharge_update_width_u,
+    )
     if (
         readout_update_width_u < 0
         or pos_update_width_u < 0
@@ -2599,19 +3415,73 @@ def readout_flow_updates(
         or neg_discharge_width_u < 0
         or pos_charge_width_u < 0
         or neg_charge_width_u < 0
+        or bias_discharge_width_u < 0
+        or bias_charge_width_u < 0
+        or (readout_dp_gate_update_width_u is not None and readout_dp_gate_update_width_u < 0)
+        or (readout_dn_gate_update_width_u is not None and readout_dn_gate_update_width_u < 0)
+        or (
+            readout_dp_discharge_gate_update_width_u is not None
+            and readout_dp_discharge_gate_update_width_u < 0
+        )
+        or (
+            readout_dp_charge_gate_update_width_u is not None
+            and readout_dp_charge_gate_update_width_u < 0
+        )
+        or (
+            readout_dn_discharge_gate_update_width_u is not None
+            and readout_dn_discharge_gate_update_width_u < 0
+        )
+        or (
+            readout_dn_charge_gate_update_width_u is not None
+            and readout_dn_charge_gate_update_width_u < 0
+        )
         or output_bias_update_width_u < 0
         or readout_center_pull_width_u < 0
         or output_bias_center_pull_width_u < 0
         or write_error_exclusion_width_u < 0
     ):
         raise ValueError("readout flow update widths must be nonnegative.")
+
+    def error_gate_width(gate: str, fallback_width_u: float, action: str) -> float:
+        if action not in {"charge", "discharge"}:
+            raise ValueError(f"unknown write-gate action: {action}")
+        if (
+            gate.startswith("dp")
+            and action == "discharge"
+            and readout_dp_discharge_gate_update_width_u is not None
+        ):
+            return readout_dp_discharge_gate_update_width_u
+        if gate.startswith("dp") and action == "charge" and readout_dp_charge_gate_update_width_u is not None:
+            return readout_dp_charge_gate_update_width_u
+        if gate.startswith("dp") and readout_dp_gate_update_width_u is not None:
+            return readout_dp_gate_update_width_u
+        if (
+            gate.startswith("dn")
+            and action == "discharge"
+            and readout_dn_discharge_gate_update_width_u is not None
+        ):
+            return readout_dn_discharge_gate_update_width_u
+        if gate.startswith("dn") and action == "charge" and readout_dn_charge_gate_update_width_u is not None:
+            return readout_dn_charge_gate_update_width_u
+        if gate.startswith("dn") and readout_dn_gate_update_width_u is not None:
+            return readout_dn_gate_update_width_u
+        return fallback_width_u
+
     n_gate, p_gate = ("dp", "dn") if readout_flow_polarity == "normal" else ("dn", "dp")
     bounded_write = readout_flow_write_mode.startswith("bounded_")
+    pmos_charge_write = readout_flow_write_mode in {
+        "bounded_pmos_charge_only",
+        "bounded_pmos_charge_discharge",
+    }
+    cmos_complementary_write = readout_flow_write_mode == "bounded_cmos_charge_discharge"
+    pmos_charge_discharge = readout_flow_write_mode == "bounded_pmos_charge_discharge"
     discharge_enabled = readout_flow_write_mode in {
         "discharge",
         "bounded_discharge",
         "charge_discharge",
         "bounded_charge_discharge",
+        "bounded_cmos_charge_discharge",
+        "bounded_pmos_charge_discharge",
     }
     charge_enabled = readout_flow_write_mode in {
         "charge_only",
@@ -2627,11 +3497,37 @@ def readout_flow_updates(
     neg_low_node = readout_neg_write_low_node if bounded_write else low_node
     state_gate_discharge = readout_write_state_gate_mode in {"state_high_discharge", "state_window"}
     state_gate_charge = readout_write_state_gate_mode == "state_window"
+    if pmos_charge_write and write_error_exclusion != "diffpair_bleed":
+        raise ValueError(f"{readout_flow_write_mode} requires write_error_exclusion='diffpair_bleed'.")
+    if pmos_charge_write and readout_write_state_gate_mode != "none":
+        raise ValueError(f"{readout_flow_write_mode} does not support readout write state-gate modes yet.")
+    if cmos_complementary_write and write_error_exclusion != "diffpair_bleed":
+        raise ValueError(f"{readout_flow_write_mode} requires write_error_exclusion='diffpair_bleed'.")
+    if cmos_complementary_write and flow_pre_store != "synapse_spike":
+        raise ValueError(f"{readout_flow_write_mode} requires flow_pre_store='synapse_spike'.")
+    if cmos_complementary_write and readout_write_state_gate_mode != "none":
+        raise ValueError(f"{readout_flow_write_mode} does not support readout write state-gate modes yet.")
     lines: list[str] = []
+    fanins = effective_readout_fanins(readout_fanins)
+
+    def bias_pre_stack(prefix: str, source_node: str, width_u: float) -> tuple[str, list[str], list[str]]:
+        if output_bias_write_pre_gate == "none":
+            return source_node, [], []
+        pre_node = f"{prefix}_a"
+        return (
+            pre_node,
+            [
+                f"M{prefix}_a {source_node} bias {pre_node} 0 NREL W={width_u:.12g}u L=180n",
+            ],
+            [pre_node],
+        )
+
     for out in range(OUTPUTS):
         positive_error_gate = f"{n_gate}{out}"
         negative_error_gate = f"{p_gate}{out}"
         overlap_write_gate: str | None = None
+        positive_write_gate_low_true: str | None = None
+        negative_write_gate_low_true: str | None = None
         if write_error_exclusion in {"pmos_inhibit", "pmos_inhibit_decay"}:
             positive_write_gate = f"rwpos{out}"
             negative_write_gate = f"rwneg{out}"
@@ -2662,81 +3558,242 @@ def readout_flow_updates(
                     f"Mrwov{out}_n rwov{out}_mid {negative_error_gate} {overlap_write_gate} 0 NMOS W={write_error_exclusion_width_u:.12g}u L=180n",
                 ]
                 lines += node_parasitics(f"rwov{out}_mid")
+        elif write_error_exclusion == "diffpair_bleed":
+            positive_write_gate = f"rwpos{out}"
+            negative_write_gate = f"rwneg{out}"
+            positive_write_gate_low_true = f"rwsel{out}_posbar"
+            negative_write_gate_low_true = f"rwsel{out}_negbar"
+            lines += diffpair_bleed_write_selector_lines(
+                f"rwsel{out}",
+                positive_error_gate,
+                negative_error_gate,
+                positive_write_gate,
+                negative_write_gate,
+                write_error_exclusion_width_u,
+                f"readout output {out}",
+            )
         else:
             positive_write_gate = positive_error_gate
             negative_write_gate = negative_error_gate
-        if output_bias_update_width_u > 0 and discharge_enabled:
+        positive_gate_neg_discharge_width_u = error_gate_width(
+            positive_error_gate, neg_discharge_width_u, "discharge"
+        )
+        negative_gate_pos_discharge_width_u = error_gate_width(
+            negative_error_gate, pos_discharge_width_u, "discharge"
+        )
+        positive_gate_pos_charge_width_u = error_gate_width(positive_error_gate, pos_charge_width_u, "charge")
+        negative_gate_neg_charge_width_u = error_gate_width(negative_error_gate, neg_charge_width_u, "charge")
+        # The output-bias cell has no hidden pre-activation gate, so its useful
+        # polarity can differ from the row synapse polarity.  By default this
+        # preserves the historical opposite-row mapping; explicit normal or
+        # reversed lets full experiments combine reversed row writes with
+        # normal-polarity bias writes.
+        if output_bias_flow_polarity == "follow_readout":
+            bias_positive_write_gate = negative_write_gate
+            bias_negative_write_gate = positive_write_gate
+        else:
+            bias_n_gate, bias_p_gate = ("dp", "dn") if output_bias_flow_polarity == "normal" else ("dn", "dp")
+            bias_positive_write_gate = f"{bias_p_gate}{out}"
+            bias_negative_write_gate = f"{bias_n_gate}{out}"
+        bias_low_true_by_gate = {
+            positive_write_gate: positive_write_gate_low_true,
+            negative_write_gate: negative_write_gate_low_true,
+            positive_error_gate: positive_write_gate_low_true,
+            negative_error_gate: negative_write_gate_low_true,
+        }
+        bias_positive_write_gate_low_true = bias_low_true_by_gate.get(bias_positive_write_gate)
+        bias_negative_write_gate_low_true = bias_low_true_by_gate.get(bias_negative_write_gate)
+        if bias_discharge_width_u > 0 and discharge_enabled:
             if state_gate_discharge:
+                n_flow_source, n_flow_pre, n_flow_pre_nodes = bias_pre_stack(
+                    f"vbo{out}n_flow",
+                    f"vbo{out}n_flow_b",
+                    bias_discharge_width_u,
+                )
+                p_flow_source, p_flow_pre, p_flow_pre_nodes = bias_pre_stack(
+                    f"vbo{out}p_flow",
+                    f"vbo{out}p_flow_b",
+                    bias_discharge_width_u,
+                )
                 lines += [
-                    f"Mvbo{out}n_flow_s vbo{out}n vbo{out}n vbo{out}n_flow_s 0 NREL W={output_bias_update_width_u:.12g}u L=180n",
-                    f"Mvbo{out}n_flow_b vbo{out}n_flow_s bwd vbo{out}n_flow_b 0 NREL W={output_bias_update_width_u:.12g}u L=180n",
-                    f"Mvbo{out}n_flow_d vbo{out}n_flow_b {positive_write_gate} {neg_low_node} 0 NSENSE W={output_bias_update_width_u:.12g}u L=180n",
-                    f"Mvbo{out}p_flow_s vbo{out}p vbo{out}p vbo{out}p_flow_s 0 NREL W={output_bias_update_width_u:.12g}u L=180n",
-                    f"Mvbo{out}p_flow_b vbo{out}p_flow_s bwd vbo{out}p_flow_b 0 NREL W={output_bias_update_width_u:.12g}u L=180n",
-                    f"Mvbo{out}p_flow_d vbo{out}p_flow_b {negative_write_gate} {pos_low_node} 0 NSENSE W={output_bias_update_width_u:.12g}u L=180n",
+                    f"Mvbo{out}n_flow_s vbo{out}n vbo{out}n vbo{out}n_flow_s 0 NREL W={bias_discharge_width_u:.12g}u L=180n",
+                    f"Mvbo{out}n_flow_b vbo{out}n_flow_s bwd vbo{out}n_flow_b 0 NREL W={bias_discharge_width_u:.12g}u L=180n",
+                    *n_flow_pre,
+                    f"Mvbo{out}n_flow_d {n_flow_source} {bias_positive_write_gate} {neg_low_node} 0 {readout_write_gate_device} W={bias_discharge_width_u:.12g}u L=180n",
+                    f"Mvbo{out}p_flow_s vbo{out}p vbo{out}p vbo{out}p_flow_s 0 NREL W={bias_discharge_width_u:.12g}u L=180n",
+                    f"Mvbo{out}p_flow_b vbo{out}p_flow_s bwd vbo{out}p_flow_b 0 NREL W={bias_discharge_width_u:.12g}u L=180n",
+                    *p_flow_pre,
+                    f"Mvbo{out}p_flow_d {p_flow_source} {bias_negative_write_gate} {pos_low_node} 0 {readout_write_gate_device} W={bias_discharge_width_u:.12g}u L=180n",
                 ]
                 lines += node_parasitics(
                     f"vbo{out}n_flow_s",
                     f"vbo{out}n_flow_b",
+                    *n_flow_pre_nodes,
                     f"vbo{out}p_flow_s",
                     f"vbo{out}p_flow_b",
+                    *p_flow_pre_nodes,
                 )
             else:
+                n_flow_source, n_flow_pre, n_flow_pre_nodes = bias_pre_stack(
+                    f"vbo{out}n_flow",
+                    f"vbo{out}n_flow_b",
+                    bias_discharge_width_u,
+                )
+                p_flow_source, p_flow_pre, p_flow_pre_nodes = bias_pre_stack(
+                    f"vbo{out}p_flow",
+                    f"vbo{out}p_flow_b",
+                    bias_discharge_width_u,
+                )
                 lines += [
-                    f"Mvbo{out}n_flow_b vbo{out}n bwd vbo{out}n_flow_b 0 NREL W={output_bias_update_width_u:.12g}u L=180n",
-                    f"Mvbo{out}n_flow_d vbo{out}n_flow_b {positive_write_gate} {neg_low_node} 0 NSENSE W={output_bias_update_width_u:.12g}u L=180n",
-                    f"Mvbo{out}p_flow_b vbo{out}p bwd vbo{out}p_flow_b 0 NREL W={output_bias_update_width_u:.12g}u L=180n",
-                    f"Mvbo{out}p_flow_d vbo{out}p_flow_b {negative_write_gate} {pos_low_node} 0 NSENSE W={output_bias_update_width_u:.12g}u L=180n",
+                    f"Mvbo{out}n_flow_b vbo{out}n bwd vbo{out}n_flow_b 0 NREL W={bias_discharge_width_u:.12g}u L=180n",
+                    *n_flow_pre,
+                    f"Mvbo{out}n_flow_d {n_flow_source} {bias_positive_write_gate} {neg_low_node} 0 {readout_write_gate_device} W={bias_discharge_width_u:.12g}u L=180n",
+                    f"Mvbo{out}p_flow_b vbo{out}p bwd vbo{out}p_flow_b 0 NREL W={bias_discharge_width_u:.12g}u L=180n",
+                    *p_flow_pre,
+                    f"Mvbo{out}p_flow_d {p_flow_source} {bias_negative_write_gate} {pos_low_node} 0 {readout_write_gate_device} W={bias_discharge_width_u:.12g}u L=180n",
                 ]
-                lines += node_parasitics(f"vbo{out}n_flow_b", f"vbo{out}p_flow_b")
-        if output_bias_update_width_u > 0 and charge_enabled:
+                lines += node_parasitics(
+                    f"vbo{out}n_flow_b",
+                    *n_flow_pre_nodes,
+                    f"vbo{out}p_flow_b",
+                    *p_flow_pre_nodes,
+                )
+        if bias_charge_width_u > 0 and charge_enabled:
             if state_gate_charge:
+                p_ch_source, p_ch_pre, p_ch_pre_nodes = bias_pre_stack(
+                    f"vbo{out}p_ch",
+                    f"vbo{out}p_ch_b",
+                    bias_charge_width_u,
+                )
+                n_ch_source, n_ch_pre, n_ch_pre_nodes = bias_pre_stack(
+                    f"vbo{out}n_ch",
+                    f"vbo{out}n_ch_b",
+                    bias_charge_width_u,
+                )
                 lines += [
-                    f"Mvbo{out}p_ch_s {pos_high_node} vbo{out}p vbo{out}p_ch_s vdd PMOS W={output_bias_update_width_u:.12g}u L=180n",
-                    f"Mvbo{out}p_ch_b vbo{out}p_ch_s bwd vbo{out}p_ch_b 0 NREL W={output_bias_update_width_u:.12g}u L=180n",
-                    f"Mvbo{out}p_ch_d vbo{out}p_ch_b {positive_write_gate} vbo{out}p 0 NSENSE W={output_bias_update_width_u:.12g}u L=180n",
-                    f"Mvbo{out}n_ch_s {neg_high_node} vbo{out}n vbo{out}n_ch_s vdd PMOS W={output_bias_update_width_u:.12g}u L=180n",
-                    f"Mvbo{out}n_ch_b vbo{out}n_ch_s bwd vbo{out}n_ch_b 0 NREL W={output_bias_update_width_u:.12g}u L=180n",
-                    f"Mvbo{out}n_ch_d vbo{out}n_ch_b {negative_write_gate} vbo{out}n 0 NSENSE W={output_bias_update_width_u:.12g}u L=180n",
+                    f"Mvbo{out}p_ch_s {pos_high_node} vbo{out}p vbo{out}p_ch_s vdd PMOS W={bias_charge_width_u:.12g}u L=180n",
+                    f"Mvbo{out}p_ch_b vbo{out}p_ch_s bwd vbo{out}p_ch_b 0 NREL W={bias_charge_width_u:.12g}u L=180n",
+                    *p_ch_pre,
+                    f"Mvbo{out}p_ch_d {p_ch_source} {bias_positive_write_gate} vbo{out}p 0 {readout_write_gate_device} W={bias_charge_width_u:.12g}u L=180n",
+                    f"Mvbo{out}n_ch_s {neg_high_node} vbo{out}n vbo{out}n_ch_s vdd PMOS W={bias_charge_width_u:.12g}u L=180n",
+                    f"Mvbo{out}n_ch_b vbo{out}n_ch_s bwd vbo{out}n_ch_b 0 NREL W={bias_charge_width_u:.12g}u L=180n",
+                    *n_ch_pre,
+                    f"Mvbo{out}n_ch_d {n_ch_source} {bias_negative_write_gate} vbo{out}n 0 {readout_write_gate_device} W={bias_charge_width_u:.12g}u L=180n",
                 ]
                 lines += node_parasitics(
                     f"vbo{out}p_ch_s",
                     f"vbo{out}p_ch_b",
+                    *p_ch_pre_nodes,
                     f"vbo{out}n_ch_s",
                     f"vbo{out}n_ch_b",
+                    *n_ch_pre_nodes,
                 )
             else:
+                p_ch_source, p_ch_pre, p_ch_pre_nodes = bias_pre_stack(
+                    f"vbo{out}p_ch",
+                    f"vbo{out}p_ch_b",
+                    bias_charge_width_u,
+                )
+                n_ch_source, n_ch_pre, n_ch_pre_nodes = bias_pre_stack(
+                    f"vbo{out}n_ch",
+                    f"vbo{out}n_ch_b",
+                    bias_charge_width_u,
+                )
                 lines += [
-                    f"Mvbo{out}p_ch_b {pos_high_node} bwd vbo{out}p_ch_b 0 NREL W={output_bias_update_width_u:.12g}u L=180n",
-                    f"Mvbo{out}p_ch_d vbo{out}p_ch_b {positive_write_gate} vbo{out}p 0 NSENSE W={output_bias_update_width_u:.12g}u L=180n",
-                    f"Mvbo{out}n_ch_b {neg_high_node} bwd vbo{out}n_ch_b 0 NREL W={output_bias_update_width_u:.12g}u L=180n",
-                    f"Mvbo{out}n_ch_d vbo{out}n_ch_b {negative_write_gate} vbo{out}n 0 NSENSE W={output_bias_update_width_u:.12g}u L=180n",
+                    f"Mvbo{out}p_ch_b {pos_high_node} bwd vbo{out}p_ch_b 0 NREL W={bias_charge_width_u:.12g}u L=180n",
+                    *p_ch_pre,
+                    f"Mvbo{out}p_ch_d {p_ch_source} {bias_positive_write_gate} vbo{out}p 0 {readout_write_gate_device} W={bias_charge_width_u:.12g}u L=180n",
+                    f"Mvbo{out}n_ch_b {neg_high_node} bwd vbo{out}n_ch_b 0 NREL W={bias_charge_width_u:.12g}u L=180n",
+                    *n_ch_pre,
+                    f"Mvbo{out}n_ch_d {n_ch_source} {bias_negative_write_gate} vbo{out}n 0 {readout_write_gate_device} W={bias_charge_width_u:.12g}u L=180n",
                 ]
-                lines += node_parasitics(f"vbo{out}p_ch_b", f"vbo{out}n_ch_b")
-        if overlap_write_gate is not None and output_bias_update_width_u > 0 and discharge_enabled:
-            if state_gate_discharge:
+                lines += node_parasitics(
+                    f"vbo{out}p_ch_b",
+                    *p_ch_pre_nodes,
+                    f"vbo{out}n_ch_b",
+                    *n_ch_pre_nodes,
+                )
+        if pmos_charge_write and bias_charge_width_u > 0:
+            if bias_positive_write_gate_low_true is None or bias_negative_write_gate_low_true is None:
+                raise ValueError("PMOS readout bias charge requires low-true diffpair write selector rails.")
+            if output_bias_write_pre_gate == "none":
                 lines += [
-                    f"Mvbo{out}p_ov_s vbo{out}p vbo{out}p vbo{out}p_ov_s 0 NREL W={output_bias_update_width_u:.12g}u L=180n",
-                    f"Mvbo{out}p_ov_b vbo{out}p_ov_s bwd vbo{out}p_ov_b 0 NREL W={output_bias_update_width_u:.12g}u L=180n",
-                    f"Mvbo{out}p_ov_d vbo{out}p_ov_b {overlap_write_gate} {pos_low_node} 0 NSENSE W={output_bias_update_width_u:.12g}u L=180n",
-                    f"Mvbo{out}n_ov_s vbo{out}n vbo{out}n vbo{out}n_ov_s 0 NREL W={output_bias_update_width_u:.12g}u L=180n",
-                    f"Mvbo{out}n_ov_b vbo{out}n_ov_s bwd vbo{out}n_ov_b 0 NREL W={output_bias_update_width_u:.12g}u L=180n",
-                    f"Mvbo{out}n_ov_d vbo{out}n_ov_b {overlap_write_gate} {neg_low_node} 0 NSENSE W={output_bias_update_width_u:.12g}u L=180n",
+                    f"Mvbo{out}p_pch_s vbo{out}p_pch_b {bias_positive_write_gate_low_true} {pos_high_node} vdd PMOS W={bias_charge_width_u:.12g}u L=180n",
+                    f"Mvbo{out}p_pch_b vbo{out}p_pch_b bwd vbo{out}p 0 NREL W={bias_charge_width_u:.12g}u L=180n",
+                    f"Mvbo{out}n_pch_s vbo{out}n_pch_b {bias_negative_write_gate_low_true} {neg_high_node} vdd PMOS W={bias_charge_width_u:.12g}u L=180n",
+                    f"Mvbo{out}n_pch_b vbo{out}n_pch_b bwd vbo{out}n 0 NREL W={bias_charge_width_u:.12g}u L=180n",
+                ]
+                lines += node_parasitics(f"vbo{out}p_pch_b", f"vbo{out}n_pch_b")
+            else:
+                lines += [
+                    f"Mvbo{out}p_pch_s vbo{out}p_pch_b {bias_positive_write_gate_low_true} {pos_high_node} vdd PMOS W={bias_charge_width_u:.12g}u L=180n",
+                    f"Mvbo{out}p_pch_g vbo{out}p_pch_b bwd vbo{out}p_pch_g 0 NREL W={bias_charge_width_u:.12g}u L=180n",
+                    f"Mvbo{out}p_pch_a vbo{out}p_pch_g bias vbo{out}p 0 NREL W={bias_charge_width_u:.12g}u L=180n",
+                    f"Mvbo{out}n_pch_s vbo{out}n_pch_b {bias_negative_write_gate_low_true} {neg_high_node} vdd PMOS W={bias_charge_width_u:.12g}u L=180n",
+                    f"Mvbo{out}n_pch_g vbo{out}n_pch_b bwd vbo{out}n_pch_g 0 NREL W={bias_charge_width_u:.12g}u L=180n",
+                    f"Mvbo{out}n_pch_a vbo{out}n_pch_g bias vbo{out}n 0 NREL W={bias_charge_width_u:.12g}u L=180n",
+                ]
+                lines += node_parasitics(
+                    f"vbo{out}p_pch_b",
+                    f"vbo{out}p_pch_g",
+                    f"vbo{out}n_pch_b",
+                    f"vbo{out}n_pch_g",
+                )
+        if overlap_write_gate is not None and bias_discharge_width_u > 0 and discharge_enabled:
+            if state_gate_discharge:
+                p_ov_source, p_ov_pre, p_ov_pre_nodes = bias_pre_stack(
+                    f"vbo{out}p_ov",
+                    f"vbo{out}p_ov_b",
+                    bias_discharge_width_u,
+                )
+                n_ov_source, n_ov_pre, n_ov_pre_nodes = bias_pre_stack(
+                    f"vbo{out}n_ov",
+                    f"vbo{out}n_ov_b",
+                    bias_discharge_width_u,
+                )
+                lines += [
+                    f"Mvbo{out}p_ov_s vbo{out}p vbo{out}p vbo{out}p_ov_s 0 NREL W={bias_discharge_width_u:.12g}u L=180n",
+                    f"Mvbo{out}p_ov_b vbo{out}p_ov_s bwd vbo{out}p_ov_b 0 NREL W={bias_discharge_width_u:.12g}u L=180n",
+                    *p_ov_pre,
+                    f"Mvbo{out}p_ov_d {p_ov_source} {overlap_write_gate} {pos_low_node} 0 {readout_write_gate_device} W={bias_discharge_width_u:.12g}u L=180n",
+                    f"Mvbo{out}n_ov_s vbo{out}n vbo{out}n vbo{out}n_ov_s 0 NREL W={bias_discharge_width_u:.12g}u L=180n",
+                    f"Mvbo{out}n_ov_b vbo{out}n_ov_s bwd vbo{out}n_ov_b 0 NREL W={bias_discharge_width_u:.12g}u L=180n",
+                    *n_ov_pre,
+                    f"Mvbo{out}n_ov_d {n_ov_source} {overlap_write_gate} {neg_low_node} 0 {readout_write_gate_device} W={bias_discharge_width_u:.12g}u L=180n",
                 ]
                 lines += node_parasitics(
                     f"vbo{out}p_ov_s",
                     f"vbo{out}p_ov_b",
+                    *p_ov_pre_nodes,
                     f"vbo{out}n_ov_s",
                     f"vbo{out}n_ov_b",
+                    *n_ov_pre_nodes,
                 )
             else:
+                p_ov_source, p_ov_pre, p_ov_pre_nodes = bias_pre_stack(
+                    f"vbo{out}p_ov",
+                    f"vbo{out}p_ov_b",
+                    bias_discharge_width_u,
+                )
+                n_ov_source, n_ov_pre, n_ov_pre_nodes = bias_pre_stack(
+                    f"vbo{out}n_ov",
+                    f"vbo{out}n_ov_b",
+                    bias_discharge_width_u,
+                )
                 lines += [
-                    f"Mvbo{out}p_ov_b vbo{out}p bwd vbo{out}p_ov_b 0 NREL W={output_bias_update_width_u:.12g}u L=180n",
-                    f"Mvbo{out}p_ov_d vbo{out}p_ov_b {overlap_write_gate} {pos_low_node} 0 NSENSE W={output_bias_update_width_u:.12g}u L=180n",
-                    f"Mvbo{out}n_ov_b vbo{out}n bwd vbo{out}n_ov_b 0 NREL W={output_bias_update_width_u:.12g}u L=180n",
-                    f"Mvbo{out}n_ov_d vbo{out}n_ov_b {overlap_write_gate} {neg_low_node} 0 NSENSE W={output_bias_update_width_u:.12g}u L=180n",
+                    f"Mvbo{out}p_ov_b vbo{out}p bwd vbo{out}p_ov_b 0 NREL W={bias_discharge_width_u:.12g}u L=180n",
+                    *p_ov_pre,
+                    f"Mvbo{out}p_ov_d {p_ov_source} {overlap_write_gate} {pos_low_node} 0 {readout_write_gate_device} W={bias_discharge_width_u:.12g}u L=180n",
+                    f"Mvbo{out}n_ov_b vbo{out}n bwd vbo{out}n_ov_b 0 NREL W={bias_discharge_width_u:.12g}u L=180n",
+                    *n_ov_pre,
+                    f"Mvbo{out}n_ov_d {n_ov_source} {overlap_write_gate} {neg_low_node} 0 {readout_write_gate_device} W={bias_discharge_width_u:.12g}u L=180n",
                 ]
-                lines += node_parasitics(f"vbo{out}p_ov_b", f"vbo{out}n_ov_b")
+                lines += node_parasitics(
+                    f"vbo{out}p_ov_b",
+                    *p_ov_pre_nodes,
+                    f"vbo{out}n_ov_b",
+                    *n_ov_pre_nodes,
+                )
         if output_bias_center_pull_width_u > 0:
             if readout_center_pull_mode == "always":
                 lines += [
@@ -2751,134 +3808,55 @@ def readout_flow_updates(
                     f"Mvbo{out}n_center_s vbo{out}n_center_g vbo{out}n {output_bias_neg_center_pull_node} 0 NREL W={output_bias_center_pull_width_u:.12g}u L=180n",
                 ]
                 lines += node_parasitics(f"vbo{out}p_center_g", f"vbo{out}n_center_g")
-        for h in range(HIDDEN):
+        for h in fanins[out]:
             if flow_pre_store == "shared_node":
                 pre_gate = f"act{h}"
+                pre_gate_low_true = None
             elif flow_pre_store == "synapse_boost":
                 pre_gate = f"fprb{out}{h}"
+                pre_gate_low_true = None
+            elif flow_pre_store == "synapse_spike":
+                pre_gate = f"fprg{out}{h}"
+                pre_gate_low_true = f"fprbar{out}{h}"
             else:
                 pre_gate = f"fpro{out}{h}"
-            if (pos_discharge_width_u > 0 or neg_discharge_width_u > 0) and discharge_enabled:
-                if state_gate_discharge:
-                    lines += [
-                        f"Mvw{out}{h}n_flow_s vw{out}{h}n vw{out}{h}n vw{out}{h}n_flow_s 0 NREL W={neg_discharge_width_u:.12g}u L=180n",
-                        f"Mvw{out}{h}n_flow_b vw{out}{h}n_flow_s bwd vw{out}{h}n_flow_b 0 NREL W={neg_discharge_width_u:.12g}u L=180n",
-                        f"Mvw{out}{h}n_flow_a vw{out}{h}n_flow_b {pre_gate} vw{out}{h}n_flow_a 0 NREL W={neg_discharge_width_u:.12g}u L=180n",
-                        f"Mvw{out}{h}n_flow_d vw{out}{h}n_flow_a {positive_write_gate} {neg_low_node} 0 NSENSE W={neg_discharge_width_u:.12g}u L=180n",
-                        f"Mvw{out}{h}p_flow_s vw{out}{h}p vw{out}{h}p vw{out}{h}p_flow_s 0 NREL W={pos_discharge_width_u:.12g}u L=180n",
-                        f"Mvw{out}{h}p_flow_b vw{out}{h}p_flow_s bwd vw{out}{h}p_flow_b 0 NREL W={pos_discharge_width_u:.12g}u L=180n",
-                        f"Mvw{out}{h}p_flow_a vw{out}{h}p_flow_b {pre_gate} vw{out}{h}p_flow_a 0 NREL W={pos_discharge_width_u:.12g}u L=180n",
-                        f"Mvw{out}{h}p_flow_d vw{out}{h}p_flow_a {negative_write_gate} {pos_low_node} 0 NSENSE W={pos_discharge_width_u:.12g}u L=180n",
-                    ]
-                    lines += node_parasitics(
-                        f"vw{out}{h}n_flow_s",
-                        f"vw{out}{h}n_flow_b",
-                        f"vw{out}{h}n_flow_a",
-                        f"vw{out}{h}p_flow_s",
-                        f"vw{out}{h}p_flow_b",
-                        f"vw{out}{h}p_flow_a",
-                    )
-                else:
-                    lines += [
-                        f"Mvw{out}{h}n_flow_b vw{out}{h}n bwd vw{out}{h}n_flow_b 0 NREL W={neg_discharge_width_u:.12g}u L=180n",
-                        f"Mvw{out}{h}n_flow_a vw{out}{h}n_flow_b {pre_gate} vw{out}{h}n_flow_a 0 NREL W={neg_discharge_width_u:.12g}u L=180n",
-                        f"Mvw{out}{h}n_flow_d vw{out}{h}n_flow_a {positive_write_gate} {neg_low_node} 0 NSENSE W={neg_discharge_width_u:.12g}u L=180n",
-                        f"Mvw{out}{h}p_flow_b vw{out}{h}p bwd vw{out}{h}p_flow_b 0 NREL W={pos_discharge_width_u:.12g}u L=180n",
-                        f"Mvw{out}{h}p_flow_a vw{out}{h}p_flow_b {pre_gate} vw{out}{h}p_flow_a 0 NREL W={pos_discharge_width_u:.12g}u L=180n",
-                        f"Mvw{out}{h}p_flow_d vw{out}{h}p_flow_a {negative_write_gate} {pos_low_node} 0 NSENSE W={pos_discharge_width_u:.12g}u L=180n",
-                    ]
-                    lines += node_parasitics(
-                        f"vw{out}{h}n_flow_b",
-                        f"vw{out}{h}n_flow_a",
-                        f"vw{out}{h}p_flow_b",
-                        f"vw{out}{h}p_flow_a",
-                    )
-            if (pos_charge_width_u > 0 or neg_charge_width_u > 0) and charge_enabled:
-                if state_gate_charge:
-                    lines += [
-                        f"Mvw{out}{h}p_ch_s {pos_high_node} vw{out}{h}p vw{out}{h}p_ch_s vdd PMOS W={pos_charge_width_u:.12g}u L=180n",
-                        f"Mvw{out}{h}p_ch_b vw{out}{h}p_ch_s bwd vw{out}{h}p_ch_b 0 NREL W={pos_charge_width_u:.12g}u L=180n",
-                        f"Mvw{out}{h}p_ch_a vw{out}{h}p_ch_b {pre_gate} vw{out}{h}p_ch_a 0 NREL W={pos_charge_width_u:.12g}u L=180n",
-                        f"Mvw{out}{h}p_ch_d vw{out}{h}p_ch_a {positive_write_gate} vw{out}{h}p 0 NSENSE W={pos_charge_width_u:.12g}u L=180n",
-                        f"Mvw{out}{h}n_ch_s {neg_high_node} vw{out}{h}n vw{out}{h}n_ch_s vdd PMOS W={neg_charge_width_u:.12g}u L=180n",
-                        f"Mvw{out}{h}n_ch_b vw{out}{h}n_ch_s bwd vw{out}{h}n_ch_b 0 NREL W={neg_charge_width_u:.12g}u L=180n",
-                        f"Mvw{out}{h}n_ch_a vw{out}{h}n_ch_b {pre_gate} vw{out}{h}n_ch_a 0 NREL W={neg_charge_width_u:.12g}u L=180n",
-                        f"Mvw{out}{h}n_ch_d vw{out}{h}n_ch_a {negative_write_gate} vw{out}{h}n 0 NSENSE W={neg_charge_width_u:.12g}u L=180n",
-                    ]
-                    lines += node_parasitics(
-                        f"vw{out}{h}p_ch_s",
-                        f"vw{out}{h}p_ch_b",
-                        f"vw{out}{h}p_ch_a",
-                        f"vw{out}{h}n_ch_s",
-                        f"vw{out}{h}n_ch_b",
-                        f"vw{out}{h}n_ch_a",
-                    )
-                else:
-                    lines += [
-                        f"Mvw{out}{h}p_ch_b {pos_high_node} bwd vw{out}{h}p_ch_b 0 NREL W={pos_charge_width_u:.12g}u L=180n",
-                        f"Mvw{out}{h}p_ch_a vw{out}{h}p_ch_b {pre_gate} vw{out}{h}p_ch_a 0 NREL W={pos_charge_width_u:.12g}u L=180n",
-                        f"Mvw{out}{h}p_ch_d vw{out}{h}p_ch_a {positive_write_gate} vw{out}{h}p 0 NSENSE W={pos_charge_width_u:.12g}u L=180n",
-                        f"Mvw{out}{h}n_ch_b {neg_high_node} bwd vw{out}{h}n_ch_b 0 NREL W={neg_charge_width_u:.12g}u L=180n",
-                        f"Mvw{out}{h}n_ch_a vw{out}{h}n_ch_b {pre_gate} vw{out}{h}n_ch_a 0 NREL W={neg_charge_width_u:.12g}u L=180n",
-                        f"Mvw{out}{h}n_ch_d vw{out}{h}n_ch_a {negative_write_gate} vw{out}{h}n 0 NSENSE W={neg_charge_width_u:.12g}u L=180n",
-                    ]
-                    lines += node_parasitics(
-                        f"vw{out}{h}p_ch_b",
-                        f"vw{out}{h}p_ch_a",
-                        f"vw{out}{h}n_ch_b",
-                        f"vw{out}{h}n_ch_a",
-                    )
-            if overlap_write_gate is not None and discharge_enabled and (
-                pos_discharge_width_u > 0 or neg_discharge_width_u > 0
-            ):
-                if state_gate_discharge:
-                    lines += [
-                        f"Mvw{out}{h}p_ov_s vw{out}{h}p vw{out}{h}p vw{out}{h}p_ov_s 0 NREL W={pos_discharge_width_u:.12g}u L=180n",
-                        f"Mvw{out}{h}p_ov_b vw{out}{h}p_ov_s bwd vw{out}{h}p_ov_b 0 NREL W={pos_discharge_width_u:.12g}u L=180n",
-                        f"Mvw{out}{h}p_ov_a vw{out}{h}p_ov_b {pre_gate} vw{out}{h}p_ov_a 0 NREL W={pos_discharge_width_u:.12g}u L=180n",
-                        f"Mvw{out}{h}p_ov_d vw{out}{h}p_ov_a {overlap_write_gate} {pos_low_node} 0 NSENSE W={pos_discharge_width_u:.12g}u L=180n",
-                        f"Mvw{out}{h}n_ov_s vw{out}{h}n vw{out}{h}n vw{out}{h}n_ov_s 0 NREL W={neg_discharge_width_u:.12g}u L=180n",
-                        f"Mvw{out}{h}n_ov_b vw{out}{h}n_ov_s bwd vw{out}{h}n_ov_b 0 NREL W={neg_discharge_width_u:.12g}u L=180n",
-                        f"Mvw{out}{h}n_ov_a vw{out}{h}n_ov_b {pre_gate} vw{out}{h}n_ov_a 0 NREL W={neg_discharge_width_u:.12g}u L=180n",
-                        f"Mvw{out}{h}n_ov_d vw{out}{h}n_ov_a {overlap_write_gate} {neg_low_node} 0 NSENSE W={neg_discharge_width_u:.12g}u L=180n",
-                    ]
-                    lines += node_parasitics(
-                        f"vw{out}{h}p_ov_s",
-                        f"vw{out}{h}p_ov_b",
-                        f"vw{out}{h}p_ov_a",
-                        f"vw{out}{h}n_ov_s",
-                        f"vw{out}{h}n_ov_b",
-                        f"vw{out}{h}n_ov_a",
-                    )
-                else:
-                    lines += [
-                        f"Mvw{out}{h}p_ov_b vw{out}{h}p bwd vw{out}{h}p_ov_b 0 NREL W={pos_discharge_width_u:.12g}u L=180n",
-                        f"Mvw{out}{h}p_ov_a vw{out}{h}p_ov_b {pre_gate} vw{out}{h}p_ov_a 0 NREL W={pos_discharge_width_u:.12g}u L=180n",
-                        f"Mvw{out}{h}p_ov_d vw{out}{h}p_ov_a {overlap_write_gate} {pos_low_node} 0 NSENSE W={pos_discharge_width_u:.12g}u L=180n",
-                        f"Mvw{out}{h}n_ov_b vw{out}{h}n bwd vw{out}{h}n_ov_b 0 NREL W={neg_discharge_width_u:.12g}u L=180n",
-                        f"Mvw{out}{h}n_ov_a vw{out}{h}n_ov_b {pre_gate} vw{out}{h}n_ov_a 0 NREL W={neg_discharge_width_u:.12g}u L=180n",
-                        f"Mvw{out}{h}n_ov_d vw{out}{h}n_ov_a {overlap_write_gate} {neg_low_node} 0 NSENSE W={neg_discharge_width_u:.12g}u L=180n",
-                    ]
-                    lines += node_parasitics(
-                        f"vw{out}{h}p_ov_b",
-                        f"vw{out}{h}p_ov_a",
-                        f"vw{out}{h}n_ov_b",
-                        f"vw{out}{h}n_ov_a",
-                    )
-            if readout_center_pull_width_u > 0:
-                if readout_center_pull_mode == "always":
-                    lines += [
-                        f"Mvw{out}{h}p_center vw{out}{h}p {readout_center_pull_gate} {readout_pos_center_pull_node} 0 NREL W={readout_center_pull_width_u:.12g}u L=180n",
-                        f"Mvw{out}{h}n_center vw{out}{h}n {readout_center_pull_gate} {readout_neg_center_pull_node} 0 NREL W={readout_center_pull_width_u:.12g}u L=180n",
-                    ]
-                else:
-                    lines += [
-                        f"Mvw{out}{h}p_center_g vw{out}{h}p {readout_center_pull_gate} vw{out}{h}p_center_g 0 NREL W={readout_center_pull_width_u:.12g}u L=180n",
-                        f"Mvw{out}{h}p_center_s vw{out}{h}p_center_g vw{out}{h}p {readout_pos_center_pull_node} 0 NREL W={readout_center_pull_width_u:.12g}u L=180n",
-                        f"Mvw{out}{h}n_center_g vw{out}{h}n {readout_center_pull_gate} vw{out}{h}n_center_g 0 NREL W={readout_center_pull_width_u:.12g}u L=180n",
-                        f"Mvw{out}{h}n_center_s vw{out}{h}n_center_g vw{out}{h}n {readout_neg_center_pull_node} 0 NREL W={readout_center_pull_width_u:.12g}u L=180n",
-                    ]
-                    lines += node_parasitics(f"vw{out}{h}p_center_g", f"vw{out}{h}n_center_g")
+                pre_gate_low_true = None
+            lines += DirectFlowWeightCell(
+                f"vw{out}{h}",
+                pos_weight_node=f"vw{out}{h}p",
+                neg_weight_node=f"vw{out}{h}n",
+                pre_gate=pre_gate,
+                positive_write_gate=positive_write_gate,
+                negative_write_gate=negative_write_gate,
+                pos_discharge_width_u=pos_discharge_width_u,
+                neg_discharge_width_u=neg_discharge_width_u,
+                pos_charge_width_u=pos_charge_width_u,
+                neg_charge_width_u=neg_charge_width_u,
+                positive_gate_neg_discharge_width_u=positive_gate_neg_discharge_width_u,
+                negative_gate_pos_discharge_width_u=negative_gate_pos_discharge_width_u,
+                positive_gate_pos_charge_width_u=positive_gate_pos_charge_width_u,
+                negative_gate_neg_charge_width_u=negative_gate_neg_charge_width_u,
+                pos_high_node=pos_high_node,
+                pos_low_node=pos_low_node,
+                neg_high_node=neg_high_node,
+                neg_low_node=neg_low_node,
+                write_gate_device=readout_write_gate_device,
+                discharge_enabled=discharge_enabled,
+                charge_enabled=charge_enabled,
+                state_gate_discharge=state_gate_discharge,
+                state_gate_charge=state_gate_charge,
+                pmos_charge_write=pmos_charge_write,
+                cmos_complementary_charge=cmos_complementary_write,
+                positive_write_gate_low_true=positive_write_gate_low_true,
+                negative_write_gate_low_true=negative_write_gate_low_true,
+                pre_gate_low_true=pre_gate_low_true,
+                overlap_write_gate=overlap_write_gate,
+                center_pull_width_u=readout_center_pull_width_u,
+                center_pull_gate=readout_center_pull_gate,
+                center_pull_mode=readout_center_pull_mode,
+                pos_center_pull_node=readout_pos_center_pull_node,
+                neg_center_pull_node=readout_neg_center_pull_node,
+            ).render_lines()
     return "\n".join(lines)
 
 
@@ -2887,6 +3865,9 @@ def flow_pre_activation_stores(
     cap_f: float,
     consume_width_u: float,
     boost_width_u: float = 4.0,
+    spike_ref_node: str = "spikeref",
+    readout_fanins: ReadoutFanins | None = None,
+    hidden_fanins: HiddenFanins | None = None,
 ) -> str:
     if mode not in FLOW_PRE_STORES:
         raise ValueError(f"unknown flow pre-store mode: {mode}")
@@ -2896,52 +3877,36 @@ def flow_pre_activation_stores(
         raise ValueError("flow pre-store capacitance and consume width must be positive.")
     if mode == "synapse_boost" and boost_width_u <= 0:
         raise ValueError("flow pre-store boost width must be positive for synapse_boost mode.")
-    lines: list[str] = [
-        "* Per-synapse pre-activation traces are charged through MOS store paths during fwd for local direct-flow writes."
-    ]
-    consume = mode == "synapse_consume"
-    boost = mode == "synapse_boost"
-    for out in range(OUTPUTS):
-        for h in range(HIDDEN):
-            node = f"fpro{out}{h}"
-            lines += [
-                f"C{node} {node} 0 {cap_f:.12g}f IC=0",
-                f"R{node} {node} 0 1G",
-                f"Mreset_{node} {node} rstf 0 0 NMOS W=4u L=180n",
-                f"Mstore_{node} {node} fwd act{h} 0 NREL W=4u L=180n",
-            ]
-            if consume:
-                lines.append(f"Mconsume_{node} {node} bwd 0 0 NREL W={consume_width_u:.12g}u L=180n")
-            if boost:
-                boosted = f"fprb{out}{h}"
-                lines += [
-                    f"C{boosted} {boosted} 0 {cap_f:.12g}f IC=0",
-                    f"Cboost_{boosted} preboost {boosted} {cap_f:.12g}f",
-                    f"R{boosted} {boosted} 0 1G",
-                    f"Mreset_{boosted} {boosted} rstf 0 0 NMOS W=4u L=180n",
-                    f"Mstore_{boosted} {boosted} fwd act{h} 0 NREL W={boost_width_u:.12g}u L=180n",
-                ]
-    for h in range(HIDDEN):
-        for rail in HIDDEN_RAILS:
-            node = f"fphi{h}_{rail}"
-            lines += [
-                f"C{node} {node} 0 {cap_f:.12g}f IC=0",
-                f"R{node} {node} 0 1G",
-                f"Mreset_{node} {node} rstf 0 0 NMOS W=4u L=180n",
-                f"Mstore_{node} {node} fwd {rail} 0 NREL W=4u L=180n",
-            ]
-            if consume:
-                lines.append(f"Mconsume_{node} {node} bwd 0 0 NREL W={consume_width_u:.12g}u L=180n")
-            if boost:
-                boosted = f"fphib{h}_{rail}"
-                lines += [
-                    f"C{boosted} {boosted} 0 {cap_f:.12g}f IC=0",
-                    f"Cboost_{boosted} preboost {boosted} {cap_f:.12g}f",
-                    f"R{boosted} {boosted} 0 1G",
-                    f"Mreset_{boosted} {boosted} rstf 0 0 NMOS W=4u L=180n",
-                    f"Mstore_{boosted} {boosted} fwd {rail} 0 NREL W={boost_width_u:.12g}u L=180n",
-                ]
-    return "\n".join(lines)
+    spike = mode == "synapse_spike"
+    fanins = effective_readout_fanins(readout_fanins)
+    hidden_edges = effective_hidden_fanins(hidden_fanins)
+    deck = NetlistBuilder()
+    readout_traces = PreTraceArray.from_readout_topology(
+        "readout_pretrace_caps",
+        FanInTopology.from_fanins(tuple(range(HIDDEN)), OUTPUTS, fanins),
+        mode=mode,
+        cap_f=cap_f,
+        consume_width_u=consume_width_u,
+        boost_width_u=boost_width_u,
+        spike_ref_node=spike_ref_node,
+    )
+    readout_traces.comment = (
+        "Per-synapse pre-activation traces are charged through MOS store paths during fwd for local direct-flow writes."
+    )
+    hidden_traces = PreTraceArray.from_hidden_topology(
+        "hidden_pretrace_caps",
+        FanInTopology.from_fanins(tuple(HIDDEN_RAILS), HIDDEN, hidden_edges),
+        mode=mode,
+        cap_f=cap_f,
+        consume_width_u=consume_width_u,
+        boost_width_u=boost_width_u,
+        spike_ref_node=spike_ref_node,
+    )
+    deck.render_component(readout_traces)
+    deck.render_component(hidden_traces)
+    if spike:
+        deck.extend(node_parasitics(*readout_traces.spike_mid_nodes(), *hidden_traces.spike_mid_nodes()))
+    return deck.render_body()
 
 
 def hidden_gradients_and_updates(
@@ -2951,16 +3916,18 @@ def hidden_gradients_and_updates(
     hidden_grad_sense_width_u: float,
     hidden_grad_sense_cap_f: float,
     design: SynapseDesign,
+    hidden_fanins: HiddenFanins | None = None,
 ) -> str:
     if hidden_gradient_act_gate not in HIDDEN_GRADIENT_ACT_GATES:
         raise ValueError(f"unknown hidden gradient activation gate: {hidden_gradient_act_gate}")
     if hidden_apply_mode not in HIDDEN_APPLY_MODES:
         raise ValueError(f"unknown hidden apply mode: {hidden_apply_mode}")
     lines: list[str] = []
+    fanins = effective_hidden_fanins(hidden_fanins)
     grad_w = design.hidden_gradient_width_u
     relu_model = "NSENSE" if hidden_gradient_act_gate == "act_nsense" else "NREL"
     for h in range(HIDDEN):
-        for rail in HIDDEN_RAILS:
+        for rail in fanins[h]:
             for sign, delta_node, grad_node in [
                 ("p", f"hdp{h}", f"ghp{h}_{rail}"),
                 ("n", f"hdn{h}", f"ghn{h}_{rail}"),
@@ -3019,6 +3986,7 @@ def hidden_flow_updates(
     hidden_flow_write_mode: str,
     write_error_exclusion: str = "none",
     write_error_exclusion_width_u: float = 8.0,
+    hidden_fanins: HiddenFanins | None = None,
 ) -> str:
     if flow_pre_store not in FLOW_PRE_STORES:
         raise ValueError(f"unknown flow pre-store mode: {flow_pre_store}")
@@ -3046,6 +4014,7 @@ def hidden_flow_updates(
     high_node = "whigh" if bounded_write else "vdd"
     low_node = "wlow" if bounded_write else "0"
     lines: list[str] = []
+    fanins = effective_hidden_fanins(hidden_fanins)
     for h in range(HIDDEN):
         positive_delta_raw = f"hdpg{h}" if hidden_delta_output_mode == "senseamp" else f"hdp{h}"
         negative_delta_raw = f"hdng{h}" if hidden_delta_output_mode == "senseamp" else f"hdn{h}"
@@ -3080,14 +4049,28 @@ def hidden_flow_updates(
                     f"Mhwov{h}_n hwov{h}_mid {negative_delta_raw} {overlap_delta_gate} 0 NMOS W={write_error_exclusion_width_u:.12g}u L=180n",
                 ]
                 lines += node_parasitics(f"hwov{h}_mid")
+        elif write_error_exclusion == "diffpair_bleed":
+            pos_delta_gate = f"hwpos{h}"
+            neg_delta_gate = f"hwneg{h}"
+            lines += diffpair_bleed_write_selector_lines(
+                f"hwsel{h}",
+                positive_delta_raw,
+                negative_delta_raw,
+                pos_delta_gate,
+                neg_delta_gate,
+                write_error_exclusion_width_u,
+                f"hidden cell {h}",
+            )
         else:
             pos_delta_gate = positive_delta_raw
             neg_delta_gate = negative_delta_raw
-        for rail in HIDDEN_RAILS:
+        for rail in fanins[h]:
             if flow_pre_store == "shared_node":
                 pre_gate = rail
             elif flow_pre_store == "synapse_boost":
                 pre_gate = f"fphib{h}_{rail}"
+            elif flow_pre_store == "synapse_spike":
+                pre_gate = f"fphig{h}_{rail}"
             else:
                 pre_gate = f"fphi{h}_{rail}"
             if hidden_delta_output_mode == "raw" and discharge_enabled:
@@ -3202,6 +4185,7 @@ def measure_lines(
     hidden_delta_output_mode: str,
     measure_detail: str,
     readout_sample_offsets_ns: list[float],
+    activation_sample_offsets_ns: list[float],
     cmp_start_ns: float,
     cmp_end_ns: float,
     bwd_start_ns: float,
@@ -3209,6 +4193,11 @@ def measure_lines(
     backward_gate_mode: str,
     hidden_delta_network_enabled: bool = True,
     output_head: str = "source_follower",
+    *,
+    flow_pre_store: str = "shared_node",
+    readout_write_error_exclusion: str = "none",
+    readout_fanins: ReadoutFanins | None = None,
+    hidden_fanins: HiddenFanins | None = None,
 ) -> tuple[str, str]:
     if hidden_apply_mode not in HIDDEN_APPLY_MODES:
         raise ValueError(f"unknown hidden apply mode: {hidden_apply_mode}")
@@ -3227,6 +4216,8 @@ def measure_lines(
     include_hidden_grad_measures = learning_mode == "accumulate_apply"
     include_train_detail = measure_detail == "full"
     include_signal_probe = measure_detail in {"full", "probe"}
+    fanins = effective_readout_fanins(readout_fanins)
+    hidden_edges = effective_hidden_fanins(hidden_fanins)
     default_offset = readout_sample_offsets_ns[0]
     cmp_probe_offset_ns = (cmp_start_ns + cmp_end_ns) / 2.0
     lead_probe_offset_ns = min(5.00, cmp_end_ns + 0.10)
@@ -3238,7 +4229,17 @@ def measure_lines(
     prints: list[str] = []
 
     def append_score_measurements(out: int, idx: int, at: float, suffix: str) -> None:
-        if output_head == "split_score_caps":
+        if output_head in DIODE_MIRROR_OUTPUT_HEADS:
+            lines.extend(
+                [
+                    f".meas tran scorep{out}{suffix}_{idx} FIND V(scorep{out}) AT={at:.2f}n",
+                    f".meas tran scoren{out}{suffix}_{idx} FIND V(scoren{out}) AT={at:.2f}n",
+                    f".meas tran scorepm{out}{suffix}_{idx} FIND V(scorepm{out}) AT={at:.2f}n",
+                    f".meas tran scorenm{out}{suffix}_{idx} FIND V(scorenm{out}) AT={at:.2f}n",
+                    f".meas tran score{out}{suffix}_{idx} PARAM='scorenm{out}{suffix}_{idx}-scorepm{out}{suffix}_{idx}'",
+                ]
+            )
+        elif output_head in SPLIT_SCORE_OUTPUT_HEADS:
             lines.extend(
                 [
                     f".meas tran scorep{out}{suffix}_{idx} FIND V(scorep{out}) AT={at:.2f}n",
@@ -3249,6 +4250,7 @@ def measure_lines(
         else:
             lines.append(f".meas tran score{out}{suffix}_{idx} FIND V(score{out}) AT={at:.2f}n")
 
+    activation_offsets = sorted({default_offset, *activation_sample_offsets_ns})
     for idx, sample in enumerate(samples):
         base = idx * CYCLE_NS
         label = int(sample["label"])
@@ -3286,11 +4288,17 @@ def measure_lines(
                     f".meas tran other_out_{key}_{idx} FIND V(out{other}) AT={base + offset:.2f}n",
                     f".meas tran margin_{key}_{idx} PARAM='target_out_{key}_{idx}-other_out_{key}_{idx}'",
                 ]
+                append_score_measurements(0, idx, base + offset, f"_{key}")
+                append_score_measurements(1, idx, base + offset, f"_{key}")
             else:
                 for out in range(OUTPUTS):
                     lines.append(f".meas tran out{out}_{key}_{idx} FIND V(out{out}) AT={base + offset:.2f}n")
+                    append_score_measurements(out, idx, base + offset, f"_{key}")
         for h in range(HIDDEN):
             lines.append(f".meas tran act{h}_{idx} FIND V(act{h}) AT={base + default_offset:.2f}n")
+            for offset in activation_offsets:
+                key = offset_key(offset)
+                lines.append(f".meas tran act{h}_{key}_{idx} FIND V(act{h}) AT={base + offset:.2f}n")
         for out in range(OUTPUTS):
             lines.append(f".meas tran lose{out}_{idx} FIND V(lose{out}) AT={base + 3.20:.2f}n")
         lines += [
@@ -3336,7 +4344,7 @@ def measure_lines(
                         f".meas tran vbo{out}_signed_after_{idx} PARAM='vbo{out}p_after_{idx}-vbo{out}n_after_{idx}'",
                         f".meas tran d_vbo{out}_signed_{idx} PARAM='vbo{out}_signed_after_{idx}-vbo{out}_signed_before_{idx}'",
                     ]
-                    for h in range(HIDDEN):
+                    for h in fanins[out]:
                         lines += [
                             f".meas tran vw{out}{h}p_before_{idx} FIND V(vw{out}{h}p) AT={base + 0.60:.2f}n",
                             f".meas tran vw{out}{h}n_before_{idx} FIND V(vw{out}{h}n) AT={base + 0.60:.2f}n",
@@ -3353,6 +4361,21 @@ def measure_lines(
                         f".meas tran dn{out}_{idx} FIND V(dn{out}) AT={base + bwd_probe_offset_ns:.2f}n",
                         f".meas tran output_delta_net_{out}_{idx} PARAM='dp{out}_{idx}-dn{out}_{idx}'",
                     ]
+                    if readout_write_error_exclusion == "diffpair_bleed":
+                        lines += [
+                            f".meas tran rwpos{out}_{idx} FIND V(rwpos{out}) AT={base + bwd_probe_offset_ns:.2f}n",
+                            f".meas tran rwneg{out}_{idx} FIND V(rwneg{out}) AT={base + bwd_probe_offset_ns:.2f}n",
+                            f".meas tran rwsel{out}_posbar_{idx} FIND V(rwsel{out}_posbar) AT={base + bwd_probe_offset_ns:.2f}n",
+                            f".meas tran rwsel{out}_negbar_{idx} FIND V(rwsel{out}_negbar) AT={base + bwd_probe_offset_ns:.2f}n",
+                            f".meas tran readout_write_select_net_{out}_{idx} PARAM='rwpos{out}_{idx}-rwneg{out}_{idx}'",
+                            f".meas tran readout_write_select_bar_net_{out}_{idx} PARAM='rwsel{out}_negbar_{idx}-rwsel{out}_posbar_{idx}'",
+                        ]
+                    if flow_pre_store == "synapse_spike":
+                        for h in fanins[out]:
+                            lines += [
+                                f".meas tran fprg{out}{h}_{idx} FIND V(fprg{out}{h}) AT={base + bwd_probe_offset_ns:.2f}n",
+                                f".meas tran fprbar{out}{h}_{idx} FIND V(fprbar{out}{h}) AT={base + bwd_probe_offset_ns:.2f}n",
+                            ]
                 if hidden_delta_network_enabled:
                     for h in range(HIDDEN):
                         lines += [
@@ -3372,7 +4395,7 @@ def measure_lines(
                 for h in range(HIDDEN):
                     if not include_train_detail:
                         continue
-                    for rail in HIDDEN_RAILS:
+                    for rail in hidden_edges[h]:
                         if include_hidden_grad_measures:
                             lines += [
                                 f".meas tran ghp{h}_{rail}_{idx} FIND V(ghp{h}_{rail}) AT={base + 8.95:.2f}n",
@@ -3390,7 +4413,7 @@ def measure_lines(
                                 f".meas tran hidden_apply_gate_net_{h}_{rail}_{idx} PARAM='hgwp{h}_{rail}_{idx}-hgwn{h}_{rail}_{idx}'",
                             ]
                     if applies_update:
-                        for rail in HIDDEN_RAILS:
+                        for rail in hidden_edges[h]:
                             lines += [
                                 f".meas tran wh{h}_{rail}p_before_{idx} FIND V(wh{h}_{rail}p) AT={base + 0.60:.2f}n",
                                 f".meas tran wh{h}_{rail}n_before_{idx} FIND V(wh{h}_{rail}n) AT={base + 0.60:.2f}n",
@@ -3415,7 +4438,7 @@ def measure_lines(
             f".meas tran vbo{out}_signed_final PARAM='vbo{out}p_final-vbo{out}n_final'",
             f".meas tran d_vbo{out}_signed_total PARAM='vbo{out}_signed_final-vbo{out}_signed_initial'",
         ]
-        for h in range(HIDDEN):
+        for h in fanins[out]:
             lines += [
                 f".meas tran vw{out}{h}p_initial FIND V(vw{out}{h}p) AT=0.60n",
                 f".meas tran vw{out}{h}n_initial FIND V(vw{out}{h}n) AT=0.60n",
@@ -3426,7 +4449,7 @@ def measure_lines(
                 f".meas tran d_vw{out}{h}_signed_total PARAM='vw{out}{h}_signed_final-vw{out}{h}_signed_initial'",
             ]
     for h in range(HIDDEN):
-        for rail in HIDDEN_RAILS:
+        for rail in hidden_edges[h]:
             lines += [
                 f".meas tran wh{h}_{rail}p_initial FIND V(wh{h}_{rail}p) AT=0.60n",
                 f".meas tran wh{h}_{rail}n_initial FIND V(wh{h}_{rail}n) AT=0.60n",
@@ -3449,6 +4472,9 @@ def random_hidden_netlist(
     batch_apply: bool,
     synapse_design_name: str,
     hidden_forward_mode: str,
+    hidden_input_topology: str,
+    hidden_input_fan_in: int,
+    hidden_input_topology_seed: int,
     hidden_delta_width_scale: float,
     hidden_gradient_width_scale: float,
     readout_gradient_width_scale: float,
@@ -3458,6 +4484,10 @@ def random_hidden_netlist(
     output_bias_forward_width_scale: float,
     output_relu_width_scale: float,
     output_head: str,
+    readout_topology: str,
+    readout_fan_in: int,
+    readout_fan_out: int,
+    readout_topology_seed: int,
     hidden_error_rule: str,
     hidden_delta_relu_gate: str,
     hidden_delta_weight_device: str,
@@ -3480,6 +4510,7 @@ def random_hidden_netlist(
     flow_pre_consume_width_u: float,
     flow_pre_boost_v: float,
     flow_pre_boost_width_u: float,
+    flow_pre_spike_ref_v: float,
     hidden_grad_sense_width_u: float,
     hidden_grad_sense_cap_f: float,
     feedback_scale: float,
@@ -3511,11 +4542,21 @@ def random_hidden_netlist(
     hidden_delta_cap_f: float,
     lead_cap_f: float,
     score_reset_v: float,
+    score_cap_f: float,
+    score_diode_width_u: float,
+    score_mirror_cap_f: float,
+    output_cap_f: float,
     readout_update_width_u: float,
     readout_pos_update_width_u: float | None,
     readout_neg_update_width_u: float | None,
     readout_charge_update_width_u: float | None,
     readout_discharge_update_width_u: float | None,
+    readout_dp_gate_update_width_u: float | None,
+    readout_dn_gate_update_width_u: float | None,
+    readout_dp_discharge_gate_update_width_u: float | None,
+    readout_dp_charge_gate_update_width_u: float | None,
+    readout_dn_discharge_gate_update_width_u: float | None,
+    readout_dn_charge_gate_update_width_u: float | None,
     output_bias_update_width_u: float,
     readout_center_pull_width_u: float,
     output_bias_center_pull_width_u: float,
@@ -3527,6 +4568,9 @@ def random_hidden_netlist(
     readout_center_pull_gate: str,
     readout_center_pull_mode: str,
     readout_write_state_gate_mode: str,
+    readout_write_gate_device: str,
+    output_bias_write_pre_gate: str,
+    output_bias_flow_polarity: str,
     readout_write_high_v: float,
     readout_write_low_v: float,
     readout_pos_write_high_v: float | None,
@@ -3543,6 +4587,8 @@ def random_hidden_netlist(
     latch_boost_width_u: float,
     residual_target_width_u: float,
     residual_output_width_u: float,
+    error_target_source_v: float | None,
+    error_nontarget_source_v: float | None,
     lose_pull_kohm: float,
     lose_width_u: float,
     lead_mode: str,
@@ -3557,6 +4603,7 @@ def random_hidden_netlist(
     apply_end_ns: float,
     measure_detail: str,
     readout_sample_offsets_ns: list[float],
+    activation_sample_offsets_ns: list[float],
     tran_step_ps: float = 10.0,
     spice_accuracy_preset: str = "standard",
     train_refire: bool = True,
@@ -3594,11 +4641,24 @@ def random_hidden_netlist(
     spice_options = spice_options_for_preset(spice_accuracy_preset)
     include_gradient_caps = learning_mode == "accumulate_apply"
     state_seed = seed if init_seed is None else init_seed
-    records = dataset_records(dataset_name, seed)
+    records = dataset_records(dataset_name, seed, root=ROOT)
     if label_shuffle_seed is not None:
         records = label_shuffled_records(records, label_shuffle_seed)
     set_output_count(max(int(record["label"]) for record in records) + 1)
     set_input_rails(input_rails_for_records(records))
+    readout_fanins = build_readout_fanins(
+        readout_topology,
+        fan_in=readout_fan_in,
+        fan_out=readout_fan_out,
+        seed=readout_topology_seed,
+    )
+    hidden_fanins = build_hidden_fanins(
+        hidden_input_topology,
+        fan_in=hidden_input_fan_in,
+        seed=hidden_input_topology_seed,
+    )
+    topology_summary = readout_topology_summary(readout_fanins)
+    hidden_topology_info = hidden_topology_summary(hidden_fanins)
     samples = make_samples(records, epochs, train_order, batch_apply, eval_each_epoch)
     stop = len(samples) * CYCLE_NS
     hidden_delta_network_enabled = learning_mode != "flow" or flow_hidden_write == "direct"
@@ -3624,6 +4684,7 @@ def random_hidden_netlist(
         hidden_delta_output_mode,
         measure_detail,
         readout_sample_offsets_ns,
+        activation_sample_offsets_ns,
         cmp_start_ns,
         cmp_end_ns,
         bwd_start_ns,
@@ -3631,6 +4692,10 @@ def random_hidden_netlist(
         backward_gate_mode,
         hidden_delta_network_enabled,
         output_head,
+        flow_pre_store=flow_pre_store,
+        readout_write_error_exclusion=readout_write_error_exclusion,
+        readout_fanins=readout_fanins,
+        hidden_fanins=hidden_fanins,
     )
     if learning_mode == "accumulate_apply":
         hidden_delta_block = hidden_delta(
@@ -3641,6 +4706,7 @@ def random_hidden_netlist(
             hidden_delta_internal_cap_f,
             hidden_delta_internal_leak_ohm,
             hidden_delta_internal_reset_width_u,
+            readout_fanins,
         )
         hidden_delta_sense_block = hidden_delta_senseamps(
             hidden_delta_output_mode,
@@ -3649,7 +4715,12 @@ def random_hidden_netlist(
         )
         learning_block = "\n".join(
             [
-                readout_gradients_and_updates(readout_update_width_u, output_bias_update_width_u, design),
+                readout_gradients_and_updates(
+                    readout_update_width_u,
+                    output_bias_update_width_u,
+                    design,
+                    readout_fanins,
+                ),
                 hidden_delta_sense_block,
                 hidden_gradients_and_updates(
                     hidden_update_width_u,
@@ -3658,6 +4729,7 @@ def random_hidden_netlist(
                     hidden_grad_sense_width_u,
                     hidden_grad_sense_cap_f,
                     design,
+                    hidden_fanins,
                 ),
             ]
         )
@@ -3675,6 +4747,7 @@ def random_hidden_netlist(
                 hidden_delta_internal_cap_f,
                 hidden_delta_internal_leak_ohm,
                 hidden_delta_internal_reset_width_u,
+                readout_fanins,
             )
             if flow_hidden_write == "direct"
             else "* Hidden delta network omitted: flow hidden writes disabled for readout-only direct-flow test."
@@ -3700,11 +4773,20 @@ def random_hidden_netlist(
                 readout_neg_update_width_u,
                 readout_charge_update_width_u,
                 readout_discharge_update_width_u,
+                readout_dp_gate_update_width_u,
+                readout_dn_gate_update_width_u,
+                readout_dp_discharge_gate_update_width_u,
+                readout_dp_charge_gate_update_width_u,
+                readout_dn_discharge_gate_update_width_u,
+                readout_dn_charge_gate_update_width_u,
                 readout_center_pull_width_u,
                 output_bias_center_pull_width_u,
                 readout_center_pull_gate,
                 readout_center_pull_mode,
                 readout_write_state_gate_mode,
+                readout_write_gate_device,
+                output_bias_write_pre_gate,
+                output_bias_flow_polarity,
                 "wphigh",
                 "wplow",
                 "wnhigh",
@@ -3715,6 +4797,7 @@ def random_hidden_netlist(
                 "wbocentern",
                 readout_write_error_exclusion,
                 readout_write_error_exclusion_width_u,
+                readout_fanins,
             ),
             hidden_delta_sense_block,
         ]
@@ -3727,6 +4810,7 @@ def random_hidden_netlist(
                     hidden_flow_write_mode,
                     hidden_write_error_exclusion,
                     hidden_write_error_exclusion_width_u,
+                    hidden_fanins,
                 )
             )
         else:
@@ -3738,7 +4822,7 @@ def random_hidden_netlist(
         raise ValueError(f"unknown learning mode: {learning_mode}")
     feedback_block = (
         "\n* Fixed signed feedback-alignment weights.\n"
-        + feedback_caps(feedback_init(state_seed, feedback_scale), hidden_cap_f)
+        + feedback_caps(feedback_init(state_seed, feedback_scale), hidden_cap_f, readout_fanins)
         if hidden_error_rule == "dfa"
         else ""
     )
@@ -3770,7 +4854,8 @@ def random_hidden_netlist(
         f"""
 * Device-level binary dataset with general random hidden layer.
 * Dataset: {dataset_name}.
-* {HIDDEN} hidden ReLU cells are fully connected to {len(INPUT_RAILS)} input rails plus a bias rail.
+* Hidden input topology: {hidden_input_topology}; data edges={hidden_topology_info["hidden_input_edge_count"]}; fan-in={hidden_topology_info["hidden_input_fanin_counts"]}; fan-out={hidden_topology_info["hidden_input_fanout_counts"]}. Bias rails are retained per hidden cell.
+* Readout topology: {readout_topology}; edges={topology_summary["readout_edge_count"]}; fan-in={topology_summary["readout_fanin_counts"]}; fan-out={topology_summary["readout_fanout_counts"]}.
 * Output ReLU cells also have capacitor-held trainable bias weights.
 * No hidden cell is wired to a specific literal pattern.
 * Synapse design: {design.name}; hidden error rule: {hidden_error_rule}; learning mode: {learning_mode}.
@@ -3778,6 +4863,7 @@ def random_hidden_netlist(
 {mos_models()}
 Vdd vdd 0 {{VDD}}
 Vbias bias 0 {{VDD}}
+Vspikeref spikeref 0 {flow_pre_spike_ref_v:.12g}
 Vscorecm scorecm 0 {score_reset_v:.12g}
 Vwcenter wcenter 0 {readout_center_pull_v:.12g}
 Vwcenterp wcenterp 0 {readout_pos_center_pull:.12g}
@@ -3794,19 +4880,19 @@ Vwnlow wnlow 0 {readout_neg_write_low:.12g}
 {target_sources}
 {phases(samples, bwd_start_ns, apply_start_ns, apply_end_ns, cmp_start_ns, cmp_end_ns, learning_mode, backward_gate_mode, flow_pre_boost_v if learning_mode == "flow" and flow_pre_store == "synapse_boost" else None, train_refire)}
 
-{persistent_caps(hidden_state, readout_state, hidden_cap_f)}
+{persistent_caps(hidden_state, readout_state, hidden_cap_f, readout_fanins, hidden_fanins)}
 {feedback_block}
-{temporary_caps(gradient_cap_f, hidden_gradient_cap_f, hidden_delta_cap_f, lead_cap_f, include_gradient_caps, score_reset_v)}
-{resets(lead_mode, include_gradient_caps, score_reset_v, output_head)}
-{flow_pre_activation_stores(flow_pre_store, flow_pre_cap_f, flow_pre_consume_width_u, flow_pre_boost_width_u) if learning_mode == "flow" else ""}
-{train_charge_noise(samples, stop, train_charge_noise_width_u, train_charge_noise_probability, train_charge_noise_seed, train_charge_noise_scope, train_charge_noise_pulse_ns, bwd_start_ns)}
+{temporary_caps(gradient_cap_f, hidden_gradient_cap_f, hidden_delta_cap_f, lead_cap_f, include_gradient_caps, score_reset_v, score_cap_f, output_cap_f, output_head, readout_fanins, hidden_fanins)}
+{resets(lead_mode, include_gradient_caps, score_reset_v, output_head, readout_fanins, hidden_fanins)}
+{flow_pre_activation_stores(flow_pre_store, flow_pre_cap_f, flow_pre_consume_width_u, flow_pre_boost_width_u, "spikeref", readout_fanins, hidden_fanins) if learning_mode == "flow" else ""}
+{train_charge_noise(samples, stop, train_charge_noise_width_u, train_charge_noise_probability, train_charge_noise_seed, train_charge_noise_scope, train_charge_noise_pulse_ns, bwd_start_ns, readout_fanins, hidden_fanins)}
 
-    {hidden_forward(design, hidden_forward_mode)}
-{output_forward(design, output_head)}
+    {hidden_forward(design, hidden_forward_mode, hidden_fanins)}
+{output_forward(design, output_head, score_diode_width_u, score_mirror_cap_f, readout_fanins)}
 {low_score_gate_cells(lose_pull_kohm, lose_width_u)}
 {score_lead_gate_cells(lead_width_u, lead_mode)}
 {backward_gate_cells(backward_gate_mode, backward_gate_width_u, backward_gate_cap_f, lead_mode)}
-{error_cells(error_rule, latch_boost_width_u, residual_target_width_u, residual_output_width_u, lead_mode)}
+{error_cells(error_rule, latch_boost_width_u, residual_target_width_u, residual_output_width_u, lead_mode, error_target_source_v, error_nontarget_source_v)}
 {hidden_delta_block}
 {learning_block}
 
@@ -3824,11 +4910,7 @@ run
 
 
 def run_netlist(spice_bin: str, path: Path, netlist: str, timeout: float) -> dict[str, float]:
-    if "xyce" in Path(spice_bin).name.lower():
-        netlist = re.sub(r"(?ims)^\.control\b.*?^\.endc\s*\n?", "", netlist)
-    path.write_text(netlist)
-    cmd = [spice_bin, "-b", str(path)] if "ngspice" in Path(spice_bin).name.lower() else [spice_bin, str(path)]
-    proc = subprocess.run(cmd, text=True, capture_output=True, timeout=timeout)
+    proc = run_text_netlist(spice_bin, path, netlist, timeout=timeout)
     if proc.returncode != 0:
         raise RuntimeError((proc.stderr or proc.stdout)[-3000:])
     parsed = parse_measures(proc.stdout + "\n" + proc.stderr)
@@ -3844,7 +4926,10 @@ def main() -> None:
     ap.add_argument(
         "--simulator",
         default=None,
-        help="Optional SPICE executable override. Defaults to ngspice when available; may point to Xyce.",
+        help=(
+            "Optional SPICE executable override. Use auto for ngspice-first compatibility, "
+            "auto-fast for Xyce/XyceNF-first sweeps, or pass an executable path."
+        ),
     )
     ap.add_argument("--tag", default="device_xor2_random_hidden")
     ap.add_argument("--epochs", type=int, default=3)
@@ -3922,6 +5007,43 @@ def main() -> None:
             "score common-mode is rejected before the output/lead path."
         ),
     )
+    ap.add_argument(
+        "--decision-source",
+        choices=DECISION_SOURCES,
+        default="out",
+        help=(
+            "Analog node family used as the classifier decision. 'out' uses the optional "
+            "sense/output capacitors. 'score' uses the hardware score rails directly, which "
+            "is useful when the score circuit is good but the output sense head is still under design."
+        ),
+    )
+    ap.add_argument(
+        "--readout-topology",
+        choices=READOUT_TOPOLOGIES,
+        default="dense",
+        help=(
+            "Hidden-to-output connectivity. random_fanout gives each hidden cell a fixed number of "
+            "output synapses; balanced_random_fanout additionally keeps class fan-ins nearly equal."
+        ),
+    )
+    ap.add_argument(
+        "--readout-fan-in",
+        type=int,
+        default=3,
+        help="For random_fanin readout topology, number of hidden synapses per output class.",
+    )
+    ap.add_argument(
+        "--readout-fan-out",
+        type=int,
+        default=3,
+        help="For random_fanout/balanced_random_fanout readout topology, number of output synapses per hidden cell.",
+    )
+    ap.add_argument(
+        "--readout-topology-seed",
+        type=int,
+        default=0,
+        help="Seed used to sample sparse hidden-to-output readout connectivity.",
+    )
     ap.add_argument("--hidden-error-rule", choices=HIDDEN_ERROR_RULES, default="backprop")
     ap.add_argument("--hidden-delta-relu-gate", choices=HIDDEN_DELTA_RELU_GATES, default="act_nrel")
     ap.add_argument(
@@ -3952,8 +5074,28 @@ def main() -> None:
         default="weighted_relu",
         help=(
             "Hidden forward circuit. weighted_relu uses trainable signed conductance into a ReLU cell; "
+            "weighted_relu_pass_input passes the input/bias rail as the positive-source voltage through "
+            "a weight-gated device; "
             "rail_buffer pass-gate copies input rails into hidden activation capacitors during fwd."
         ),
+    )
+    ap.add_argument(
+        "--hidden-input-topology",
+        choices=HIDDEN_INPUT_TOPOLOGIES,
+        default="dense",
+        help="Input-to-hidden connectivity. random_fanin keeps the bias rail and samples data input rails per hidden cell.",
+    )
+    ap.add_argument(
+        "--hidden-input-fan-in",
+        type=int,
+        default=3,
+        help="For random_fanin hidden input topology, number of data input rails per hidden cell; bias is added separately.",
+    )
+    ap.add_argument(
+        "--hidden-input-topology-seed",
+        type=int,
+        default=0,
+        help="Seed used to sample sparse input-to-hidden connectivity.",
     )
     ap.add_argument("--learning-mode", choices=LEARNING_MODES, default="accumulate_apply")
     ap.add_argument("--flow-hidden-write", choices=FLOW_HIDDEN_WRITES, default="direct")
@@ -3966,7 +5108,9 @@ def main() -> None:
             "Optional transistor-generated mutual inhibition for local write rails. "
             "pmos_inhibit creates positive-write = positive-error AND not negative-error, "
             "and the symmetric negative-write rail. pmos_inhibit_decay also creates an "
-            "overlap rail that applies symmetric common-mode decay when both error rails are high."
+            "overlap rail that applies symmetric common-mode decay when both error rails are high. "
+            "diffpair_bleed uses a shared-tail differential pair plus weak bwd bleed, so equal "
+            "common-mode dp/dn rails mostly decay instead of opening both write branches."
         ),
     )
     ap.add_argument(
@@ -4016,6 +5160,15 @@ def main() -> None:
         default=4.0,
         help="Forward-store pass width for the bootstrapped write gate used by flow-pre-store=synapse_boost.",
     )
+    ap.add_argument(
+        "--flow-pre-spike-ref-v",
+        type=float,
+        default=0.30,
+        help=(
+            "Source reference for flow-pre-store=synapse_spike.  The stored activation must exceed "
+            "this rail plus the NREL threshold before the full-swing eligibility gate fires."
+        ),
+    )
     ap.add_argument("--hidden-grad-sense-width-u", type=float, default=512.0)
     ap.add_argument("--hidden-grad-sense-cap-f", type=float, default=2.0)
     ap.add_argument("--feedback-scale", type=float, default=0.3)
@@ -4036,6 +5189,9 @@ def main() -> None:
             "threshold_separator",
             "csv_threshold_separator",
             "csv_readout",
+            "csv_readout_rectified",
+            "csv_readout_sparse_rectified",
+            "csv_cap_state",
         ],
         default="random",
     )
@@ -4111,6 +5267,33 @@ def main() -> None:
             "Nonzero values give negative readout branches discharge headroom."
         ),
     )
+    ap.add_argument(
+        "--score-cap-f",
+        type=float,
+        default=10.0,
+        help="Output score capacitor size in fF. Larger values keep the readout branch in a smaller-signal regime.",
+    )
+    ap.add_argument(
+        "--score-diode-width-u",
+        type=float,
+        default=1024.0,
+        help=(
+            "Diode-connected score-load width for diode-loaded split-score heads. "
+            "This is the production current-mirror input approximation for split score nodes."
+        ),
+    )
+    ap.add_argument(
+        "--score-mirror-cap-f",
+        type=float,
+        default=20.0,
+        help="Current-mirror output capacitor size in fF for split_score_diode_mirror_caps.",
+    )
+    ap.add_argument(
+        "--output-cap-f",
+        type=float,
+        default=20.0,
+        help="Output capacitor size in fF. Larger values keep active-low/current-style output heads from saturating early.",
+    )
     ap.add_argument("--update-width-u", type=float, default=120.0)
     ap.add_argument("--readout-update-width-u", type=float)
     ap.add_argument(
@@ -4138,6 +5321,42 @@ def main() -> None:
             "Optional direct-flow update width for readout discharge devices. "
             "When set, it overrides branch widths for the discharge half of discharge/charge_discharge write modes."
         ),
+    )
+    ap.add_argument(
+        "--readout-dp-gate-update-width-u",
+        type=float,
+        help=(
+            "Optional final write-gate width for devices controlled by dp error rails. "
+            "This tunes target-row mobility in one-hot multiclass experiments without changing error-rail voltage."
+        ),
+    )
+    ap.add_argument(
+        "--readout-dn-gate-update-width-u",
+        type=float,
+        help=(
+            "Optional final write-gate width for devices controlled by dn error rails. "
+            "This tunes non-target-row mobility in one-hot multiclass experiments without changing error-rail voltage."
+        ),
+    )
+    ap.add_argument(
+        "--readout-dp-discharge-gate-update-width-u",
+        type=float,
+        help="Optional dp-controlled discharge gate width; overrides --readout-dp-gate-update-width-u for discharge legs.",
+    )
+    ap.add_argument(
+        "--readout-dp-charge-gate-update-width-u",
+        type=float,
+        help="Optional dp-controlled charge gate width; overrides --readout-dp-gate-update-width-u for charge legs.",
+    )
+    ap.add_argument(
+        "--readout-dn-discharge-gate-update-width-u",
+        type=float,
+        help="Optional dn-controlled discharge gate width; overrides --readout-dn-gate-update-width-u for discharge legs.",
+    )
+    ap.add_argument(
+        "--readout-dn-charge-gate-update-width-u",
+        type=float,
+        help="Optional dn-controlled charge gate width; overrides --readout-dn-gate-update-width-u for charge legs.",
     )
     ap.add_argument("--output-bias-update-width-u", type=float)
     ap.add_argument(
@@ -4218,12 +5437,42 @@ def main() -> None:
         ),
     )
     ap.add_argument(
+        "--readout-write-gate-device",
+        choices=WRITE_GATE_DEVICES,
+        default="NSENSE",
+        help=(
+            "MOS model for final error-controlled readout write gates. NSENSE is the historical "
+            "low-threshold gate; NREL/NMOS trade write magnitude for stronger suppression of weak error rails."
+        ),
+    )
+    ap.add_argument(
+        "--output-bias-write-pre-gate",
+        choices=OUTPUT_BIAS_WRITE_PRE_GATES,
+        default="none",
+        help=(
+            "Optional pre-activation device inserted into output-bias write stacks. 'bias' makes "
+            "the bias capacitor write topology match ordinary readout synapses with a constant "
+            "bias pre-activation rail, reducing bias mobility mismatch."
+        ),
+    )
+    ap.add_argument(
+        "--output-bias-flow-polarity",
+        choices=OUTPUT_BIAS_FLOW_POLARITIES,
+        default="follow_readout",
+        help=(
+            "Output-bias write polarity for direct-flow mode. The default preserves the historical "
+            "opposite-row mapping; explicit normal/reversed lets row and bias write signs be tested independently."
+        ),
+    )
+    ap.add_argument(
         "--readout-flow-polarity",
         choices=READOUT_FLOW_POLARITIES,
         default="normal",
         help=(
             "Polarity of direct-flow readout discharges. normal drains negative caps on dp "
-            "and positive caps on dn; reversed swaps those gates for sign-control experiments."
+            "and positive caps on dn; reversed swaps those gates.  The isolated multiclass "
+            "write-selectivity contract currently passes with reversed polarity for the "
+            "scorep/scoren p-n score convention."
         ),
     )
     ap.add_argument(
@@ -4233,14 +5482,21 @@ def main() -> None:
         help=(
             "Physical direct-flow readout write primitive. discharge drains the opposite branch; "
             "charge_only charges the branch matching the desired sign; charge_discharge does both. "
-            "bounded_* modes use --readout-write-high-v/--readout-write-low-v instead of VDD/ground."
+            "bounded_* modes use --readout-write-high-v/--readout-write-low-v instead of VDD/ground. "
+            "bounded_pmos_charge_only and bounded_pmos_charge_discharge use low-true diffpair selector "
+            "bars for high-side PMOS charge. bounded_cmos_charge_discharge additionally uses the "
+            "low-true synapse_spike pretrace bar for a true PMOS charge stack."
         ),
     )
     ap.add_argument(
         "--readout-write-high-v",
         type=float,
-        default=0.58,
-        help="High rail for bounded_* local selected-branch readout/hidden writes.",
+        default=None,
+        help=(
+            "High rail for bounded_* local selected-branch readout/hidden writes. "
+            "Defaults to 1.0 V for high-side PMOS charge writes and 0.58 V for "
+            "the older NMOS bounded write modes."
+        ),
     )
     ap.add_argument(
         "--readout-write-low-v",
@@ -4287,9 +5543,20 @@ def main() -> None:
         choices=[
             "score",
             "onehot",
+            "onehot_limited",
             "onehot_out",
             "ce_out",
             "ce_split_score",
+            "ce_split_diffgate",
+            "ce_split_dpair",
+            "ce_split_compete",
+            "ce_split_current",
+            "ce_split_hybrid",
+            "ce_split_limited",
+            "ce_mirror_limited",
+            "ce_mirror_winner_limited",
+            "ce_mirror_hybrid_limited",
+            "ce_mirror_compete_limited",
             "perceptron",
             "margin",
             "competitive",
@@ -4331,6 +5598,40 @@ def main() -> None:
         type=float,
         default=64.0,
         help="Own-output feedback device width for the out_residual error cell.",
+    )
+    ap.add_argument(
+        "--error-target-source-v",
+        type=float,
+        default=None,
+        help=(
+            "Optional high rail for current-limited target error source ctsrc. "
+            "Defaults to VDD; lower values tune analog CE/one-vs-rest target amplitude."
+        ),
+    )
+    ap.add_argument(
+        "--error-nontarget-source-v",
+        type=float,
+        default=None,
+        help=(
+            "Optional high rail for current-limited non-target error source cesrc. "
+            "Defaults to VDD; lower values tune softmax-like negative pressure."
+        ),
+    )
+    ap.add_argument(
+        "--error-source-balance",
+        choices=["none", "onehot_average"],
+        default="none",
+        help=(
+            "Optional source-rail heuristic for onehot_limited. onehot_average sets "
+            "ctsrc to the target high rail unless overridden and cesrc to ctsrc/(classes-1), "
+            "so one target pulse approximately balances the non-target pulses."
+        ),
+    )
+    ap.add_argument(
+        "--error-nontarget-balance-scale",
+        type=float,
+        default=1.0,
+        help="Scale factor applied to the auto-balanced onehot_limited non-target source rail.",
     )
     ap.add_argument("--lose-pull-kohm", type=float, default=100.0)
     ap.add_argument("--lose-width-u", type=float, default=24.0)
@@ -4385,6 +5686,14 @@ def main() -> None:
         help="Comma-separated readout sampling offsets within each cycle. The first offset remains the compatibility accuracy point.",
     )
     ap.add_argument(
+        "--activation-sample-offsets-ns",
+        default="",
+        help=(
+            "Optional comma-separated activation sampling offsets within each cycle. "
+            "Rows keep the compatibility act* columns at the first readout offset and add act*_<offset> columns."
+        ),
+    )
+    ap.add_argument(
         "--tran-step-ps",
         type=float,
         default=10.0,
@@ -4429,6 +5738,14 @@ def main() -> None:
         raise SystemExit("hidden delta capacitance must be positive.")
     if not 0.0 <= args.score_reset_v <= 0.8:
         raise SystemExit("--score-reset-v must be in 0..0.8 V.")
+    if args.score_cap_f <= 0:
+        raise SystemExit("--score-cap-f must be positive.")
+    if args.score_diode_width_u <= 0:
+        raise SystemExit("--score-diode-width-u must be positive.")
+    if args.score_mirror_cap_f <= 0:
+        raise SystemExit("--score-mirror-cap-f must be positive.")
+    if args.output_cap_f <= 0:
+        raise SystemExit("--output-cap-f must be positive.")
     if args.hidden_grad_sense_width_u <= 0 or args.hidden_grad_sense_cap_f <= 0:
         raise SystemExit("hidden gradient sense width and capacitance must be positive.")
     if args.flow_pre_cap_f <= 0 or args.flow_pre_consume_width_u <= 0:
@@ -4437,6 +5754,8 @@ def main() -> None:
         raise SystemExit("--flow-pre-boost-v must be in 0..1.2 V.")
     if args.flow_pre_boost_width_u <= 0:
         raise SystemExit("--flow-pre-boost-width-u must be positive.")
+    if not 0.0 <= args.flow_pre_spike_ref_v <= 1.2:
+        raise SystemExit("--flow-pre-spike-ref-v must be in 0..1.2 V.")
     if args.write_error_exclusion_width_u <= 0:
         raise SystemExit("--write-error-exclusion-width-u must be positive.")
     readout_write_error_exclusion = (
@@ -4479,6 +5798,24 @@ def main() -> None:
         raise SystemExit("--readout-pos-update-width-u must be nonnegative.")
     if args.readout_neg_update_width_u is not None and args.readout_neg_update_width_u < 0:
         raise SystemExit("--readout-neg-update-width-u must be nonnegative.")
+    if args.readout_dp_gate_update_width_u is not None and args.readout_dp_gate_update_width_u < 0:
+        raise SystemExit("--readout-dp-gate-update-width-u must be nonnegative.")
+    if args.readout_dn_gate_update_width_u is not None and args.readout_dn_gate_update_width_u < 0:
+        raise SystemExit("--readout-dn-gate-update-width-u must be nonnegative.")
+    if (
+        args.readout_dp_discharge_gate_update_width_u is not None
+        and args.readout_dp_discharge_gate_update_width_u < 0
+    ):
+        raise SystemExit("--readout-dp-discharge-gate-update-width-u must be nonnegative.")
+    if args.readout_dp_charge_gate_update_width_u is not None and args.readout_dp_charge_gate_update_width_u < 0:
+        raise SystemExit("--readout-dp-charge-gate-update-width-u must be nonnegative.")
+    if (
+        args.readout_dn_discharge_gate_update_width_u is not None
+        and args.readout_dn_discharge_gate_update_width_u < 0
+    ):
+        raise SystemExit("--readout-dn-discharge-gate-update-width-u must be nonnegative.")
+    if args.readout_dn_charge_gate_update_width_u is not None and args.readout_dn_charge_gate_update_width_u < 0:
+        raise SystemExit("--readout-dn-charge-gate-update-width-u must be nonnegative.")
     if args.readout_charge_update_width_u is not None and args.readout_charge_update_width_u < 0:
         raise SystemExit("--readout-charge-update-width-u must be nonnegative.")
     if args.readout_discharge_update_width_u is not None and args.readout_discharge_update_width_u < 0:
@@ -4498,6 +5835,8 @@ def main() -> None:
         value = getattr(args, name)
         if value is not None and not 0.0 <= value <= 1.2:
             raise SystemExit(f"--{name.replace('_', '-')} must be in 0..1.2 V.")
+    if args.readout_write_high_v is None:
+        args.readout_write_high_v = default_readout_write_high_v(args.readout_flow_write_mode)
     if not 0.0 <= args.readout_write_low_v < args.readout_write_high_v <= 1.2:
         raise SystemExit("--readout-write-low-v must be below --readout-write-high-v, both in 0..1.2 V.")
     readout_pos_write_high_v = (
@@ -4542,6 +5881,10 @@ def main() -> None:
         readout_sample_offsets_ns = parse_offsets(args.readout_sample_offsets_ns)
     except ValueError as exc:
         raise SystemExit(str(exc)) from exc
+    try:
+        activation_sample_offsets_ns = parse_offsets(args.activation_sample_offsets_ns) if args.activation_sample_offsets_ns.strip() else []
+    except ValueError as exc:
+        raise SystemExit(str(exc)) from exc
     if args.tran_step_ps <= 0:
         raise SystemExit("--tran-step-ps must be positive.")
     if not 2.40 <= args.cmp_start_ns < args.cmp_end_ns <= 5.00:
@@ -4558,7 +5901,7 @@ def main() -> None:
     elif args.cycle_ns < 15.80:
         raise SystemExit("--cycle-ns below 15.80 ns requires --skip-train-refire.")
     CYCLE_NS = args.cycle_ns
-    records = dataset_records(args.dataset, args.seed)
+    records = dataset_records(args.dataset, args.seed, root=ROOT)
     if args.label_shuffle_seed is not None:
         records = label_shuffled_records(records, args.label_shuffle_seed)
     try:
@@ -4569,27 +5912,95 @@ def main() -> None:
         set_input_rails(input_rails_for_records(records))
     except ValueError as exc:
         raise SystemExit(str(exc)) from exc
+    try:
+        readout_fanins = build_readout_fanins(
+            args.readout_topology,
+            fan_in=args.readout_fan_in,
+            fan_out=args.readout_fan_out,
+            seed=args.readout_topology_seed,
+        )
+    except ValueError as exc:
+        raise SystemExit(str(exc)) from exc
+    readout_topology_info = readout_topology_summary(readout_fanins)
+    try:
+        hidden_fanins = build_hidden_fanins(
+            args.hidden_input_topology,
+            fan_in=args.hidden_input_fan_in,
+            seed=args.hidden_input_topology_seed,
+        )
+    except ValueError as exc:
+        raise SystemExit(str(exc)) from exc
+    hidden_topology_info = hidden_topology_summary(hidden_fanins)
     if OUTPUTS != 2:
-        if args.output_head not in {"source_follower", "split_score_caps"}:
+        if args.output_head not in {"source_follower"} | SPLIT_SCORE_OUTPUT_HEADS:
             raise SystemExit(
-                "multi-class direct-flow runs currently require --output-head source_follower or split_score_caps."
+                "multi-class direct-flow runs currently require --output-head source_follower or a split-score head."
             )
-        if args.error_rule not in {"score", "out_residual", "onehot", "onehot_out", "ce_out", "ce_split_score"}:
+        if args.error_rule not in {
+            "score",
+            "out_residual",
+            "onehot",
+            "onehot_limited",
+            "onehot_out",
+            "ce_out",
+            "ce_split_score",
+            "ce_split_diffgate",
+            "ce_split_dpair",
+            "ce_split_compete",
+            "ce_split_current",
+            "ce_split_hybrid",
+            "ce_split_limited",
+            "ce_mirror_limited",
+            "ce_mirror_winner_limited",
+            "ce_mirror_hybrid_limited",
+            "ce_mirror_compete_limited",
+        }:
             raise SystemExit(
-                "multi-class direct-flow runs currently require --error-rule score, out_residual, onehot, onehot_out, ce_out, or ce_split_score."
+                "multi-class direct-flow runs currently require --error-rule score, out_residual, onehot, onehot_limited, onehot_out, ce_out, ce_split_score, ce_split_diffgate, ce_split_dpair, ce_split_compete, ce_split_current, ce_split_hybrid, ce_split_limited, ce_mirror_limited, ce_mirror_winner_limited, ce_mirror_hybrid_limited, or ce_mirror_compete_limited."
             )
         if args.backward_gate_mode != "scheduled":
             raise SystemExit("multi-class direct-flow runs currently require --backward-gate-mode scheduled.")
         if args.lead_mode != "score_direct":
             raise SystemExit("multi-class direct-flow runs currently require --lead-mode score_direct.")
-        if args.readout_init not in {"random", "csv_readout"}:
-            raise SystemExit("multi-class direct-flow runs currently require --readout-init random or csv_readout.")
+        if args.readout_init not in {
+            "random",
+            "csv_readout",
+            "csv_readout_rectified",
+            "csv_readout_sparse_rectified",
+            "csv_cap_state",
+        }:
+            raise SystemExit(
+                "multi-class direct-flow runs currently require --readout-init random, csv_readout, csv_readout_rectified, csv_readout_sparse_rectified, or csv_cap_state."
+            )
         if args.output_bias_offset_v != 0.0:
             raise SystemExit("multi-class direct-flow runs do not support --output-bias-offset-v yet.")
         if args.measure_detail == "full":
             raise SystemExit("multi-class direct-flow runs currently require --measure-detail light or probe.")
-    if args.error_rule == "ce_split_score" and args.output_head != "split_score_caps":
-        raise SystemExit("--error-rule ce_split_score requires --output-head split_score_caps.")
+    if (
+        args.error_rule
+        in {
+            "ce_split_score",
+            "ce_split_diffgate",
+            "ce_split_dpair",
+            "ce_split_compete",
+            "ce_split_current",
+            "ce_split_hybrid",
+            "ce_split_limited",
+            "ce_mirror_limited",
+            "ce_mirror_winner_limited",
+            "ce_mirror_hybrid_limited",
+            "ce_mirror_compete_limited",
+        }
+        and args.output_head not in SPLIT_SCORE_OUTPUT_HEADS
+    ):
+        raise SystemExit(f"--error-rule {args.error_rule} requires a split-score output head.")
+    if args.error_rule in {
+        "ce_mirror_limited",
+        "ce_mirror_winner_limited",
+        "ce_mirror_hybrid_limited",
+        "ce_mirror_compete_limited",
+    } and args.output_head not in DIODE_MIRROR_OUTPUT_HEADS:
+        raise SystemExit(f"--error-rule {args.error_rule} requires a diode-mirror split-score output head.")
     if args.hidden_init == "input_identity" and args.hidden_cells < len(INPUT_RAILS):
         raise SystemExit("--hidden-init input_identity requires --hidden-cells >= the dataset input rail count.")
     all_patterns = [int(record["pattern"]) for record in records]
@@ -4610,6 +6021,22 @@ def main() -> None:
         raise SystemExit("--target-low-v must be below --target-high-v, both in 0..1.2 V.")
     if args.residual_target_width_u <= 0 or args.residual_output_width_u <= 0:
         raise SystemExit("--residual-target-width-u and --residual-output-width-u must be positive.")
+    try:
+        args.error_target_source_v, args.error_nontarget_source_v = resolve_error_source_rails(
+            error_rule=args.error_rule,
+            output_count=OUTPUTS,
+            target_high_v=args.target_high_v,
+            error_target_source_v=args.error_target_source_v,
+            error_nontarget_source_v=args.error_nontarget_source_v,
+            error_source_balance=args.error_source_balance,
+            error_nontarget_balance_scale=args.error_nontarget_balance_scale,
+        )
+    except ValueError as exc:
+        raise SystemExit(str(exc)) from exc
+    if args.error_target_source_v is not None and not 0.0 < args.error_target_source_v <= 1.2:
+        raise SystemExit("--error-target-source-v must be in 0..1.2 V.")
+    if args.error_nontarget_source_v is not None and not 0.0 < args.error_nontarget_source_v <= 1.2:
+        raise SystemExit("--error-nontarget-source-v must be in 0..1.2 V.")
 
     spice_bin, version = detect_spice(args.simulator)
     generated = ROOT / "spice/generated"
@@ -4637,6 +6064,11 @@ def main() -> None:
         if args.output_bias_update_width_u is not None
         else readout_update_width
     )
+    effective_output_bias_discharge_width, effective_output_bias_charge_width = output_bias_flow_action_widths(
+        output_bias_update_width,
+        readout_charge_update_width,
+        readout_discharge_update_width,
+    )
 
     safe_tag = "".join(ch if ch.isalnum() or ch in {"_", "-"} else "_" for ch in args.tag)
     netlist, samples = random_hidden_netlist(
@@ -4649,6 +6081,9 @@ def main() -> None:
         args.batch_apply,
         args.synapse_design,
         args.hidden_forward_mode,
+        args.hidden_input_topology,
+        args.hidden_input_fan_in,
+        args.hidden_input_topology_seed,
         args.hidden_delta_width_scale,
         args.hidden_gradient_width_scale,
         args.readout_gradient_width_scale,
@@ -4658,6 +6093,10 @@ def main() -> None:
         args.output_bias_forward_width_scale,
         args.output_relu_width_scale,
         args.output_head,
+        args.readout_topology,
+        args.readout_fan_in,
+        args.readout_fan_out,
+        args.readout_topology_seed,
         args.hidden_error_rule,
         args.hidden_delta_relu_gate,
         args.hidden_delta_weight_device,
@@ -4680,6 +6119,7 @@ def main() -> None:
         args.flow_pre_consume_width_u,
         args.flow_pre_boost_v,
         args.flow_pre_boost_width_u,
+        args.flow_pre_spike_ref_v,
         args.hidden_grad_sense_width_u,
         args.hidden_grad_sense_cap_f,
         args.feedback_scale,
@@ -4711,11 +6151,21 @@ def main() -> None:
         args.hidden_delta_cap_f,
         args.lead_cap_f,
         args.score_reset_v,
+        args.score_cap_f,
+        args.score_diode_width_u,
+        args.score_mirror_cap_f,
+        args.output_cap_f,
         readout_update_width,
         args.readout_pos_update_width_u,
         args.readout_neg_update_width_u,
         args.readout_charge_update_width_u,
         args.readout_discharge_update_width_u,
+        args.readout_dp_gate_update_width_u,
+        args.readout_dn_gate_update_width_u,
+        args.readout_dp_discharge_gate_update_width_u,
+        args.readout_dp_charge_gate_update_width_u,
+        args.readout_dn_discharge_gate_update_width_u,
+        args.readout_dn_charge_gate_update_width_u,
         output_bias_update_width,
         args.readout_center_pull_width_u,
         args.output_bias_center_pull_width_u,
@@ -4727,6 +6177,9 @@ def main() -> None:
         args.readout_center_pull_gate,
         args.readout_center_pull_mode,
         args.readout_write_state_gate_mode,
+        args.readout_write_gate_device,
+        args.output_bias_write_pre_gate,
+        args.output_bias_flow_polarity,
         args.readout_write_high_v,
         args.readout_write_low_v,
         readout_pos_write_high_v,
@@ -4743,6 +6196,8 @@ def main() -> None:
         args.latch_boost_width_u,
         args.residual_target_width_u,
         args.residual_output_width_u,
+        args.error_target_source_v,
+        args.error_nontarget_source_v,
         args.lose_pull_kohm,
         args.lose_width_u,
         args.lead_mode,
@@ -4757,6 +6212,7 @@ def main() -> None:
         args.apply_end_ns,
         args.measure_detail,
         readout_sample_offsets_ns,
+        activation_sample_offsets_ns,
         args.tran_step_ps,
         args.spice_accuracy_preset,
         not args.skip_train_refire,
@@ -4766,24 +6222,29 @@ def main() -> None:
     parsed = run_netlist(spice_bin, generated / f"{safe_tag}.cir", netlist, args.timeout)
 
     hidden_delta_network_enabled = args.learning_mode != "flow" or args.flow_hidden_write == "direct"
+    low_true_output = args.output_head in LOW_TRUE_OUTPUT_HEADS
     rows: list[dict[str, Any]] = []
     for idx, sample in enumerate(samples):
         phase = str(sample["phase"])
         label = int(sample["label"])
         if OUTPUTS == 2:
-            target_out = parsed[f"target_out_{idx}"]
-            other_out = parsed[f"other_out_{idx}"]
-            margin = parsed[f"margin_{idx}"]
-            predicted_label = label if margin > 0 else 1 - label
+            other = 1 - label
+            target_raw = parsed[f"target_out_{idx}"]
+            other_raw = parsed[f"other_out_{idx}"]
+            output_target = -target_raw if low_true_output else target_raw
+            output_other = -other_raw if low_true_output else other_raw
+            output_margin = output_target - output_other
+            output_predicted_label = label if output_margin > 0 else 1 - label
             score_values = [parsed[f"score{out}_{idx}"] for out in range(OUTPUTS)]
             score_cmp_values = [parsed[f"score{out}_cmp_{idx}"] for out in range(OUTPUTS)]
             out_cmp_values = [parsed[f"out{out}_cmp_{idx}"] for out in range(OUTPUTS)]
         else:
             out_values = [parsed[f"out{out}_{idx}"] for out in range(OUTPUTS)]
-            target_out = out_values[label]
-            other_out = max(value for out, value in enumerate(out_values) if out != label)
-            margin = target_out - other_out
-            predicted_label = int(np.argmax(out_values))
+            output_decision_values = [-value for value in out_values] if low_true_output else out_values
+            output_target = output_decision_values[label]
+            output_other = max(value for out, value in enumerate(output_decision_values) if out != label)
+            output_margin = output_target - output_other
+            output_predicted_label = int(np.argmax(output_decision_values))
             score_values = [parsed[f"score{out}_{idx}"] for out in range(OUTPUTS)]
             score_cmp_values = [parsed[f"score{out}_cmp_{idx}"] for out in range(OUTPUTS)]
             out_cmp_values = [parsed[f"out{out}_cmp_{idx}"] for out in range(OUTPUTS)]
@@ -4791,6 +6252,15 @@ def main() -> None:
         score_other = max(value for out, value in enumerate(score_values) if out != label)
         score_margin = score_target - score_other
         score_predicted_label = int(np.argmax(score_values))
+        target_out, other_out, margin, predicted_label = selected_decision(
+            decision_source=args.decision_source,
+            output_target=output_target,
+            output_other=output_other,
+            output_predicted_label=output_predicted_label,
+            score_target=score_target,
+            score_other=score_other,
+            score_predicted_label=score_predicted_label,
+        )
         row: dict[str, Any] = {
             "cycle": idx,
             "phase": phase,
@@ -4804,6 +6274,11 @@ def main() -> None:
             "margin": margin,
             "predicted_label": predicted_label,
             "correct": predicted_label == label,
+            "output_target": output_target,
+            "output_other": output_other,
+            "output_margin": output_margin,
+            "output_predicted_label": output_predicted_label,
+            "output_correct": output_predicted_label == label,
             "target_score": score_target,
             "other_score": score_other,
             "score_margin": score_margin,
@@ -4813,14 +6288,20 @@ def main() -> None:
         }
         for out, value in enumerate(score_values):
             row[f"score{out}"] = value
-            if args.output_head == "split_score_caps":
+            if args.output_head in SPLIT_SCORE_OUTPUT_HEADS:
                 row[f"scorep{out}"] = parsed[f"scorep{out}_{idx}"]
                 row[f"scoren{out}"] = parsed[f"scoren{out}_{idx}"]
+                if args.output_head in DIODE_MIRROR_OUTPUT_HEADS:
+                    row[f"scorepm{out}"] = parsed[f"scorepm{out}_{idx}"]
+                    row[f"scorenm{out}"] = parsed[f"scorenm{out}_{idx}"]
         for out, value in enumerate(score_cmp_values):
             row[f"score{out}_cmp"] = value
-            if args.output_head == "split_score_caps":
+            if args.output_head in SPLIT_SCORE_OUTPUT_HEADS:
                 row[f"scorep{out}_cmp"] = parsed[f"scorep{out}_cmp_{idx}"]
                 row[f"scoren{out}_cmp"] = parsed[f"scoren{out}_cmp_{idx}"]
+                if args.output_head in DIODE_MIRROR_OUTPUT_HEADS:
+                    row[f"scorepm{out}_cmp"] = parsed[f"scorepm{out}_cmp_{idx}"]
+                    row[f"scorenm{out}_cmp"] = parsed[f"scorenm{out}_cmp_{idx}"]
         for out, value in enumerate(out_cmp_values):
             row[f"out{out}_cmp"] = value
         if OUTPUTS != 2:
@@ -4829,22 +6310,54 @@ def main() -> None:
         for offset in readout_sample_offsets_ns:
             key = offset_key(offset)
             if OUTPUTS == 2:
-                offset_margin = parsed[f"margin_{key}_{idx}"]
-                row[f"target_out_{key}"] = parsed[f"target_out_{key}_{idx}"]
-                row[f"other_out_{key}"] = parsed[f"other_out_{key}_{idx}"]
-                row[f"margin_{key}"] = offset_margin
-                row[f"correct_{key}"] = offset_margin > 0
-            else:
-                offset_values = [parsed[f"out{out}_{key}_{idx}"] for out in range(OUTPUTS)]
-                offset_target = offset_values[label]
-                offset_other = max(value for out, value in enumerate(offset_values) if out != label)
-                offset_predicted = int(np.argmax(offset_values))
+                target_raw = parsed[f"target_out_{key}_{idx}"]
+                other_raw = parsed[f"other_out_{key}_{idx}"]
+                offset_target = -target_raw if low_true_output else target_raw
+                offset_other = -other_raw if low_true_output else other_raw
+                offset_output_margin = offset_target - offset_other
+                offset_score_values = [parsed[f"score{out}_{key}_{idx}"] for out in range(OUTPUTS)]
+                offset_score_target = offset_score_values[label]
+                offset_score_other = offset_score_values[other]
+                offset_score_margin = offset_score_target - offset_score_other
                 row[f"target_out_{key}"] = offset_target
                 row[f"other_out_{key}"] = offset_other
-                row[f"margin_{key}"] = offset_target - offset_other
-                row[f"correct_{key}"] = offset_predicted == label
+                row[f"output_margin_{key}"] = offset_output_margin
+                row[f"target_score_{key}"] = offset_score_target
+                row[f"other_score_{key}"] = offset_score_other
+                row[f"score_margin_{key}"] = offset_score_margin
+                if args.decision_source == "score":
+                    row[f"margin_{key}"] = offset_score_margin
+                    row[f"correct_{key}"] = offset_score_margin > 0
+                else:
+                    row[f"margin_{key}"] = offset_output_margin
+                    row[f"correct_{key}"] = offset_output_margin > 0
+            else:
+                offset_values = [parsed[f"out{out}_{key}_{idx}"] for out in range(OUTPUTS)]
+                offset_decision_values = [-value for value in offset_values] if low_true_output else offset_values
+                offset_target = offset_decision_values[label]
+                offset_other = max(value for out, value in enumerate(offset_decision_values) if out != label)
+                offset_predicted = int(np.argmax(offset_decision_values))
+                offset_score_values = [parsed[f"score{out}_{key}_{idx}"] for out in range(OUTPUTS)]
+                offset_score_target = offset_score_values[label]
+                offset_score_other = max(value for out, value in enumerate(offset_score_values) if out != label)
+                offset_score_predicted = int(np.argmax(offset_score_values))
+                row[f"target_out_{key}"] = offset_target
+                row[f"other_out_{key}"] = offset_other
+                row[f"output_margin_{key}"] = offset_target - offset_other
+                row[f"target_score_{key}"] = offset_score_target
+                row[f"other_score_{key}"] = offset_score_other
+                row[f"score_margin_{key}"] = offset_score_target - offset_score_other
+                if args.decision_source == "score":
+                    row[f"margin_{key}"] = offset_score_target - offset_score_other
+                    row[f"correct_{key}"] = offset_score_predicted == label
+                else:
+                    row[f"margin_{key}"] = offset_target - offset_other
+                    row[f"correct_{key}"] = offset_predicted == label
         for h in range(HIDDEN):
             row[f"act{h}"] = parsed[f"act{h}_{idx}"]
+            for offset in sorted({readout_sample_offsets_ns[0], *activation_sample_offsets_ns}):
+                key = offset_key(offset)
+                row[f"act{h}_{key}"] = parsed[f"act{h}_{key}_{idx}"]
         for out in range(OUTPUTS):
             row[f"lose{out}"] = parsed[f"lose{out}_{idx}"]
         row["lead01"] = parsed[f"lead01_{idx}"]
@@ -4866,12 +6379,57 @@ def main() -> None:
                 row[f"dp{out}"] = parsed[f"dp{out}_{idx}"]
                 row[f"dn{out}"] = parsed[f"dn{out}_{idx}"]
                 row[f"output_delta_net_{out}"] = parsed[f"output_delta_net_{out}_{idx}"]
+                if args.readout_write_error_exclusion == "diffpair_bleed":
+                    row[f"rwpos{out}"] = parsed[f"rwpos{out}_{idx}"]
+                    row[f"rwneg{out}"] = parsed[f"rwneg{out}_{idx}"]
+                    row[f"rwsel{out}_posbar"] = parsed[f"rwsel{out}_posbar_{idx}"]
+                    row[f"rwsel{out}_negbar"] = parsed[f"rwsel{out}_negbar_{idx}"]
+                    row[f"readout_write_select_net_{out}"] = parsed[f"readout_write_select_net_{out}_{idx}"]
+                    row[f"readout_write_select_bar_net_{out}"] = parsed[
+                        f"readout_write_select_bar_net_{out}_{idx}"
+                    ]
+                if args.flow_pre_store == "synapse_spike":
+                    fprg_values = [parsed[f"fprg{out}{h}_{idx}"] for h in readout_fanins[out]]
+                    fprbar_values = [parsed[f"fprbar{out}{h}_{idx}"] for h in readout_fanins[out]]
+                    if fprg_values:
+                        row[f"fprg{out}_on_fraction"] = float(np.mean(np.asarray(fprg_values) > 0.6))
+                        row[f"fprg{out}_min"] = float(min(fprg_values))
+                        row[f"fprg{out}_max"] = float(max(fprg_values))
+                        row[f"fprbar{out}_min"] = float(min(fprbar_values))
+                        row[f"fprbar{out}_max"] = float(max(fprbar_values))
             row["max_abs_output_delta_signal"] = max(
                 abs(parsed[f"output_delta_net_{out}_{idx}"]) for out in range(OUTPUTS)
             )
             row["max_output_delta_node"] = max(
                 max(abs(parsed[f"dp{out}_{idx}"]), abs(parsed[f"dn{out}_{idx}"])) for out in range(OUTPUTS)
             )
+            if args.readout_write_error_exclusion == "diffpair_bleed":
+                row["max_abs_readout_write_select_signal"] = max(
+                    abs(parsed[f"readout_write_select_net_{out}_{idx}"]) for out in range(OUTPUTS)
+                )
+                row["max_abs_readout_write_select_bar_signal"] = max(
+                    abs(parsed[f"readout_write_select_bar_net_{out}_{idx}"]) for out in range(OUTPUTS)
+                )
+                row["max_readout_write_select_node"] = max(
+                    max(abs(parsed[f"rwpos{out}_{idx}"]), abs(parsed[f"rwneg{out}_{idx}"]))
+                    for out in range(OUTPUTS)
+                )
+                row["min_readout_write_select_bar"] = min(
+                    min(parsed[f"rwsel{out}_posbar_{idx}"], parsed[f"rwsel{out}_negbar_{idx}"])
+                    for out in range(OUTPUTS)
+                )
+            if args.flow_pre_store == "synapse_spike":
+                all_fprg_values = [
+                    parsed[f"fprg{out}{h}_{idx}"] for out in range(OUTPUTS) for h in readout_fanins[out]
+                ]
+                all_fprbar_values = [
+                    parsed[f"fprbar{out}{h}_{idx}"] for out in range(OUTPUTS) for h in readout_fanins[out]
+                ]
+                row["flow_pre_spike_on_fraction"] = float(np.mean(np.asarray(all_fprg_values) > 0.6))
+                row["flow_pre_spike_gate_min"] = float(min(all_fprg_values))
+                row["flow_pre_spike_gate_max"] = float(max(all_fprg_values))
+                row["flow_pre_spike_bar_min"] = float(min(all_fprbar_values))
+                row["flow_pre_spike_bar_max"] = float(max(all_fprbar_values))
             if hidden_delta_network_enabled:
                 row["max_abs_hidden_delta_signal"] = max(
                     abs(parsed[f"hidden_delta_net_{h}_{idx}"]) for h in range(HIDDEN)
@@ -4899,12 +6457,12 @@ def main() -> None:
                 row["max_abs_hidden_grad_signal"] = max(
                     abs(parsed[f"hidden_grad_net_{h}_{rail}_{idx}"])
                     for h in range(HIDDEN)
-                    for rail in HIDDEN_RAILS
+                    for rail in hidden_fanins[h]
                 )
                 row["max_hidden_grad_node"] = max(
                     max(parsed[f"ghp{h}_{rail}_{idx}"], parsed[f"ghn{h}_{rail}_{idx}"])
                     for h in range(HIDDEN)
-                    for rail in HIDDEN_RAILS
+                    for rail in hidden_fanins[h]
                 )
             if (
                 args.learning_mode == "accumulate_apply"
@@ -4914,17 +6472,22 @@ def main() -> None:
                 row["max_abs_hidden_apply_gate_signal"] = max(
                     abs(parsed[f"hidden_apply_gate_net_{h}_{rail}_{idx}"])
                     for h in range(HIDDEN)
-                    for rail in HIDDEN_RAILS
+                    for rail in hidden_fanins[h]
                 )
                 row["max_hidden_apply_gate_node"] = max(
                     max(parsed[f"hgwp{h}_{rail}_{idx}"], parsed[f"hgwn{h}_{rail}_{idx}"])
                     for h in range(HIDDEN)
-                    for rail in HIDDEN_RAILS
+                    for rail in hidden_fanins[h]
                 )
         if phase == "train" and sample.get("apply_update", True) and args.measure_detail == "full" and OUTPUTS == 2:
+            readout_delta_values = [
+                abs(parsed[f"d_vw{out}{h}_signed_{idx}"])
+                for out in range(OUTPUTS)
+                for h in readout_fanins[out]
+            ]
             readout_weight_delta_by_out = {
                 f"sum_d_readout_out{out}_signed": sum(
-                    parsed[f"d_vw{out}{h}_signed_{idx}"] for h in range(HIDDEN)
+                    parsed[f"d_vw{out}{h}_signed_{idx}"] for h in readout_fanins[out]
                 )
                 for out in range(OUTPUTS)
             }
@@ -4937,25 +6500,19 @@ def main() -> None:
                     "post_update_margin": parsed[f"train_margin_after_{idx}"],
                     "d_margin_after_update": parsed[f"train_d_margin_{idx}"],
                     "max_abs_readout_weight_signed_delta": max(
-                        abs(parsed[f"d_vw{out}{h}_signed_{idx}"])
-                        for out in range(OUTPUTS)
-                        for h in range(HIDDEN)
+                        readout_delta_values or [0.0]
                     ),
                     "max_abs_output_bias_signed_delta": max(
                         abs(parsed[f"d_vbo{out}_signed_{idx}"]) for out in range(OUTPUTS)
                     ),
                     "max_abs_readout_signed_delta": max(
-                        [
-                            abs(parsed[f"d_vw{out}{h}_signed_{idx}"])
-                            for out in range(OUTPUTS)
-                            for h in range(HIDDEN)
-                        ]
+                        readout_delta_values
                         + [abs(parsed[f"d_vbo{out}_signed_{idx}"]) for out in range(OUTPUTS)]
                     ),
                     "max_abs_hidden_signed_delta": max(
                         abs(parsed[f"d_wh{h}_{rail}_signed_{idx}"])
                         for h in range(HIDDEN)
-                        for rail in HIDDEN_RAILS
+                        for rail in hidden_fanins[h]
                     ),
                 }
                 | readout_weight_delta_by_out
@@ -4996,33 +6553,33 @@ def main() -> None:
     total_readout_deltas = [
         parsed[f"d_vw{out}{h}_signed_total"]
         for out in range(OUTPUTS)
-        for h in range(HIDDEN)
+        for h in readout_fanins[out]
     ]
     total_readout_pos_branch_deltas = [
         parsed[f"vw{out}{h}p_final"] - parsed[f"vw{out}{h}p_initial"]
         for out in range(OUTPUTS)
-        for h in range(HIDDEN)
+        for h in readout_fanins[out]
     ]
     total_readout_neg_branch_deltas = [
         parsed[f"vw{out}{h}n_final"] - parsed[f"vw{out}{h}n_initial"]
         for out in range(OUTPUTS)
-        for h in range(HIDDEN)
+        for h in readout_fanins[out]
     ]
     total_readout_deltas_by_out = {
         f"total_readout_out{out}_signed_delta_v": sum(
-            parsed[f"d_vw{out}{h}_signed_total"] for h in range(HIDDEN)
+            parsed[f"d_vw{out}{h}_signed_total"] for h in readout_fanins[out]
         )
         for out in range(OUTPUTS)
     }
     total_readout_pos_branch_deltas_by_out = {
         f"total_readout_out{out}_pos_branch_delta_v": sum(
-            parsed[f"vw{out}{h}p_final"] - parsed[f"vw{out}{h}p_initial"] for h in range(HIDDEN)
+            parsed[f"vw{out}{h}p_final"] - parsed[f"vw{out}{h}p_initial"] for h in readout_fanins[out]
         )
         for out in range(OUTPUTS)
     }
     total_readout_neg_branch_deltas_by_out = {
         f"total_readout_out{out}_neg_branch_delta_v": sum(
-            parsed[f"vw{out}{h}n_final"] - parsed[f"vw{out}{h}n_initial"] for h in range(HIDDEN)
+            parsed[f"vw{out}{h}n_final"] - parsed[f"vw{out}{h}n_initial"] for h in readout_fanins[out]
         )
         for out in range(OUTPUTS)
     }
@@ -5033,6 +6590,21 @@ def main() -> None:
         )
         for out in range(OUTPUTS)
     }
+    total_readout_common_deltas = list(total_readout_common_deltas_by_out.values())
+    readout_initial_branch_values = [
+        parsed[f"vw{out}{h}{suffix}_initial"]
+        for out in range(OUTPUTS)
+        for h in readout_fanins[out]
+        for suffix in ("p", "n")
+    ]
+    readout_final_branch_values = [
+        parsed[f"vw{out}{h}{suffix}_final"]
+        for out in range(OUTPUTS)
+        for h in readout_fanins[out]
+        for suffix in ("p", "n")
+    ]
+    max_abs_total_readout_signed_delta = max(abs(x) for x in total_readout_deltas)
+    max_abs_total_readout_common_delta = max(abs(x) for x in total_readout_common_deltas)
     row_signed_deltas = list(total_readout_deltas_by_out.values())
     total_output_bias_deltas = [parsed[f"d_vbo{out}_signed_total"] for out in range(OUTPUTS)]
     total_output_bias_deltas_by_out = {
@@ -5042,7 +6614,7 @@ def main() -> None:
     total_hidden_deltas = [
         parsed[f"d_wh{h}_{rail}_signed_total"]
         for h in range(HIDDEN)
-        for rail in HIDDEN_RAILS
+        for rail in hidden_fanins[h]
     ]
     effective_design = scaled_synapse_design(
         args.synapse_design,
@@ -5071,8 +6643,45 @@ def main() -> None:
         not train.empty and "max_abs_hidden_delta_gate_signal" in train.columns
     )
     has_bwd_metrics = not train.empty and "bwd_signal" in train.columns
+    has_readout_write_select_metrics = (
+        not train.empty and "max_abs_readout_write_select_signal" in train.columns
+    )
+    readout_write_select_stats = (
+        {
+            "max_train_readout_write_select_signal_v": float(
+                train["max_abs_readout_write_select_signal"].max()
+            ),
+            "mean_train_readout_write_select_signal_v": float(
+                train["max_abs_readout_write_select_signal"].mean()
+            ),
+            "max_train_readout_write_select_bar_signal_v": float(
+                train["max_abs_readout_write_select_bar_signal"].max()
+            ),
+            "mean_train_readout_write_select_bar_signal_v": float(
+                train["max_abs_readout_write_select_bar_signal"].mean()
+            ),
+            "max_train_readout_write_select_node_v": float(train["max_readout_write_select_node"].max()),
+            "min_train_readout_write_select_bar_v": float(train["min_readout_write_select_bar"].min()),
+        }
+        if has_readout_write_select_metrics
+        else {}
+    )
+    has_flow_pre_spike_metrics = not train.empty and "flow_pre_spike_on_fraction" in train.columns
+    flow_pre_spike_stats = (
+        {
+            "mean_train_flow_pre_spike_on_fraction": float(train["flow_pre_spike_on_fraction"].mean()),
+            "min_train_flow_pre_spike_on_fraction": float(train["flow_pre_spike_on_fraction"].min()),
+            "max_train_flow_pre_spike_on_fraction": float(train["flow_pre_spike_on_fraction"].max()),
+            "min_train_flow_pre_spike_gate_v": float(train["flow_pre_spike_gate_min"].min()),
+            "max_train_flow_pre_spike_gate_v": float(train["flow_pre_spike_gate_max"].max()),
+            "min_train_flow_pre_spike_bar_v": float(train["flow_pre_spike_bar_min"].min()),
+            "max_train_flow_pre_spike_bar_v": float(train["flow_pre_spike_bar_max"].max()),
+        }
+        if has_flow_pre_spike_metrics
+        else {}
+    )
     mistake_gate_stats = (
-        target_mistake_gate_stats(train)
+        target_mistake_gate_stats(train, args.lead_mode)
         if OUTPUTS == 2
         and args.backward_gate_mode in {
             "target_mistake",
@@ -5086,9 +6695,20 @@ def main() -> None:
         else {}
     )
     mistake_latch_stats = (
-        target_mistake_latch_stats(train) if OUTPUTS == 2 and "mistake_latch" in args.backward_gate_mode else {}
+        target_mistake_latch_stats(train, args.lead_mode)
+        if OUTPUTS == 2 and "mistake_latch" in args.backward_gate_mode
+        else {}
     )
     output_error_stats = output_error_rail_stats(train, args.lead_mode) if OUTPUTS == 2 and has_output_delta_metrics else {}
+    output_delta_alignment_stats = (
+        output_delta_alignment_metrics(train, OUTPUTS) if has_output_delta_metrics else {}
+    )
+    train_output_delta_sums = output_delta_sums_by_out(train, OUTPUTS) if has_output_delta_metrics else None
+    train_output_delta_sums_by_out = (
+        {f"train_output_delta_out{out}_sum_v": value for out, value in enumerate(train_output_delta_sums)}
+        if train_output_delta_sums is not None
+        else {}
+    )
     hidden_delta_network_enabled = args.learning_mode != "flow" or args.flow_hidden_write == "direct"
     hidden_weight_updates_enabled = args.epochs > 0 and not (
         args.learning_mode == "flow" and args.flow_hidden_write == "off"
@@ -5163,6 +6783,12 @@ def main() -> None:
         readout_offset_stats,
         key=lambda item: (float(item["final_accuracy"]), float(item["final_min_margin_v"])),
     )
+    initial_labels = initial_eval["label"].to_numpy(dtype=int)
+    final_labels = final_eval["label"].to_numpy(dtype=int)
+    initial_score_values = score_matrix(initial_eval, OUTPUTS)
+    final_score_values = score_matrix(final_eval, OUTPUTS)
+    initial_output_values = output_decision_matrix(initial_eval, OUTPUTS, low_true_output=low_true_output)
+    final_output_values = output_decision_matrix(final_eval, OUTPUTS, low_true_output=low_true_output)
     summary = {
         "tag": safe_tag,
         "simulator": version,
@@ -5179,6 +6805,13 @@ def main() -> None:
         "model_level": "ngspice built-in LEVEL=1 MOS models; not a foundry PDK.",
         "synapse_design": args.synapse_design,
         "synapse_design_description": SYNAPSE_DESIGNS[args.synapse_design].description,
+        "readout_topology": args.readout_topology,
+        "readout_topology_seed": args.readout_topology_seed,
+        "readout_fan_in": args.readout_fan_in if args.readout_topology == "random_fanin" else None,
+        "readout_fan_out": args.readout_fan_out
+        if args.readout_topology in {"random_fanout", "balanced_random_fanout"}
+        else None,
+        **readout_topology_info,
         "hidden_delta_width_scale": args.hidden_delta_width_scale,
         "hidden_gradient_width_scale": args.hidden_gradient_width_scale,
         "readout_gradient_width_scale": args.readout_gradient_width_scale,
@@ -5232,6 +6865,9 @@ def main() -> None:
         "flow_pre_boost_width_u": args.flow_pre_boost_width_u
         if args.learning_mode == "flow" and args.flow_pre_store == "synapse_boost"
         else None,
+        "flow_pre_spike_ref_v": args.flow_pre_spike_ref_v
+        if args.learning_mode == "flow" and args.flow_pre_store == "synapse_spike"
+        else None,
         "uses_gradient_accumulators": args.learning_mode == "accumulate_apply",
         "uses_separate_apply_phase": args.learning_mode == "accumulate_apply"
         or (
@@ -5247,13 +6883,19 @@ def main() -> None:
         and args.flow_pre_store == "synapse_consume",
         "uses_boosted_pre_activation_write_gate": args.learning_mode == "flow"
         and args.flow_pre_store == "synapse_boost",
+        "uses_spiking_pre_activation_write_gate": args.learning_mode == "flow"
+        and args.flow_pre_store == "synapse_spike",
         "pre_activation_capture_path": (
             "mos_store_trace_caps_plus_boosted_write_gate"
             if args.learning_mode == "flow" and args.flow_pre_store == "synapse_boost"
             else (
-                "mos_store_trace_caps"
-                if args.learning_mode == "flow" and args.flow_pre_store != "shared_node"
-                else "shared_source_nodes"
+                "mos_store_trace_caps_plus_thresholded_full_swing_eligibility_gate"
+                if args.learning_mode == "flow" and args.flow_pre_store == "synapse_spike"
+                else (
+                    "mos_store_trace_caps"
+                    if args.learning_mode == "flow" and args.flow_pre_store != "shared_node"
+                    else "shared_source_nodes"
+                )
             )
         ),
         "hidden_delta_passes_through_activation_gate": hidden_delta_network_enabled
@@ -5278,6 +6920,10 @@ def main() -> None:
         "input_frontend": records[0].get("input_frontend") if records else None,
         "input_frontend_key": records[0].get("input_frontend_key") if records else None,
         "hidden_forward_mode": args.hidden_forward_mode,
+        "hidden_input_topology": args.hidden_input_topology,
+        "hidden_input_topology_seed": args.hidden_input_topology_seed,
+        "hidden_input_fan_in": args.hidden_input_fan_in if args.hidden_input_topology == "random_fanin" else None,
+        **hidden_topology_info,
         "signal_path": (
             (
                 f"{min(HIDDEN, len(INPUT_RAILS))} hidden activation capacitors are MOS pass-gate buffered "
@@ -5286,8 +6932,15 @@ def main() -> None:
             )
             if args.hidden_forward_mode == "rail_buffer"
             else (
-                f"{HIDDEN} fully connected hidden ReLU cells receive signed conductance from "
-                f"{len(INPUT_RAILS)} externally driven input rails plus a bias rail. "
+                f"{HIDDEN} hidden ReLU cells pass selected externally driven input/bias rails "
+                f"as the positive-source voltage through capacitor-held weight gates, with signed negative "
+                f"discharge branches, into the hidden pre-activation capacitors. "
+            )
+            if args.hidden_forward_mode == "weighted_relu_pass_input"
+            else (
+                f"{HIDDEN} hidden ReLU cells receive signed conductance from "
+                f"{hidden_topology_info['hidden_input_edge_count']} selected data-input synapses plus "
+                f"one bias rail per hidden cell. "
             )
         )
         + (
@@ -5344,12 +6997,16 @@ def main() -> None:
         "latch_boost_width_u": args.latch_boost_width_u
         if args.error_rule == "out_competitive_latchboost"
         else None,
-        "residual_target_width_u": args.residual_target_width_u
-        if args.error_rule in {"out_residual", "onehot", "onehot_out", "ce_out", "ce_split_score"}
-        else None,
-        "residual_output_width_u": args.residual_output_width_u
-        if args.error_rule in {"out_residual", "onehot", "onehot_out", "ce_out", "ce_split_score"}
-        else None,
+        "residual_target_width_u": args.residual_target_width_u if args.error_rule in UPDATE_ERROR_RULES else None,
+        "residual_output_width_u": args.residual_output_width_u if args.error_rule in UPDATE_ERROR_RULES else None,
+        "error_target_source_v": args.error_target_source_v if args.error_rule in UPDATE_ERROR_RULES else None,
+        "error_nontarget_source_v": args.error_nontarget_source_v if args.error_rule in UPDATE_ERROR_RULES else None,
+        "error_source_balance": args.error_source_balance if args.error_rule in UPDATE_ERROR_RULES else "none",
+        "error_nontarget_balance_scale": (
+            args.error_nontarget_balance_scale
+            if args.error_rule in UPDATE_ERROR_RULES and args.error_source_balance != "none"
+            else None
+        ),
         "lose_pull_kohm": args.lose_pull_kohm,
         "lose_width_u": args.lose_width_u,
         "lead_mode": args.lead_mode,
@@ -5370,6 +7027,20 @@ def main() -> None:
         **mistake_gate_stats,
         **mistake_latch_stats,
         **output_error_stats,
+        **output_delta_alignment_stats,
+        **train_output_delta_sums_by_out,
+        **readout_write_select_stats,
+        **flow_pre_spike_stats,
+        "readout_row_delta_matches_output_delta_sum_fraction": (
+            signed_alignment_fraction(row_signed_deltas, train_output_delta_sums)
+            if train_output_delta_sums is not None
+            else None
+        ),
+        "readout_row_delta_vs_output_delta_sum_cosine": (
+            cosine_similarity(row_signed_deltas, train_output_delta_sums)
+            if train_output_delta_sums is not None
+            else None
+        ),
         "max_train_mistake_latch_v": float(train[["merr0", "merr1"]].max().max())
         if has_mistake_latch_metrics
         else None,
@@ -5407,13 +7078,45 @@ def main() -> None:
         "hidden_delta_cap_f": args.hidden_delta_cap_f,
         "lead_cap_f": args.lead_cap_f,
         "score_reset_v": args.score_reset_v,
+        "score_cap_f": args.score_cap_f,
+        "score_diode_width_u": (
+            args.score_diode_width_u
+            if args.output_head in {"split_score_diode_diffpair", *DIODE_MIRROR_OUTPUT_HEADS}
+            else None
+        ),
+        "score_mirror_cap_f": args.score_mirror_cap_f if args.output_head in DIODE_MIRROR_OUTPUT_HEADS else None,
+        "output_cap_f": args.output_cap_f,
         "update_width_u": args.update_width_u,
         "readout_update_width_u": readout_update_width,
         "readout_pos_update_width_u": readout_pos_update_width if args.learning_mode == "flow" else None,
         "readout_neg_update_width_u": readout_neg_update_width if args.learning_mode == "flow" else None,
         "readout_charge_update_width_u": readout_charge_update_width if args.learning_mode == "flow" else None,
         "readout_discharge_update_width_u": readout_discharge_update_width if args.learning_mode == "flow" else None,
+        "readout_dp_gate_update_width_u": args.readout_dp_gate_update_width_u
+        if args.learning_mode == "flow"
+        else None,
+        "readout_dn_gate_update_width_u": args.readout_dn_gate_update_width_u
+        if args.learning_mode == "flow"
+        else None,
+        "readout_dp_discharge_gate_update_width_u": args.readout_dp_discharge_gate_update_width_u
+        if args.learning_mode == "flow"
+        else None,
+        "readout_dp_charge_gate_update_width_u": args.readout_dp_charge_gate_update_width_u
+        if args.learning_mode == "flow"
+        else None,
+        "readout_dn_discharge_gate_update_width_u": args.readout_dn_discharge_gate_update_width_u
+        if args.learning_mode == "flow"
+        else None,
+        "readout_dn_charge_gate_update_width_u": args.readout_dn_charge_gate_update_width_u
+        if args.learning_mode == "flow"
+        else None,
         "output_bias_update_width_u": output_bias_update_width,
+        "effective_output_bias_discharge_update_width_u": (
+            effective_output_bias_discharge_width if args.learning_mode == "flow" else None
+        ),
+        "effective_output_bias_charge_update_width_u": (
+            effective_output_bias_charge_width if args.learning_mode == "flow" else None
+        ),
         "readout_center_pull_width_u": args.readout_center_pull_width_u if args.learning_mode == "flow" else None,
         "output_bias_center_pull_width_u": args.output_bias_center_pull_width_u
         if args.learning_mode == "flow"
@@ -5452,6 +7155,9 @@ def main() -> None:
         "readout_write_state_gate_mode": (
             args.readout_write_state_gate_mode if args.learning_mode == "flow" else None
         ),
+        "readout_write_gate_device": args.readout_write_gate_device if args.learning_mode == "flow" else None,
+        "output_bias_write_pre_gate": args.output_bias_write_pre_gate if args.learning_mode == "flow" else None,
+        "output_bias_flow_polarity": args.output_bias_flow_polarity if args.learning_mode == "flow" else None,
         "readout_write_high_v": (
             args.readout_write_high_v
             if args.learning_mode == "flow"
@@ -5504,6 +7210,7 @@ def main() -> None:
         "apply_end_ns": args.apply_end_ns,
         "apply_duration_ns": args.apply_end_ns - args.apply_start_ns,
         "readout_sample_offsets_ns": readout_sample_offsets_ns,
+        "activation_sample_offsets_ns": sorted({readout_sample_offsets_ns[0], *activation_sample_offsets_ns}),
         "eval_each_epoch": args.eval_each_epoch,
         "epoch_eval_stats": epoch_eval_stats,
         "best_eval_phase": best_eval_phase["phase"],
@@ -5511,15 +7218,29 @@ def main() -> None:
         "best_eval_accuracy": best_eval_phase["accuracy"],
         "best_eval_min_margin_v": best_eval_phase["min_margin_v"],
         "readout_offset_stats": readout_offset_stats,
+        "readout_offset_decision_source": args.decision_source,
         "best_final_transient_offset_ns": best_final_transient["offset_ns"],
         "best_final_transient_accuracy": best_final_transient["final_accuracy"],
         "best_final_transient_min_margin_v": best_final_transient["final_min_margin_v"],
+        "decision_source": args.decision_source,
         "initial_eval_accuracy": float(initial_eval["correct"].mean()),
         "final_eval_accuracy": float(final_eval["correct"].mean()),
+        "initial_output_accuracy": float(initial_eval["output_correct"].mean()),
+        "final_output_accuracy": float(final_eval["output_correct"].mean()),
         "initial_score_accuracy": float(initial_eval["score_correct"].mean()),
         "final_score_accuracy": float(final_eval["score_correct"].mean()),
+        **column_centering_metrics("initial_score", initial_score_values, initial_labels),
+        **column_centering_metrics("final_score", final_score_values, final_labels),
+        **column_centering_metrics("initial_output", initial_output_values, initial_labels),
+        **column_centering_metrics("final_output", final_output_values, final_labels),
         "initial_prediction_histogram": prediction_histogram(initial_eval, OUTPUTS),
         "final_prediction_histogram": prediction_histogram(final_eval, OUTPUTS),
+        "initial_output_prediction_histogram": prediction_histogram_for(
+            initial_eval, OUTPUTS, "output_predicted_label"
+        ),
+        "final_output_prediction_histogram": prediction_histogram_for(
+            final_eval, OUTPUTS, "output_predicted_label"
+        ),
         "initial_score_prediction_histogram": prediction_histogram_for(
             initial_eval, OUTPUTS, "score_predicted_label"
         ),
@@ -5528,6 +7249,8 @@ def main() -> None:
         ),
         "initial_class_accuracy": per_class_accuracy(initial_eval, OUTPUTS),
         "final_class_accuracy": per_class_accuracy(final_eval, OUTPUTS),
+        "initial_output_class_accuracy": per_class_accuracy_for(initial_eval, OUTPUTS, "output_correct"),
+        "final_output_class_accuracy": per_class_accuracy_for(final_eval, OUTPUTS, "output_correct"),
         "initial_score_class_accuracy": per_class_accuracy_for(initial_eval, OUTPUTS, "score_correct"),
         "final_score_class_accuracy": per_class_accuracy_for(final_eval, OUTPUTS, "score_correct"),
         "input_feature_separability": input_feature_separability(records),
@@ -5535,9 +7258,14 @@ def main() -> None:
         "final_hidden_feature_separability": perceptron_separable(final_eval),
         "initial_min_margin_v": float(initial_eval["margin"].min()),
         "final_min_margin_v": float(final_eval["margin"].min()),
+        "initial_output_min_margin_v": float(initial_eval["output_margin"].min()),
+        "final_output_min_margin_v": float(final_eval["output_margin"].min()),
         "initial_score_min_margin_v": float(initial_eval["score_margin"].min()),
         "final_score_min_margin_v": float(final_eval["score_margin"].min()),
         "min_margin_gain_v": float((final_eval["margin"].to_numpy() - initial_eval["margin"].to_numpy()).min()),
+        "output_min_margin_gain_v": float(
+            (final_eval["output_margin"].to_numpy() - initial_eval["output_margin"].to_numpy()).min()
+        ),
         "score_min_margin_gain_v": float(
             (final_eval["score_margin"].to_numpy() - initial_eval["score_margin"].to_numpy()).min()
         ),
@@ -5600,12 +7328,23 @@ def main() -> None:
         "max_train_hidden_apply_gate_node_v": float(applied_train["max_hidden_apply_gate_node"].max())
         if has_hidden_apply_gate_metrics
         else 0.0,
-        "max_abs_total_readout_weight_signed_delta_v": float(max(abs(x) for x in total_readout_deltas)),
+        "initial_readout_branch_min_v": float(min(readout_initial_branch_values)),
+        "initial_readout_branch_max_v": float(max(readout_initial_branch_values)),
+        "final_readout_branch_min_v": float(min(readout_final_branch_values)),
+        "final_readout_branch_max_v": float(max(readout_final_branch_values)),
+        "max_abs_total_readout_weight_signed_delta_v": float(max_abs_total_readout_signed_delta),
         "max_abs_total_readout_pos_branch_delta_v": float(
             max(abs(x) for x in total_readout_pos_branch_deltas)
         ),
         "max_abs_total_readout_neg_branch_delta_v": float(
             max(abs(x) for x in total_readout_neg_branch_deltas)
+        ),
+        "max_abs_total_readout_common_delta_v": float(max_abs_total_readout_common_delta),
+        "readout_common_to_signed_delta_ratio": float(
+            max_abs_total_readout_common_delta / max(max_abs_total_readout_signed_delta, 1e-12)
+        ),
+        "max_abs_readout_common_delta_per_applied_sample_v": float(
+            max_abs_total_readout_common_delta / max(len(applied_train), 1)
         ),
         "readout_row_signed_delta_mean_v": float(np.mean(row_signed_deltas)),
         "readout_row_signed_delta_std_v": float(np.std(row_signed_deltas)),

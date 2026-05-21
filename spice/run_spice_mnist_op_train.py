@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import subprocess
 import time
 from pathlib import Path
 
@@ -11,7 +10,7 @@ import numpy as np
 import pandas as pd
 
 from run_spice_mnist_train import load_mnist_sequence
-from run_spice_sweep import ROOT, detect_spice, run_tiny_test
+from run_spice_sweep import ROOT, detect_spice, prepare_netlist_for_simulator, run_tiny_test, run_simulator_netlist
 
 
 def make_train_op_netlist(
@@ -113,8 +112,8 @@ def run_step(
     timeout: float,
 ) -> tuple[int, np.ndarray, np.ndarray]:
     netlist = generated / "spice_mnist_op_train_step.cir"
-    netlist.write_text(make_train_op_netlist(x, label, weights, bias, lr, tmp_data))
-    proc = subprocess.run([spice_bin, "-b", str(netlist)], text=True, capture_output=True, timeout=timeout)
+    netlist.write_text(prepare_netlist_for_simulator(make_train_op_netlist(x, label, weights, bias, lr, tmp_data), spice_bin))
+    proc = run_simulator_netlist(spice_bin, netlist, timeout=timeout)
     if proc.returncode != 0:
         raise RuntimeError(proc.stderr[-3000:] or proc.stdout[-3000:])
     n_classes, n_in = weights.shape
@@ -139,8 +138,8 @@ def run_eval(
     correct = 0
     netlist = generated / "spice_mnist_op_eval_step.cir"
     for idx, (x, label) in enumerate(zip(x_eval, y_eval)):
-        netlist.write_text(make_eval_op_netlist(x, weights, bias, tmp_data))
-        proc = subprocess.run([spice_bin, "-b", str(netlist)], text=True, capture_output=True, timeout=timeout)
+        netlist.write_text(prepare_netlist_for_simulator(make_eval_op_netlist(x, weights, bias, tmp_data), spice_bin))
+        proc = run_simulator_netlist(spice_bin, netlist, timeout=timeout)
         if proc.returncode != 0:
             raise RuntimeError(proc.stderr[-3000:] or proc.stdout[-3000:])
         y = read_wrdata_row(tmp_data, weights.shape[0])

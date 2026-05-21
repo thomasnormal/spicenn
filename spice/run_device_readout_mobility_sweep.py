@@ -2,8 +2,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import re
-import subprocess
 import time
 from pathlib import Path
 from typing import Any
@@ -13,11 +11,11 @@ import pandas as pd
 
 from run_device_xor2_random_hidden import error_cells, low_score_gate_cells
 from run_device_multicell_classifier import mos_models
-from run_spice_sweep import ROOT, detect_spice, run_tiny_test
+from run_spice_sweep import ROOT, detect_spice, run_text_netlist, run_tiny_test
+from _util import MEAS_RE, parse_measures
 
 
-MEAS_RE = re.compile(r"(?im)^\s*([a-zA-Z_][a-zA-Z0-9_]*)\s*=\s*([-+0-9.eE]+)")
-VDD = 1.2
+from spicenn.timing import VDD
 WRITE_MODES = [
     "discharge",
     "bounded_discharge",
@@ -37,10 +35,6 @@ def parse_float_list(text: str) -> list[float]:
     if not values:
         raise argparse.ArgumentTypeError("expected at least one comma-separated float")
     return values
-
-
-def parse_measures(text: str) -> dict[str, float]:
-    return {name.lower(): float(value) for name, value in MEAS_RE.findall(text)}
 
 
 def common_header() -> str:
@@ -638,14 +632,12 @@ print dp0_probe dn0_probe dp1_probe dn1_probe pre_probe row0_signed_read_delta r
 
 
 def run_netlist(spice_bin: str, path: Path, netlist: str, timeout: float) -> dict[str, float]:
-    path.write_text(netlist)
-    cmd = [spice_bin, "-b", str(path)] if "ngspice" in Path(spice_bin).name.lower() else [spice_bin, str(path)]
-    proc = subprocess.run(cmd, text=True, capture_output=True, timeout=timeout)
+    proc = run_text_netlist(spice_bin, path, netlist, timeout=timeout)
     if proc.returncode != 0:
         raise RuntimeError((proc.stderr or proc.stdout)[-3000:])
     measures = parse_measures(proc.stdout + "\n" + proc.stderr)
     if not measures:
-        raise RuntimeError("ngspice produced no parseable measurements:\n" + (proc.stdout + proc.stderr)[-3000:])
+        raise RuntimeError("SPICE produced no parseable measurements:\n" + (proc.stdout + proc.stderr)[-3000:])
     return measures
 
 

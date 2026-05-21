@@ -23,3 +23,15 @@ spice/results/*trace.csv
 # Mirrored per-run experiment tables. Curated aggregate tables may still be
 # committed explicitly when they are worth keeping.
 results/tables/*_v*.csv
+results/tables/device_readout_error_loop_*.csv
+results/tables/device_readout_error_loop_*_summary.json
+results/tables/device_readout_transfer_pyspice_*.csv
+results/tables/device_readout_branch_surface*.csv
+results/tables/device_readout_branch_surface*_summary.json
+results/tables/device_readout_transfer_branch*.csv
+results/tables/device_readout_transfer_w*.csv
+results/tables/device_readout_write_selectivity_*_afterfix.csv
+results/tables/device_readout_write_selectivity_check_*.csv
+results/tables/device_softmax_current_competition*.csv
+results/tables/device_mnist3fixed8_30_pyspice_*.csv
+results/tables/pyspice_migration_*.csv

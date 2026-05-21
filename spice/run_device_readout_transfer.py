@@ -20,6 +20,12 @@ from typing import Any
 import numpy as np
 import pandas as pd
 
+try:
+    from spicenn import CapStateProgram, load_readout_cap_state_csv
+except ModuleNotFoundError:
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+    from spicenn import CapStateProgram, load_readout_cap_state_csv
+
 import run_device_xor2_random_hidden as direct_flow
 from run_spice_sweep import detect_spice
 
@@ -28,7 +34,13 @@ ROOT = Path(__file__).resolve().parents[1]
 RESULTS = ROOT / "results/tables"
 SPICE_RESULTS = ROOT / "spice/results"
 GENERATED = ROOT / "spice/generated"
-TRANSFER_TOPOLOGIES = ["main", "split_score_caps"]
+TRANSFER_TOPOLOGIES = [
+    "main",
+    "split_score_caps",
+    "split_score_clamped_current",
+    "split_score_diode_clamp",
+    "split_score_diode_current",
+]
 
 
 def piecewise_signal(points: list[tuple[float, float]]) -> str:
@@ -95,13 +107,11 @@ def load_activations(path: Path, phase: str, hidden: int, limit: int | None) -> 
 
 
 def readout_caps(init: dict[str, float], cap_f: float) -> str:
-    lines: list[str] = []
-    for name, value in sorted(init.items()):
-        lines += [
-            f"C{name} {name} 0 {cap_f:.12g}f IC={value:.12g}",
-            f"R{name} {name} 0 1e15",
-        ]
-    return "\n".join(lines)
+    return CapStateProgram("readout_caps", init, cap_f).render_spice()
+
+
+def load_readout_cap_init(path: Path, *, hidden: int, outputs: int) -> dict[str, float]:
+    return load_readout_cap_state_csv(path, hidden_count=hidden, output_count=outputs)
 
 
 def split_score_caps() -> str:
@@ -114,6 +124,44 @@ def split_score_caps() -> str:
             f"Rscoren{out} scoren{out} 0 1G",
             f"Mreset_scorep{out} scorep{out} rstf scorecm 0 NMOS W=4u L=180n",
             f"Mreset_scoren{out} scoren{out} rstf scorecm 0 NMOS W=4u L=180n",
+        ]
+    return "\n".join(lines)
+
+
+def clamped_score_sources(score_v: float) -> str:
+    lines: list[str] = []
+    for out in range(direct_flow.OUTPUTS):
+        lines += [
+            f"Vscorep{out}_clamp scorep{out} 0 {score_v:.12g}",
+            f"Vscoren{out}_clamp scoren{out} 0 {score_v:.12g}",
+        ]
+    return "\n".join(lines)
+
+
+def diode_score_nodes(score_cap_f: float, diode_width_u: float, *, current_probe: bool = False) -> str:
+    lines: list[str] = []
+    for out in range(direct_flow.OUTPUTS):
+        if current_probe:
+            pos_source = f"scorep{out}_sense"
+            neg_source = f"scoren{out}_sense"
+            sense = [
+                f"Vscorep{out}_sense {pos_source} 0 0",
+                f"Vscoren{out}_sense {neg_source} 0 0",
+            ]
+        else:
+            pos_source = "0"
+            neg_source = "0"
+            sense = []
+        lines += [
+            f"Cscorep{out} scorep{out} 0 {score_cap_f:.12g}f IC=0",
+            f"Cscoren{out} scoren{out} 0 {score_cap_f:.12g}f IC=0",
+            f"Rscorep{out} scorep{out} 0 1e12",
+            f"Rscoren{out} scoren{out} 0 1e12",
+            *sense,
+            f"Mscorep{out}_diode scorep{out} scorep{out} {pos_source} 0 NSENSE W={diode_width_u:.12g}u L=180n",
+            f"Mscoren{out}_diode scoren{out} scoren{out} {neg_source} 0 NSENSE W={diode_width_u:.12g}u L=180n",
+            f"Mreset_scorep{out}_diode scorep{out} rstf 0 0 NMOS W=4u L=180n",
+            f"Mreset_scoren{out}_diode scoren{out} rstf 0 0 NMOS W=4u L=180n",
         ]
     return "\n".join(lines)
 
@@ -158,6 +206,7 @@ def split_score_caps_output_forward(design: direct_flow.SynapseDesign) -> str:
             else:
                 raise ValueError(f"unknown output forward style: {design.output_forward_style}")
             lines += direct_flow.node_parasitics(*readout_internal_nodes)
+        bias_internal_nodes = [f"sp{out}bp0", f"sp{out}bp1", f"sn{out}bn0", f"sn{out}bn1"]
         if design.output_forward_style == "gate_stack":
             lines += [
                 f"Msp{out}bpos_a vdd bias sp{out}bp0 0 NSENSE W={design.output_bias_forward_pos_width_u:.12g}u L=180n",
@@ -169,14 +218,13 @@ def split_score_caps_output_forward(design: direct_flow.SynapseDesign) -> str:
             ]
         else:
             lines += [
-                f"Msp{out}bpos_src vdd vbo{out}p sp{out}bp0 0 NREL W={design.output_bias_forward_pos_width_u:.12g}u L=180n",
-                f"Msp{out}bpos_gate sp{out}bp0 bias sp{out}bp1 0 NSENSE W={design.output_bias_forward_pos_width_u:.12g}u L=180n",
+                f"Msp{out}bpos_w bias vbo{out}p sp{out}bp1 0 NREL W={design.output_bias_forward_pos_width_u:.12g}u L=180n",
                 f"Msp{out}bpos_f sp{out}bp1 fwd scorep{out} 0 NREL W={design.output_bias_forward_pos_width_u:.12g}u L=180n",
-                f"Msn{out}bneg_src vdd vbo{out}n sn{out}bn0 0 NREL W={design.output_bias_forward_neg_width_u:.12g}u L=180n",
-                f"Msn{out}bneg_gate sn{out}bn0 bias sn{out}bn1 0 NSENSE W={design.output_bias_forward_neg_width_u:.12g}u L=180n",
+                f"Msn{out}bneg_w bias vbo{out}n sn{out}bn1 0 NREL W={design.output_bias_forward_neg_width_u:.12g}u L=180n",
                 f"Msn{out}bneg_f sn{out}bn1 fwd scoren{out} 0 NREL W={design.output_bias_forward_neg_width_u:.12g}u L=180n",
             ]
-        lines += direct_flow.node_parasitics(f"sp{out}bp0", f"sp{out}bp1", f"sn{out}bn0", f"sn{out}bn1")
+            bias_internal_nodes = [f"sp{out}bp1", f"sn{out}bn1"]
+        lines += direct_flow.node_parasitics(*bias_internal_nodes)
     return "\n".join(lines)
 
 
@@ -199,6 +247,11 @@ def build_readout_transfer_netlist(
     sample_offset_ns: float,
     tran_step_ps: float,
     cap_f: float,
+    score_cap_f: float = 10.0,
+    readout_init_mode: str = "csv_readout",
+    readout_cap_csv: Path | None = None,
+    score_diode_width_u: float = 256.0,
+    output_bias_offset_v: float = 0.0,
 ) -> tuple[str, pd.DataFrame]:
     hidden = direct_flow.HIDDEN
     outputs = direct_flow.OUTPUTS
@@ -213,21 +266,27 @@ def build_readout_transfer_netlist(
         output_bias_forward_width_scale=output_bias_forward_width_scale,
         output_relu_width_scale=output_relu_width_scale,
     )
-    init = direct_flow.readout_init(
-        seed=0,
-        mode="csv_readout",
-        separator_scale=separator_scale,
-        separator_offset_v=0.0,
-        readout_center_v=readout_center_v,
-        random_center_v=None,
-        random_span_v=0.0,
-        random_pos_center_v=None,
-        random_neg_center_v=None,
-        random_pos_span_v=None,
-        random_neg_span_v=None,
-        separator_csv=separator_csv,
-        separator_phase="initial_eval",
-    )
+    if readout_cap_csv is not None:
+        init = load_readout_cap_init(readout_cap_csv, hidden=hidden, outputs=outputs)
+    else:
+        init = direct_flow.apply_output_bias_offset(
+            direct_flow.readout_init(
+                seed=0,
+                mode=readout_init_mode,
+                separator_scale=separator_scale,
+                separator_offset_v=0.0,
+                readout_center_v=readout_center_v,
+                random_center_v=None,
+                random_span_v=0.0,
+                random_pos_center_v=None,
+                random_neg_center_v=None,
+                random_pos_span_v=None,
+                random_neg_span_v=None,
+                separator_csv=separator_csv,
+                separator_phase="initial_eval",
+            ),
+            output_bias_offset_v,
+        )
     weights, biases = direct_flow.csv_readout_weights(separator_csv)
     act = activations[[f"act{h}" for h in range(hidden)]].to_numpy(dtype=float)
     ideal_logits = separator_scale * (act @ np.asarray(weights, dtype=float).T + np.asarray(biases, dtype=float))
@@ -242,10 +301,20 @@ def build_readout_transfer_netlist(
     for idx in range(cycles):
         at = idx * cycle_ns + sample_offset_ns
         for out in range(outputs):
-            if transfer_topology == "split_score_caps":
+            if transfer_topology in {"split_score_caps", "split_score_diode_clamp"}:
                 measures += [
                     f".meas tran scorep{out}_{idx} FIND V(scorep{out}) AT={at:.6g}n",
                     f".meas tran scoren{out}_{idx} FIND V(scoren{out}) AT={at:.6g}n",
+                ]
+            elif transfer_topology == "split_score_diode_current":
+                measures += [
+                    f".meas tran scorep{out}_{idx} FIND I(Vscorep{out}_sense) AT={at:.6g}n",
+                    f".meas tran scoren{out}_{idx} FIND I(Vscoren{out}_sense) AT={at:.6g}n",
+                ]
+            elif transfer_topology == "split_score_clamped_current":
+                measures += [
+                    f".meas tran scorep{out}_{idx} FIND I(Vscorep{out}_clamp) AT={at:.6g}n",
+                    f".meas tran scoren{out}_{idx} FIND I(Vscoren{out}_clamp) AT={at:.6g}n",
                 ]
             else:
                 measures += [
@@ -259,7 +328,19 @@ def build_readout_transfer_netlist(
     for h in range(hidden):
         activation_sources.append(f"Vact{h} act{h} 0 {activation_signal(act[:, h], cycle_ns)}")
     if transfer_topology == "split_score_caps":
-        score_cells = split_score_caps()
+        # Production temporary_caps already creates scorep/scoren caps and
+        # reset devices.  Keep this harness wired to the same primitive instead
+        # of shadowing those cells with duplicate diagnostic definitions.
+        score_cells = ""
+        readout_forward = split_score_caps_output_forward(design)
+    elif transfer_topology == "split_score_clamped_current":
+        score_cells = clamped_score_sources(score_reset_v)
+        readout_forward = split_score_caps_output_forward(design)
+    elif transfer_topology == "split_score_diode_clamp":
+        score_cells = diode_score_nodes(score_cap_f, score_diode_width_u)
+        readout_forward = split_score_caps_output_forward(design)
+    elif transfer_topology == "split_score_diode_current":
+        score_cells = diode_score_nodes(score_cap_f, score_diode_width_u, current_probe=True)
         readout_forward = split_score_caps_output_forward(design)
     elif transfer_topology == "main":
         score_cells = ""
@@ -288,8 +369,8 @@ Vacc acc 0 0
 Vgcmp gcmp 0 0
 Vapply apply 0 0
 {chr(10).join(activation_sources)}
-{direct_flow.temporary_caps(4.0, 4.0, 12.0, 2.0, False, score_reset_v)}
-{direct_flow.resets("score_direct", False, score_reset_v)}
+{"" if transfer_topology in {"split_score_clamped_current", "split_score_diode_clamp", "split_score_diode_current"} else direct_flow.temporary_caps(4.0, 4.0, 12.0, 2.0, False, score_reset_v, score_cap_f)}
+{"" if transfer_topology in {"split_score_clamped_current", "split_score_diode_clamp", "split_score_diode_current"} else direct_flow.resets("score_direct", False, score_reset_v)}
 {score_cells}
 {readout_caps(init, cap_f)}
 {readout_forward}
@@ -307,7 +388,12 @@ def attach_measurements(rows: pd.DataFrame, parsed: dict[str, float], transfer_t
     rows = rows.copy()
     for idx in range(len(rows)):
         for out in range(outputs):
-            if transfer_topology == "split_score_caps":
+            if transfer_topology in {
+                "split_score_caps",
+                "split_score_clamped_current",
+                "split_score_diode_clamp",
+                "split_score_diode_current",
+            }:
                 scorep = parsed[f"scorep{out}_{idx}"]
                 scoren = parsed[f"scoren{out}_{idx}"]
                 rows.loc[idx, f"scorep{out}"] = scorep
@@ -329,8 +415,76 @@ def attach_measurements(rows: pd.DataFrame, parsed: dict[str, float], transfer_t
     return rows
 
 
+def _argmax_accuracy(logits: np.ndarray, labels: np.ndarray) -> float:
+    return float(np.mean(np.argmax(logits, axis=1) == labels)) if len(labels) else 0.0
+
+
+def _diagonal_ideal_fit(source: np.ndarray, ideal: np.ndarray) -> tuple[np.ndarray, float]:
+    fitted = np.zeros_like(ideal, dtype=float)
+    rmses: list[float] = []
+    for out in range(ideal.shape[1]):
+        x = np.column_stack([source[:, out], np.ones(source.shape[0])])
+        coef, *_ = np.linalg.lstsq(x, ideal[:, out], rcond=None)
+        fitted[:, out] = x @ coef
+        rmses.append(float(np.sqrt(np.mean((fitted[:, out] - ideal[:, out]) ** 2))))
+    return fitted, float(np.mean(rmses)) if rmses else 0.0
+
+
+def _full_ideal_fit(source: np.ndarray, ideal: np.ndarray) -> tuple[np.ndarray, float]:
+    x = np.column_stack([source, np.ones(source.shape[0])])
+    coef, *_ = np.linalg.lstsq(x, ideal, rcond=None)
+    fitted = x @ coef
+    return fitted, float(np.sqrt(np.mean((fitted - ideal) ** 2))) if fitted.size else 0.0
+
+
+def affine_recovery_metrics(prefix: str, source: np.ndarray, ideal: np.ndarray, labels: np.ndarray) -> dict[str, Any]:
+    """Measure whether a simple downstream affine calibration could recover class order.
+
+    This is an oracle diagnostic, not a training result.  It answers whether the
+    MOS readout scores still contain the separator information up to per-class
+    gain/offset or a small full affine class mixer.
+    """
+    diag_logits, diag_rmse = _diagonal_ideal_fit(source, ideal)
+    full_logits, full_rmse = _full_ideal_fit(source, ideal)
+    return {
+        f"{prefix}_diag_idealfit_accuracy": _argmax_accuracy(diag_logits, labels),
+        f"{prefix}_diag_idealfit_rmse_v": diag_rmse,
+        f"{prefix}_full_idealfit_accuracy": _argmax_accuracy(full_logits, labels),
+        f"{prefix}_full_idealfit_rmse_v": full_rmse,
+    }
+
+
+def column_centering_metrics(prefix: str, source: np.ndarray, labels: np.ndarray) -> dict[str, Any]:
+    means = source.mean(axis=0) if source.size else np.zeros(source.shape[1] if source.ndim == 2 else 0)
+    centered = source - means
+    if len(labels):
+        predictions = np.argmax(centered, axis=1)
+        accuracy = float(np.mean(predictions == labels))
+        margins = []
+        for row, label in zip(centered, labels):
+            others = np.delete(row, int(label))
+            margins.append(float(row[int(label)] - np.max(others)))
+        min_margin = float(np.min(margins)) if margins else 0.0
+    else:
+        accuracy = 0.0
+        min_margin = 0.0
+    return {
+        f"{prefix}_column_centered_accuracy": accuracy,
+        f"{prefix}_column_centered_min_margin_v": min_margin,
+        f"{prefix}_mean_by_output_v": {str(out): float(value) for out, value in enumerate(means)},
+    }
+
+
 def transfer_summary(rows: pd.DataFrame, tag: str, synapse_design: str, separator_scale: float, wall_time_s: float) -> dict[str, Any]:
-    outputs = direct_flow.OUTPUTS
+    outputs = 0
+    while f"ideal{outputs}" in rows.columns:
+        outputs += 1
+    if outputs == 0:
+        outputs = direct_flow.OUTPUTS
+    labels = rows["label"].astype(int).to_numpy()
+    ideal_values = rows[[f"ideal{out}" for out in range(outputs)]].to_numpy(dtype=float)
+    score_values = rows[[f"score{out}" for out in range(outputs)]].to_numpy(dtype=float)
+    out_values = rows[[f"out{out}" for out in range(outputs)]].to_numpy(dtype=float)
     summary: dict[str, Any] = {
         "tag": tag,
         "synapse_design": synapse_design,
@@ -341,10 +495,14 @@ def transfer_summary(rows: pd.DataFrame, tag: str, synapse_design: str, separato
         "out_accuracy": float(rows["out_correct"].mean()),
         "wall_time_s": wall_time_s,
     }
+    summary.update(affine_recovery_metrics("score", score_values, ideal_values, labels))
+    summary.update(affine_recovery_metrics("out", out_values, ideal_values, labels))
+    summary.update(column_centering_metrics("score", score_values, labels))
+    summary.update(column_centering_metrics("out", out_values, labels))
     for out in range(outputs):
-        ideal = rows[f"ideal{out}"].to_numpy(dtype=float)
-        score = rows[f"score{out}"].to_numpy(dtype=float)
-        outv = rows[f"out{out}"].to_numpy(dtype=float)
+        ideal = ideal_values[:, out]
+        score = score_values[:, out]
+        outv = out_values[:, out]
         summary[f"score_corr_out{out}"] = float(np.corrcoef(ideal, score)[0, 1]) if np.std(ideal) and np.std(score) else None
         summary[f"out_corr_out{out}"] = float(np.corrcoef(ideal, outv)[0, 1]) if np.std(ideal) and np.std(outv) else None
         summary[f"score_span_out{out}_v"] = float(score.max() - score.min())
@@ -365,7 +523,19 @@ def main() -> None:
     ap.add_argument("--outputs", type=int, default=3)
     ap.add_argument("--synapse-design", choices=sorted(direct_flow.SYNAPSE_DESIGNS), default="split_signed_v1")
     ap.add_argument("--separator-scale", type=float, default=1.0)
+    ap.add_argument("--readout-init-mode", choices=sorted(direct_flow.PROGRAMMED_READOUT_INITS), default="csv_readout")
+    ap.add_argument(
+        "--readout-cap-csv",
+        type=Path,
+        help="Optional direct cap program with cap,value rows. Overrides --readout-init-mode for transfer checks.",
+    )
     ap.add_argument("--readout-center-v", type=float, default=0.64)
+    ap.add_argument(
+        "--output-bias-offset-v",
+        type=float,
+        default=0.0,
+        help="Binary differential output-bias cap offset; negative favors class 1 and positive favors class 0.",
+    )
     ap.add_argument("--score-reset-v", type=float, default=0.0)
     ap.add_argument("--output-head", choices=direct_flow.OUTPUT_HEAD_MODES, default="source_follower")
     ap.add_argument("--output-forward-width-scale", type=float, default=1.0)
@@ -378,10 +548,14 @@ def main() -> None:
     ap.add_argument("--sample-offset-ns", type=float, default=2.95)
     ap.add_argument("--tran-step-ps", type=float, default=10.0)
     ap.add_argument("--cap-f", type=float, default=4.0)
+    ap.add_argument("--score-cap-f", type=float, default=10.0)
+    ap.add_argument("--score-diode-width-u", type=float, default=256.0)
     args = ap.parse_args()
 
     if args.hidden_cells <= 0 or args.outputs <= 1:
         raise SystemExit("--hidden-cells must be positive and --outputs must be at least 2.")
+    if args.score_diode_width_u <= 0:
+        raise SystemExit("--score-diode-width-u must be positive.")
     direct_flow.set_hidden_cells(args.hidden_cells)
     direct_flow.set_output_count(args.outputs)
     activations = load_activations(args.activation_csv, args.activation_phase, args.hidden_cells, args.limit)
@@ -391,6 +565,7 @@ def main() -> None:
         synapse_design=args.synapse_design,
         separator_scale=args.separator_scale,
         readout_center_v=args.readout_center_v,
+        output_bias_offset_v=args.output_bias_offset_v,
         score_reset_v=args.score_reset_v,
         output_forward_width_scale=args.output_forward_width_scale,
         output_forward_pos_width_scale=args.output_forward_pos_width_scale,
@@ -403,6 +578,10 @@ def main() -> None:
         sample_offset_ns=args.sample_offset_ns,
         tran_step_ps=args.tran_step_ps,
         cap_f=args.cap_f,
+        score_cap_f=args.score_cap_f,
+        readout_init_mode=args.readout_init_mode,
+        readout_cap_csv=args.readout_cap_csv,
+        score_diode_width_u=args.score_diode_width_u,
     )
     spice_bin, simulator_version = detect_spice(args.simulator)
     GENERATED.mkdir(parents=True, exist_ok=True)
@@ -420,13 +599,20 @@ def main() -> None:
             "activation_csv": str(args.activation_csv),
             "activation_phase": args.activation_phase,
             "separator_csv": str(args.separator_csv),
+            "readout_init_mode": args.readout_init_mode,
+            "readout_cap_csv": str(args.readout_cap_csv) if args.readout_cap_csv is not None else None,
             "readout_center_v": args.readout_center_v,
+            "output_bias_offset_v": args.output_bias_offset_v,
             "score_reset_v": args.score_reset_v,
             "output_head": args.output_head,
             "transfer_topology": args.transfer_topology,
             "cycle_ns": args.cycle_ns,
             "sample_offset_ns": args.sample_offset_ns,
             "tran_step_ps": args.tran_step_ps,
+            "score_cap_f": args.score_cap_f,
+            "score_diode_width_u": args.score_diode_width_u
+            if args.transfer_topology in {"split_score_diode_clamp", "split_score_diode_current"}
+            else None,
         }
     )
     curve = RESULTS / f"{safe_tag}.csv"

@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import subprocess
 import time
 from pathlib import Path
 
@@ -16,7 +15,7 @@ from run_spice_mnist_local_block_batch_op_train import (
     block_indices,
 )
 from run_spice_mnist_train import load_mnist_sequence
-from run_spice_sweep import ROOT, detect_spice, run_tiny_test
+from run_spice_sweep import ROOT, detect_spice, prepare_netlist_for_simulator, run_tiny_test, run_simulator_netlist
 
 
 def parse_bool(text: str) -> bool:
@@ -165,8 +164,13 @@ def run_eval(spice_bin, netlist_path, data_path, x_eval, y_eval, models, batch_s
     for start in range(0, len(y_eval), batch_size):
         x = x_eval[start : start + batch_size]
         y = y_eval[start : start + batch_size]
-        netlist_path.write_text(make_ensemble_eval_netlist(x, models, data_path, write_branch_scores=collect_branch_scores))
-        proc = subprocess.run([spice_bin, "-b", str(netlist_path)], text=True, capture_output=True, timeout=timeout)
+        netlist_path.write_text(
+            prepare_netlist_for_simulator(
+                make_ensemble_eval_netlist(x, models, data_path, write_branch_scores=collect_branch_scores),
+                spice_bin,
+            )
+        )
+        proc = run_simulator_netlist(spice_bin, netlist_path, timeout=timeout)
         if proc.returncode != 0:
             raise RuntimeError(proc.stderr[-3000:] or proc.stdout[-3000:])
         n_ens = len(y) * n_classes

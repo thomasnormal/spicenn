@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import subprocess
 from pathlib import Path
 
 import numpy as np
@@ -12,7 +11,7 @@ from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import accuracy_score, confusion_matrix
 from sklearn.model_selection import train_test_split
 
-from run_spice_sweep import ROOT, detect_spice, run_tiny_test
+from run_spice_sweep import ROOT, detect_spice, prepare_netlist_for_simulator, run_tiny_test, run_simulator_netlist
 
 
 def pwl(values: np.ndarray, sample_period: float, edge: float = 1e-9) -> str:
@@ -126,9 +125,12 @@ def main() -> None:
     trace_path = ROOT / f"spice/results/{stem}_trace.dat"
     netlist_path = generated / f"{stem}.cir"
     netlist_path.write_text(
-        make_netlist(x_test, model.coef_.astype(float), model.intercept_.astype(float), args.sample_period, trace_path)
+        prepare_netlist_for_simulator(
+            make_netlist(x_test, model.coef_.astype(float), model.intercept_.astype(float), args.sample_period, trace_path),
+            spice_bin,
+        )
     )
-    proc = subprocess.run([spice_bin, "-b", str(netlist_path)], text=True, capture_output=True, timeout=120)
+    proc = run_simulator_netlist(spice_bin, netlist_path, timeout=120)
     if proc.returncode != 0:
         raise RuntimeError(proc.stderr[-3000:] or proc.stdout[-3000:])
 

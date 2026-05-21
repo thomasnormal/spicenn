@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import subprocess
 from pathlib import Path
 
 import matplotlib.pyplot as plt
@@ -10,13 +9,13 @@ import numpy as np
 import pandas as pd
 
 from parse_ngspice import parse_measure
-from run_spice_sweep import ROOT, detect_spice, run_tiny_test
+from run_spice_sweep import ROOT, detect_spice, prepare_netlist_for_simulator, run_tiny_test, run_simulator_netlist
 
 
 TEMPLATE = ROOT / "spice/templates/pulse_width_neuron.cir"
 
 
-def render(path: Path, vin: float, gsum: float, cint: float, rleak: float, vth: float, sigma: float, seed: int) -> None:
+def render(path: Path, spice_bin: str, vin: float, gsum: float, cint: float, rleak: float, vth: float, sigma: float, seed: int) -> None:
     text = TEMPLATE.read_text()
     for old, new in {
         "{VIN}": f"{vin:.12g}",
@@ -28,7 +27,7 @@ def render(path: Path, vin: float, gsum: float, cint: float, rleak: float, vth: 
         "{SEED}": str(seed),
     }.items():
         text = text.replace(old, new)
-    path.write_text(text)
+    path.write_text(prepare_netlist_for_simulator(text, spice_bin))
 
 
 def parse_optional(text: str, name: str) -> float | None:
@@ -57,8 +56,8 @@ def run_sweep(vin_values, trials, c_values, r_values, vth_values, sigma_values, 
                                 f"pulse_width_vin{vin:+.3e}_c{cint:.1e}_r{rleak:.1e}_"
                                 f"vth{vth:.1e}_sig{sigma:.1e}_seed{trial_seed}.cir"
                             )
-                            render(netlist, vin, gsum=100e-9, cint=cint, rleak=rleak, vth=vth, sigma=sigma, seed=trial_seed)
-                            proc = subprocess.run([spice_bin, "-b", str(netlist)], text=True, capture_output=True, timeout=30)
+                            render(netlist, spice_bin, vin, gsum=100e-9, cint=cint, rleak=rleak, vth=vth, sigma=sigma, seed=trial_seed)
+                            proc = run_simulator_netlist(spice_bin, netlist, timeout=30)
                             if proc.returncode != 0:
                                 raise RuntimeError(proc.stderr[-1200:] or proc.stdout[-1200:])
                             text = proc.stdout + "\n" + proc.stderr
@@ -140,4 +139,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-

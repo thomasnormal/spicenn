@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import subprocess
 from pathlib import Path
 
 import matplotlib.pyplot as plt
@@ -10,7 +9,7 @@ import numpy as np
 import pandas as pd
 
 from parse_ngspice import parse_measure
-from run_spice_sweep import ROOT, detect_spice, run_tiny_test
+from run_spice_sweep import ROOT, detect_spice, prepare_netlist_for_simulator, run_tiny_test, run_simulator_netlist
 
 
 TEMPLATE = ROOT / "spice/templates/charge_adc_behavioral.cir"
@@ -24,6 +23,7 @@ def adc_expr(levels: int, vmin: float, vmax: float) -> str:
 
 def render(
     path: Path,
+    spice_bin: str,
     vin: float,
     gsum: float,
     cint: float,
@@ -47,11 +47,11 @@ def render(
     }
     for old, new in replacements.items():
         text = text.replace(old, new)
-    path.write_text(text)
+    path.write_text(prepare_netlist_for_simulator(text, spice_bin))
 
 
 def run_one(spice_bin: str, netlist: Path) -> tuple[float, float, float]:
-    proc = subprocess.run([spice_bin, "-b", str(netlist)], text=True, capture_output=True, timeout=30)
+    proc = run_simulator_netlist(spice_bin, netlist, timeout=30)
     if proc.returncode != 0:
         raise RuntimeError(proc.stderr[-1200:] or proc.stdout[-1200:])
     text = proc.stdout + "\n" + proc.stderr
@@ -91,7 +91,7 @@ def run_sweep(
                                     f"charge_adc_b{bits}_vin{vin:+.3e}_c{cint:.1e}_"
                                     f"tau{tau:.1e}_g{gsum:.1e}_sig{sigma:.1e}_seed{trial_seed}.cir"
                                 )
-                                render(netlist, vin, gsum, cint, tau, sigma, trial_seed, bits, adc_vmin, adc_vmax)
+                                render(netlist, spice_bin, vin, gsum, cint, tau, sigma, trial_seed, bits, adc_vmin, adc_vmax)
                                 vint, code, ecap = run_one(spice_bin, netlist)
                                 vint_values.append(vint)
                                 code_values.append(code)
@@ -190,4 +190,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-

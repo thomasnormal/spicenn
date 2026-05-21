@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import subprocess
 import time
 from pathlib import Path
 from typing import Optional
@@ -13,7 +12,7 @@ import pandas as pd
 
 from run_spice_mnist_batch_op_train import read_wrdata_row
 from run_spice_mnist_train import load_mnist_sequence
-from run_spice_sweep import ROOT, detect_spice, run_tiny_test
+from run_spice_sweep import ROOT, detect_spice, prepare_netlist_for_simulator, run_tiny_test, run_simulator_netlist
 
 
 def sample_noise(rng: np.random.Generator, sigma: float, shape: tuple[int, ...]) -> Optional[np.ndarray]:
@@ -397,29 +396,32 @@ def run_train_batch(
     class_labels=None,
 ):
     netlist_path.write_text(
-        make_batch_train_netlist(
-            x,
-            y,
-            weights,
-            local_bias,
-            gains,
-            output_bias,
-            blocks,
-            lr,
-            data_path,
-            train_gains,
-            input_noise=input_noise,
-            weight_mismatch=weight_mismatch,
-            local_offset=local_offset,
-            output_offset=output_offset,
-            linear_output=linear_output,
-            softmax_output=softmax_output,
-            local_activation=local_activation,
-            relu_clip=relu_clip,
-            class_labels=class_labels,
+        prepare_netlist_for_simulator(
+            make_batch_train_netlist(
+                x,
+                y,
+                weights,
+                local_bias,
+                gains,
+                output_bias,
+                blocks,
+                lr,
+                data_path,
+                train_gains,
+                input_noise=input_noise,
+                weight_mismatch=weight_mismatch,
+                local_offset=local_offset,
+                output_offset=output_offset,
+                linear_output=linear_output,
+                softmax_output=softmax_output,
+                local_activation=local_activation,
+                relu_clip=relu_clip,
+                class_labels=class_labels,
+            ),
+            spice_bin,
         )
     )
-    proc = subprocess.run([spice_bin, "-b", str(netlist_path)], text=True, capture_output=True, timeout=timeout)
+    proc = run_simulator_netlist(spice_bin, netlist_path, timeout=timeout)
     if proc.returncode != 0:
         raise RuntimeError(proc.stderr[-3000:] or proc.stdout[-3000:])
     n_classes, n_blocks, block_len = weights.shape
@@ -482,25 +484,28 @@ def run_eval(
             lo = None if local_offset is None else local_offset[cs:ce]
             oo = None if output_offset is None else output_offset[cs:ce]
             netlist_path.write_text(
-                make_batch_eval_netlist(
-                    x,
-                    weights[cs:ce],
-                    local_bias[cs:ce],
-                    gains[cs:ce],
-                    output_bias[cs:ce],
-                    blocks,
-                    data_path,
-                    input_noise=input_noise,
-                    weight_mismatch=wm,
-                    local_offset=lo,
-                    output_offset=oo,
-                    linear_output=linear_output,
-                    softmax_output=softmax_output,
-                    local_activation=local_activation,
-                    relu_clip=relu_clip,
+                prepare_netlist_for_simulator(
+                    make_batch_eval_netlist(
+                        x,
+                        weights[cs:ce],
+                        local_bias[cs:ce],
+                        gains[cs:ce],
+                        output_bias[cs:ce],
+                        blocks,
+                        data_path,
+                        input_noise=input_noise,
+                        weight_mismatch=wm,
+                        local_offset=lo,
+                        output_offset=oo,
+                        linear_output=linear_output,
+                        softmax_output=softmax_output,
+                        local_activation=local_activation,
+                        relu_clip=relu_clip,
+                    ),
+                    spice_bin,
                 )
             )
-            proc = subprocess.run([spice_bin, "-b", str(netlist_path)], text=True, capture_output=True, timeout=timeout)
+            proc = run_simulator_netlist(spice_bin, netlist_path, timeout=timeout)
             if proc.returncode != 0:
                 raise RuntimeError(proc.stderr[-3000:] or proc.stdout[-3000:])
             vals_by_chunk.append(read_wrdata_row(data_path, len(y) * (ce - cs)).reshape(len(y), ce - cs))

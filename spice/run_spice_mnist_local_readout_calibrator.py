@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import subprocess
 import time
 from pathlib import Path
 
@@ -12,7 +11,7 @@ import pandas as pd
 from run_spice_mnist_batch_op_train import read_wrdata_row
 from run_spice_mnist_local_block_batch_op_train import add_local_activation, block_indices, plot_curve
 from run_spice_mnist_train import load_mnist_sequence
-from run_spice_sweep import ROOT, detect_spice, run_tiny_test
+from run_spice_sweep import ROOT, detect_spice, prepare_netlist_for_simulator, run_tiny_test, run_simulator_netlist
 
 
 def load_local_checkpoint(path: Path, image_size: int, block_size: int, stride: int):
@@ -214,24 +213,27 @@ def run_eval(
         x = x_eval[start : start + batch_size]
         y = y_eval[start : start + batch_size]
         netlist_path.write_text(
-            make_eval_netlist(
-                x,
-                weights,
-                local_bias,
-                gains,
-                output_bias,
-                blocks,
-                wmix,
-                bmix,
-                data_path,
-                local_activation,
-                relu_clip,
-                feature_mode,
-                calibrated,
-                readout_source,
+            prepare_netlist_for_simulator(
+                make_eval_netlist(
+                    x,
+                    weights,
+                    local_bias,
+                    gains,
+                    output_bias,
+                    blocks,
+                    wmix,
+                    bmix,
+                    data_path,
+                    local_activation,
+                    relu_clip,
+                    feature_mode,
+                    calibrated,
+                    readout_source,
+                ),
+                spice_bin,
             )
         )
-        proc = subprocess.run([spice_bin, "-b", str(netlist_path)], text=True, capture_output=True, timeout=timeout)
+        proc = run_simulator_netlist(spice_bin, netlist_path, timeout=timeout)
         if proc.returncode != 0:
             raise RuntimeError(proc.stderr[-3000:] or proc.stdout[-3000:])
         vals = read_wrdata_row(data_path, len(y) * 10).reshape(len(y), 10)
@@ -318,25 +320,28 @@ def main() -> None:
         for n, start in enumerate(range(0, len(order), args.batch_size)):
             idx = order[start : start + args.batch_size]
             netlist_path.write_text(
-                make_train_netlist(
-                    x_train[idx],
-                    y_train[idx],
-                    weights,
-                    local_bias,
-                    gains,
-                    output_bias,
-                    blocks,
-                    wmix,
-                    bmix,
-                    args.lr,
-                    data_path,
-                    args.local_activation,
-                    args.relu_clip,
-                    args.feature_mode,
-                    args.readout_source,
+                prepare_netlist_for_simulator(
+                    make_train_netlist(
+                        x_train[idx],
+                        y_train[idx],
+                        weights,
+                        local_bias,
+                        gains,
+                        output_bias,
+                        blocks,
+                        wmix,
+                        bmix,
+                        args.lr,
+                        data_path,
+                        args.local_activation,
+                        args.relu_clip,
+                        args.feature_mode,
+                        args.readout_source,
+                    ),
+                    spice_bin,
                 )
             )
-            proc = subprocess.run([spice_bin, "-b", str(netlist_path)], text=True, capture_output=True, timeout=args.timeout)
+            proc = run_simulator_netlist(spice_bin, netlist_path, timeout=args.timeout)
             if proc.returncode != 0:
                 raise RuntimeError(proc.stderr[-3000:] or proc.stdout[-3000:])
             n_vals = 10 * n_features + 10

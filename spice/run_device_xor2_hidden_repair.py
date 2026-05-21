@@ -2,8 +2,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import re
-import subprocess
 import time
 from pathlib import Path
 from typing import Any
@@ -22,14 +20,8 @@ from run_device_xor2_learned_features import (
     target_wave,
     xor_label,
 )
-from run_spice_sweep import ROOT, detect_spice, run_tiny_test
-
-
-MEAS_RE = re.compile(r"(?im)^\s*([a-zA-Z_][a-zA-Z0-9_]*)\s*=\s*([-+0-9.eE]+)")
-
-
-def parse_measures(text: str) -> dict[str, float]:
-    return {name.lower(): float(value) for name, value in MEAS_RE.findall(text)}
+from run_spice_sweep import ROOT, detect_spice, run_text_netlist, run_tiny_test
+from _util import MEAS_RE, parse_measures
 
 
 def phases(samples: list[dict[str, Any]]) -> str:
@@ -337,14 +329,12 @@ run
 
 
 def run_netlist(spice_bin: str, path: Path, netlist: str, timeout: float) -> dict[str, float]:
-    path.write_text(netlist)
-    cmd = [spice_bin, "-b", str(path)] if "ngspice" in Path(spice_bin).name.lower() else [spice_bin, str(path)]
-    proc = subprocess.run(cmd, text=True, capture_output=True, timeout=timeout)
+    proc = run_text_netlist(spice_bin, path, netlist, timeout=timeout)
     if proc.returncode != 0:
         raise RuntimeError((proc.stderr or proc.stdout)[-3000:])
     parsed = parse_measures(proc.stdout + "\n" + proc.stderr)
     if not parsed:
-        raise RuntimeError("ngspice produced no parseable measurements:\n" + (proc.stdout + proc.stderr)[-3000:])
+        raise RuntimeError("SPICE produced no parseable measurements:\n" + (proc.stdout + proc.stderr)[-3000:])
     return parsed
 
 

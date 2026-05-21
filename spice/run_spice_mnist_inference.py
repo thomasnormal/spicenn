@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import subprocess
 from pathlib import Path
 
 import numpy as np
@@ -11,7 +10,7 @@ import torch.nn.functional as F
 from sklearn.metrics import accuracy_score, confusion_matrix
 from sklearn.neural_network import MLPClassifier
 
-from run_spice_sweep import ROOT, detect_spice, run_tiny_test
+from run_spice_sweep import ROOT, detect_spice, prepare_netlist_for_simulator, run_tiny_test, run_simulator_netlist
 
 
 def pwl(values: np.ndarray, sample_period: float, edge: float = 1e-9) -> str:
@@ -186,8 +185,8 @@ def run_op_predictions(
 ) -> np.ndarray:
     preds = np.zeros(len(x_test), dtype=int)
     for idx, x in enumerate(x_test):
-        netlist_path.write_text(make_op_netlist(x, w0, b0, w1, b1, trace_path))
-        proc = subprocess.run([spice_bin, "-b", str(netlist_path)], text=True, capture_output=True, timeout=20)
+        netlist_path.write_text(prepare_netlist_for_simulator(make_op_netlist(x, w0, b0, w1, b1, trace_path), spice_bin))
+        proc = run_simulator_netlist(spice_bin, netlist_path, timeout=20)
         if proc.returncode != 0:
             raise RuntimeError(proc.stderr[-3000:] or proc.stdout[-3000:])
         row = read_wrdata(trace_path, 10).iloc[-1]
@@ -231,17 +230,20 @@ def main() -> None:
     b1 = model.intercepts_[1].astype(float)
     if args.eval_mode == "transient":
         netlist_path.write_text(
-            make_netlist(
-                x_test,
-                w0,
-                b0,
-                w1,
-                b1,
-                args.sample_period,
-                trace_path,
+            prepare_netlist_for_simulator(
+                make_netlist(
+                    x_test,
+                    w0,
+                    b0,
+                    w1,
+                    b1,
+                    args.sample_period,
+                    trace_path,
+                ),
+                spice_bin,
             )
         )
-        proc = subprocess.run([spice_bin, "-b", str(netlist_path)], text=True, capture_output=True, timeout=240)
+        proc = run_simulator_netlist(spice_bin, netlist_path, timeout=240)
         if proc.returncode != 0:
             raise RuntimeError(proc.stderr[-3000:] or proc.stdout[-3000:])
         trace = read_wrdata(trace_path, 10)

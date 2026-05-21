@@ -2,24 +2,27 @@ from __future__ import annotations
 
 import argparse
 import json
-import re
-import subprocess
+import sys
 import time
 from pathlib import Path
 from typing import Any
 
 import pandas as pd
 
-from run_spice_sweep import ROOT, detect_spice, run_tiny_test
+from run_spice_sweep import ROOT, detect_spice, run_text_netlist, run_tiny_test
+from _util import MEAS_RE, parse_measures
 
 
-MEAS_RE = re.compile(r"(?im)^\s*([a-zA-Z_][a-zA-Z0-9_]*)\s*=\s*([-+0-9.eE]+)")
-CYCLE_NS = 16.0
-VDD = 1.2
-
-
-def parse_measures(text: str) -> dict[str, float]:
-    return {name.lower(): float(value) for name, value in MEAS_RE.findall(text)}
+# Timing primitives have moved to ``spicenn.timing``; re-exported here so the
+# existing ``from run_device_multicell_classifier import pulse_wave`` imports
+# in other run scripts keep working.  Direct ``python spice/foo.py`` execution
+# puts ``spice/`` rather than the repository root on ``sys.path``, so add the
+# root before importing the package.
+try:
+    from spicenn.timing import CYCLE_NS, VDD, compact_pwl_points, pulse_wave, pwl
+except ModuleNotFoundError:
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+    from spicenn.timing import CYCLE_NS, VDD, compact_pwl_points, pulse_wave, pwl
 
 
 def mos_models() -> str:
@@ -29,32 +32,6 @@ def mos_models() -> str:
 .model NSENSE NMOS LEVEL=1 VTO=0.03 KP=260u LAMBDA=0.03 GAMMA=0.05 PHI=0.60
 .model PMOS PMOS LEVEL=1 VTO=-0.35 KP=90u LAMBDA=0.03 GAMMA=0.20 PHI=0.60
 """.strip()
-
-
-def compact_pwl_points(points: list[tuple[float, float]]) -> list[tuple[float, float]]:
-    compact: list[tuple[float, float]] = []
-    for t, v in sorted(points):
-        if compact and abs(compact[-1][0] - t) < 1e-12:
-            compact[-1] = (t, v)
-        else:
-            compact.append((t, v))
-    return compact
-
-
-def pwl(points: list[tuple[float, float]]) -> str:
-    compact = compact_pwl_points(points)
-    return "PWL(" + " ".join(f"{t:.12g}n {v:.12g}" for t, v in compact) + ")"
-
-
-def pulse_wave(pulses: list[tuple[float, float]], stop_ns: float, high: float = VDD) -> str:
-    points: list[tuple[float, float]] = [(0.0, 0.0)]
-    for start, end in pulses:
-        points.append((max(0.0, start - 0.05), 0.0))
-        points.append((start, high))
-        points.append((end, high))
-        points.append((min(stop_ns, end + 0.05), 0.0))
-    points.append((stop_ns, 0.0))
-    return pwl(points)
 
 
 def sample_wave(samples: list[dict[str, float]], key: str, stop_ns: float) -> str:
@@ -417,14 +394,12 @@ run
 
 
 def run_netlist(spice_bin: str, path: Path, netlist: str, timeout: float) -> dict[str, float]:
-    path.write_text(netlist)
-    cmd = [spice_bin, "-b", str(path)] if "ngspice" in Path(spice_bin).name.lower() else [spice_bin, str(path)]
-    proc = subprocess.run(cmd, text=True, capture_output=True, timeout=timeout)
+    proc = run_text_netlist(spice_bin, path, netlist, timeout=timeout)
     if proc.returncode != 0:
         raise RuntimeError((proc.stderr or proc.stdout)[-3000:])
     measures = parse_measures(proc.stdout + "\n" + proc.stderr)
     if not measures:
-        raise RuntimeError("ngspice produced no parseable measurements:\n" + (proc.stdout + proc.stderr)[-3000:])
+        raise RuntimeError("SPICE produced no parseable measurements:\n" + (proc.stdout + proc.stderr)[-3000:])
     return measures
 
 

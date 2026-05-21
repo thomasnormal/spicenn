@@ -3,7 +3,6 @@ from __future__ import annotations
 import argparse
 import json
 import re
-import subprocess
 from pathlib import Path
 
 import matplotlib.pyplot as plt
@@ -11,7 +10,7 @@ import numpy as np
 import pandas as pd
 
 from run_spice_mnist_train import load_mnist_sequence, pwl, read_wrdata, sample_accuracy, update_gate
-from run_spice_sweep import ROOT, detect_spice, run_tiny_test
+from run_spice_sweep import ROOT, detect_spice, prepare_netlist_for_simulator, run_tiny_test, run_simulator_netlist
 
 
 def make_netlist(x_train, y_train, hidden: int, epochs: int, lr: float, sample_period: float, trace_path: Path, seed: int) -> str:
@@ -208,8 +207,13 @@ def main() -> None:
     stem = f"spice_mnist_mlp_{safe_tag}"
     trace_path = ROOT / f"spice/results/{stem}_trace.dat"
     netlist = generated / f"{stem}.cir"
-    netlist.write_text(make_netlist(x_train, y_train, args.hidden, args.epochs, args.lr, args.sample_period, trace_path, args.seed))
-    proc = subprocess.run([spice_bin, "-b", str(netlist)], text=True, capture_output=True, timeout=300)
+    netlist.write_text(
+        prepare_netlist_for_simulator(
+            make_netlist(x_train, y_train, args.hidden, args.epochs, args.lr, args.sample_period, trace_path, args.seed),
+            spice_bin,
+        )
+    )
+    proc = run_simulator_netlist(spice_bin, netlist, timeout=300)
     if proc.returncode != 0:
         raise RuntimeError(proc.stderr[-3000:] or proc.stdout[-3000:])
     trace = read_wrdata(trace_path, 20)
@@ -226,8 +230,10 @@ def main() -> None:
 
     eval_trace_path = ROOT / f"spice/results/{stem}_eval_trace.dat"
     eval_netlist = generated / f"{stem}_eval.cir"
-    eval_netlist.write_text(make_eval_netlist(x_test, y_test, weights, args.sample_period, eval_trace_path))
-    eval_proc = subprocess.run([spice_bin, "-b", str(eval_netlist)], text=True, capture_output=True, timeout=120)
+    eval_netlist.write_text(
+        prepare_netlist_for_simulator(make_eval_netlist(x_test, y_test, weights, args.sample_period, eval_trace_path), spice_bin)
+    )
+    eval_proc = run_simulator_netlist(spice_bin, eval_netlist, timeout=120)
     if eval_proc.returncode != 0:
         raise RuntimeError(eval_proc.stderr[-3000:] or eval_proc.stdout[-3000:])
     eval_trace = read_wrdata(eval_trace_path, 20)

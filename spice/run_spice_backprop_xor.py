@@ -2,14 +2,13 @@ from __future__ import annotations
 
 import argparse
 import json
-import subprocess
 from pathlib import Path
 
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 
-from run_spice_sweep import ROOT, detect_spice, run_tiny_test
+from run_spice_sweep import ROOT, detect_spice, prepare_netlist_for_simulator, run_tiny_test, run_simulator_netlist
 
 
 def pwl(values: list[float], sample_period: float, edge: float = 1e-9) -> str:
@@ -175,8 +174,9 @@ def main() -> None:
     run_tiny_test(spice_bin, generated)
     trace_path = ROOT / "spice/results/spice_backprop_xor_trace.dat"
     netlist_path = generated / "spice_backprop_xor.cir"
-    netlist_path.write_text(netlist_text(args.epochs, args.lr, args.sample_period, trace_path))
-    proc = subprocess.run([spice_bin, "-b", str(netlist_path)], text=True, capture_output=True, timeout=120)
+    netlist = netlist_text(args.epochs, args.lr, args.sample_period, trace_path)
+    netlist_path.write_text(prepare_netlist_for_simulator(netlist, spice_bin))
+    proc = run_simulator_netlist(spice_bin, netlist_path, timeout=120)
     if proc.returncode != 0:
         raise RuntimeError(proc.stderr[-2000:] or proc.stdout[-2000:])
     trace = read_wrdata(trace_path)
@@ -207,4 +207,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-

@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import subprocess
 import time
 from pathlib import Path
 
@@ -13,7 +12,7 @@ import pandas as pd
 from netlist_builder import Netlist, join_terms, param_ref, pwl, v
 from run_spice_mnist_local_block_batch_op_train import block_indices
 from run_spice_mnist_train import load_mnist_sequence
-from run_spice_sweep import ROOT, detect_spice, run_tiny_test
+from run_spice_sweep import ROOT, detect_spice, prepare_netlist_for_simulator, run_tiny_test, run_simulator_netlist
 
 
 def sanitize_tag(tag: str) -> str:
@@ -246,9 +245,9 @@ def main() -> None:
             args.pwl_pixels,
             args.weight_sources,
         )
-        netlist_path.write_text(netlist)
+        netlist_path.write_text(prepare_netlist_for_simulator(netlist, spice_bin))
         b0 = time.perf_counter()
-        proc = subprocess.run([spice_bin, "-b", str(netlist_path)], text=True, capture_output=True, timeout=args.timeout)
+        proc = run_simulator_netlist(spice_bin, netlist_path, timeout=args.timeout)
         batch_wall = time.perf_counter() - b0
         if proc.returncode != 0:
             raise RuntimeError(proc.stderr[-3000:] or proc.stdout[-3000:])

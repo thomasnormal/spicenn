@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import subprocess
 import time
 from pathlib import Path
 
@@ -18,7 +17,7 @@ from run_spice_mnist_train import (
     read_wrdata,
     sample_accuracy,
 )
-from run_spice_sweep import ROOT, detect_spice, run_tiny_test
+from run_spice_sweep import ROOT, detect_spice, prepare_netlist_for_simulator, run_tiny_test, run_simulator_netlist
 
 
 def evaluate(
@@ -33,8 +32,10 @@ def evaluate(
 ) -> tuple[float, Path]:
     trace_path = ROOT / f"spice/results/{stem}_eval_trace.dat"
     netlist_path = generated / f"{stem}_eval.cir"
-    netlist_path.write_text(make_eval_netlist(x_eval, y_eval, weights, bias, sample_period, trace_path))
-    proc = subprocess.run([spice_bin, "-b", str(netlist_path)], text=True, capture_output=True, timeout=180)
+    netlist_path.write_text(
+        prepare_netlist_for_simulator(make_eval_netlist(x_eval, y_eval, weights, bias, sample_period, trace_path), spice_bin)
+    )
+    proc = run_simulator_netlist(spice_bin, netlist_path, timeout=180)
     if proc.returncode != 0:
         raise RuntimeError(proc.stderr[-3000:] or proc.stdout[-3000:])
     trace = read_wrdata(trace_path, 20)
@@ -93,19 +94,22 @@ def main() -> None:
             trace_path = ROOT / f"spice/results/{chunk_stem}_trace.dat"
             netlist_path = generated / f"{chunk_stem}.cir"
             netlist_path.write_text(
-                make_netlist(
-                    x_train[idx],
-                    y_train[idx],
-                    epochs=1,
-                    lr=args.lr,
-                    sample_period=args.sample_period,
-                    trace_path=trace_path,
-                    seed=args.seed + epoch * 1000 + chunk_idx,
-                    initial_weights=weights,
-                    initial_bias=bias,
+                prepare_netlist_for_simulator(
+                    make_netlist(
+                        x_train[idx],
+                        y_train[idx],
+                        epochs=1,
+                        lr=args.lr,
+                        sample_period=args.sample_period,
+                        trace_path=trace_path,
+                        seed=args.seed + epoch * 1000 + chunk_idx,
+                        initial_weights=weights,
+                        initial_bias=bias,
+                    ),
+                    spice_bin,
                 )
             )
-            proc = subprocess.run([spice_bin, "-b", str(netlist_path)], text=True, capture_output=True, timeout=args.timeout)
+            proc = run_simulator_netlist(spice_bin, netlist_path, timeout=args.timeout)
             if proc.returncode != 0:
                 raise RuntimeError(proc.stderr[-3000:] or proc.stdout[-3000:])
             weights, bias = parse_final_weights(proc.stdout + "\n" + proc.stderr, x_train.shape[1], 10)

@@ -20,6 +20,11 @@ def _require_positive(name: str, value: float) -> None:
         raise ValueError(f"{name} must be positive and finite.")
 
 
+def _require_nonnegative(name: str, value: float) -> None:
+    if not isfinite(value) or value < 0:
+        raise ValueError(f"{name} must be nonnegative and finite.")
+
+
 def rc_tau_ns(resistance_ohm: float, capacitance_ff: float) -> float:
     """Return the RC time constant in ns for R in ohms and C in fF."""
     _require_positive("resistance_ohm", resistance_ohm)
@@ -286,6 +291,70 @@ def one_vs_rest_target_balance_ratio(class_count: int, target_mobility: float, n
     return target_mobility / ((class_count - 1) * nontarget_mobility)
 
 
+def one_vs_rest_signed_update_balance_ratio(
+    class_count: int,
+    target_delta: float,
+    nontarget_delta: float,
+) -> float:
+    """Return target write movement divided by total non-target movement.
+
+    ``target_delta`` should be positive and ``nontarget_delta`` should be
+    negative for the usual one-vs-rest correction direction.  A value near one
+    means one target exposure balances the ``class_count - 1`` non-target
+    exposures a row sees in a balanced epoch.
+    """
+    if class_count < 2:
+        raise ValueError("class_count must be at least two.")
+    _require_positive("target_delta", target_delta)
+    if not isfinite(nontarget_delta) or nontarget_delta >= 0:
+        raise ValueError("nontarget_delta must be negative and finite.")
+    return target_delta / ((class_count - 1) * abs(nontarget_delta))
+
+
+def one_vs_rest_signed_epoch_delta(
+    class_count: int,
+    target_delta: float,
+    nontarget_delta: float,
+) -> float:
+    """Return net row movement after one target and all non-target exposures."""
+    if class_count < 2:
+        raise ValueError("class_count must be at least two.")
+    if not isfinite(target_delta) or not isfinite(nontarget_delta):
+        raise ValueError("deltas must be finite.")
+    return target_delta + (class_count - 1) * nontarget_delta
+
+
+def one_vs_rest_common_epoch_delta(
+    class_count: int,
+    target_common_delta: float,
+    nontarget_common_delta: float,
+) -> float:
+    """Return net branch-common movement for one balanced one-vs-rest epoch.
+
+    This is separate from the signed learning balance.  A writer can have
+    nearly zero signed epoch drift while still walking both physical branches
+    toward a rail if target and non-target events have same-sign common motion.
+    """
+    if class_count < 2:
+        raise ValueError("class_count must be at least two.")
+    if not isfinite(target_common_delta) or not isfinite(nontarget_common_delta):
+        raise ValueError("common deltas must be finite.")
+    return target_common_delta + (class_count - 1) * nontarget_common_delta
+
+
+def common_drift_to_signed_step_ratio(
+    class_count: int,
+    target_delta: float,
+    nontarget_delta: float,
+    target_common_delta: float,
+    nontarget_common_delta: float,
+) -> float:
+    """Compare balanced-epoch common-mode drift to the useful signed step size."""
+    signed_scale = max(abs(target_delta), abs(nontarget_delta))
+    _require_positive("signed step scale", signed_scale)
+    return abs(one_vs_rest_common_epoch_delta(class_count, target_common_delta, nontarget_common_delta)) / signed_scale
+
+
 def one_vs_rest_width_ratio_is_balanced(
     class_count: int,
     target_width_u: float,
@@ -296,3 +365,106 @@ def one_vs_rest_width_ratio_is_balanced(
     """Screen one-vs-rest rail widths against balanced-class exposure counts."""
     _require_positive("min_ratio", min_ratio)
     return one_vs_rest_target_balance_ratio(class_count, target_width_u, nontarget_width_u) >= min_ratio
+
+
+@dataclass(frozen=True)
+class MulticlassReadoutSizing:
+    """Derived local sizes for a one-vs-rest multiclass readout family.
+
+    These are not independent hyperparameters.  They are the local widths and
+    capacitances implied by the chosen topology and three global scales.
+    """
+
+    class_count: int
+    effective_readout_fan_in: float
+    readout_fan_in_scale: float
+    readout_update_width_u: float
+    readout_dp_gate_update_width_u: float
+    readout_dn_gate_update_width_u: float
+    output_bias_update_width_u: float
+    readout_write_error_exclusion_width_u: float
+    residual_target_width_u: float
+    residual_output_width_u: float
+    score_cap_f: float
+    output_cap_f: float
+
+
+def derive_multiclass_readout_sizing(
+    *,
+    class_count: int,
+    effective_readout_fan_in: float,
+    learning_rate_scale: float = 1.0,
+    error_drive_scale: float = 1.0,
+    score_tau_scale: float = 1.0,
+    anchor_fan_in: float = 8.0,
+    anchor_update_width_u: float = 5e-4,
+    anchor_guard_width_u: float = 8.0,
+    anchor_target_width_u: float = 96.0,
+    anchor_score_cap_f: float = 10.0,
+    output_to_score_cap_ratio: float = 2.0,
+    target_selector_ratio: float = 1.0,
+    nontarget_selector_ratio: float = 1.0,
+    output_bias_update_ratio: float = 1.0,
+) -> MulticlassReadoutSizing:
+    """Derive local readout sizes from topology plus global circuit scales.
+
+    The formulas encode three first-order constraints:
+
+    * row update mobility scales like ``1 / effective_readout_fan_in`` to keep
+      the feature-norm stability yardstick near the anchor circuit;
+    * score/output capacitance scales with fan-in to keep voltage swing roughly
+      invariant under wider rows;
+    * non-target one-vs-rest error drive scales as ``1 / (class_count - 1)`` so
+      balanced epochs do not create a class-count-dependent row drift.
+    * target/non-target selector widths and output-bias write width are fixed
+      circuit-family ratios around the derived readout update width, not
+      independent experiment knobs.
+    """
+    if class_count < 2:
+        raise ValueError("class_count must be at least two.")
+    for name, value in [
+        ("effective_readout_fan_in", effective_readout_fan_in),
+        ("learning_rate_scale", learning_rate_scale),
+        ("error_drive_scale", error_drive_scale),
+        ("score_tau_scale", score_tau_scale),
+        ("anchor_fan_in", anchor_fan_in),
+        ("anchor_update_width_u", anchor_update_width_u),
+        ("anchor_guard_width_u", anchor_guard_width_u),
+        ("anchor_target_width_u", anchor_target_width_u),
+        ("anchor_score_cap_f", anchor_score_cap_f),
+        ("output_to_score_cap_ratio", output_to_score_cap_ratio),
+        ("target_selector_ratio", target_selector_ratio),
+        ("nontarget_selector_ratio", nontarget_selector_ratio),
+    ]:
+        _require_positive(name, float(value))
+    _require_nonnegative("output_bias_update_ratio", float(output_bias_update_ratio))
+
+    readout_fan_in_scale = effective_readout_fan_in / anchor_fan_in
+    write_scale = learning_rate_scale / readout_fan_in_scale
+    readout_update_width_u = anchor_update_width_u * write_scale
+    residual_target_width_u = anchor_target_width_u * error_drive_scale
+    residual_output_width_u = residual_target_width_u / (class_count - 1)
+
+    if not one_vs_rest_width_ratio_is_balanced(
+        class_count,
+        residual_target_width_u,
+        residual_output_width_u,
+    ):
+        raise AssertionError("derived one-vs-rest widths should be balanced")
+
+    score_cap_f = anchor_score_cap_f * score_tau_scale * readout_fan_in_scale
+
+    return MulticlassReadoutSizing(
+        class_count=class_count,
+        effective_readout_fan_in=effective_readout_fan_in,
+        readout_fan_in_scale=readout_fan_in_scale,
+        readout_update_width_u=readout_update_width_u,
+        readout_dp_gate_update_width_u=target_selector_ratio * readout_update_width_u,
+        readout_dn_gate_update_width_u=nontarget_selector_ratio * readout_update_width_u,
+        output_bias_update_width_u=output_bias_update_ratio * readout_update_width_u,
+        readout_write_error_exclusion_width_u=anchor_guard_width_u * write_scale,
+        residual_target_width_u=residual_target_width_u,
+        residual_output_width_u=residual_output_width_u,
+        score_cap_f=score_cap_f,
+        output_cap_f=output_to_score_cap_ratio * score_cap_f,
+    )

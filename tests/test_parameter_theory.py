@@ -107,3 +107,85 @@ def test_one_vs_rest_balance_accounts_for_multiple_non_target_classes() -> None:
     assert theory.one_vs_rest_target_balance_ratio(3, target_mobility=192.0, nontarget_mobility=32.0) == pytest.approx(3.0)
     assert theory.one_vs_rest_width_ratio_is_balanced(3, 192.0, 32.0)
     assert not theory.one_vs_rest_width_ratio_is_balanced(3, 96.0, 64.0)
+
+
+def test_one_vs_rest_measured_signed_update_balance_reports_epoch_drift() -> None:
+    assert theory.one_vs_rest_signed_update_balance_ratio(5, 0.064, -0.016) == pytest.approx(1.0)
+    assert theory.one_vs_rest_signed_epoch_delta(5, 0.064, -0.016) == pytest.approx(0.0)
+
+    assert theory.one_vs_rest_signed_update_balance_ratio(5, 0.064, -0.044) == pytest.approx(0.36363636)
+    assert theory.one_vs_rest_signed_epoch_delta(5, 0.064, -0.044) == pytest.approx(-0.112)
+
+    with pytest.raises(ValueError, match="nontarget_delta"):
+        theory.one_vs_rest_signed_update_balance_ratio(5, 0.064, 0.01)
+
+
+def test_one_vs_rest_common_epoch_delta_catches_hidden_common_mode_drift() -> None:
+    assert theory.one_vs_rest_common_epoch_delta(5, -0.0187, -0.00535) == pytest.approx(-0.0401)
+    assert theory.common_drift_to_signed_step_ratio(5, 0.0187, -0.00535, -0.0187, -0.00535) == pytest.approx(
+        0.0401 / 0.0187
+    )
+
+    assert theory.one_vs_rest_signed_epoch_delta(5, 0.0187, -0.004675) == pytest.approx(0.0)
+    assert theory.one_vs_rest_common_epoch_delta(5, -0.0187, -0.004675) == pytest.approx(-0.0374)
+
+
+def test_multiclass_readout_sizing_derives_topology_dependent_locals() -> None:
+    sizing = theory.derive_multiclass_readout_sizing(
+        class_count=5,
+        effective_readout_fan_in=16.0,
+        learning_rate_scale=1.5,
+        error_drive_scale=0.5,
+        score_tau_scale=2.0,
+    )
+
+    assert sizing.readout_fan_in_scale == pytest.approx(2.0)
+    assert sizing.readout_update_width_u == pytest.approx(3.75e-4)
+    assert sizing.readout_dp_gate_update_width_u == pytest.approx(3.75e-4)
+    assert sizing.readout_dn_gate_update_width_u == pytest.approx(3.75e-4)
+    assert sizing.output_bias_update_width_u == pytest.approx(3.75e-4)
+    assert sizing.readout_write_error_exclusion_width_u == pytest.approx(6.0)
+    assert sizing.residual_target_width_u == pytest.approx(48.0)
+    assert sizing.residual_output_width_u == pytest.approx(12.0)
+    assert sizing.score_cap_f == pytest.approx(40.0)
+    assert sizing.output_cap_f == pytest.approx(80.0)
+    assert theory.one_vs_rest_target_balance_ratio(
+        sizing.class_count,
+        sizing.residual_target_width_u,
+        sizing.residual_output_width_u,
+    ) == pytest.approx(1.0)
+
+    selector_sized = theory.derive_multiclass_readout_sizing(
+        class_count=5,
+        effective_readout_fan_in=16.0,
+        target_selector_ratio=4.0,
+        nontarget_selector_ratio=0.5,
+        output_bias_update_ratio=0.25,
+    )
+
+    assert selector_sized.readout_update_width_u == pytest.approx(2.5e-4)
+    assert selector_sized.readout_dp_gate_update_width_u == pytest.approx(1.0e-3)
+    assert selector_sized.readout_dn_gate_update_width_u == pytest.approx(1.25e-4)
+    assert selector_sized.output_bias_update_width_u == pytest.approx(6.25e-5)
+
+    no_bias_sized = theory.derive_multiclass_readout_sizing(
+        class_count=5,
+        effective_readout_fan_in=16.0,
+        output_bias_update_ratio=0.0,
+    )
+
+    assert no_bias_sized.output_bias_update_width_u == pytest.approx(0.0)
+
+
+def test_multiclass_readout_sizing_rejects_invalid_global_scales() -> None:
+    with pytest.raises(ValueError, match="learning_rate_scale"):
+        theory.derive_multiclass_readout_sizing(
+            class_count=3,
+            effective_readout_fan_in=8.0,
+            learning_rate_scale=0.0,
+        )
+    with pytest.raises(ValueError, match="class_count"):
+        theory.derive_multiclass_readout_sizing(
+            class_count=1,
+            effective_readout_fan_in=8.0,
+        )

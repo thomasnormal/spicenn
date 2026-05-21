@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import subprocess
 import time
 from pathlib import Path
 
@@ -23,7 +22,7 @@ from run_spice_mnist_sparse_random_train import (
     pulse_update_expr,
 )
 from run_spice_mnist_train import load_mnist_sequence
-from run_spice_sweep import ROOT, detect_spice, run_tiny_test
+from run_spice_sweep import ROOT, detect_spice, prepare_netlist_for_simulator, run_tiny_test, run_simulator_netlist
 
 
 def make_sheet_graph(
@@ -519,39 +518,42 @@ def run_train_batch(
     hidden_error_rule,
 ):
     netlist_path.write_text(
-        make_train_netlist(
-            x,
-            y,
-            input_fanins,
-            recurrent_fanins,
-            output_edges,
-            feedback,
-            win,
-            brec,
-            wrec,
-            wout,
-            bout,
-            rin,
-            rbrec,
-            rrec,
-            rout,
-            rbout,
-            ticks,
-            lr,
-            data_path,
-            activation_mode,
-            activation_clip,
-            gradient_mode,
-            gradient_bits,
-            gradient_clip,
-            pulse_step,
-            pulse_max_count,
-            self_memory,
-            local_inhibition,
-            hidden_error_rule,
+        prepare_netlist_for_simulator(
+            make_train_netlist(
+                x,
+                y,
+                input_fanins,
+                recurrent_fanins,
+                output_edges,
+                feedback,
+                win,
+                brec,
+                wrec,
+                wout,
+                bout,
+                rin,
+                rbrec,
+                rrec,
+                rout,
+                rbout,
+                ticks,
+                lr,
+                data_path,
+                activation_mode,
+                activation_clip,
+                gradient_mode,
+                gradient_bits,
+                gradient_clip,
+                pulse_step,
+                pulse_max_count,
+                self_memory,
+                local_inhibition,
+                hidden_error_rule,
+            ),
+            spice_bin,
         )
     )
-    proc = subprocess.run([spice_bin, "-b", str(netlist_path)], text=True, capture_output=True, timeout=timeout)
+    proc = run_simulator_netlist(spice_bin, netlist_path, timeout=timeout)
     if proc.returncode != 0:
         raise RuntimeError(proc.stderr[-3000:] or proc.stdout[-3000:])
     hidden, input_fan_in = input_fanins.shape
@@ -608,25 +610,28 @@ def run_eval(
         x = x_eval[start : start + batch_size]
         y = y_eval[start : start + batch_size]
         netlist_path.write_text(
-            make_eval_netlist(
-                x,
-                input_fanins,
-                recurrent_fanins,
-                output_edges,
-                win,
-                brec,
-                wrec,
-                wout,
-                bout,
-                ticks,
-                data_path,
-                activation_mode,
-                activation_clip,
-                self_memory,
-                local_inhibition,
+            prepare_netlist_for_simulator(
+                make_eval_netlist(
+                    x,
+                    input_fanins,
+                    recurrent_fanins,
+                    output_edges,
+                    win,
+                    brec,
+                    wrec,
+                    wout,
+                    bout,
+                    ticks,
+                    data_path,
+                    activation_mode,
+                    activation_clip,
+                    self_memory,
+                    local_inhibition,
+                ),
+                spice_bin,
             )
         )
-        proc = subprocess.run([spice_bin, "-b", str(netlist_path)], text=True, capture_output=True, timeout=timeout)
+        proc = run_simulator_netlist(spice_bin, netlist_path, timeout=timeout)
         if proc.returncode != 0:
             raise RuntimeError(proc.stderr[-3000:] or proc.stdout[-3000:])
         vals = read_wrdata_row(data_path, len(y) * n_classes).reshape(len(y), n_classes)

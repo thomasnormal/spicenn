@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import shutil
 import subprocess
 from pathlib import Path
@@ -11,17 +12,83 @@ import pandas as pd
 
 from parse_ngspice import parse_output_high
 from fit_activation_curve import fit_activation
+from pyspice_adapter import (
+    canonical_circuit_body,
+    is_ngspice as pyspice_is_ngspice,
+    is_xyce as pyspice_is_xyce,
+    render_for_simulator,
+    run_simulator_netlist as pyspice_run_simulator_netlist,
+    run_text_netlist as pyspice_run_text_netlist,
+    spice_batch_command as pyspice_batch_command,
+    write_simulator_netlist as pyspice_write_simulator_netlist,
+)
 
 
 ROOT = Path(__file__).resolve().parents[1]
 TEMPLATE = ROOT / "spice/templates/noisy_comparator_behavioral.cir"
+SPICE_SIMULATOR_ENV = "SPICENN_SIMULATOR"
+COMPAT_SIMULATOR_CANDIDATES = ("ngspice", "Xyce", "xyce", "XyceNF")
+FAST_SIMULATOR_CANDIDATES = ("Xyce", "xyce", "XyceNF", "ngspice")
+
+
+def simulator_name(spice_bin: str) -> str:
+    return Path(spice_bin).name.lower()
+
+
+def is_ngspice(spice_bin: str) -> bool:
+    return pyspice_is_ngspice(spice_bin)
+
+
+def is_xyce(spice_bin: str) -> bool:
+    return pyspice_is_xyce(spice_bin)
+
+
+def prepare_netlist_for_simulator(netlist: str, spice_bin: str) -> str:
+    return render_for_simulator(netlist, spice_bin)
+
+
+def spice_batch_command(spice_bin: str, netlist: Path) -> list[str]:
+    return pyspice_batch_command(spice_bin, netlist)
+
+
+def write_simulator_netlist(path: Path, netlist: str, spice_bin: str) -> None:
+    pyspice_write_simulator_netlist(path, netlist, spice_bin)
+
+
+def run_simulator_netlist(spice_bin: str, netlist: Path, *, timeout: float) -> subprocess.CompletedProcess[str]:
+    return pyspice_run_simulator_netlist(spice_bin, netlist, timeout=timeout)
+
+
+def run_text_netlist(spice_bin: str, path: Path, netlist: str, *, timeout: float) -> subprocess.CompletedProcess[str]:
+    return pyspice_run_text_netlist(spice_bin, path, netlist, timeout=timeout)
+
+
+def canonical_circuit_netlist(netlist: str) -> str:
+    return canonical_circuit_body(netlist)
+
+
+def simulator_candidates(preferred: str | None = None) -> tuple[str, ...]:
+    """Return candidate simulator executables in the requested priority order.
+
+    ``auto`` preserves the historical ngspice-first behavior.  ``auto-fast`` is
+    for long transient sweeps where Xyce is preferred when it is installed.
+    The same modes can be selected globally with ``SPICENN_SIMULATOR``.
+    """
+    selector = preferred if preferred is not None else os.environ.get(SPICE_SIMULATOR_ENV)
+    if selector is None or selector == "" or selector == "auto":
+        return COMPAT_SIMULATOR_CANDIDATES
+    if selector in {"auto-fast", "fast", "xyce-first"}:
+        return FAST_SIMULATOR_CANDIDATES
+    if selector in {"auto-compat", "compat", "ngspice-first"}:
+        return COMPAT_SIMULATOR_CANDIDATES
+    if "," in selector:
+        return tuple(item.strip() for item in selector.split(",") if item.strip())
+    return (selector,)
 
 
 def detect_spice(preferred: str | None = None) -> tuple[str, str]:
-    candidates = [preferred] if preferred else ["ngspice", "Xyce", "xyce"]
+    candidates = simulator_candidates(preferred)
     for name in candidates:
-        if not name:
-            continue
         path = shutil.which(name)
         if path is None and Path(name).exists():
             path = str(Path(name).resolve())
@@ -35,20 +102,19 @@ def detect_spice(preferred: str | None = None) -> tuple[str, str]:
 
 
 def run_tiny_test(spice_bin: str, workdir: Path) -> None:
-    netlist = workdir / "tiny_test.cir"
-    if "ngspice" in Path(spice_bin).name.lower():
-        netlist.write_text(
-            "* tiny test\nV1 in 0 DC 1\nR1 in 0 1k\n.op\n.control\nrun\nprint v(in)\n.endc\n.end\n"
-        )
-    else:
-        netlist.write_text("* tiny test\nV1 in 0 DC 1\nR1 in 0 1k\n.op\n.print DC V(in)\n.end\n")
-    cmd = [spice_bin, "-b", str(netlist)] if "ngspice" in Path(spice_bin).name.lower() else [spice_bin, str(netlist)]
-    proc = subprocess.run(cmd, text=True, capture_output=True, timeout=20)
+    name = simulator_name(spice_bin)
+    netlist = workdir / f"tiny_test_{name}_{os.getpid()}.cir"
+    proc = run_text_netlist(
+        spice_bin,
+        netlist,
+        "* tiny test\nV1 in 0 DC 1\nR1 in 0 1k\n.op\n.control\nrun\nprint v(in)\n.endc\n.end\n",
+        timeout=20,
+    )
     if proc.returncode != 0:
         raise RuntimeError(f"SPICE tiny test failed:\nSTDOUT:\n{proc.stdout}\nSTDERR:\n{proc.stderr}")
 
 
-def render_netlist(signal: float, sigma: float, seed: int, out_path: Path) -> None:
+def render_netlist(signal: float, sigma: float, seed: int, out_path: Path, spice_bin: str | None = None) -> None:
     text = TEMPLATE.read_text()
     replacements = {
         "{S}": f"{signal}",
@@ -57,7 +123,10 @@ def render_netlist(signal: float, sigma: float, seed: int, out_path: Path) -> No
     }
     for k, v in replacements.items():
         text = text.replace(k, v)
-    out_path.write_text(text)
+    if spice_bin is None:
+        out_path.write_text(text)
+    else:
+        write_simulator_netlist(out_path, text, spice_bin)
 
 
 def analytic_fallback(signals: np.ndarray, trials: int, sigma: float, theta: float, seed: int) -> pd.DataFrame:
@@ -93,9 +162,8 @@ def run_sweep(
         for _ in range(trials):
             trial_seed = int(rng.integers(1, 2**30))
             netlist = generated / f"cmp_s{s:+.6e}_seed{trial_seed}.cir"
-            render_netlist(float(s), sigma, trial_seed, netlist)
-            cmd = [spice_bin, "-b", str(netlist)] if "ngspice" in Path(spice_bin).name.lower() else [spice_bin, str(netlist)]
-            proc = subprocess.run(cmd, text=True, capture_output=True, timeout=30)
+            render_netlist(float(s), sigma, trial_seed, netlist, spice_bin)
+            proc = run_simulator_netlist(spice_bin, netlist, timeout=30)
             if proc.returncode != 0:
                 msg = proc.stderr[-500:] or proc.stdout[-500:]
                 failures.append(msg)

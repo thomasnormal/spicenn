@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import subprocess
 import time
 from pathlib import Path
 
@@ -21,7 +20,7 @@ from run_spice_mnist_local_feature_phase_transient import (
     target_matrix,
 )
 from run_spice_mnist_train import load_mnist_sequence
-from run_spice_sweep import ROOT, detect_spice, run_tiny_test
+from run_spice_sweep import ROOT, detect_spice, prepare_netlist_for_simulator, run_tiny_test, run_simulator_netlist
 
 
 PartialState = tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]
@@ -436,10 +435,10 @@ def main() -> None:
         args.rleak,
         "measure" if args.final_measures else "wrdata",
     )
-    phase_netlist.write_text(netlist)
+    phase_netlist.write_text(prepare_netlist_for_simulator(netlist, spice_bin))
 
     t0 = time.perf_counter()
-    proc = subprocess.run([spice_bin, "-b", str(phase_netlist)], text=True, capture_output=True, timeout=args.timeout)
+    proc = run_simulator_netlist(spice_bin, phase_netlist, timeout=args.timeout)
     phase_wall = time.perf_counter() - t0
     if proc.returncode != 0:
         raise RuntimeError(proc.stderr[-3000:] or proc.stdout[-3000:])

@@ -2,8 +2,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import re
-import subprocess
 import time
 from pathlib import Path
 from typing import Any
@@ -11,14 +9,11 @@ from typing import Any
 import pandas as pd
 
 from run_device_multicell_classifier import mos_models, pwl
-from run_spice_sweep import ROOT, detect_spice, run_tiny_test
+from run_spice_sweep import ROOT, detect_spice, run_text_netlist, run_tiny_test
+from _util import MEAS_RE, parse_measures
 
 
-MEAS_RE = re.compile(r"(?im)^\s*([a-zA-Z_][a-zA-Z0-9_]*)\s*=\s*([-+0-9.eE]+)")
-
-
-def parse_measures(text: str) -> dict[str, float]:
-    return {name.lower(): float(value) for name, value in MEAS_RE.findall(text)}
+SELECTOR_MODES = ["pmos_inhibit", "diffpair_bleed"]
 
 
 def write_rail_exclusion_netlist(
@@ -27,11 +22,53 @@ def write_rail_exclusion_netlist(
     width_u: float,
     rail_cap_f: float = 0.1,
     overlap_decay: bool = False,
+    selector_mode: str = "pmos_inhibit",
 ) -> str:
+    if selector_mode not in SELECTOR_MODES:
+        raise ValueError(f"unknown write-rail selector mode: {selector_mode}")
     overlap_block = ""
     overlap_measures = ""
     overlap_prints = ""
-    if overlap_decay:
+    if selector_mode == "diffpair_bleed":
+        tail_width_u = max(width_u * 0.5, 1e-9)
+        bleed_width_u = max(width_u * 0.025, 1e-9)
+        selector_block = f"""
+Cposbar posbar 0 0.05f IC=1.2
+Cnegbar negbar 0 0.05f IC=1.2
+Rposbar posbar vdd 1G
+Rnegbar negbar vdd 1G
+Mposbar_load posbar posbar vdd vdd PMOS W={width_u:.12g}u L=180n
+Mnegbar_load negbar negbar vdd vdd PMOS W={width_u:.12g}u L=180n
+Mposbar_sel posbar dp sel_src 0 NSENSE W={width_u:.12g}u L=180n
+Mnegbar_sel negbar dn sel_src 0 NSENSE W={width_u:.12g}u L=180n
+Msel_tail sel_src bwd 0 0 NMOS W={tail_width_u:.12g}u L=180n
+Mrwpos_bleed rwpos bwd 0 0 NMOS W={bleed_width_u:.12g}u L=180n
+Mrwneg_bleed rwneg bwd 0 0 NMOS W={bleed_width_u:.12g}u L=180n
+Mrwpos_p vdd posbar posmid vdd PMOS W={width_u:.12g}u L=180n
+Mrwpos_n posmid negbar rwpos 0 NMOS W={width_u:.12g}u L=180n
+Mrwneg_p vdd negbar negmid vdd PMOS W={width_u:.12g}u L=180n
+Mrwneg_n negmid posbar rwneg 0 NMOS W={width_u:.12g}u L=180n
+Cposmid posmid 0 0.02f IC=0
+Cnegmid negmid 0 0.02f IC=0
+Rposmid posmid 0 1G
+Rnegmid negmid 0 1G
+Csrc sel_src 0 0.02f IC=0
+Rsrc sel_src 0 1G
+"""
+    else:
+        selector_block = f"""
+Mrwpos_inh vdd dn rwpos_src vdd PMOS W={width_u:.12g}u L=180n
+Mrwpos_gate rwpos_src dp rwpos 0 NSENSE W={width_u:.12g}u L=180n
+Mrwneg_inh vdd dp rwneg_src vdd PMOS W={width_u:.12g}u L=180n
+Mrwneg_gate rwneg_src dn rwneg 0 NSENSE W={width_u:.12g}u L=180n
+Mrwpos_kill rwpos dn 0 0 NMOS W={width_u:.12g}u L=180n
+Mrwneg_kill rwneg dp 0 0 NMOS W={width_u:.12g}u L=180n
+Csrcp rwpos_src 0 0.02f IC=0
+Csrcn rwneg_src 0 0.02f IC=0
+Rsrcp rwpos_src 0 1G
+Rsrcn rwneg_src 0 1G
+"""
+    if overlap_decay and selector_mode == "pmos_inhibit":
         overlap_block = f"""
 Crwov rwov 0 {rail_cap_f:.12g}f IC=0
 Rrwov rwov 0 1G
@@ -54,6 +91,7 @@ Rovmid rwov_mid 0 1G
 {mos_models()}
 Vdd vdd 0 {{VDD}}
 Vrste rste 0 {pwl([(0.0, 1.1), (0.45, 1.1), (0.50, 0.0), (8.0, 0.0)])}
+Vbwd bwd 0 {pwl([(0.0, 0.0), (0.50, 0.0), (0.55, 1.1), (5.00, 1.1), (5.05, 0.0), (8.0, 0.0)])}
 Vdp dp 0 {pwl([(0.0, 0.0), (0.50, 0.0), (0.55, dp_v), (5.00, dp_v), (5.05, 0.0), (8.0, 0.0)])}
 Vdn dn 0 {pwl([(0.0, 0.0), (0.50, 0.0), (0.55, dn_v), (5.00, dn_v), (5.05, 0.0), (8.0, 0.0)])}
 
@@ -63,16 +101,7 @@ Rrwpos rwpos 0 1G
 Rrwneg rwneg 0 1G
 Mreset_rwpos rwpos rste 0 0 NMOS W=4u L=180n
 Mreset_rwneg rwneg rste 0 0 NMOS W=4u L=180n
-Mrwpos_inh vdd dn rwpos_src vdd PMOS W={width_u:.12g}u L=180n
-Mrwpos_gate rwpos_src dp rwpos 0 NSENSE W={width_u:.12g}u L=180n
-Mrwneg_inh vdd dp rwneg_src vdd PMOS W={width_u:.12g}u L=180n
-Mrwneg_gate rwneg_src dn rwneg 0 NSENSE W={width_u:.12g}u L=180n
-Mrwpos_kill rwpos dn 0 0 NMOS W={width_u:.12g}u L=180n
-Mrwneg_kill rwneg dp 0 0 NMOS W={width_u:.12g}u L=180n
-Csrcp rwpos_src 0 0.02f IC=0
-Csrcn rwneg_src 0 0.02f IC=0
-Rsrcp rwpos_src 0 1G
-Rsrcn rwneg_src 0 1G
+{selector_block}
 {overlap_block}
 
 .options method=gear maxord=2
@@ -93,14 +122,12 @@ print pos_mid neg_mid pos_late neg_late pos_after_off neg_after_off{overlap_prin
 
 
 def run_netlist(spice_bin: str, path: Path, netlist: str, timeout: float) -> dict[str, float]:
-    path.write_text(netlist)
-    cmd = [spice_bin, "-b", str(path)] if "ngspice" in Path(spice_bin).name.lower() else [spice_bin, str(path)]
-    proc = subprocess.run(cmd, text=True, capture_output=True, timeout=timeout)
+    proc = run_text_netlist(spice_bin, path, netlist, timeout=timeout)
     if proc.returncode != 0:
         raise RuntimeError((proc.stderr or proc.stdout)[-3000:])
     measures = parse_measures(proc.stdout + "\n" + proc.stderr)
     if not measures:
-        raise RuntimeError("ngspice produced no parseable measurements:\n" + (proc.stdout + proc.stderr)[-3000:])
+        raise RuntimeError("SPICE produced no parseable measurements:\n" + (proc.stdout + proc.stderr)[-3000:])
     return measures
 
 
@@ -110,6 +137,7 @@ def main() -> None:
     ap.add_argument("--tag", default="device_write_rail_exclusion")
     ap.add_argument("--rail-cap-f", type=float, default=0.1)
     ap.add_argument("--overlap-decay", action="store_true")
+    ap.add_argument("--mode", choices=SELECTOR_MODES, default="pmos_inhibit")
     args = ap.parse_args()
     if args.rail_cap_f <= 0:
         raise SystemExit("--rail-cap-f must be positive.")
@@ -136,7 +164,14 @@ def main() -> None:
             measures = run_netlist(
                 spice_bin,
                 generated / f"{safe_tag}_{name}_{width_u:g}.cir",
-                write_rail_exclusion_netlist(dp_v, dn_v, width_u, args.rail_cap_f, args.overlap_decay),
+                write_rail_exclusion_netlist(
+                    dp_v,
+                    dn_v,
+                    width_u,
+                    args.rail_cap_f,
+                    args.overlap_decay,
+                    args.mode,
+                ),
                 args.timeout,
             )
             rows.append(
@@ -146,6 +181,7 @@ def main() -> None:
                     "dn_v": dn_v,
                     "width_u": width_u,
                     "rail_cap_f": args.rail_cap_f,
+                    "selector_mode": args.mode,
                     **measures,
                 }
             )
@@ -162,6 +198,7 @@ def main() -> None:
     summary = {
         "simulator": version,
         "architecture": "mutually_inhibited_write_rail_generator",
+        "selector_mode": args.mode,
         "overlap_decay": args.overlap_decay,
         "model_level": "ngspice built-in LEVEL=1 MOS models; not a foundry PDK.",
         "rail_cap_f": args.rail_cap_f,
@@ -176,7 +213,7 @@ def main() -> None:
         "max_conflict_neg_late_v": float(conflict["neg_late"].max()),
         "wall_time_s": time.perf_counter() - t0,
     }
-    if args.overlap_decay:
+    if args.overlap_decay and args.mode == "pmos_inhibit":
         summary.update(
             {
                 "min_conflict_overlap_late_v": float(conflict["ov_late"].min()),

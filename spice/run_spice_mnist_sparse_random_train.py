@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import subprocess
 import time
 from pathlib import Path
 from typing import Literal
@@ -19,7 +18,7 @@ from run_spice_mnist_local_block_batch_op_train import (
     relu_expr,
 )
 from run_spice_mnist_train import load_mnist_sequence
-from run_spice_sweep import ROOT, detect_spice, run_tiny_test
+from run_spice_sweep import ROOT, detect_spice, prepare_netlist_for_simulator, run_tiny_test, run_simulator_netlist
 
 
 GradientMode = Literal[
@@ -461,34 +460,37 @@ def run_train_batch(
     hidden_error_rule,
 ):
     netlist_path.write_text(
-        make_train_netlist(
-            x,
-            y,
-            fanins,
-            output_edges,
-            feedback,
-            w1,
-            b1,
-            w2,
-            b2,
-            r1,
-            rb1,
-            r2,
-            rb2,
-            lr,
-            data_path,
-            activation,
-            activation_clip,
-            output_mode,
-            gradient_mode,
-            gradient_bits,
-            gradient_clip,
-            pulse_step,
-            pulse_max_count,
-            hidden_error_rule,
+        prepare_netlist_for_simulator(
+            make_train_netlist(
+                x,
+                y,
+                fanins,
+                output_edges,
+                feedback,
+                w1,
+                b1,
+                w2,
+                b2,
+                r1,
+                rb1,
+                r2,
+                rb2,
+                lr,
+                data_path,
+                activation,
+                activation_clip,
+                output_mode,
+                gradient_mode,
+                gradient_bits,
+                gradient_clip,
+                pulse_step,
+                pulse_max_count,
+                hidden_error_rule,
+            ),
+            spice_bin,
         )
     )
-    proc = subprocess.run([spice_bin, "-b", str(netlist_path)], text=True, capture_output=True, timeout=timeout)
+    proc = run_simulator_netlist(spice_bin, netlist_path, timeout=timeout)
     if proc.returncode != 0:
         raise RuntimeError(proc.stderr[-3000:] or proc.stdout[-3000:])
     hidden, fan_in = fanins.shape
@@ -558,9 +560,12 @@ def run_eval(
         x = x_eval[start : start + batch_size]
         y = y_eval[start : start + batch_size]
         netlist_path.write_text(
-            make_eval_netlist(x, fanins, output_edges, w1, b1, w2, b2, data_path, activation, activation_clip, output_mode)
+            prepare_netlist_for_simulator(
+                make_eval_netlist(x, fanins, output_edges, w1, b1, w2, b2, data_path, activation, activation_clip, output_mode),
+                spice_bin,
+            )
         )
-        proc = subprocess.run([spice_bin, "-b", str(netlist_path)], text=True, capture_output=True, timeout=timeout)
+        proc = run_simulator_netlist(spice_bin, netlist_path, timeout=timeout)
         if proc.returncode != 0:
             raise RuntimeError(proc.stderr[-3000:] or proc.stdout[-3000:])
         vals = read_wrdata_row(data_path, len(y) * n_classes).reshape(len(y), n_classes)

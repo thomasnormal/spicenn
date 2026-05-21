@@ -300,14 +300,32 @@ trajectory, while a finer 5 ps run improved this calibration from 90\% to
 For confirmation runs, 5--7.5 ps is now a better default than 10 ps when wall
 time is acceptable.
 
-The first Xyce comparison is promising for throughput but not yet calibrated
-as a drop-in oracle.  A user-local Xyce 7.10 serial install runs the same
+The first Xyce comparison is promising for throughput but not a sufficient
+oracle by itself.  A user-local Xyce 7.10 serial install runs the same
 20-sample calibration roughly twice as fast as ngspice: about 20 s instead of
-42 s at the 10 ps setting.  However, the measured learning outcome was 85\%
-at both 10 ps and 5 ps, while ngspice gave 90\% at 10 ps and 95\% at 5 ps.
-That makes Xyce useful for fast smoke tests and convergence screening, but
-ngspice remains the reference simulator until we characterize which MOS
-options, timestep controls, or numerical tolerances explain the discrepancy.
+42 s at the 10 ps setting.  However, the first measured learning outcome was
+85\% at both 10 ps and 5 ps, while ngspice gave 90\% at 10 ps and 95\% at
+5 ps.  A later primitive pass found two concrete sources of confusion: the
+tiny simulator smoke test reused a single filename, so parallel ngspice/Xyce
+checks could race, and the output-bias write cell had the opposite branch
+orientation from the per-synapse row cell.  After those fixes, the isolated
+readout-write and composed readout/error/write primitives agree between
+ngspice and Xyce to about \(10^{-5}\,\mathrm{V}\) on the key signed row and
+bias deltas.  The remaining rule is stricter: any promising architecture must
+pass a matched ngspice/Xyce primitive or small-training gate before it counts as
+evidence.  When both simulators agree on a bad result, as in the current
+3-class readout-only gate, the problem should be treated as circuit/learning
+fragility rather than numerical disagreement.  The implementation now depends
+on PySpice and keeps the circuit generator shared by converting generated decks
+through a PySpice \code{Circuit} boundary before simulator-specific rendering.
+The adapter preserves one device/connectivity body, includes ngspice
+\code{.control}/\code{.endc} blocks only for ngspice, strips them for Xyce, and
+compares both prepared decks with a canonical circuit-body test.
+The migration point is the shared runner, not simulator-specific duplicated
+generators: the active XOR/random-hidden, readout-transfer, readout-error-loop,
+softmax-current-competition, reusable device primitive scripts, and older
+MNIST transient/op runners now write their decks through this PySpice rendering
+boundary before invoking ngspice or Xyce.
 
 \section{Primitive Circuit Model}
 
@@ -395,57 +413,136 @@ accidentally trigger common-mode decay.
 
 \begin{figure}[h]
   \centering
-  \begin{circuitikz}[american, scale=0.85, transform shape, font=\small]
-    %% Positive branch (top stack): VDD - w+ - x_i - fwd - pre
+  \begin{circuitikz}[american, scale=0.72, transform shape, font=\footnotesize]
+    %% =========================================================================
+    %% Weight capacitors (CapState primitives) on the far left.
+    %% Each cap voltage IS the analog ``w^+'' / ``w^-'' gate signal.  Rather
+    %% than wire each cap to every MOS that uses it (which produced ugly
+    %% diagonals), we follow the standard schematic convention: name the gate
+    %% with the signal it carries, and label the cap on the side with which
+    %% signal it produces.  Every gate marked ``w^+'' is electrically
+    %% connected to the top plate of C_{w^+}, and similarly for w^-.
+    %% =========================================================================
+    \coordinate (cwp_top) at (-2.4,5.7);
+    \node[circ] at (cwp_top) {};
+    \node[above, font=\footnotesize] at (cwp_top) {$C_{w^+}$};
+    \draw (cwp_top) to[C] ($(cwp_top)+(0,-1.5)$) node[ground]{};
+    \draw (cwp_top) -- ($(cwp_top)+(0.55,0)$);
+    \draw ($(cwp_top)+(0.55,0)$) to[R, l_={$R_w$}] ($(cwp_top)+(0.55,-1.5)$) node[ground]{};
+    \draw[stategreen, thick] (cwp_top) -- ($(cwp_top)+(0.8,0)$)
+      node[right, font=\footnotesize, stategreen] {$\to w^+$};
+
+    \coordinate (cwn_top) at (-2.4,1.7);
+    \node[circ] at (cwn_top) {};
+    \node[above, font=\footnotesize] at (cwn_top) {$C_{w^-}$};
+    \draw (cwn_top) to[C] ($(cwn_top)+(0,-1.5)$) node[ground]{};
+    \draw (cwn_top) -- ($(cwn_top)+(0.55,0)$);
+    \draw ($(cwn_top)+(0.55,0)$) to[R, l_={$R_w$}] ($(cwn_top)+(0.55,-1.5)$) node[ground]{};
+    \draw[stategreen, thick] (cwn_top) -- ($(cwn_top)+(0.8,0)$)
+      node[right, font=\footnotesize, stategreen] {$\to w^-$};
+
+    %% =========================================================================
+    %% Forward NEGATIVE branch on the LEFT (x = 2): V_DD -> w- -> x_i -> fwd -> post^-
+    %% =========================================================================
     \draw (2,7.4) node[above] {$V_{DD}$} -- (2,7.0);
-    \node[nmos, anchor=D] (mwp) at (2,7.0) {};
-    \draw (mwp.G) -- ++(-0.5,0) node[left] {$w^+$};
+    \node[nmos, anchor=D] (mwn) at (2,7.0) {};
+    \draw (mwn.G) -- ++(-0.55,0) node[left, stategreen] {$w^-$};
 
-    \draw (mwp.S) -- (2,5.6);
-    \node[nmos, anchor=D] (mxp) at (2,5.6) {};
-    \draw (mxp.G) -- ++(-0.5,0) node[left] {$x_i$};
+    \draw (mwn.S) -- (2,5.6);
+    \node[nmos, anchor=D] (mxn) at (2,5.6) {};
+    \draw (mxn.G) -- ++(-0.55,0) node[left] {$x_i$};
 
-    \draw (mxp.S) -- (2,4.2);
-    \node[nmos, anchor=D] (mfp) at (2,4.2) {};
-    \draw (mfp.G) -- ++(-0.5,0) node[left] {fwd};
+    \draw (mxn.S) -- (2,4.2);
+    \node[nmos, anchor=D] (mfn) at (2,4.2) {};
+    \draw (mfn.G) -- ++(-0.55,0) node[left] {fwd};
 
-    %% pre node and storage branch
-    \draw (mfp.S) -- (2,3.2);
-    \node[circ] (pre) at (2,3.2) {};
-    \draw (pre) -- (3.6,3.2);
-    \draw (3.6,3.2) to[C,l_={$C_{\mathrm{pre}}$}] (3.6,1.8) node[ground] {};
-    \draw (3.6,3.2) -- (4.9,3.2);
-    \draw (4.9,3.2) to[R,l_={$R_{\mathrm{leak}}$}] (4.9,1.8) node[ground] {};
-    \draw (pre) -- (6.4,3.2) node[right] {to neuron};
+    \draw (mfn.S) -- (2,3.2);
+    \node[circ] (postn) at (2,3.2) {};
+    %% Pure downward drop of 1.2 units; label at the bottom of the wire.
+    %% Symmetric with the post^+ output below.
+    \draw (postn) -- (2,2.0)
+      node[below, font=\footnotesize] {$\mathrm{post}^{-}$};
 
-    %% Negative branch (bottom stack): pre - fwd - x_i - w- - GND
-    \draw (pre) -- (2,2.4);
-    \node[nmos, anchor=D] (mfn) at (2,2.4) {};
-    \draw (mfn.G) -- ++(-0.5,0) node[left] {fwd};
+    %% =========================================================================
+    %% Forward POSITIVE branch on the RIGHT (x = 4.2): V_DD -> w+ -> x_i -> fwd -> post^+
+    %% Both branches pull UP from V_DD onto SEPARATE output nodes; the signed
+    %% pre-activation is V(post^+) - V(post^-).  Positive on the right means
+    %% its output wire can exit straight right without crossing post^-.
+    %% =========================================================================
+    \draw (4.2,7.4) node[above] {$V_{DD}$} -- (4.2,7.0);
+    \node[nmos, anchor=D] (mwp) at (4.2,7.0) {};
+    \draw (mwp.G) -- ++(-0.55,0) node[left, stategreen] {$w^+$};
 
-    \draw (mfn.S) -- (2,1.0);
-    \node[nmos, anchor=D] (mxn) at (2,1.0) {};
-    \draw (mxn.G) -- ++(-0.5,0) node[left] {$x_i$};
+    \draw (mwp.S) -- (4.2,5.6);
+    \node[nmos, anchor=D] (mxp) at (4.2,5.6) {};
+    \draw (mxp.G) -- ++(-0.55,0) node[left] {$x_i$};
 
-    \draw (mxn.S) -- (2,-0.4);
-    \node[nmos, anchor=D] (mwn) at (2,-0.4) {};
-    \draw (mwn.G) -- ++(-0.5,0) node[left] {$w^-$};
-    \draw (mwn.S) -- (2,-1.4) node[ground] {};
+    \draw (mxp.S) -- (4.2,4.2);
+    \node[nmos, anchor=D] (mfp) at (4.2,4.2) {};
+    \draw (mfp.G) -- ++(-0.55,0) node[left] {fwd};
 
-    %% Description box
-    \node[draw, rounded corners=2pt, fill=lightgray, align=left, text width=6.4cm,
-          font=\small]
-      at (9.8,4.5)
-      {\textbf{Signed synapse:}\\
-       top branch charges $C_{\mathrm{pre}}$ when fwd, $x_i$, $w^+$ are on;\\
-       bottom branch discharges it via the symmetric $w^-$ stack;\\
-       $R_{\mathrm{leak}}$ sets the trace decay time constant.};
+    \draw (mfp.S) -- (4.2,3.2);
+    \node[circ] (postp) at (4.2,3.2) {};
+    %% Pure downward drop of 1.2 units, symmetric with post^-.
+    \draw (postp) -- (4.2,2.0)
+      node[below, font=\footnotesize] {$\mathrm{post}^{+}$};
+
+    %% =========================================================================
+    %% Backward POSITIVE stack on the right (x = 8).
+    %%   V_DD -> [delta_post^+] -> [w+ (same signal as forward w^+)] ->
+    %%   [a_post] -> [bwd] -> delta_pre^+
+    %% =========================================================================
+    \draw (10.4,7.4) node[above] {$V_{DD}$} -- (10.4,7.0);
+    \node[nmos, anchor=D] (bdp) at (10.4,7.0) {};
+    \draw (bdp.G) -- ++(-0.55,0) node[left] {$\delta^{+}_{\mathrm{post}}$};
+
+    \draw (bdp.S) -- (10.4,5.6);
+    \node[nmos, anchor=D] (bwp) at (10.4,5.6) {};
+    \draw (bwp.G) -- ++(-0.55,0) node[left, stategreen] {$w^+$};
+
+    \draw (bwp.S) -- (10.4,4.2);
+    \node[nmos, anchor=D] (bap) at (10.4,4.2) {};
+    \draw (bap.G) -- ++(-0.55,0) node[left] {$a_{\mathrm{post}}$};
+
+    \draw (bap.S) -- (10.4,2.8);
+    \node[nmos, anchor=D] (bbp) at (10.4,2.8) {};
+    \draw (bbp.G) -- ++(-0.55,0) node[left] {bwd};
+
+    \draw (bbp.S) -- (10.4,1.6);
+    \node[circ] (deltapre_pos) at (10.4,1.6) {};
+    \draw (deltapre_pos) -- (11.4,1.6) node[right, font=\footnotesize] {$\delta^{+}_{\mathrm{pre}}$};
+
+    %% =========================================================================
+    %% Description box (right side, narrower).
+    %% =========================================================================
+    \node[draw, rounded corners=2pt, fill=lightgray, align=left, text width=4.6cm,
+          font=\footnotesize]
+      at (15.0,4.4)
+      {\textbf{Signed synapse, both directions:}\\[3pt]
+       \emph{Forward (centre):}\ both branches pull up from $V_{DD}$ through
+       $w^\pm,\,x_i,\,\mathrm{fwd}$ onto separate outputs
+       $\mathrm{post}^{\pm}$.  Neuron reads
+       $V(\mathrm{post}^{+})-V(\mathrm{post}^{-})$.  No per-synapse
+       $C_{\mathrm{pre}}$ in the default
+       \texttt{flow\_pre\_store=shared\_node}.\\[3pt]
+       \emph{Backward (right):}\ $\delta^{+}_{\mathrm{post}}$ propagates back
+       through the \emph{same} $C_{w^+}$ that gates the forward $w^+$ MOS;
+       both \textcolor{stategreen}{\textbf{green}}-labelled gates are
+       electrically one node.  $a_{\mathrm{post}}$ is the ReLU derivative.
+       Negative direction mirrors this stack via $C_{w^-}$.};
   \end{circuitikz}
-  \caption{Conceptual signed conductance synapse.  One synapse contributes
-  positive or negative charge to the shared $C_{\mathrm{pre}}$ node of its
-  postsynaptic neuron.  The generated netlists use MOS stacks, capacitor state,
-  leakage resistors, and phase rails; the figure omits parasitic damping
-  elements for readability.}
+  \caption{Conceptual signed-pair synapse with differential output and both
+  forward and backward MOS stacks shown.  Both forward branches \emph{pull
+  up} from $V_{DD}$ onto separate output nodes $\mathrm{post}^{+}$ /
+  $\mathrm{post}^{-}$, so the signed pre-activation is encoded
+  differentially as $V(\mathrm{post}^{+})\!-\!V(\mathrm{post}^{-})$; this
+  avoids the rail-clamp at GND that a single-ended summing node would
+  impose.  The same weight capacitor $C_{w^+}$ gates both the forward
+  positive MOS and the backward positive MOS (all green-labelled gates are
+  the same electrical node), so back-propagating current passes through the
+  gate transistor whose conductance is set by $V(C_{w^+})$.  No per-synapse
+  pre-activation cap is stored in the default direct-flow run
+  (\texttt{shared\_node} mode).}
   \label{fig:synapse}
 \end{figure}
 
@@ -472,74 +569,70 @@ count is visible.
 
 \begin{figure}[h]
   \centering
-  \begin{circuitikz}[american, scale=0.85, transform shape, font=\small]
-    %% ===== Pass-gate AND: 1 NMOS + leak pull-down =====
-    %% gate = fwd, drain = x_i, source = x_{a,i}
-    \node[nmos, anchor=D] (mand) at (-0.4,6.4) {};
+  \begin{circuitikz}[american, scale=0.78, transform shape, font=\footnotesize]
+    %% ===== Pass-gate AND on the left: 1 NMOS + leak pull-down =====
+    %% gate = fwd, drain = x_i, source = x_{a,i}.  Produces the shared rail.
+    \node[nmos, anchor=D] (mand) at (-1.0,6.6) {};
     \draw (mand.D) -- ++(0,0.4) node[above, font=\footnotesize] {$x_i$};
-    \draw (mand.G) -- ++(-0.5,0) node[left] {fwd};
+    \draw (mand.G) -- ++(-0.55,0) node[left] {fwd};
     \coordinate (xa) at ($(mand.S)+(0,-0.4)$);
     \draw (mand.S) -- (xa);
     \node[circ] at (xa) {};
-    \node[above right, font=\footnotesize] at (xa) {$x_{\mathrm{a},i}$};
-    %% leak pull-down so x_a goes to 0 when the pass gate is off
-    \draw (xa) -- ++(0.0,-0.4) coordinate (xa_below);
-    \draw (xa_below) to[R, l_={$R_{\ell}$}] ++(0,-1.0) node[ground]{};
+    \node[above right, font=\footnotesize, stategreen] at (xa) {$\to x_{\mathrm{a},i}$};
+    \draw (xa) to[R, l_={$R_\ell$}] ($(xa)+(0,-1.4)$) node[ground]{};
 
-    %% ===== 4-MOS synapse stack at x=2.4 =====
-    \node[above, font=\small] at (2.4,6.9) {$V_{DD}$};
-    \draw (2.4,6.9) -- (2.4,6.4);
-    \node[nmos, anchor=D] (mwp) at (2.4,6.4) {};
-    \draw (mwp.G) -- ++(-0.45,0) node[left] {$w^+$};
+    %% ===== Forward NEGATIVE column on the LEFT (x = 2): V_DD -> w- -> x_a -> post^-
+    \draw (2,7.4) node[above] {$V_{DD}$} -- (2,7.0);
+    \node[nmos, anchor=D] (mwn) at (2,7.0) {};
+    \draw (mwn.G) -- ++(-0.55,0) node[left, stategreen] {$w^-$};
 
-    \draw (mwp.S) -- (2.4,5.0);
-    \node[nmos, anchor=D] (mxp) at (2.4,5.0) {};
-    \coordinate (xag_up) at ($(mxp.G)+(-0.5,0)$);
-    \draw (mxp.G) -- (xag_up);
+    \draw (mwn.S) -- (2,5.6);
+    \node[nmos, anchor=D] (mxn) at (2,5.6) {};
+    \draw (mxn.G) -- ++(-0.55,0) node[left, stategreen] {$x_{\mathrm{a},i}$};
 
-    \draw (mxp.S) -- (2.4,3.6);
-    \node[circ] (tap) at (2.4,3.6) {};
-    \draw (tap) -- (4.2,3.6) node[right] {to $C_{\mathrm{pre}}$ rail};
+    \draw (mxn.S) -- (2,4.4);
+    \node[circ] (postn) at (2,4.4) {};
+    \draw (postn) -- (2,3.2) -- (5.8,3.2)
+      node[right, font=\footnotesize] {$\mathrm{post}^{-}$};
 
-    \draw (tap) -- (2.4,3.2);
-    \node[nmos, anchor=D] (mxn) at (2.4,3.2) {};
-    \coordinate (xag_dn) at ($(mxn.G)+(-0.5,0)$);
-    \draw (mxn.G) -- (xag_dn);
+    %% ===== Forward POSITIVE column on the RIGHT (x = 4.2): V_DD -> w+ -> x_a -> post^+
+    \draw (4.2,7.4) node[above] {$V_{DD}$} -- (4.2,7.0);
+    \node[nmos, anchor=D] (mwp) at (4.2,7.0) {};
+    \draw (mwp.G) -- ++(-0.55,0) node[left, stategreen] {$w^+$};
 
-    \draw (mxn.S) -- (2.4,1.8);
-    \node[nmos, anchor=D] (mwn) at (2.4,1.8) {};
-    \draw (mwn.G) -- ++(-0.45,0) node[left] {$w^-$};
+    \draw (mwp.S) -- (4.2,5.6);
+    \node[nmos, anchor=D] (mxp) at (4.2,5.6) {};
+    \draw (mxp.G) -- ++(-0.55,0) node[left, stategreen] {$x_{\mathrm{a},i}$};
 
-    \draw (mwn.S) -- (2.4,0.5) node[ground]{};
-
-    %% ===== Shared x_{a,i} rail from pass-gate to both gates =====
-    \draw (xa) -- (1.4,5.0) coordinate (railtop) -- (xag_up);
-    \draw (railtop) -- (1.4,3.2) -- (xag_dn);
-    \node[circ] at (railtop) {};
+    \draw (mxp.S) -- (4.2,4.4);
+    \node[circ] (postp) at (4.2,4.4) {};
+    \draw (postp) -- (4.2,3.8) -- (5.8,3.8)
+      node[right, font=\footnotesize] {$\mathrm{post}^{+}$};
 
     %% ===== Description box =====
-    \node[draw, rounded corners=2pt, fill=lightgray, align=left, text width=5.4cm,
-          font=\small]
-      at (7.7,5.0)
-      {\textbf{Shared-rail compact form, every transistor shown:}\\[2pt]
-       The AND is a single pass-gate NMOS (gate=fwd, drain=$x_i$,
-       source=$x_{\mathrm{a},i}$) plus a leak resistor $R_\ell$ that
-       pulls $x_{\mathrm{a},i}$ to GND when fwd is low.\\[2pt]
-       The synapse itself is two 2-NMOS stacks:
-       $(w^+,\,x_{\mathrm{a},i})$ pulling $V_{DD}\!\to\!C_{\mathrm{pre}}$ and
-       $(x_{\mathrm{a},i},\,w^-)$ pulling
-       $C_{\mathrm{pre}}\!\to\!\mathrm{GND}$.\\[2pt]
-       Per-layer total: $4NM + N$ NMOS, vs.\ $6NM$ for the tutorial form.};
+    \node[draw, rounded corners=2pt, fill=lightgray, align=left, text width=5.0cm,
+          font=\footnotesize]
+      at (9.7,5.4)
+      {\textbf{Compact 4-MOS form (shared $x_{\mathrm{a},i}$):}\\[3pt]
+       Pass-gate AND on the left (1 NMOS + leak $R_\ell$) computes
+       $x_{\mathrm{a},i}=x_i\!\wedge\!\mathrm{fwd}$ once per input rail.\\[3pt]
+       Each synapse is two 2-NMOS pull-up stacks:
+       $(w^-\!,\,x_{\mathrm{a},i})$ onto $\mathrm{post}^{-}$ and
+       $(w^+\!,\,x_{\mathrm{a},i})$ onto $\mathrm{post}^{+}$.  Same
+       differential-output convention as Fig.~\ref{fig:synapse}.\\[3pt]
+       Per-layer total: $4NM + N$ NMOS vs.\ $6NM$ for the tutorial form.};
   \end{circuitikz}
   \caption{Shared-rail compact synapse form with every transistor drawn.
-  Per input rail, one pass-gate NMOS (gate~=~fwd, drain~=~$x_i$) plus a leak
-  resistor $R_\ell$ produces the shared $x_{\mathrm{a},i}$ signal.  Per
-  synapse, two 2-NMOS stacks (top: $w^+\!,\,x_{\mathrm{a},i}$; bottom:
-  $x_{\mathrm{a},i},\,w^-$) drive the $C_{\mathrm{pre}}$ tap.  Compared to
-  Fig.~\ref{fig:synapse} the total device count for an $N{\to}M$ layer goes
-  from $6NM$ to $4NM + N$ NMOS (plus $N$ leak resistors), at the cost of
-  $x_{\mathrm{a},i}$ becoming a layer-level analog signal whose buffering and
-  edge cleanliness must be characterised.}
+  One pass-gate NMOS per input rail (gate~=~fwd, drain~=~$x_i$) plus a leak
+  resistor $R_\ell$ produces the shared $x_{\mathrm{a},i}$ signal that
+  drives every fan-out synapse.  Per synapse, two 2-NMOS pull-up stacks
+  ($(w^-,x_{\mathrm{a},i})$ and $(w^+,x_{\mathrm{a},i})$) deposit charge
+  onto the same differential outputs $\mathrm{post}^{-}\!,\mathrm{post}^{+}$
+  used in Fig.~\ref{fig:synapse}.  Total device count for an $N{\to}M$
+  layer is $4NM + N$ NMOS plus $N$ leak resistors --- around $30\%$ fewer
+  devices than the tutorial form, at the cost of $x_{\mathrm{a},i}$
+  becoming a layer-level analog signal whose buffering and edge cleanliness
+  must be characterised.}
   \label{fig:synapse-compact}
 \end{figure}
 
@@ -552,223 +645,259 @@ puts all three on one diagram for a single input-layer signed-pair cell.
 
 \begin{figure}[H]
   \centering
-  \begin{circuitikz}[american, scale=0.7, transform shape, font=\footnotesize]
-    %% =============== Pass-gate AND ===============
+  \begin{circuitikz}[american, scale=0.72, transform shape, font=\footnotesize]
+    %% =============== Pass-gate AND on upper left ===============
     \node[nmos, anchor=D] (mand) at (-1.0,8.6) {};
     \draw (mand.D) -- ++(0,0.4) node[above, font=\footnotesize] {$x_i$};
     \draw (mand.G) -- ++(-0.55,0) node[left] {fwd};
     \coordinate (xa) at ($(mand.S)+(0,-0.4)$);
     \draw (mand.S) -- (xa);
     \node[circ] at (xa) {};
-    \node[above right, font=\footnotesize] at (xa) {$x_{\mathrm{a},i}$};
-    \draw (xa) to[R, l_={$R_\ell$}] ($(xa)+(0,-1.0)$) node[ground]{};
+    \node[above right, font=\footnotesize, stategreen] at (xa) {$\to x_{\mathrm{a},i}$};
+    \draw (xa) to[R, l_={$R_\ell$}] ($(xa)+(0,-1.4)$) node[ground]{};
 
-    %% =============== Weight capacitor Cw+ ===============
-    \coordinate (cwp_top) at (-3.0,7.5);
+    %% =============== Weight capacitors (state primitives) on left ===============
+    \coordinate (cwp_top) at (-3.0,5.8);
     \node[circ] at (cwp_top) {};
     \node[above, font=\footnotesize] at (cwp_top) {$C_{w^+}$};
     \draw (cwp_top) to[C] ($(cwp_top)+(0,-1.4)$) node[ground]{};
+    \draw[stategreen, thick] (cwp_top) -- ($(cwp_top)+(0.8,0)$)
+      node[right, font=\footnotesize, stategreen] {$\to w^+$};
 
-    %% =============== Weight capacitor Cw- ===============
-    \coordinate (cwm_top) at (-3.0,2.9);
+    \coordinate (cwm_top) at (-3.0,1.8);
     \node[circ] at (cwm_top) {};
     \node[above, font=\footnotesize] at (cwm_top) {$C_{w^-}$};
     \draw (cwm_top) to[C] ($(cwm_top)+(0,-1.4)$) node[ground]{};
+    \draw[stategreen, thick] (cwm_top) -- ($(cwm_top)+(0.8,0)$)
+      node[right, font=\footnotesize, stategreen] {$\to w^-$};
 
-    %% =============== 4-NMOS forward synapse stack at x=1.5 ===============
-    \node[above, font=\footnotesize] at (1.5,8.6) {$V_{DD}$};
-    \draw (1.5,8.6) -- (1.5,8.1);
-    \node[nmos, anchor=D] (mwp) at (1.5,8.1) {};
-    \coordinate (mwp_g) at ($(mwp.G)+(-0.45,0)$);
-    \draw (mwp.G) -- (mwp_g);
+    %% =============== Forward NEGATIVE column (LEFT, x = 1.5) ===============
+    \draw (1.5,7.4) node[above] {$V_{DD}$} -- (1.5,7.0);
+    \node[nmos, anchor=D] (mwn) at (1.5,7.0) {};
+    \draw (mwn.G) -- ++(-0.55,0) node[left, stategreen] {$w^-$};
 
-    \draw (mwp.S) -- (1.5,6.6);
-    \node[nmos, anchor=D] (mxp) at (1.5,6.6) {};
-    \coordinate (mxp_g) at ($(mxp.G)+(-0.45,0)$);
-    \draw (mxp.G) -- (mxp_g);
+    \draw (mwn.S) -- (1.5,5.6);
+    \node[nmos, anchor=D] (mxn) at (1.5,5.6) {};
+    \draw (mxn.G) -- ++(-0.55,0) node[left, stategreen] {$x_{\mathrm{a},i}$};
 
-    \draw (mxp.S) -- (1.5,5.2);
-    \node[circ] (tap) at (1.5,5.2) {};
+    \draw (mxn.S) -- (1.5,4.4);
+    \node[circ] (postn) at (1.5,4.4) {};
+    \draw (postn) -- (1.5,3.6) -- (4.0,3.6) coordinate (postn_to_neuron);
 
-    \draw (tap) -- (1.5,4.8);
-    \node[nmos, anchor=D] (mxn) at (1.5,4.8) {};
-    \coordinate (mxn_g) at ($(mxn.G)+(-0.45,0)$);
-    \draw (mxn.G) -- (mxn_g);
+    %% =============== Forward POSITIVE column (RIGHT, x = 3.5) ===============
+    \draw (3.5,7.4) node[above] {$V_{DD}$} -- (3.5,7.0);
+    \node[nmos, anchor=D] (mwp) at (3.5,7.0) {};
+    \draw (mwp.G) -- ++(-0.55,0) node[left, stategreen] {$w^+$};
 
-    \draw (mxn.S) -- (1.5,3.4);
-    \node[nmos, anchor=D] (mwn) at (1.5,3.4) {};
-    \coordinate (mwn_g) at ($(mwn.G)+(-0.45,0)$);
-    \draw (mwn.G) -- (mwn_g);
+    \draw (mwp.S) -- (3.5,5.6);
+    \node[nmos, anchor=D] (mxp) at (3.5,5.6) {};
+    \draw (mxp.G) -- ++(-0.55,0) node[left, stategreen] {$x_{\mathrm{a},i}$};
 
-    \draw (mwn.S) -- (1.5,2.0) node[ground]{};
+    \draw (mxp.S) -- (3.5,4.4);
+    \node[circ] (postp) at (3.5,4.4) {};
+    \draw (postp) -- (3.5,4.2) -- (4.0,4.2) coordinate (postp_to_neuron);
 
-    %% =============== Cw+ -> mwp gate wiring ===============
-    \draw (cwp_top) -- (cwp_top -| -1.6,0) -- (mwp_g -| -1.6,0) -- (mwp_g);
+    %% =============== Neuron block (abstracted diff-pair + SF -> a_j) ===============
+    \node[draw, rounded corners=2pt, fill=lightgray, align=center,
+          minimum width=1.7cm, minimum height=1.3cm, font=\footnotesize]
+      (neuron) at (5.0,3.9) {neuron\\(diff $+$ ReLU)};
+    \draw (postp_to_neuron) -- (neuron.west |- postp_to_neuron);
+    \draw (postn_to_neuron) -- (neuron.west |- postn_to_neuron);
 
-    %% =============== Cw- -> mwn gate wiring ===============
-    \draw (cwm_top) -- (cwm_top -| -1.6,0) -- (mwn_g -| -1.6,0) -- (mwn_g);
-
-    %% =============== Shared x_a rail to both x_a gates ===============
-    \draw (xa) -| (0.3,6.6) -- (mxp_g);
-    \draw (0.3,6.6) |- (mxn_g);
-    \node[circ] at (0.3,6.6) {};
-
-    %% =============== C_pre on tap ===============
-    \draw (tap) -- (2.8,5.2);
-    \draw (2.8,5.2) to[C, l_={$C_{\mathrm{pre}}$}] (2.8,3.7) node[ground]{};
-
-    %% =============== Source follower (neuron) ===============
-    \draw (2.8,5.2) -- (4.2,5.2);
-    \node[nmos, anchor=G] (msf) at (4.2,5.2) {};
-    \draw (msf.D) -- (msf.D |- 0,7.2) node[above, font=\footnotesize] {$V_{DD}$};
-    \draw (msf.S) -- (msf.S |- 0,4.2);
-    \draw (msf.S |- 0,4.2) -- (5.8,4.2);
-    \node[circ] (act) at (5.8,4.2) {};
-    \draw (act) to[C, l_={$C_{\mathrm{act}}$}] (5.8,2.7) node[ground]{};
-    \draw (act) -- (6.8,4.2) node[right] {$a_j$};
+    %% =============== C_act + a_j output ===============
+    \draw (neuron.east) -- (6.6,3.9);
+    \node[circ] (act) at (6.6,3.9) {};
+    \draw (act) to[C, l_={$C_{\mathrm{act}}$}] (6.6,2.4) node[ground]{};
+    \draw (act) -- (7.6,3.9) node[right] {$a_j$};
 
     %% =============== Sense amp (compare a_j to target -> delta) ===============
-    \draw[backred, thick] (7.6,5.0) -- (7.6,4.0) -- (8.6,4.5) -- cycle;
-    \node[anchor=west, font=\scriptsize] at (7.6,4.85) {$+$};
-    \node[anchor=west, font=\scriptsize] at (7.6,4.15) {$-$};
-    \draw[backred] (7.6,5.0) -- (6.5,5.0) node[left, font=\footnotesize] {target$_j$};
-    \draw[backred] (7.6,4.0) -- (6.5,4.0) -- (6.5,4.2) -- (act);
-    \draw[backred] (8.6,4.5) -- (9.6,4.5);
-    \node[above, font=\footnotesize, backred] at (9.0,4.5) {$\delta_j$};
+    \draw[backred, thick] (8.4,5.0) -- (8.4,4.0) -- (9.4,4.5) -- cycle;
+    \node[anchor=west, font=\scriptsize] at (8.4,4.85) {$+$};
+    \node[anchor=west, font=\scriptsize] at (8.4,4.15) {$-$};
+    \draw[backred] (8.4,5.0) -- (7.4,5.0) node[left, font=\footnotesize] {target$_j$};
+    \draw[backred] (8.4,4.0) -- (7.6,4.0) -- (7.6,3.9) -- (act);
+    \draw[backred] (9.4,4.5) -- (10.4,4.5);
+    \node[above, font=\footnotesize, backred] at (9.9,4.5) {$\delta_j$};
 
     %% =============== Writer block ===============
     \node[draw, rounded corners=2pt, fill=lightgray, align=center,
-          minimum width=2.4cm, minimum height=1.0cm, font=\footnotesize]
+          minimum width=2.6cm, minimum height=1.0cm, font=\footnotesize]
       (writer) at (4.0,0.4) {writer\\(apply $\cdot\,\mathrm{sign}(\delta_j)\cdot x_{\mathrm{a},i}$)};
 
-    %% writer input: delta_j from sense amp
+    %% Writer input: delta_j from sense amp (orange dashed - the bwd-derived signal)
     \draw[backred, thick, -{Latex[length=2mm]}]
-      (9.6,4.5) -- (9.6,0.4) -- (writer.east);
-    %% writer input: x_a (the saved pre-trace; here the live x_a rail stands in)
+      (10.4,4.5) -- (10.4,0.4) -- (writer.east);
+    %% Writer input: x_a (the saved pre-trace; the live x_a rail stands in)
     \draw[forwardblue, -{Latex[length=2mm]}]
-      (0.3,6.6) -- (0.3,1.8) -- (writer.north -| 0.3,0) -- (writer.north);
-    %% writer outputs (write path, orange dashed) -> Cw+ and Cw-
+      (xa) -- (xa |- 0,1.4) -- (writer.north -| xa) -- (writer.north);
+    %% Writer outputs (write path, orange dashed) -> Cw+ and Cw-.
+    %% Route via x=-2.0 (between the Cw caps at x=-3 and the pass-gate AND
+    %% at x=-1) so the wire stays compact and doesn't detour past the caps.
     \draw[writeorange, dashed, -{Latex[length=2mm]}]
-      (writer.west) -- (writer.west -| -3.0,0) -- (cwp_top);
+      (writer.west) -| (-2.0,5.8) -- (cwp_top);
     \draw[writeorange, dashed, -{Latex[length=2mm]}]
-      (writer.west) -- (writer.west -| -3.0,0) -- (cwm_top);
+      (writer.west) -| (-2.0,1.8) -- (cwm_top);
 
     %% =============== Caption / legend box ===============
-    \node[draw, rounded corners=2pt, fill=white, align=left, text width=5.0cm,
-          font=\footnotesize, inner sep=4pt] at (12.4,6.2)
-      {\textbf{Whole signed-pair cell:}\\[2pt]
-       \textbf{black} = forward path (synapse stack + neuron SF + $C_{\mathrm{act}}$);\\[1pt]
-       \textcolor{backred}{\textbf{red}} = backward path (sense amp produces $\delta_j$
-       from $a_j$ vs.\ target);\\[1pt]
-       \textcolor{writeorange}{\textbf{orange dashed}} = write path (writer
-       discharges $C_{w^+}$ if $\delta_j>0$, $C_{w^-}$ if $\delta_j<0$,
-       gated by saved $x_{\mathrm{a},i}$ and the apply window).\\[2pt]
-       The $C_{w^\pm}$ caps are both \emph{state} (gating the forward stack)
-       and \emph{output} (the writer's targets), closing the local learning
-       loop.};
+    \node[draw, rounded corners=2pt, fill=white, align=left, text width=4.8cm,
+          font=\footnotesize, inner sep=4pt] at (13.2,5.5)
+      {\textbf{Whole signed-pair cell:}\\[3pt]
+       \textbf{Black} = forward path: two pull-up columns deposit charge on
+       differential $\mathrm{post}^{\pm}$; the neuron reads
+       $V(\mathrm{post}^{+})\!-\!V(\mathrm{post}^{-})$ and rectifies to
+       $a_j$ on $C_{\mathrm{act}}$.\\[3pt]
+       \textcolor{backred}{\textbf{Red}} = backward path: sense amp compares
+       $a_j$ to target, producing $\delta_j$.\\[3pt]
+       \textcolor{writeorange}{\textbf{Orange dashed}} = write path: writer
+       discharges $C_{w^+}$ if $\delta_j>0$, $C_{w^-}$ if $\delta_j<0$, gated
+       by $x_{\mathrm{a},i}$ and the apply window.\\[3pt]
+       The $C_{w^\pm}$ caps are both \emph{state} (gating the forward MOSes)
+       and \emph{output} (the writer's targets) --- they close the local
+       learning loop.};
   \end{circuitikz}
-  \caption{Complete signed-pair cell on one diagram: the same $C_{w^+}$ and
-  $C_{w^-}$ capacitors that gate the forward synapse are also the targets of
-  the local writer, with $\delta_j$ produced by a sense amp comparing $a_j$
-  to the target rail.  Forward path in black, backward path in red, write
-  path in dashed orange.  The writer is shown as a block here; the
-  per-synapse details of its transistor stack are covered in
-  \S\ref{fig:synapse-gate}.}
+  \caption{Complete signed-pair cell on one diagram.  Forward (black): two
+  pull-up MOS stacks share $x_{\mathrm{a},i}$ and gate on $w^\pm$, producing
+  the differential pre-activation $\mathrm{post}^{\pm}$; the neuron block
+  takes the difference, rectifies, and stores $a_j$ on $C_{\mathrm{act}}$.
+  Backward (red): a sense amp compares $a_j$ with the target rail to produce
+  $\delta_j$.  Write (orange dashed): the writer combines $\delta_j$ with the
+  $x_{\mathrm{a},i}$ trace during the apply window to discharge the matching
+  weight capacitor.  Per-transistor structure of the synapse appears in
+  Fig.~\ref{fig:synapse}/Fig.~\ref{fig:synapse-compact}; the writer's
+  transistor stack is documented in \S\ref{fig:synapse-gate}.}
   \label{fig:cell}
 \end{figure}
 
 \begin{figure}[h]
   \centering
   \begin{circuitikz}[american, scale=0.7, transform shape, font=\footnotesize]
-    %% ====== Synapse 1 (full 6-NMOS stack) at x=1.5 ======
-    \node[above, font=\footnotesize] at (1.5,9.0) {$V_{DD}$};
-    \draw (1.5,9.0) -- (1.5,8.4);
-    \node[nmos, anchor=D] (s1mwp) at (1.5,8.4) {};
-    \draw (s1mwp.G) -- ++(-0.45,0) node[left] {$w_1^+$};
-    \draw (s1mwp.S) -- (1.5,6.9);
-    \node[nmos, anchor=D] (s1mxp) at (1.5,6.9) {};
-    \draw (s1mxp.G) -- ++(-0.45,0) node[left] {$x_1$};
-    \draw (s1mxp.S) -- (1.5,5.4);
-    \node[nmos, anchor=D] (s1mfp) at (1.5,5.4) {};
-    \draw (s1mfp.G) -- ++(-0.45,0) node[left] {fwd};
-    \draw (s1mfp.S) -- (1.5,4.0);
-    \node[circ] (s1tap) at (1.5,4.0) {};
-    \draw (s1tap) -- (1.5,3.6);
-    \node[nmos, anchor=D] (s1mfn) at (1.5,3.6) {};
-    \draw (s1mfn.G) -- ++(-0.45,0) node[left] {fwd};
-    \draw (s1mfn.S) -- (1.5,2.1);
-    \node[nmos, anchor=D] (s1mxn) at (1.5,2.1) {};
+    %% NEG columns on the LEFT half, POS columns on the RIGHT half.
+    %% That way the post^- rail collects only from NEG taps on the left and
+    %% the post^+ rail collects only from POS taps on the right, with no
+    %% NEG-column drop ever crossing the post^+ rail.
+
+    %% ====== Synapse 1 NEG (x = 1.5) ======
+    \node[above, font=\footnotesize] at (1.5,8.0) {$V_{DD}$};
+    \draw (1.5,8.0) -- (1.5,7.6);
+    \node[nmos, anchor=D] (s1mwn) at (1.5,7.6) {};
+    \draw (s1mwn.G) -- ++(-0.45,0) node[left, stategreen] {$w_1^{-}$};
+    \draw (s1mwn.S) -- (1.5,6.2);
+    \node[nmos, anchor=D] (s1mxn) at (1.5,6.2) {};
     \draw (s1mxn.G) -- ++(-0.45,0) node[left] {$x_1$};
-    \draw (s1mxn.S) -- (1.5,0.6);
-    \node[nmos, anchor=D] (s1mwn) at (1.5,0.6) {};
-    \draw (s1mwn.G) -- ++(-0.45,0) node[left] {$w_1^-$};
-    \draw (s1mwn.S) -- (1.5,-0.6) node[ground]{};
+    \draw (s1mxn.S) -- (1.5,4.8);
+    \node[nmos, anchor=D] (s1mfn) at (1.5,4.8) {};
+    \draw (s1mfn.G) -- ++(-0.45,0) node[left] {fwd};
+    \draw (s1mfn.S) -- (1.5,3.8);
 
-    %% ====== Synapse 2 (full 6-NMOS stack) at x=4.0 ======
-    \node[above, font=\footnotesize] at (4.0,9.0) {$V_{DD}$};
-    \draw (4.0,9.0) -- (4.0,8.4);
-    \node[nmos, anchor=D] (s2mwp) at (4.0,8.4) {};
-    \draw (s2mwp.G) -- ++(-0.45,0) node[left] {$w_2^+$};
-    \draw (s2mwp.S) -- (4.0,6.9);
-    \node[nmos, anchor=D] (s2mxp) at (4.0,6.9) {};
-    \draw (s2mxp.G) -- ++(-0.45,0) node[left] {$x_2$};
-    \draw (s2mxp.S) -- (4.0,5.4);
-    \node[nmos, anchor=D] (s2mfp) at (4.0,5.4) {};
-    \draw (s2mfp.G) -- ++(-0.45,0) node[left] {fwd};
-    \draw (s2mfp.S) -- (4.0,4.0);
-    \node[circ] (s2tap) at (4.0,4.0) {};
-    \draw (s2tap) -- (4.0,3.6);
-    \node[nmos, anchor=D] (s2mfn) at (4.0,3.6) {};
-    \draw (s2mfn.G) -- ++(-0.45,0) node[left] {fwd};
-    \draw (s2mfn.S) -- (4.0,2.1);
-    \node[nmos, anchor=D] (s2mxn) at (4.0,2.1) {};
+    %% ====== Synapse 2 NEG (x = 3.4) ======
+    \node[above, font=\footnotesize] at (3.4,8.0) {$V_{DD}$};
+    \draw (3.4,8.0) -- (3.4,7.6);
+    \node[nmos, anchor=D] (s2mwn) at (3.4,7.6) {};
+    \draw (s2mwn.G) -- ++(-0.45,0) node[left, stategreen] {$w_2^{-}$};
+    \draw (s2mwn.S) -- (3.4,6.2);
+    \node[nmos, anchor=D] (s2mxn) at (3.4,6.2) {};
     \draw (s2mxn.G) -- ++(-0.45,0) node[left] {$x_2$};
-    \draw (s2mxn.S) -- (4.0,0.6);
-    \node[nmos, anchor=D] (s2mwn) at (4.0,0.6) {};
-    \draw (s2mwn.G) -- ++(-0.45,0) node[left] {$w_2^-$};
-    \draw (s2mwn.S) -- (4.0,-0.6) node[ground]{};
+    \draw (s2mxn.S) -- (3.4,4.8);
+    \node[nmos, anchor=D] (s2mfn) at (3.4,4.8) {};
+    \draw (s2mfn.G) -- ++(-0.45,0) node[left] {fwd};
+    \draw (s2mfn.S) -- (3.4,3.8);
 
-    %% ====== C_pre summing rail ======
-    \draw (s1tap) -- (s2tap);
-    \node at (4.8,4.0) {$\cdots$};
-    \draw (s2tap) -- (5.7,4.0);
-    \node[circ] (pre) at (5.7,4.0) {};
-    \draw (pre) to[C,l_={$C_{\mathrm{pre}}$}] (5.7,2.3) node[ground]{};
+    %% ====== Synapse 1 POS (x = 6.0) ======
+    \node[above, font=\footnotesize] at (6.0,8.0) {$V_{DD}$};
+    \draw (6.0,8.0) -- (6.0,7.6);
+    \node[nmos, anchor=D] (s1mwp) at (6.0,7.6) {};
+    \draw (s1mwp.G) -- ++(-0.45,0) node[left, stategreen] {$w_1^{+}$};
+    \draw (s1mwp.S) -- (6.0,6.2);
+    \node[nmos, anchor=D] (s1mxp) at (6.0,6.2) {};
+    \draw (s1mxp.G) -- ++(-0.45,0) node[left] {$x_1$};
+    \draw (s1mxp.S) -- (6.0,4.8);
+    \node[nmos, anchor=D] (s1mfp) at (6.0,4.8) {};
+    \draw (s1mfp.G) -- ++(-0.45,0) node[left] {fwd};
+    \draw (s1mfp.S) -- (6.0,3.8);
 
-    %% ====== Source follower (ReLU stage) ======
-    \draw (pre) -- (7.4,4.0);
-    \node[nmos, anchor=G] (mrelu) at (7.4,4.0) {};
-    \draw (mrelu.D) -- (mrelu.D |- 0,6.5) node[above, font=\footnotesize] {$V_{DD}$};
-    \draw (mrelu.S) -- (mrelu.S |- 0,2.9);
-    \draw (mrelu.S |- 0,2.9) -- (9.2,2.9);
-    \node[circ] (act) at (9.2,2.9) {};
-    \draw (act) to[C,l_={$C_{\mathrm{act}}$}] (9.2,1.2) node[ground]{};
-    \draw (act) -- (10.2,2.9) node[right] {$a_j$};
+    %% ====== Synapse 2 POS (x = 7.9) ======
+    \node[above, font=\footnotesize] at (7.9,8.0) {$V_{DD}$};
+    \draw (7.9,8.0) -- (7.9,7.6);
+    \node[nmos, anchor=D] (s2mwp) at (7.9,7.6) {};
+    \draw (s2mwp.G) -- ++(-0.45,0) node[left, stategreen] {$w_2^{+}$};
+    \draw (s2mwp.S) -- (7.9,6.2);
+    \node[nmos, anchor=D] (s2mxp) at (7.9,6.2) {};
+    \draw (s2mxp.G) -- ++(-0.45,0) node[left] {$x_2$};
+    \draw (s2mxp.S) -- (7.9,4.8);
+    \node[nmos, anchor=D] (s2mfp) at (7.9,4.8) {};
+    \draw (s2mfp.G) -- ++(-0.45,0) node[left] {fwd};
+    \draw (s2mfp.S) -- (7.9,3.8);
+
+    %% ====== Differential summing rails ======
+    %% post^- rail at y = 3.0 connects the two NEG taps on the left (only).
+    %% post^+ rail at y = 2.4 connects the two POS taps on the right (only).
+    %% No crossings because NEG drops never reach y=2.4 and POS drops never
+    %% reach y=3.0.
+
+    %% NEG taps drop from y=3.8 to post^- rail at y=3.0.
+    \draw (1.5,3.8) -- (1.5,3.0);
+    \node[circ] at (1.5,3.0) {};
+    \draw (3.4,3.8) -- (3.4,3.0);
+    \node[circ] at (3.4,3.0) {};
+
+    %% POS taps drop from y=3.8 to post^+ rail at y=2.4.
+    \draw (6.0,3.8) -- (6.0,2.4);
+    \node[circ] at (6.0,2.4) {};
+    \draw (7.9,3.8) -- (7.9,2.4);
+    \node[circ] at (7.9,2.4) {};
+
+    %% Two straight horizontal rails.  post^- at y=3.0 collects from the
+    %% NEG taps on the LEFT half (x=1.5, 3.4) and runs straight to the
+    %% neuron.  post^+ at y=2.4 starts at the first POS tap (x=6.0) and runs
+    %% straight to the neuron.  POS drops (y=3.8 -> 2.4) cross the post^-
+    %% rail at y=3.0 without connecting; we use the schematic ``hop''
+    %% (semicircle) convention to mark the no-connect crossings.
+    \draw (1.5,3.0) -- (10.4,3.0)
+      node[right, font=\footnotesize] {$\mathrm{post}^{-}$ rail};
+    \node at (2.6,3.0) {$\cdots$};
+    \draw (6.0,2.4) -- (10.4,2.4)
+      node[right, font=\footnotesize] {$\mathrm{post}^{+}$ rail};
+    \node at (7.05,2.4) {$\cdots$};
+
+    %% POS column drops cross the post^- rail at (6.0, 3.0) and (7.9, 3.0).
+    %% No dot is drawn at those points, so by schematic convention they are
+    %% no-connect crossings -- the rail and the drop simply pass each other.
+
+    %% ====== Neuron block (differential -> a_j) ======
+    \node[draw, rounded corners=2pt, fill=lightgray, align=center,
+          minimum width=2.0cm, minimum height=1.3cm, font=\footnotesize]
+      (neuron) at (12.5,2.7) {neuron\\(diff $+$ ReLU)};
+    \draw (10.4,2.4) -- (neuron.west |- 0,2.4);
+    \draw (10.4,3.0) -- (neuron.west |- 0,3.0);
+
+    \draw (neuron.east) -- (14.0,2.7);
+    \node[circ] (act) at (14.0,2.7) {};
+    \draw (act) to[C, l_={$C_{\mathrm{act}}$}] (14.0,1.2) node[ground]{};
+    \draw (act) -- (15.0,2.7) node[right, font=\footnotesize] {$a_j$};
 
     %% ====== Description box ======
-    \node[draw, rounded corners=2pt, fill=lightgray, align=left, text width=5.2cm,
+    \node[draw, rounded corners=2pt, fill=lightgray, align=left, text width=4.6cm,
           font=\footnotesize]
-      at (13.4,6.5)
-      {\textbf{ReLU-like neuron:}\\[2pt]
-       Each fan-in synapse is a full 6-NMOS signed pair.  The top stack
-       ($w_i^+$, $x_i$, fwd) pushes $V_{DD}\!\to\!C_{\mathrm{pre}}$; the
-       bottom stack (fwd, $x_i$, $w_i^-$) pulls $C_{\mathrm{pre}}\!\to\!
-       \mathrm{GND}$.  All taps share the $C_{\mathrm{pre}}$ rail, so charge
-       sums.\\[2pt]
-       The summed $V(C_{\mathrm{pre}})$ gates the source follower, which
-       passes $V(C_{\mathrm{pre}}) - V_{\mathrm{th}}$ onto $C_{\mathrm{act}}$
-       when above threshold; otherwise $C_{\mathrm{act}}$ stays at ground.};
+      at (16.6,6.0)
+      {\textbf{Differential ReLU-like neuron:}\\[3pt]
+       Every fan-in synapse contributes two pull-up branches:
+       $(w_i^{-},x_i,\mathrm{fwd})$ onto the shared $\mathrm{post}^{-}$ rail
+       and $(w_i^{+},x_i,\mathrm{fwd})$ onto the shared $\mathrm{post}^{+}$
+       rail.  Charge sums on each rail.\\[3pt]
+       The neuron block reads
+       $V(\mathrm{post}^{+})-V(\mathrm{post}^{-})$, rectifies, and stores
+       $a_j$ on $C_{\mathrm{act}}$.  No single-ended $C_{\mathrm{pre}}$
+       summing node (matches Fig.~\ref{fig:synapse}).};
   \end{circuitikz}
-  \caption{Conceptual ReLU-like neuron with explicit signed-pair fan-in.
-  Each synapse contributes a top NMOS stack
-  ($V_{DD}\!\to\!w_i^+\!\to\!x_i\!\to\!\mathrm{fwd}\!\to\!C_{\mathrm{pre}}$)
-  and a symmetric bottom stack
-  ($C_{\mathrm{pre}}\!\to\!\mathrm{fwd}\!\to\!x_i\!\to\!w_i^-\!\to\!\mathrm{GND}$).
-  When fwd is open and $x_i$ is high, the two stacks form a signed current
-  divider whose net direction is set by $\mathrm{sign}(V(C_{w_i^+})-V(C_{w_i^-}))$.
-  Many such synapses share the $C_{\mathrm{pre}}$ rail; the source follower
-  on the right reads the accumulated voltage and one-sidedly charges
-  $C_{\mathrm{act}}$.}
+  \caption{Conceptual differential ReLU-like neuron with explicit signed-pair
+  fan-in.  Each synapse splits into a NEG column
+  ($V_{DD}\!\to\!w_i^{-}\!\to\!x_i\!\to\!\mathrm{fwd}$) and a POS column
+  ($V_{DD}\!\to\!w_i^{+}\!\to\!x_i\!\to\!\mathrm{fwd}$); both branches pull
+  up onto two shared rails $\mathrm{post}^{\pm}$.  The neuron block reads
+  $V(\mathrm{post}^{+})\!-\!V(\mathrm{post}^{-})$, rectifies it through a
+  diff-pair source-follower, and stores the result on $C_{\mathrm{act}}$.
+  This matches Fig.~\ref{fig:synapse} --- no single-ended $C_{\mathrm{pre}}$
+  rail.}
   \label{fig:neuron}
 \end{figure}
 
@@ -808,15 +937,15 @@ capacitor through stacks gated by the saved pre-activation trace.
     \draw[fwd] (hidden) -- node[lbl, above] {$a_j$} (readout);
     \draw[fwd] (readout) -- node[lbl, above] {scores} (err);
 
-    %% --- Lower row: capacitors aligned under their columns ---
-    \node[capn, below=2.6cm of inputs]  (cphi)  {$C_\phi$};
+    %% --- Lower row: state caps + sense amp (default shared_node mode,
+    %% no per-synapse C_phi).
     \node[capn, below=2.6cm of hidden]  (cact)  {$C_a$};
     \node[sa,  below=2.6cm of readout] (sense) {hidden\\$\delta$ SA};
     \node[capn, below=2.6cm of err]     (cw)    {$C_w$};
 
-    %% --- Forward capture: vertical down (blue) ---
-    \draw[fwd] (inputs.south) -- node[lbl, right] {store $\phi$} (cphi.north);
-    \draw[fwd] (hidden.south) -- node[lbl, right] {store $a$}    (cact.north);
+    %% --- Forward capture (blue): only the activation is stored
+    %% (shared_node mode skips per-synapse pre-trace caps).
+    \draw[fwd] (hidden.south) -- node[lbl, right] {store $a$} (cact.north);
 
     %% --- Backward path (red) ---
     \draw[bwd] (err.south)  -- node[lbl, right] {$\delta_{\mathrm{out}}$} (cw.north);
@@ -829,9 +958,9 @@ capacitor through stacks gated by the saved pre-activation trace.
       -- (hidden.south east |- sa)
       node[lbl, above, pos=0.6] {$\delta_h$}
       -- (hidden.south east);
-    %% write gate: cphi -> hidden.south west, route via the left
-    \draw[wr] (cphi.west) -- ++(-0.45,0) |- ($(hidden.south west)+(0,-0.55)$)
-      -- node[lbl, left, pos=0.5] {write} (hidden.south west);
+    %% write gate: live x_{a,i} rail (from inputs) -> hidden write logic
+    \draw[wr] (inputs.south) -- ++(0,-0.55) |- ($(hidden.south west)+(0,-0.55)$)
+      -- node[lbl, left, pos=0.5] {write $x_{\mathrm{a},i}$} (hidden.south west);
 
     %% --- Legend, centered below the diagram ---
     \node[draw, rounded corners=2pt, align=center, fill=white, font=\footnotesize,
@@ -840,11 +969,14 @@ capacitor through stacks gated by the saved pre-activation trace.
        \textcolor{backred}{\textbf{red}}: backward error through readout synapses.\quad
        \textcolor{writeorange}{\textbf{orange}}: local weight-capacitor write path.};
   \end{tikzpicture}
-  \caption{Direct backward/write flow.  This is the architecture we want to
-  scale: Python provides rails and timing windows, while hidden deltas and
-  weight writes are produced by local circuit paths.  The red path is not a
-  bypass around the hidden neuron: the hidden activation capacitor gates the
-  local neuron/derivative path that forms the hidden delta.}
+  \caption{Direct backward/write flow (default \code{shared\_node} mode).
+  Python provides rails and timing windows; hidden deltas and weight writes
+  are produced by local circuit paths.  Per-synapse pre-activation traces
+  are \emph{not} stored — the writer reads the live $x_{\mathrm{a},i}$ rail
+  directly during the apply window, which is what \code{flow\_pre\_store
+  =shared\_node} does in the running netlists.  The red path is not a
+  bypass around the hidden neuron: the hidden activation capacitor $C_a$
+  gates the local neuron/derivative path that forms the hidden delta.}
   \label{fig:direct-flow}
 \end{figure}
 
@@ -1615,6 +1747,42 @@ to know: with these strong-inversion toy models, the normalizer is a
 softmax-like positive-current competition only in the small-margin range.  A
 real subthreshold/PDK model should be characterized before using this as the
 multiclass error block.
+
+The first version consumed one single-ended score per class, but the current
+network stores split score capacitors \(\mathrm{scorep}_k,\mathrm{scoren}_k\).
+The PySpice-rendered diagnostic now includes a split-score competition cell:
+\(\mathrm{scorep}_k\) opens the class branch, while \(\mathrm{scoren}_k\)
+inhibits the same branch through a PMOS source device.  This avoids a Python
+subtraction before the softmax-like competition.  It is still not textbook
+softmax: the measured branch current is a MOS-defined function
+\[
+  I_k = C_{\mathrm{MOS}}(\mathrm{scorep}_k,\mathrm{scoren}_k,V_{\mathrm{tail}})
+\]
+and probabilities are only characterized after the run as current shares.
+The useful criterion is therefore monotone signed-score ordering and reasonable
+common-mode tolerance, not equality to \(\exp(s_k)/\sum_j\exp(s_j)\).
+The first split-score run is a useful negative result: ngspice and Xyce agree
+to measurement precision through the PySpice-rendered deck, but the simple
+branch/inhibit topology preserves ordering only when \(\mathrm{scoren}\) is
+held fixed.  When both split rails move, or when common mode changes at fixed
+\(\mathrm{scorep}-\mathrm{scoren}\), absolute \(\mathrm{scorep}\) still
+dominates too strongly.  This cell is therefore a simulator-consistency and
+characterization primitive, not yet the multiclass error block to insert into
+the learner.
+
+The next split-score normalizer is a local source-coupled differential pair per
+class.  Each class first compares \(\mathrm{scorep}_k\) against
+\(\mathrm{scoren}_k\) through a matched NMOS pair with its own tail device, and
+only the positive-branch current enters the class current share.  In the
+LEVEL=1 model this is still not a proof of softmax, but it is much better at
+rejecting common-mode score motion.  The default diagnostic
+\code{device\_softmax\_current\_competition\_diffpair\_default} uses
+\(V_{\mathrm{tail}}=0.42\,\mathrm{V}\), \(W_{\mathrm{tail}}=32\,\mu\mathrm{m}\),
+and \(W_{\mathrm{branch}}=12\,\mu\mathrm{m}\).  On a seven-case stress table,
+including cases where a lower absolute \(\mathrm{scorep}\) has a larger
+\(\mathrm{scorep}-\mathrm{scoren}\), it preserves every non-tie argmax.  The
+total current still moves by about 15.9\%, so this is a candidate current
+competition block, not a solved probability generator.
 
 For the direct-flow learner, the intended cross-entropy-style write rails are:
 \[
@@ -2973,6 +3141,160 @@ the sign/headroom bug, but we still need either a calibrated differential
 output/error head or a readout training rule that learns the hardware-distorted
 separator directly.
 
+The PySpice/Xyce migration caught an important bug in that transfer harness:
+the diagnostic had been instantiating local \(\mathrm{scorep}/\mathrm{scoren}\)
+capacitors on top of the production \code{temporary\_caps} definitions.  Xyce
+rejected the duplicate devices; ngspice had been permissive enough that the
+old diagnostic could still run.  The harness now uses only the production
+score-cap/reset cells, and unit tests assert that the rendered ngspice and Xyce
+circuit bodies are identical and contain each split score capacitor once.
+After this fix, the conclusion is unchanged but cleaner: with the 3-class
+\code{mnist3fixed8\_30} separator, the gate-stack split-score readout reaches
+63.3\% score accuracy at scale 5 and 10, and a rectified capacitor
+parameterization reaches 66.7\% in the transfer-only harness.
+Sweeps over early sample time, \(0.02\times\)--\(0.1\times\) branch width,
+readout center voltage, and pass-activation topologies do not recover the
+100\% ideal separator.  The transfer harness now reports two explicit
+calibration controls: a diagonal per-class gain/offset fit from measured
+scores back to the ideal logits, and a full affine class mixer.  On
+\code{device\_readout\_transfer\_v689\_prog\_rect\_scale002\_affine}, raw
+split-score accuracy is 66.7\%, the diagonal oracle fit reaches only 60.0\%,
+and even the full affine oracle reaches only 73.3\% on the same 30 examples.
+This points away from a mere timing, common-mode, or row-bias issue; the
+readout transfer itself is warping or losing enough hidden-feature information
+that ideal linear weights are not a good programmed state for this topology.
+
+We then tested whether the problem is only the software-weight-to-capacitor
+mapping.  The new \code{run\_device\_readout\_capfit.py} diagnostic first
+measures the single-branch MOS basis
+\(E_{\mathrm{MOS}}(V_{\mathrm{act}},V_{\mathrm{cap}})\), then greedily chooses
+the actual stored capacitor voltages to classify the held activations under
+that measured branch basis.  In the full-width gate-stack setting,
+\code{device\_readout\_capfit\_v690\_gate\_fullwidth} reaches 90.0\%
+accuracy in the additive branch surrogate, but programming those same cap
+voltages into the real transfer deck,
+\code{device\_readout\_transfer\_v691\_capfit\_fullwidth}, gives only 56.7\%
+raw split-score accuracy.  The same test in the nominal small-signal region is
+also negative: \code{v692} reaches 86.7\% in the surrogate, while
+\code{v693} gives 33.3\% in SPICE; constraining the caps to
+\(0.16\)--\(0.56\,\mathrm{V}\) gives \code{v694}=86.7\% surrogate but
+\code{v695}=33.3\% actual.  A buffered pass-activation topology repeats the
+pattern: \code{v696}=86.7\% surrogate and \code{v697}=33.3\% actual.  This is
+stronger evidence than the programmed-separator controls: even cap voltages
+chosen for a measured hardware branch basis do not survive simultaneous
+multi-branch readout.  The missing primitive is therefore not just a better cap
+initializer; the readout topology needs either local current summing that is
+additive under fan-in, or an explicit class-coupled normalization/competition
+stage before score storage and error generation.
+
+The first local-current-summing check is encouraging.  A new transfer topology,
+\code{split\_score\_clamped\_current}, replaces each floating
+\(\mathrm{scorep}/\mathrm{scoren}\) capacitor with a low-impedance voltage
+clamp and measures the branch current absorbed by that node.  This is a
+diagnostic virtual summing node, not yet a final transistor-only score circuit,
+but it directly tests whether floating score-cap interaction is the readout
+failure.  With the old rectified programmed separator it still reaches only
+66.7\%, so the ideal linear weight mapping remains poor.  But with capacitor
+voltages fitted for the hardware branch basis, the low-impedance current node
+recovers much of the lost information: the full-width cap program from
+\code{v690} gives \code{device\_readout\_transfer\_v699\_clamped\_capfit\_fullwidth}
+=83.3\%, compared with 56.7\% for the same caps on floating score capacitors.
+Fitting directly against a clamped-current branch surface gives matching
+surrogate and transfer behavior: \code{v700} predicts 83.3\%, and
+\code{v701} measures 83.3\% in the transfer deck at a \(0.2\,\mathrm{V}\)
+clamp.  Sweeping the clamp operating point then finds the first 90\% 3-class
+readout-expression result: \code{device\_readout\_transfer\_v704\_clamp0p0}
+and \code{device\_readout\_transfer\_v704\_clamp0p1} both reach 90.0\%
+actual SPICE score accuracy on the 30 held examples.  This does not finish the
+MNIST learner, but it identifies the next concrete circuit direction: replace
+floating score-cap accumulation with a transistor-level current-summing or
+current-mirror stage that keeps the summing node low impedance, then generate
+the class decision and error rails from those currents.
+
+The next transistor-level approximation replaces the ideal clamp with a
+diode-connected \(\mathrm{NSENSE}\) load at each score node.  Reading the diode
+node voltage helps but does not fully preserve the current-mode result:
+\code{device\_readout\_transfer\_v706\_diode\_w512} and
+\code{v706\_diode\_w1024} reach 83.3\% after fitting against the corresponding
+diode-voltage branch surface.  The more relevant current-mirror interpretation
+is to use the diode-connected device as the input leg of a mirror and score by
+its drain current rather than by its compressed gate voltage.  The
+\code{split\_score\_diode\_current} diagnostic measures that diode current via
+a zero-volt sense source while leaving the score node transistor-clamped.  This
+recovers the 90\% direction without ideal voltage-source clamping:
+\code{device\_readout\_transfer\_v708\_diodecur\_w1024},
+\code{v708\_diodecur\_w2048}, and \code{v708\_diodecur\_w4096} all reach
+90.0\% actual SPICE score accuracy on the same held 3-class case.  The design
+lesson is now sharper: the next production readout should not consume the score
+node voltage directly.  It should make \(\mathrm{scorep}/\mathrm{scoren}\)
+low-impedance diode/mirror input nodes, copy their currents into a class
+competition/error generator, and only store voltages where state must persist.
+
+The first production bridge for that idea is now available as
+\code{--output-head split\_score\_diode\_diffpair}.  It leaves the readout
+matrix wiring unchanged, diode-loads each \(\mathrm{scorep}_k\) and
+\(\mathrm{scoren}_k\) node with matched \(\mathrm{NSENSE}\) devices, and then
+uses a local source-coupled output pair from the diode-loaded score voltages.
+This is not as clean as measuring the diode current with a simulator sense
+source, but it is a transistor-only proxy for a mirrored-current input stage
+that can live inside the full training deck.  The first default smoke was a
+negative result: with a \(10\,\mathrm{fF}\) output cap and a \(0.3\,\mathrm{ns}\)
+window, distinct score cases over-discharge to the same active-low output.
+The small output-head transfer sweep found a usable unsaturated regime:
+\code{device\_output\_head\_transfer\_diode\_dpair\_cap100\_t020}, using
+\(100\,\mathrm{fF}\) output caps, \(1024\,\mu\mathrm{m}\) diode loads, and a
+\(0.2\,\mathrm{ns}\) window, preserves every non-tie 3-class signed-score
+argmax.  A full-generator smoke,
+\code{device\_xor2\_diode\_dpair\_smoke}, confirms the new head can be
+instantiated in the production train/eval deck with PySpice-rendered ngspice
+netlists.  It is only an eval-only wiring smoke, not a learning result.
+
+A single-branch characterization harness,
+\code{run\_device\_readout\_branch\_surface.py}, now measures the actual
+readout MOS kernel
+\[
+  \Delta V_{\mathrm{score}}
+  =
+  E_{\mathrm{MOS}}(V_{\mathrm{act}},V_{\mathrm{weight}})
+\]
+for the production gate-stack and pass-activation branches.  The compact
+ngspice sweep is reassuring in one respect: both positive and negative branches
+are monotone in activation and weight voltage, and the two branch polarities
+match.  The harness now uses the same PySpice-backed deck rendering path as
+the full learner, so ngspice/Xyce differences are not caused by duplicate
+generation code.  But the branch is not a linear multiplier in the usual operating
+range.  With the default \(10\,\mathrm{fF}\) score cap and full readout width,
+the gate-stack branch already moves the score cap by about
+\(170\,\mathrm{mV}\) at \(V_{\mathrm{act}}=0.3\,\mathrm{V}\) and
+\(V_{\mathrm{weight}}=0.3\,\mathrm{V}\), and it largely clips by
+\(V_{\mathrm{weight}}\approx0.64\,\mathrm{V}\).  A bilinear fit on the compact
+surface gives only \(R^2\approx0.93\) for gate-stack and \(R^2\approx0.916\)
+for pass-activation.  Moving the storage center down into the apparent
+transition region does not solve the 3-class transfer check: center
+\(0.16\,\mathrm{V}\), scale 1 gives 36.7\%, and rectified scale 5 gives 40.0\%.
+
+The more useful primitive result is small-signal: with a \(100\,\mathrm{fF}\)
+score cap, \(0.02\times\) readout width, and early sampling at \(0.9\,\mathrm{ns}\),
+the same gate-stack branch has a much better bilinear fit
+\((R^2\approx0.965)\), and its score movement remains below
+\(180\,\mathrm{mV}\) on the measured grid.  Exposing \code{--score-cap-f} in
+the generator makes this knob testable in the full circuit.  The first
+transfer-only check at \(0.02\times\), \(100\,\mathrm{fF}\), and early sampling
+does not classify correctly by raw argmax, but the per-row score correlations
+with the ideal separator are high (\(0.62,0.87,0.77\)); a posthoc row-affine
+calibration reaches 66.7\% and a full linear calibration reaches 73.3\%.  So
+the next circuit step should not just tune the branch center.  It should add a
+hardware-native row normalization/current competition or a differential
+score-comparison stage that removes row offsets and common-mode score movement
+before the class decision and before the error rails.
+Evaluating the tuned differential-pair current competition on measured
+split-score traces confirms the distinction.  On the default scale-5 transfer
+trace it gives the same 63.3\% class accuracy as the raw split-score argmax; on
+the \(0.02\times\), \(100\,\mathrm{fF}\), early-sampled trace it still collapses
+to class 1.  So the differential pair is useful as an output/error primitive,
+but it cannot recover information that the preceding readout transfer has
+already collapsed into row offsets.
+
 The same split-score storage has now been moved into the full device generator
 as \code{--output-head split\_score\_caps}.  In this mode each class has
 physical \(\mathrm{scorep}_k\) and \(\mathrm{scoren}_k\) capacitors, and the
@@ -2986,6 +3308,21 @@ trying \(0.30\ \mathrm{V}\) and \(0.50\ \mathrm{V}\) common modes does not
 change this.  The next output primitive should therefore compare split-score
 currents directly, or generate the error rails from the split score caps,
 rather than forcing the evidence through the present single output capacitor.
+The matching zero-epoch production controls now give 60.0\% final output
+accuracy for symmetric \code{csv\_readout} programming and 63.3\% for
+\code{csv\_readout\_rectified}, with score argmax still at 63.3\%.  Rectified
+programming is therefore a small improvement, not a solution.
+The full training analogue also fails in the same way: the
+\code{device\_mnist3fixed8\_30\_v642\_scorecap100\_w002\_ng} run uses
+\(0.02\times\) forward readout devices, \(100\,\mathrm{fF}\) score caps, the
+reversed one-hot write polarity, and the previous target/non-target gate-width
+mobility fix.  Its initial evaluation is 50.0\%, but after two epochs final
+output and score accuracy both collapse to 33.3\%, predicting class 1 for all
+samples.  The readout rows show large common-mode branch motion
+(\(\approx -2.9\,\mathrm{V}\) summed over positive/negative branches) while the
+signed row deltas remain much smaller.  This is the current multiclass blocker:
+the learning loop needs an output/error primitive that trains on differential
+score evidence and rejects row-common movement during the write decision.
 
 We also tested the first such error-rail variant,
 \code{ce\_split\_score}.  This keeps the split score storage and generates the
@@ -3014,15 +3351,166 @@ The reversed polarity gives the desired one-vs-rest motion: target row
 the older binary reversed-polarity control does not transfer directly to the
 explicit multiclass one-hot rail convention.
 
+A composed readout/error/write harness now inserts the production
+\code{output\_forward}, \code{error\_cells}, and
+\code{readout\_flow\_updates} fragments in one transient while holding hidden
+activations externally.  This catches wiring mistakes that the isolated
+\(\mathrm{dp}/\mathrm{dn}\) harness cannot see.  The first composed run exposed
+one such bug: the output-bias write cell has no pre-activation gate, so its
+charge/discharge branch orientation is opposite to the row synapse cell.  The
+row caps moved target-positive and non-target-negative under reversed polarity,
+but the bias caps moved the other way.  Swapping only the bias write rails fixes
+the composed primitive: both ngspice and Xyce now report target-positive row and
+bias deltas and non-target-negative row and bias deltas for all three labels,
+with key deltas matching to roughly \(10^{-5}\,\mathrm{V}\).
+
 Using the locally correct reversed polarity in the full 3-class circuit still
 does not solve learning.  High-rail \code{onehot}, \code{ce\_out}, and
 \code{ce\_split\_score} runs all collapse to 33.3\%; target-heavy one-hot
 rails also collapse, and a smaller readout step only reaches 36.7\%.  The
-local readout-write sign is now characterized, but the full loop still needs a
-better error/output/readout primitive.  The next readout primitive should
-measure and balance local target and non-target write currents per row, then
-feed a differential score comparator or current competition directly instead
-of the present single-ended \(\mathrm{out}\) storage.
+post-fix 3-class readout-only control is more informative: ngspice and Xyce
+agree closely, but all three readout rows still drift negative over the
+balanced dataset and final accuracy falls to chance.  So the present blocker is
+not simulator disagreement alone.  It is an aggregate one-vs-rest mobility and
+common-mode problem: each class is a target once but a non-target twice in a
+3-class balanced stream, so the target write must be much stronger than a
+single non-target write, and the differential output/error head must avoid
+turning common-mode drift into class evidence.  A first attempt to increase the
+one-hot target width does not actually change the mobility enough: composed
+Xyce runs at \(128/64\), \(192/64\), and \(192/32\,\mu\mathrm{m}\) target/
+non-target error widths still produce target row deltas near \(+6.8\) to
+\(+7.0\,\mathrm{mV}\) and non-target row deltas near \(-7.2\) to
+\(-7.3\,\mathrm{mV}\).  A matched ngspice \(192/32\,\mu\mathrm{m}\) control
+agrees.  The error rails are already near \(1.04\,\mathrm{V}\), so changing
+these device widths mostly saturates the same rail voltages instead of giving a
+usable target/non-target mobility ratio.
+
+The more useful knob is at the write stack itself.  The generator now exposes
+optional final error-gate widths for the \(\mathrm{dp}\) and \(\mathrm{dn}\)
+write rails.  This is different from changing the stored-weight branch widths:
+it changes the transistor that locally admits target or non-target error into
+the update stack.  In the composed reversed-polarity one-hot harness, setting
+\[
+  W_{\mathrm{dp\ gate}}=0.00012\,\mu\mathrm{m},
+  \qquad
+  W_{\mathrm{dn\ gate}}=0.000002\,\mu\mathrm{m}
+\]
+with output-bias writes disabled gives the first useful 3-class mobility
+balance: target row deltas are about \(+8.6\,\mathrm{mV}\), while non-target
+row deltas are about \(-2.0\,\mathrm{mV}\).  That is large enough that one
+target exposure can dominate the two non-target exposures in a balanced
+3-class stream.  In the full 30-sample 3-class gate this still does not solve
+classification: with output-bias writes disabled, the row totals no longer all
+drift negative, but the physical output still tends to collapse to class 1.
+The newer split-score CE gate improves the internal differential score rails
+rather than the final output head: \code{device\_mnist3fixed8\_30\_v643}
+and the PySpice-rendered \code{v644} split-score-diffgate output-head smoke
+both finish at 33.3\% physical-output accuracy, while the final
+\(\mathrm{scorep}-\mathrm{scoren}\) argmax reaches 56.7\%.  Follow-up
+PySpice-rendered \code{v645}--\code{v649} output-head checks keep the same
+separation: charge-gated and active-low differential-pair heads do not yet
+rank the physical \(\mathrm{out}\) capacitors the same way as the learned
+differential score rails.  The production-output transfer harness
+\code{device\_output\_head\_transfer\_v650} makes this smaller and more
+diagnostic: with fixed synthetic \(\mathrm{scorep}/\mathrm{scoren}\) inputs,
+the existing \(\mathrm{out}\)-voltage heads only match 3--5 of the 7 non-tie
+signed-score cases.  The current-competition primitive still matches all
+non-tie cases, and the same active-low differential-pair voltage head matches
+all non-tie cases once \(\mathrm{Cout}\) is increased from \(20\,\mathrm{fF}\)
+to \(100\,\mathrm{fF}\) in the \code{v651} transfer sweep.  This is useful
+evidence because it separates the failure: the split score state is learning
+some class structure, but the present voltage-mode \(\mathrm{out}\) heads can
+saturate before preserving the score ranking.  In the composed 3-class run,
+however, \code{v652}--\code{v654} do not recover the physical output:
+\(\mathrm{Cout}=100\,\mathrm{fF}\), weak/full output width, and
+\(0.30\,\mathrm{V}\) score common-mode variants still finish between 23.3\%
+and 33.3\% physical-output accuracy, while the internal
+\(\mathrm{scorep}-\mathrm{scoren}\) argmax remains at 56.7\%.  The next
+output primitive should therefore expose the current-competition winner or
+current share directly to the error rails, or add a true class-coupled sense
+stage, instead of relying only on independent \(\mathrm{out}\)-capacitor
+discharge.  A first attempt to do this locally,
+\code{ce\_split\_dpair}, generates an active-low prediction rail
+\(\bar y_k\) from each class's \(\mathrm{scorep}_k/\mathrm{scoren}_k\)
+differential pair and drives the target/non-target write rails from that
+rail.  The PySpice-rendered \code{v655} 3-class smoke simulates cleanly, but
+is a negative result: physical output accuracy is 23.3\%, score argmax is
+33.3\%, and all three readout rows still drift negative.  So independent local
+differential pairs are not enough; the next design needs an explicitly
+class-coupled winner/current-share primitive or a separate mobility correction
+that prevents the balanced one-vs-rest stream from depressing every row.
+The follow-up \code{ce\_split\_compete} primitive adds that class coupling:
+each class's \(\bar y_k\) is discharged through a
+\(\mathrm{scorep}_k/\mathrm{scoren}_k\) branch that shares one tail node
+(\(\mathrm{ccsrc}\)) across classes.  This changes the failure mode but still
+does not solve the learner.  The default \code{v656} run finishes at 20.0\%
+physical accuracy and 33.3\% score accuracy, with all three readout rows now
+moving positive instead of negative
+\((+0.129,+0.236,+0.029)\,\mathrm{V}\).  A stronger-target/weaker-non-target
+\code{v657} variant reaches the same accuracies and pushes the rows even more
+positive \((+0.187,+0.358,+0.089)\,\mathrm{V}\).  The conclusion is narrower:
+the shared-tail error block can change aggregate mobility sign, but it is not
+yet producing class-selective enough write rails.  The next primitive should
+measure or store a true winner/current-share rail and use that directly in the
+write stack, rather than only thresholding a discharged \(\bar y_k\) capacitor.
+
+Two direct-current variants make the failure more specific.  The
+\code{ce\_split\_current} rule removes the thresholded \(\bar y_k\) conversion
+from the non-target side and feeds \(\mathrm{dn}_k\) from a shared score-current
+source \(\mathrm{cesrc}\).  The composed readout/error/write diagnostic gives
+the right per-sample signs, but the full \code{v658} run still finishes at
+20.0\% physical accuracy and 33.3\% score accuracy, with all three readout rows
+positive \((+0.338,+0.380,+0.259)\,\mathrm{V}\).  Increasing the non-target
+write gate in \code{v659} reduces the row drift but does not change the
+qualitative result: all rows remain positive
+\((+0.260,+0.320,+0.171)\,\mathrm{V}\).  The \code{ce\_split\_hybrid} rule
+then combines shared-tail \(\bar y_k\) target suppression with the direct
+non-target current source.  It again improves the aggregate row balance but
+does not solve the learner: \code{v660} remains at 20.0\% physical and 33.3\%
+score accuracy, with row drift
+\((+0.215,+0.285,+0.120)\,\mathrm{V}\).  The practical diagnosis is that the
+target-side \(\mathrm{vdd}\!\rightarrow t_k\!\rightarrow\mathrm{dp}_k\) stack is
+still saturating; changing device widths mostly changes write mobility after a
+nearly full-swing target error has already been created.
+
+The next primitive, \code{ce\_split\_limited}, changes that physical source
+rather than only the write gate.  Target \(\mathrm{dp}_k\) is now fed from a
+current-starved source rail \(\mathrm{ctsrc}\), while non-target
+\(\mathrm{dn}_k\) remains fed from \(\mathrm{cesrc}\).  In the composed
+3-class diagnostic, this makes target-error magnitude controllable: with
+\(\code{residual\_target\_width\_u}=0.02\), target row movement is only about
+\(+0.0008\,\mathrm{V}\), while non-target rows remain around
+\(-0.0025\) to \(-0.0030\,\mathrm{V}\); with
+\(\code{residual\_target\_width\_u}=0.1\), target movement rises to about
+\(+0.0057\,\mathrm{V}\), close to the expected 3-class one-target/two-non-target
+balance.  This is the first split-score CE-like error block where the target
+rail is not automatically full-swing.  Full 30-sample \code{mnist3fixed8\_30}
+runs confirm that this is a real mobility improvement but not yet a learning
+solution.  With \(\code{residual\_target\_width\_u}=0.1\), \code{v661} changes
+the aggregate row drift from all-positive to two positive rows and one nearly
+flat row \((+0.085,+0.170,-0.001)\,\mathrm{V}\), but accuracy remains 20.0\%
+physical and 33.3\% by score.  With
+\(\code{residual\_target\_width\_u}=0.06\), \code{v662} crosses the balance
+point: two rows move negative and one positive
+\((-0.023,+0.087,-0.101)\,\mathrm{V}\), and physical accuracy nudges from
+20.0\% to 23.3\%, but the score argmax still collapses to class 1.  Enabling a
+small output-bias write in \code{v663} breaks that score collapse
+(final score histogram \(3/9/18\) instead of \(0/30/0\)) and improves physical
+accuracy to 26.7\%, but it is still far below what the measured hidden
+activations can support.
+
+A programmed-separator control makes that last point explicit.  A software
+multiclass perceptron fitted to the measured initial hidden activations has
+100\% ideal accuracy on the same 30 examples, but mapping it into the
+capacitor readout with \code{csv\_readout\_rectified} and the split-score
+diffpair head gives only 63.3\% in the full \code{v664} zero-training SPICE
+eval at scale \(10^{-3}\).  A faster readout-transfer sweep peaks at 66.7\%
+for rectified scales \(2\times10^{-3}\) and \(4\times10^{-3}\); larger scales
+saturate and fall back toward chance, while the differential
+\code{csv\_readout} mapping is no better.  So the immediate blocker is now
+more precise: before a learned CE-like update can reach the separable solution,
+the signed readout cell and split-score output head must express a known
+multiclass separator with much higher fidelity.
 
 The next useful experiments are therefore: keep the default-rail
 bounded-discharge readout anchor

@@ -17,8 +17,8 @@ dependencies = [
   "torch",
   "torchvision",
   "optuna",
+  "PySpice>=1.5",
 ]
 
 [tool.setuptools.packages.find]
-include = ["sim*"]
-
+include = ["sim*", "spicenn*"]

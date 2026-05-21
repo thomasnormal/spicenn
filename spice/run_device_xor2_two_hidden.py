@@ -2,12 +2,12 @@ from __future__ import annotations
 
 import argparse
 import json
-import re
-import subprocess
 import time
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+import numpy as np
 import pandas as pd
 
 from run_device_multicell_classifier import mos_models, pulse_wave
@@ -22,14 +22,104 @@ from run_device_xor2_learned_features import (
     target_wave,
     xor_label,
 )
-from run_spice_sweep import ROOT, detect_spice, run_tiny_test
+from run_spice_sweep import ROOT, detect_spice, run_text_netlist, run_tiny_test
+from _util import MEAS_RE, parse_measures
 
 
-MEAS_RE = re.compile(r"(?im)^\s*([a-zA-Z_][a-zA-Z0-9_]*)\s*=\s*([-+0-9.eE]+)")
+Fanins = dict[int, tuple[int, ...]]
 
 
-def parse_measures(text: str) -> dict[str, float]:
-    return {name.lower(): float(value) for name, value in MEAS_RE.findall(text)}
+@dataclass(frozen=True)
+class SparseTopology:
+    middle_fanins: Fanins
+    readout_fanins: Fanins
+
+
+def dense_fanins(source_count: int, sink_count: int) -> Fanins:
+    return {sink: tuple(range(source_count)) for sink in range(sink_count)}
+
+
+def random_fanins(
+    source_count: int,
+    sink_count: int,
+    fan_in: int,
+    seed: int,
+    *,
+    fan_out: int | None = None,
+) -> Fanins:
+    """Return random source ids for each sink, optionally with exact source fanout.
+
+    The exact fanout form is a configuration-model draw with duplicate rejection.
+    It is intended for small sparse silicon probes, where we want absent synapses
+    omitted from the generated transistor netlist instead of emitted with off caps.
+    """
+    if source_count <= 0 or sink_count <= 0:
+        raise ValueError("source_count and sink_count must be positive.")
+    if fan_in <= 0:
+        raise ValueError("fan_in must be positive.")
+    if fan_in > source_count:
+        raise ValueError("fan_in cannot exceed source_count without duplicate synapses.")
+    rng = np.random.default_rng(seed)
+    if fan_out is None:
+        return {
+            sink: tuple(sorted(int(src) for src in rng.choice(source_count, size=fan_in, replace=False)))
+            for sink in range(sink_count)
+        }
+    if fan_out <= 0:
+        raise ValueError("fan_out must be positive when provided.")
+    if fan_out > sink_count:
+        raise ValueError("fan_out cannot exceed sink_count without duplicate synapses.")
+    if source_count * fan_out != sink_count * fan_in:
+        raise ValueError(
+            "exact sparse topology requires source_count * fan_out == sink_count * fan_in; "
+            f"got {source_count}*{fan_out} != {sink_count}*{fan_in}."
+        )
+    sink_slots = np.repeat(np.arange(sink_count), fan_in)
+    source_slots = np.repeat(np.arange(source_count), fan_out)
+    for _ in range(2000):
+        shuffled = np.array(source_slots, copy=True)
+        rng.shuffle(shuffled)
+        fanins: dict[int, list[int]] = {sink: [] for sink in range(sink_count)}
+        duplicate = False
+        for sink, src in zip(sink_slots, shuffled):
+            src_i = int(src)
+            dst_i = int(sink)
+            if src_i in fanins[dst_i]:
+                duplicate = True
+                break
+            fanins[dst_i].append(src_i)
+        if not duplicate:
+            return {sink: tuple(sorted(srcs)) for sink, srcs in fanins.items()}
+    raise RuntimeError("failed to sample a duplicate-free sparse topology; try a different seed.")
+
+
+def build_topology(
+    mode: str,
+    *,
+    middle_fan_in: int,
+    middle_fan_out: int,
+    readout_fan_in: int,
+    seed: int,
+) -> SparseTopology:
+    if mode == "dense":
+        return SparseTopology(
+            middle_fanins=dense_fanins(HIDDEN, HIDDEN),
+            readout_fanins=dense_fanins(HIDDEN, OUTPUTS),
+        )
+    if mode != "random":
+        raise ValueError(f"unknown topology mode: {mode}")
+    return SparseTopology(
+        middle_fanins=random_fanins(HIDDEN, HIDDEN, middle_fan_in, seed, fan_out=middle_fan_out),
+        readout_fanins=random_fanins(HIDDEN, OUTPUTS, min(readout_fan_in, HIDDEN), seed + 1009),
+    )
+
+
+def fanouts_from_fanins(fanins: Fanins, source_count: int) -> dict[int, tuple[int, ...]]:
+    fanouts: dict[int, list[int]] = {src: [] for src in range(source_count)}
+    for dst, srcs in fanins.items():
+        for src in srcs:
+            fanouts[src].append(dst)
+    return {src: tuple(dsts) for src, dsts in fanouts.items()}
 
 
 def phases(samples: list[dict[str, Any]]) -> str:
@@ -69,10 +159,11 @@ def phases(samples: list[dict[str, Any]]) -> str:
     )
 
 
-def middle_caps(diag_v: float, off_v: float, neg_v: float, cap_f: float) -> str:
+def middle_caps(diag_v: float, off_v: float, neg_v: float, cap_f: float, fanins: Fanins | None = None) -> str:
     lines: list[str] = []
+    middle_fanins = dense_fanins(HIDDEN, HIDDEN) if fanins is None else fanins
     for dst in range(HIDDEN):
-        for src in range(HIDDEN):
+        for src in middle_fanins[dst]:
             p = diag_v if dst == src else off_v
             n = neg_v
             lines += [
@@ -84,10 +175,11 @@ def middle_caps(diag_v: float, off_v: float, neg_v: float, cap_f: float) -> str:
     return "\n".join(lines)
 
 
-def readout_caps(high_v: float, low_v: float, cap_f: float) -> str:
+def readout_caps(high_v: float, low_v: float, cap_f: float, fanins: Fanins | None = None) -> str:
     lines: list[str] = []
+    readout_fanins = dense_fanins(HIDDEN, OUTPUTS) if fanins is None else fanins
     for out in range(OUTPUTS):
-        for h in range(HIDDEN):
+        for h in readout_fanins[out]:
             same = out == xor_label(h)
             p = high_v if same else low_v
             n = low_v if same else high_v
@@ -100,8 +192,14 @@ def readout_caps(high_v: float, low_v: float, cap_f: float) -> str:
     return "\n".join(lines)
 
 
-def temporary_caps(grad_cap_f: float) -> str:
+def temporary_caps(
+    grad_cap_f: float,
+    middle_fanins: Fanins | None = None,
+    readout_fanins: Fanins | None = None,
+) -> str:
     lines: list[str] = []
+    middle_edges = dense_fanins(HIDDEN, HIDDEN) if middle_fanins is None else middle_fanins
+    readout_edges = dense_fanins(HIDDEN, OUTPUTS) if readout_fanins is None else readout_fanins
     for h in range(HIDDEN):
         lines += [
             f"Cpre{h} pre{h} 0 10f IC=0",
@@ -121,7 +219,7 @@ def temporary_caps(grad_cap_f: float) -> str:
             f"Rh1dp{h} h1dp{h} 0 1G",
             f"Rh1dn{h} h1dn{h} 0 1G",
         ]
-        for src in range(HIDDEN):
+        for src in middle_edges[h]:
             lines += [
                 f"Cgmp{h}{src} gmp{h}{src} 0 {grad_cap_f:.12g}f IC=0",
                 f"Cgmn{h}{src} gmn{h}{src} 0 {grad_cap_f:.12g}f IC=0",
@@ -139,7 +237,7 @@ def temporary_caps(grad_cap_f: float) -> str:
             f"Rdp{out} dp{out} 0 1G",
             f"Rdn{out} dn{out} 0 1G",
         ]
-        for h in range(HIDDEN):
+        for h in readout_edges[out]:
             lines += [
                 f"Cgvp{out}{h} gvp{out}{h} 0 {grad_cap_f:.12g}f IC=0",
                 f"Cgvn{out}{h} gvn{out}{h} 0 {grad_cap_f:.12g}f IC=0",
@@ -149,8 +247,13 @@ def temporary_caps(grad_cap_f: float) -> str:
     return "\n".join(lines)
 
 
-def resets() -> str:
+def resets(
+    middle_fanins: Fanins | None = None,
+    readout_fanins: Fanins | None = None,
+) -> str:
     lines: list[str] = []
+    middle_edges = dense_fanins(HIDDEN, HIDDEN) if middle_fanins is None else middle_fanins
+    readout_edges = dense_fanins(HIDDEN, OUTPUTS) if readout_fanins is None else readout_fanins
     for h in range(HIDDEN):
         for node in [
             f"pre{h}",
@@ -164,7 +267,7 @@ def resets() -> str:
         ]:
             gate = "rstf" if node.startswith(("pre", "act")) else "rstg"
             lines.append(f"Mreset_{node} {node} {gate} 0 0 NMOS W=4u L=180n")
-        for src in range(HIDDEN):
+        for src in middle_edges[h]:
             lines += [
                 f"Mreset_gmp{h}{src} gmp{h}{src} rstg 0 0 NMOS W=4u L=180n",
                 f"Mreset_gmn{h}{src} gmn{h}{src} rstg 0 0 NMOS W=4u L=180n",
@@ -173,7 +276,7 @@ def resets() -> str:
         for node in [f"score{out}", f"out{out}", f"dp{out}", f"dn{out}"]:
             gate = "rstf" if node.startswith(("score", "out")) else "rstg"
             lines.append(f"Mreset_{node} {node} {gate} 0 0 NMOS W=4u L=180n")
-        for h in range(HIDDEN):
+        for h in readout_edges[out]:
             lines += [
                 f"Mreset_gvp{out}{h} gvp{out}{h} rstg 0 0 NMOS W=4u L=180n",
                 f"Mreset_gvn{out}{h} gvn{out}{h} rstg 0 0 NMOS W=4u L=180n",
@@ -181,11 +284,14 @@ def resets() -> str:
     return "\n".join(lines)
 
 
-def hidden2_forward() -> str:
+def hidden2_forward(fanins: Fanins | None = None) -> str:
     lines: list[str] = []
+    middle_fanins = dense_fanins(HIDDEN, HIDDEN) if fanins is None else fanins
     for dst in range(HIDDEN):
-        lines.append(f"* Hidden layer 2 cell {dst}: signed conductance from hidden layer 1.")
-        for src in range(HIDDEN):
+        lines.append(
+            f"* Hidden layer 2 cell {dst}: signed conductance from {len(middle_fanins[dst])} hidden-1 sources."
+        )
+        for src in middle_fanins[dst]:
             lines += [
                 f"Mm{dst}{src}pos_a vdd act{src} m{dst}{src}p0 0 NREL W=48u L=180n",
                 f"Mm{dst}{src}pos_w m{dst}{src}p0 wm{dst}{src}p m{dst}{src}p1 0 NREL W=48u L=180n",
@@ -198,13 +304,14 @@ def hidden2_forward() -> str:
     return "\n".join(lines)
 
 
-def output_forward(output_device: str, output_width_u: float) -> str:
+def output_forward(output_device: str, output_width_u: float, fanins: Fanins | None = None) -> str:
     if output_device not in {"NREL", "NSENSE"}:
         raise ValueError(f"unknown output device: {output_device}")
     lines: list[str] = []
+    readout_fanins = dense_fanins(HIDDEN, OUTPUTS) if fanins is None else fanins
     for out in range(OUTPUTS):
-        lines.append(f"* Output {out}: signed readout from hidden layer 2.")
-        for h in range(HIDDEN):
+        lines.append(f"* Output {out}: signed readout from hidden layer 2 ({len(readout_fanins[out])} cells).")
+        for h in readout_fanins[out]:
             lines += [
                 f"Mo{out}{h}pos_a vdd act2{h} o{out}{h}p0 0 NREL W=64u L=180n",
                 f"Mo{out}{h}pos_w o{out}{h}p0 vw{out}{h}p o{out}{h}p1 0 NREL W=64u L=180n",
@@ -235,11 +342,13 @@ def error_cells() -> str:
     return "\n".join(lines)
 
 
-def hidden2_delta() -> str:
+def hidden2_delta(readout_fanins: Fanins | None = None) -> str:
     lines: list[str] = []
+    readout_edges = dense_fanins(HIDDEN, OUTPUTS) if readout_fanins is None else readout_fanins
+    readout_fanouts = fanouts_from_fanins(readout_edges, HIDDEN)
     for h in range(HIDDEN):
         lines.append(f"* Hidden layer 2 delta {h}: output error through readout weights.")
-        for out in range(OUTPUTS):
+        for out in readout_fanouts[h]:
             lines += [
                 f"Mh2dp{h}{out}a0 vdd dp{out} h2dp{h}{out}a0 0 NSENSE W=32u L=180n",
                 f"Mh2dp{h}{out}a1 h2dp{h}{out}a0 vw{out}{h}p h2dp{h}{out}a1 0 NMOS W=32u L=180n",
@@ -261,11 +370,13 @@ def hidden2_delta() -> str:
     return "\n".join(lines)
 
 
-def hidden1_delta() -> str:
+def hidden1_delta(middle_fanins: Fanins | None = None) -> str:
     lines: list[str] = []
+    middle_edges = dense_fanins(HIDDEN, HIDDEN) if middle_fanins is None else middle_fanins
+    middle_fanouts = fanouts_from_fanins(middle_edges, HIDDEN)
     for src in range(HIDDEN):
         lines.append(f"* Hidden layer 1 delta {src}: hidden-2 error through middle weights.")
-        for dst in range(HIDDEN):
+        for dst in middle_fanouts[src]:
             lines += [
                 f"Mh1dp{src}{dst}a0 vdd h2dp{dst} h1dp{src}{dst}a0 0 NSENSE W=28u L=180n",
                 f"Mh1dp{src}{dst}a1 h1dp{src}{dst}a0 wm{dst}{src}p h1dp{src}{dst}a1 0 NMOS W=28u L=180n",
@@ -287,10 +398,17 @@ def hidden1_delta() -> str:
     return "\n".join(lines)
 
 
-def update_cells(readout_width_u: float, middle_width_u: float) -> str:
+def update_cells(
+    readout_width_u: float,
+    middle_width_u: float,
+    middle_fanins: Fanins | None = None,
+    readout_fanins: Fanins | None = None,
+) -> str:
     lines: list[str] = []
+    middle_edges = dense_fanins(HIDDEN, HIDDEN) if middle_fanins is None else middle_fanins
+    readout_edges = dense_fanins(HIDDEN, OUTPUTS) if readout_fanins is None else readout_fanins
     for out in range(OUTPUTS):
-        for h in range(HIDDEN):
+        for h in readout_edges[out]:
             lines += [
                 f"Mgvp{out}{h}_a vdd act2{h} gvp{out}{h}_a 0 NREL W=24u L=180n",
                 f"Mgvp{out}{h}_d gvp{out}{h}_a dp{out} gvp{out}{h}_d 0 NSENSE W=24u L=180n",
@@ -308,7 +426,7 @@ def update_cells(readout_width_u: float, middle_width_u: float) -> str:
                 f"Mvw{out}{h}p_dn_g vw{out}{h}p_dn gvn{out}{h} 0 0 NSENSE W={readout_width_u:.12g}u L=180n",
             ]
     for dst in range(HIDDEN):
-        for src in range(HIDDEN):
+        for src in middle_edges[dst]:
             lines += [
                 f"Mgmp{dst}{src}_a vdd act{src} gmp{dst}{src}_a 0 NREL W=24u L=180n",
                 f"Mgmp{dst}{src}_d gmp{dst}{src}_a h2dp{dst} gmp{dst}{src}_d 0 NSENSE W=24u L=180n",
@@ -340,9 +458,10 @@ def make_samples(epochs: int, order: list[int]) -> list[dict[str, Any]]:
     return samples
 
 
-def measures(samples: list[dict[str, Any]]) -> tuple[str, str]:
+def measures(samples: list[dict[str, Any]], middle_fanins: Fanins | None = None) -> tuple[str, str]:
     lines: list[str] = []
     prints: list[str] = []
+    middle_edges = dense_fanins(HIDDEN, HIDDEN) if middle_fanins is None else middle_fanins
     for idx, sample in enumerate(samples):
         base = idx * CYCLE_NS
         pattern = int(sample["pattern"])
@@ -380,7 +499,7 @@ def measures(samples: list[dict[str, Any]]) -> tuple[str, str]:
         prints.append(f"print target_out_{idx} other_out_{idx} margin_{idx}")
     final_base = (len(samples) - 1) * CYCLE_NS
     for dst in range(HIDDEN):
-        for src in range(HIDDEN):
+        for src in middle_edges[dst]:
             lines += [
                 f".meas tran wm{dst}{src}p_initial FIND V(wm{dst}{src}p) AT=0.60n",
                 f".meas tran wm{dst}{src}n_initial FIND V(wm{dst}{src}n) AT=0.60n",
@@ -391,14 +510,24 @@ def measures(samples: list[dict[str, Any]]) -> tuple[str, str]:
     return "\n".join(lines), "\n".join(prints)
 
 
-def xor_netlist(args: argparse.Namespace) -> tuple[str, list[dict[str, Any]]]:
+def xor_netlist(args: argparse.Namespace) -> tuple[str, list[dict[str, Any]], SparseTopology]:
     samples = make_samples(args.epochs, [0, 3, 1, 2])
     stop = len(samples) * CYCLE_NS
-    meas, prints = measures(samples)
+    topology = build_topology(
+        args.topology,
+        middle_fan_in=args.middle_fan_in,
+        middle_fan_out=args.middle_fan_out,
+        readout_fan_in=args.readout_fan_in,
+        seed=args.topology_seed,
+    )
+    meas, prints = measures(samples, topology.middle_fanins)
+    middle_edge_count = sum(len(srcs) for srcs in topology.middle_fanins.values())
+    readout_edge_count = sum(len(srcs) for srcs in topology.readout_fanins.values())
     return (
         f"""
 * Device-level two-hidden-layer XOR architecture probe.
 * Layer 1: fixed literal detectors. Layer 2 and readout use capacitor-held signed weights.
+* Topology: {args.topology}; middle edges={middle_edge_count}; readout edges={readout_edge_count}.
 .param VDD=1.2
 {mos_models()}
 Vdd vdd 0 {{VDD}}
@@ -411,19 +540,19 @@ Vt1 t1 0 {target_wave(samples, 1, stop)}
 {phases(samples)}
 
 {hidden_caps()}
-{middle_caps(args.middle_diag_v, args.middle_off_v, args.middle_neg_v, args.weight_cap_f)}
-{readout_caps(args.readout_high_v, args.readout_low_v, args.weight_cap_f)}
+{middle_caps(args.middle_diag_v, args.middle_off_v, args.middle_neg_v, args.weight_cap_f, topology.middle_fanins)}
+{readout_caps(args.readout_high_v, args.readout_low_v, args.weight_cap_f, topology.readout_fanins)}
 
-{temporary_caps(args.gradient_cap_f)}
-{resets()}
+{temporary_caps(args.gradient_cap_f, topology.middle_fanins, topology.readout_fanins)}
+{resets(topology.middle_fanins, topology.readout_fanins)}
 
 {hidden_forward()}
-{hidden2_forward()}
-{output_forward(args.output_device, args.output_width_u)}
+{hidden2_forward(topology.middle_fanins)}
+{output_forward(args.output_device, args.output_width_u, topology.readout_fanins)}
 {error_cells()}
-{hidden2_delta()}
-{hidden1_delta()}
-{update_cells(args.readout_update_width_u, args.middle_update_width_u)}
+{hidden2_delta(topology.readout_fanins)}
+{hidden1_delta(topology.middle_fanins)}
+{update_cells(args.readout_update_width_u, args.middle_update_width_u, topology.middle_fanins, topology.readout_fanins)}
 
 .options method=gear maxord=2
 .tran 10p {stop:.2f}n uic
@@ -435,24 +564,31 @@ run
 .end
 """.lstrip(),
         samples,
+        topology,
     )
 
 
 def run_netlist(spice_bin: str, path: Path, netlist: str, timeout: float) -> dict[str, float]:
-    path.write_text(netlist)
-    cmd = [spice_bin, "-b", str(path)] if "ngspice" in Path(spice_bin).name.lower() else [spice_bin, str(path)]
-    proc = subprocess.run(cmd, text=True, capture_output=True, timeout=timeout)
+    proc = run_text_netlist(spice_bin, path, netlist, timeout=timeout)
     if proc.returncode != 0:
         raise RuntimeError((proc.stderr or proc.stdout)[-3000:])
     parsed = parse_measures(proc.stdout + "\n" + proc.stderr)
     if not parsed:
-        raise RuntimeError("ngspice produced no parseable measurements:\n" + (proc.stdout + proc.stderr)[-3000:])
+        raise RuntimeError("SPICE produced no parseable measurements:\n" + (proc.stdout + proc.stderr)[-3000:])
     return parsed
 
 
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--timeout", type=float, default=180.0)
+    ap.add_argument(
+        "--simulator",
+        default=None,
+        help=(
+            "Optional SPICE executable override. Use auto for ngspice-first compatibility, "
+            "auto-fast for Xyce/XyceNF-first sweeps, or pass an executable path."
+        ),
+    )
     ap.add_argument("--tag", default="device_xor2_two_hidden")
     ap.add_argument("--epochs", type=int, default=2)
     ap.add_argument("--middle-diag-v", type=float, default=0.82)
@@ -466,9 +602,19 @@ def main() -> None:
     ap.add_argument("--middle-update-width-u", type=float, default=4.0)
     ap.add_argument("--output-device", choices=["NREL", "NSENSE"], default="NREL")
     ap.add_argument("--output-width-u", type=float, default=24.0)
+    ap.add_argument(
+        "--topology",
+        choices=["dense", "random"],
+        default="dense",
+        help="dense keeps the old fully connected layer-2/readout graph; random emits only selected sparse edges.",
+    )
+    ap.add_argument("--middle-fan-in", type=int, default=3)
+    ap.add_argument("--middle-fan-out", type=int, default=3)
+    ap.add_argument("--readout-fan-in", type=int, default=3)
+    ap.add_argument("--topology-seed", type=int, default=0)
     args = ap.parse_args()
 
-    spice_bin, version = detect_spice(None)
+    spice_bin, version = detect_spice(args.simulator)
     generated = ROOT / "spice/generated"
     results = ROOT / "spice/results"
     tables = ROOT / "results/tables"
@@ -477,7 +623,7 @@ def main() -> None:
     run_tiny_test(spice_bin, generated)
 
     safe_tag = "".join(ch if ch.isalnum() or ch in {"_", "-"} else "_" for ch in args.tag)
-    netlist, samples = xor_netlist(args)
+    netlist, samples, topology = xor_netlist(args)
     t0 = time.perf_counter()
     parsed = run_netlist(spice_bin, generated / f"{safe_tag}.cir", netlist, args.timeout)
 
@@ -524,8 +670,10 @@ def main() -> None:
     middle_deltas = [
         parsed[f"d_wm{dst}{src}_signed_total"]
         for dst in range(HIDDEN)
-        for src in range(HIDDEN)
+        for src in topology.middle_fanins[dst]
     ]
+    middle_fanouts = fanouts_from_fanins(topology.middle_fanins, HIDDEN)
+    readout_fanouts = fanouts_from_fanins(topology.readout_fanins, HIDDEN)
     summary = {
         "simulator": version,
         "architecture": "device_level_2bit_xor_two_hidden_layers",
@@ -540,6 +688,17 @@ def main() -> None:
         "uses_behavioral_multipliers": False,
         "hidden_layers": 2,
         "trainable_hidden_layers": 1,
+        "topology": args.topology,
+        "topology_seed": args.topology_seed,
+        "middle_fan_in": args.middle_fan_in,
+        "middle_fan_out": args.middle_fan_out,
+        "readout_fan_in": args.readout_fan_in,
+        "middle_edge_count": int(sum(len(srcs) for srcs in topology.middle_fanins.values())),
+        "readout_edge_count": int(sum(len(srcs) for srcs in topology.readout_fanins.values())),
+        "middle_fanins": {str(dst): list(srcs) for dst, srcs in topology.middle_fanins.items()},
+        "readout_fanins": {str(out): list(srcs) for out, srcs in topology.readout_fanins.items()},
+        "middle_source_fanouts": {str(src): list(dsts) for src, dsts in middle_fanouts.items()},
+        "readout_source_fanouts": {str(src): list(dsts) for src, dsts in readout_fanouts.items()},
         "epochs": args.epochs,
         "initial_eval_accuracy": float(initial_eval["correct"].mean()),
         "final_eval_accuracy": float(final_eval["correct"].mean()),

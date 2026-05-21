@@ -1972,6 +1972,11 @@ def main() -> None:
             "When set, it replaces --sample-set for repeated training and feature probes."
         ),
     )
+    ap.add_argument(
+        "--download-dataset",
+        action="store_true",
+        help="Allow torchvision-backed datasets such as MNIST to be downloaded into ./data when missing.",
+    )
     ap.add_argument("--epochs", type=int, default=2)
     ap.add_argument("--class-balanced-replay", action="store_true")
     ap.add_argument("--label", type=int, default=0)
@@ -2034,7 +2039,10 @@ def main() -> None:
             return named_sample_stream(args.sample_set, epochs=epochs)
         from datasets import dataset_records
 
-        return repeat_samples(dataset_records(args.dataset, args.seed, root=ROOT), epochs=epochs)
+        return repeat_samples(
+            dataset_records(args.dataset, args.seed, root=ROOT, download=args.download_dataset),
+            epochs=epochs,
+        )
 
     if args.feature_separation_probe:
         t0 = time.perf_counter()

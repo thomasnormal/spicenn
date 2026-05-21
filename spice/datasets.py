@@ -199,12 +199,12 @@ def mnist01_frontend(image: np.ndarray, frontend: str) -> tuple[np.ndarray, str]
     )
 
 
-def _load_mnist(root: Path):
+def _load_mnist(root: Path, *, download: bool = False):
     """Return ``(dataset, labels_np, F)`` so the per-sample loop can pull tensors out."""
     from torch.nn import functional as F  # local import keeps torch optional
     from torchvision import datasets, transforms
 
-    ds = datasets.MNIST(root=str(root / "data"), train=True, download=False, transform=transforms.ToTensor())
+    ds = datasets.MNIST(root=str(root / "data"), train=True, download=download, transform=transforms.ToTensor())
     labels_np = np.asarray(ds.targets)
     return ds, labels_np, F
 
@@ -215,11 +215,12 @@ def mnist01_records(
     frontend: str = "pool2",
     *,
     root: Path,
+    download: bool = False,
 ) -> list[dict[str, Any]]:
     """Balanced binary subset of MNIST (digits 0 and 1) fed through ``frontend``."""
     if sample_count % 2 != 0:
         raise ValueError("MNIST 0/1 sample count must be even.")
-    ds, labels_np, F = _load_mnist(root)
+    ds, labels_np, F = _load_mnist(root, download=download)
     rng = np.random.default_rng(seed)
     half = sample_count // 2
     selected: list[tuple[int, int]] = []
@@ -279,13 +280,14 @@ def mnist_records(
     class_count: int = 10,
     *,
     root: Path,
+    download: bool = False,
 ) -> list[dict[str, Any]]:
     """Balanced ``class_count``-way MNIST subset fed through ``frontend``."""
     if not 2 <= class_count <= 10:
         raise ValueError("MNIST class count must be in 2..10.")
     if sample_count % class_count != 0:
         raise ValueError(f"{class_count}-way MNIST sample count must be divisible by {class_count}.")
-    ds, labels_np, F = _load_mnist(root)
+    ds, labels_np, F = _load_mnist(root, download=download)
     rng = np.random.default_rng(seed)
     per_digit = sample_count // class_count
     selected: list[tuple[int, int]] = []
@@ -324,7 +326,7 @@ def mnist_records(
     return records
 
 
-def dataset_records(name: str, seed: int, *, root: Path) -> list[dict[str, Any]]:
+def dataset_records(name: str, seed: int, *, root: Path, download: bool = False) -> list[dict[str, Any]]:
     """Top-level dataset dispatcher used by the run scripts."""
     if name == "xor2":
         return [{"pattern": p, "label": xor_label(p)} for p in range(4)]
@@ -335,11 +337,11 @@ def dataset_records(name: str, seed: int, *, root: Path) -> list[dict[str, Any]]
     mnist_match = re.fullmatch(r"mnist01([a-z0-9]*)_(\d+)", name)
     if mnist_match:
         frontend = mnist_match.group(1) or "pool2"
-        return mnist01_records(int(mnist_match.group(2)), seed, frontend, root=root)
+        return mnist01_records(int(mnist_match.group(2)), seed, frontend, root=root, download=download)
     counted_mnist = parse_counted_mnist_dataset(name)
     if counted_mnist:
         class_count, frontend, sample_count = counted_mnist
-        return mnist_records(sample_count, seed, frontend, class_count=class_count, root=root)
+        return mnist_records(sample_count, seed, frontend, class_count=class_count, root=root, download=download)
     examples = ", ".join(
         DATASET_EXAMPLES
         + [

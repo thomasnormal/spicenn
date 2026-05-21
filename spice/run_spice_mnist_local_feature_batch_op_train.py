@@ -292,10 +292,23 @@ def save_weight_checkpoint(path: Path, w: np.ndarray, hb: np.ndarray, v: np.ndar
     )
 
 
+def best_accuracy(rows: list[dict]) -> float | None:
+    values = [row.get("heldout_accuracy") for row in rows if row.get("heldout_accuracy") is not None]
+    return None if not values else float(max(values))
+
+
+def final_accuracy(rows: list[dict]) -> float | None:
+    for row in reversed(rows):
+        if row.get("heldout_accuracy") is not None:
+            return float(row["heldout_accuracy"])
+    return None
+
+
 def plot_curve(df, out):
     out.parent.mkdir(parents=True, exist_ok=True)
     plt.figure(figsize=(6, 4))
-    plt.plot(df["epoch"], df["heldout_accuracy"], marker="o")
+    if "heldout_accuracy" in df and df["heldout_accuracy"].notna().any():
+        plt.plot(df["epoch"], df["heldout_accuracy"], marker="o")
     plt.xlabel("epoch")
     plt.ylabel("held-out accuracy")
     plt.ylim(-0.05, 1.05)
@@ -345,12 +358,19 @@ def main():
         default=0,
         help="Write *_latest_weights.npz every N completed train batches. Zero writes only final/best checkpoints.",
     )
+    ap.add_argument(
+        "--skip-heldout-eval",
+        action="store_true",
+        help="Train and checkpoint without running held-out SPICE evaluation. Use for fast resumable chunks.",
+    )
     ap.add_argument("--seed", type=int, default=0)
     ap.add_argument("--timeout", type=float, default=90)
     ap.add_argument("--tag", default="local_feature")
     args = ap.parse_args()
     if args.linear_output and args.softmax_output:
         raise ValueError("--linear-output and --softmax-output are mutually exclusive")
+    if args.skip_heldout_eval and (args.eval_only or args.epochs == 0):
+        raise ValueError("--skip-heldout-eval cannot be used with --eval-only or --epochs 0")
 
     stride = args.block_size if args.stride is None else args.stride
     blocks = block_indices(args.image_size, args.block_size, stride)
@@ -499,17 +519,19 @@ def main():
                         )
                         + "\n"
                     )
-            heldout = run_eval(
-                spice_bin, eval_netlist, data_path, x_test, y_test,
-                w, hb, v, ob, blocks, args.batch_size, args.timeout,
-                args.linear_output,
-                args.softmax_output,
-                args.local_activation,
-                args.relu_clip,
-            )
+            heldout = None
+            if not args.skip_heldout_eval:
+                heldout = run_eval(
+                    spice_bin, eval_netlist, data_path, x_test, y_test,
+                    w, hb, v, ob, blocks, args.batch_size, args.timeout,
+                    args.linear_output,
+                    args.softmax_output,
+                    args.local_activation,
+                    args.relu_clip,
+                )
             row = {"epoch": epoch + 1, "heldout_accuracy": heldout, "epoch_wall_time_s": time.perf_counter() - epoch_start}
             rows.append(row)
-            if heldout > best_acc:
+            if heldout is not None and heldout > best_acc:
                 best_acc = heldout
                 best_state = (w.copy(), hb.copy(), v.copy(), ob.copy())
             print(json.dumps(row), flush=True)
@@ -562,6 +584,7 @@ def main():
         "test_samples": args.test_samples,
         "epochs": args.epochs,
         "eval_only": bool(args.eval_only),
+        "skip_heldout_eval": bool(args.skip_heldout_eval),
         "batch_size": args.batch_size,
         "checkpoint_every_batches": int(args.checkpoint_every_batches),
         "lr": args.lr,
@@ -576,8 +599,8 @@ def main():
         "best_weights": str(best_weights_path) if best_state is not None else None,
         "latest_weights": str(latest_weights_path) if latest_checkpoint_written else None,
         "completed_train_batches": int(completed_train_batches),
-        "heldout_test_accuracy": float(curve.iloc[-1]["heldout_accuracy"]),
-        "best_heldout_accuracy": float(curve["heldout_accuracy"].max()),
+        "heldout_test_accuracy": final_accuracy(rows),
+        "best_heldout_accuracy": best_accuracy(rows),
         "note": "Local feature/readout batch-op all-SPICE training with SPICE-computed backprop updates.",
     }
     out = results / f"{stem}_summary.json"

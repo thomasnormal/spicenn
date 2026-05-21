@@ -43,3 +43,17 @@ def test_save_weight_checkpoint_is_init_weights_compatible(tmp_path: Path) -> No
             "completed_train_batches": 17,
             "epoch": 3,
         }
+
+
+def test_accuracy_helpers_ignore_train_only_rows() -> None:
+    rows = [
+        {"epoch": 1, "heldout_accuracy": None},
+        {"epoch": 2, "heldout_accuracy": 0.4},
+        {"epoch": 3, "heldout_accuracy": None},
+        {"epoch": 4, "heldout_accuracy": 0.6},
+    ]
+
+    assert batch_op.final_accuracy(rows) == pytest.approx(0.6)
+    assert batch_op.best_accuracy(rows) == pytest.approx(0.6)
+    assert batch_op.final_accuracy([{"heldout_accuracy": None}]) is None
+    assert batch_op.best_accuracy([{"heldout_accuracy": None}]) is None

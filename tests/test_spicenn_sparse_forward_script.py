@@ -822,6 +822,39 @@ def test_spicenn_sparse_forward_train_netlist_can_use_hybrid_trace_spike_writer(
     assert ".meas tran fprbar0_" in text
 
 
+def test_spicenn_sparse_forward_train_netlist_defaults_to_low_pretrace_reference() -> None:
+    text, _topology = sparse_forward.train_netlist(
+        x0=1.0,
+        x1=1.0,
+        bias=0.6,
+        label=0,
+        hidden_count=4,
+        output_count=1,
+        hidden1_fan_in=2,
+        hidden2_fan_in=3,
+        readout_fan_in=3,
+        seed=7,
+        update_width_u=0.004,
+        update_write_mode="hybrid_trace_spike_charge_discharge",
+    )
+
+    assert sparse_forward.DEFAULT_SPIKE_REF_V == pytest.approx(0.02)
+    assert "Vspikeref spikeref 0 DC 0.02" in text
+
+
+def test_spicenn_sparse_forward_summarizes_pretrace_gate_coverage() -> None:
+    summary = sparse_forward.pretrace_gate_summary(
+        {
+            "0_0": {"gate": 1.2, "bar": 0.02},
+            "0_1": {"gate": 0.04, "bar": 0.6},
+            "0_2": {"gate": 0.0, "bar": 1.2},
+            "0_3": {"gate": None, "bar": None},
+        }
+    )
+
+    assert summary == {"total": 4, "active": 1, "weak": 1, "inactive": 1, "missing": 1}
+
+
 def test_spicenn_sparse_forward_train_netlist_can_use_stored_analog_trace_writer() -> None:
     text, _topology = sparse_forward.train_netlist(
         x0=1.0,

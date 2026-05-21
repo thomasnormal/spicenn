@@ -55,6 +55,7 @@ class SparseForwardTopology:
 
 TOPOLOGY_MODES = ("fanin", "balanced_fanout", "ring_fanout")
 ERROR_RULES = ("residual", "target_only", "ce_split_limited")
+DEFAULT_SPIKE_REF_V = 0.02
 
 
 def _source_slug(source: SourceId) -> str:
@@ -619,6 +620,37 @@ def activation_vector(measures: dict[str, float], prefix: str, count: int) -> li
     return [float(measures.get(f"{prefix}_{index}", 0.0)) for index in range(count)]
 
 
+def pretrace_gate_summary(
+    pretrace_gates: Mapping[str, Mapping[str, float | None]],
+    *,
+    active_threshold: float = 0.8,
+    weak_threshold: float = 1e-3,
+) -> dict[str, int]:
+    """Summarize hybrid pretrace coverage from per-edge gate measurements."""
+
+    total = 0
+    active = 0
+    weak = 0
+    missing = 0
+    for gates in pretrace_gates.values():
+        total += 1
+        gate = gates.get("gate")
+        if gate is None:
+            missing += 1
+            continue
+        if gate > active_threshold:
+            active += 1
+        elif gate > weak_threshold:
+            weak += 1
+    return {
+        "total": total,
+        "active": active,
+        "weak": weak,
+        "inactive": total - active - weak - missing,
+        "missing": missing,
+    }
+
+
 def vector_l1(a: list[float], b: list[float]) -> float:
     return sum(abs(left - right) for left, right in zip(a, b))
 
@@ -1179,7 +1211,7 @@ def train_netlist(
     charge_width_u: float | None = None,
     discharge_width_u: float | None = None,
     update_write_mode: str = "simple_charge_discharge",
-    spike_ref_v: float = 0.1,
+    spike_ref_v: float = DEFAULT_SPIKE_REF_V,
     readout_center_v: float = 0.30,
     false_negative_target_v: float = 0.0,
     hidden_weight_mode: str = "positive",
@@ -1815,6 +1847,7 @@ def run_repeated_readout_training(
                 "selector_gates": selector_gates,
                 "competition_error": competition_error,
                 "pretrace_gates": pretrace_gates,
+                "pretrace_gate_summary": pretrace_gate_summary(pretrace_gates),
                 "hidden2_row_signed_deltas": hidden2_row_signed_deltas,
                 "hidden2_row_common_deltas": hidden2_row_common_deltas,
                 "hidden2_selector_gates": hidden2_selector_gates,
@@ -1962,7 +1995,7 @@ def main() -> None:
     )
     ap.add_argument("--charge-width-u", type=float, default=None)
     ap.add_argument("--discharge-width-u", type=float, default=None)
-    ap.add_argument("--spike-ref-v", type=float, default=0.1)
+    ap.add_argument("--spike-ref-v", type=float, default=DEFAULT_SPIKE_REF_V)
     ap.add_argument("--false-negative-target-v", type=float, default=0.0)
     ap.add_argument("--error-rule", choices=ERROR_RULES, default="residual")
     ap.add_argument("--sensitivity-deltas", default="0,0.01,0.02,0.05,0.1")

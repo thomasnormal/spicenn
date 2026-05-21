@@ -318,13 +318,15 @@ def main():
     x_train, y_train, x_test, y_test = load_mnist_sequence(args.train_samples, args.test_samples, args.image_size, args.seed)
     spice_bin, version = detect_spice(None)
     generated = ROOT / "spice/generated"
-    generated.mkdir(parents=True, exist_ok=True)
+    results = ROOT / "spice/results"
+    for directory in (generated, results):
+        directory.mkdir(parents=True, exist_ok=True)
     run_tiny_test(spice_bin, generated)
     safe_tag = "".join(ch if ch.isalnum() or ch in {"_", "-"} else "_" for ch in args.tag)
     stem = f"spice_mnist_local_feature_{safe_tag}"
     netlist_path = generated / f"{stem}_step.cir"
     eval_netlist = generated / f"{stem}_eval.cir"
-    data_path = ROOT / f"spice/results/{stem}_step.dat"
+    data_path = results / f"{stem}_step.dat"
     rng = np.random.default_rng(args.seed)
     w = rng.normal(0.0, 0.05, size=(len(blocks), args.channels, args.block_size * args.block_size))
     hb = np.zeros((len(blocks), args.channels))
@@ -428,12 +430,12 @@ def main():
                 best_state = (w.copy(), hb.copy(), v.copy(), ob.copy())
             print(json.dumps(row), flush=True)
     curve = pd.DataFrame(rows)
-    curve_path = ROOT / f"spice/results/{stem}_learning_curve.csv"
+    curve_path = results / f"{stem}_learning_curve.csv"
     curve.to_csv(curve_path, index=False)
-    fig = ROOT / f"spice/results/{stem}_learning_curve.png"
+    fig = results / f"{stem}_learning_curve.png"
     plot_curve(curve, fig)
-    weights_path = ROOT / f"spice/results/{stem}_final_weights.npz"
-    best_weights_path = ROOT / f"spice/results/{stem}_best_weights.npz"
+    weights_path = results / f"{stem}_final_weights.npz"
+    best_weights_path = results / f"{stem}_best_weights.npz"
     np.savez_compressed(weights_path, local_weights=w, local_bias=hb, readout=v, output_bias=ob)
     if best_state is not None:
         bw, bhb, bv, bob = best_state
@@ -474,7 +476,7 @@ def main():
         "best_heldout_accuracy": float(curve["heldout_accuracy"].max()),
         "note": "Local feature/readout batch-op all-SPICE training with SPICE-computed backprop updates.",
     }
-    out = ROOT / f"spice/results/{stem}_summary.json"
+    out = results / f"{stem}_summary.json"
     out.write_text(json.dumps(summary, indent=2) + "\n")
     print(json.dumps(summary, indent=2))
 

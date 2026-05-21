@@ -917,11 +917,11 @@ def test_direct_flow_synapse_spike_creates_full_swing_write_gates() -> None:
     assert "Mreset_fprg00 fprg00 rstf 0 0 NMOS W=4u" in stores
     assert "Mreset_fprbar00 vdd rstf fprbar00 0 NSENSE W=4u" in stores
     assert "Mspike_fprbar00_fwd fprbar00 fwd fprm00 0 NREL W=3.5u" in stores
-    assert "Mspike_fprbar00_act fprm00 act0 spikeref 0 NREL W=3.5u" in stores
+    assert "Mspike_fprbar00_act fprm00 act0 spikeref 0 NSENSE W=3.5u" in stores
     assert "Mspike_fprg00_p vdd fprbar00 fprg00 vdd PMOS W=3.5u" in stores
     assert "Mspike_fprg00_n fprg00 fprbar00 0 0 NMOS W=3.5u" in stores
     assert "Cfphig0_x0 fphig0_x0 0 2f IC=0" in stores
-    assert "Mspike_fphibar0_x0_act fphim0_x0 x0 spikeref 0 NREL W=3.5u" in stores
+    assert "Mspike_fphibar0_x0_act fphim0_x0 x0 spikeref 0 NSENSE W=3.5u" in stores
     assert "Mvw00p_ch_a vw00p_ch_b fprg00" in readout_updates
     assert "Mwh0_x0n_flow_x wh0_x0n_flow_b fphig0_x0" in hidden_updates
 
@@ -2551,7 +2551,7 @@ def test_readout_write_selectivity_can_use_dynamic_spike_pre_store() -> None:
     assert "Vrstf rstf 0 PWL" in netlist
     assert "Vfwd fwd 0 PWL" in netlist
     assert "Cfprg10 fprg10 0 2f IC=0" in netlist
-    assert "Mspike_fprbar10_act fprm10 act0 spikeref 0 NREL" in netlist
+    assert "Mspike_fprbar10_act fprm10 act0 spikeref 0 NSENSE" in netlist
     assert "Mvw10p_pch_a vw10p_pch_g fprg10 vw10p 0 NREL" in netlist
     assert ".meas tran fprg10_write FIND V(fprg10)" in netlist
     assert "print row0_signed_delta" in netlist
@@ -5309,7 +5309,7 @@ def test_readout_array_eval_can_attach_inactive_direct_flow_write_loads() -> Non
     assert "Vdn1 dn1 0 0" in netlist
     assert "Cfpsrg" not in netlist
     assert "Cfprg00 fprg00 0 2f IC=0" in netlist
-    assert "Mspike_fprbar00_act fprm00 act0 spikeref 0 NREL W=4u" in netlist
+    assert "Mspike_fprbar00_act fprm00 act0 spikeref 0 NSENSE W=4u" in netlist
     assert "Mvw00p_pch_s vw00p_pch_b rwsel0_posbar wphigh vdd PMOS W=120u" in netlist
     assert "Mvw00p_pch_a vw00p_pch_g fprg00 vw00p 0 NREL W=120u" in netlist
 

@@ -265,6 +265,33 @@ def run_eval(
     return correct / max(len(y_eval), 1)
 
 
+def epoch_order_slice(order: np.ndarray, epoch_train_samples: int, epoch_train_offset: int, max_train_batches: int, batch_size: int) -> np.ndarray:
+    if batch_size <= 0:
+        raise ValueError("batch size must be positive")
+    if epoch_train_samples > 0:
+        start = min(max(epoch_train_offset, 0), len(order))
+        stop = min(start + epoch_train_samples, len(order))
+        order = order[start:stop]
+    elif epoch_train_offset > 0:
+        start = min(epoch_train_offset, len(order))
+        order = order[start:]
+    if max_train_batches > 0:
+        order = order[: max_train_batches * batch_size]
+    return order
+
+
+def save_weight_checkpoint(path: Path, w: np.ndarray, hb: np.ndarray, v: np.ndarray, ob: np.ndarray, **metadata) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    np.savez_compressed(
+        path,
+        local_weights=w,
+        local_bias=hb,
+        readout=v,
+        output_bias=ob,
+        metadata_json=np.array(json.dumps(metadata, sort_keys=True)),
+    )
+
+
 def plot_curve(df, out):
     out.parent.mkdir(parents=True, exist_ok=True)
     plt.figure(figsize=(6, 4))
@@ -288,6 +315,12 @@ def main():
     ap.add_argument("--epochs", type=int, default=20)
     ap.add_argument("--epoch-train-samples", type=int, default=0)
     ap.add_argument("--epoch-train-offset", type=int, default=0)
+    ap.add_argument(
+        "--max-train-batches",
+        type=int,
+        default=0,
+        help="Cap train batches per epoch after epoch offset/sample slicing. Use with --init-weights to resume long runs in chunks.",
+    )
     ap.add_argument("--batch-size", type=int, default=50)
     ap.add_argument("--lr", type=float, default=0.2)
     ap.add_argument("--linear-output", action="store_true")
@@ -306,6 +339,12 @@ def main():
         help="Stddev for class readout weights into channels above 10 when importing a class-evidence checkpoint.",
     )
     ap.add_argument("--eval-only", action="store_true")
+    ap.add_argument(
+        "--checkpoint-every-batches",
+        type=int,
+        default=0,
+        help="Write *_latest_weights.npz every N completed train batches. Zero writes only final/best checkpoints.",
+    )
     ap.add_argument("--seed", type=int, default=0)
     ap.add_argument("--timeout", type=float, default=90)
     ap.add_argument("--tag", default="local_feature")
@@ -327,6 +366,8 @@ def main():
     netlist_path = generated / f"{stem}_step.cir"
     eval_netlist = generated / f"{stem}_eval.cir"
     data_path = results / f"{stem}_step.dat"
+    latest_weights_path = results / f"{stem}_latest_weights.npz"
+    progress_path = results / f"{stem}_progress.json"
     rng = np.random.default_rng(args.seed)
     w = rng.normal(0.0, 0.05, size=(len(blocks), args.channels, args.block_size * args.block_size))
     hb = np.zeros((len(blocks), args.channels))
@@ -382,6 +423,8 @@ def main():
     best_acc = -1.0
     best_state = None
     t0 = time.perf_counter()
+    completed_train_batches = 0
+    latest_checkpoint_written = False
     if args.eval_only or args.epochs == 0:
         epoch_start = time.perf_counter()
         heldout = run_eval(
@@ -400,10 +443,13 @@ def main():
         for epoch in range(args.epochs):
             order = np.arange(len(y_train))
             rng.shuffle(order)
-            if args.epoch_train_samples > 0:
-                start = min(max(args.epoch_train_offset, 0), len(order))
-                stop = min(start + args.epoch_train_samples, len(order))
-                order = order[start:stop]
+            order = epoch_order_slice(
+                order,
+                args.epoch_train_samples,
+                args.epoch_train_offset,
+                args.max_train_batches,
+                args.batch_size,
+            )
             epoch_start = time.perf_counter()
             for start in range(0, len(order), args.batch_size):
                 idx = order[start : start + args.batch_size]
@@ -415,6 +461,44 @@ def main():
                     args.local_activation,
                     args.relu_clip,
                 )
+                completed_train_batches += 1
+                if args.checkpoint_every_batches > 0 and completed_train_batches % args.checkpoint_every_batches == 0:
+                    save_weight_checkpoint(
+                        latest_weights_path,
+                        w,
+                        hb,
+                        v,
+                        ob,
+                        epoch=epoch + 1,
+                        completed_train_batches=completed_train_batches,
+                        epoch_batch_index=start // args.batch_size + 1,
+                        epoch_train_offset=args.epoch_train_offset,
+                        max_train_batches=args.max_train_batches,
+                        train_samples=args.train_samples,
+                        test_samples=args.test_samples,
+                        image_size=args.image_size,
+                        block_size=args.block_size,
+                        stride=stride,
+                        channels=args.channels,
+                        batch_size=args.batch_size,
+                        lr=args.lr,
+                        seed=args.seed,
+                    )
+                    latest_checkpoint_written = True
+                    progress_path.write_text(
+                        json.dumps(
+                            {
+                                "latest_weights": str(latest_weights_path),
+                                "epoch": epoch + 1,
+                                "completed_train_batches": completed_train_batches,
+                                "epoch_batch_index": start // args.batch_size + 1,
+                                "epoch_train_offset": args.epoch_train_offset,
+                                "max_train_batches": args.max_train_batches,
+                            },
+                            indent=2,
+                        )
+                        + "\n"
+                    )
             heldout = run_eval(
                 spice_bin, eval_netlist, data_path, x_test, y_test,
                 w, hb, v, ob, blocks, args.batch_size, args.timeout,
@@ -436,10 +520,26 @@ def main():
     plot_curve(curve, fig)
     weights_path = results / f"{stem}_final_weights.npz"
     best_weights_path = results / f"{stem}_best_weights.npz"
-    np.savez_compressed(weights_path, local_weights=w, local_bias=hb, readout=v, output_bias=ob)
+    save_weight_checkpoint(
+        weights_path,
+        w,
+        hb,
+        v,
+        ob,
+        completed_train_batches=completed_train_batches,
+        checkpoint_kind="final",
+    )
     if best_state is not None:
         bw, bhb, bv, bob = best_state
-        np.savez_compressed(best_weights_path, local_weights=bw, local_bias=bhb, readout=bv, output_bias=bob)
+        save_weight_checkpoint(
+            best_weights_path,
+            bw,
+            bhb,
+            bv,
+            bob,
+            completed_train_batches=completed_train_batches,
+            checkpoint_kind="best",
+        )
     summary = {
         "simulator": version,
         "dataset": "MNIST train/test split, downsampled",
@@ -458,10 +558,12 @@ def main():
         "train_samples": args.train_samples,
         "epoch_train_samples": int(args.epoch_train_samples) if args.epoch_train_samples > 0 else int(args.train_samples),
         "epoch_train_offset": int(args.epoch_train_offset),
+        "max_train_batches": int(args.max_train_batches),
         "test_samples": args.test_samples,
         "epochs": args.epochs,
         "eval_only": bool(args.eval_only),
         "batch_size": args.batch_size,
+        "checkpoint_every_batches": int(args.checkpoint_every_batches),
         "lr": args.lr,
         "init_weights": args.init_weights,
         "import_extra_readout_scale": args.import_extra_readout_scale,
@@ -472,6 +574,8 @@ def main():
         "figure": str(fig),
         "final_weights": str(weights_path),
         "best_weights": str(best_weights_path) if best_state is not None else None,
+        "latest_weights": str(latest_weights_path) if latest_checkpoint_written else None,
+        "completed_train_batches": int(completed_train_batches),
         "heldout_test_accuracy": float(curve.iloc[-1]["heldout_accuracy"]),
         "best_heldout_accuracy": float(curve["heldout_accuracy"].max()),
         "note": "Local feature/readout batch-op all-SPICE training with SPICE-computed backprop updates.",

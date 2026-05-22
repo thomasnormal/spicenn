@@ -58,6 +58,7 @@ def test_phase_transient_cli_exposes_agreement_gates() -> None:
     assert "--local-update-scale" in proc.stdout
     assert "--softmax-negative-scale" in proc.stdout
     assert "--softmax-error-centering" in proc.stdout
+    assert "--readout-class-centering" in proc.stdout
     assert "--eval-backend" in proc.stdout
     assert "--simulator-extra-args" in proc.stdout
 
@@ -875,6 +876,67 @@ def test_batch_op_softmax_negative_scale_matches_phase_error_expr(tmp_path: Path
             1.0,
             softmax_negative_scale=-1.0,
         )
+
+
+def test_phase_and_batch_readout_class_centering_use_effective_centered_readout(tmp_path: Path) -> None:
+    x = np.zeros((1, 4))
+    y = np.array([0])
+    w = np.zeros((1, 1, 4))
+    hb = np.zeros((1, 1))
+    readout = np.zeros((2, 1, 1))
+    output_bias = np.zeros(2)
+
+    phase_netlist, _n_vec, _t_stop = phase_transient.make_phase_transient_netlist(
+        x,
+        y,
+        w,
+        hb,
+        readout,
+        output_bias,
+        [[0, 1, 2, 3]],
+        0.8,
+        tmp_path / "phase.dat",
+        False,
+        1,
+        1,
+        1e-9,
+        0.1e-9,
+        5e-12,
+        40.0,
+        20e-12,
+        1e-12,
+        1e-12,
+        1e-12,
+        1e18,
+        True,
+        "measure",
+        readout_class_centering="mean",
+    )
+
+    assert "((V(v0_0_0)) - (((V(v0_0_0)) + (V(v1_0_0)))/2))*V(h0_0)" in phase_netlist
+    assert "((V(v1_0_0)) - (((V(v0_0_0)) + (V(v1_0_0)))/2))*V(d1)" in phase_netlist
+
+    batch_netlist = feature_batch_train.make_train_netlist(
+        x,
+        y,
+        w,
+        hb,
+        readout,
+        output_bias,
+        [[0, 1, 2, 3]],
+        0.8,
+        tmp_path / "batch.dat",
+        False,
+        True,
+        "tanh",
+        1.0,
+        readout_class_centering="mean",
+    )
+
+    assert "((V(v0_0_0)) - (((V(v0_0_0)) + (V(v1_0_0)))/2))*V(h0_0_0)" in batch_netlist
+
+    with pytest.raises(ValueError, match="readout_class_centering"):
+        phase_transient.apply_readout_class_centering_np(readout, "median")
 
 
 def test_phase_transient_synapse_transfer_modes_affect_forward_and_backward_paths(tmp_path: Path) -> None:

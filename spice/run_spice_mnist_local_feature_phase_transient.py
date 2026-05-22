@@ -12,7 +12,7 @@ import numpy as np
 import pandas as pd
 
 from run_spice_mnist_batch_op_train import read_wrdata_row
-from local_feature_error import mean_centered_expr, softmax_delta_expr
+from local_feature_error import class_centered_expr, mean_centered_expr, softmax_delta_expr
 from run_spice_mnist_local_block_batch_op_train import (
     local_activation_deriv_expr as block_local_activation_deriv_expr,
     local_activation_expr as block_local_activation_expr,
@@ -220,6 +220,14 @@ def target_matrix(labels: np.ndarray, n_classes: int, softmax_output: bool = Fal
     return targets
 
 
+def apply_readout_class_centering_np(readout: np.ndarray, mode: str) -> np.ndarray:
+    if mode == "none":
+        return readout
+    if mode == "mean":
+        return readout - np.mean(readout, axis=0, keepdims=True)
+    raise ValueError("readout_class_centering must be 'none' or 'mean'")
+
+
 def parse_measured_vector(stdout: str, n_vec: int) -> np.ndarray:
     return parse_named_measured_vector(stdout, "m", n_vec)
 
@@ -418,6 +426,7 @@ def make_phase_transient_netlist(
     local_update_scale: float = 1.0,
     softmax_negative_scale: float = 1.0,
     softmax_error_centering: str = "none",
+    readout_class_centering: str = "none",
 ) -> tuple[str, int, float]:
     total_samples = x_batch.shape[0]
     if total_samples != update_batch_size * updates:
@@ -436,6 +445,8 @@ def make_phase_transient_netlist(
         raise ValueError("softmax_negative_scale must be non-negative")
     if softmax_error_centering not in {"none", "mean"}:
         raise ValueError("softmax_error_centering must be 'none' or 'mean'")
+    if readout_class_centering not in {"none", "mean"}:
+        raise ValueError("readout_class_centering must be 'none' or 'mean'")
     direct_update = update_mode == "direct"
     if direct_update and update_batch_size != 1:
         raise ValueError("direct update mode requires update_batch_size=1")
@@ -523,8 +534,16 @@ def make_phase_transient_netlist(
             h_calc = local_activation_expr(f"V(ah{b}_{c})", local_activation, relu_clip, relu_leak, softplus_beta)
             lines.append(f"Bstore_h{b}_{c} h{b}_{c} 0 I = V(pact)*{{CSTATE}}/{{TAU}}*(V(h{b}_{c})-({h_calc}))")
     for k in range(n_classes):
+        readout_exprs_for_class: dict[tuple[int, int], str] = {}
+        for b in range(n_blocks):
+            for c in range(channels):
+                class_exprs = [
+                    synapse_transfer_expr(f"V(v{kk}_{b}_{c})", readout_synapse_mode, synapse_clip)
+                    for kk in range(n_classes)
+                ]
+                readout_exprs_for_class[(b, c)] = class_centered_expr(class_exprs, k, readout_class_centering)
         score_terms = [
-            f"{synapse_transfer_expr(f'V(v{k}_{b}_{c})', readout_synapse_mode, synapse_clip)}*V(h{b}_{c})"
+            f"{readout_exprs_for_class[(b, c)]}*V(h{b}_{c})"
             for b in range(n_blocks)
             for c in range(channels)
         ]
@@ -558,7 +577,14 @@ def make_phase_transient_netlist(
         for c in range(channels):
             feedback = " + ".join(
                 readout_feedback_expr(
-                    synapse_transfer_expr(f"V(v{k}_{b}_{c})", readout_synapse_mode, synapse_clip),
+                    class_centered_expr(
+                        [
+                            synapse_transfer_expr(f"V(v{kk}_{b}_{c})", readout_synapse_mode, synapse_clip)
+                            for kk in range(n_classes)
+                        ],
+                        k,
+                        readout_class_centering,
+                    ),
                     f"V(d{k})",
                     readout_feedback_mode,
                     readout_feedback_clip,
@@ -913,11 +939,15 @@ def numpy_eval_accuracy(
     hidden_synapse_mode: str,
     readout_synapse_mode: str,
     synapse_clip: float,
+    readout_class_centering: str = "none",
 ) -> float:
     correct = 0
     w, hb, readout, output_bias = state
     eff_w = synapse_transfer_np(w, hidden_synapse_mode, synapse_clip)
-    eff_readout = synapse_transfer_np(readout, readout_synapse_mode, synapse_clip)
+    eff_readout = apply_readout_class_centering_np(
+        synapse_transfer_np(readout, readout_synapse_mode, synapse_clip),
+        readout_class_centering,
+    )
     for start in range(0, len(y_eval), batch_size):
         x = x_eval[start : start + batch_size]
         labels = y_eval[start : start + batch_size]
@@ -946,6 +976,7 @@ def numpy_eval_diagnostics(
     hidden_synapse_mode: str,
     readout_synapse_mode: str,
     synapse_clip: float,
+    readout_class_centering: str = "none",
 ) -> dict[str, object]:
     _w, _hb, _readout, output_bias = state
     n_classes = int(output_bias.shape[0])
@@ -953,7 +984,10 @@ def numpy_eval_diagnostics(
     labels_all: list[np.ndarray] = []
     w, hb, readout, output_bias = state
     eff_w = synapse_transfer_np(w, hidden_synapse_mode, synapse_clip)
-    eff_readout = synapse_transfer_np(readout, readout_synapse_mode, synapse_clip)
+    eff_readout = apply_readout_class_centering_np(
+        synapse_transfer_np(readout, readout_synapse_mode, synapse_clip),
+        readout_class_centering,
+    )
     for start in range(0, len(y_eval), batch_size):
         x = x_eval[start : start + batch_size]
         labels = y_eval[start : start + batch_size]
@@ -1011,6 +1045,7 @@ def diagnostic_eval_accuracy(
     hidden_synapse_mode: str,
     readout_synapse_mode: str,
     synapse_clip: float,
+    readout_class_centering: str = "none",
 ) -> float:
     if eval_backend == "spice":
         w, hb, readout, output_bias = state
@@ -1036,6 +1071,7 @@ def diagnostic_eval_accuracy(
             hidden_synapse_mode=hidden_synapse_mode,
             readout_synapse_mode=readout_synapse_mode,
             synapse_clip=synapse_clip,
+            readout_class_centering=readout_class_centering,
         )
     if eval_backend == "numpy":
         return numpy_eval_accuracy(
@@ -1053,6 +1089,7 @@ def diagnostic_eval_accuracy(
             hidden_synapse_mode=hidden_synapse_mode,
             readout_synapse_mode=readout_synapse_mode,
             synapse_clip=synapse_clip,
+            readout_class_centering=readout_class_centering,
         )
     raise ValueError("eval_backend must be 'spice' or 'numpy'")
 
@@ -1229,6 +1266,7 @@ def main() -> None:
     ap.add_argument("--hidden-synapse-mode", choices=synapse_modes, default="linear")
     ap.add_argument("--readout-synapse-mode", choices=synapse_modes, default="linear")
     ap.add_argument("--synapse-clip", type=float, default=1.0)
+    ap.add_argument("--readout-class-centering", choices=["none", "mean"], default="none")
     ap.add_argument("--seed", type=int, default=0)
     ap.add_argument("--timeout", type=float, default=300.0)
     ap.add_argument("--simulator", default=None)
@@ -1410,6 +1448,7 @@ def main() -> None:
         args.local_update_scale,
         args.softmax_negative_scale,
         args.softmax_error_centering,
+        args.readout_class_centering,
     )
     phase_netlist.write_text(prepare_phase_netlist(netlist, spice_bin))
 
@@ -1489,6 +1528,7 @@ def main() -> None:
                 hidden_synapse_mode=args.hidden_synapse_mode,
                 readout_synapse_mode=args.readout_synapse_mode,
                 synapse_clip=args.synapse_clip,
+                readout_class_centering=args.readout_class_centering,
                 softmax_negative_scale=args.softmax_negative_scale,
                 softmax_error_centering=args.softmax_error_centering,
             )
@@ -1551,6 +1591,7 @@ def main() -> None:
             "hidden_synapse_mode": args.hidden_synapse_mode,
             "readout_synapse_mode": args.readout_synapse_mode,
             "synapse_clip": args.synapse_clip,
+            "readout_class_centering": args.readout_class_centering,
         }
         initial_evals = diagnostic_eval_accuracies(
             args.eval_backend,
@@ -1820,6 +1861,7 @@ def main() -> None:
         "hidden_synapse_mode": args.hidden_synapse_mode,
         "readout_synapse_mode": args.readout_synapse_mode,
         "synapse_clip": args.synapse_clip,
+        "readout_class_centering": args.readout_class_centering,
         "reference_mode": args.reference_mode,
         "phase_output_mode_requested": args.phase_output_mode,
         "update_mode": args.update_mode,

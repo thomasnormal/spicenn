@@ -58,6 +58,7 @@ def test_phase_summary_row_keeps_execution_contract_and_backend_fields(tmp_path:
                 "readout_update_scale": 0.5,
                 "hidden_synapse_mode": "tanh-clipped",
                 "readout_synapse_mode": "linear",
+                "readout_class_centering": "mean",
                 "single_phase_training_transient": True,
                 "weights_persist_inside_phase_transient": True,
                 "python_weight_updates_between_samples": False,
@@ -108,6 +109,7 @@ def test_phase_summary_row_keeps_execution_contract_and_backend_fields(tmp_path:
     assert row["local_update_scale"] == 0.75
     assert row["output_bias_update_scale"] == 0.25
     assert row["readout_update_scale"] == 0.5
+    assert row["readout_class_centering"] == "mean"
     assert row["eval_backend"] == "both"
     assert row["phase_dominant_pred_class"] == 3
     assert row["phase_dominant_pred_fraction"] == 0.4

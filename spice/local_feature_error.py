@@ -10,3 +10,11 @@ def mean_centered_expr(exprs: list[str], index: int) -> str:
         raise ValueError("exprs must be non-empty")
     summed = " + ".join(f"({expr})" for expr in exprs)
     return f"({exprs[index]}) - (({summed})/{len(exprs)})"
+
+
+def class_centered_expr(exprs: list[str], index: int, mode: str) -> str:
+    if mode == "none":
+        return exprs[index]
+    if mode == "mean":
+        return f"({mean_centered_expr(exprs, index)})"
+    raise ValueError("class centering mode must be 'none' or 'mean'")

@@ -17,7 +17,7 @@ from run_spice_mnist_local_block_batch_op_train import (
     readout_feedback_expr,
     synapse_transfer_expr,
 )
-from local_feature_error import mean_centered_expr, softmax_delta_expr
+from local_feature_error import class_centered_expr, mean_centered_expr, softmax_delta_expr
 from run_spice_mnist_train import load_mnist_sequence
 from run_spice_sweep import ROOT, detect_spice, is_xyce, prepare_netlist_for_simulator, run_tiny_test, run_simulator_netlist
 
@@ -113,11 +113,14 @@ def make_train_netlist(
     synapse_clip=1.0,
     softmax_negative_scale=1.0,
     softmax_error_centering="none",
+    readout_class_centering="none",
 ):
     if softmax_negative_scale < 0:
         raise ValueError("softmax_negative_scale must be non-negative")
     if softmax_error_centering not in {"none", "mean"}:
         raise ValueError("softmax_error_centering must be 'none' or 'mean'")
+    if readout_class_centering not in {"none", "mean"}:
+        raise ValueError("readout_class_centering must be 'none' or 'mean'")
     batch = len(y_batch)
     n_blocks, channels, block_len = w.shape
     n_classes = v.shape[0]
@@ -172,8 +175,16 @@ def make_train_netlist(
                     softplus_beta,
                 )
         for k in range(n_classes):
+            readout_exprs_for_class = {}
+            for b in range(n_blocks):
+                for c in range(channels):
+                    class_exprs = [
+                        synapse_transfer_expr(f"V(v{kk}_{b}_{c})", readout_synapse_mode, synapse_clip)
+                        for kk in range(n_classes)
+                    ]
+                    readout_exprs_for_class[(b, c)] = class_centered_expr(class_exprs, k, readout_class_centering)
             terms = [
-                f"{synapse_transfer_expr(f'V(v{k}_{b}_{c})', readout_synapse_mode, synapse_clip)}*{feature_expr(s, b, c, channels)}"
+                f"{readout_exprs_for_class[(b, c)]}*{feature_expr(s, b, c, channels)}"
                 for b in range(n_blocks)
                 for c in range(channels)
             ]
@@ -208,7 +219,14 @@ def make_train_netlist(
             for c in range(channels):
                 fb = " + ".join(
                     readout_feedback_expr(
-                        synapse_transfer_expr(f"V(v{k}_{b}_{c})", readout_synapse_mode, synapse_clip),
+                        class_centered_expr(
+                            [
+                                synapse_transfer_expr(f"V(v{kk}_{b}_{c})", readout_synapse_mode, synapse_clip)
+                                for kk in range(n_classes)
+                            ],
+                            k,
+                            readout_class_centering,
+                        ),
                         f"V(d{s}_{k})",
                         readout_feedback_mode,
                         readout_feedback_clip,
@@ -268,6 +286,7 @@ def make_eval_netlist(
     hidden_synapse_mode="linear",
     readout_synapse_mode="linear",
     synapse_clip=1.0,
+    readout_class_centering="none",
 ):
     batch = len(x_batch)
     n_blocks, channels, _block_len = w.shape
@@ -308,8 +327,16 @@ def make_eval_netlist(
                     softplus_beta,
                 )
         for k in range(n_classes):
+            readout_exprs_for_class = {}
+            for b in range(n_blocks):
+                for c in range(channels):
+                    class_exprs = [
+                        synapse_transfer_expr(f"V(v{kk}_{b}_{c})", readout_synapse_mode, synapse_clip)
+                        for kk in range(n_classes)
+                    ]
+                    readout_exprs_for_class[(b, c)] = class_centered_expr(class_exprs, k, readout_class_centering)
             terms = [
-                f"{synapse_transfer_expr(f'V(v{k}_{b}_{c})', readout_synapse_mode, synapse_clip)}*{feature_expr(s, b, c, channels)}"
+                f"{readout_exprs_for_class[(b, c)]}*{feature_expr(s, b, c, channels)}"
                 for b in range(n_blocks)
                 for c in range(channels)
             ]
@@ -359,6 +386,7 @@ def run_train_batch(
     synapse_clip=1.0,
     softmax_negative_scale=1.0,
     softmax_error_centering="none",
+    readout_class_centering="none",
 ):
     netlist_path.write_text(
         prepare_local_feature_netlist(
@@ -388,6 +416,7 @@ def run_train_batch(
                 synapse_clip,
                 softmax_negative_scale,
                 softmax_error_centering,
+                readout_class_centering,
             ),
             spice_bin,
         )
@@ -432,6 +461,7 @@ def run_eval(
     hidden_synapse_mode="linear",
     readout_synapse_mode="linear",
     synapse_clip=1.0,
+    readout_class_centering="none",
 ):
     correct = 0
     for start in range(0, len(y_eval), batch_size):
@@ -456,6 +486,7 @@ def run_eval(
                     hidden_synapse_mode,
                     readout_synapse_mode,
                     synapse_clip,
+                    readout_class_centering,
                 ),
                 spice_bin,
             )
@@ -583,6 +614,7 @@ def main():
     ap.add_argument("--hidden-synapse-mode", choices=synapse_modes, default="linear")
     ap.add_argument("--readout-synapse-mode", choices=synapse_modes, default="linear")
     ap.add_argument("--synapse-clip", type=float, default=1.0)
+    ap.add_argument("--readout-class-centering", choices=["none", "mean"], default="none")
     ap.add_argument("--init-weights", default="")
     ap.add_argument(
         "--import-extra-readout-scale",
@@ -715,6 +747,7 @@ def main():
             args.hidden_synapse_mode,
             args.readout_synapse_mode,
             args.synapse_clip,
+            args.readout_class_centering,
         )
         rows.append({"epoch": 0, "heldout_accuracy": heldout, "epoch_wall_time_s": time.perf_counter() - epoch_start})
         best_acc = heldout
@@ -755,6 +788,7 @@ def main():
                     args.synapse_clip,
                     args.softmax_negative_scale,
                     args.softmax_error_centering,
+                    args.readout_class_centering,
                 )
                 completed_train_batches += 1
                 if args.checkpoint_every_batches > 0 and completed_train_batches % args.checkpoint_every_batches == 0:
@@ -808,6 +842,7 @@ def main():
                     args.hidden_synapse_mode,
                     args.readout_synapse_mode,
                     args.synapse_clip,
+                    args.readout_class_centering,
                 )
             row = {"epoch": epoch + 1, "heldout_accuracy": heldout, "epoch_wall_time_s": time.perf_counter() - epoch_start}
             rows.append(row)
@@ -861,6 +896,7 @@ def main():
         "hidden_synapse_mode": args.hidden_synapse_mode,
         "readout_synapse_mode": args.readout_synapse_mode,
         "synapse_clip": args.synapse_clip,
+        "readout_class_centering": args.readout_class_centering,
         "output_mode": "softmax_class_evidence" if args.softmax_output else ("linear_class_evidence" if args.linear_output else "tanh_class_evidence"),
         "image_size": args.image_size,
         "block_size": args.block_size,

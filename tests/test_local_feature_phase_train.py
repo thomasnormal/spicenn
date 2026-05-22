@@ -42,6 +42,7 @@ def test_phase_transient_cli_exposes_agreement_gates() -> None:
     assert "--random-accuracy-threshold" in proc.stdout
     assert "--learning-improvement-threshold" in proc.stdout
     assert "--probe-updates" in proc.stdout
+    assert "--local-activation" in proc.stdout
 
 
 def test_phase_transient_x_yce_print_reader_extracts_final_transient_row(tmp_path: Path) -> None:
@@ -102,6 +103,20 @@ def test_phase_transient_softmax_targets_are_zero_one() -> None:
 
     assert softmax_targets.tolist() == [[0.0, 0.0, 1.0], [1.0, 0.0, 0.0]]
     assert tanh_targets.tolist() == [[-1.0, -1.0, 1.0], [1.0, -1.0, -1.0]]
+
+
+def test_phase_pulse_area_includes_ramp_edges() -> None:
+    assert phase_transient.phase_pulse_area(1.0e-9, 10.0e-12) == pytest.approx(1.01e-9)
+    assert phase_transient.phase_pulse_area(1.0e-9, 0.0) == pytest.approx(1.0e-9)
+    with pytest.raises(ValueError, match="edge"):
+        phase_transient.phase_pulse_area(1.0e-9, -1.0e-12)
+
+
+def test_phase_transient_activation_exprs_cover_relu_families() -> None:
+    assert phase_transient.local_activation_expr("x", "relu", 1.0) == "0.5*((x)+abs(x))"
+    assert "0.5*(((x)-0.25)+abs((x)-0.25))" in phase_transient.local_activation_expr("x", "clipped-relu", 0.25)
+    assert "-(" not in phase_transient.local_activation_deriv_expr("x", "h0", "relu", 1.0)
+    assert "V(h0)" in phase_transient.local_activation_deriv_expr("x", "h0", "tanh", 1.0)
 
 
 def test_phase_transient_update_direction_metrics_detect_alignment() -> None:
@@ -191,11 +206,57 @@ def test_phase_transient_softmax_deck_is_one_continuous_online_run(tmp_path: Pat
     assert "Vw0_0_0" not in netlist
     assert "Vpix0 pix0 0 PWL(" in netlist
     assert "Vtarget0 target0 0 PWL(" in netlist
+    assert "Bpre_h0_0 ah0_0 0 V =" in netlist
     assert "By0 y0 0 V = exp(V(score0))/(exp(V(score0)) + exp(V(score1)))" in netlist
     assert "Bstore_d0 d0 0 I = V(perr)*{CSTATE}/{TAU}*(V(d0)-(V(target0)-V(y0)))" in netlist
+    assert ".param TAREA=1.005e-09" in netlist
+    assert "{CGRAD}/{TAREA}" in netlist
+    assert "{LR}/({BS}*{TAREA})" in netlist
+    assert "{CGRAD}/{TPHASE}" not in netlist
     assert netlist.count("Vpapply papply 0 PWL(") == 1
     assert netlist.count("Vpclear pclear 0 PWL(") == 1
     assert netlist.count(" 1 ") >= len(y)
+
+
+def test_phase_transient_relu_deck_matches_forward_and_backward_activation(tmp_path: Path) -> None:
+    x = np.zeros((1, 4))
+    y = np.array([0])
+    w = np.zeros((1, 1, 4))
+    hb = np.zeros((1, 1))
+    readout = np.zeros((2, 1, 1))
+    output_bias = np.zeros(2)
+
+    netlist, _n_vec, _t_stop = phase_transient.make_phase_transient_netlist(
+        x,
+        y,
+        w,
+        hb,
+        readout,
+        output_bias,
+        [[0, 1, 2, 3]],
+        0.8,
+        tmp_path / "out.dat",
+        False,
+        1,
+        1,
+        1e-9,
+        0.1e-9,
+        5e-12,
+        40.0,
+        20e-12,
+        1e-12,
+        1e-12,
+        1e-12,
+        1e18,
+        True,
+        "measure",
+        (),
+        "relu",
+        1.0,
+    )
+
+    assert "0.5*((V(ah0_0))+abs(V(ah0_0)))" in netlist
+    assert "0.5*(1+(V(ah0_0))/(abs(V(ah0_0))+1e-9))" in netlist
 
 
 def test_phase_transient_print_mode_uses_native_tran_print(tmp_path: Path) -> None:

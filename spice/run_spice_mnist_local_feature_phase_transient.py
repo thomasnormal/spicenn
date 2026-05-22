@@ -10,7 +10,13 @@ import numpy as np
 import pandas as pd
 
 from run_spice_mnist_batch_op_train import read_wrdata_row
-from run_spice_mnist_local_block_batch_op_train import block_indices
+from run_spice_mnist_local_block_batch_op_train import (
+    block_indices,
+    clipped_relu_deriv_expr,
+    clipped_relu_expr,
+    relu_deriv_expr,
+    relu_expr,
+)
 from run_spice_mnist_local_feature_batch_op_train import run_eval, run_train_batch, wrap_xyce_behavioral_rhs, xyce_prn_path
 from run_spice_mnist_train import load_mnist_sequence
 from run_spice_sweep import ROOT, detect_spice, is_xyce, prepare_netlist_for_simulator, run_tiny_test, run_simulator_netlist
@@ -37,6 +43,14 @@ def phase_pwl(pulses: list[tuple[float, float]], t_stop: float, edge: float) -> 
     return "PWL(" + " ".join(f"{t:.12g} {val:.12g}" for t, val in cleaned) + ")"
 
 
+def phase_pulse_area(phase: float, edge: float) -> float:
+    if phase <= 0.0:
+        raise ValueError("phase must be positive")
+    if edge < 0.0:
+        raise ValueError("edge must be non-negative")
+    return phase + edge
+
+
 def sample_source_pwl(values: np.ndarray, sample_starts: list[float], t_stop: float, edge: float) -> str:
     points: list[tuple[float, float]] = [(0.0, float(values[0]))]
     for s, val in enumerate(values):
@@ -56,6 +70,33 @@ def sample_source_pwl(values: np.ndarray, sample_starts: list[float], t_stop: fl
 
 def tanh_expr(expr: str) -> str:
     return f"(2/(1+exp(-2*({expr})))-1)"
+
+
+def local_activation_expr(expr: str, local_activation: str, relu_clip: float) -> str:
+    if local_activation == "relu":
+        return relu_expr(expr)
+    if local_activation in {"clipped-relu", "clipped_relu"}:
+        return clipped_relu_expr(expr, max(float(relu_clip), 1e-12))
+    if local_activation in {"diff-clipped-relu", "differential-clipped-relu", "diff_clipped_relu"}:
+        clip = max(float(relu_clip), 1e-12)
+        return f"{clipped_relu_expr(expr, clip)}-{clipped_relu_expr(f'0-({expr})', clip)}"
+    if local_activation == "tanh":
+        return tanh_expr(expr)
+    raise ValueError(f"unknown local activation {local_activation!r}")
+
+
+def local_activation_deriv_expr(preactivation_expr: str, activation_node: str, local_activation: str, relu_clip: float) -> str:
+    if local_activation == "relu":
+        return relu_deriv_expr(preactivation_expr)
+    if local_activation in {"clipped-relu", "clipped_relu"}:
+        return clipped_relu_deriv_expr(preactivation_expr, max(float(relu_clip), 1e-12))
+    if local_activation in {"diff-clipped-relu", "differential-clipped-relu", "diff_clipped_relu"}:
+        clip = max(float(relu_clip), 1e-12)
+        neg_expr = f"0-({preactivation_expr})"
+        return f"({clipped_relu_deriv_expr(preactivation_expr, clip)}+{clipped_relu_deriv_expr(neg_expr, clip)})"
+    if local_activation == "tanh":
+        return f"(1-V({activation_node})*V({activation_node}))"
+    raise ValueError(f"unknown local activation {local_activation!r}")
 
 
 def target_matrix(labels: np.ndarray, n_classes: int, softmax_output: bool = False) -> np.ndarray:
@@ -218,6 +259,8 @@ def make_phase_transient_netlist(
     softmax_output: bool = False,
     output_mode: str = "wrdata",
     probe_updates: tuple[int, ...] = (),
+    local_activation: str = "tanh",
+    relu_clip: float = 1.0,
 ) -> tuple[str, int, float]:
     total_samples = x_batch.shape[0]
     if total_samples != update_batch_size * updates:
@@ -226,6 +269,7 @@ def make_phase_transient_netlist(
     n_classes = readout.shape[0]
     phases, sample_starts, t_stop = make_phase_schedule(update_batch_size, updates, phase, gap)
     tau = phase / settle_ratio
+    phase_area = phase_pulse_area(phase, edge)
     targets = target_matrix(y_batch, n_classes, softmax_output)
     lines = [
         "* Phase-resolved transient local-feature/readout training deck.",
@@ -239,6 +283,7 @@ def make_phase_transient_netlist(
         f".param RLEAK={rleak:.12g}",
         f".param TAU={tau:.12g}",
         f".param TPHASE={phase:.12g}",
+        f".param TAREA={phase_area:.12g}",
         "",
         f"Vpact pact 0 {phase_pwl(phases['act'], t_stop, edge)}",
         f"Vpscore pscore 0 {phase_pwl(phases['score'], t_stop, edge)}",
@@ -281,7 +326,8 @@ def make_phase_transient_netlist(
         for c in range(channels):
             terms = [f"V(w{b}_{c}_{p})*V(pix{idx})" for p, idx in enumerate(idxs)]
             terms.append(f"V(hb{b}_{c})")
-            h_calc = tanh_expr(" + ".join(terms))
+            lines.append(f"Bpre_h{b}_{c} ah{b}_{c} 0 V = " + " + ".join(terms))
+            h_calc = local_activation_expr(f"V(ah{b}_{c})", local_activation, relu_clip)
             lines.append(f"Bstore_h{b}_{c} h{b}_{c} 0 I = V(pact)*{{CSTATE}}/{{TAU}}*(V(h{b}_{c})-({h_calc}))")
     for k in range(n_classes):
         score_terms = [f"V(v{k}_{b}_{c})*V(h{b}_{c})" for b in range(n_blocks) for c in range(channels)]
@@ -307,25 +353,26 @@ def make_phase_transient_netlist(
     for b, idxs in enumerate(blocks):
         for c in range(channels):
             feedback = " + ".join(f"V(v{k}_{b}_{c})*V(d{k})" for k in range(n_classes))
-            local_delta = f"({feedback})*(1-V(h{b}_{c})*V(h{b}_{c}))"
+            deriv = local_activation_deriv_expr(f"V(ah{b}_{c})", f"h{b}_{c}", local_activation, relu_clip)
+            local_delta = f"({feedback})*{deriv}"
             lines.append(f"Bstore_dh{b}_{c} dh{b}_{c} 0 I = V(pbwd)*{{CSTATE}}/{{TAU}}*(V(dh{b}_{c})-({local_delta}))")
             for p, idx in enumerate(idxs):
                 grad = f"V(dh{b}_{c})*V(pix{idx})"
-                lines.append(f"Bacc_w{b}_{c}_{p} gw{b}_{c}_{p} 0 I = -V(pacc)*{{CGRAD}}/{{TPHASE}}*({grad})")
-                lines.append(f"Bupd_w{b}_{c}_{p} w{b}_{c}_{p} 0 I = -V(papply)*{{CW}}*{{LR}}/({{BS}}*{{TPHASE}})*V(gw{b}_{c}_{p})")
+                lines.append(f"Bacc_w{b}_{c}_{p} gw{b}_{c}_{p} 0 I = -V(pacc)*{{CGRAD}}/{{TAREA}}*({grad})")
+                lines.append(f"Bupd_w{b}_{c}_{p} w{b}_{c}_{p} 0 I = -V(papply)*{{CW}}*{{LR}}/({{BS}}*{{TAREA}})*V(gw{b}_{c}_{p})")
                 lines.append(f"Bclear_gw{b}_{c}_{p} gw{b}_{c}_{p} 0 I = V(pclear)*{{CGRAD}}/{{TAU}}*V(gw{b}_{c}_{p})")
-            lines.append(f"Bacc_hb{b}_{c} ghb{b}_{c} 0 I = -V(pacc)*{{CGRAD}}/{{TPHASE}}*V(dh{b}_{c})")
-            lines.append(f"Bupd_hb{b}_{c} hb{b}_{c} 0 I = -V(papply)*{{CW}}*{{LR}}/({{BS}}*{{TPHASE}})*V(ghb{b}_{c})")
+            lines.append(f"Bacc_hb{b}_{c} ghb{b}_{c} 0 I = -V(pacc)*{{CGRAD}}/{{TAREA}}*V(dh{b}_{c})")
+            lines.append(f"Bupd_hb{b}_{c} hb{b}_{c} 0 I = -V(papply)*{{CW}}*{{LR}}/({{BS}}*{{TAREA}})*V(ghb{b}_{c})")
             lines.append(f"Bclear_ghb{b}_{c} ghb{b}_{c} 0 I = V(pclear)*{{CGRAD}}/{{TAU}}*V(ghb{b}_{c})")
     for k in range(n_classes):
         for b in range(n_blocks):
             for c in range(channels):
                 grad = f"V(d{k})*V(h{b}_{c})"
-                lines.append(f"Bacc_v{k}_{b}_{c} gv{k}_{b}_{c} 0 I = -V(pacc)*{{CGRAD}}/{{TPHASE}}*({grad})")
-                lines.append(f"Bupd_v{k}_{b}_{c} v{k}_{b}_{c} 0 I = -V(papply)*{{CW}}*{{LR}}/({{BS}}*{{TPHASE}})*V(gv{k}_{b}_{c})")
+                lines.append(f"Bacc_v{k}_{b}_{c} gv{k}_{b}_{c} 0 I = -V(pacc)*{{CGRAD}}/{{TAREA}}*({grad})")
+                lines.append(f"Bupd_v{k}_{b}_{c} v{k}_{b}_{c} 0 I = -V(papply)*{{CW}}*{{LR}}/({{BS}}*{{TAREA}})*V(gv{k}_{b}_{c})")
                 lines.append(f"Bclear_gv{k}_{b}_{c} gv{k}_{b}_{c} 0 I = V(pclear)*{{CGRAD}}/{{TAU}}*V(gv{k}_{b}_{c})")
-        lines.append(f"Bacc_ob{k} gob{k} 0 I = -V(pacc)*{{CGRAD}}/{{TPHASE}}*V(d{k})")
-        lines.append(f"Bupd_ob{k} ob{k} 0 I = -V(papply)*{{CW}}*{{LR}}/({{BS}}*{{TPHASE}})*V(gob{k})")
+        lines.append(f"Bacc_ob{k} gob{k} 0 I = -V(pacc)*{{CGRAD}}/{{TAREA}}*V(d{k})")
+        lines.append(f"Bupd_ob{k} ob{k} 0 I = -V(papply)*{{CW}}*{{LR}}/({{BS}}*{{TAREA}})*V(gob{k})")
         lines.append(f"Bclear_gob{k} gob{k} 0 I = V(pclear)*{{CGRAD}}/{{TAU}}*V(gob{k})")
     vectors = [f"V(w{b}_{c}_{p})" for b in range(n_blocks) for c in range(channels) for p in range(block_len)]
     vectors += [f"V(hb{b}_{c})" for b in range(n_blocks) for c in range(channels)]
@@ -478,6 +525,12 @@ def main() -> None:
     ap.add_argument("--lr", type=float, default=0.005)
     ap.add_argument("--linear-output", action="store_true")
     ap.add_argument("--softmax-output", action="store_true")
+    ap.add_argument(
+        "--local-activation",
+        default="tanh",
+        choices=["tanh", "relu", "clipped-relu", "clipped_relu", "diff-clipped-relu", "differential-clipped-relu", "diff_clipped_relu"],
+    )
+    ap.add_argument("--relu-clip", type=float, default=1.0)
     ap.add_argument("--seed", type=int, default=0)
     ap.add_argument("--timeout", type=float, default=300.0)
     ap.add_argument("--simulator", default=None)
@@ -511,6 +564,8 @@ def main() -> None:
         raise ValueError("--linear-output and --softmax-output are mutually exclusive")
     if args.channels <= 0:
         raise ValueError("--channels must be positive")
+    if args.relu_clip <= 0:
+        raise ValueError("--relu-clip must be positive")
     if args.phase <= 0 or args.settle_ratio <= 0:
         raise ValueError("--phase and --settle-ratio must be positive")
     if args.direction_cosine_threshold < -1 or args.direction_cosine_threshold > 1:
@@ -581,6 +636,8 @@ def main() -> None:
         args.softmax_output,
         phase_output_mode,
         probe_updates,
+        args.local_activation,
+        args.relu_clip,
     )
     phase_netlist.write_text(prepare_phase_netlist(netlist, spice_bin))
 
@@ -624,8 +681,8 @@ def main() -> None:
             args.timeout,
             linear_output=args.linear_output,
             softmax_output=args.softmax_output,
-            local_activation="tanh",
-            relu_clip=1.0,
+            local_activation=args.local_activation,
+            relu_clip=args.relu_clip,
         )
         if update + 1 in probe_updates:
             op_probe_states[update + 1] = (op_w.copy(), op_hb.copy(), op_readout.copy(), op_ob.copy())
@@ -661,8 +718,8 @@ def main() -> None:
             args.timeout,
             linear_output=args.linear_output,
             softmax_output=args.softmax_output,
-            local_activation="tanh",
-            relu_clip=1.0,
+            local_activation=args.local_activation,
+            relu_clip=args.relu_clip,
         )
         phase_eval_accuracy = run_eval(
             spice_bin,
@@ -679,8 +736,8 @@ def main() -> None:
             args.timeout,
             linear_output=args.linear_output,
             softmax_output=args.softmax_output,
-            local_activation="tanh",
-            relu_clip=1.0,
+            local_activation=args.local_activation,
+            relu_clip=args.relu_clip,
         )
         op_reference_eval_accuracy = run_eval(
             spice_bin,
@@ -697,8 +754,8 @@ def main() -> None:
             args.timeout,
             linear_output=args.linear_output,
             softmax_output=args.softmax_output,
-            local_activation="tanh",
-            relu_clip=1.0,
+            local_activation=args.local_activation,
+            relu_clip=args.relu_clip,
         )
         eval_wall = time.perf_counter() - t2
     eval_accuracy_abs_diff = (
@@ -772,6 +829,8 @@ def main() -> None:
         "lr": args.lr,
         "linear_output": bool(args.linear_output),
         "softmax_output": bool(args.softmax_output),
+        "local_activation": args.local_activation,
+        "relu_clip": args.relu_clip,
         "init_weights": args.init_weights,
         "phase_netlist": str(phase_netlist),
         "phase_data": str(phase_data),

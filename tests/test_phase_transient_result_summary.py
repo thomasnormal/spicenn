@@ -37,6 +37,7 @@ def test_phase_summary_row_keeps_execution_contract_and_backend_fields(tmp_path:
                 "batch_size": 1,
                 "updates": 16,
                 "eval_samples": 100,
+                "lr": 0.1,
                 "update_mode": "direct",
                 "reference_mode": "none",
                 "eval_backend": "both",
@@ -77,6 +78,7 @@ def test_phase_summary_row_keeps_execution_contract_and_backend_fields(tmp_path:
     assert row["mnist_index_order"] == "stable_permutation_prefix"
     assert row["train_index_sha256"] == "trainhash"
     assert row["eval_index_sha256"] == "evalhash"
+    assert row["lr"] == 0.1
     assert row["eval_backend"] == "both"
     assert row["fully_on_device_execution_contract_met"] is True
     assert row["strict_fully_on_device_contract_met"] is True

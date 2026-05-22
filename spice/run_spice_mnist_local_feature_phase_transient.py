@@ -200,6 +200,7 @@ def make_phase_schedule(
     updates: int,
     phase: float,
     gap: float,
+    direct_update: bool = False,
 ) -> tuple[dict[str, list[tuple[float, float]]], list[float], float]:
     phases = {"act": [], "score": [], "err": [], "bwd": [], "acc": [], "apply": [], "clear": []}
     sample_starts: list[float] = []
@@ -218,10 +219,11 @@ def make_phase_schedule(
             t += phase + gap
             phases["acc"].append((t, t + phase))
             t += phase + gap
-        phases["apply"].append((t, t + phase))
-        t += phase + gap
-        phases["clear"].append((t, t + phase))
-        t += phase + gap
+        if not direct_update:
+            phases["apply"].append((t, t + phase))
+            t += phase + gap
+            phases["clear"].append((t, t + phase))
+            t += phase + gap
     return phases, sample_starts, t + phase
 
 
@@ -280,15 +282,21 @@ def make_phase_transient_netlist(
     hidden_synapse_mode: str = "linear",
     readout_synapse_mode: str = "linear",
     synapse_clip: float = 1.0,
+    update_mode: str = "phased",
 ) -> tuple[str, int, float]:
     total_samples = x_batch.shape[0]
     if total_samples != update_batch_size * updates:
         raise ValueError("x_batch length must equal update_batch_size * updates")
     if rleak < 0:
         raise ValueError("rleak must be non-negative")
+    if update_mode not in {"phased", "direct"}:
+        raise ValueError("update_mode must be 'phased' or 'direct'")
+    direct_update = update_mode == "direct"
+    if direct_update and update_batch_size != 1:
+        raise ValueError("direct update mode requires update_batch_size=1")
     n_blocks, channels, block_len = w.shape
     n_classes = readout.shape[0]
-    phases, sample_starts, t_stop = make_phase_schedule(update_batch_size, updates, phase, gap)
+    phases, sample_starts, t_stop = make_phase_schedule(update_batch_size, updates, phase, gap, direct_update)
     tau = phase / settle_ratio
     phase_area = phase_pulse_area(phase, edge)
     targets = target_matrix(y_batch, n_classes, softmax_output)
@@ -311,10 +319,13 @@ def make_phase_transient_netlist(
         f"Vperr perr 0 {phase_pwl(phases['err'], t_stop, edge)}",
         f"Vpbwd pbwd 0 {phase_pwl(phases['bwd'], t_stop, edge)}",
         f"Vpacc pacc 0 {phase_pwl(phases['acc'], t_stop, edge)}",
-        f"Vpapply papply 0 {phase_pwl(phases['apply'], t_stop, edge)}",
-        f"Vpclear pclear 0 {phase_pwl(phases['clear'], t_stop, edge)}",
         "",
     ]
+    if not direct_update:
+        lines[-1:-1] = [
+            f"Vpapply papply 0 {phase_pwl(phases['apply'], t_stop, edge)}",
+            f"Vpclear pclear 0 {phase_pwl(phases['clear'], t_stop, edge)}",
+        ]
     for i in range(x_batch.shape[1]):
         lines.append(f"Vpix{i} pix{i} 0 {sample_source_pwl(x_batch[:, i], sample_starts, t_stop, edge)}")
     for k in range(n_classes):
@@ -326,11 +337,13 @@ def make_phase_transient_netlist(
                 lines.append(f"Cw{b}_{c}_{p} w{b}_{c}_{p} 0 {{CW}} IC={w[b, c, p]:.12g}")
                 if rleak > 0:
                     lines.append(f"Rw{b}_{c}_{p} w{b}_{c}_{p} 0 {{RLEAK}}")
-                lines.append(f"Cgw{b}_{c}_{p} gw{b}_{c}_{p} 0 {{CGRAD}} IC=0")
+                if not direct_update:
+                    lines.append(f"Cgw{b}_{c}_{p} gw{b}_{c}_{p} 0 {{CGRAD}} IC=0")
             lines.append(f"Chb{b}_{c} hb{b}_{c} 0 {{CW}} IC={hb[b, c]:.12g}")
             if rleak > 0:
                 lines.append(f"Rhb{b}_{c} hb{b}_{c} 0 {{RLEAK}}")
-            lines.append(f"Cghb{b}_{c} ghb{b}_{c} 0 {{CGRAD}} IC=0")
+            if not direct_update:
+                lines.append(f"Cghb{b}_{c} ghb{b}_{c} 0 {{CGRAD}} IC=0")
             lines.append(f"Ch{b}_{c} h{b}_{c} 0 {{CSTATE}} IC=0")
             lines.append(f"Cdh{b}_{c} dh{b}_{c} 0 {{CSTATE}} IC=0")
     for k in range(n_classes):
@@ -339,11 +352,13 @@ def make_phase_transient_netlist(
                 lines.append(f"Cv{k}_{b}_{c} v{k}_{b}_{c} 0 {{CW}} IC={readout[k, b, c]:.12g}")
                 if rleak > 0:
                     lines.append(f"Rv{k}_{b}_{c} v{k}_{b}_{c} 0 {{RLEAK}}")
-                lines.append(f"Cgv{k}_{b}_{c} gv{k}_{b}_{c} 0 {{CGRAD}} IC=0")
+                if not direct_update:
+                    lines.append(f"Cgv{k}_{b}_{c} gv{k}_{b}_{c} 0 {{CGRAD}} IC=0")
         lines.append(f"Cob{k} ob{k} 0 {{CW}} IC={output_bias[k]:.12g}")
         if rleak > 0:
             lines.append(f"Rob{k} ob{k} 0 {{RLEAK}}")
-        lines.append(f"Cgob{k} gob{k} 0 {{CGRAD}} IC=0")
+        if not direct_update:
+            lines.append(f"Cgob{k} gob{k} 0 {{CGRAD}} IC=0")
         lines.append(f"Cscore{k} score{k} 0 {{CSTATE}} IC=0")
         lines.append(f"Cd{k} d{k} 0 {{CSTATE}} IC=0")
     lines.append("")
@@ -408,22 +423,34 @@ def make_phase_transient_netlist(
             lines.append(f"Bstore_dh{b}_{c} dh{b}_{c} 0 I = V(pbwd)*{{CSTATE}}/{{TAU}}*(V(dh{b}_{c})-({local_delta}))")
             for p, idx in enumerate(idxs):
                 grad = f"V(dh{b}_{c})*V(pix{idx})"
-                lines.append(f"Bacc_w{b}_{c}_{p} gw{b}_{c}_{p} 0 I = -V(pacc)*{{CGRAD}}/{{TAREA}}*({grad})")
-                lines.append(f"Bupd_w{b}_{c}_{p} w{b}_{c}_{p} 0 I = -V(papply)*{{CW}}*{{LR}}/({{BS}}*{{TAREA}})*V(gw{b}_{c}_{p})")
-                lines.append(f"Bclear_gw{b}_{c}_{p} gw{b}_{c}_{p} 0 I = V(pclear)*{{CGRAD}}/{{TAU}}*V(gw{b}_{c}_{p})")
-            lines.append(f"Bacc_hb{b}_{c} ghb{b}_{c} 0 I = -V(pacc)*{{CGRAD}}/{{TAREA}}*V(dh{b}_{c})")
-            lines.append(f"Bupd_hb{b}_{c} hb{b}_{c} 0 I = -V(papply)*{{CW}}*{{LR}}/({{BS}}*{{TAREA}})*V(ghb{b}_{c})")
-            lines.append(f"Bclear_ghb{b}_{c} ghb{b}_{c} 0 I = V(pclear)*{{CGRAD}}/{{TAU}}*V(ghb{b}_{c})")
+                if direct_update:
+                    lines.append(f"Bupd_w{b}_{c}_{p} w{b}_{c}_{p} 0 I = -V(pacc)*{{CW}}*{{LR}}/({{BS}}*{{TAREA}})*({grad})")
+                else:
+                    lines.append(f"Bacc_w{b}_{c}_{p} gw{b}_{c}_{p} 0 I = -V(pacc)*{{CGRAD}}/{{TAREA}}*({grad})")
+                    lines.append(f"Bupd_w{b}_{c}_{p} w{b}_{c}_{p} 0 I = -V(papply)*{{CW}}*{{LR}}/({{BS}}*{{TAREA}})*V(gw{b}_{c}_{p})")
+                    lines.append(f"Bclear_gw{b}_{c}_{p} gw{b}_{c}_{p} 0 I = V(pclear)*{{CGRAD}}/{{TAU}}*V(gw{b}_{c}_{p})")
+            if direct_update:
+                lines.append(f"Bupd_hb{b}_{c} hb{b}_{c} 0 I = -V(pacc)*{{CW}}*{{LR}}/({{BS}}*{{TAREA}})*V(dh{b}_{c})")
+            else:
+                lines.append(f"Bacc_hb{b}_{c} ghb{b}_{c} 0 I = -V(pacc)*{{CGRAD}}/{{TAREA}}*V(dh{b}_{c})")
+                lines.append(f"Bupd_hb{b}_{c} hb{b}_{c} 0 I = -V(papply)*{{CW}}*{{LR}}/({{BS}}*{{TAREA}})*V(ghb{b}_{c})")
+                lines.append(f"Bclear_ghb{b}_{c} ghb{b}_{c} 0 I = V(pclear)*{{CGRAD}}/{{TAU}}*V(ghb{b}_{c})")
     for k in range(n_classes):
         for b in range(n_blocks):
             for c in range(channels):
                 grad = f"V(d{k})*V(h{b}_{c})"
-                lines.append(f"Bacc_v{k}_{b}_{c} gv{k}_{b}_{c} 0 I = -V(pacc)*{{CGRAD}}/{{TAREA}}*({grad})")
-                lines.append(f"Bupd_v{k}_{b}_{c} v{k}_{b}_{c} 0 I = -V(papply)*{{CW}}*{{LR}}/({{BS}}*{{TAREA}})*V(gv{k}_{b}_{c})")
-                lines.append(f"Bclear_gv{k}_{b}_{c} gv{k}_{b}_{c} 0 I = V(pclear)*{{CGRAD}}/{{TAU}}*V(gv{k}_{b}_{c})")
-        lines.append(f"Bacc_ob{k} gob{k} 0 I = -V(pacc)*{{CGRAD}}/{{TAREA}}*V(d{k})")
-        lines.append(f"Bupd_ob{k} ob{k} 0 I = -V(papply)*{{CW}}*{{LR}}/({{BS}}*{{TAREA}})*V(gob{k})")
-        lines.append(f"Bclear_gob{k} gob{k} 0 I = V(pclear)*{{CGRAD}}/{{TAU}}*V(gob{k})")
+                if direct_update:
+                    lines.append(f"Bupd_v{k}_{b}_{c} v{k}_{b}_{c} 0 I = -V(pacc)*{{CW}}*{{LR}}/({{BS}}*{{TAREA}})*({grad})")
+                else:
+                    lines.append(f"Bacc_v{k}_{b}_{c} gv{k}_{b}_{c} 0 I = -V(pacc)*{{CGRAD}}/{{TAREA}}*({grad})")
+                    lines.append(f"Bupd_v{k}_{b}_{c} v{k}_{b}_{c} 0 I = -V(papply)*{{CW}}*{{LR}}/({{BS}}*{{TAREA}})*V(gv{k}_{b}_{c})")
+                    lines.append(f"Bclear_gv{k}_{b}_{c} gv{k}_{b}_{c} 0 I = V(pclear)*{{CGRAD}}/{{TAU}}*V(gv{k}_{b}_{c})")
+        if direct_update:
+            lines.append(f"Bupd_ob{k} ob{k} 0 I = -V(pacc)*{{CW}}*{{LR}}/({{BS}}*{{TAREA}})*V(d{k})")
+        else:
+            lines.append(f"Bacc_ob{k} gob{k} 0 I = -V(pacc)*{{CGRAD}}/{{TAREA}}*V(d{k})")
+            lines.append(f"Bupd_ob{k} ob{k} 0 I = -V(papply)*{{CW}}*{{LR}}/({{BS}}*{{TAREA}})*V(gob{k})")
+            lines.append(f"Bclear_gob{k} gob{k} 0 I = V(pclear)*{{CGRAD}}/{{TAU}}*V(gob{k})")
     vectors = [f"V(w{b}_{c}_{p})" for b in range(n_blocks) for c in range(channels) for p in range(block_len)]
     vectors += [f"V(hb{b}_{c})" for b in range(n_blocks) for c in range(channels)]
     vectors += [f"V(v{k}_{b}_{c})" for k in range(n_classes) for b in range(n_blocks) for c in range(channels)]
@@ -434,7 +461,7 @@ def make_phase_transient_netlist(
     if output_mode not in {"wrdata", "control_measure", "measure", "print"}:
         raise ValueError("output_mode must be 'wrdata', 'control_measure', 'measure', or 'print'")
     measure_time = max(0.0, t_stop - transient_step)
-    probe_times = probe_measure_times(phases["clear"], probe_updates, gap, t_stop, measure_time)
+    probe_times = probe_measure_times(phases["acc" if direct_update else "clear"], probe_updates, gap, t_stop, measure_time)
     lines += ["", ".options method=gear maxord=2"]
     if output_mode == "print":
         if probe_updates:
@@ -662,6 +689,7 @@ def main() -> None:
     ap.add_argument("--learning-improvement-threshold", type=float, default=0.02)
     ap.add_argument("--reference-mode", choices=["spice", "none"], default="spice")
     ap.add_argument("--phase-output-mode", choices=["auto", "measure", "print", "control_measure", "wrdata"], default="auto")
+    ap.add_argument("--update-mode", choices=["phased", "direct"], default="phased")
     ap.add_argument("--simulator-extra-args", default="", help=f"Extra simulator command-line arguments, also available via {SPICE_SIMULATOR_ARGS_ENV}.")
     ap.add_argument("--final-measures", action="store_true")
     ap.add_argument(
@@ -716,6 +744,8 @@ def main() -> None:
         raise ValueError("--eval-probe-updates requires --eval-samples > 0")
     if args.reference_mode == "none" and probe_updates:
         raise ValueError("--reference-mode none does not support --probe-updates")
+    if args.update_mode == "direct" and args.batch_size != 1:
+        raise ValueError("--update-mode direct requires --batch-size 1")
     if args.simulator_extra_args:
         os.environ[SPICE_SIMULATOR_ARGS_ENV] = args.simulator_extra_args
 
@@ -787,6 +817,7 @@ def main() -> None:
         args.hidden_synapse_mode,
         args.readout_synapse_mode,
         args.synapse_clip,
+        args.update_mode,
     )
     phase_netlist.write_text(prepare_phase_netlist(netlist, spice_bin))
 
@@ -1106,6 +1137,7 @@ def main() -> None:
         "synapse_clip": args.synapse_clip,
         "reference_mode": args.reference_mode,
         "phase_output_mode_requested": args.phase_output_mode,
+        "update_mode": args.update_mode,
         "simulator_extra_args": args.simulator_extra_args or os.environ.get(SPICE_SIMULATOR_ARGS_ENV, ""),
         "init_weights": args.init_weights,
         "phase_netlist": str(phase_netlist),

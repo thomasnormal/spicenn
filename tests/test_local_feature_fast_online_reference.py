@@ -1,3 +1,4 @@
+import argparse
 import sys
 from pathlib import Path
 
@@ -11,6 +12,7 @@ if str(SPICE_DIR) not in sys.path:
     sys.path.insert(0, str(SPICE_DIR))
 
 import run_spice_mnist_local_feature_fast_online_reference as fast_ref  # noqa: E402
+import run_spice_mnist_local_feature_fast_online_variant_sweep as fast_sweep  # noqa: E402
 
 
 def test_synapse_transfer_np_matches_spice_transfer_families() -> None:
@@ -157,3 +159,80 @@ def test_fast_online_reference_honors_update_scales_and_decay() -> None:
     assert frozen_head[1] == pytest.approx(0.9 * hb)
     assert frozen_head[2] == pytest.approx(0.9 * readout)
     assert frozen_head[3] == pytest.approx(0.9 * output_bias)
+
+
+def test_fast_online_variant_sweep_grid_uses_phase_variant_family_axes() -> None:
+    args = argparse.Namespace(
+        activations="tanh,diff-clipped-relu",
+        relu_clips="0.5,1.0",
+        derivative_modes="exact,stored-gate",
+        feedback_modes="readout,full-readout",
+        hidden_synapse_modes="linear,tanh-clipped",
+        readout_synapse_modes="linear",
+        synapse_clip=2.0,
+        synapse_clips="1.0,2.0",
+        tag="fastscreen",
+    )
+
+    rows = fast_sweep.variant_grid(args)
+
+    assert len(rows) == 48
+    assert rows[0]["local_activation"] == "tanh"
+    assert rows[0]["relu_clip"] == 0.5
+    assert any(row["local_activation"] == "diff-clipped-relu" and row["relu_clip"] == 1.0 for row in rows)
+    assert all("tag" in row for row in rows)
+
+
+def test_fast_online_variant_sweep_row_reports_best_probe_and_improvement() -> None:
+    args = argparse.Namespace(
+        lr=0.8,
+        linear_output=False,
+        softmax_output=True,
+        relu_leak=0.01,
+        softplus_beta=10.0,
+        derivative_floor=0.0,
+        derivative_gate_threshold=1e-6,
+        readout_feedback_clip=0.05,
+        output_bias_update_scale=0.0,
+        readout_update_scale=0.25,
+        local_update_scale=1.0,
+        state_decay=0.0,
+        softmax_negative_scale=1.0,
+        softmax_error_centering="none",
+        softmax_temperature=4.0,
+        softmax_competition_mode="all",
+        softmax_competitor_power=2,
+        softmax_error_gate="none",
+        softmax_margin=1.0,
+        readout_class_centering="none",
+        eval_batch_size=4,
+    )
+    variant = {
+        "local_activation": "tanh",
+        "relu_clip": 1.0,
+        "activation_derivative": "exact",
+        "readout_feedback_mode": "full-readout",
+        "hidden_synapse_mode": "linear",
+        "readout_synapse_mode": "linear",
+        "synapse_clip": 1.0,
+        "tag": "row",
+    }
+    x_train = np.array([[0.5, 0.0], [0.0, 0.5]])
+    y_train = np.array([0, 1])
+    x_eval = x_train.copy()
+    y_eval = y_train.copy()
+    blocks = [[0, 1]]
+    state = (
+        np.array([[[0.1, -0.1]]]),
+        np.array([[0.0]]),
+        np.array([[[0.2]], [[-0.2]]]),
+        np.zeros(2),
+    )
+
+    row = fast_sweep.run_variant(args, variant, x_train, y_train, x_eval, y_eval, state, blocks, (1, 2))
+
+    assert row["tag"] == "row"
+    assert row["initial_eval_accuracy"] >= 0.0
+    assert row["final_eval_accuracy"] >= 0.0
+    assert row["eval_improvement"] == pytest.approx(row["final_eval_accuracy"] - row["initial_eval_accuracy"])
+    assert row["best_probe_update"] in {1, 2}

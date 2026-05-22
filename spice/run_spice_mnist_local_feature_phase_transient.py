@@ -11,11 +11,10 @@ import pandas as pd
 
 from run_spice_mnist_batch_op_train import read_wrdata_row
 from run_spice_mnist_local_block_batch_op_train import (
+    local_activation_deriv_expr as block_local_activation_deriv_expr,
+    local_activation_expr as block_local_activation_expr,
     block_indices,
-    clipped_relu_deriv_expr,
-    clipped_relu_expr,
-    relu_deriv_expr,
-    relu_expr,
+    readout_feedback_expr,
 )
 from run_spice_mnist_local_feature_batch_op_train import run_eval, run_train_batch, wrap_xyce_behavioral_rhs, xyce_prn_path
 from run_spice_mnist_train import load_mnist_sequence
@@ -72,31 +71,38 @@ def tanh_expr(expr: str) -> str:
     return f"(2/(1+exp(-2*({expr})))-1)"
 
 
-def local_activation_expr(expr: str, local_activation: str, relu_clip: float) -> str:
-    if local_activation == "relu":
-        return relu_expr(expr)
-    if local_activation in {"clipped-relu", "clipped_relu"}:
-        return clipped_relu_expr(expr, max(float(relu_clip), 1e-12))
-    if local_activation in {"diff-clipped-relu", "differential-clipped-relu", "diff_clipped_relu"}:
-        clip = max(float(relu_clip), 1e-12)
-        return f"{clipped_relu_expr(expr, clip)}-{clipped_relu_expr(f'0-({expr})', clip)}"
-    if local_activation == "tanh":
-        return tanh_expr(expr)
-    raise ValueError(f"unknown local activation {local_activation!r}")
+def local_activation_expr(
+    expr: str,
+    local_activation: str,
+    relu_clip: float,
+    relu_leak: float = 0.01,
+    softplus_beta: float = 10.0,
+) -> str:
+    return block_local_activation_expr(expr, local_activation, relu_clip, relu_leak, softplus_beta)
 
 
-def local_activation_deriv_expr(preactivation_expr: str, activation_node: str, local_activation: str, relu_clip: float) -> str:
-    if local_activation == "relu":
-        return relu_deriv_expr(preactivation_expr)
-    if local_activation in {"clipped-relu", "clipped_relu"}:
-        return clipped_relu_deriv_expr(preactivation_expr, max(float(relu_clip), 1e-12))
-    if local_activation in {"diff-clipped-relu", "differential-clipped-relu", "diff_clipped_relu"}:
-        clip = max(float(relu_clip), 1e-12)
-        neg_expr = f"0-({preactivation_expr})"
-        return f"({clipped_relu_deriv_expr(preactivation_expr, clip)}+{clipped_relu_deriv_expr(neg_expr, clip)})"
-    if local_activation == "tanh":
-        return f"(1-V({activation_node})*V({activation_node}))"
-    raise ValueError(f"unknown local activation {local_activation!r}")
+def local_activation_deriv_expr(
+    preactivation_expr: str,
+    activation_node: str,
+    local_activation: str,
+    relu_clip: float,
+    activation_derivative: str = "exact",
+    derivative_floor: float = 0.0,
+    derivative_gate_threshold: float = 1e-6,
+    relu_leak: float = 0.01,
+    softplus_beta: float = 10.0,
+) -> str:
+    return block_local_activation_deriv_expr(
+        preactivation_expr,
+        f"V({activation_node})",
+        local_activation,
+        relu_clip,
+        activation_derivative,
+        derivative_floor,
+        derivative_gate_threshold,
+        relu_leak,
+        softplus_beta,
+    )
 
 
 def target_matrix(labels: np.ndarray, n_classes: int, softmax_output: bool = False) -> np.ndarray:
@@ -261,6 +267,13 @@ def make_phase_transient_netlist(
     probe_updates: tuple[int, ...] = (),
     local_activation: str = "tanh",
     relu_clip: float = 1.0,
+    activation_derivative: str = "exact",
+    derivative_floor: float = 0.0,
+    derivative_gate_threshold: float = 1e-6,
+    readout_feedback_mode: str = "readout",
+    readout_feedback_clip: float = 0.05,
+    relu_leak: float = 0.01,
+    softplus_beta: float = 10.0,
 ) -> tuple[str, int, float]:
     total_samples = x_batch.shape[0]
     if total_samples != update_batch_size * updates:
@@ -327,7 +340,7 @@ def make_phase_transient_netlist(
             terms = [f"V(w{b}_{c}_{p})*V(pix{idx})" for p, idx in enumerate(idxs)]
             terms.append(f"V(hb{b}_{c})")
             lines.append(f"Bpre_h{b}_{c} ah{b}_{c} 0 V = " + " + ".join(terms))
-            h_calc = local_activation_expr(f"V(ah{b}_{c})", local_activation, relu_clip)
+            h_calc = local_activation_expr(f"V(ah{b}_{c})", local_activation, relu_clip, relu_leak, softplus_beta)
             lines.append(f"Bstore_h{b}_{c} h{b}_{c} 0 I = V(pact)*{{CSTATE}}/{{TAU}}*(V(h{b}_{c})-({h_calc}))")
     for k in range(n_classes):
         score_terms = [f"V(v{k}_{b}_{c})*V(h{b}_{c})" for b in range(n_blocks) for c in range(channels)]
@@ -352,8 +365,21 @@ def make_phase_transient_netlist(
     lines.append("")
     for b, idxs in enumerate(blocks):
         for c in range(channels):
-            feedback = " + ".join(f"V(v{k}_{b}_{c})*V(d{k})" for k in range(n_classes))
-            deriv = local_activation_deriv_expr(f"V(ah{b}_{c})", f"h{b}_{c}", local_activation, relu_clip)
+            feedback = " + ".join(
+                readout_feedback_expr(f"V(v{k}_{b}_{c})", f"V(d{k})", readout_feedback_mode, readout_feedback_clip)
+                for k in range(n_classes)
+            )
+            deriv = local_activation_deriv_expr(
+                f"V(ah{b}_{c})",
+                f"h{b}_{c}",
+                local_activation,
+                relu_clip,
+                activation_derivative,
+                derivative_floor,
+                derivative_gate_threshold,
+                relu_leak,
+                softplus_beta,
+            )
             local_delta = f"({feedback})*{deriv}"
             lines.append(f"Bstore_dh{b}_{c} dh{b}_{c} 0 I = V(pbwd)*{{CSTATE}}/{{TAU}}*(V(dh{b}_{c})-({local_delta}))")
             for p, idx in enumerate(idxs):
@@ -528,9 +554,29 @@ def main() -> None:
     ap.add_argument(
         "--local-activation",
         default="tanh",
-        choices=["tanh", "relu", "clipped-relu", "clipped_relu", "diff-clipped-relu", "differential-clipped-relu", "diff_clipped_relu"],
+        choices=[
+            "tanh",
+            "relu",
+            "clipped-relu",
+            "clipped_relu",
+            "diff-clipped-relu",
+            "differential-clipped-relu",
+            "diff_clipped_relu",
+            "leaky-relu",
+            "leaky_relu",
+            "softplus",
+            "softplus-relu",
+            "softplus_relu",
+        ],
     )
     ap.add_argument("--relu-clip", type=float, default=1.0)
+    ap.add_argument("--relu-leak", type=float, default=0.01)
+    ap.add_argument("--softplus-beta", type=float, default=10.0)
+    ap.add_argument("--activation-derivative", choices=["exact", "stored-gate", "unity", "floor-exact"], default="exact")
+    ap.add_argument("--derivative-floor", type=float, default=0.0)
+    ap.add_argument("--derivative-gate-threshold", type=float, default=1e-6)
+    ap.add_argument("--readout-feedback-mode", choices=["readout", "full-readout", "exact", "sign-readout", "sign", "clipped-readout", "clipped"], default="readout")
+    ap.add_argument("--readout-feedback-clip", type=float, default=0.05)
     ap.add_argument("--seed", type=int, default=0)
     ap.add_argument("--timeout", type=float, default=300.0)
     ap.add_argument("--simulator", default=None)
@@ -566,6 +612,16 @@ def main() -> None:
         raise ValueError("--channels must be positive")
     if args.relu_clip <= 0:
         raise ValueError("--relu-clip must be positive")
+    if args.relu_leak < 0:
+        raise ValueError("--relu-leak must be non-negative")
+    if args.softplus_beta <= 0:
+        raise ValueError("--softplus-beta must be positive")
+    if args.derivative_floor < 0 or args.derivative_floor > 1:
+        raise ValueError("--derivative-floor must be between 0 and 1")
+    if args.derivative_gate_threshold < 0:
+        raise ValueError("--derivative-gate-threshold must be non-negative")
+    if args.readout_feedback_clip <= 0:
+        raise ValueError("--readout-feedback-clip must be positive")
     if args.phase <= 0 or args.settle_ratio <= 0:
         raise ValueError("--phase and --settle-ratio must be positive")
     if args.direction_cosine_threshold < -1 or args.direction_cosine_threshold > 1:
@@ -638,6 +694,13 @@ def main() -> None:
         probe_updates,
         args.local_activation,
         args.relu_clip,
+        args.activation_derivative,
+        args.derivative_floor,
+        args.derivative_gate_threshold,
+        args.readout_feedback_mode,
+        args.readout_feedback_clip,
+        args.relu_leak,
+        args.softplus_beta,
     )
     phase_netlist.write_text(prepare_phase_netlist(netlist, spice_bin))
 
@@ -683,6 +746,13 @@ def main() -> None:
             softmax_output=args.softmax_output,
             local_activation=args.local_activation,
             relu_clip=args.relu_clip,
+            activation_derivative=args.activation_derivative,
+            derivative_floor=args.derivative_floor,
+            derivative_gate_threshold=args.derivative_gate_threshold,
+            readout_feedback_mode=args.readout_feedback_mode,
+            readout_feedback_clip=args.readout_feedback_clip,
+            relu_leak=args.relu_leak,
+            softplus_beta=args.softplus_beta,
         )
         if update + 1 in probe_updates:
             op_probe_states[update + 1] = (op_w.copy(), op_hb.copy(), op_readout.copy(), op_ob.copy())
@@ -720,6 +790,8 @@ def main() -> None:
             softmax_output=args.softmax_output,
             local_activation=args.local_activation,
             relu_clip=args.relu_clip,
+            relu_leak=args.relu_leak,
+            softplus_beta=args.softplus_beta,
         )
         phase_eval_accuracy = run_eval(
             spice_bin,
@@ -738,6 +810,8 @@ def main() -> None:
             softmax_output=args.softmax_output,
             local_activation=args.local_activation,
             relu_clip=args.relu_clip,
+            relu_leak=args.relu_leak,
+            softplus_beta=args.softplus_beta,
         )
         op_reference_eval_accuracy = run_eval(
             spice_bin,
@@ -756,6 +830,8 @@ def main() -> None:
             softmax_output=args.softmax_output,
             local_activation=args.local_activation,
             relu_clip=args.relu_clip,
+            relu_leak=args.relu_leak,
+            softplus_beta=args.softplus_beta,
         )
         eval_wall = time.perf_counter() - t2
     eval_accuracy_abs_diff = (
@@ -831,6 +907,13 @@ def main() -> None:
         "softmax_output": bool(args.softmax_output),
         "local_activation": args.local_activation,
         "relu_clip": args.relu_clip,
+        "relu_leak": args.relu_leak,
+        "softplus_beta": args.softplus_beta,
+        "activation_derivative": args.activation_derivative,
+        "derivative_floor": args.derivative_floor,
+        "derivative_gate_threshold": args.derivative_gate_threshold,
+        "readout_feedback_mode": args.readout_feedback_mode,
+        "readout_feedback_clip": args.readout_feedback_clip,
         "init_weights": args.init_weights,
         "phase_netlist": str(phase_netlist),
         "phase_data": str(phase_data),

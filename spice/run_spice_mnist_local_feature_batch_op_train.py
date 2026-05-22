@@ -10,7 +10,12 @@ import numpy as np
 import pandas as pd
 
 from run_spice_mnist_batch_op_train import read_wrdata_row
-from run_spice_mnist_local_block_batch_op_train import add_local_activation, add_local_activation_deriv, block_indices
+from run_spice_mnist_local_block_batch_op_train import (
+    add_local_activation,
+    add_local_activation_deriv,
+    block_indices,
+    readout_feedback_expr,
+)
 from run_spice_mnist_train import load_mnist_sequence
 from run_spice_sweep import ROOT, detect_spice, is_xyce, prepare_netlist_for_simulator, run_tiny_test, run_simulator_netlist
 
@@ -94,6 +99,13 @@ def make_train_netlist(
     softmax_output,
     local_activation,
     relu_clip,
+    activation_derivative="exact",
+    derivative_floor=0.0,
+    derivative_gate_threshold=1e-6,
+    readout_feedback_mode="readout",
+    readout_feedback_clip=0.05,
+    relu_leak=0.01,
+    softplus_beta=10.0,
 ):
     batch = len(y_batch)
     n_blocks, channels, block_len = w.shape
@@ -133,7 +145,17 @@ def make_train_netlist(
             for c in range(channels):
                 terms = [f"V(w{b}_{c}_{p})*V(x{s}_{idx})" for p, idx in enumerate(idxs)]
                 terms.append(f"V(hb{b}_{c})")
-                add_local_activation(lines, s, 0, b * channels + c, " + ".join(terms), local_activation, relu_clip)
+                add_local_activation(
+                    lines,
+                    s,
+                    0,
+                    b * channels + c,
+                    " + ".join(terms),
+                    local_activation,
+                    relu_clip,
+                    relu_leak,
+                    softplus_beta,
+                )
         for k in range(n_classes):
             terms = [f"V(v{k}_{b}_{c})*{feature_expr(s, b, c, channels)}" for b in range(n_blocks) for c in range(channels)]
             terms.append(f"V(ob{k})")
@@ -159,8 +181,22 @@ def make_train_netlist(
                     lines.append(f"Bd{s}_{k} d{s}_{k} 0 V = V(e{s}_{k})*(1-V(y{s}_{k})*V(y{s}_{k}))")
         for b in range(n_blocks):
             for c in range(channels):
-                fb = " + ".join(f"V(v{k}_{b}_{c})*V(d{s}_{k})" for k in range(n_classes))
-                deriv = add_local_activation_deriv(local_activation, relu_clip, s, 0, b * channels + c)
+                fb = " + ".join(
+                    readout_feedback_expr(f"V(v{k}_{b}_{c})", f"V(d{s}_{k})", readout_feedback_mode, readout_feedback_clip)
+                    for k in range(n_classes)
+                )
+                deriv = add_local_activation_deriv(
+                    local_activation,
+                    relu_clip,
+                    s,
+                    0,
+                    b * channels + c,
+                    activation_derivative,
+                    derivative_floor,
+                    derivative_gate_threshold,
+                    relu_leak,
+                    softplus_beta,
+                )
                 lines.append(f"Bdh{s}_{b}_{c} dh{s}_{b}_{c} 0 V = ({fb})*{deriv}")
     lines.append("")
     for b, idxs in enumerate(blocks):
@@ -185,7 +221,21 @@ def make_train_netlist(
     return "\n".join(lines)
 
 
-def make_eval_netlist(x_batch, w, hb, v, ob, blocks, out_path, linear_output, softmax_output, local_activation, relu_clip):
+def make_eval_netlist(
+    x_batch,
+    w,
+    hb,
+    v,
+    ob,
+    blocks,
+    out_path,
+    linear_output,
+    softmax_output,
+    local_activation,
+    relu_clip,
+    relu_leak=0.01,
+    softplus_beta=10.0,
+):
     batch = len(x_batch)
     n_blocks, channels, _block_len = w.shape
     n_classes = v.shape[0]
@@ -210,7 +260,17 @@ def make_eval_netlist(x_batch, w, hb, v, ob, blocks, out_path, linear_output, so
             for c in range(channels):
                 terms = [f"V(w{b}_{c}_{p})*V(x{s}_{idx})" for p, idx in enumerate(idxs)]
                 terms.append(f"V(hb{b}_{c})")
-                add_local_activation(lines, s, 0, b * channels + c, " + ".join(terms), local_activation, relu_clip)
+                add_local_activation(
+                    lines,
+                    s,
+                    0,
+                    b * channels + c,
+                    " + ".join(terms),
+                    local_activation,
+                    relu_clip,
+                    relu_leak,
+                    softplus_beta,
+                )
         for k in range(n_classes):
             terms = [f"V(v{k}_{b}_{c})*{feature_expr(s, b, c, channels)}" for b in range(n_blocks) for c in range(channels)]
             terms.append(f"V(ob{k})")
@@ -247,6 +307,13 @@ def run_train_batch(
     softmax_output,
     local_activation,
     relu_clip,
+    activation_derivative="exact",
+    derivative_floor=0.0,
+    derivative_gate_threshold=1e-6,
+    readout_feedback_mode="readout",
+    readout_feedback_clip=0.05,
+    relu_leak=0.01,
+    softplus_beta=10.0,
 ):
     netlist_path.write_text(
         prepare_local_feature_netlist(
@@ -264,6 +331,13 @@ def run_train_batch(
                 softmax_output,
                 local_activation,
                 relu_clip,
+                activation_derivative,
+                derivative_floor,
+                derivative_gate_threshold,
+                readout_feedback_mode,
+                readout_feedback_clip,
+                relu_leak,
+                softplus_beta,
             ),
             spice_bin,
         )
@@ -303,6 +377,8 @@ def run_eval(
     softmax_output,
     local_activation,
     relu_clip,
+    relu_leak=0.01,
+    softplus_beta=10.0,
 ):
     correct = 0
     for start in range(0, len(y_eval), batch_size):
@@ -310,7 +386,21 @@ def run_eval(
         y = y_eval[start : start + batch_size]
         netlist_path.write_text(
             prepare_local_feature_netlist(
-                make_eval_netlist(x, w, hb, v, ob, blocks, data_path, linear_output, softmax_output, local_activation, relu_clip),
+                make_eval_netlist(
+                    x,
+                    w,
+                    hb,
+                    v,
+                    ob,
+                    blocks,
+                    data_path,
+                    linear_output,
+                    softmax_output,
+                    local_activation,
+                    relu_clip,
+                    relu_leak,
+                    softplus_beta,
+                ),
                 spice_bin,
             )
         )
@@ -411,10 +501,26 @@ def main():
     ap.add_argument("--softmax-output", action="store_true")
     ap.add_argument(
         "--local-activation",
-        choices=["tanh", "relu", "clipped-relu", "diff-clipped-relu", "differential-clipped-relu"],
+        choices=[
+            "tanh",
+            "relu",
+            "clipped-relu",
+            "diff-clipped-relu",
+            "differential-clipped-relu",
+            "leaky-relu",
+            "softplus",
+            "softplus-relu",
+        ],
         default="tanh",
     )
     ap.add_argument("--relu-clip", type=float, default=1.0)
+    ap.add_argument("--relu-leak", type=float, default=0.01)
+    ap.add_argument("--softplus-beta", type=float, default=10.0)
+    ap.add_argument("--activation-derivative", choices=["exact", "stored-gate", "unity", "floor-exact"], default="exact")
+    ap.add_argument("--derivative-floor", type=float, default=0.0)
+    ap.add_argument("--derivative-gate-threshold", type=float, default=1e-6)
+    ap.add_argument("--readout-feedback-mode", choices=["readout", "full-readout", "exact", "sign-readout", "sign", "clipped-readout", "clipped"], default="readout")
+    ap.add_argument("--readout-feedback-clip", type=float, default=0.05)
     ap.add_argument("--init-weights", default="")
     ap.add_argument(
         "--import-extra-readout-scale",
@@ -441,6 +547,16 @@ def main():
     args = ap.parse_args()
     if args.linear_output and args.softmax_output:
         raise ValueError("--linear-output and --softmax-output are mutually exclusive")
+    if args.relu_leak < 0:
+        raise ValueError("--relu-leak must be non-negative")
+    if args.softplus_beta <= 0:
+        raise ValueError("--softplus-beta must be positive")
+    if args.derivative_floor < 0 or args.derivative_floor > 1:
+        raise ValueError("--derivative-floor must be between 0 and 1")
+    if args.derivative_gate_threshold < 0:
+        raise ValueError("--derivative-gate-threshold must be non-negative")
+    if args.readout_feedback_clip <= 0:
+        raise ValueError("--readout-feedback-clip must be positive")
     if args.start_epoch < 0:
         raise ValueError("--start-epoch must be non-negative")
     if args.skip_heldout_eval and (args.eval_only or args.epochs == 0):
@@ -528,6 +644,8 @@ def main():
             args.softmax_output,
             args.local_activation,
             args.relu_clip,
+            args.relu_leak,
+            args.softplus_beta,
         )
         rows.append({"epoch": 0, "heldout_accuracy": heldout, "epoch_wall_time_s": time.perf_counter() - epoch_start})
         best_acc = heldout
@@ -556,6 +674,13 @@ def main():
                     args.softmax_output,
                     args.local_activation,
                     args.relu_clip,
+                    args.activation_derivative,
+                    args.derivative_floor,
+                    args.derivative_gate_threshold,
+                    args.readout_feedback_mode,
+                    args.readout_feedback_clip,
+                    args.relu_leak,
+                    args.softplus_beta,
                 )
                 completed_train_batches += 1
                 if args.checkpoint_every_batches > 0 and completed_train_batches % args.checkpoint_every_batches == 0:
@@ -604,6 +729,8 @@ def main():
                     args.softmax_output,
                     args.local_activation,
                     args.relu_clip,
+                    args.relu_leak,
+                    args.softplus_beta,
                 )
             row = {"epoch": epoch + 1, "heldout_accuracy": heldout, "epoch_wall_time_s": time.perf_counter() - epoch_start}
             rows.append(row)
@@ -645,6 +772,13 @@ def main():
         "architecture": "local_feature_readout",
         "local_activation": args.local_activation,
         "relu_clip": args.relu_clip,
+        "relu_leak": args.relu_leak,
+        "softplus_beta": args.softplus_beta,
+        "activation_derivative": args.activation_derivative,
+        "derivative_floor": args.derivative_floor,
+        "derivative_gate_threshold": args.derivative_gate_threshold,
+        "readout_feedback_mode": args.readout_feedback_mode,
+        "readout_feedback_clip": args.readout_feedback_clip,
         "output_mode": "softmax_class_evidence" if args.softmax_output else ("linear_class_evidence" if args.linear_output else "tanh_class_evidence"),
         "image_size": args.image_size,
         "block_size": args.block_size,

@@ -117,8 +117,13 @@ def test_phase_pulse_area_includes_ramp_edges() -> None:
 def test_phase_transient_activation_exprs_cover_relu_families() -> None:
     assert phase_transient.local_activation_expr("x", "relu", 1.0) == "0.5*((x)+abs(x))"
     assert "0.5*(((x)-0.25)+abs((x)-0.25))" in phase_transient.local_activation_expr("x", "clipped-relu", 0.25)
+    assert "0.01*0.5*((0-(x))" in phase_transient.local_activation_expr("x", "leaky-relu", 1.0, relu_leak=0.01)
+    assert "log(1+exp(5*" in phase_transient.local_activation_expr("x", "softplus", 1.0, softplus_beta=5.0)
     assert "-(" not in phase_transient.local_activation_deriv_expr("x", "h0", "relu", 1.0)
     assert "V(h0)" in phase_transient.local_activation_deriv_expr("x", "h0", "tanh", 1.0)
+    assert phase_transient.local_activation_deriv_expr("x", "h0", "relu", 1.0, "unity") == "1"
+    assert "V(h0)" in phase_transient.local_activation_deriv_expr("x", "h0", "relu", 1.0, "stored-gate")
+    assert "0.05+" in phase_transient.local_activation_deriv_expr("x", "h0", "relu", 1.0, "floor-exact", 0.05)
 
 
 def test_phase_transient_update_direction_metrics_detect_alignment() -> None:
@@ -192,12 +197,17 @@ def test_phase_variant_sweep_dry_command_preserves_online_contract() -> None:
         timeout=600.0,
         probe_updates="1,2,4,8",
         tag="sweep",
+        relu_leak=0.01,
+        softplus_beta=10.0,
+        derivative_floor=0.0,
+        derivative_gate_threshold=1e-6,
+        readout_feedback_clip=0.05,
         softmax_output=True,
         linear_output=False,
         final_measures=False,
     )
 
-    command = phase_variant_sweep.build_variant_command(args, "diff-clipped-relu", 0.5)
+    command = phase_variant_sweep.build_variant_command(args, "diff-clipped-relu", 0.5, "stored-gate", "clipped-readout")
 
     assert "--batch-size" in command
     assert command[command.index("--batch-size") + 1] == "1"
@@ -205,6 +215,10 @@ def test_phase_variant_sweep_dry_command_preserves_online_contract() -> None:
     assert command[command.index("--local-activation") + 1] == "diff-clipped-relu"
     assert "--relu-clip" in command
     assert command[command.index("--relu-clip") + 1] == "0.5"
+    assert "--activation-derivative" in command
+    assert command[command.index("--activation-derivative") + 1] == "stored-gate"
+    assert "--readout-feedback-mode" in command
+    assert command[command.index("--readout-feedback-mode") + 1] == "clipped-readout"
 
 
 def test_phase_transient_softmax_deck_is_one_continuous_online_run(tmp_path: Path) -> None:

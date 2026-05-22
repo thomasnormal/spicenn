@@ -60,6 +60,112 @@ def clipped_relu_deriv_expr(expr: str, clip: float) -> str:
     return f"({relu_deriv_expr(expr)}-{relu_deriv_expr(shifted_expr)})"
 
 
+def leaky_relu_expr(expr: str, leak: float) -> str:
+    leak = max(float(leak), 0.0)
+    return f"({relu_expr(expr)}-{leak:.12g}*{relu_expr(f'0-({expr})')})"
+
+
+def leaky_relu_deriv_expr(expr: str, leak: float) -> str:
+    leak = max(float(leak), 0.0)
+    return f"({relu_deriv_expr(expr)}+{leak:.12g}*{relu_deriv_expr(f'0-({expr})')})"
+
+
+def softplus_expr(expr: str, beta: float) -> str:
+    beta = max(float(beta), 1e-12)
+    return f"(log(1+exp({beta:.12g}*({expr})))/{beta:.12g})"
+
+
+def softplus_deriv_expr(expr: str, beta: float) -> str:
+    beta = max(float(beta), 1e-12)
+    return f"(1/(1+exp(-{beta:.12g}*({expr}))))"
+
+
+def local_activation_expr(
+    expr: str,
+    local_activation: str,
+    relu_clip: float,
+    relu_leak: float = 0.01,
+    softplus_beta: float = 10.0,
+) -> str:
+    if local_activation == "relu":
+        return relu_expr(expr)
+    if local_activation in {"clipped-relu", "clipped_relu"}:
+        return clipped_relu_expr(expr, max(float(relu_clip), 1e-12))
+    if local_activation in {"diff-clipped-relu", "differential-clipped-relu", "diff_clipped_relu"}:
+        clip = max(float(relu_clip), 1e-12)
+        return f"{clipped_relu_expr(expr, clip)}-{clipped_relu_expr(f'0-({expr})', clip)}"
+    if local_activation in {"leaky-relu", "leaky_relu"}:
+        return leaky_relu_expr(expr, relu_leak)
+    if local_activation in {"softplus", "softplus-relu", "softplus_relu"}:
+        return softplus_expr(expr, softplus_beta)
+    if local_activation == "tanh":
+        return f"(2/(1+exp(-2*({expr})))-1)"
+    raise ValueError(f"unknown local activation {local_activation!r}")
+
+
+def wrap_derivative_floor(deriv: str, derivative_floor: float) -> str:
+    derivative_floor = max(float(derivative_floor), 0.0)
+    if derivative_floor <= 0.0:
+        return deriv
+    if derivative_floor >= 1.0:
+        return "1"
+    return f"({derivative_floor:.12g}+{1.0 - derivative_floor:.12g}*({deriv}))"
+
+
+def local_activation_deriv_expr(
+    preactivation_expr: str,
+    activation_expr: str,
+    local_activation: str,
+    relu_clip: float,
+    derivative_mode: str = "exact",
+    derivative_floor: float = 0.0,
+    derivative_gate_threshold: float = 1e-6,
+    relu_leak: float = 0.01,
+    softplus_beta: float = 10.0,
+) -> str:
+    if derivative_mode == "unity":
+        return "1"
+    if derivative_mode == "stored-gate":
+        if local_activation == "tanh":
+            deriv = f"(1-({activation_expr})*({activation_expr}))"
+        elif local_activation in {"diff-clipped-relu", "differential-clipped-relu", "diff_clipped_relu"}:
+            deriv = relu_deriv_expr(f"abs({activation_expr})-{max(float(derivative_gate_threshold), 0.0):.12g}")
+        else:
+            deriv = relu_deriv_expr(f"({activation_expr})-{max(float(derivative_gate_threshold), 0.0):.12g}")
+        return wrap_derivative_floor(deriv, derivative_floor)
+    if derivative_mode not in {"exact", "floor-exact"}:
+        raise ValueError(f"unknown activation derivative mode {derivative_mode!r}")
+    if local_activation == "relu":
+        deriv = relu_deriv_expr(preactivation_expr)
+    elif local_activation in {"clipped-relu", "clipped_relu"}:
+        deriv = clipped_relu_deriv_expr(preactivation_expr, max(float(relu_clip), 1e-12))
+    elif local_activation in {"diff-clipped-relu", "differential-clipped-relu", "diff_clipped_relu"}:
+        clip = max(float(relu_clip), 1e-12)
+        neg_expr = f"0-({preactivation_expr})"
+        deriv = f"({clipped_relu_deriv_expr(preactivation_expr, clip)}+{clipped_relu_deriv_expr(neg_expr, clip)})"
+    elif local_activation in {"leaky-relu", "leaky_relu"}:
+        deriv = leaky_relu_deriv_expr(preactivation_expr, relu_leak)
+    elif local_activation in {"softplus", "softplus-relu", "softplus_relu"}:
+        deriv = softplus_deriv_expr(preactivation_expr, softplus_beta)
+    elif local_activation == "tanh":
+        deriv = f"(1-({activation_expr})*({activation_expr}))"
+    else:
+        raise ValueError(f"unknown local activation {local_activation!r}")
+    floor = derivative_floor if derivative_mode == "floor-exact" else 0.0
+    return wrap_derivative_floor(deriv, floor)
+
+
+def readout_feedback_expr(weight_expr: str, delta_expr: str, feedback_mode: str, feedback_clip: float = 0.05) -> str:
+    if feedback_mode in {"readout", "full-readout", "exact"}:
+        return f"{weight_expr}*{delta_expr}"
+    if feedback_mode in {"sign-readout", "sign"}:
+        return f"(({weight_expr})/(abs({weight_expr})+1e-9))*{delta_expr}"
+    if feedback_mode in {"clipped-readout", "clipped"}:
+        clip = max(float(feedback_clip), 1e-12)
+        return f"({clip:.12g}*tanh(({weight_expr})/{clip:.12g}))*{delta_expr}"
+    raise ValueError(f"unknown readout feedback mode {feedback_mode!r}")
+
+
 def add_local_activation(
     lines: list[str],
     sample: int,
@@ -68,46 +174,52 @@ def add_local_activation(
     summed: str,
     local_activation: str,
     relu_clip: float,
+    relu_leak: float = 0.01,
+    softplus_beta: float = 10.0,
 ) -> tuple[str, str]:
     a_node = f"a{sample}_{klass}_{block}"
     h_node = f"h{sample}_{klass}_{block}"
     lines.append(f"Ba{sample}_{klass}_{block} {a_node} 0 V = {summed}")
     a_expr = f"V({a_node})"
-    if local_activation == "relu":
-        lines.append(f"Bh{sample}_{klass}_{block} {h_node} 0 V = {relu_expr(a_expr)}")
-        deriv = relu_deriv_expr(a_expr)
-    elif local_activation in {"clipped-relu", "clipped_relu"}:
-        clip = max(float(relu_clip), 1e-12)
-        lines.append(f"Bh{sample}_{klass}_{block} {h_node} 0 V = {clipped_relu_expr(a_expr, clip)}")
-        deriv = clipped_relu_deriv_expr(a_expr, clip)
-    elif local_activation in {"diff-clipped-relu", "differential-clipped-relu", "diff_clipped_relu"}:
-        clip = max(float(relu_clip), 1e-12)
-        neg_a_expr = f"0-({a_expr})"
-        lines.append(
-            f"Bh{sample}_{klass}_{block} {h_node} 0 V = "
-            f"{clipped_relu_expr(a_expr, clip)}-{clipped_relu_expr(neg_a_expr, clip)}"
-        )
-        deriv = f"({clipped_relu_deriv_expr(a_expr, clip)}+{clipped_relu_deriv_expr(neg_a_expr, clip)})"
-    else:
-        lines.append(f"Bh{sample}_{klass}_{block} {h_node} 0 V = 2/(1+exp(-2*V({a_node})))-1")
-        deriv = f"(1-V({h_node})*V({h_node}))"
+    h_expr = local_activation_expr(a_expr, local_activation, relu_clip, relu_leak, softplus_beta)
+    lines.append(f"Bh{sample}_{klass}_{block} {h_node} 0 V = {h_expr}")
+    deriv = local_activation_deriv_expr(
+        a_expr,
+        f"V({h_node})",
+        local_activation,
+        relu_clip,
+        relu_leak=relu_leak,
+        softplus_beta=softplus_beta,
+    )
     return f"V({h_node})", deriv
 
 
-def add_local_activation_deriv(local_activation: str, relu_clip: float, sample: int, klass: int, block: int) -> str:
+def add_local_activation_deriv(
+    local_activation: str,
+    relu_clip: float,
+    sample: int,
+    klass: int,
+    block: int,
+    derivative_mode: str = "exact",
+    derivative_floor: float = 0.0,
+    derivative_gate_threshold: float = 1e-6,
+    relu_leak: float = 0.01,
+    softplus_beta: float = 10.0,
+) -> str:
     a_node = f"a{sample}_{klass}_{block}"
     a_expr = f"V({a_node})"
     h_node = f"h{sample}_{klass}_{block}"
-    if local_activation == "relu":
-        return relu_deriv_expr(a_expr)
-    if local_activation in {"clipped-relu", "clipped_relu"}:
-        clip = max(float(relu_clip), 1e-12)
-        return clipped_relu_deriv_expr(a_expr, clip)
-    if local_activation in {"diff-clipped-relu", "differential-clipped-relu", "diff_clipped_relu"}:
-        clip = max(float(relu_clip), 1e-12)
-        neg_a_expr = f"0-({a_expr})"
-        return f"({clipped_relu_deriv_expr(a_expr, clip)}+{clipped_relu_deriv_expr(neg_a_expr, clip)})"
-    return f"(1-V({h_node})*V({h_node}))"
+    return local_activation_deriv_expr(
+        a_expr,
+        f"V({h_node})",
+        local_activation,
+        relu_clip,
+        derivative_mode,
+        derivative_floor,
+        derivative_gate_threshold,
+        relu_leak,
+        softplus_beta,
+    )
 
 
 def block_indices(image_size: int, block_size: int, stride: int) -> list[list[int]]:

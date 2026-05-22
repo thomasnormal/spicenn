@@ -33,12 +33,14 @@ def activation_clip_pairs(activations: list[str], relu_clips: list[float]) -> li
     return pairs
 
 
-def variant_tag(base_tag: str, activation: str, relu_clip: float) -> str:
+def variant_tag(base_tag: str, activation: str, relu_clip: float, derivative_mode: str = "exact", feedback_mode: str = "readout") -> str:
     safe_activation = sanitize_tag(activation.replace("-", "_"))
-    return sanitize_tag(f"{base_tag}_{safe_activation}_clip{relu_clip:g}")
+    safe_derivative = sanitize_tag(derivative_mode.replace("-", "_"))
+    safe_feedback = sanitize_tag(feedback_mode.replace("-", "_"))
+    return sanitize_tag(f"{base_tag}_{safe_activation}_clip{relu_clip:g}_{safe_derivative}_{safe_feedback}")
 
 
-def build_variant_command(args: argparse.Namespace, activation: str, relu_clip: float) -> list[str]:
+def build_variant_command(args: argparse.Namespace, activation: str, relu_clip: float, derivative_mode: str = "exact", feedback_mode: str = "readout") -> list[str]:
     script = ROOT / "spice/run_spice_mnist_local_feature_phase_transient.py"
     command = [
         sys.executable,
@@ -81,8 +83,22 @@ def build_variant_command(args: argparse.Namespace, activation: str, relu_clip: 
         activation,
         "--relu-clip",
         str(relu_clip),
+        "--relu-leak",
+        str(args.relu_leak),
+        "--softplus-beta",
+        str(args.softplus_beta),
+        "--activation-derivative",
+        derivative_mode,
+        "--derivative-floor",
+        str(args.derivative_floor),
+        "--derivative-gate-threshold",
+        str(args.derivative_gate_threshold),
+        "--readout-feedback-mode",
+        feedback_mode,
+        "--readout-feedback-clip",
+        str(args.readout_feedback_clip),
         "--tag",
-        variant_tag(args.tag, activation, relu_clip),
+        variant_tag(args.tag, activation, relu_clip, derivative_mode, feedback_mode),
     ]
     if args.softmax_output:
         command.append("--softmax-output")
@@ -101,7 +117,7 @@ def parse_runner_json(stdout: str) -> dict[str, Any]:
     return json.loads(stdout[start : end + 1])
 
 
-def row_from_summary(activation: str, relu_clip: float, summary: dict[str, Any], command: list[str]) -> dict[str, Any]:
+def row_from_summary(activation: str, relu_clip: float, derivative_mode: str, feedback_mode: str, summary: dict[str, Any], command: list[str]) -> dict[str, Any]:
     keys = [
         "continuous_transient_contract_met",
         "direction_matches_batch_op_reference",
@@ -118,7 +134,14 @@ def row_from_summary(activation: str, relu_clip: float, summary: dict[str, Any],
         "op_reference_wall_time_s",
         "eval_wall_time_s",
     ]
-    row = {"local_activation": activation, "relu_clip": relu_clip, "tag": summary.get("tag"), "command": " ".join(command)}
+    row = {
+        "local_activation": activation,
+        "relu_clip": relu_clip,
+        "activation_derivative": derivative_mode,
+        "readout_feedback_mode": feedback_mode,
+        "tag": summary.get("tag"),
+        "command": " ".join(command),
+    }
     row.update({key: summary.get(key) for key in keys})
     return row
 
@@ -143,6 +166,13 @@ def main() -> None:
     ap.add_argument("--probe-updates", default="1,2,4,8,final")
     ap.add_argument("--activations", default="tanh,diff-clipped-relu,relu,clipped-relu")
     ap.add_argument("--relu-clips", default="1.0")
+    ap.add_argument("--relu-leak", type=float, default=0.01)
+    ap.add_argument("--softplus-beta", type=float, default=10.0)
+    ap.add_argument("--derivative-modes", default="exact")
+    ap.add_argument("--derivative-floor", type=float, default=0.0)
+    ap.add_argument("--derivative-gate-threshold", type=float, default=1e-6)
+    ap.add_argument("--feedback-modes", default="readout")
+    ap.add_argument("--readout-feedback-clip", type=float, default=0.05)
     ap.add_argument("--softmax-output", action="store_true", default=True)
     ap.add_argument("--linear-output", action="store_true")
     ap.add_argument("--final-measures", action="store_true")
@@ -152,24 +182,43 @@ def main() -> None:
 
     activations = parse_csv(args.activations)
     relu_clips = parse_float_csv(args.relu_clips)
+    derivative_modes = parse_csv(args.derivative_modes)
+    feedback_modes = parse_csv(args.feedback_modes)
     if not activations:
         raise ValueError("--activations must not be empty")
     if not relu_clips:
         raise ValueError("--relu-clips must not be empty")
+    if not derivative_modes:
+        raise ValueError("--derivative-modes must not be empty")
+    if not feedback_modes:
+        raise ValueError("--feedback-modes must not be empty")
 
     rows = []
     for activation, relu_clip in activation_clip_pairs(activations, relu_clips):
-        command = build_variant_command(args, activation, relu_clip)
-        if args.dry_run:
-            rows.append({"local_activation": activation, "relu_clip": relu_clip, "command": " ".join(command)})
-            continue
-        proc = subprocess.run(command, cwd=ROOT, text=True, capture_output=True, timeout=args.timeout + 60.0)
-        if proc.returncode != 0:
-            raise RuntimeError(f"variant {activation} clip {relu_clip:g} failed:\nSTDOUT:\n{proc.stdout[-3000:]}\nSTDERR:\n{proc.stderr[-3000:]}")
-        summary = parse_runner_json(proc.stdout)
-        summary["tag"] = variant_tag(args.tag, activation, relu_clip)
-        rows.append(row_from_summary(activation, relu_clip, summary, command))
-        print(json.dumps(rows[-1], indent=2))
+        for derivative_mode in derivative_modes:
+            for feedback_mode in feedback_modes:
+                command = build_variant_command(args, activation, relu_clip, derivative_mode, feedback_mode)
+                if args.dry_run:
+                    rows.append(
+                        {
+                            "local_activation": activation,
+                            "relu_clip": relu_clip,
+                            "activation_derivative": derivative_mode,
+                            "readout_feedback_mode": feedback_mode,
+                            "command": " ".join(command),
+                        }
+                    )
+                    continue
+                proc = subprocess.run(command, cwd=ROOT, text=True, capture_output=True, timeout=args.timeout + 60.0)
+                if proc.returncode != 0:
+                    raise RuntimeError(
+                        f"variant {activation} clip {relu_clip:g} derivative {derivative_mode} feedback {feedback_mode} failed:"
+                        f"\nSTDOUT:\n{proc.stdout[-3000:]}\nSTDERR:\n{proc.stderr[-3000:]}"
+                    )
+                summary = parse_runner_json(proc.stdout)
+                summary["tag"] = variant_tag(args.tag, activation, relu_clip, derivative_mode, feedback_mode)
+                rows.append(row_from_summary(activation, relu_clip, derivative_mode, feedback_mode, summary, command))
+                print(json.dumps(rows[-1], indent=2))
 
     results = ROOT / "spice/results"
     results.mkdir(parents=True, exist_ok=True)

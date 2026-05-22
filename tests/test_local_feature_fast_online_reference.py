@@ -296,3 +296,13 @@ def test_fast_online_variant_sweep_row_reports_best_probe_and_improvement() -> N
     assert row["best_probe_update"] in {1, 2}
     assert row["probe_eval_accuracy_u1"] >= 0.0
     assert row["probe_eval_accuracy_u2"] >= 0.0
+    assert row["promotion_probe_eval_accuracy"] == row["probe_eval_accuracy_u2"]
+
+
+def test_fast_online_variant_sweep_selects_best_promotion_variant() -> None:
+    rows = [
+        {"tag": "late", "final_eval_accuracy": 0.9, "promotion_probe_eval_accuracy": 0.4, "eval_improvement": 0.8},
+        {"tag": "early", "final_eval_accuracy": 0.8, "promotion_probe_eval_accuracy": 0.6, "eval_improvement": 0.7},
+    ]
+
+    assert fast_sweep.best_promotion_variant(rows)["tag"] == "early"

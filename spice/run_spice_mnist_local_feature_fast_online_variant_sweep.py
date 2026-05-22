@@ -182,6 +182,13 @@ def command_text(command: list[str]) -> str:
     return " ".join(shlex.quote(part) for part in command)
 
 
+def best_promotion_variant(rows: list[dict[str, Any]]) -> dict[str, Any] | None:
+    candidates = [row for row in rows if row.get("promotion_probe_eval_accuracy") is not None]
+    if not candidates:
+        return None
+    return max(candidates, key=lambda row: (row["promotion_probe_eval_accuracy"], row["eval_improvement"]))
+
+
 def strict_phase_promotion_command(args: argparse.Namespace, variant: dict[str, Any]) -> list[str]:
     updates = int(getattr(args, "promotion_updates", 0) or args.train_samples)
     if updates <= 0:
@@ -324,6 +331,10 @@ def run_variant(
     ]
     best_probe = max(probe_rows, key=lambda row: row["eval_accuracy"]) if probe_rows else None
     probe_columns = {f"probe_eval_accuracy_u{int(row['update'])}": row["eval_accuracy"] for row in probe_rows}
+    promotion_updates = int(getattr(args, "promotion_updates", 0) or args.train_samples)
+    promotion_probe_eval_accuracy = probe_columns.get(f"probe_eval_accuracy_u{promotion_updates}")
+    if promotion_probe_eval_accuracy is None and promotion_updates == args.train_samples:
+        promotion_probe_eval_accuracy = final_eval
     wall = time.perf_counter() - t0
     phase_command = strict_phase_promotion_command(args, variant)
     return {
@@ -333,7 +344,8 @@ def run_variant(
         "eval_improvement": final_eval - initial_eval,
         "best_probe_eval_accuracy": best_probe["eval_accuracy"] if best_probe is not None else None,
         "best_probe_update": best_probe["update"] if best_probe is not None else None,
-        "strict_phase_promotion_updates": int(getattr(args, "promotion_updates", 0) or args.train_samples),
+        "promotion_probe_eval_accuracy": promotion_probe_eval_accuracy,
+        "strict_phase_promotion_updates": promotion_updates,
         "strict_phase_promotion_max_transient_points": int(getattr(args, "promotion_max_transient_points", 2000)),
         "strict_phase_promotion_max_source_pwl_points": int(getattr(args, "promotion_max_source_pwl_points", 0)),
         "strict_phase_promotion_command": command_text(phase_command),
@@ -438,6 +450,9 @@ def main() -> None:
     stride = args.block_size if args.stride is None else args.stride
     blocks = block_indices(args.image_size, args.block_size, stride)
     probe_updates = fast_ref.parse_probe_update_list(args.probe_updates, args.train_samples)
+    promotion_updates = int(args.promotion_updates or args.train_samples)
+    if 1 <= promotion_updates <= args.train_samples:
+        probe_updates = tuple(sorted(set(probe_updates) | {promotion_updates}))
     x_train, y_train, x_eval, y_eval = load_mnist_sequence(args.train_samples, args.eval_samples, args.image_size, args.seed)
     rng = np.random.default_rng(args.seed)
     initial_state = fast_ref.load_or_init_weights(
@@ -474,6 +489,7 @@ def main() -> None:
         "batch_size": 1,
         "variants": len(rows),
         "best_variant": rows[0] if rows else None,
+        "best_promotion_variant": best_promotion_variant(rows),
         "csv": str(csv_path),
         "table_csv": str(table_csv_path),
     }

@@ -69,3 +69,91 @@ def test_fast_online_softmax_update_uses_raw_weight_update_with_effective_forwar
     assert updated[2] == pytest.approx(readout + 0.8 * np.einsum("nk,nbc->kbc", d, h))
     assert updated[3] == pytest.approx(output_bias + 0.8 * d[0])
 
+
+def test_fast_online_reference_matches_phase_softmax_error_knobs() -> None:
+    targets = np.array([[1.0, 0.0, 0.0]])
+    y = np.array([[0.2, 0.3, 0.5]])
+    score = np.array([[0.1, 0.4, 0.8]])
+
+    default = fast_ref.softmax_delta_np(
+        targets,
+        y,
+        score,
+        softmax_negative_scale=1.0,
+        softmax_error_centering="none",
+        softmax_competition_mode="all",
+        softmax_competitor_power=2,
+        softmax_error_gate="none",
+        softmax_margin=1.0,
+    )
+    assert default == pytest.approx(np.array([[0.8, -0.3, -0.5]]))
+
+    focused = fast_ref.softmax_delta_np(
+        targets,
+        y,
+        score,
+        softmax_negative_scale=1.0,
+        softmax_error_centering="none",
+        softmax_competition_mode="normalized-power",
+        softmax_competitor_power=2,
+        softmax_error_gate="none",
+        softmax_margin=1.0,
+    )
+    denom = 0.3 * 0.3 + 0.5 * 0.5
+    assert focused == pytest.approx(np.array([[0.8, -0.8 * 0.09 / denom, -0.8 * 0.25 / denom]]))
+
+    gated = fast_ref.softmax_delta_np(
+        targets,
+        y,
+        score,
+        softmax_negative_scale=1.0,
+        softmax_error_centering="none",
+        softmax_competition_mode="all",
+        softmax_competitor_power=2,
+        softmax_error_gate="target-margin",
+        softmax_margin=1.0,
+    )
+    gate = (1.0 - (0.1 - 0.8)) / (1.0 + 1e-12)
+    assert gated == pytest.approx(default * np.clip(gate, 0.0, 1.0))
+
+
+def test_fast_online_reference_honors_update_scales_and_decay() -> None:
+    x = np.array([[0.5, 1.0]])
+    labels = np.array([1])
+    blocks = [[0, 1]]
+    w = np.array([[[0.2, -0.1]]])
+    hb = np.array([[0.05]])
+    readout = np.array([[[0.3]], [[-0.2]]])
+    output_bias = np.array([0.1, -0.1])
+    state = (w.copy(), hb.copy(), readout.copy(), output_bias.copy())
+
+    frozen_head = fast_ref.update_np(
+        x,
+        labels,
+        state,
+        blocks,
+        lr=0.8,
+        linear_output=False,
+        softmax_output=True,
+        local_activation="tanh",
+        relu_clip=1.0,
+        activation_derivative="exact",
+        derivative_floor=0.0,
+        derivative_gate_threshold=1e-6,
+        readout_feedback_mode="readout",
+        readout_feedback_clip=0.05,
+        relu_leak=0.01,
+        softplus_beta=10.0,
+        hidden_synapse_mode="linear",
+        readout_synapse_mode="linear",
+        synapse_clip=1.0,
+        output_bias_update_scale=0.0,
+        readout_update_scale=0.0,
+        local_update_scale=0.0,
+        state_decay=0.1,
+    )
+
+    assert frozen_head[0] == pytest.approx(0.9 * w)
+    assert frozen_head[1] == pytest.approx(0.9 * hb)
+    assert frozen_head[2] == pytest.approx(0.9 * readout)
+    assert frozen_head[3] == pytest.approx(0.9 * output_bias)

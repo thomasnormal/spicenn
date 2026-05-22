@@ -11,6 +11,7 @@ import pandas as pd
 
 from run_spice_mnist_local_block_batch_op_train import block_indices
 from run_spice_mnist_local_feature_phase_transient import (
+    apply_readout_class_centering_np,
     block_tensor_np,
     load_or_init_weights,
     local_activation_np,
@@ -85,15 +86,20 @@ def forward_np(
     synapse_clip: float,
     linear_output: bool,
     softmax_output: bool,
+    softmax_temperature: float,
+    readout_class_centering: str,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     w, hb, readout, output_bias = state
     xb = block_tensor_np(x, blocks)
     eff_w = synapse_transfer_np(w, hidden_synapse_mode, synapse_clip)
     pre = np.einsum("nbp,bcp->nbc", xb, eff_w) + hb
     h = local_activation_np(pre, local_activation, relu_clip, relu_leak, softplus_beta)
-    eff_readout = synapse_transfer_np(readout, readout_synapse_mode, synapse_clip)
+    eff_readout = apply_readout_class_centering_np(
+        synapse_transfer_np(readout, readout_synapse_mode, synapse_clip),
+        readout_class_centering,
+    )
     score = np.einsum("nbc,kbc->nk", h, eff_readout) + output_bias
-    y = output_activation_np(score, linear_output, softmax_output)
+    y = output_activation_np(score, linear_output, softmax_output, softmax_temperature)
     return xb, pre, h, score, y
 
 
@@ -101,6 +107,48 @@ def target_matrix(labels: np.ndarray, n_classes: int, softmax_output: bool) -> n
     targets = np.zeros((len(labels), n_classes)) if softmax_output else -np.ones((len(labels), n_classes))
     targets[np.arange(len(labels)), labels.astype(int)] = 1.0
     return targets
+
+
+def softmax_delta_np(
+    targets: np.ndarray,
+    y: np.ndarray,
+    score: np.ndarray,
+    *,
+    softmax_negative_scale: float,
+    softmax_error_centering: str,
+    softmax_competition_mode: str,
+    softmax_competitor_power: int,
+    softmax_error_gate: str,
+    softmax_margin: float,
+) -> np.ndarray:
+    if softmax_negative_scale < 0.0:
+        raise ValueError("softmax_negative_scale must be non-negative")
+    if softmax_competition_mode == "all":
+        d = targets * (1.0 - y) - (1.0 - targets) * softmax_negative_scale * y
+    elif softmax_competition_mode == "normalized-power":
+        if softmax_competitor_power < 1:
+            raise ValueError("softmax_competitor_power must be positive")
+        target_error = np.sum(targets * (1.0 - y), axis=1, keepdims=True)
+        competitor_weight = (1.0 - targets) * np.power(y, softmax_competitor_power)
+        competitor_den = np.sum(competitor_weight, axis=1, keepdims=True)
+        d = targets * (1.0 - y) - softmax_negative_scale * target_error * competitor_weight / (competitor_den + 1e-12)
+    else:
+        raise ValueError("softmax_competition_mode must be 'all' or 'normalized-power'")
+    if softmax_error_centering == "mean":
+        d = d - np.mean(d, axis=1, keepdims=True)
+    elif softmax_error_centering != "none":
+        raise ValueError("softmax_error_centering must be 'none' or 'mean'")
+    if softmax_error_gate == "target-margin":
+        if softmax_margin <= 0.0:
+            raise ValueError("softmax_margin must be positive when softmax_error_gate is target-margin")
+        target_score = np.sum(targets * score, axis=1, keepdims=True)
+        masked_score = np.where(targets > 0.5, -np.inf, score)
+        competitor_score = np.max(masked_score, axis=1, keepdims=True)
+        deficit = (softmax_margin - (target_score - competitor_score)) / (softmax_margin + 1e-12)
+        d = d * np.clip(deficit, 0.0, 1.0)
+    elif softmax_error_gate != "none":
+        raise ValueError("softmax_error_gate must be 'none' or 'target-margin'")
+    return d
 
 
 def update_np(
@@ -124,6 +172,18 @@ def update_np(
     hidden_synapse_mode: str,
     readout_synapse_mode: str,
     synapse_clip: float,
+    softmax_negative_scale: float = 1.0,
+    softmax_error_centering: str = "none",
+    softmax_temperature: float = 1.0,
+    softmax_competition_mode: str = "all",
+    softmax_competitor_power: int = 2,
+    softmax_error_gate: str = "none",
+    softmax_margin: float = 1.0,
+    output_bias_update_scale: float = 1.0,
+    readout_update_scale: float = 1.0,
+    local_update_scale: float = 1.0,
+    state_decay: float = 0.0,
+    readout_class_centering: str = "none",
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     w, hb, readout, output_bias = state
     xb, pre, h, _score, y = forward_np(
@@ -139,13 +199,30 @@ def update_np(
         synapse_clip=synapse_clip,
         linear_output=linear_output,
         softmax_output=softmax_output,
+        softmax_temperature=softmax_temperature,
+        readout_class_centering=readout_class_centering,
     )
     targets = target_matrix(labels, readout.shape[0], softmax_output)
-    if softmax_output or linear_output:
+    if softmax_output:
+        d = softmax_delta_np(
+            targets,
+            y,
+            _score,
+            softmax_negative_scale=softmax_negative_scale,
+            softmax_error_centering=softmax_error_centering,
+            softmax_competition_mode=softmax_competition_mode,
+            softmax_competitor_power=softmax_competitor_power,
+            softmax_error_gate=softmax_error_gate,
+            softmax_margin=softmax_margin,
+        )
+    elif linear_output:
         d = targets - y
     else:
         d = (targets - y) * (1.0 - y * y)
-    eff_readout = synapse_transfer_np(readout, readout_synapse_mode, synapse_clip)
+    eff_readout = apply_readout_class_centering_np(
+        synapse_transfer_np(readout, readout_synapse_mode, synapse_clip),
+        readout_class_centering,
+    )
     if readout_feedback_mode in {"sign-readout", "sign"}:
         feedback_readout = eff_readout / (np.abs(eff_readout) + 1e-9)
     elif readout_feedback_mode in {"clipped-readout", "clipped"}:
@@ -169,10 +246,10 @@ def update_np(
     dh = np.einsum("nk,kbc->nbc", d, feedback_readout) * deriv
     batch = max(len(labels), 1)
     return (
-        w + lr * np.einsum("nbc,nbp->bcp", dh, xb) / batch,
-        hb + lr * np.mean(dh, axis=0),
-        readout + lr * np.einsum("nk,nbc->kbc", d, h) / batch,
-        output_bias + lr * np.mean(d, axis=0),
+        w * (1.0 - state_decay) + lr * local_update_scale * np.einsum("nbc,nbp->bcp", dh, xb) / batch,
+        hb * (1.0 - state_decay) + lr * local_update_scale * np.mean(dh, axis=0),
+        readout * (1.0 - state_decay) + lr * readout_update_scale * np.einsum("nk,nbc->kbc", d, h) / batch,
+        output_bias * (1.0 - state_decay) + lr * output_bias_update_scale * np.mean(d, axis=0),
     )
 
 
@@ -214,9 +291,21 @@ def main() -> None:
     ap.add_argument("--derivative-gate-threshold", type=float, default=1e-6)
     ap.add_argument("--readout-feedback-mode", default="readout")
     ap.add_argument("--readout-feedback-clip", type=float, default=0.05)
+    ap.add_argument("--output-bias-update-scale", type=float, default=1.0)
+    ap.add_argument("--readout-update-scale", type=float, default=1.0)
+    ap.add_argument("--local-update-scale", type=float, default=1.0)
+    ap.add_argument("--state-decay", type=float, default=0.0)
+    ap.add_argument("--softmax-negative-scale", type=float, default=1.0)
+    ap.add_argument("--softmax-error-centering", choices=["none", "mean"], default="none")
+    ap.add_argument("--softmax-temperature", type=float, default=1.0)
+    ap.add_argument("--softmax-competition-mode", choices=["all", "normalized-power"], default="all")
+    ap.add_argument("--softmax-competitor-power", type=int, default=2)
+    ap.add_argument("--softmax-error-gate", choices=["none", "target-margin"], default="none")
+    ap.add_argument("--softmax-margin", type=float, default=1.0)
     ap.add_argument("--hidden-synapse-mode", default="linear")
     ap.add_argument("--readout-synapse-mode", default="linear")
     ap.add_argument("--synapse-clip", type=float, default=1.0)
+    ap.add_argument("--readout-class-centering", choices=["none", "mean"], default="none")
     ap.add_argument("--init-weights", default="")
     ap.add_argument("--probe-updates", default="powers2")
     ap.add_argument("--eval-batch-size", type=int, default=1024)
@@ -230,6 +319,18 @@ def main() -> None:
         raise ValueError("sample counts must be positive")
     if args.synapse_clip <= 0:
         raise ValueError("--synapse-clip must be positive")
+    if args.softmax_negative_scale < 0:
+        raise ValueError("--softmax-negative-scale must be non-negative")
+    if args.softmax_temperature <= 0:
+        raise ValueError("--softmax-temperature must be positive")
+    if args.softmax_competitor_power < 1:
+        raise ValueError("--softmax-competitor-power must be positive")
+    if args.softmax_error_gate == "target-margin" and args.softmax_margin <= 0:
+        raise ValueError("--softmax-margin must be positive when --softmax-error-gate is target-margin")
+    if args.output_bias_update_scale < 0 or args.readout_update_scale < 0 or args.local_update_scale < 0:
+        raise ValueError("update scales must be non-negative")
+    if args.state_decay < 0 or args.state_decay >= 1:
+        raise ValueError("--state-decay must be in [0, 1)")
     stride = args.block_size if args.stride is None else args.stride
     blocks = block_indices(args.image_size, args.block_size, stride)
     probe_updates = parse_probe_update_list(args.probe_updates, args.train_samples)
@@ -247,6 +348,8 @@ def main() -> None:
         "synapse_clip": args.synapse_clip,
         "linear_output": args.linear_output,
         "softmax_output": args.softmax_output,
+        "softmax_temperature": args.softmax_temperature,
+        "readout_class_centering": args.readout_class_centering,
     }
     update_kwargs = {
         "lr": args.lr,
@@ -255,6 +358,16 @@ def main() -> None:
         "derivative_gate_threshold": args.derivative_gate_threshold,
         "readout_feedback_mode": args.readout_feedback_mode,
         "readout_feedback_clip": args.readout_feedback_clip,
+        "output_bias_update_scale": args.output_bias_update_scale,
+        "readout_update_scale": args.readout_update_scale,
+        "local_update_scale": args.local_update_scale,
+        "state_decay": args.state_decay,
+        "softmax_negative_scale": args.softmax_negative_scale,
+        "softmax_error_centering": args.softmax_error_centering,
+        "softmax_competition_mode": args.softmax_competition_mode,
+        "softmax_competitor_power": args.softmax_competitor_power,
+        "softmax_error_gate": args.softmax_error_gate,
+        "softmax_margin": args.softmax_margin,
         **forward_kwargs,
     }
     t0 = time.perf_counter()
@@ -299,9 +412,21 @@ def main() -> None:
         "local_activation": args.local_activation,
         "activation_derivative": args.activation_derivative,
         "readout_feedback_mode": args.readout_feedback_mode,
+        "output_bias_update_scale": args.output_bias_update_scale,
+        "readout_update_scale": args.readout_update_scale,
+        "local_update_scale": args.local_update_scale,
+        "state_decay": args.state_decay,
+        "softmax_negative_scale": args.softmax_negative_scale,
+        "softmax_error_centering": args.softmax_error_centering,
+        "softmax_temperature": args.softmax_temperature,
+        "softmax_competition_mode": args.softmax_competition_mode,
+        "softmax_competitor_power": args.softmax_competitor_power,
+        "softmax_error_gate": args.softmax_error_gate,
+        "softmax_margin": args.softmax_margin,
         "hidden_synapse_mode": args.hidden_synapse_mode,
         "readout_synapse_mode": args.readout_synapse_mode,
         "synapse_clip": args.synapse_clip,
+        "readout_class_centering": args.readout_class_centering,
         "initial_eval_accuracy": initial_eval,
         "final_eval_accuracy": final_eval,
         "eval_improvement": final_eval - initial_eval,

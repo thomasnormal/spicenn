@@ -292,6 +292,12 @@ def test_fast_online_variant_sweep_row_reports_best_probe_and_improvement() -> N
     assert row["strict_phase_promotion_updates"] == 2
     assert row["strict_phase_promotion_max_transient_points"] == 2000
     assert row["strict_phase_promotion_max_source_pwl_points"] == 5000
+    assert row["strict_phase_promotion_phase_clock_mode"] == "analytic"
+    assert row["strict_phase_promotion_estimated_transient_points"] == 34
+    assert row["strict_phase_promotion_transient_budget_met"] is True
+    assert row["strict_phase_promotion_phase_clock_source_pwl_points"] == 0
+    assert row["strict_phase_promotion_total_source_pwl_points"] == row["strict_phase_promotion_sample_source_pwl_points"]
+    assert row["strict_phase_promotion_source_pwl_budget_met"] is True
     assert row["initial_eval_accuracy"] >= 0.0
     assert row["final_eval_accuracy"] >= 0.0
     assert row["eval_improvement"] == pytest.approx(row["final_eval_accuracy"] - row["initial_eval_accuracy"])
@@ -356,6 +362,31 @@ def test_fast_online_strict_promotion_defaults_to_analytic_phase_clock() -> None
     command = fast_sweep.strict_phase_promotion_command(args, variant)
 
     assert command[command.index("--phase-clock-mode") + 1] == "analytic"
+
+
+def test_fast_online_strict_promotion_cost_fields_respect_pwl_clock_override() -> None:
+    args = argparse.Namespace(
+        train_samples=2,
+        promotion_updates=2,
+        promotion_phase=0.5e-9,
+        promotion_gap=0.05e-9,
+        promotion_edge=5e-12,
+        promotion_transient_step=200e-12,
+        promotion_max_transient_points=100,
+        promotion_max_source_pwl_points=50,
+        promotion_phase_clock_mode="pwl",
+        softmax_output=True,
+    )
+    x_train = np.array([[0.5, 0.0], [0.0, 0.5]])
+    y_train = np.array([0, 1])
+
+    fields = fast_sweep.strict_phase_promotion_cost_fields(args, x_train, y_train)
+
+    assert fields["strict_phase_promotion_phase_clock_mode"] == "pwl"
+    assert fields["strict_phase_promotion_estimated_transient_points"] == 34
+    assert fields["strict_phase_promotion_phase_clock_source_pwl_points"] == 50
+    assert fields["strict_phase_promotion_total_source_pwl_points"] > fields["strict_phase_promotion_sample_source_pwl_points"]
+    assert fields["strict_phase_promotion_source_pwl_budget_met"] is False
 
 
 def test_fast_online_variant_sweep_selects_best_promotion_variant() -> None:

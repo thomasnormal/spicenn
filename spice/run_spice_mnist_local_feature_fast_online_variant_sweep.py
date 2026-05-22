@@ -12,6 +12,12 @@ import pandas as pd
 
 import run_spice_mnist_local_feature_fast_online_reference as fast_ref
 from run_spice_mnist_local_block_batch_op_train import block_indices
+from run_spice_mnist_local_feature_phase_transient import (
+    estimate_transient_points,
+    make_phase_schedule,
+    phase_source_complexity,
+    target_matrix,
+)
 from run_spice_mnist_local_feature_phase_variant_sweep import activation_clip_pairs, parse_csv, parse_float_csv, variant_tag
 from run_spice_mnist_train import load_mnist_sequence
 from run_spice_sweep import ROOT
@@ -305,6 +311,48 @@ def strict_phase_promotion_command(args: argparse.Namespace, variant: dict[str, 
     return command
 
 
+def strict_phase_promotion_cost_fields(
+    args: argparse.Namespace,
+    x_train: np.ndarray,
+    y_train: np.ndarray,
+) -> dict[str, Any]:
+    updates = int(getattr(args, "promotion_updates", 0) or args.train_samples)
+    if updates <= 0:
+        raise ValueError("--promotion-updates must be positive when set")
+    if len(x_train) < updates or len(y_train) < updates:
+        raise ValueError("training prefix is shorter than promotion updates")
+    phase = float(getattr(args, "promotion_phase", 0.5e-9))
+    gap = float(getattr(args, "promotion_gap", 0.05e-9))
+    edge = float(getattr(args, "promotion_edge", 5e-12))
+    transient_step = float(getattr(args, "promotion_transient_step", 200e-12))
+    phase_clock_mode = getattr(args, "promotion_phase_clock_mode", "analytic")
+    phases, sample_starts, t_stop = make_phase_schedule(1, updates, phase, gap, True)
+    source_complexity = phase_source_complexity(
+        x_train[:updates],
+        target_matrix(y_train[:updates], 10, bool(args.softmax_output)),
+        phases,
+        sample_starts,
+        t_stop,
+        edge,
+        True,
+        phase_clock_mode,
+    )
+    estimated_points = estimate_transient_points(t_stop, transient_step)
+    max_transient_points = int(getattr(args, "promotion_max_transient_points", 0))
+    max_source_pwl_points = int(getattr(args, "promotion_max_source_pwl_points", 0))
+    return {
+        "strict_phase_promotion_phase_clock_mode": phase_clock_mode,
+        "strict_phase_promotion_estimated_transient_points": estimated_points,
+        "strict_phase_promotion_transient_budget_met": bool(not max_transient_points or estimated_points <= max_transient_points),
+        "strict_phase_promotion_sample_source_pwl_points": source_complexity["sample_source_pwl_points"],
+        "strict_phase_promotion_phase_clock_source_pwl_points": source_complexity["phase_clock_source_pwl_points"],
+        "strict_phase_promotion_total_source_pwl_points": source_complexity["total_source_pwl_points"],
+        "strict_phase_promotion_source_pwl_budget_met": bool(
+            not max_source_pwl_points or source_complexity["total_source_pwl_points"] <= max_source_pwl_points
+        ),
+    }
+
+
 def run_variant(
     args: argparse.Namespace,
     variant: dict[str, Any],
@@ -339,6 +387,7 @@ def run_variant(
         promotion_probe_eval_accuracy = final_eval
     wall = time.perf_counter() - t0
     phase_command = strict_phase_promotion_command(args, variant)
+    promotion_costs = strict_phase_promotion_cost_fields(args, x_train, y_train)
     return {
         **variant,
         "initial_eval_accuracy": initial_eval,
@@ -350,6 +399,7 @@ def run_variant(
         "strict_phase_promotion_updates": promotion_updates,
         "strict_phase_promotion_max_transient_points": int(getattr(args, "promotion_max_transient_points", 2000)),
         "strict_phase_promotion_max_source_pwl_points": int(getattr(args, "promotion_max_source_pwl_points", 0)),
+        **promotion_costs,
         "strict_phase_promotion_command": command_text(phase_command),
         **probe_columns,
         "wall_time_s": wall,

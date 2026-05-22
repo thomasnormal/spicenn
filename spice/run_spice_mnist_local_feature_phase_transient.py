@@ -53,6 +53,28 @@ def phase_pulse_area(phase: float, edge: float) -> float:
     return phase + edge
 
 
+def phase_state_descriptions(update_mode: str) -> dict[str, str]:
+    if update_mode == "phased":
+        temporary = (
+            "feature activations, class scores, class deltas, hidden/backward feature deltas, "
+            "and gradient accumulators are capacitor voltages"
+        )
+    elif update_mode == "direct":
+        temporary = (
+            "feature activations, class scores, class deltas, and hidden/backward feature deltas "
+            "are capacitor voltages; weights are updated directly during each per-sample update phase"
+        )
+    else:
+        raise ValueError("update_mode must be 'phased' or 'direct'")
+    return {
+        "persistent_state": (
+            "local feature weights, local biases, class readout weights, and output biases are "
+            "persistent capacitor voltages initialized once at the start of the transient"
+        ),
+        "temporary_state": temporary,
+    }
+
+
 def sample_source_pwl(values: np.ndarray, sample_starts: list[float], t_stop: float, edge: float) -> str:
     points: list[tuple[float, float]] = [(0.0, float(values[0]))]
     for s, val in enumerate(values):
@@ -300,10 +322,11 @@ def make_phase_transient_netlist(
     tau = phase / settle_ratio
     phase_area = phase_pulse_area(phase, edge)
     targets = target_matrix(y_batch, n_classes, softmax_output)
+    state_descriptions = phase_state_descriptions(update_mode)
     lines = [
         "* Phase-resolved transient local-feature/readout training deck.",
-        "* Persistent local feature and readout parameters are capacitor voltages.",
-        "* Feature activations, class deltas, backward deltas, and gradients are capacitor voltages.",
+        f"* {state_descriptions['persistent_state']}.",
+        f"* {state_descriptions['temporary_state']}.",
         f".param LR={lr:.12g}",
         f".param BS={update_batch_size}",
         f".param CW={cw:.12g}",
@@ -1098,6 +1121,7 @@ def main() -> None:
     pd.DataFrame([metrics]).to_csv(metrics_path, index=False)
     if probe_rows:
         pd.DataFrame(probe_rows).to_csv(probe_metrics_path, index=False)
+    state_descriptions = phase_state_descriptions(args.update_mode)
     summary = {
         "simulator": version,
         "simulator_selector": args.simulator,
@@ -1175,8 +1199,7 @@ def main() -> None:
         "phase_s": args.phase,
         "settle_ratio": args.settle_ratio,
         "output_mode": phase_output_mode,
-        "persistent_state": "local feature weights, local biases, class readout weights, and output biases are capacitor voltages with checkpoint ICs",
-        "temporary_state": "feature activations, class scores, class deltas, hidden/backward feature deltas, and gradient accumulators are capacitor voltages",
+        **state_descriptions,
         "python_role": "Python generates guiding waveforms and compares final state; it does not carry training state during the transient run.",
         "python_checkpointing_between_samples": False,
         "note": (

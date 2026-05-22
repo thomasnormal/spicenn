@@ -494,6 +494,8 @@ def test_phase_transient_direct_update_mode_omits_gradient_accumulator_family(tm
     assert "Cgob0" not in netlist
     assert "Bacc_w0_0_0" not in netlist
     assert "Bclear_gw0_0_0" not in netlist
+    assert "gradient accumulators are capacitor voltages" not in netlist
+    assert "weights are updated directly during each per-sample update phase" in netlist
     assert "Bupd_w0_0_0 w0_0_0 0 I = -V(pacc)*{CW}*{LR}/({BS}*{TAREA})*(V(dh0_0)*V(pix0))" in netlist
 
     with pytest.raises(ValueError, match="direct update mode"):
@@ -522,6 +524,19 @@ def test_phase_transient_direct_update_mode_omits_gradient_accumulator_family(tm
             True,
             update_mode="direct",
         )
+
+
+def test_phase_transient_state_descriptions_follow_update_mode() -> None:
+    phased = phase_transient.phase_state_descriptions("phased")
+    direct = phase_transient.phase_state_descriptions("direct")
+
+    assert "gradient accumulators" in phased["temporary_state"]
+    assert "gradient accumulators" not in direct["temporary_state"]
+    assert "updated directly during each per-sample update phase" in direct["temporary_state"]
+    assert "checkpoint" not in direct["persistent_state"].lower()
+
+    with pytest.raises(ValueError, match="update_mode"):
+        phase_transient.phase_state_descriptions("online")
 
 
 def test_phase_transient_relu_deck_matches_forward_and_backward_activation(tmp_path: Path) -> None:

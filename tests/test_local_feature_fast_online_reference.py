@@ -1,0 +1,71 @@
+import sys
+from pathlib import Path
+
+import numpy as np
+import pytest
+
+
+ROOT = Path(__file__).resolve().parents[1]
+SPICE_DIR = ROOT / "spice"
+if str(SPICE_DIR) not in sys.path:
+    sys.path.insert(0, str(SPICE_DIR))
+
+import run_spice_mnist_local_feature_fast_online_reference as fast_ref  # noqa: E402
+
+
+def test_synapse_transfer_np_matches_spice_transfer_families() -> None:
+    weights = np.array([-2.0, -0.5, 0.0, 0.5, 2.0])
+
+    assert fast_ref.synapse_transfer_np(weights, "linear", 0.25).tolist() == pytest.approx(weights.tolist())
+    assert fast_ref.synapse_transfer_np(weights, "hard-clipped", 0.25).tolist() == pytest.approx(
+        [-0.25, -0.25, 0.0, 0.25, 0.25]
+    )
+    assert fast_ref.synapse_transfer_np(np.array([0.25]), "tanh-clipped", 0.25)[0] == pytest.approx(0.25 * np.tanh(1.0))
+    assert fast_ref.synapse_transfer_np(np.array([-0.5, 0.5]), "sign", 0.25).tolist() == pytest.approx([-0.25, 0.25])
+
+
+def test_fast_online_softmax_update_uses_raw_weight_update_with_effective_forward_synapses() -> None:
+    x = np.array([[0.5, 1.0]])
+    labels = np.array([1])
+    blocks = [[0, 1]]
+    w = np.array([[[0.2, -0.1]]])
+    hb = np.array([[0.0]])
+    readout = np.array([[[0.3]], [[-0.2]]])
+    output_bias = np.array([0.0, 0.0])
+    state = (w.copy(), hb.copy(), readout.copy(), output_bias.copy())
+
+    updated = fast_ref.update_np(
+        x,
+        labels,
+        state,
+        blocks,
+        lr=0.8,
+        linear_output=False,
+        softmax_output=True,
+        local_activation="tanh",
+        relu_clip=1.0,
+        activation_derivative="exact",
+        derivative_floor=0.0,
+        derivative_gate_threshold=1e-6,
+        readout_feedback_mode="readout",
+        readout_feedback_clip=0.05,
+        relu_leak=0.01,
+        softplus_beta=10.0,
+        hidden_synapse_mode="tanh-clipped",
+        readout_synapse_mode="linear",
+        synapse_clip=0.25,
+    )
+
+    effective_w = 0.25 * np.tanh(w / 0.25)
+    pre = np.einsum("nbp,bcp->nbc", fast_ref.block_tensor_np(x, blocks), effective_w) + hb
+    h = np.tanh(pre)
+    score = np.einsum("nbc,kbc->nk", h, readout) + output_bias
+    y = fast_ref.output_activation_np(score, linear_output=False, softmax_output=True)
+    d = np.array([[0.0, 1.0]]) - y
+    dh = np.einsum("nk,kbc->nbc", d, readout) * (1.0 - h * h)
+
+    assert updated[0] == pytest.approx(w + 0.8 * np.einsum("nbc,nbp->bcp", dh, fast_ref.block_tensor_np(x, blocks)))
+    assert updated[1] == pytest.approx(hb + 0.8 * dh[0])
+    assert updated[2] == pytest.approx(readout + 0.8 * np.einsum("nk,nbc->kbc", d, h))
+    assert updated[3] == pytest.approx(output_bias + 0.8 * d[0])
+

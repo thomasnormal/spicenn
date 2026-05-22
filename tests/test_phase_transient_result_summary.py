@@ -31,6 +31,7 @@ def test_phase_summary_row_keeps_execution_contract_and_backend_fields(tmp_path:
                 "block_size": 4,
                 "stride": 2,
                 "channels": 2,
+                "mnist_index_order": "stable_permutation_prefix",
                 "batch_size": 1,
                 "updates": 16,
                 "eval_samples": 100,
@@ -71,6 +72,7 @@ def test_phase_summary_row_keeps_execution_contract_and_backend_fields(tmp_path:
     assert row["topology"] == "10x10 b4 s2 c2"
     assert row["simulator"] == "Xyce"
     assert row["updates"] == 16
+    assert row["mnist_index_order"] == "stable_permutation_prefix"
     assert row["eval_backend"] == "both"
     assert row["fully_on_device_execution_contract_met"] is True
     assert row["strict_fully_on_device_contract_met"] is True

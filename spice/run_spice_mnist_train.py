@@ -44,8 +44,9 @@ def update_gate(n_samples: int, sample_period: float, settle_frac: float = 0.45,
 def mnist_index_splits(n_train: int, n_test: int, train_count: int, test_count: int, seed: int) -> tuple[np.ndarray, np.ndarray]:
     """Choose train/test samples from independent RNG streams.
 
-    Keeping the held-out stream independent makes eval slices comparable when
-    only the online training horizon changes.
+    Keeping streams independent makes eval slices comparable when only the
+    online training horizon changes. Taking prefixes from full permutations
+    also makes shorter training horizons match the prefix of longer runs.
     """
     if n_train < 0 or n_test < 0:
         raise ValueError("sample counts must be non-negative")
@@ -53,8 +54,8 @@ def mnist_index_splits(n_train: int, n_test: int, train_count: int, test_count: 
         raise ValueError("requested MNIST sample count exceeds dataset size")
     seed_sequence = np.random.SeedSequence(seed)
     train_seed, test_seed = seed_sequence.spawn(2)
-    train_idx = np.random.default_rng(train_seed).choice(train_count, size=n_train, replace=False)
-    test_idx = np.random.default_rng(test_seed).choice(test_count, size=n_test, replace=False)
+    train_idx = np.random.default_rng(train_seed).permutation(train_count)[:n_train]
+    test_idx = np.random.default_rng(test_seed).permutation(test_count)[:n_test]
     return train_idx, test_idx
 
 

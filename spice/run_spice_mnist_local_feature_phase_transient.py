@@ -1590,6 +1590,7 @@ def main() -> None:
         "blocks": len(blocks),
         "channels": args.channels,
         "classes": 10,
+        "mnist_index_order": "stable_permutation_prefix",
         "train_samples": args.train_samples,
         "eval_samples": args.eval_samples,
         "batch_size": args.batch_size,

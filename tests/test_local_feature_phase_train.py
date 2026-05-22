@@ -455,14 +455,15 @@ def test_phase_transient_cleanup_simulator_sidecars_removes_only_known_sidecars(
     assert not mt0.exists()
 
 
-def test_mnist_index_splits_keep_test_slice_independent_of_train_count() -> None:
-    _train_small, test_small = mnist_train.mnist_index_splits(5, 8, 100, 100, seed=7)
-    _train_large, test_large = mnist_train.mnist_index_splits(50, 8, 100, 100, seed=7)
+def test_mnist_index_splits_use_stable_train_and_test_prefixes() -> None:
+    train_small, test_small = mnist_train.mnist_index_splits(5, 8, 100, 100, seed=7)
+    train_large, test_large = mnist_train.mnist_index_splits(50, 20, 100, 100, seed=7)
     train_again, test_again = mnist_train.mnist_index_splits(5, 8, 100, 100, seed=7)
 
-    assert test_small.tolist() == test_large.tolist()
+    assert train_small.tolist() == train_large[:5].tolist()
+    assert test_small.tolist() == test_large[:8].tolist()
     assert test_small.tolist() == test_again.tolist()
-    assert train_again.shape == (5,)
+    assert train_small.tolist() == train_again.tolist()
 
     with pytest.raises(ValueError, match="exceeds"):
         mnist_train.mnist_index_splits(101, 1, 100, 100, seed=7)

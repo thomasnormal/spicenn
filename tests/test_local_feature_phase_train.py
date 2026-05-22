@@ -291,6 +291,39 @@ def test_phase_transient_analytic_phase_clock_complexity_removes_clock_pwl_point
     assert complexity["total_source_pwl_points"] == complexity["sample_source_pwl_points"]
 
 
+def test_phase_transient_lr_schedule_values_support_linear_decay() -> None:
+    assert phase_transient.lr_schedule_values(0.8, 1, "linear-decay", 0.25).tolist() == pytest.approx([0.8])
+    assert phase_transient.lr_schedule_values(0.8, 3, "linear-decay", 0.25).tolist() == pytest.approx([0.8, 0.5, 0.2])
+
+
+def test_phase_transient_source_complexity_counts_lr_control_waveform() -> None:
+    x = np.zeros((2, 2), dtype=float)
+    y = np.array([0, 1])
+    phases, sample_starts, t_stop = phase_transient.make_phase_schedule(1, 2, 1.0e-9, 0.1e-9, True)
+    targets = phase_transient.target_matrix(y, 2, softmax_output=True)
+
+    complexity = phase_transient.phase_source_complexity(
+        x,
+        targets,
+        phases,
+        sample_starts,
+        t_stop,
+        0.1e-9,
+        True,
+        phase_clock_mode="analytic",
+        lr_values=np.array([0.8, 0.2]),
+    )
+
+    assert complexity["control_source_count"] == 1
+    assert complexity["control_source_pwl_count"] == 1
+    assert complexity["control_source_pwl_points"] > 0
+    assert complexity["total_source_pwl_points"] == (
+        complexity["sample_source_pwl_points"]
+        + complexity["phase_clock_source_pwl_points"]
+        + complexity["control_source_pwl_points"]
+    )
+
+
 def test_phase_transient_activation_exprs_cover_relu_families() -> None:
     assert phase_transient.local_activation_expr("x", "relu", 1.0) == "0.5*((x)+abs(x))"
     assert "0.5*(((x)-0.25)+abs((x)-0.25))" in phase_transient.local_activation_expr("x", "clipped-relu", 0.25)
@@ -1604,6 +1637,48 @@ def test_phase_transient_direct_update_mode_omits_gradient_accumulator_family(tm
         )
 
 
+def test_phase_transient_linear_decay_lr_schedule_uses_control_waveform(tmp_path: Path) -> None:
+    x = np.zeros((2, 4))
+    y = np.array([0, 1])
+    w = np.zeros((1, 1, 4))
+    hb = np.zeros((1, 1))
+    readout = np.zeros((2, 1, 1))
+    output_bias = np.zeros(2)
+
+    netlist, _n_vec, _t_stop = phase_transient.make_phase_transient_netlist(
+        x,
+        y,
+        w,
+        hb,
+        readout,
+        output_bias,
+        [[0, 1, 2, 3]],
+        0.8,
+        tmp_path / "out.dat",
+        False,
+        1,
+        2,
+        1e-9,
+        0.1e-9,
+        5e-12,
+        40.0,
+        20e-12,
+        1e-12,
+        1e-12,
+        1e-12,
+        1e18,
+        True,
+        update_mode="direct",
+        lr_schedule="linear-decay",
+        lr_final_scale=0.25,
+    )
+
+    assert "Vlrctrl lrctrl 0 PWL(" in netlist
+    assert "0.8" in netlist
+    assert "0.2" in netlist
+    assert "Bupd_w0_0_0 w0_0_0 0 I = -V(pacc)*{CW}*V(lrctrl)*{LOCAL_UPDATE_SCALE}/({BS}*{TAREA})*(V(dh0_0)*V(pix0))" in netlist
+
+
 def test_phase_transient_state_descriptions_follow_update_mode() -> None:
     phased = phase_transient.phase_state_descriptions("phased")
     direct = phase_transient.phase_state_descriptions("direct")
@@ -1696,6 +1771,9 @@ def test_phase_transient_preflight_summary_has_no_artifact_paths() -> None:
         train_indices=np.array([5, 7]),
         eval_indices=np.array([11]),
         labels=labels,
+        lr=0.8,
+        lr_schedule="linear-decay",
+        lr_final_scale=0.25,
         update_mode="direct",
         phase_clock_mode="analytic",
         reference_mode="none",
@@ -1714,6 +1792,8 @@ def test_phase_transient_preflight_summary_has_no_artifact_paths() -> None:
     assert summary["status"] == "phase_preflight_only"
     assert summary["preflight_only"] is True
     assert summary["strict_fully_on_device_contract_met"] is True
+    assert summary["lr_schedule"] == "linear-decay"
+    assert summary["lr_final_scale"] == 0.25
     assert summary["phase_clock_mode"] == "analytic"
     assert summary["phase_netlist"] is None
     assert summary["final_weights"] is None

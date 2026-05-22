@@ -15,6 +15,7 @@ from run_spice_mnist_local_feature_phase_transient import (
     block_tensor_np,
     load_or_init_weights,
     local_activation_np,
+    lr_schedule_values,
     numpy_eval_accuracy as accuracy_np,
     output_activation_np,
     parse_probe_update_list,
@@ -264,8 +265,20 @@ def run_online(
     probes = set(probe_updates)
     probe_states = {}
     next_state = tuple(arr.copy() for arr in state)
+    update_args = dict(update_kwargs)
+    base_lr = float(update_args.pop("lr"))
+    lr_schedule = update_args.pop("lr_schedule", "constant")
+    lr_final_scale = float(update_args.pop("lr_final_scale", 1.0))
+    lr_values = lr_schedule_values(base_lr, len(y_train), lr_schedule, lr_final_scale)
     for update in range(1, len(y_train) + 1):
-        next_state = update_np(x_train[update - 1 : update], y_train[update - 1 : update], next_state, blocks, **update_kwargs)
+        next_state = update_np(
+            x_train[update - 1 : update],
+            y_train[update - 1 : update],
+            next_state,
+            blocks,
+            **update_args,
+            lr=float(lr_values[update - 1]),
+        )
         if update in probes:
             probe_states[update] = tuple(arr.copy() for arr in next_state)
     return next_state, probe_states
@@ -280,6 +293,8 @@ def main() -> None:
     ap.add_argument("--stride", type=int, default=2)
     ap.add_argument("--channels", type=int, default=2)
     ap.add_argument("--lr", type=float, default=0.8)
+    ap.add_argument("--lr-schedule", choices=["constant", "linear-decay"], default="constant")
+    ap.add_argument("--lr-final-scale", type=float, default=1.0)
     ap.add_argument("--linear-output", action="store_true")
     ap.add_argument("--softmax-output", action="store_true", default=True)
     ap.add_argument("--local-activation", default="tanh")
@@ -317,6 +332,10 @@ def main() -> None:
         raise ValueError("--linear-output and --softmax-output are mutually exclusive")
     if args.train_samples <= 0 or args.eval_samples <= 0:
         raise ValueError("sample counts must be positive")
+    if args.lr < 0:
+        raise ValueError("--lr must be non-negative")
+    if args.lr_final_scale < 0:
+        raise ValueError("--lr-final-scale must be non-negative")
     if args.synapse_clip <= 0:
         raise ValueError("--synapse-clip must be positive")
     if args.softmax_negative_scale < 0:
@@ -353,6 +372,8 @@ def main() -> None:
     }
     update_kwargs = {
         "lr": args.lr,
+        "lr_schedule": args.lr_schedule,
+        "lr_final_scale": args.lr_final_scale,
         "activation_derivative": args.activation_derivative,
         "derivative_floor": args.derivative_floor,
         "derivative_gate_threshold": args.derivative_gate_threshold,
@@ -407,6 +428,8 @@ def main() -> None:
         "eval_samples": args.eval_samples,
         "batch_size": 1,
         "lr": args.lr,
+        "lr_schedule": args.lr_schedule,
+        "lr_final_scale": args.lr_final_scale,
         "linear_output": bool(args.linear_output),
         "softmax_output": bool(args.softmax_output),
         "local_activation": args.local_activation,

@@ -14,6 +14,7 @@ import run_spice_mnist_local_feature_fast_online_reference as fast_ref
 from run_spice_mnist_local_block_batch_op_train import block_indices
 from run_spice_mnist_local_feature_phase_transient import (
     estimate_transient_points,
+    lr_schedule_values,
     make_phase_schedule,
     phase_source_complexity,
     target_matrix,
@@ -36,6 +37,8 @@ def float_axis(args: argparse.Namespace, plural_name: str, single_name: str, fla
 def hparam_tag(
     base_tag: str,
     lr: float,
+    lr_schedule: str,
+    lr_final_scale: float,
     output_bias_update_scale: float,
     readout_update_scale: float,
     local_update_scale: float,
@@ -43,7 +46,7 @@ def hparam_tag(
     softmax_temperature: float,
 ) -> str:
     return fast_ref.sanitize_tag(
-        f"{base_tag}_lr{lr:g}_obs{output_bias_update_scale:g}_rs{readout_update_scale:g}"
+        f"{base_tag}_lr{lr:g}_{lr_schedule}_lrfs{lr_final_scale:g}_obs{output_bias_update_scale:g}_rs{readout_update_scale:g}"
         f"_ls{local_update_scale:g}_decay{state_decay:g}_temp{softmax_temperature:g}"
     )
 
@@ -57,6 +60,7 @@ def variant_grid(args: argparse.Namespace) -> list[dict[str, Any]]:
     readout_synapse_modes = parse_csv(args.readout_synapse_modes)
     synapse_clips = parse_float_csv(args.synapse_clips) if args.synapse_clips else [args.synapse_clip]
     lrs = float_axis(args, "lrs", "lr", "lrs")
+    lr_final_scales = float_axis(args, "lr_final_scales", "lr_final_scale", "lr-final-scales")
     output_bias_update_scales = float_axis(
         args,
         "output_bias_update_scales",
@@ -83,6 +87,8 @@ def variant_grid(args: argparse.Namespace) -> list[dict[str, Any]]:
         raise ValueError("--synapse-clip/--synapse-clips values must be positive")
     if any(lr < 0 for lr in lrs):
         raise ValueError("--lr/--lrs values must be non-negative")
+    if any(scale < 0 for scale in lr_final_scales):
+        raise ValueError("--lr-final-scale/--lr-final-scales values must be non-negative")
     if any(scale < 0 for scale in output_bias_update_scales):
         raise ValueError("--output-bias-update-scale/--output-bias-update-scales values must be non-negative")
     if any(scale < 0 for scale in readout_update_scales):
@@ -112,37 +118,42 @@ def variant_grid(args: argparse.Namespace) -> list[dict[str, Any]]:
                                 synapse_clip,
                             )
                             for lr in lrs:
-                                for output_bias_update_scale in output_bias_update_scales:
-                                    for readout_update_scale in readout_update_scales:
-                                        for local_update_scale in local_update_scales:
-                                            for state_decay in state_decays:
-                                                for softmax_temperature in softmax_temperatures:
-                                                    rows.append(
-                                                        {
-                                                            "local_activation": activation,
-                                                            "relu_clip": relu_clip,
-                                                            "activation_derivative": derivative_mode,
-                                                            "readout_feedback_mode": feedback_mode,
-                                                            "hidden_synapse_mode": hidden_synapse_mode,
-                                                            "readout_synapse_mode": readout_synapse_mode,
-                                                            "synapse_clip": synapse_clip,
-                                                            "lr": lr,
-                                                            "output_bias_update_scale": output_bias_update_scale,
-                                                            "readout_update_scale": readout_update_scale,
-                                                            "local_update_scale": local_update_scale,
-                                                            "state_decay": state_decay,
-                                                            "softmax_temperature": softmax_temperature,
-                                                            "tag": hparam_tag(
-                                                                family_tag,
-                                                                lr,
-                                                                output_bias_update_scale,
-                                                                readout_update_scale,
-                                                                local_update_scale,
-                                                                state_decay,
-                                                                softmax_temperature,
-                                                            ),
-                                                        }
-                                                    )
+                                for lr_final_scale in lr_final_scales:
+                                    for output_bias_update_scale in output_bias_update_scales:
+                                        for readout_update_scale in readout_update_scales:
+                                            for local_update_scale in local_update_scales:
+                                                for state_decay in state_decays:
+                                                    for softmax_temperature in softmax_temperatures:
+                                                        rows.append(
+                                                            {
+                                                                "local_activation": activation,
+                                                                "relu_clip": relu_clip,
+                                                                "activation_derivative": derivative_mode,
+                                                                "readout_feedback_mode": feedback_mode,
+                                                                "hidden_synapse_mode": hidden_synapse_mode,
+                                                                "readout_synapse_mode": readout_synapse_mode,
+                                                                "synapse_clip": synapse_clip,
+                                                                "lr": lr,
+                                                                "lr_schedule": args.lr_schedule,
+                                                                "lr_final_scale": lr_final_scale,
+                                                                "output_bias_update_scale": output_bias_update_scale,
+                                                                "readout_update_scale": readout_update_scale,
+                                                                "local_update_scale": local_update_scale,
+                                                                "state_decay": state_decay,
+                                                                "softmax_temperature": softmax_temperature,
+                                                                "tag": hparam_tag(
+                                                                    family_tag,
+                                                                    lr,
+                                                                    args.lr_schedule,
+                                                                    lr_final_scale,
+                                                                    output_bias_update_scale,
+                                                                    readout_update_scale,
+                                                                    local_update_scale,
+                                                                    state_decay,
+                                                                    softmax_temperature,
+                                                                ),
+                                                            }
+                                                        )
     return rows
 
 
@@ -165,6 +176,8 @@ def forward_kwargs(args: argparse.Namespace, variant: dict[str, Any]) -> dict[st
 def update_kwargs(args: argparse.Namespace, variant: dict[str, Any]) -> dict[str, Any]:
     return {
         "lr": variant["lr"],
+        "lr_schedule": variant.get("lr_schedule", "constant"),
+        "lr_final_scale": variant.get("lr_final_scale", 1.0),
         "activation_derivative": variant["activation_derivative"],
         "derivative_floor": args.derivative_floor,
         "derivative_gate_threshold": args.derivative_gate_threshold,
@@ -231,6 +244,10 @@ def strict_phase_promotion_command(args: argparse.Namespace, variant: dict[str, 
         str(updates),
         "--lr",
         str(variant["lr"]),
+        "--lr-schedule",
+        variant.get("lr_schedule", "constant"),
+        "--lr-final-scale",
+        str(variant.get("lr_final_scale", 1.0)),
         "--phase",
         str(getattr(args, "promotion_phase", 0.5e-9)),
         "--gap",
@@ -321,6 +338,7 @@ def strict_phase_promotion_command(args: argparse.Namespace, variant: dict[str, 
 
 def strict_phase_promotion_cost_fields(
     args: argparse.Namespace,
+    variant: dict[str, Any],
     x_train: np.ndarray,
     y_train: np.ndarray,
 ) -> dict[str, Any]:
@@ -335,6 +353,11 @@ def strict_phase_promotion_cost_fields(
     transient_step = float(getattr(args, "promotion_transient_step", 200e-12))
     phase_clock_mode = getattr(args, "promotion_phase_clock_mode", "analytic")
     phases, sample_starts, t_stop = make_phase_schedule(1, updates, phase, gap, True)
+    lr_values = None
+    lr_schedule = variant.get("lr_schedule", "constant")
+    lr_final_scale = float(variant.get("lr_final_scale", 1.0))
+    if lr_schedule != "constant":
+        lr_values = lr_schedule_values(float(variant["lr"]), updates, lr_schedule, lr_final_scale)
     source_complexity = phase_source_complexity(
         x_train[:updates],
         target_matrix(y_train[:updates], 10, bool(args.softmax_output)),
@@ -344,6 +367,7 @@ def strict_phase_promotion_cost_fields(
         edge,
         True,
         phase_clock_mode,
+        lr_values,
     )
     estimated_points = estimate_transient_points(t_stop, transient_step)
     max_transient_points = int(getattr(args, "promotion_max_transient_points", 0))
@@ -395,7 +419,7 @@ def run_variant(
         promotion_probe_eval_accuracy = final_eval
     wall = time.perf_counter() - t0
     phase_command = strict_phase_promotion_command(args, variant)
-    promotion_costs = strict_phase_promotion_cost_fields(args, x_train, y_train)
+    promotion_costs = strict_phase_promotion_cost_fields(args, variant, x_train, y_train)
     return {
         **variant,
         "initial_eval_accuracy": initial_eval,
@@ -424,6 +448,9 @@ def main() -> None:
     ap.add_argument("--channels", type=int, default=2)
     ap.add_argument("--lr", type=float, default=0.8)
     ap.add_argument("--lrs", default="")
+    ap.add_argument("--lr-schedule", choices=["constant", "linear-decay"], default="constant")
+    ap.add_argument("--lr-final-scale", type=float, default=1.0)
+    ap.add_argument("--lr-final-scales", default="")
     ap.add_argument("--linear-output", action="store_true")
     ap.add_argument("--softmax-output", action=argparse.BooleanOptionalAction, default=True)
     ap.add_argument(
@@ -497,6 +524,8 @@ def main() -> None:
         raise ValueError("--softmax-competitor-power must be positive")
     if args.softmax_error_gate == "target-margin" and args.softmax_margin <= 0:
         raise ValueError("--softmax-margin must be positive when --softmax-error-gate is target-margin")
+    if args.lr_final_scale < 0:
+        raise ValueError("--lr-final-scale must be non-negative")
     if args.output_bias_update_scale < 0 or args.readout_update_scale < 0 or args.local_update_scale < 0:
         raise ValueError("update scales must be non-negative")
     if args.state_decay < 0 or args.state_decay >= 1:

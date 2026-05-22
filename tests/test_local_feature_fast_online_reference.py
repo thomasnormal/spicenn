@@ -162,6 +162,63 @@ def test_fast_online_reference_honors_update_scales_and_decay() -> None:
     assert frozen_head[3] == pytest.approx(0.9 * output_bias)
 
 
+def test_fast_online_reference_linear_decay_lr_schedule_matches_manual_updates() -> None:
+    x = np.array([[0.5, 0.0], [0.0, 0.5]])
+    y = np.array([0, 1])
+    blocks = [[0, 1]]
+    state = (
+        np.array([[[0.1, -0.1]]]),
+        np.array([[0.0]]),
+        np.array([[[0.2]], [[-0.2]]]),
+        np.zeros(2),
+    )
+    kwargs = dict(
+        lr=0.8,
+        local_activation="tanh",
+        relu_clip=1.0,
+        relu_leak=0.01,
+        softplus_beta=10.0,
+        activation_derivative="exact",
+        derivative_floor=0.0,
+        derivative_gate_threshold=1e-6,
+        readout_feedback_mode="full-readout",
+        readout_feedback_clip=0.05,
+        output_bias_update_scale=0.0,
+        readout_update_scale=0.25,
+        local_update_scale=1.0,
+        state_decay=0.0,
+        softmax_negative_scale=1.0,
+        softmax_error_centering="none",
+        softmax_temperature=4.0,
+        softmax_competition_mode="all",
+        softmax_competitor_power=2,
+        softmax_error_gate="none",
+        softmax_margin=1.0,
+        hidden_synapse_mode="linear",
+        readout_synapse_mode="linear",
+        synapse_clip=1.0,
+        readout_class_centering="none",
+        linear_output=False,
+        softmax_output=True,
+    )
+
+    scheduled, _probes = fast_ref.run_online(
+        x,
+        y,
+        state,
+        blocks,
+        (),
+        **kwargs,
+        lr_schedule="linear-decay",
+        lr_final_scale=0.25,
+    )
+    manual = fast_ref.update_np(x[:1], y[:1], state, blocks, **{**kwargs, "lr": 0.8})
+    manual = fast_ref.update_np(x[1:], y[1:], manual, blocks, **{**kwargs, "lr": 0.2})
+
+    for got, expected in zip(scheduled, manual):
+        assert got == pytest.approx(expected)
+
+
 def test_fast_online_variant_sweep_grid_uses_phase_variant_family_axes() -> None:
     args = argparse.Namespace(
         activations="tanh,diff-clipped-relu",
@@ -174,6 +231,9 @@ def test_fast_online_variant_sweep_grid_uses_phase_variant_family_axes() -> None
         synapse_clips="1.0,2.0",
         lr=0.8,
         lrs="0.4,0.8",
+        lr_schedule="constant",
+        lr_final_scale=1.0,
+        lr_final_scales="",
         output_bias_update_scale=0.0,
         output_bias_update_scales="",
         readout_update_scale=0.25,
@@ -253,6 +313,8 @@ def test_fast_online_variant_sweep_row_reports_best_probe_and_improvement() -> N
         "readout_synapse_mode": "linear",
         "synapse_clip": 1.0,
         "lr": 0.8,
+        "lr_schedule": "linear-decay",
+        "lr_final_scale": 0.25,
         "output_bias_update_scale": 0.0,
         "readout_update_scale": 0.25,
         "local_update_scale": 1.0,
@@ -276,6 +338,8 @@ def test_fast_online_variant_sweep_row_reports_best_probe_and_improvement() -> N
 
     assert row["tag"] == "row"
     assert row["lr"] == 0.8
+    assert row["lr_schedule"] == "linear-decay"
+    assert row["lr_final_scale"] == 0.25
     assert row["readout_update_scale"] == 0.25
     assert row["softmax_temperature"] == 4.0
     command = shlex.split(row["strict_phase_promotion_command"])
@@ -287,6 +351,8 @@ def test_fast_online_variant_sweep_row_reports_best_probe_and_improvement() -> N
     assert command[command.index("--eval-backend") + 1] == "numpy"
     assert command[command.index("--updates") + 1] == "2"
     assert command[command.index("--lr") + 1] == "0.8"
+    assert command[command.index("--lr-schedule") + 1] == "linear-decay"
+    assert command[command.index("--lr-final-scale") + 1] == "0.25"
     assert command[command.index("--readout-update-scale") + 1] == "0.25"
     assert command[command.index("--softmax-temperature") + 1] == "4.0"
     assert row["strict_phase_promotion_updates"] == 2
@@ -296,7 +362,7 @@ def test_fast_online_variant_sweep_row_reports_best_probe_and_improvement() -> N
     assert row["strict_phase_promotion_estimated_transient_points"] == 34
     assert row["strict_phase_promotion_transient_budget_met"] is True
     assert row["strict_phase_promotion_phase_clock_source_pwl_points"] == 0
-    assert row["strict_phase_promotion_total_source_pwl_points"] == row["strict_phase_promotion_sample_source_pwl_points"]
+    assert row["strict_phase_promotion_total_source_pwl_points"] > row["strict_phase_promotion_sample_source_pwl_points"]
     assert row["strict_phase_promotion_source_pwl_budget_met"] is True
     assert row["initial_eval_accuracy"] >= 0.0
     assert row["final_eval_accuracy"] >= 0.0
@@ -379,8 +445,13 @@ def test_fast_online_strict_promotion_cost_fields_respect_pwl_clock_override() -
     )
     x_train = np.array([[0.5, 0.0], [0.0, 0.5]])
     y_train = np.array([0, 1])
+    variant = {
+        "lr": 0.8,
+        "lr_schedule": "constant",
+        "lr_final_scale": 1.0,
+    }
 
-    fields = fast_sweep.strict_phase_promotion_cost_fields(args, x_train, y_train)
+    fields = fast_sweep.strict_phase_promotion_cost_fields(args, variant, x_train, y_train)
 
     assert fields["strict_phase_promotion_phase_clock_mode"] == "pwl"
     assert fields["strict_phase_promotion_estimated_transient_points"] == 34

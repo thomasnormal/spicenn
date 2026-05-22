@@ -157,7 +157,11 @@ def validate_source_point_budget(source_complexity: dict[str, int], max_points: 
 
 
 def total_source_pwl_points(source_complexity: dict[str, int]) -> int:
-    return int(source_complexity["sample_source_pwl_points"]) + int(source_complexity["phase_clock_source_pwl_points"])
+    return (
+        int(source_complexity["sample_source_pwl_points"])
+        + int(source_complexity["phase_clock_source_pwl_points"])
+        + int(source_complexity.get("control_source_pwl_points", 0))
+    )
 
 
 def final_state_measure_time(t_stop: float, transient_step: float, final_update_stop: float) -> float:
@@ -260,6 +264,9 @@ def phase_preflight_summary(
     train_indices: np.ndarray,
     eval_indices: np.ndarray,
     labels: np.ndarray,
+    lr: float,
+    lr_schedule: str,
+    lr_final_scale: float,
     update_mode: str,
     phase_clock_mode: str,
     reference_mode: str,
@@ -295,6 +302,9 @@ def phase_preflight_summary(
         "batch_size": batch_size,
         "updates": updates,
         "total_samples": total_samples,
+        "lr": lr,
+        "lr_schedule": lr_schedule,
+        "lr_final_scale": lr_final_scale,
         "update_mode": update_mode,
         "phase_clock_mode": phase_clock_mode,
         "reference_mode": reference_mode,
@@ -373,6 +383,24 @@ def sample_source_pwl(values: np.ndarray, sample_starts: list[float], t_stop: fl
     return "PWL(" + " ".join(f"{t:.12g} {val:.12g}" for t, val in cleaned) + ")"
 
 
+def lr_schedule_values(base_lr: float, updates: int, schedule: str = "constant", final_scale: float = 1.0) -> np.ndarray:
+    if base_lr < 0.0:
+        raise ValueError("base_lr must be non-negative")
+    if updates <= 0:
+        raise ValueError("updates must be positive")
+    if final_scale < 0.0:
+        raise ValueError("lr_final_scale must be non-negative")
+    if schedule == "constant":
+        return np.full(updates, float(base_lr))
+    if schedule == "linear-decay":
+        if updates == 1:
+            scales = np.array([1.0], dtype=float)
+        else:
+            scales = np.linspace(1.0, final_scale, updates)
+        return float(base_lr) * scales
+    raise ValueError("lr_schedule must be 'constant' or 'linear-decay'")
+
+
 def pwl_point_count(source: str) -> int:
     if not source.startswith("PWL(") or not source.endswith(")"):
         return 0
@@ -391,6 +419,7 @@ def phase_source_complexity(
     edge: float,
     direct_update: bool,
     phase_clock_mode: str = "pwl",
+    lr_values: np.ndarray | None = None,
 ) -> dict[str, int]:
     pixel_sources = [sample_source_pwl(x_batch[:, i], sample_starts, t_stop, edge) for i in range(x_batch.shape[1])]
     target_sources = [sample_source_pwl(targets[:, k], sample_starts, t_stop, edge) for k in range(targets.shape[1])]
@@ -401,6 +430,9 @@ def phase_source_complexity(
         phase_sources = ["0" for _name in phase_names]
     else:
         raise ValueError("phase_clock_mode must be 'pwl' or 'analytic'")
+    control_sources = []
+    if lr_values is not None:
+        control_sources.append(sample_source_pwl(np.asarray(lr_values, dtype=float), sample_starts, t_stop, edge))
 
     def count_dc(sources: list[str]) -> int:
         return sum(not source.startswith("PWL(") for source in sources)
@@ -428,6 +460,10 @@ def phase_source_complexity(
         "phase_clock_source_count": len(phase_sources),
         "phase_clock_source_pwl_count": count_pwl(phase_sources),
         "phase_clock_source_pwl_points": count_points(phase_sources),
+        "control_source_count": len(control_sources),
+        "control_source_dc_count": count_dc(control_sources),
+        "control_source_pwl_count": count_pwl(control_sources),
+        "control_source_pwl_points": count_points(control_sources),
     }
     complexity["total_source_pwl_points"] = total_source_pwl_points(complexity)
     return complexity
@@ -692,6 +728,8 @@ def make_phase_transient_netlist(
     softmax_margin: float = 1.0,
     readout_class_centering: str = "none",
     phase_clock_mode: str = "pwl",
+    lr_schedule: str = "constant",
+    lr_final_scale: float = 1.0,
 ) -> tuple[str, int, float]:
     total_samples = x_batch.shape[0]
     if total_samples != update_batch_size * updates:
@@ -726,6 +764,9 @@ def make_phase_transient_netlist(
         raise ValueError("readout_class_centering must be 'none' or 'mean'")
     if phase_clock_mode not in {"pwl", "analytic"}:
         raise ValueError("phase_clock_mode must be 'pwl' or 'analytic'")
+    if lr_schedule not in {"constant", "linear-decay"}:
+        raise ValueError("lr_schedule must be 'constant' or 'linear-decay'")
+    lr_values = lr_schedule_values(lr, updates, lr_schedule, lr_final_scale)
     direct_update = update_mode == "direct"
     if direct_update and update_batch_size != 1:
         raise ValueError("direct update mode requires update_batch_size=1")
@@ -735,6 +776,8 @@ def make_phase_transient_netlist(
     n_blocks, channels, block_len = w.shape
     n_classes = readout.shape[0]
     phases, sample_starts, t_stop = make_phase_schedule(update_batch_size, updates, phase, gap, direct_update)
+    lr_sample_values = np.repeat(lr_values, update_batch_size)
+    lr_control = "{LR}" if lr_schedule == "constant" else "V(lrctrl)"
     tau = phase / settle_ratio
     phase_area = phase_pulse_area(phase, edge)
     targets = target_matrix(y_batch, n_classes, softmax_output)
@@ -768,6 +811,9 @@ def make_phase_transient_netlist(
         phase_clock_source_line("pacc", "pacc", phases["acc"], t_stop, phase, gap, edge, phase_clock_mode, direct_update, update_batch_size),
         "",
     ]
+    if lr_control == "V(lrctrl)":
+        lines.append(f"Vlrctrl lrctrl 0 {sample_source_pwl(lr_sample_values, sample_starts, t_stop, edge)}")
+        lines.append("")
     if not direct_update:
         lines[-1:-1] = [
             phase_clock_source_line("papply", "papply", phases["apply"], t_stop, phase, gap, edge, phase_clock_mode, direct_update, update_batch_size),
@@ -907,18 +953,18 @@ def make_phase_transient_netlist(
             for p, idx in enumerate(idxs):
                 grad = f"V(dh{b}_{c})*V(pix{idx})"
                 if direct_update:
-                    lines.append(f"Bupd_w{b}_{c}_{p} w{b}_{c}_{p} 0 I = -V(pacc)*{{CW}}*{{LR}}*{{LOCAL_UPDATE_SCALE}}/({{BS}}*{{TAREA}})*({grad})")
+                    lines.append(f"Bupd_w{b}_{c}_{p} w{b}_{c}_{p} 0 I = -V(pacc)*{{CW}}*{lr_control}*{{LOCAL_UPDATE_SCALE}}/({{BS}}*{{TAREA}})*({grad})")
                 else:
                     lines.append(f"Bacc_w{b}_{c}_{p} gw{b}_{c}_{p} 0 I = -V(pacc)*{{CGRAD}}/{{TAREA}}*({grad})")
-                    lines.append(f"Bupd_w{b}_{c}_{p} w{b}_{c}_{p} 0 I = -V(papply)*{{CW}}*{{LR}}*{{LOCAL_UPDATE_SCALE}}/({{BS}}*{{TAREA}})*V(gw{b}_{c}_{p})")
+                    lines.append(f"Bupd_w{b}_{c}_{p} w{b}_{c}_{p} 0 I = -V(papply)*{{CW}}*{lr_control}*{{LOCAL_UPDATE_SCALE}}/({{BS}}*{{TAREA}})*V(gw{b}_{c}_{p})")
                     lines.append(f"Bclear_gw{b}_{c}_{p} gw{b}_{c}_{p} 0 I = V(pclear)*{{CGRAD}}/{{TAU}}*V(gw{b}_{c}_{p})")
                 if state_decay > 0.0:
                     lines.append(f"Bdecay_w{b}_{c}_{p} w{b}_{c}_{p} 0 I = V({decay_phase})*{{CW}}*{{STATE_DECAY}}/{{TAREA}}*V(w{b}_{c}_{p})")
             if direct_update:
-                lines.append(f"Bupd_hb{b}_{c} hb{b}_{c} 0 I = -V(pacc)*{{CW}}*{{LR}}*{{LOCAL_UPDATE_SCALE}}/({{BS}}*{{TAREA}})*V(dh{b}_{c})")
+                lines.append(f"Bupd_hb{b}_{c} hb{b}_{c} 0 I = -V(pacc)*{{CW}}*{lr_control}*{{LOCAL_UPDATE_SCALE}}/({{BS}}*{{TAREA}})*V(dh{b}_{c})")
             else:
                 lines.append(f"Bacc_hb{b}_{c} ghb{b}_{c} 0 I = -V(pacc)*{{CGRAD}}/{{TAREA}}*V(dh{b}_{c})")
-                lines.append(f"Bupd_hb{b}_{c} hb{b}_{c} 0 I = -V(papply)*{{CW}}*{{LR}}*{{LOCAL_UPDATE_SCALE}}/({{BS}}*{{TAREA}})*V(ghb{b}_{c})")
+                lines.append(f"Bupd_hb{b}_{c} hb{b}_{c} 0 I = -V(papply)*{{CW}}*{lr_control}*{{LOCAL_UPDATE_SCALE}}/({{BS}}*{{TAREA}})*V(ghb{b}_{c})")
                 lines.append(f"Bclear_ghb{b}_{c} ghb{b}_{c} 0 I = V(pclear)*{{CGRAD}}/{{TAU}}*V(ghb{b}_{c})")
             if state_decay > 0.0:
                 lines.append(f"Bdecay_hb{b}_{c} hb{b}_{c} 0 I = V({decay_phase})*{{CW}}*{{STATE_DECAY}}/{{TAREA}}*V(hb{b}_{c})")
@@ -927,18 +973,18 @@ def make_phase_transient_netlist(
             for c in range(channels):
                 grad = f"V(d{k})*V(h{b}_{c})"
                 if direct_update:
-                    lines.append(f"Bupd_v{k}_{b}_{c} v{k}_{b}_{c} 0 I = -V(pacc)*{{CW}}*{{LR}}*{{READOUT_UPDATE_SCALE}}/({{BS}}*{{TAREA}})*({grad})")
+                    lines.append(f"Bupd_v{k}_{b}_{c} v{k}_{b}_{c} 0 I = -V(pacc)*{{CW}}*{lr_control}*{{READOUT_UPDATE_SCALE}}/({{BS}}*{{TAREA}})*({grad})")
                 else:
                     lines.append(f"Bacc_v{k}_{b}_{c} gv{k}_{b}_{c} 0 I = -V(pacc)*{{CGRAD}}/{{TAREA}}*({grad})")
-                    lines.append(f"Bupd_v{k}_{b}_{c} v{k}_{b}_{c} 0 I = -V(papply)*{{CW}}*{{LR}}*{{READOUT_UPDATE_SCALE}}/({{BS}}*{{TAREA}})*V(gv{k}_{b}_{c})")
+                    lines.append(f"Bupd_v{k}_{b}_{c} v{k}_{b}_{c} 0 I = -V(papply)*{{CW}}*{lr_control}*{{READOUT_UPDATE_SCALE}}/({{BS}}*{{TAREA}})*V(gv{k}_{b}_{c})")
                     lines.append(f"Bclear_gv{k}_{b}_{c} gv{k}_{b}_{c} 0 I = V(pclear)*{{CGRAD}}/{{TAU}}*V(gv{k}_{b}_{c})")
                 if state_decay > 0.0:
                     lines.append(f"Bdecay_v{k}_{b}_{c} v{k}_{b}_{c} 0 I = V({decay_phase})*{{CW}}*{{STATE_DECAY}}/{{TAREA}}*V(v{k}_{b}_{c})")
         if direct_update:
-            lines.append(f"Bupd_ob{k} ob{k} 0 I = -V(pacc)*{{CW}}*{{LR}}*{{OB_UPDATE_SCALE}}/({{BS}}*{{TAREA}})*V(d{k})")
+            lines.append(f"Bupd_ob{k} ob{k} 0 I = -V(pacc)*{{CW}}*{lr_control}*{{OB_UPDATE_SCALE}}/({{BS}}*{{TAREA}})*V(d{k})")
         else:
             lines.append(f"Bacc_ob{k} gob{k} 0 I = -V(pacc)*{{CGRAD}}/{{TAREA}}*V(d{k})")
-            lines.append(f"Bupd_ob{k} ob{k} 0 I = -V(papply)*{{CW}}*{{LR}}*{{OB_UPDATE_SCALE}}/({{BS}}*{{TAREA}})*V(gob{k})")
+            lines.append(f"Bupd_ob{k} ob{k} 0 I = -V(papply)*{{CW}}*{lr_control}*{{OB_UPDATE_SCALE}}/({{BS}}*{{TAREA}})*V(gob{k})")
             lines.append(f"Bclear_gob{k} gob{k} 0 I = V(pclear)*{{CGRAD}}/{{TAU}}*V(gob{k})")
         if state_decay > 0.0:
             lines.append(f"Bdecay_ob{k} ob{k} 0 I = V({decay_phase})*{{CW}}*{{STATE_DECAY}}/{{TAREA}}*V(ob{k})")
@@ -1541,6 +1587,8 @@ def main() -> None:
     ap.add_argument("--batch-size", type=int, default=1)
     ap.add_argument("--updates", type=int, default=1)
     ap.add_argument("--lr", type=float, default=0.005)
+    ap.add_argument("--lr-schedule", choices=["constant", "linear-decay"], default="constant")
+    ap.add_argument("--lr-final-scale", type=float, default=1.0)
     ap.add_argument("--linear-output", action="store_true")
     ap.add_argument("--softmax-output", action="store_true")
     ap.add_argument(
@@ -1698,6 +1746,12 @@ def main() -> None:
 
     if args.batch_size <= 0 or args.updates <= 0:
         raise ValueError("--batch-size and --updates must be positive")
+    if args.lr < 0:
+        raise ValueError("--lr must be non-negative")
+    if args.lr_final_scale < 0:
+        raise ValueError("--lr-final-scale must be non-negative")
+    if args.lr_schedule != "constant" and args.reference_mode != "none":
+        raise ValueError("--lr-schedule non-constant requires --reference-mode none")
     if args.linear_output and args.softmax_output:
         raise ValueError("--linear-output and --softmax-output are mutually exclusive")
     if args.channels <= 0:
@@ -1795,6 +1849,9 @@ def main() -> None:
         args.gap,
         args.update_mode == "direct",
     )
+    source_lr_values = None
+    if args.lr_schedule != "constant":
+        source_lr_values = np.repeat(lr_schedule_values(args.lr, args.updates, args.lr_schedule, args.lr_final_scale), args.batch_size)
     source_complexity = phase_source_complexity(
         x_batch,
         target_matrix(y_batch, 10, args.softmax_output),
@@ -1804,6 +1861,7 @@ def main() -> None:
         args.edge,
         args.update_mode == "direct",
         args.phase_clock_mode,
+        source_lr_values,
     )
     validate_source_point_budget(source_complexity, args.max_source_pwl_points)
     if args.preflight_only:
@@ -1824,6 +1882,9 @@ def main() -> None:
                     train_indices=train_indices,
                     eval_indices=eval_indices,
                     labels=y_batch,
+                    lr=args.lr,
+                    lr_schedule=args.lr_schedule,
+                    lr_final_scale=args.lr_final_scale,
                     update_mode=args.update_mode,
                     phase_clock_mode=args.phase_clock_mode,
                     reference_mode=args.reference_mode,
@@ -1921,6 +1982,8 @@ def main() -> None:
         args.softmax_margin,
         args.readout_class_centering,
         args.phase_clock_mode,
+        args.lr_schedule,
+        args.lr_final_scale,
     )
     phase_netlist.write_text(prepare_phase_netlist(netlist, spice_bin))
 
@@ -2321,6 +2384,8 @@ def main() -> None:
         "eval_backend": args.eval_backend,
         "total_samples": total_samples,
         "lr": args.lr,
+        "lr_schedule": args.lr_schedule,
+        "lr_final_scale": args.lr_final_scale,
         "linear_output": bool(args.linear_output),
         "softmax_output": bool(args.softmax_output),
         "local_activation": args.local_activation,

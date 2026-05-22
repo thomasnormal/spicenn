@@ -26,6 +26,50 @@ def test_cli_exposes_simulator_selector() -> None:
     assert "--simulator" in proc.stdout
 
 
+def test_x_yce_print_reader_extracts_first_operating_point_row(tmp_path: Path) -> None:
+    path = tmp_path / "deck.cir.prn"
+    path.write_text(
+        "Index       V(A)          V(B)\n"
+        "0        1.25000000e+00 -3.50000000e-01\n"
+        "End of Xyce(TM) Simulation\n"
+    )
+
+    assert batch_op.read_xyce_print_row(path, 2) == pytest.approx([1.25, -0.35])
+
+
+def test_local_feature_decks_include_x_yce_operating_point_print() -> None:
+    x = np.zeros((1, 4))
+    w = np.zeros((1, 1, 4))
+    hb = np.zeros((1, 1))
+    v = np.ones((2, 1, 1))
+    ob = np.zeros(2)
+
+    netlist = batch_op.make_eval_netlist(
+        x,
+        w,
+        hb,
+        v,
+        ob,
+        [[0, 1, 2, 3]],
+        Path("out.dat"),
+        True,
+        False,
+        "tanh",
+        1.0,
+    )
+
+    assert ".op" in netlist
+    assert ".print DC V(y0_0) V(y0_1)" in netlist
+    assert "wrdata out.dat V(y0_0) V(y0_1)" in netlist
+
+
+def test_x_yce_behavioral_rhs_wrapper_preserves_spaced_expressions() -> None:
+    netlist = "B1 out 0 V = V(in) + 1 + V(bias)\nR1 out 0 1k\n"
+
+    assert batch_op.wrap_xyce_behavioral_rhs(netlist).splitlines()[0] == "B1 out 0 V = {V(in) + 1 + V(bias)}"
+    assert batch_op.wrap_xyce_behavioral_rhs("B1 out 0 V = {V(in) + 1}\n") == "B1 out 0 V = {V(in) + 1}\n"
+
+
 def test_epoch_order_slice_applies_offset_sample_limit_then_batch_cap() -> None:
     order = np.arange(10)
 

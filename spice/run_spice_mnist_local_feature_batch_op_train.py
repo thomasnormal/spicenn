@@ -12,7 +12,7 @@ import pandas as pd
 from run_spice_mnist_batch_op_train import read_wrdata_row
 from run_spice_mnist_local_block_batch_op_train import add_local_activation, add_local_activation_deriv, block_indices
 from run_spice_mnist_train import load_mnist_sequence
-from run_spice_sweep import ROOT, detect_spice, prepare_netlist_for_simulator, run_tiny_test, run_simulator_netlist
+from run_spice_sweep import ROOT, detect_spice, is_xyce, prepare_netlist_for_simulator, run_tiny_test, run_simulator_netlist
 
 
 def feature_node(sample: int, block: int, channel: int, channels: int) -> str:
@@ -21,6 +21,63 @@ def feature_node(sample: int, block: int, channel: int, channels: int) -> str:
 
 def feature_expr(sample: int, block: int, channel: int, channels: int) -> str:
     return f"V({feature_node(sample, block, channel, channels)})"
+
+
+def xyce_prn_path(netlist_path: Path) -> Path:
+    return Path(str(netlist_path) + ".prn")
+
+
+def read_xyce_print_row(path: Path, expected_values: int) -> np.ndarray:
+    for raw in path.read_text().splitlines():
+        parts = raw.split()
+        if not parts or parts[0].lower() in {"index", "end"}:
+            continue
+        try:
+            int(float(parts[0]))
+            values = np.array([float(item) for item in parts[1:]], dtype=float)
+        except ValueError:
+            continue
+        if values.size < expected_values:
+            raise ValueError(f"Xyce print row in {path} had {values.size} values, expected {expected_values}")
+        return values[:expected_values]
+    raise ValueError(f"no Xyce print data row found in {path}")
+
+
+def read_output_row(spice_bin: str, netlist_path: Path, data_path: Path, expected_values: int) -> np.ndarray:
+    if is_xyce(spice_bin):
+        return read_xyce_print_row(xyce_prn_path(netlist_path), expected_values)
+    return read_wrdata_row(data_path, expected_values)
+
+
+def append_op_output(lines: list[str], out_path: Path, vectors: list[str]) -> None:
+    lines += [
+        "",
+        ".op",
+        ".print DC " + " ".join(vectors),
+        ".control",
+        "op",
+        f"wrdata {out_path} " + " ".join(vectors),
+        ".endc",
+        ".end",
+        "",
+    ]
+
+
+def wrap_xyce_behavioral_rhs(netlist: str) -> str:
+    wrapped = []
+    for line in netlist.splitlines():
+        stripped = line.lstrip()
+        if stripped.startswith("B") and " = " in line:
+            prefix, rhs = line.split(" = ", 1)
+            if not rhs.startswith("{"):
+                line = f"{prefix} = {{{rhs}}}"
+        wrapped.append(line)
+    return "\n".join(wrapped) + ("\n" if netlist.endswith("\n") else "")
+
+
+def prepare_local_feature_netlist(netlist: str, spice_bin: str) -> str:
+    rendered = prepare_netlist_for_simulator(netlist, spice_bin)
+    return wrap_xyce_behavioral_rhs(rendered) if is_xyce(spice_bin) else rendered
 
 
 def make_train_netlist(
@@ -124,7 +181,7 @@ def make_train_netlist(
     vectors += [f"V(nhb{b}_{c})" for b in range(n_blocks) for c in range(channels)]
     vectors += [f"V(nv{k}_{b}_{c})" for k in range(n_classes) for b in range(n_blocks) for c in range(channels)]
     vectors += [f"V(nob{k})" for k in range(n_classes)]
-    lines += ["", ".control", "op", f"wrdata {out_path} " + " ".join(vectors), ".endc", ".end", ""]
+    append_op_output(lines, out_path, vectors)
     return "\n".join(lines)
 
 
@@ -169,7 +226,7 @@ def make_eval_netlist(x_batch, w, hb, v, ob, blocks, out_path, linear_output, so
             for k in range(n_classes):
                 lines.append(f"By{s}_{k} y{s}_{k} 0 V = exp(V(z{s}_{k}))/({denom})")
     vectors = [f"V(y{s}_{k})" for s in range(batch) for k in range(n_classes)]
-    lines += ["", ".control", "op", f"wrdata {out_path} " + " ".join(vectors), ".endc", ".end", ""]
+    append_op_output(lines, out_path, vectors)
     return "\n".join(lines)
 
 
@@ -192,7 +249,7 @@ def run_train_batch(
     relu_clip,
 ):
     netlist_path.write_text(
-        prepare_netlist_for_simulator(
+        prepare_local_feature_netlist(
             make_train_netlist(
                 x,
                 y,
@@ -217,7 +274,7 @@ def run_train_batch(
     n_blocks, channels, block_len = w.shape
     n_classes = v.shape[0]
     n = n_blocks * channels * block_len + n_blocks * channels + n_classes * n_blocks * channels + n_classes
-    vals = read_wrdata_row(data_path, n)
+    vals = read_output_row(spice_bin, netlist_path, data_path, n)
     offset = 0
     nw = vals[offset : offset + n_blocks * channels * block_len].reshape(w.shape)
     offset += n_blocks * channels * block_len
@@ -252,7 +309,7 @@ def run_eval(
         x = x_eval[start : start + batch_size]
         y = y_eval[start : start + batch_size]
         netlist_path.write_text(
-            prepare_netlist_for_simulator(
+            prepare_local_feature_netlist(
                 make_eval_netlist(x, w, hb, v, ob, blocks, data_path, linear_output, softmax_output, local_activation, relu_clip),
                 spice_bin,
             )
@@ -260,7 +317,7 @@ def run_eval(
         proc = run_simulator_netlist(spice_bin, netlist_path, timeout=timeout)
         if proc.returncode != 0:
             raise RuntimeError(proc.stderr[-3000:] or proc.stdout[-3000:])
-        vals = read_wrdata_row(data_path, len(y) * v.shape[0]).reshape(len(y), v.shape[0])
+        vals = read_output_row(spice_bin, netlist_path, data_path, len(y) * v.shape[0]).reshape(len(y), v.shape[0])
         correct += int((np.argmax(vals, axis=1) == y).sum())
     return correct / max(len(y_eval), 1)
 

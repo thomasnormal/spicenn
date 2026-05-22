@@ -53,6 +53,7 @@ def test_phase_transient_cli_exposes_agreement_gates() -> None:
     assert "--update-mode" in proc.stdout
     assert "--strict-fully-on-device" in proc.stdout
     assert "--output-bias-update-scale" in proc.stdout
+    assert "--readout-update-scale" in proc.stdout
     assert "--eval-backend" in proc.stdout
     assert "--simulator-extra-args" in proc.stdout
 
@@ -1141,6 +1142,105 @@ def test_phase_transient_output_bias_update_scale_controls_bias_update(tmp_path:
             True,
             "measure",
             output_bias_update_scale=-1.0,
+        )
+
+
+def test_phase_transient_readout_update_scale_controls_readout_update(tmp_path: Path) -> None:
+    x = np.zeros((1, 4))
+    y = np.array([0])
+    w = np.zeros((1, 1, 4))
+    hb = np.zeros((1, 1))
+    readout = np.zeros((2, 1, 1))
+    output_bias = np.zeros(2)
+
+    direct_netlist, _n_vec, _t_stop = phase_transient.make_phase_transient_netlist(
+        x,
+        y,
+        w,
+        hb,
+        readout,
+        output_bias,
+        [[0, 1, 2, 3]],
+        0.8,
+        tmp_path / "direct.dat",
+        False,
+        1,
+        1,
+        1e-9,
+        0.1e-9,
+        5e-12,
+        40.0,
+        20e-12,
+        1e-12,
+        1e-12,
+        1e-12,
+        1e18,
+        True,
+        "measure",
+        update_mode="direct",
+        readout_update_scale=0.25,
+    )
+
+    assert ".param READOUT_UPDATE_SCALE=0.25" in direct_netlist
+    assert "Bupd_v0_0_0 v0_0_0 0 I = -V(pacc)*{CW}*{LR}*{READOUT_UPDATE_SCALE}/({BS}*{TAREA})*(V(d0)*V(h0_0))" in direct_netlist
+    assert "Bupd_ob0 ob0 0 I = -V(pacc)*{CW}*{LR}*{OB_UPDATE_SCALE}/({BS}*{TAREA})*V(d0)" in direct_netlist
+
+    phased_netlist, _n_vec, _t_stop = phase_transient.make_phase_transient_netlist(
+        x,
+        y,
+        w,
+        hb,
+        readout,
+        output_bias,
+        [[0, 1, 2, 3]],
+        0.8,
+        tmp_path / "phased.dat",
+        False,
+        1,
+        1,
+        1e-9,
+        0.1e-9,
+        5e-12,
+        40.0,
+        20e-12,
+        1e-12,
+        1e-12,
+        1e-12,
+        1e18,
+        True,
+        "measure",
+        readout_update_scale=0.5,
+    )
+
+    assert ".param READOUT_UPDATE_SCALE=0.5" in phased_netlist
+    assert "Bupd_v0_0_0 v0_0_0 0 I = -V(papply)*{CW}*{LR}*{READOUT_UPDATE_SCALE}/({BS}*{TAREA})*V(gv0_0_0)" in phased_netlist
+
+    with pytest.raises(ValueError, match="readout_update_scale"):
+        phase_transient.make_phase_transient_netlist(
+            x,
+            y,
+            w,
+            hb,
+            readout,
+            output_bias,
+            [[0, 1, 2, 3]],
+            0.8,
+            tmp_path / "bad.dat",
+            False,
+            1,
+            1,
+            1e-9,
+            0.1e-9,
+            5e-12,
+            40.0,
+            20e-12,
+            1e-12,
+            1e-12,
+            1e-12,
+            1e18,
+            True,
+            "measure",
+            readout_update_scale=-1.0,
         )
 
 

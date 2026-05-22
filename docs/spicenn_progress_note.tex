@@ -316,15 +316,15 @@ pass a matched ngspice/Xyce primitive or small-training gate before it counts as
 evidence.  When both simulators agree on a bad result, as in the current
 3-class readout-only gate, the problem should be treated as circuit/learning
 fragility rather than numerical disagreement.  The implementation now depends
-on PySpice and keeps the circuit generator shared by converting generated decks
-through a PySpice \code{Circuit} boundary before simulator-specific rendering.
+on spicelib and keeps the circuit generator shared by converting generated decks
+through a raw-deck adapter boundary before simulator-specific rendering.
 The adapter preserves one device/connectivity body, includes ngspice
 \code{.control}/\code{.endc} blocks only for ngspice, strips them for Xyce, and
 compares both prepared decks with a canonical circuit-body test.
 The migration point is the shared runner, not simulator-specific duplicated
 generators: the active XOR/random-hidden, readout-transfer, readout-error-loop,
 softmax-current-competition, reusable device primitive scripts, and older
-MNIST transient/op runners now write their decks through this PySpice rendering
+MNIST transient/op runners now write their decks through this spicelib-backed adapter rendering
 boundary before invoking ngspice or Xyce.
 
 \section{Primitive Circuit Model}
@@ -1750,7 +1750,7 @@ multiclass error block.
 
 The first version consumed one single-ended score per class, but the current
 network stores split score capacitors \(\mathrm{scorep}_k,\mathrm{scoren}_k\).
-The PySpice-rendered diagnostic now includes a split-score competition cell:
+The adapter-rendered diagnostic now includes a split-score competition cell:
 \(\mathrm{scorep}_k\) opens the class branch, while \(\mathrm{scoren}_k\)
 inhibits the same branch through a PMOS source device.  This avoids a Python
 subtraction before the softmax-like competition.  It is still not textbook
@@ -1762,7 +1762,7 @@ and probabilities are only characterized after the run as current shares.
 The useful criterion is therefore monotone signed-score ordering and reasonable
 common-mode tolerance, not equality to \(\exp(s_k)/\sum_j\exp(s_j)\).
 The first split-score run is a useful negative result: ngspice and Xyce agree
-to measurement precision through the PySpice-rendered deck, but the simple
+to measurement precision through the adapter-rendered deck, but the simple
 branch/inhibit topology preserves ordering only when \(\mathrm{scoren}\) is
 held fixed.  When both split rails move, or when common mode changes at fixed
 \(\mathrm{scorep}-\mathrm{scoren}\), absolute \(\mathrm{scorep}\) still
@@ -3141,7 +3141,7 @@ the sign/headroom bug, but we still need either a calibrated differential
 output/error head or a readout training rule that learns the hardware-distorted
 separator directly.
 
-The PySpice/Xyce migration caught an important bug in that transfer harness:
+The simulator-adapter/Xyce migration caught an important bug in that transfer harness:
 the diagnostic had been instantiating local \(\mathrm{scorep}/\mathrm{scoren}\)
 capacitors on top of the production \code{temporary\_caps} definitions.  Xyce
 rejected the duplicate devices; ngspice had been permissive enough that the
@@ -3246,7 +3246,7 @@ The small output-head transfer sweep found a usable unsaturated regime:
 \(0.2\,\mathrm{ns}\) window, preserves every non-tie 3-class signed-score
 argmax.  A full-generator smoke,
 \code{device\_xor2\_diode\_dpair\_smoke}, confirms the new head can be
-instantiated in the production train/eval deck with PySpice-rendered ngspice
+instantiated in the production train/eval deck with adapter-rendered ngspice
 netlists.  It is only an eval-only wiring smoke, not a learning result.
 
 A single-branch characterization harness,
@@ -3260,7 +3260,7 @@ readout MOS kernel
 for the production gate-stack and pass-activation branches.  The compact
 ngspice sweep is reassuring in one respect: both positive and negative branches
 are monotone in activation and weight voltage, and the two branch polarities
-match.  The harness now uses the same PySpice-backed deck rendering path as
+match.  The harness now uses the same spicelib-backed deck rendering path as
 the full learner, so ngspice/Xyce differences are not caused by duplicate
 generation code.  But the branch is not a linear multiplier in the usual operating
 range.  With the default \(10\,\mathrm{fF}\) score cap and full readout width,
@@ -3404,10 +3404,10 @@ classification: with output-bias writes disabled, the row totals no longer all
 drift negative, but the physical output still tends to collapse to class 1.
 The newer split-score CE gate improves the internal differential score rails
 rather than the final output head: \code{device\_mnist3fixed8\_30\_v643}
-and the PySpice-rendered \code{v644} split-score-diffgate output-head smoke
+and the adapter-rendered \code{v644} split-score-diffgate output-head smoke
 both finish at 33.3\% physical-output accuracy, while the final
 \(\mathrm{scorep}-\mathrm{scoren}\) argmax reaches 56.7\%.  Follow-up
-PySpice-rendered \code{v645}--\code{v649} output-head checks keep the same
+adapter-rendered \code{v645}--\code{v649} output-head checks keep the same
 separation: charge-gated and active-low differential-pair heads do not yet
 rank the physical \(\mathrm{out}\) capacitors the same way as the learned
 differential score rails.  The production-output transfer harness
@@ -3433,7 +3433,7 @@ discharge.  A first attempt to do this locally,
 \code{ce\_split\_dpair}, generates an active-low prediction rail
 \(\bar y_k\) from each class's \(\mathrm{scorep}_k/\mathrm{scoren}_k\)
 differential pair and drives the target/non-target write rails from that
-rail.  The PySpice-rendered \code{v655} 3-class smoke simulates cleanly, but
+rail.  The adapter-rendered \code{v655} 3-class smoke simulates cleanly, but
 is a negative result: physical output accuracy is 23.3\%, score argmax is
 33.3\%, and all three readout rows still drift negative.  So independent local
 differential pairs are not enough; the next design needs an explicitly

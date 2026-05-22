@@ -12,12 +12,9 @@ For each circuit family, separate parameters into three groups.
 ## Simulator Status
 
 The experiment drivers can use either ngspice or Xyce through the shared
-PySpice netlist-normalization path.  `--simulator auto` keeps the historical
+spicelib-backed netlist adapter.  `--simulator auto` keeps the historical
 ngspice-first order, while `--simulator auto-fast` searches for Xyce/XyceNF
-first and falls back to ngspice.  As of this note, the local machine has no
-`Xyce`/`xyce` executable on `PATH`, and Homebrew reports no `xyce` formula or
-cask.  Current primitive numbers are therefore ngspice results even when the
-command line says `auto-fast`.
+first and falls back to ngspice.
 
 1. **Topology constants**
 

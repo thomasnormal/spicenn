@@ -12,15 +12,15 @@ import pandas as pd
 
 from parse_ngspice import parse_output_high
 from fit_activation_curve import fit_activation
-from pyspice_adapter import (
+from spice_adapter import (
     canonical_circuit_body,
-    is_ngspice as pyspice_is_ngspice,
-    is_xyce as pyspice_is_xyce,
+    is_ngspice as adapter_is_ngspice,
+    is_xyce as adapter_is_xyce,
     render_for_simulator,
-    run_simulator_netlist as pyspice_run_simulator_netlist,
-    run_text_netlist as pyspice_run_text_netlist,
-    spice_batch_command as pyspice_batch_command,
-    write_simulator_netlist as pyspice_write_simulator_netlist,
+    run_simulator_netlist as adapter_run_simulator_netlist,
+    run_text_netlist as adapter_run_text_netlist,
+    spice_batch_command as adapter_batch_command,
+    write_simulator_netlist as adapter_write_simulator_netlist,
 )
 
 
@@ -36,11 +36,11 @@ def simulator_name(spice_bin: str) -> str:
 
 
 def is_ngspice(spice_bin: str) -> bool:
-    return pyspice_is_ngspice(spice_bin)
+    return adapter_is_ngspice(spice_bin)
 
 
 def is_xyce(spice_bin: str) -> bool:
-    return pyspice_is_xyce(spice_bin)
+    return adapter_is_xyce(spice_bin)
 
 
 def prepare_netlist_for_simulator(netlist: str, spice_bin: str) -> str:
@@ -48,19 +48,19 @@ def prepare_netlist_for_simulator(netlist: str, spice_bin: str) -> str:
 
 
 def spice_batch_command(spice_bin: str, netlist: Path) -> list[str]:
-    return pyspice_batch_command(spice_bin, netlist)
+    return adapter_batch_command(spice_bin, netlist)
 
 
 def write_simulator_netlist(path: Path, netlist: str, spice_bin: str) -> None:
-    pyspice_write_simulator_netlist(path, netlist, spice_bin)
+    adapter_write_simulator_netlist(path, netlist, spice_bin)
 
 
 def run_simulator_netlist(spice_bin: str, netlist: Path, *, timeout: float) -> subprocess.CompletedProcess[str]:
-    return pyspice_run_simulator_netlist(spice_bin, netlist, timeout=timeout)
+    return adapter_run_simulator_netlist(spice_bin, netlist, timeout=timeout)
 
 
 def run_text_netlist(spice_bin: str, path: Path, netlist: str, *, timeout: float) -> subprocess.CompletedProcess[str]:
-    return pyspice_run_text_netlist(spice_bin, path, netlist, timeout=timeout)
+    return adapter_run_text_netlist(spice_bin, path, netlist, timeout=timeout)
 
 
 def canonical_circuit_netlist(netlist: str) -> str:

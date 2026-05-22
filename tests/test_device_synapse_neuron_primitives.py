@@ -29,9 +29,10 @@ import run_device_softmax_current_competition as softmax_primitives  # noqa: E40
 import run_device_write_rail_exclusion_sweep as write_rail_primitives  # noqa: E402
 import run_device_xor2_two_hidden as two_hidden_probe  # noqa: E402
 import run_device_xor2_random_hidden as direct_flow  # noqa: E402
+import spice_adapter  # noqa: E402
 import run_spice_sweep  # noqa: E402
 from run_spice_sweep import canonical_circuit_netlist, detect_spice, prepare_netlist_for_simulator, run_tiny_test  # noqa: E402
-from pyspice_adapter import raw_netlist_to_pyspice, render_pyspice_deck, simulator_kind  # noqa: E402
+from spice_adapter import raw_netlist_to_spice_deck, render_spice_deck, simulator_kind  # noqa: E402
 
 
 PWL_TIME_RE = re.compile(r"([-+0-9.eE]+)n")
@@ -194,12 +195,13 @@ def test_xyce_netlist_runner_strips_ngspice_control_block(monkeypatch: pytest.Mo
         stdout = "foo = 1.0\n"
         stderr = ""
 
-    def fake_run(cmd: list[str], text: bool, capture_output: bool, timeout: float) -> Result:
+    def fake_run(spice_bin: str, netlist: Path, *, timeout: float) -> Result:
+        cmd = run_spice_sweep.spice_batch_command(spice_bin, netlist)
         captured["cmd"] = " ".join(cmd)
         captured["netlist"] = Path(cmd[-1]).read_text()
         return Result()
 
-    monkeypatch.setattr("pyspice_adapter.subprocess.run", fake_run)
+    monkeypatch.setattr("spice_adapter._run_simulator_process", fake_run)
 
     parsed = direct_flow.run_netlist(
         "Xyce",
@@ -225,12 +227,13 @@ def test_tiny_spice_smoke_uses_simulator_specific_netlist_names(
         stdout = ""
         stderr = ""
 
-    def fake_run(cmd: list[str], text: bool, capture_output: bool, timeout: float) -> Result:
+    def fake_run(spice_bin: str, netlist: Path, *, timeout: float) -> Result:
+        cmd = run_spice_sweep.spice_batch_command(spice_bin, netlist)
         path = Path(cmd[-1])
         written[path.name] = path.read_text()
         return Result()
 
-    monkeypatch.setattr("pyspice_adapter.subprocess.run", fake_run)
+    monkeypatch.setattr("spice_adapter._run_simulator_process", fake_run)
     run_tiny_test("ngspice", tmp_path)
     run_tiny_test("Xyce", tmp_path)
 
@@ -252,11 +255,11 @@ def test_simulator_deck_preparation_preserves_canonical_circuit_body() -> None:
     assert canonical_circuit_netlist(ng) == canonical_circuit_netlist(xy)
 
 
-def test_pyspice_raw_deck_adapter_keeps_control_block_separate() -> None:
+def test_spice_raw_deck_adapter_keeps_control_block_separate() -> None:
     netlist = "* deck\nV1 in 0 DC 1\nR1 in 0 1k\n.op\n.control\nrun\nprint v(in)\n.endc\n.end\n"
-    deck = raw_netlist_to_pyspice(netlist)
-    no_control = render_pyspice_deck(deck, include_control=False)
-    with_control = render_pyspice_deck(deck, include_control=True)
+    deck = raw_netlist_to_spice_deck(netlist)
+    no_control = render_spice_deck(deck, include_control=False)
+    with_control = render_spice_deck(deck, include_control=True)
 
     assert simulator_kind("/opt/bin/ngspice") == "ngspice"
     assert simulator_kind("/opt/bin/Xyce") == "xyce"
@@ -265,6 +268,25 @@ def test_pyspice_raw_deck_adapter_keeps_control_block_separate() -> None:
     assert ".control" not in no_control
     assert ".control" in with_control
     assert canonical_circuit_netlist(no_control) == canonical_circuit_netlist(with_control)
+
+
+def test_spicelib_resolves_executable_without_forcing_raw_output(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    netlist = tmp_path / "deck.cir"
+    netlist.write_text(".title deck\n.end\n")
+
+    class Simulator:
+        spice_exe = ["/sim/Xyce"]
+
+    monkeypatch.setattr(spice_adapter, "spicelib_simulator", lambda spice_bin: Simulator)
+
+    cmd = spice_adapter.spice_batch_command("Xyce", netlist)
+
+    assert cmd == ["/sim/Xyce", netlist.as_posix()]
+    assert "-r" not in cmd
+    assert "-l" not in cmd
 
 
 def test_simulator_auto_modes_make_fast_xyce_choice_explicit(monkeypatch: pytest.MonkeyPatch) -> None:

@@ -268,8 +268,10 @@ def make_phase_transient_netlist(
     vectors += [f"V(v{k}_{b}_{c})" for k in range(n_classes) for b in range(n_blocks) for c in range(channels)]
     vectors += [f"V(ob{k})" for k in range(n_classes)]
     vectors += [f"V(y{k})" for k in range(n_classes)]
-    if output_mode not in {"wrdata", "measure", "native_measure", "print"}:
-        raise ValueError("output_mode must be 'wrdata', 'measure', 'native_measure', or 'print'")
+    if output_mode == "native_measure":
+        output_mode = "measure"
+    if output_mode not in {"wrdata", "control_measure", "measure", "print"}:
+        raise ValueError("output_mode must be 'wrdata', 'control_measure', 'measure', or 'print'")
     measure_time = max(0.0, t_stop - transient_step)
     lines += ["", ".options method=gear maxord=2"]
     if output_mode == "print":
@@ -277,17 +279,17 @@ def make_phase_transient_netlist(
             f".tran {transient_step:.12g} {t_stop:.12g} uic",
             ".print TRAN " + " ".join(vectors),
         ]
-    elif output_mode == "native_measure":
+    elif output_mode == "measure":
         lines.append(f".tran {transient_step:.12g} {t_stop:.12g} uic")
         for i, vec in enumerate(vectors):
             lines.append(f".measure TRAN m{i:05d} FIND {vec} AT={measure_time:.12g}")
     else:
         lines += [".control", f"tran {transient_step:.12g} {t_stop:.12g} uic"]
-        if output_mode == "wrdata":
-            lines.append(f"wrdata {out_path} " + " ".join(vectors))
-        else:
+        if output_mode == "control_measure":
             for i, vec in enumerate(vectors):
                 lines.append(f"meas tran m{i:05d} FIND {vec} AT={measure_time:.12g}")
+        else:
+            lines.append(f"wrdata {out_path} " + " ".join(vectors))
         lines.append(".endc")
     lines += [".end", ""]
     return "\n".join(lines), len(vectors), t_stop
@@ -471,6 +473,7 @@ def main() -> None:
     phase_data = results / f"{stem}.dat"
     op_netlist = generated / f"{stem}_op_reference.cir"
     op_data = results / f"{stem}_op_reference.dat"
+    phase_output_mode = "measure" if is_xyce(spice_bin) else ("control_measure" if args.final_measures else "wrdata")
 
     netlist, n_vec, t_stop = make_phase_transient_netlist(
         x_batch,
@@ -495,7 +498,7 @@ def main() -> None:
         args.cgrad,
         args.rleak,
         args.softmax_output,
-        "native_measure" if is_xyce(spice_bin) else ("measure" if args.final_measures else "wrdata"),
+        phase_output_mode,
     )
     phase_netlist.write_text(prepare_phase_netlist(netlist, spice_bin))
 
@@ -504,13 +507,13 @@ def main() -> None:
     phase_wall = time.perf_counter() - t0
     if proc.returncode != 0:
         raise RuntimeError(proc.stderr[-3000:] or proc.stdout[-3000:])
-    if is_xyce(spice_bin):
+    if phase_output_mode in {"measure", "control_measure"}:
         try:
             vals = parse_measured_vector(proc.stdout + "\n" + proc.stderr, n_vec)
         except ValueError:
+            if not is_xyce(spice_bin):
+                raise
             vals = read_xyce_print_last_row(xyce_prn_path(phase_netlist), n_vec)
-    elif args.final_measures:
-        vals = parse_measured_vector(proc.stdout + "\n" + proc.stderr, n_vec)
     else:
         vals = read_wrdata_row(phase_data, n_vec)
     phase_w, phase_hb, phase_readout, phase_ob, phase_y = unpack_state(vals, w, hb, readout, output_bias)
@@ -699,7 +702,7 @@ def main() -> None:
         "transient_step_s": args.transient_step,
         "phase_s": args.phase,
         "settle_ratio": args.settle_ratio,
-        "output_mode": "native_measure" if is_xyce(spice_bin) else ("measure" if args.final_measures else "wrdata"),
+        "output_mode": phase_output_mode,
         "persistent_state": "local feature weights, local biases, class readout weights, and output biases are capacitor voltages with checkpoint ICs",
         "temporary_state": "feature activations, class scores, class deltas, hidden/backward feature deltas, and gradient accumulators are capacitor voltages",
         "python_role": "Python generates guiding waveforms and compares final state; it does not carry training state during the transient run.",

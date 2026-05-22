@@ -210,7 +210,7 @@ def test_phase_transient_print_mode_uses_native_tran_print(tmp_path: Path) -> No
     assert "wrdata" not in netlist
 
 
-def test_phase_transient_native_measure_mode_uses_top_level_measures(tmp_path: Path) -> None:
+def test_phase_transient_measure_mode_uses_top_level_measures(tmp_path: Path) -> None:
     x = np.zeros((1, 4))
     y = np.array([0])
     w = np.zeros((1, 1, 4))
@@ -241,7 +241,7 @@ def test_phase_transient_native_measure_mode_uses_top_level_measures(tmp_path: P
         1e-12,
         1e18,
         True,
-        "native_measure",
+        "measure",
     )
 
     assert ".tran " in netlist
@@ -249,3 +249,43 @@ def test_phase_transient_native_measure_mode_uses_top_level_measures(tmp_path: P
     assert f".measure TRAN m{n_vec - 1:05d}" in netlist
     assert ".control" not in netlist
     assert ".print TRAN" not in netlist
+
+
+def test_phase_transient_control_measure_mode_keeps_measures_inside_control(tmp_path: Path) -> None:
+    x = np.zeros((1, 4))
+    y = np.array([0])
+    w = np.zeros((1, 1, 4))
+    hb = np.zeros((1, 1))
+    readout = np.zeros((2, 1, 1))
+    output_bias = np.zeros(2)
+
+    netlist, _n_vec, _t_stop = phase_transient.make_phase_transient_netlist(
+        x,
+        y,
+        w,
+        hb,
+        readout,
+        output_bias,
+        [[0, 1, 2, 3]],
+        0.8,
+        tmp_path / "out.dat",
+        False,
+        1,
+        1,
+        1e-9,
+        0.1e-9,
+        5e-12,
+        40.0,
+        20e-12,
+        1e-12,
+        1e-12,
+        1e-12,
+        1e18,
+        True,
+        "control_measure",
+    )
+
+    assert ".control" in netlist
+    assert "meas tran m00000 FIND V(w0_0_0)" in netlist
+    assert ".measure TRAN" not in netlist
+    assert "wrdata" not in netlist

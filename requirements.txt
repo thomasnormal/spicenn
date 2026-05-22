@@ -8,4 +8,4 @@ torch
 torchvision
 optuna
 pytest
-PySpice>=1.5
+spicelib>=1.5.1

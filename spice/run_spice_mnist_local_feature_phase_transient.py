@@ -197,12 +197,21 @@ def label_sequence_metadata(labels: np.ndarray, n_classes: int, prefix_len: int 
 
 
 def sample_source_pwl(values: np.ndarray, sample_starts: list[float], t_stop: float, edge: float) -> str:
+    if len(values) == 0:
+        raise ValueError("values must not be empty")
+    if len(values) != len(sample_starts):
+        raise ValueError("values length must match sample_starts length")
+    if edge < 0.0:
+        raise ValueError("edge must be non-negative")
     points: list[tuple[float, float]] = [(0.0, float(values[0]))]
     for s, val in enumerate(values):
-        t = sample_starts[s]
+        current = float(val)
         prev = float(values[s - 1] if s > 0 else val)
+        if current == prev:
+            continue
+        t = sample_starts[s]
         points.append((max(0.0, t - edge), prev))
-        points.append((t, float(val)))
+        points.append((t, current))
     points.append((t_stop, float(values[-1])))
     cleaned: list[tuple[float, float]] = []
     for t, val in points:

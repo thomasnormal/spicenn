@@ -177,6 +177,22 @@ def test_phase_pulse_area_includes_ramp_edges() -> None:
         phase_transient.phase_pulse_area(1.0e-9, -1.0e-12)
 
 
+def test_phase_transient_sample_source_pwl_skips_unchanged_values() -> None:
+    source = phase_transient.sample_source_pwl(
+        np.array([0.0, 0.0, 1.0, 1.0, 0.0]),
+        [1.0e-9, 2.0e-9, 3.0e-9, 4.0e-9, 5.0e-9],
+        6.0e-9,
+        0.1e-9,
+    )
+
+    assert source == "PWL(0 0 2.9e-09 0 3e-09 1 4.9e-09 1 5e-09 0 6e-09 0)"
+
+
+def test_phase_transient_sample_source_pwl_rejects_mismatched_schedule() -> None:
+    with pytest.raises(ValueError, match="sample_starts"):
+        phase_transient.sample_source_pwl(np.array([1.0, 2.0]), [1.0e-9], 2.0e-9, 0.1e-9)
+
+
 def test_phase_transient_activation_exprs_cover_relu_families() -> None:
     assert phase_transient.local_activation_expr("x", "relu", 1.0) == "0.5*((x)+abs(x))"
     assert "0.5*(((x)-0.25)+abs((x)-0.25))" in phase_transient.local_activation_expr("x", "clipped-relu", 0.25)

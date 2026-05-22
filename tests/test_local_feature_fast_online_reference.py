@@ -171,16 +171,33 @@ def test_fast_online_variant_sweep_grid_uses_phase_variant_family_axes() -> None
         readout_synapse_modes="linear",
         synapse_clip=2.0,
         synapse_clips="1.0,2.0",
+        lr=0.8,
+        lrs="0.4,0.8",
+        output_bias_update_scale=0.0,
+        output_bias_update_scales="",
+        readout_update_scale=0.25,
+        readout_update_scales="0.25,0.5",
+        local_update_scale=1.0,
+        local_update_scales="",
+        state_decay=0.0,
+        state_decays="",
+        softmax_temperature=4.0,
+        softmax_temperatures="2.0,4.0",
         tag="fastscreen",
     )
 
     rows = fast_sweep.variant_grid(args)
 
-    assert len(rows) == 48
+    assert len(rows) == 384
     assert rows[0]["local_activation"] == "tanh"
     assert rows[0]["relu_clip"] == 0.5
+    assert rows[0]["lr"] == 0.4
+    assert rows[0]["readout_update_scale"] == 0.25
+    assert rows[0]["softmax_temperature"] == 2.0
     assert any(row["local_activation"] == "diff-clipped-relu" and row["relu_clip"] == 1.0 for row in rows)
+    assert any(row["lr"] == 0.8 and row["readout_update_scale"] == 0.5 for row in rows)
     assert all("tag" in row for row in rows)
+    assert all("_lr" in row["tag"] and "_temp" in row["tag"] for row in rows)
 
 
 def test_fast_online_variant_sweep_row_reports_best_probe_and_improvement() -> None:
@@ -215,6 +232,12 @@ def test_fast_online_variant_sweep_row_reports_best_probe_and_improvement() -> N
         "hidden_synapse_mode": "linear",
         "readout_synapse_mode": "linear",
         "synapse_clip": 1.0,
+        "lr": 0.8,
+        "output_bias_update_scale": 0.0,
+        "readout_update_scale": 0.25,
+        "local_update_scale": 1.0,
+        "state_decay": 0.0,
+        "softmax_temperature": 4.0,
         "tag": "row",
     }
     x_train = np.array([[0.5, 0.0], [0.0, 0.5]])
@@ -232,6 +255,9 @@ def test_fast_online_variant_sweep_row_reports_best_probe_and_improvement() -> N
     row = fast_sweep.run_variant(args, variant, x_train, y_train, x_eval, y_eval, state, blocks, (1, 2))
 
     assert row["tag"] == "row"
+    assert row["lr"] == 0.8
+    assert row["readout_update_scale"] == 0.25
+    assert row["softmax_temperature"] == 4.0
     assert row["initial_eval_accuracy"] >= 0.0
     assert row["final_eval_accuracy"] >= 0.0
     assert row["eval_improvement"] == pytest.approx(row["final_eval_accuracy"] - row["initial_eval_accuracy"])

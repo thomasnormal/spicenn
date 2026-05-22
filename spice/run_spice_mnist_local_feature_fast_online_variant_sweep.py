@@ -17,6 +17,29 @@ from run_spice_sweep import ROOT
 TrainState = tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]
 
 
+def float_axis(args: argparse.Namespace, plural_name: str, single_name: str, flag_name: str) -> list[float]:
+    raw = getattr(args, plural_name, "")
+    values = parse_float_csv(raw) if raw else [float(getattr(args, single_name))]
+    if not values:
+        raise ValueError(f"--{flag_name} must not be empty")
+    return values
+
+
+def hparam_tag(
+    base_tag: str,
+    lr: float,
+    output_bias_update_scale: float,
+    readout_update_scale: float,
+    local_update_scale: float,
+    state_decay: float,
+    softmax_temperature: float,
+) -> str:
+    return fast_ref.sanitize_tag(
+        f"{base_tag}_lr{lr:g}_obs{output_bias_update_scale:g}_rs{readout_update_scale:g}"
+        f"_ls{local_update_scale:g}_decay{state_decay:g}_temp{softmax_temperature:g}"
+    )
+
+
 def variant_grid(args: argparse.Namespace) -> list[dict[str, Any]]:
     activations = parse_csv(args.activations)
     relu_clips = parse_float_csv(args.relu_clips)
@@ -25,6 +48,17 @@ def variant_grid(args: argparse.Namespace) -> list[dict[str, Any]]:
     hidden_synapse_modes = parse_csv(args.hidden_synapse_modes)
     readout_synapse_modes = parse_csv(args.readout_synapse_modes)
     synapse_clips = parse_float_csv(args.synapse_clips) if args.synapse_clips else [args.synapse_clip]
+    lrs = float_axis(args, "lrs", "lr", "lrs")
+    output_bias_update_scales = float_axis(
+        args,
+        "output_bias_update_scales",
+        "output_bias_update_scale",
+        "output-bias-update-scales",
+    )
+    readout_update_scales = float_axis(args, "readout_update_scales", "readout_update_scale", "readout-update-scales")
+    local_update_scales = float_axis(args, "local_update_scales", "local_update_scale", "local-update-scales")
+    state_decays = float_axis(args, "state_decays", "state_decay", "state-decays")
+    softmax_temperatures = float_axis(args, "softmax_temperatures", "softmax_temperature", "softmax-temperatures")
     if not activations:
         raise ValueError("--activations must not be empty")
     if not relu_clips:
@@ -39,6 +73,18 @@ def variant_grid(args: argparse.Namespace) -> list[dict[str, Any]]:
         raise ValueError("--readout-synapse-modes must not be empty")
     if any(clip <= 0 for clip in synapse_clips):
         raise ValueError("--synapse-clip/--synapse-clips values must be positive")
+    if any(lr < 0 for lr in lrs):
+        raise ValueError("--lr/--lrs values must be non-negative")
+    if any(scale < 0 for scale in output_bias_update_scales):
+        raise ValueError("--output-bias-update-scale/--output-bias-update-scales values must be non-negative")
+    if any(scale < 0 for scale in readout_update_scales):
+        raise ValueError("--readout-update-scale/--readout-update-scales values must be non-negative")
+    if any(scale < 0 for scale in local_update_scales):
+        raise ValueError("--local-update-scale/--local-update-scales values must be non-negative")
+    if any(decay < 0 or decay >= 1 for decay in state_decays):
+        raise ValueError("--state-decay/--state-decays values must be in [0, 1)")
+    if any(temp <= 0 for temp in softmax_temperatures):
+        raise ValueError("--softmax-temperature/--softmax-temperatures values must be positive")
 
     rows: list[dict[str, Any]] = []
     for activation, relu_clip in activation_clip_pairs(activations, relu_clips):
@@ -47,27 +93,48 @@ def variant_grid(args: argparse.Namespace) -> list[dict[str, Any]]:
                 for hidden_synapse_mode in hidden_synapse_modes:
                     for readout_synapse_mode in readout_synapse_modes:
                         for synapse_clip in synapse_clips:
-                            rows.append(
-                                {
-                                    "local_activation": activation,
-                                    "relu_clip": relu_clip,
-                                    "activation_derivative": derivative_mode,
-                                    "readout_feedback_mode": feedback_mode,
-                                    "hidden_synapse_mode": hidden_synapse_mode,
-                                    "readout_synapse_mode": readout_synapse_mode,
-                                    "synapse_clip": synapse_clip,
-                                    "tag": variant_tag(
-                                        args.tag,
-                                        activation,
-                                        relu_clip,
-                                        derivative_mode,
-                                        feedback_mode,
-                                        hidden_synapse_mode,
-                                        readout_synapse_mode,
-                                        synapse_clip,
-                                    ),
-                                }
+                            family_tag = variant_tag(
+                                args.tag,
+                                activation,
+                                relu_clip,
+                                derivative_mode,
+                                feedback_mode,
+                                hidden_synapse_mode,
+                                readout_synapse_mode,
+                                synapse_clip,
                             )
+                            for lr in lrs:
+                                for output_bias_update_scale in output_bias_update_scales:
+                                    for readout_update_scale in readout_update_scales:
+                                        for local_update_scale in local_update_scales:
+                                            for state_decay in state_decays:
+                                                for softmax_temperature in softmax_temperatures:
+                                                    rows.append(
+                                                        {
+                                                            "local_activation": activation,
+                                                            "relu_clip": relu_clip,
+                                                            "activation_derivative": derivative_mode,
+                                                            "readout_feedback_mode": feedback_mode,
+                                                            "hidden_synapse_mode": hidden_synapse_mode,
+                                                            "readout_synapse_mode": readout_synapse_mode,
+                                                            "synapse_clip": synapse_clip,
+                                                            "lr": lr,
+                                                            "output_bias_update_scale": output_bias_update_scale,
+                                                            "readout_update_scale": readout_update_scale,
+                                                            "local_update_scale": local_update_scale,
+                                                            "state_decay": state_decay,
+                                                            "softmax_temperature": softmax_temperature,
+                                                            "tag": hparam_tag(
+                                                                family_tag,
+                                                                lr,
+                                                                output_bias_update_scale,
+                                                                readout_update_scale,
+                                                                local_update_scale,
+                                                                state_decay,
+                                                                softmax_temperature,
+                                                            ),
+                                                        }
+                                                    )
     return rows
 
 
@@ -82,23 +149,23 @@ def forward_kwargs(args: argparse.Namespace, variant: dict[str, Any]) -> dict[st
         "synapse_clip": variant["synapse_clip"],
         "linear_output": args.linear_output,
         "softmax_output": args.softmax_output,
-        "softmax_temperature": args.softmax_temperature,
+        "softmax_temperature": variant["softmax_temperature"],
         "readout_class_centering": args.readout_class_centering,
     }
 
 
 def update_kwargs(args: argparse.Namespace, variant: dict[str, Any]) -> dict[str, Any]:
     return {
-        "lr": args.lr,
+        "lr": variant["lr"],
         "activation_derivative": variant["activation_derivative"],
         "derivative_floor": args.derivative_floor,
         "derivative_gate_threshold": args.derivative_gate_threshold,
         "readout_feedback_mode": variant["readout_feedback_mode"],
         "readout_feedback_clip": args.readout_feedback_clip,
-        "output_bias_update_scale": args.output_bias_update_scale,
-        "readout_update_scale": args.readout_update_scale,
-        "local_update_scale": args.local_update_scale,
-        "state_decay": args.state_decay,
+        "output_bias_update_scale": variant["output_bias_update_scale"],
+        "readout_update_scale": variant["readout_update_scale"],
+        "local_update_scale": variant["local_update_scale"],
+        "state_decay": variant["state_decay"],
         "softmax_negative_scale": args.softmax_negative_scale,
         "softmax_error_centering": args.softmax_error_centering,
         "softmax_competition_mode": args.softmax_competition_mode,
@@ -157,6 +224,7 @@ def main() -> None:
     ap.add_argument("--stride", type=int, default=2)
     ap.add_argument("--channels", type=int, default=2)
     ap.add_argument("--lr", type=float, default=0.8)
+    ap.add_argument("--lrs", default="")
     ap.add_argument("--linear-output", action="store_true")
     ap.add_argument("--softmax-output", action=argparse.BooleanOptionalAction, default=True)
     ap.add_argument(
@@ -174,12 +242,17 @@ def main() -> None:
     ap.add_argument("--feedback-modes", default="full-readout")
     ap.add_argument("--readout-feedback-clip", type=float, default=0.05)
     ap.add_argument("--output-bias-update-scale", type=float, default=0.0)
+    ap.add_argument("--output-bias-update-scales", default="")
     ap.add_argument("--readout-update-scale", type=float, default=0.25)
+    ap.add_argument("--readout-update-scales", default="")
     ap.add_argument("--local-update-scale", type=float, default=1.0)
+    ap.add_argument("--local-update-scales", default="")
     ap.add_argument("--state-decay", type=float, default=0.0)
+    ap.add_argument("--state-decays", default="")
     ap.add_argument("--softmax-negative-scale", type=float, default=1.0)
     ap.add_argument("--softmax-error-centering", choices=["none", "mean"], default="none")
     ap.add_argument("--softmax-temperature", type=float, default=4.0)
+    ap.add_argument("--softmax-temperatures", default="")
     ap.add_argument("--softmax-competition-mode", choices=["all", "normalized-power"], default="all")
     ap.add_argument("--softmax-competitor-power", type=int, default=2)
     ap.add_argument("--softmax-error-gate", choices=["none", "target-margin"], default="none")

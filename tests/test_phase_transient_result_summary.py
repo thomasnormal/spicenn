@@ -82,6 +82,7 @@ def test_phase_summary_row_keeps_execution_contract_and_backend_fields(tmp_path:
                 "max_transient_points": 2000,
                 "phase_output_vector_count": 884,
                 "sample_source_count": 110,
+                "max_source_pwl_points": 50000,
                 "sample_source_dc_count": 10,
                 "sample_source_pwl_count": 100,
                 "sample_source_pwl_points": 25478,
@@ -141,6 +142,7 @@ def test_phase_summary_row_keeps_execution_contract_and_backend_fields(tmp_path:
     assert row["max_transient_points"] == 2000
     assert row["phase_output_vector_count"] == 884
     assert row["sample_source_count"] == 110
+    assert row["max_source_pwl_points"] == 50000
     assert row["sample_source_dc_count"] == 10
     assert row["sample_source_pwl_points"] == 25478
     assert row["phase_clock_source_count"] == 5

@@ -239,6 +239,7 @@ def test_fast_online_variant_sweep_row_reports_best_probe_and_improvement() -> N
         promotion_transient_step=200e-12,
         promotion_timeout=240.0,
         promotion_max_transient_points=2000,
+        promotion_max_source_pwl_points=5000,
         promotion_probe_updates="",
         promotion_tag_prefix="promote",
     )
@@ -288,6 +289,7 @@ def test_fast_online_variant_sweep_row_reports_best_probe_and_improvement() -> N
     assert command[command.index("--softmax-temperature") + 1] == "4.0"
     assert row["strict_phase_promotion_updates"] == 2
     assert row["strict_phase_promotion_max_transient_points"] == 2000
+    assert row["strict_phase_promotion_max_source_pwl_points"] == 5000
     assert row["initial_eval_accuracy"] >= 0.0
     assert row["final_eval_accuracy"] >= 0.0
     assert row["eval_improvement"] == pytest.approx(row["final_eval_accuracy"] - row["initial_eval_accuracy"])

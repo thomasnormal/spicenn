@@ -84,6 +84,17 @@ def validate_transient_point_budget(estimated_points: int, max_points: int) -> N
         )
 
 
+def validate_source_point_budget(source_complexity: dict[str, int], max_points: int) -> None:
+    if max_points < 0:
+        raise ValueError("--max-source-pwl-points must be non-negative")
+    estimated_points = int(source_complexity["sample_source_pwl_points"]) + int(source_complexity["phase_clock_source_pwl_points"])
+    if max_points and estimated_points > max_points:
+        raise ValueError(
+            f"estimated source PWL points ({estimated_points}) exceed --max-source-pwl-points ({max_points}); "
+            "reduce --updates, choose a smaller training prefix, or raise the budget intentionally"
+        )
+
+
 def final_state_measure_time(t_stop: float, transient_step: float, final_update_stop: float) -> float:
     if transient_step <= 0.0:
         raise ValueError("transient_step must be positive")
@@ -1472,6 +1483,12 @@ def main() -> None:
         default=0,
         help="Optional preflight guard on ceil(t_stop / transient_step) + 1; 0 disables the guard.",
     )
+    ap.add_argument(
+        "--max-source-pwl-points",
+        type=int,
+        default=0,
+        help="Optional preflight guard on input/target plus phase-clock PWL point count; 0 disables the guard.",
+    )
     ap.add_argument("--init-weights", default="")
     ap.add_argument("--phase", type=float, default=2e-9)
     ap.add_argument("--gap", type=float, default=0.2e-9)
@@ -1554,6 +1571,8 @@ def main() -> None:
         raise ValueError("--phase and --settle-ratio must be positive")
     if args.max_transient_points < 0:
         raise ValueError("--max-transient-points must be non-negative")
+    if args.max_source_pwl_points < 0:
+        raise ValueError("--max-source-pwl-points must be non-negative")
     if args.direction_cosine_threshold < -1 or args.direction_cosine_threshold > 1:
         raise ValueError("--direction-cosine-threshold must be between -1 and 1")
     if args.sign_alignment_threshold < 0 or args.sign_alignment_threshold > 1:
@@ -1618,6 +1637,7 @@ def main() -> None:
         args.edge,
         args.update_mode == "direct",
     )
+    validate_source_point_budget(source_complexity, args.max_source_pwl_points)
     rng = np.random.default_rng(args.seed)
     w, hb, readout, output_bias = load_or_init_weights(
         args.init_weights,
@@ -2175,6 +2195,7 @@ def main() -> None:
         "estimated_transient_points": estimated_transient_points,
         "max_transient_points": args.max_transient_points,
         "phase_output_vector_count": n_vec,
+        "max_source_pwl_points": args.max_source_pwl_points,
         **source_complexity,
         "phase_s": args.phase,
         "settle_ratio": args.settle_ratio,

@@ -224,6 +224,8 @@ def strict_phase_promotion_command(args: argparse.Namespace, variant: dict[str, 
         str(getattr(args, "promotion_timeout", 240.0)),
         "--max-transient-points",
         str(getattr(args, "promotion_max_transient_points", 2000)),
+        "--max-source-pwl-points",
+        str(getattr(args, "promotion_max_source_pwl_points", 0)),
         "--reference-mode",
         "none",
         "--phase-output-mode",
@@ -332,6 +334,7 @@ def run_variant(
         "best_probe_update": best_probe["update"] if best_probe is not None else None,
         "strict_phase_promotion_updates": int(getattr(args, "promotion_updates", 0) or args.train_samples),
         "strict_phase_promotion_max_transient_points": int(getattr(args, "promotion_max_transient_points", 2000)),
+        "strict_phase_promotion_max_source_pwl_points": int(getattr(args, "promotion_max_source_pwl_points", 0)),
         "strict_phase_promotion_command": command_text(phase_command),
         "wall_time_s": wall,
     }
@@ -396,6 +399,7 @@ def main() -> None:
     ap.add_argument("--promotion-transient-step", type=float, default=200e-12)
     ap.add_argument("--promotion-timeout", type=float, default=240.0)
     ap.add_argument("--promotion-max-transient-points", type=int, default=2000)
+    ap.add_argument("--promotion-max-source-pwl-points", type=int, default=0)
     ap.add_argument("--promotion-probe-updates", default="")
     ap.add_argument("--promotion-tag-prefix", default="promote")
     ap.add_argument("--seed", type=int, default=0)
@@ -426,6 +430,8 @@ def main() -> None:
         raise ValueError("--promotion-updates must be non-negative")
     if args.promotion_max_transient_points < 0:
         raise ValueError("--promotion-max-transient-points must be non-negative")
+    if args.promotion_max_source_pwl_points < 0:
+        raise ValueError("--promotion-max-source-pwl-points must be non-negative")
 
     stride = args.block_size if args.stride is None else args.stride
     blocks = block_indices(args.image_size, args.block_size, stride)

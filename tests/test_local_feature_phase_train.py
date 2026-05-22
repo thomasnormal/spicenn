@@ -115,6 +115,14 @@ def test_phase_transient_point_budget_fails_before_large_runs() -> None:
         phase_transient.validate_transient_point_budget(101, 100)
 
 
+def test_phase_transient_source_point_budget_fails_before_large_decks() -> None:
+    phase_transient.validate_source_point_budget({"sample_source_pwl_points": 101, "phase_clock_source_pwl_points": 50}, 0)
+    phase_transient.validate_source_point_budget({"sample_source_pwl_points": 60, "phase_clock_source_pwl_points": 40}, 100)
+
+    with pytest.raises(ValueError, match="estimated source PWL points"):
+        phase_transient.validate_source_point_budget({"sample_source_pwl_points": 61, "phase_clock_source_pwl_points": 40}, 100)
+
+
 def test_phase_transient_final_measure_time_requires_post_update_slack() -> None:
     assert phase_transient.final_state_measure_time(10.0e-9, 2.0e-9, 7.0e-9) == pytest.approx(8.0e-9)
 
@@ -649,6 +657,7 @@ def test_phase_variant_sweep_dry_command_preserves_online_contract() -> None:
         transient_step=50e-12,
         timeout=600.0,
         max_transient_points=500,
+        max_source_pwl_points=1200,
         reference_mode="none",
         phase_output_mode="print",
         update_mode="direct",
@@ -712,6 +721,8 @@ def test_phase_variant_sweep_dry_command_preserves_online_contract() -> None:
     assert command[command.index("--synapse-clip") + 1] == "0.25"
     assert "--max-transient-points" in command
     assert command[command.index("--max-transient-points") + 1] == "500"
+    assert "--max-source-pwl-points" in command
+    assert command[command.index("--max-source-pwl-points") + 1] == "1200"
     assert "--reference-mode" in command
     assert command[command.index("--reference-mode") + 1] == "none"
     assert "--phase-output-mode" in command

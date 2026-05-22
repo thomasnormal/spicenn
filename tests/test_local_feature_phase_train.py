@@ -660,6 +660,25 @@ def test_phase_transient_state_descriptions_follow_update_mode() -> None:
         phase_transient.phase_state_descriptions("online")
 
 
+def test_phase_transient_execution_contract_is_separate_from_reference_replay() -> None:
+    no_reference = phase_transient.phase_execution_contract_fields(1, "none")
+    with_reference = phase_transient.phase_execution_contract_fields(1, "spice")
+    batched = phase_transient.phase_execution_contract_fields(2, "none")
+
+    assert no_reference["fully_on_device_execution_contract_met"] is True
+    assert no_reference["single_phase_training_transient"] is True
+    assert no_reference["weights_persist_inside_phase_transient"] is True
+    assert no_reference["python_weight_updates_between_samples"] is False
+    assert no_reference["python_checkpointing_between_samples"] is False
+    assert no_reference["reference_replay_used_for_diagnostics"] is False
+    assert with_reference["fully_on_device_execution_contract_met"] is True
+    assert with_reference["reference_replay_used_for_diagnostics"] is True
+    assert batched["fully_on_device_execution_contract_met"] is False
+
+    with pytest.raises(ValueError, match="reference_mode"):
+        phase_transient.phase_execution_contract_fields(1, "fast")
+
+
 def test_phase_transient_relu_deck_matches_forward_and_backward_activation(tmp_path: Path) -> None:
     x = np.zeros((1, 4))
     y = np.array([0])

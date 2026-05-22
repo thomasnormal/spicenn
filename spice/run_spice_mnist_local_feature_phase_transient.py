@@ -77,6 +77,24 @@ def phase_state_descriptions(update_mode: str) -> dict[str, str]:
     }
 
 
+def phase_execution_contract_fields(batch_size: int, reference_mode: str) -> dict[str, bool | str]:
+    if reference_mode not in {"spice", "none"}:
+        raise ValueError("reference_mode must be 'spice' or 'none'")
+    return {
+        "single_phase_training_transient": True,
+        "weights_persist_inside_phase_transient": True,
+        "python_weight_updates_between_samples": False,
+        "python_checkpointing_between_samples": False,
+        "reference_replay_used_for_diagnostics": reference_mode == "spice",
+        "fully_on_device_execution_contract_met": batch_size == 1,
+        "execution_contract_note": (
+            "This gate covers the executed phase-transient training path only: one persistent-state "
+            "training transient, batch_size=1 online updates, and no Python weight writes between "
+            "samples. Reference/eval runs are diagnostics after the training transient."
+        ),
+    }
+
+
 def sample_source_pwl(values: np.ndarray, sample_starts: list[float], t_stop: float, edge: float) -> str:
     points: list[tuple[float, float]] = [(0.0, float(values[0]))]
     for s, val in enumerate(values):
@@ -1254,6 +1272,7 @@ def main() -> None:
         pd.DataFrame(probe_rows).to_csv(probe_metrics_path, index=False)
     simulator_sidecars_cleaned = cleanup_simulator_sidecars(owned_netlists)
     state_descriptions = phase_state_descriptions(args.update_mode)
+    execution_contract = phase_execution_contract_fields(args.batch_size, args.reference_mode)
     probe_summary = summarize_probe_rows(probe_rows)
     summary = {
         "simulator": version,
@@ -1324,6 +1343,7 @@ def main() -> None:
         "eval_accuracy_matches_batch_op_reference": eval_matches_reference,
         "nontrivial_learning_met": nontrivial_learning_met,
         "online_batch_size_one": args.batch_size == 1,
+        **execution_contract,
         "continuous_transient_contract_met": (
             None
             if args.reference_mode == "none"
@@ -1336,7 +1356,6 @@ def main() -> None:
         "output_mode": phase_output_mode,
         **state_descriptions,
         "python_role": "Python generates guiding waveforms and compares final state; it does not carry training state during the transient run.",
-        "python_checkpointing_between_samples": False,
         "note": (
             "Local-feature phase-transient all-SPICE update run. reference_mode=spice compares against the existing "
             "operating-point SPICE update; reference_mode=none skips that replay for longer final-diagnostic runs."

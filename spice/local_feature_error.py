@@ -5,6 +5,43 @@ def softmax_delta_expr(target_expr: str, y_expr: str) -> str:
     return f"({target_expr})*(1-({y_expr})) - (1-({target_expr}))*{{SOFTMAX_NEGATIVE_SCALE}}*({y_expr})"
 
 
+def product_power_expr(expr: str, power: int) -> str:
+    if power < 1:
+        raise ValueError("power must be positive")
+    return "*".join(f"({expr})" for _ in range(power))
+
+
+def softmax_delta_exprs(
+    target_exprs: list[str],
+    y_exprs: list[str],
+    competition_mode: str,
+    competitor_power: int,
+) -> list[str]:
+    if len(target_exprs) != len(y_exprs):
+        raise ValueError("target and softmax expression counts must match")
+    if competition_mode == "all":
+        return [softmax_delta_expr(target_expr, y_expr) for target_expr, y_expr in zip(target_exprs, y_exprs)]
+    if competition_mode != "normalized-power":
+        raise ValueError("softmax competition mode must be 'all' or 'normalized-power'")
+    if competitor_power < 1:
+        raise ValueError("competitor power must be positive")
+    target_error = " + ".join(
+        f"({target_expr})*(1-({y_expr}))" for target_expr, y_expr in zip(target_exprs, y_exprs)
+    )
+    competitor_den = " + ".join(
+        f"(1-({target_expr}))*({product_power_expr(y_expr, competitor_power)})"
+        for target_expr, y_expr in zip(target_exprs, y_exprs)
+    )
+    return [
+        (
+            f"({target_expr})*(1-({y_expr})) - "
+            f"(1-({target_expr}))*{{SOFTMAX_NEGATIVE_SCALE}}*({target_error})"
+            f"*({product_power_expr(y_expr, competitor_power)})/(({competitor_den})+1e-12)"
+        )
+        for target_expr, y_expr in zip(target_exprs, y_exprs)
+    ]
+
+
 def softmax_exp_expr(score_expr: str) -> str:
     return f"exp(({score_expr})/{{SOFTMAX_TEMPERATURE}})"
 

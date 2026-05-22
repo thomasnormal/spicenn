@@ -17,7 +17,7 @@ from run_spice_mnist_local_block_batch_op_train import (
     readout_feedback_expr,
     synapse_transfer_expr,
 )
-from local_feature_error import append_target_margin_gate, class_centered_expr, mean_centered_expr, softmax_delta_expr, softmax_exp_expr
+from local_feature_error import append_target_margin_gate, class_centered_expr, mean_centered_expr, softmax_delta_exprs, softmax_exp_expr
 from run_spice_mnist_train import load_mnist_sequence
 from run_spice_sweep import ROOT, detect_spice, is_xyce, prepare_netlist_for_simulator, run_tiny_test, run_simulator_netlist
 
@@ -114,6 +114,8 @@ def make_train_netlist(
     softmax_negative_scale=1.0,
     softmax_error_centering="none",
     softmax_temperature=1.0,
+    softmax_competition_mode="all",
+    softmax_competitor_power=2,
     softmax_error_gate="none",
     softmax_margin=1.0,
     state_decay=0.0,
@@ -123,6 +125,10 @@ def make_train_netlist(
         raise ValueError("softmax_negative_scale must be non-negative")
     if softmax_temperature <= 0:
         raise ValueError("softmax_temperature must be positive")
+    if softmax_competition_mode not in {"all", "normalized-power"}:
+        raise ValueError("softmax_competition_mode must be 'all' or 'normalized-power'")
+    if softmax_competitor_power < 1:
+        raise ValueError("softmax_competitor_power must be positive")
     if state_decay < 0 or state_decay >= 1:
         raise ValueError("state_decay must be in [0, 1)")
     if softmax_error_centering not in {"none", "mean"}:
@@ -143,6 +149,7 @@ def make_train_netlist(
         f".param BS={batch}",
         f".param SOFTMAX_NEGATIVE_SCALE={softmax_negative_scale:.12g}",
         f".param SOFTMAX_TEMPERATURE={softmax_temperature:.12g}",
+        f".param SOFTMAX_COMPETITOR_POWER={softmax_competitor_power}",
         f".param SOFTMAX_MARGIN={softmax_margin:.12g}",
         f".param STATE_DECAY={state_decay:.12g}",
         "",
@@ -213,9 +220,14 @@ def make_train_netlist(
                 lines.append(f"By{s}_{k} y{s}_{k} 0 V = 2/(1+exp(-2*({out_sum})))-1")
         if softmax_output:
             denom = " + ".join(softmax_exp_expr(f"V(z{s}_{k})") for k in range(n_classes))
-            raw_delta_exprs = [softmax_delta_expr(f"V(t{s}_{k})", f"V(y{s}_{k})") for k in range(n_classes)]
             for k in range(n_classes):
                 lines.append(f"By{s}_{k} y{s}_{k} 0 V = {softmax_exp_expr(f'V(z{s}_{k})')}/({denom})")
+            raw_delta_exprs = softmax_delta_exprs(
+                [f"V(t{s}_{k})" for k in range(n_classes)],
+                [f"V(y{s}_{k})" for k in range(n_classes)],
+                softmax_competition_mode,
+                softmax_competitor_power,
+            )
             if softmax_error_gate == "target-margin":
                 append_target_margin_gate(
                     lines,
@@ -417,6 +429,8 @@ def run_train_batch(
     softmax_negative_scale=1.0,
     softmax_error_centering="none",
     softmax_temperature=1.0,
+    softmax_competition_mode="all",
+    softmax_competitor_power=2,
     softmax_error_gate="none",
     softmax_margin=1.0,
     state_decay=0.0,
@@ -451,6 +465,8 @@ def run_train_batch(
                 softmax_negative_scale=softmax_negative_scale,
                 softmax_error_centering=softmax_error_centering,
                 softmax_temperature=softmax_temperature,
+                softmax_competition_mode=softmax_competition_mode,
+                softmax_competitor_power=softmax_competitor_power,
                 softmax_error_gate=softmax_error_gate,
                 softmax_margin=softmax_margin,
                 state_decay=state_decay,
@@ -652,6 +668,8 @@ def main():
     ap.add_argument("--softmax-negative-scale", type=float, default=1.0)
     ap.add_argument("--softmax-error-centering", choices=["none", "mean"], default="none")
     ap.add_argument("--softmax-temperature", type=float, default=1.0)
+    ap.add_argument("--softmax-competition-mode", choices=["all", "normalized-power"], default="all")
+    ap.add_argument("--softmax-competitor-power", type=int, default=2)
     ap.add_argument("--softmax-error-gate", choices=["none", "target-margin"], default="none")
     ap.add_argument("--softmax-margin", type=float, default=1.0)
     synapse_modes = ["linear", "full", "ideal", "tanh-clipped", "smooth-clipped", "clipped", "hard-clipped", "bounded", "sign", "binary"]
@@ -701,6 +719,8 @@ def main():
         raise ValueError("--softmax-negative-scale must be non-negative")
     if args.softmax_temperature <= 0:
         raise ValueError("--softmax-temperature must be positive")
+    if args.softmax_competitor_power < 1:
+        raise ValueError("--softmax-competitor-power must be positive")
     if args.softmax_error_gate == "target-margin" and args.softmax_margin <= 0:
         raise ValueError("--softmax-margin must be positive when --softmax-error-gate is target-margin")
     if args.synapse_clip <= 0:
@@ -840,6 +860,8 @@ def main():
                     args.softmax_negative_scale,
                     args.softmax_error_centering,
                     args.softmax_temperature,
+                    args.softmax_competition_mode,
+                    args.softmax_competitor_power,
                     args.softmax_error_gate,
                     args.softmax_margin,
                     args.state_decay,
@@ -951,6 +973,8 @@ def main():
         "softmax_negative_scale": args.softmax_negative_scale,
         "softmax_error_centering": args.softmax_error_centering,
         "softmax_temperature": args.softmax_temperature,
+        "softmax_competition_mode": args.softmax_competition_mode,
+        "softmax_competitor_power": args.softmax_competitor_power,
         "softmax_error_gate": args.softmax_error_gate,
         "softmax_margin": args.softmax_margin,
         "hidden_synapse_mode": args.hidden_synapse_mode,

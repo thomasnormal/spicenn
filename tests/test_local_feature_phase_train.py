@@ -60,6 +60,8 @@ def test_phase_transient_cli_exposes_agreement_gates() -> None:
     assert "--softmax-negative-scale" in proc.stdout
     assert "--softmax-error-centering" in proc.stdout
     assert "--softmax-temperature" in proc.stdout
+    assert "--softmax-competition-mode" in proc.stdout
+    assert "--softmax-competitor-power" in proc.stdout
     assert "--softmax-error-gate" in proc.stdout
     assert "--softmax-margin" in proc.stdout
     assert "--readout-class-centering" in proc.stdout
@@ -897,6 +899,30 @@ def test_batch_op_softmax_negative_scale_matches_phase_error_expr(tmp_path: Path
     assert "Be0_1 e0_1 0 V = ((V(t0_1))*(1-(V(y0_1)))" in centered_netlist
     assert ")/2)" in centered_netlist
 
+    focused_netlist = feature_batch_train.make_train_netlist(
+        x,
+        y,
+        w,
+        hb,
+        readout,
+        output_bias,
+        [[0, 1, 2, 3]],
+        0.8,
+        tmp_path / "focused.dat",
+        False,
+        True,
+        "tanh",
+        1.0,
+        softmax_competition_mode="normalized-power",
+        softmax_competitor_power=2,
+    )
+
+    assert ".param SOFTMAX_COMPETITOR_POWER=2" in focused_netlist
+    assert "(V(t0_0))*(1-(V(y0_0))) + (V(t0_1))*(1-(V(y0_1)))" in focused_netlist
+    assert "(1-(V(t0_1)))*{SOFTMAX_NEGATIVE_SCALE}" in focused_netlist
+    assert "*((V(y0_1))*(V(y0_1)))/" in focused_netlist
+    assert "((1-(V(t0_0)))*((V(y0_0))*(V(y0_0))) + (1-(V(t0_1)))*((V(y0_1))*(V(y0_1))))+1e-12" in focused_netlist
+
     with pytest.raises(ValueError, match="softmax_negative_scale"):
         feature_batch_train.make_train_netlist(
             x,
@@ -931,6 +957,52 @@ def test_batch_op_softmax_negative_scale_matches_phase_error_expr(tmp_path: Path
             "tanh",
             1.0,
             softmax_temperature=0.0,
+        )
+
+    with pytest.raises(ValueError, match="softmax_competition_mode"):
+        feature_batch_train.make_train_netlist(
+            x,
+            y,
+            w,
+            hb,
+            readout,
+            output_bias,
+            [[0, 1, 2, 3]],
+            0.8,
+            tmp_path / "bad_competition.dat",
+            False,
+            True,
+            "tanh",
+            1.0,
+            softmax_competition_mode="bad",
+        )
+
+    with pytest.raises(ValueError, match="softmax_competitor_power"):
+        phase_transient.make_phase_transient_netlist(
+            x,
+            y,
+            w,
+            hb,
+            readout,
+            output_bias,
+            [[0, 1, 2, 3]],
+            0.8,
+            tmp_path / "bad_competition_power.dat",
+            False,
+            1,
+            1,
+            1e-9,
+            0.1e-9,
+            5e-12,
+            40.0,
+            20e-12,
+            1e-12,
+            1e-12,
+            1e-12,
+            1e18,
+            True,
+            "measure",
+            softmax_competitor_power=0,
         )
 
 

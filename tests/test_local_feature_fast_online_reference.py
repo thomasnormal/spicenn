@@ -396,3 +396,49 @@ def test_fast_online_variant_sweep_selects_best_promotion_variant() -> None:
     ]
 
     assert fast_sweep.best_promotion_variant(rows)["tag"] == "early"
+
+
+def test_fast_online_variant_sweep_prefers_budget_feasible_promotion_variant() -> None:
+    rows = [
+        {
+            "tag": "too_expensive",
+            "final_eval_accuracy": 0.9,
+            "promotion_probe_eval_accuracy": 0.8,
+            "eval_improvement": 0.8,
+            "strict_phase_promotion_transient_budget_met": True,
+            "strict_phase_promotion_source_pwl_budget_met": False,
+        },
+        {
+            "tag": "feasible",
+            "final_eval_accuracy": 0.8,
+            "promotion_probe_eval_accuracy": 0.6,
+            "eval_improvement": 0.6,
+            "strict_phase_promotion_transient_budget_met": True,
+            "strict_phase_promotion_source_pwl_budget_met": True,
+        },
+    ]
+
+    assert fast_sweep.best_promotion_variant(rows)["tag"] == "feasible"
+
+
+def test_fast_online_variant_sweep_keeps_best_when_no_promotion_is_budget_feasible() -> None:
+    rows = [
+        {
+            "tag": "expensive_best",
+            "final_eval_accuracy": 0.9,
+            "promotion_probe_eval_accuracy": 0.8,
+            "eval_improvement": 0.8,
+            "strict_phase_promotion_transient_budget_met": False,
+            "strict_phase_promotion_source_pwl_budget_met": True,
+        },
+        {
+            "tag": "also_expensive",
+            "final_eval_accuracy": 0.8,
+            "promotion_probe_eval_accuracy": 0.6,
+            "eval_improvement": 0.6,
+            "strict_phase_promotion_transient_budget_met": True,
+            "strict_phase_promotion_source_pwl_budget_met": False,
+        },
+    ]
+
+    assert fast_sweep.best_promotion_variant(rows)["tag"] == "expensive_best"

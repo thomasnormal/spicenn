@@ -192,6 +192,14 @@ def best_promotion_variant(rows: list[dict[str, Any]]) -> dict[str, Any] | None:
     candidates = [row for row in rows if row.get("promotion_probe_eval_accuracy") is not None]
     if not candidates:
         return None
+    feasible = [
+        row
+        for row in candidates
+        if row.get("strict_phase_promotion_transient_budget_met") is True
+        and row.get("strict_phase_promotion_source_pwl_budget_met") is True
+    ]
+    if feasible:
+        candidates = feasible
     return max(candidates, key=lambda row: (row["promotion_probe_eval_accuracy"], row["eval_improvement"]))
 
 

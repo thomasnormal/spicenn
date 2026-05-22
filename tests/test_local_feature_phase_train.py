@@ -258,6 +258,66 @@ def test_phase_transient_probe_rows_compare_reference_when_available() -> None:
     assert rows[0]["state_update_sign_alignment_fraction"] == pytest.approx(1.0)
 
 
+def test_phase_transient_probe_summary_reports_best_and_final_points() -> None:
+    rows = [
+        {
+            "update": 1,
+            "phase_update_l2": 0.2,
+            "phase_eval_accuracy": 0.12,
+            "phase_eval_improvement": 0.01,
+        },
+        {
+            "update": 4,
+            "phase_update_l2": 0.8,
+            "phase_eval_accuracy": 0.25,
+            "phase_eval_improvement": 0.14,
+        },
+        {
+            "update": 2,
+            "phase_update_l2": 0.5,
+            "phase_eval_accuracy": 0.18,
+            "phase_eval_improvement": 0.07,
+        },
+    ]
+
+    summary = phase_transient.summarize_probe_rows(rows)
+
+    assert summary["probe_count"] == 3
+    assert summary["final_probe_update"] == 4
+    assert summary["final_probe_phase_update_l2"] == pytest.approx(0.8)
+    assert summary["max_probe_phase_update_l2"] == pytest.approx(0.8)
+    assert summary["max_probe_phase_update_l2_update"] == 4
+    assert summary["best_probe_phase_eval_accuracy"] == pytest.approx(0.25)
+    assert summary["best_probe_phase_eval_update"] == 4
+    assert summary["best_probe_phase_eval_improvement"] == pytest.approx(0.14)
+
+
+def test_phase_transient_probe_summary_handles_missing_eval_fields() -> None:
+    summary = phase_transient.summarize_probe_rows(
+        [
+            {"update": 2, "phase_update_l2": None},
+            {"update": 1, "phase_update_l2": 0.3},
+        ]
+    )
+
+    assert summary["probe_count"] == 2
+    assert summary["final_probe_update"] == 2
+    assert summary["final_probe_phase_update_l2"] is None
+    assert summary["max_probe_phase_update_l2"] == pytest.approx(0.3)
+    assert summary["max_probe_phase_update_l2_update"] == 1
+    assert summary["best_probe_phase_eval_accuracy"] is None
+    assert summary["best_probe_phase_eval_update"] is None
+
+
+def test_phase_transient_empty_probe_summary_is_json_nulls() -> None:
+    summary = phase_transient.summarize_probe_rows([])
+
+    assert summary["probe_count"] == 0
+    assert summary["final_probe_update"] is None
+    assert summary["max_probe_phase_update_l2"] is None
+    assert summary["best_probe_phase_eval_accuracy"] is None
+
+
 def test_mnist_index_splits_keep_test_slice_independent_of_train_count() -> None:
     _train_small, test_small = mnist_train.mnist_index_splits(5, 8, 100, 100, seed=7)
     _train_large, test_large = mnist_train.mnist_index_splits(50, 8, 100, 100, seed=7)

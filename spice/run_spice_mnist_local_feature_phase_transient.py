@@ -656,6 +656,53 @@ def probe_diagnostic_rows(
     return rows, phase_states
 
 
+def finite_row_value(row: dict[str, object], key: str) -> float | None:
+    value = row.get(key)
+    if value is None:
+        return None
+    try:
+        out = float(value)
+    except (TypeError, ValueError):
+        return None
+    return out if np.isfinite(out) else None
+
+
+def summarize_probe_rows(probe_rows: list[dict[str, object]]) -> dict[str, int | float | None]:
+    if not probe_rows:
+        return {
+            "probe_count": 0,
+            "final_probe_update": None,
+            "final_probe_phase_update_l2": None,
+            "max_probe_phase_update_l2": None,
+            "max_probe_phase_update_l2_update": None,
+            "best_probe_phase_eval_accuracy": None,
+            "best_probe_phase_eval_update": None,
+            "best_probe_phase_eval_improvement": None,
+        }
+
+    final_row = max(probe_rows, key=lambda row: int(row["update"]))
+    phase_l2_rows = [(row, finite_row_value(row, "phase_update_l2")) for row in probe_rows]
+    phase_l2_rows = [(row, value) for row, value in phase_l2_rows if value is not None]
+    max_l2_row, max_l2 = max(phase_l2_rows, key=lambda item: item[1]) if phase_l2_rows else (None, None)
+
+    eval_rows = [(row, finite_row_value(row, "phase_eval_accuracy")) for row in probe_rows]
+    eval_rows = [(row, value) for row, value in eval_rows if value is not None]
+    best_eval_row, best_eval = max(eval_rows, key=lambda item: item[1]) if eval_rows else (None, None)
+
+    return {
+        "probe_count": len(probe_rows),
+        "final_probe_update": int(final_row["update"]),
+        "final_probe_phase_update_l2": finite_row_value(final_row, "phase_update_l2"),
+        "max_probe_phase_update_l2": max_l2,
+        "max_probe_phase_update_l2_update": int(max_l2_row["update"]) if max_l2_row is not None else None,
+        "best_probe_phase_eval_accuracy": best_eval,
+        "best_probe_phase_eval_update": int(best_eval_row["update"]) if best_eval_row is not None else None,
+        "best_probe_phase_eval_improvement": (
+            finite_row_value(best_eval_row, "phase_eval_improvement") if best_eval_row is not None else None
+        ),
+    }
+
+
 def select_phase_output_mode(
     requested_mode: str,
     spice_bin: str,
@@ -1176,6 +1223,7 @@ def main() -> None:
     if probe_rows:
         pd.DataFrame(probe_rows).to_csv(probe_metrics_path, index=False)
     state_descriptions = phase_state_descriptions(args.update_mode)
+    probe_summary = summarize_probe_rows(probe_rows)
     summary = {
         "simulator": version,
         "simulator_selector": args.simulator,
@@ -1226,6 +1274,7 @@ def main() -> None:
         "op_reference_final_weights": str(reference_weights_path) if args.reference_mode == "spice" else None,
         "equivalence_metrics": str(metrics_path),
         "probe_metrics": str(probe_metrics_path) if probe_rows else None,
+        **probe_summary,
         "phase_wall_time_s": phase_wall,
         "op_reference_wall_time_s": op_wall,
         "eval_wall_time_s": eval_wall,

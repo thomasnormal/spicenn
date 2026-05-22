@@ -294,3 +294,5 @@ def test_fast_online_variant_sweep_row_reports_best_probe_and_improvement() -> N
     assert row["final_eval_accuracy"] >= 0.0
     assert row["eval_improvement"] == pytest.approx(row["final_eval_accuracy"] - row["initial_eval_accuracy"])
     assert row["best_probe_update"] in {1, 2}
+    assert row["probe_eval_accuracy_u1"] >= 0.0
+    assert row["probe_eval_accuracy_u2"] >= 0.0

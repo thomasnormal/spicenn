@@ -323,6 +323,7 @@ def run_variant(
         if update in probe_states
     ]
     best_probe = max(probe_rows, key=lambda row: row["eval_accuracy"]) if probe_rows else None
+    probe_columns = {f"probe_eval_accuracy_u{int(row['update'])}": row["eval_accuracy"] for row in probe_rows}
     wall = time.perf_counter() - t0
     phase_command = strict_phase_promotion_command(args, variant)
     return {
@@ -336,6 +337,7 @@ def run_variant(
         "strict_phase_promotion_max_transient_points": int(getattr(args, "promotion_max_transient_points", 2000)),
         "strict_phase_promotion_max_source_pwl_points": int(getattr(args, "promotion_max_source_pwl_points", 0)),
         "strict_phase_promotion_command": command_text(phase_command),
+        **probe_columns,
         "wall_time_s": wall,
     }
 

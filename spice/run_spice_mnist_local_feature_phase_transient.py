@@ -179,6 +179,77 @@ def phase_execution_contract_fields(
     }
 
 
+def phase_preflight_summary(
+    *,
+    simulator_selector: str | None,
+    image_size: int,
+    block_size: int,
+    stride: int,
+    blocks: int,
+    channels: int,
+    train_samples: int,
+    eval_samples: int,
+    batch_size: int,
+    updates: int,
+    total_samples: int,
+    train_indices: np.ndarray,
+    eval_indices: np.ndarray,
+    labels: np.ndarray,
+    update_mode: str,
+    reference_mode: str,
+    init_weights: str,
+    strict_fully_on_device: bool,
+    estimated_transient_points: int,
+    max_transient_points: int,
+    max_source_pwl_points: int,
+    t_stop: float,
+    transient_step: float,
+    phase: float,
+    settle_ratio: float,
+    source_complexity: dict[str, int],
+) -> dict[str, object]:
+    return {
+        "simulator_selector": simulator_selector,
+        "architecture": "phase_resolved_transient_local_feature_readout",
+        "status": "phase_preflight_only",
+        "preflight_only": True,
+        "would_launch_simulator": False,
+        "image_size": image_size,
+        "block_size": block_size,
+        "stride": stride,
+        "blocks": blocks,
+        "channels": channels,
+        "classes": 10,
+        "mnist_index_order": "stable_permutation_prefix",
+        "train_index_metadata": index_prefix_metadata(train_indices),
+        "eval_index_metadata": index_prefix_metadata(eval_indices),
+        "train_label_metadata": label_sequence_metadata(labels, 10),
+        "train_samples": train_samples,
+        "eval_samples": eval_samples,
+        "batch_size": batch_size,
+        "updates": updates,
+        "total_samples": total_samples,
+        "update_mode": update_mode,
+        "reference_mode": reference_mode,
+        "init_weights": init_weights,
+        "phase_netlist": None,
+        "phase_data": None,
+        "final_weights": None,
+        "equivalence_metrics": None,
+        **phase_execution_contract_fields(batch_size, reference_mode, init_weights, strict_fully_on_device),
+        "continuous_transient_contract_met": None,
+        "t_stop_s": t_stop,
+        "transient_step_s": transient_step,
+        "estimated_transient_points": estimated_transient_points,
+        "max_transient_points": max_transient_points,
+        "max_source_pwl_points": max_source_pwl_points,
+        **source_complexity,
+        "phase_s": phase,
+        "settle_ratio": settle_ratio,
+        **phase_state_descriptions(update_mode),
+    }
+
+
 def index_prefix_metadata(indices: np.ndarray, prefix_len: int = 16) -> dict[str, object]:
     idx = np.asarray(indices, dtype=np.int64)
     return {
@@ -1528,6 +1599,11 @@ def main() -> None:
         action="store_true",
         help="After the uninterrupted transient finishes, run diagnostic evals on measured probe states.",
     )
+    ap.add_argument(
+        "--preflight-only",
+        action="store_true",
+        help="Load the deterministic training prefix, report source/transient complexity, and exit before simulator setup.",
+    )
     ap.add_argument("--tag", default="phase_local_feature")
     args = ap.parse_args()
 
@@ -1638,6 +1714,41 @@ def main() -> None:
         args.update_mode == "direct",
     )
     validate_source_point_budget(source_complexity, args.max_source_pwl_points)
+    if args.preflight_only:
+        print(
+            json.dumps(
+                phase_preflight_summary(
+                    simulator_selector=args.simulator,
+                    image_size=args.image_size,
+                    block_size=args.block_size,
+                    stride=stride,
+                    blocks=len(blocks),
+                    channels=args.channels,
+                    train_samples=args.train_samples,
+                    eval_samples=args.eval_samples,
+                    batch_size=args.batch_size,
+                    updates=args.updates,
+                    total_samples=total_samples,
+                    train_indices=train_indices,
+                    eval_indices=eval_indices,
+                    labels=y_batch,
+                    update_mode=args.update_mode,
+                    reference_mode=args.reference_mode,
+                    init_weights=args.init_weights,
+                    strict_fully_on_device=args.strict_fully_on_device,
+                    estimated_transient_points=estimated_transient_points,
+                    max_transient_points=args.max_transient_points,
+                    max_source_pwl_points=args.max_source_pwl_points,
+                    t_stop=preflight_t_stop,
+                    transient_step=args.transient_step,
+                    phase=args.phase,
+                    settle_ratio=args.settle_ratio,
+                    source_complexity=source_complexity,
+                ),
+                indent=2,
+            )
+        )
+        return
     rng = np.random.default_rng(args.seed)
     w, hb, readout, output_bias = load_or_init_weights(
         args.init_weights,

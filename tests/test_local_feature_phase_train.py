@@ -68,6 +68,8 @@ def test_phase_transient_cli_exposes_agreement_gates() -> None:
     assert "--eval-backend" in proc.stdout
     assert "--simulator-extra-args" in proc.stdout
     assert "--max-transient-points" in proc.stdout
+    assert "--max-source-pwl-points" in proc.stdout
+    assert "--preflight-only" in proc.stdout
 
 
 def test_phase_transient_x_yce_print_reader_extracts_final_transient_row(tmp_path: Path) -> None:
@@ -1602,6 +1604,64 @@ def test_phase_transient_strict_fully_on_device_validation() -> None:
         phase_transient.validate_strict_fully_on_device_args(1, "spice", "")
     with pytest.raises(ValueError, match="random init"):
         phase_transient.validate_strict_fully_on_device_args(1, "none", "weights.npz")
+
+
+def test_phase_transient_preflight_summary_has_no_artifact_paths() -> None:
+    labels = np.array([2, 0])
+    source_complexity = {
+        "sample_source_count": 26,
+        "sample_source_dc_count": 11,
+        "sample_source_pwl_count": 15,
+        "sample_source_pwl_points": 60,
+        "pixel_source_count": 16,
+        "pixel_source_dc_count": 3,
+        "pixel_source_pwl_count": 13,
+        "pixel_source_pwl_points": 52,
+        "target_source_count": 10,
+        "target_source_dc_count": 8,
+        "target_source_pwl_count": 2,
+        "target_source_pwl_points": 8,
+        "phase_clock_source_count": 5,
+        "phase_clock_source_pwl_count": 5,
+        "phase_clock_source_pwl_points": 50,
+    }
+
+    summary = phase_transient.phase_preflight_summary(
+        simulator_selector="Xyce",
+        image_size=4,
+        block_size=2,
+        stride=2,
+        blocks=4,
+        channels=1,
+        train_samples=2,
+        eval_samples=0,
+        batch_size=1,
+        updates=2,
+        total_samples=2,
+        train_indices=np.array([5, 7]),
+        eval_indices=np.array([11]),
+        labels=labels,
+        update_mode="direct",
+        reference_mode="none",
+        init_weights="",
+        strict_fully_on_device=True,
+        estimated_transient_points=34,
+        max_transient_points=100,
+        max_source_pwl_points=200,
+        t_stop=6.6e-9,
+        transient_step=200e-12,
+        phase=0.5e-9,
+        settle_ratio=20.0,
+        source_complexity=source_complexity,
+    )
+
+    assert summary["status"] == "phase_preflight_only"
+    assert summary["preflight_only"] is True
+    assert summary["strict_fully_on_device_contract_met"] is True
+    assert summary["phase_netlist"] is None
+    assert summary["final_weights"] is None
+    assert summary["sample_source_pwl_points"] == 60
+    assert summary["phase_clock_source_pwl_points"] == 50
 
 
 def test_phase_transient_relu_deck_matches_forward_and_backward_activation(tmp_path: Path) -> None:

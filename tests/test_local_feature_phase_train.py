@@ -41,6 +41,7 @@ def test_phase_transient_cli_exposes_agreement_gates() -> None:
     assert "--eval-accuracy-diff-threshold" in proc.stdout
     assert "--random-accuracy-threshold" in proc.stdout
     assert "--learning-improvement-threshold" in proc.stdout
+    assert "--probe-updates" in proc.stdout
 
 
 def test_phase_transient_x_yce_print_reader_extracts_final_transient_row(tmp_path: Path) -> None:
@@ -117,6 +118,33 @@ def test_phase_transient_update_direction_metrics_detect_alignment() -> None:
     assert aligned_metrics["state_update_wrong_sign_count"] == pytest.approx(0.0)
     assert wrong_metrics["state_update_sign_alignment_fraction"] == pytest.approx(0.5)
     assert wrong_metrics["state_update_wrong_sign_count"] == pytest.approx(1.0)
+
+
+def test_phase_transient_probe_update_parser_supports_ranges_and_powers() -> None:
+    assert phase_transient.parse_probe_update_list("", 8) == ()
+    assert phase_transient.parse_probe_update_list("1,3-4,final", 8) == (1, 3, 4, 8)
+    assert phase_transient.parse_probe_update_list("powers2", 10) == (1, 2, 4, 8, 10)
+
+    with pytest.raises(ValueError, match="probe updates"):
+        phase_transient.parse_probe_update_list("0", 8)
+    with pytest.raises(ValueError, match="descending"):
+        phase_transient.parse_probe_update_list("5-3", 8)
+
+
+def test_phase_transient_probe_measurement_parser_uses_update_order() -> None:
+    text = "\n".join(
+        [
+            "p000_00000 = 1.0",
+            "p000_00001 = 2.0",
+            "p001_00000 = 3.0",
+            "p001_00001 = 4.0",
+        ]
+    )
+
+    parsed = phase_transient.parse_probe_measurements(text, (2, 5), 2)
+
+    assert parsed[2] == pytest.approx([1.0, 2.0])
+    assert parsed[5] == pytest.approx([3.0, 4.0])
 
 
 def test_phase_transient_softmax_deck_is_one_continuous_online_run(tmp_path: Path) -> None:
@@ -249,6 +277,46 @@ def test_phase_transient_measure_mode_uses_top_level_measures(tmp_path: Path) ->
     assert f".measure TRAN m{n_vec - 1:05d}" in netlist
     assert ".control" not in netlist
     assert ".print TRAN" not in netlist
+
+
+def test_phase_transient_probe_measures_are_inside_same_continuous_deck(tmp_path: Path) -> None:
+    x = np.zeros((2, 4))
+    y = np.array([0, 1])
+    w = np.zeros((1, 1, 4))
+    hb = np.zeros((1, 1))
+    readout = np.zeros((2, 1, 1))
+    output_bias = np.zeros(2)
+
+    netlist, _n_vec, _t_stop = phase_transient.make_phase_transient_netlist(
+        x,
+        y,
+        w,
+        hb,
+        readout,
+        output_bias,
+        [[0, 1, 2, 3]],
+        0.8,
+        tmp_path / "out.dat",
+        False,
+        1,
+        2,
+        1e-9,
+        0.1e-9,
+        5e-12,
+        40.0,
+        20e-12,
+        1e-12,
+        1e-12,
+        1e-12,
+        1e18,
+        True,
+        "measure",
+        (1, 2),
+    )
+
+    assert netlist.count(".tran ") == 1
+    assert ".measure TRAN p000_00000 FIND V(w0_0_0)" in netlist
+    assert ".measure TRAN p001_00000 FIND V(w0_0_0)" in netlist
 
 
 def test_phase_transient_control_measure_mode_keeps_measures_inside_control(tmp_path: Path) -> None:

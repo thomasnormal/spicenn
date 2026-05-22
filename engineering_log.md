@@ -3,6 +3,7 @@
 ## 2026-05-22
 
 - Replaced the legacy Python netlist-normalization dependency with a neutral, spicelib-backed SPICE adapter. The adapter now keeps raw generated circuit bodies textual, owns title/end/control-block rendering, strips ngspice-only control blocks for Xyce, and uses spicelib for simulator executable resolution while preserving SPICENN's output contract (`ngspice -b deck`, `Xyce deck`). A first attempt to use spicelib's raw/log runner directly exposed two incompatible defaults: ngspice rejects top-level `.measure` when `-r` rawfile output is forced, and Xyce `.print` readers stop seeing `.prn` files when `-r` is forced.
+- Added in-transient prefix probes to the fully on-device local-feature phase runner. The probes are `.measure` diagnostics inside the same uninterrupted transient, then compared against the post-run batch-op reference per prefix. A 4x4 b2 stride2 c1 Xyce smoke stayed aligned through 10 updates (`cos=0.9999577`, sign alignment `98.57%`). An 8x8 b4 stride2 c2, channel-2 diagnostic showed gradual accumulated drift rather than an immediate wiring error: cosine was `0.99996` at update 4, `0.99978` at 8, `0.99898` at 16, `0.99785` at 32, and `0.99356` at 50. A first 10x10 b4 stride2 c2, channel-2 smoke completed in the target topology but already missed the strict direction gate at 10 updates (`cos=0.99834`, sign alignment `98.97%`), so the next correction should target accumulated analog integration/drift before longer 10x10 learning runs.
 
 ## 2026-05-21
 

@@ -66,14 +66,59 @@ def target_matrix(labels: np.ndarray, n_classes: int, softmax_output: bool = Fal
 
 
 def parse_measured_vector(stdout: str, n_vec: int) -> np.ndarray:
+    return parse_named_measured_vector(stdout, "m", n_vec)
+
+
+def parse_named_measured_vector(stdout: str, prefix: str, n_vec: int) -> np.ndarray:
     vals = np.empty(n_vec, dtype=float)
     for i in range(n_vec):
-        name = f"m{i:05d}"
+        name = f"{prefix}{i:05d}"
         m = re.search(rf"(?im)^\s*{name}\s*=\s*([-+0-9.eE]+)", stdout)
         if not m:
             raise ValueError(f"missing final-state measurement {name}")
         vals[i] = float(m.group(1))
     return vals
+
+
+def parse_probe_update_list(raw: str, updates: int) -> tuple[int, ...]:
+    if not raw:
+        return ()
+    selected: set[int] = set()
+    for item in raw.split(","):
+        item = item.strip()
+        if not item:
+            continue
+        if item in {"final", "last"}:
+            selected.add(updates)
+            continue
+        if item == "powers2":
+            value = 1
+            while value <= updates:
+                selected.add(value)
+                value *= 2
+            selected.add(updates)
+            continue
+        if "-" in item:
+            bounds = item.split("-", 1)
+            if len(bounds) != 2 or not bounds[0] or not bounds[1]:
+                raise ValueError(f"invalid probe update range {item!r}")
+            start, stop = (int(bounds[0]), int(bounds[1]))
+            if start > stop:
+                raise ValueError(f"invalid descending probe update range {item!r}")
+            selected.update(range(start, stop + 1))
+            continue
+        selected.add(int(item))
+    bad = sorted(value for value in selected if value < 1 or value > updates)
+    if bad:
+        raise ValueError(f"probe updates must be in [1, {updates}], got {bad}")
+    return tuple(sorted(selected))
+
+
+def parse_probe_measurements(stdout: str, probe_updates: tuple[int, ...], n_vec: int) -> dict[int, np.ndarray]:
+    return {
+        update: parse_named_measured_vector(stdout, f"p{probe_idx:03d}_", n_vec)
+        for probe_idx, update in enumerate(probe_updates)
+    }
 
 
 def read_xyce_print_last_row(path: Path, expected_values: int) -> np.ndarray:
@@ -130,6 +175,24 @@ def make_phase_schedule(
     return phases, sample_starts, t + phase
 
 
+def probe_measure_times(
+    clear_phases: list[tuple[float, float]],
+    probe_updates: tuple[int, ...],
+    gap: float,
+    t_stop: float,
+    final_measure_time: float,
+) -> dict[int, float]:
+    if not probe_updates:
+        return {}
+    if gap <= 0.0:
+        raise ValueError("probe measurements require --gap > 0")
+    times: dict[int, float] = {}
+    for update in probe_updates:
+        _clear_start, clear_stop = clear_phases[update - 1]
+        times[update] = min(final_measure_time, clear_stop + 0.5 * gap, t_stop)
+    return times
+
+
 def make_phase_transient_netlist(
     x_batch: np.ndarray,
     y_batch: np.ndarray,
@@ -154,6 +217,7 @@ def make_phase_transient_netlist(
     rleak: float,
     softmax_output: bool = False,
     output_mode: str = "wrdata",
+    probe_updates: tuple[int, ...] = (),
 ) -> tuple[str, int, float]:
     total_samples = x_batch.shape[0]
     if total_samples != update_batch_size * updates:
@@ -273,8 +337,11 @@ def make_phase_transient_netlist(
     if output_mode not in {"wrdata", "control_measure", "measure", "print"}:
         raise ValueError("output_mode must be 'wrdata', 'control_measure', 'measure', or 'print'")
     measure_time = max(0.0, t_stop - transient_step)
+    probe_times = probe_measure_times(phases["clear"], probe_updates, gap, t_stop, measure_time)
     lines += ["", ".options method=gear maxord=2"]
     if output_mode == "print":
+        if probe_updates:
+            raise ValueError("probe measurements require 'measure' or 'control_measure' output mode")
         lines += [
             f".tran {transient_step:.12g} {t_stop:.12g} uic",
             ".print TRAN " + " ".join(vectors),
@@ -283,12 +350,20 @@ def make_phase_transient_netlist(
         lines.append(f".tran {transient_step:.12g} {t_stop:.12g} uic")
         for i, vec in enumerate(vectors):
             lines.append(f".measure TRAN m{i:05d} FIND {vec} AT={measure_time:.12g}")
+        for probe_idx, update in enumerate(probe_updates):
+            for i, vec in enumerate(vectors):
+                lines.append(f".measure TRAN p{probe_idx:03d}_{i:05d} FIND {vec} AT={probe_times[update]:.12g}")
     else:
         lines += [".control", f"tran {transient_step:.12g} {t_stop:.12g} uic"]
         if output_mode == "control_measure":
             for i, vec in enumerate(vectors):
                 lines.append(f"meas tran m{i:05d} FIND {vec} AT={measure_time:.12g}")
+            for probe_idx, update in enumerate(probe_updates):
+                for i, vec in enumerate(vectors):
+                    lines.append(f"meas tran p{probe_idx:03d}_{i:05d} FIND {vec} AT={probe_times[update]:.12g}")
         else:
+            if probe_updates:
+                raise ValueError("probe measurements require 'measure' or 'control_measure' output mode")
             lines.append(f"wrdata {out_path} " + " ".join(vectors))
         lines.append(".endc")
     lines += [".end", ""]
@@ -422,6 +497,11 @@ def main() -> None:
     ap.add_argument("--random-accuracy-threshold", type=float, default=0.10)
     ap.add_argument("--learning-improvement-threshold", type=float, default=0.02)
     ap.add_argument("--final-measures", action="store_true")
+    ap.add_argument(
+        "--probe-updates",
+        default="",
+        help="Comma-separated 1-based update numbers, ranges, 'final', or 'powers2' to measure inside the same transient.",
+    )
     ap.add_argument("--tag", default="phase_local_feature")
     args = ap.parse_args()
 
@@ -443,6 +523,7 @@ def main() -> None:
         raise ValueError("--random-accuracy-threshold must be between 0 and 1")
     if args.learning_improvement_threshold < 0:
         raise ValueError("--learning-improvement-threshold must be non-negative")
+    probe_updates = parse_probe_update_list(args.probe_updates, args.updates)
 
     stride = args.block_size if args.stride is None else args.stride
     blocks = block_indices(args.image_size, args.block_size, stride)
@@ -473,7 +554,7 @@ def main() -> None:
     phase_data = results / f"{stem}.dat"
     op_netlist = generated / f"{stem}_op_reference.cir"
     op_data = results / f"{stem}_op_reference.dat"
-    phase_output_mode = "measure" if is_xyce(spice_bin) else ("control_measure" if args.final_measures else "wrdata")
+    phase_output_mode = "measure" if is_xyce(spice_bin) else ("control_measure" if args.final_measures or probe_updates else "wrdata")
 
     netlist, n_vec, t_stop = make_phase_transient_netlist(
         x_batch,
@@ -499,6 +580,7 @@ def main() -> None:
         args.rleak,
         args.softmax_output,
         phase_output_mode,
+        probe_updates,
     )
     phase_netlist.write_text(prepare_phase_netlist(netlist, spice_bin))
 
@@ -508,18 +590,22 @@ def main() -> None:
     if proc.returncode != 0:
         raise RuntimeError(proc.stderr[-3000:] or proc.stdout[-3000:])
     if phase_output_mode in {"measure", "control_measure"}:
+        measured_text = proc.stdout + "\n" + proc.stderr
         try:
-            vals = parse_measured_vector(proc.stdout + "\n" + proc.stderr, n_vec)
+            vals = parse_measured_vector(measured_text, n_vec)
         except ValueError:
             if not is_xyce(spice_bin):
                 raise
             vals = read_xyce_print_last_row(xyce_prn_path(phase_netlist), n_vec)
+        probe_vals = parse_probe_measurements(measured_text, probe_updates, n_vec) if probe_updates else {}
     else:
         vals = read_wrdata_row(phase_data, n_vec)
+        probe_vals = {}
     phase_w, phase_hb, phase_readout, phase_ob, phase_y = unpack_state(vals, w, hb, readout, output_bias)
 
     t1 = time.perf_counter()
     op_w, op_hb, op_readout, op_ob = w.copy(), hb.copy(), readout.copy(), output_bias.copy()
+    op_probe_states: dict[int, tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]] = {}
     for update in range(args.updates):
         start = update * args.batch_size
         stop = start + args.batch_size
@@ -541,9 +627,19 @@ def main() -> None:
             local_activation="tanh",
             relu_clip=1.0,
         )
+        if update + 1 in probe_updates:
+            op_probe_states[update + 1] = (op_w.copy(), op_hb.copy(), op_readout.copy(), op_ob.copy())
     op_wall = time.perf_counter() - t1
     metrics = state_metrics((op_w, op_hb, op_readout, op_ob), (phase_w, phase_hb, phase_readout, phase_ob))
     metrics.update(update_direction_metrics((w, hb, readout, output_bias), (op_w, op_hb, op_readout, op_ob), (phase_w, phase_hb, phase_readout, phase_ob)))
+    probe_rows = []
+    for update in probe_updates:
+        probe_w, probe_hb, probe_readout, probe_ob, _probe_y = unpack_state(probe_vals[update], w, hb, readout, output_bias)
+        op_state = op_probe_states[update]
+        row = {"update": update}
+        row.update(state_metrics(op_state, (probe_w, probe_hb, probe_readout, probe_ob)))
+        row.update(update_direction_metrics((w, hb, readout, output_bias), op_state, (probe_w, probe_hb, probe_readout, probe_ob)))
+        probe_rows.append(row)
     phase_eval_accuracy = None
     op_reference_eval_accuracy = None
     initial_eval_accuracy = None
@@ -637,6 +733,7 @@ def main() -> None:
     final_weights_path = results / f"{stem}_final_weights.npz"
     reference_weights_path = results / f"{stem}_op_reference_final_weights.npz"
     metrics_path = results / f"{stem}_equivalence_metrics.csv"
+    probe_metrics_path = results / f"{stem}_probe_metrics.csv"
     np.savez_compressed(
         final_weights_path,
         local_weights=phase_w,
@@ -653,6 +750,8 @@ def main() -> None:
         output_bias=op_ob,
     )
     pd.DataFrame([metrics]).to_csv(metrics_path, index=False)
+    if probe_rows:
+        pd.DataFrame(probe_rows).to_csv(probe_metrics_path, index=False)
     summary = {
         "simulator": version,
         "simulator_selector": args.simulator,
@@ -668,6 +767,7 @@ def main() -> None:
         "eval_samples": args.eval_samples,
         "batch_size": args.batch_size,
         "updates": args.updates,
+        "probe_updates": list(probe_updates),
         "total_samples": total_samples,
         "lr": args.lr,
         "linear_output": bool(args.linear_output),
@@ -680,6 +780,7 @@ def main() -> None:
         "final_weights": str(final_weights_path),
         "op_reference_final_weights": str(reference_weights_path),
         "equivalence_metrics": str(metrics_path),
+        "probe_metrics": str(probe_metrics_path) if probe_rows else None,
         "phase_wall_time_s": phase_wall,
         "op_reference_wall_time_s": op_wall,
         "eval_wall_time_s": eval_wall,

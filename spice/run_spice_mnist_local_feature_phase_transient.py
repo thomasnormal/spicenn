@@ -84,6 +84,19 @@ def validate_transient_point_budget(estimated_points: int, max_points: int) -> N
         )
 
 
+def final_state_measure_time(t_stop: float, transient_step: float, final_update_stop: float) -> float:
+    if transient_step <= 0.0:
+        raise ValueError("transient_step must be positive")
+    measure_time = max(0.0, t_stop - transient_step)
+    if measure_time <= final_update_stop:
+        slack = max(t_stop - final_update_stop, 0.0)
+        raise ValueError(
+            "--transient-step places the final-state measurement before the final update has settled; "
+            f"use a step smaller than the final measurement slack ({slack:.12g}s)"
+        )
+    return measure_time
+
+
 def phase_state_descriptions(update_mode: str) -> dict[str, str]:
     if update_mode == "phased":
         temporary = (
@@ -713,7 +726,8 @@ def make_phase_transient_netlist(
         output_mode = "measure"
     if output_mode not in {"wrdata", "control_measure", "measure", "print"}:
         raise ValueError("output_mode must be 'wrdata', 'control_measure', 'measure', or 'print'")
-    measure_time = max(0.0, t_stop - transient_step)
+    final_state_phase = phases["acc" if direct_update else "clear"][-1]
+    measure_time = final_state_measure_time(t_stop, transient_step, final_state_phase[1])
     probe_times = probe_measure_times(phases["acc" if direct_update else "clear"], probe_updates, gap, t_stop, measure_time)
     lines += ["", ".options method=gear maxord=2"]
     if output_mode == "print":
@@ -1503,6 +1517,8 @@ def main() -> None:
         args.gap,
         args.update_mode == "direct",
     )
+    final_state_phase = _preflight_phases["acc" if args.update_mode == "direct" else "clear"][-1]
+    final_state_measure_time(preflight_t_stop, args.transient_step, final_state_phase[1])
     estimated_transient_points = estimate_transient_points(preflight_t_stop, args.transient_step)
     validate_transient_point_budget(estimated_transient_points, args.max_transient_points)
     if args.simulator_extra_args:

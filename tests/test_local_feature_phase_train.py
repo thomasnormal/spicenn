@@ -115,6 +115,13 @@ def test_phase_transient_point_budget_fails_before_large_runs() -> None:
         phase_transient.validate_transient_point_budget(101, 100)
 
 
+def test_phase_transient_final_measure_time_requires_post_update_slack() -> None:
+    assert phase_transient.final_state_measure_time(10.0e-9, 2.0e-9, 7.0e-9) == pytest.approx(8.0e-9)
+
+    with pytest.raises(ValueError, match="final-state measurement"):
+        phase_transient.final_state_measure_time(10.0e-9, 3.0e-9, 7.0e-9)
+
+
 def test_eval_accuracy_improved_requires_finite_strict_improvement() -> None:
     assert phase_train.eval_accuracy_improved(0.9, None)
     assert phase_train.eval_accuracy_improved(0.91, 0.9)

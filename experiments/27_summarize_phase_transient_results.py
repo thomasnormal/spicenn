@@ -19,6 +19,9 @@ TARGET_TOPOLOGY = {
 FIELDS = [
     "tag",
     "topology",
+    "target_topology",
+    "strict_target_contract_met",
+    "strict_target_contract_issues",
     "simulator",
     "updates",
     "eval_samples",
@@ -74,6 +77,9 @@ FIELDS = [
     "phase_update_l2",
     "state_update_direction_cosine",
     "state_update_sign_alignment_fraction",
+    "estimated_transient_points",
+    "max_transient_points",
+    "phase_output_vector_count",
     "phase_wall_time_s",
     "eval_wall_time_s",
     "summary_path",
@@ -110,7 +116,7 @@ def nested(data: dict[str, Any], *keys: str) -> Any:
 def row_from_summary(path: Path) -> dict[str, Any]:
     data = json.loads(path.read_text())
     tag = path.name.removesuffix("_summary.json")
-    return {
+    row = {
         "tag": tag,
         "topology": topology_label(data),
         "image_size": data.get("image_size"),
@@ -172,11 +178,19 @@ def row_from_summary(path: Path) -> dict[str, Any]:
         "phase_update_l2": data.get("phase_update_l2"),
         "state_update_direction_cosine": data.get("state_update_direction_cosine"),
         "state_update_sign_alignment_fraction": data.get("state_update_sign_alignment_fraction"),
+        "estimated_transient_points": data.get("estimated_transient_points"),
+        "max_transient_points": data.get("max_transient_points"),
+        "phase_output_vector_count": data.get("phase_output_vector_count"),
         "phase_wall_time_s": data.get("phase_wall_time_s"),
         "eval_wall_time_s": data.get("eval_wall_time_s"),
         "summary_mtime_s": path.stat().st_mtime,
         "summary_path": str(path),
     }
+    issues = strict_target_contract_issues(row)
+    row["target_topology"] = same_target_topology(row)
+    row["strict_target_contract_met"] = not issues
+    row["strict_target_contract_issues"] = issues
+    return row
 
 
 def discover_summary_paths(root: Path = ROOT) -> list[Path]:
@@ -205,6 +219,21 @@ def as_int(value: Any) -> int:
 
 def same_target_topology(row: dict[str, Any]) -> bool:
     return all(row.get(key) == value for key, value in TARGET_TOPOLOGY.items())
+
+
+def strict_target_contract_issues(row: dict[str, Any]) -> list[str]:
+    checks = [
+        ("target_topology", same_target_topology(row)),
+        ("batch_size_1", row.get("batch_size") == 1),
+        ("strict_contract", row.get("strict_fully_on_device_contract_met") is True),
+        ("strict_requested", row.get("strict_fully_on_device_requested") is True),
+        ("random_init", row.get("random_init_used") is True),
+        ("random_init_source", row.get("initial_weights_source") == "random_init"),
+        ("reference_mode_none", row.get("reference_mode") == "none"),
+        ("no_python_weight_updates", row.get("python_weight_updates_between_samples") is False),
+        ("no_python_checkpointing", row.get("python_checkpointing_between_samples") is False),
+    ]
+    return [name for name, ok in checks if not ok]
 
 
 def filter_rows(
@@ -236,6 +265,16 @@ def filter_rows(
 
 
 def sort_rows(rows: list[dict[str, Any]], sort_key: str) -> list[dict[str, Any]]:
+    if sort_key == "accuracy":
+        return sorted(
+            rows,
+            key=lambda row: (
+                float(row.get("phase_eval_accuracy") or -1.0),
+                as_int(row.get("updates")),
+                float(row.get("phase_eval_improvement") or -999.0),
+            ),
+            reverse=True,
+        )
     if sort_key == "updates":
         return sorted(
             rows,
@@ -259,6 +298,8 @@ def format_value(value: Any) -> str:
         return ""
     if isinstance(value, float):
         return f"{value:.6g}"
+    if isinstance(value, list):
+        return ";".join(str(item) for item in value)
     return str(value)
 
 
@@ -284,6 +325,8 @@ def print_markdown(rows: list[dict[str, Any]]) -> None:
         "readout_update_scale",
         "state_decay",
         "readout_class_centering",
+        "strict_target_contract_met",
+        "strict_target_contract_issues",
         "fully_on_device_execution_contract_met",
         "strict_fully_on_device_contract_met",
         "random_init_used",
@@ -296,6 +339,8 @@ def print_markdown(rows: list[dict[str, Any]]) -> None:
         "phase_unique_predicted_classes",
         "phase_eval_backend_abs_diff",
         "phase_update_l2",
+        "estimated_transient_points",
+        "phase_output_vector_count",
         "phase_wall_time_s",
     ]
     print("| " + " | ".join(columns) + " |")
@@ -333,7 +378,7 @@ def main() -> None:
     ap.add_argument("--limit", type=int, help="Maximum rows to print or write after sorting.")
     ap.add_argument(
         "--sort",
-        choices=["latest", "updates", "improvement"],
+        choices=["latest", "updates", "improvement", "accuracy"],
         default="latest",
         help="Row ordering before applying --limit.",
     )

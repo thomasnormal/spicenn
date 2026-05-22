@@ -78,6 +78,9 @@ def test_phase_summary_row_keeps_execution_contract_and_backend_fields(tmp_path:
                     "unique_predicted_classes": 5,
                 },
                 "phase_update_l2": 0.364,
+                "estimated_transient_points": 902,
+                "max_transient_points": 2000,
+                "phase_output_vector_count": 884,
                 "phase_wall_time_s": 36.1,
                 "eval_wall_time_s": 9.5,
                 "spice_phase_eval_accuracy": 0.12,
@@ -123,6 +126,12 @@ def test_phase_summary_row_keeps_execution_contract_and_backend_fields(tmp_path:
     assert row["python_checkpointing_between_samples"] is False
     assert row["phase_eval_accuracy"] == 0.12
     assert row["phase_eval_backend_abs_diff"] == 0.0
+    assert row["target_topology"] is True
+    assert row["strict_target_contract_met"] is True
+    assert row["strict_target_contract_issues"] == []
+    assert row["estimated_transient_points"] == 902
+    assert row["max_transient_points"] == 2000
+    assert row["phase_output_vector_count"] == 884
 
 
 def test_discovery_filters_to_phase_transient_summaries_and_prefers_tables(tmp_path: Path) -> None:
@@ -176,3 +185,44 @@ def test_strict_contract_filter_keeps_random_init_no_reference_runs() -> None:
 
     assert module.filter_rows(rows, contract_only=True) == rows
     assert module.filter_rows(rows, strict_contract_only=True) == [rows[0]]
+
+
+def test_strict_target_contract_audit_reports_missing_requirements() -> None:
+    module = load_summary_module()
+    row = {
+        "image_size": 10,
+        "block_size": 4,
+        "stride": 2,
+        "channels": 1,
+        "batch_size": 2,
+        "strict_fully_on_device_contract_met": False,
+        "strict_fully_on_device_requested": False,
+        "random_init_used": False,
+        "initial_weights_source": "checkpoint",
+        "reference_mode": "spice",
+        "python_weight_updates_between_samples": True,
+        "python_checkpointing_between_samples": True,
+    }
+
+    assert module.strict_target_contract_issues(row) == [
+        "target_topology",
+        "batch_size_1",
+        "strict_contract",
+        "strict_requested",
+        "random_init",
+        "random_init_source",
+        "reference_mode_none",
+        "no_python_weight_updates",
+        "no_python_checkpointing",
+    ]
+
+
+def test_accuracy_sort_ranks_phase_accuracy_then_updates() -> None:
+    module = load_summary_module()
+    rows = [
+        {"tag": "low", "phase_eval_accuracy": 0.2, "updates": 256},
+        {"tag": "high_short", "phase_eval_accuracy": 0.4, "updates": 64},
+        {"tag": "high_long", "phase_eval_accuracy": 0.4, "updates": 128},
+    ]
+
+    assert [row["tag"] for row in module.sort_rows(rows, "accuracy")] == ["high_long", "high_short", "low"]

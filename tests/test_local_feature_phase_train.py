@@ -1,3 +1,4 @@
+import argparse
 import subprocess
 import sys
 from pathlib import Path
@@ -13,6 +14,7 @@ if str(SPICE_DIR) not in sys.path:
 
 import run_spice_mnist_local_feature_phase_train as phase_train  # noqa: E402
 import run_spice_mnist_local_feature_phase_transient as phase_transient  # noqa: E402
+import run_spice_mnist_local_feature_phase_variant_sweep as phase_variant_sweep  # noqa: E402
 
 
 def test_cli_exposes_simulator_selector() -> None:
@@ -160,6 +162,49 @@ def test_phase_transient_probe_measurement_parser_uses_update_order() -> None:
 
     assert parsed[2] == pytest.approx([1.0, 2.0])
     assert parsed[5] == pytest.approx([3.0, 4.0])
+
+
+def test_phase_variant_sweep_pairs_only_expand_clipped_activations() -> None:
+    pairs = phase_variant_sweep.activation_clip_pairs(
+        ["tanh", "relu", "diff-clipped-relu"],
+        [0.5, 1.0],
+    )
+
+    assert pairs == [("tanh", 0.5), ("relu", 0.5), ("diff-clipped-relu", 0.5), ("diff-clipped-relu", 1.0)]
+
+
+def test_phase_variant_sweep_dry_command_preserves_online_contract() -> None:
+    args = argparse.Namespace(
+        simulator="Xyce",
+        train_samples=8,
+        eval_samples=0,
+        image_size=10,
+        block_size=4,
+        stride=2,
+        channels=2,
+        updates=8,
+        lr=0.8,
+        phase=1e-9,
+        gap=0.1e-9,
+        edge=10e-12,
+        settle_ratio=80.0,
+        transient_step=50e-12,
+        timeout=600.0,
+        probe_updates="1,2,4,8",
+        tag="sweep",
+        softmax_output=True,
+        linear_output=False,
+        final_measures=False,
+    )
+
+    command = phase_variant_sweep.build_variant_command(args, "diff-clipped-relu", 0.5)
+
+    assert "--batch-size" in command
+    assert command[command.index("--batch-size") + 1] == "1"
+    assert "--local-activation" in command
+    assert command[command.index("--local-activation") + 1] == "diff-clipped-relu"
+    assert "--relu-clip" in command
+    assert command[command.index("--relu-clip") + 1] == "0.5"
 
 
 def test_phase_transient_softmax_deck_is_one_continuous_online_run(tmp_path: Path) -> None:

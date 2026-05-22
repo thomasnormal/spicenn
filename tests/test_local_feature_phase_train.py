@@ -48,6 +48,7 @@ def test_phase_transient_cli_exposes_agreement_gates() -> None:
     assert "--local-activation" in proc.stdout
     assert "--hidden-synapse-mode" in proc.stdout
     assert "--readout-synapse-mode" in proc.stdout
+    assert "--reference-mode" in proc.stdout
 
 
 def test_phase_transient_x_yce_print_reader_extracts_final_transient_row(tmp_path: Path) -> None:
@@ -145,6 +146,13 @@ def test_phase_transient_update_direction_metrics_detect_alignment() -> None:
     assert wrong_metrics["state_update_wrong_sign_count"] == pytest.approx(1.0)
 
 
+def test_phase_transient_empty_reference_metrics_are_json_nulls() -> None:
+    metrics = phase_transient.empty_reference_metrics()
+
+    assert metrics["state_update_direction_cosine"] is None
+    assert metrics["state_update_sign_alignment_fraction"] is None
+
+
 def test_phase_transient_probe_update_parser_supports_ranges_and_powers() -> None:
     assert phase_transient.parse_probe_update_list("", 8) == ()
     assert phase_transient.parse_probe_update_list("1,3-4,final", 8) == (1, 3, 4, 8)
@@ -154,6 +162,28 @@ def test_phase_transient_probe_update_parser_supports_ranges_and_powers() -> Non
         phase_transient.parse_probe_update_list("0", 8)
     with pytest.raises(ValueError, match="descending"):
         phase_transient.parse_probe_update_list("5-3", 8)
+
+
+def test_phase_transient_reference_none_rejects_probe_updates_before_running_dataset() -> None:
+    proc = subprocess.run(
+        [
+            sys.executable,
+            str(SPICE_DIR / "run_spice_mnist_local_feature_phase_transient.py"),
+            "--reference-mode",
+            "none",
+            "--probe-updates",
+            "final",
+            "--train-samples",
+            "1",
+            "--updates",
+            "1",
+        ],
+        text=True,
+        capture_output=True,
+    )
+
+    assert proc.returncode != 0
+    assert "--reference-mode none does not support --probe-updates" in proc.stderr
 
 
 def test_phase_transient_probe_measurement_parser_uses_update_order() -> None:

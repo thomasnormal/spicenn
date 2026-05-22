@@ -527,6 +527,27 @@ def update_direction_metrics(
     return metrics
 
 
+def empty_reference_metrics() -> dict[str, float | None]:
+    metrics: dict[str, float | None] = {}
+    for name in ["local_weights", "local_bias", "readout", "output_bias"]:
+        metrics[f"{name}_max_abs_diff"] = None
+        metrics[f"{name}_mean_abs_diff"] = None
+        metrics[f"{name}_rms_diff"] = None
+    metrics.update(
+        {
+            "state_max_abs_diff": None,
+            "state_mean_abs_diff": None,
+            "state_rms_diff": None,
+            "reference_update_l2": None,
+            "phase_update_l2": None,
+            "state_update_direction_cosine": None,
+            "state_update_sign_alignment_fraction": None,
+            "state_update_wrong_sign_count": None,
+        }
+    )
+    return metrics
+
+
 def load_or_init_weights(
     init_weights: str,
     rng: np.random.Generator,
@@ -615,6 +636,7 @@ def main() -> None:
     ap.add_argument("--eval-accuracy-diff-threshold", type=float, default=0.0)
     ap.add_argument("--random-accuracy-threshold", type=float, default=0.10)
     ap.add_argument("--learning-improvement-threshold", type=float, default=0.02)
+    ap.add_argument("--reference-mode", choices=["spice", "none"], default="spice")
     ap.add_argument("--final-measures", action="store_true")
     ap.add_argument(
         "--probe-updates",
@@ -666,6 +688,8 @@ def main() -> None:
         raise ValueError("--eval-probe-updates requires --probe-updates")
     if args.eval_probe_updates and args.eval_samples <= 0:
         raise ValueError("--eval-probe-updates requires --eval-samples > 0")
+    if args.reference_mode == "none" and probe_updates:
+        raise ValueError("--reference-mode none does not support --probe-updates")
 
     stride = args.block_size if args.stride is None else args.stride
     blocks = block_indices(args.image_size, args.block_size, stride)
@@ -758,44 +782,56 @@ def main() -> None:
     phase_w, phase_hb, phase_readout, phase_ob, phase_y = unpack_state(vals, w, hb, readout, output_bias)
 
     t1 = time.perf_counter()
-    op_w, op_hb, op_readout, op_ob = w.copy(), hb.copy(), readout.copy(), output_bias.copy()
+    op_w = op_hb = op_readout = op_ob = None
     op_probe_states: dict[int, tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]] = {}
-    for update in range(args.updates):
-        start = update * args.batch_size
-        stop = start + args.batch_size
-        op_w, op_hb, op_readout, op_ob = run_train_batch(
-            spice_bin,
-            op_netlist,
-            op_data,
-            x_batch[start:stop],
-            y_batch[start:stop],
-            op_w,
-            op_hb,
-            op_readout,
-            op_ob,
-            blocks,
-            args.lr,
-            args.timeout,
-            linear_output=args.linear_output,
-            softmax_output=args.softmax_output,
-            local_activation=args.local_activation,
-            relu_clip=args.relu_clip,
-            activation_derivative=args.activation_derivative,
-            derivative_floor=args.derivative_floor,
-            derivative_gate_threshold=args.derivative_gate_threshold,
-            readout_feedback_mode=args.readout_feedback_mode,
-            readout_feedback_clip=args.readout_feedback_clip,
-            relu_leak=args.relu_leak,
-            softplus_beta=args.softplus_beta,
-            hidden_synapse_mode=args.hidden_synapse_mode,
-            readout_synapse_mode=args.readout_synapse_mode,
-            synapse_clip=args.synapse_clip,
-        )
-        if update + 1 in probe_updates:
-            op_probe_states[update + 1] = (op_w.copy(), op_hb.copy(), op_readout.copy(), op_ob.copy())
+    if args.reference_mode == "spice":
+        op_w, op_hb, op_readout, op_ob = w.copy(), hb.copy(), readout.copy(), output_bias.copy()
+        for update in range(args.updates):
+            start = update * args.batch_size
+            stop = start + args.batch_size
+            op_w, op_hb, op_readout, op_ob = run_train_batch(
+                spice_bin,
+                op_netlist,
+                op_data,
+                x_batch[start:stop],
+                y_batch[start:stop],
+                op_w,
+                op_hb,
+                op_readout,
+                op_ob,
+                blocks,
+                args.lr,
+                args.timeout,
+                linear_output=args.linear_output,
+                softmax_output=args.softmax_output,
+                local_activation=args.local_activation,
+                relu_clip=args.relu_clip,
+                activation_derivative=args.activation_derivative,
+                derivative_floor=args.derivative_floor,
+                derivative_gate_threshold=args.derivative_gate_threshold,
+                readout_feedback_mode=args.readout_feedback_mode,
+                readout_feedback_clip=args.readout_feedback_clip,
+                relu_leak=args.relu_leak,
+                softplus_beta=args.softplus_beta,
+                hidden_synapse_mode=args.hidden_synapse_mode,
+                readout_synapse_mode=args.readout_synapse_mode,
+                synapse_clip=args.synapse_clip,
+            )
+            if update + 1 in probe_updates:
+                op_probe_states[update + 1] = (op_w.copy(), op_hb.copy(), op_readout.copy(), op_ob.copy())
     op_wall = time.perf_counter() - t1
-    metrics = state_metrics((op_w, op_hb, op_readout, op_ob), (phase_w, phase_hb, phase_readout, phase_ob))
-    metrics.update(update_direction_metrics((w, hb, readout, output_bias), (op_w, op_hb, op_readout, op_ob), (phase_w, phase_hb, phase_readout, phase_ob)))
+    if args.reference_mode == "spice":
+        assert op_w is not None and op_hb is not None and op_readout is not None and op_ob is not None
+        metrics = state_metrics((op_w, op_hb, op_readout, op_ob), (phase_w, phase_hb, phase_readout, phase_ob))
+        metrics.update(
+            update_direction_metrics(
+                (w, hb, readout, output_bias),
+                (op_w, op_hb, op_readout, op_ob),
+                (phase_w, phase_hb, phase_readout, phase_ob),
+            )
+        )
+    else:
+        metrics = empty_reference_metrics()
     probe_rows = []
     probe_phase_states: dict[int, tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]] = {}
     for update in probe_updates:
@@ -858,29 +894,31 @@ def main() -> None:
             readout_synapse_mode=args.readout_synapse_mode,
             synapse_clip=args.synapse_clip,
         )
-        op_reference_eval_accuracy = run_eval(
-            spice_bin,
-            generated / f"{stem}_op_reference_eval.cir",
-            results / f"{stem}_op_reference_eval.dat",
-            x_test[: args.eval_samples],
-            y_test[: args.eval_samples],
-            op_w,
-            op_hb,
-            op_readout,
-            op_ob,
-            blocks,
-            max(1, min(args.eval_samples, 50)),
-            args.timeout,
-            linear_output=args.linear_output,
-            softmax_output=args.softmax_output,
-            local_activation=args.local_activation,
-            relu_clip=args.relu_clip,
-            relu_leak=args.relu_leak,
-            softplus_beta=args.softplus_beta,
-            hidden_synapse_mode=args.hidden_synapse_mode,
-            readout_synapse_mode=args.readout_synapse_mode,
-            synapse_clip=args.synapse_clip,
-        )
+        if args.reference_mode == "spice":
+            assert op_w is not None and op_hb is not None and op_readout is not None and op_ob is not None
+            op_reference_eval_accuracy = run_eval(
+                spice_bin,
+                generated / f"{stem}_op_reference_eval.cir",
+                results / f"{stem}_op_reference_eval.dat",
+                x_test[: args.eval_samples],
+                y_test[: args.eval_samples],
+                op_w,
+                op_hb,
+                op_readout,
+                op_ob,
+                blocks,
+                max(1, min(args.eval_samples, 50)),
+                args.timeout,
+                linear_output=args.linear_output,
+                softmax_output=args.softmax_output,
+                local_activation=args.local_activation,
+                relu_clip=args.relu_clip,
+                relu_leak=args.relu_leak,
+                softplus_beta=args.softplus_beta,
+                hidden_synapse_mode=args.hidden_synapse_mode,
+                readout_synapse_mode=args.readout_synapse_mode,
+                synapse_clip=args.synapse_clip,
+            )
         if args.eval_probe_updates:
             for row in probe_rows:
                 update = int(row["update"])
@@ -946,11 +984,15 @@ def main() -> None:
         if phase_eval_accuracy is not None and op_reference_eval_accuracy is not None
         else None
     )
-    direction_matches_reference = bool(
-        np.isfinite(metrics["state_update_direction_cosine"])
-        and metrics["state_update_direction_cosine"] >= args.direction_cosine_threshold
-        and np.isfinite(metrics["state_update_sign_alignment_fraction"])
-        and metrics["state_update_sign_alignment_fraction"] >= args.sign_alignment_threshold
+    direction_matches_reference = (
+        None
+        if args.reference_mode == "none"
+        else bool(
+            np.isfinite(metrics["state_update_direction_cosine"])
+            and metrics["state_update_direction_cosine"] >= args.direction_cosine_threshold
+            and np.isfinite(metrics["state_update_sign_alignment_fraction"])
+            and metrics["state_update_sign_alignment_fraction"] >= args.sign_alignment_threshold
+        )
     )
     eval_matches_reference = (
         None
@@ -982,13 +1024,15 @@ def main() -> None:
         output_bias=phase_ob,
         y=phase_y,
     )
-    np.savez_compressed(
-        reference_weights_path,
-        local_weights=op_w,
-        local_bias=op_hb,
-        readout=op_readout,
-        output_bias=op_ob,
-    )
+    if args.reference_mode == "spice":
+        assert op_w is not None and op_hb is not None and op_readout is not None and op_ob is not None
+        np.savez_compressed(
+            reference_weights_path,
+            local_weights=op_w,
+            local_bias=op_hb,
+            readout=op_readout,
+            output_bias=op_ob,
+        )
     pd.DataFrame([metrics]).to_csv(metrics_path, index=False)
     if probe_rows:
         pd.DataFrame(probe_rows).to_csv(probe_metrics_path, index=False)
@@ -996,7 +1040,11 @@ def main() -> None:
         "simulator": version,
         "simulator_selector": args.simulator,
         "architecture": "phase_resolved_transient_local_feature_readout",
-        "status": "one_batch_equivalence_check" if args.updates == 1 else "multi_update_equivalence_check",
+        "status": (
+            ("one_batch_equivalence_check" if args.updates == 1 else "multi_update_equivalence_check")
+            if args.reference_mode == "spice"
+            else "continuous_phase_train_no_reference"
+        ),
         "image_size": args.image_size,
         "block_size": args.block_size,
         "stride": stride,
@@ -1025,13 +1073,14 @@ def main() -> None:
         "hidden_synapse_mode": args.hidden_synapse_mode,
         "readout_synapse_mode": args.readout_synapse_mode,
         "synapse_clip": args.synapse_clip,
+        "reference_mode": args.reference_mode,
         "init_weights": args.init_weights,
         "phase_netlist": str(phase_netlist),
         "phase_data": str(phase_data),
-        "op_reference_netlist": str(op_netlist),
-        "op_reference_data": str(op_data),
+        "op_reference_netlist": str(op_netlist) if args.reference_mode == "spice" else None,
+        "op_reference_data": str(op_data) if args.reference_mode == "spice" else None,
         "final_weights": str(final_weights_path),
-        "op_reference_final_weights": str(reference_weights_path),
+        "op_reference_final_weights": str(reference_weights_path) if args.reference_mode == "spice" else None,
         "equivalence_metrics": str(metrics_path),
         "probe_metrics": str(probe_metrics_path) if probe_rows else None,
         "phase_wall_time_s": phase_wall,
@@ -1051,7 +1100,11 @@ def main() -> None:
         "eval_accuracy_matches_batch_op_reference": eval_matches_reference,
         "nontrivial_learning_met": nontrivial_learning_met,
         "online_batch_size_one": args.batch_size == 1,
-        "continuous_transient_contract_met": bool(args.batch_size == 1 and direction_matches_reference and (eval_matches_reference is not False)),
+        "continuous_transient_contract_met": (
+            None
+            if args.reference_mode == "none"
+            else bool(args.batch_size == 1 and direction_matches_reference and (eval_matches_reference is not False))
+        ),
         "t_stop_s": t_stop,
         "transient_step_s": args.transient_step,
         "phase_s": args.phase,
@@ -1061,7 +1114,10 @@ def main() -> None:
         "temporary_state": "feature activations, class scores, class deltas, hidden/backward feature deltas, and gradient accumulators are capacitor voltages",
         "python_role": "Python generates guiding waveforms and compares final state; it does not carry training state during the transient run.",
         "python_checkpointing_between_samples": False,
-        "note": "Local-feature phase-transient all-SPICE update smoke; small equivalence check against the existing operating-point SPICE update.",
+        "note": (
+            "Local-feature phase-transient all-SPICE update run. reference_mode=spice compares against the existing "
+            "operating-point SPICE update; reference_mode=none skips that replay for longer final-diagnostic runs."
+        ),
         **metrics,
     }
     summary_path = results / f"{stem}_summary.json"

@@ -10,43 +10,18 @@ import numpy as np
 import pandas as pd
 
 from run_spice_mnist_local_block_batch_op_train import block_indices
-from run_spice_mnist_local_feature_phase_transient import load_or_init_weights, parse_probe_update_list, sanitize_tag
+from run_spice_mnist_local_feature_phase_transient import (
+    block_tensor_np,
+    load_or_init_weights,
+    local_activation_np,
+    numpy_eval_accuracy as accuracy_np,
+    output_activation_np,
+    parse_probe_update_list,
+    sanitize_tag,
+    synapse_transfer_np,
+)
 from run_spice_mnist_train import load_mnist_sequence
 from run_spice_sweep import ROOT
-
-
-def block_tensor_np(x: np.ndarray, blocks: list[list[int]]) -> np.ndarray:
-    return np.stack([x[:, idxs] for idxs in blocks], axis=1)
-
-
-def synapse_transfer_np(weight: np.ndarray, mode: str, clip: float) -> np.ndarray:
-    if mode in {"linear", "full", "ideal"}:
-        return weight
-    clip = max(float(clip), 1e-12)
-    if mode in {"tanh-clipped", "smooth-clipped", "clipped"}:
-        return clip * np.tanh(weight / clip)
-    if mode in {"hard-clipped", "bounded"}:
-        return np.clip(weight, -clip, clip)
-    if mode in {"sign", "binary"}:
-        return clip * weight / (np.abs(weight) + 1e-9)
-    raise ValueError(f"unknown synapse transfer mode {mode!r}")
-
-
-def local_activation_np(x: np.ndarray, mode: str, relu_clip: float, relu_leak: float, softplus_beta: float) -> np.ndarray:
-    if mode == "tanh":
-        return np.tanh(x)
-    if mode == "relu":
-        return np.maximum(x, 0.0)
-    if mode in {"clipped-relu", "clipped_relu"}:
-        return np.clip(x, 0.0, relu_clip)
-    if mode in {"diff-clipped-relu", "differential-clipped-relu", "diff_clipped_relu"}:
-        return np.clip(x, 0.0, relu_clip) - np.clip(-x, 0.0, relu_clip)
-    if mode in {"leaky-relu", "leaky_relu"}:
-        return np.where(x >= 0.0, x, relu_leak * x)
-    if mode in {"softplus", "softplus-relu", "softplus_relu"}:
-        beta = max(float(softplus_beta), 1e-12)
-        return np.logaddexp(0.0, beta * x) / beta
-    raise ValueError(f"unknown local activation {mode!r}")
 
 
 def local_activation_deriv_np(
@@ -94,16 +69,6 @@ def local_activation_deriv_np(
     if floor >= 1.0:
         return np.ones_like(deriv)
     return floor + (1.0 - floor) * deriv
-
-
-def output_activation_np(score: np.ndarray, linear_output: bool, softmax_output: bool) -> np.ndarray:
-    if linear_output:
-        return score
-    if softmax_output:
-        shifted = score - np.max(score, axis=1, keepdims=True)
-        exp_score = np.exp(shifted)
-        return exp_score / np.sum(exp_score, axis=1, keepdims=True)
-    return np.tanh(score)
 
 
 def forward_np(
@@ -209,21 +174,6 @@ def update_np(
         readout + lr * np.einsum("nk,nbc->kbc", d, h) / batch,
         output_bias + lr * np.mean(d, axis=0),
     )
-
-
-def accuracy_np(
-    x: np.ndarray,
-    labels: np.ndarray,
-    state: tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray],
-    blocks: list[list[int]],
-    batch_size: int,
-    **forward_kwargs,
-) -> float:
-    correct = 0
-    for start in range(0, len(labels), batch_size):
-        _xb, _pre, _h, _score, y = forward_np(x[start : start + batch_size], state, blocks, **forward_kwargs)
-        correct += int(np.sum(np.argmax(y, axis=1) == labels[start : start + batch_size]))
-    return correct / max(len(labels), 1)
 
 
 def run_online(

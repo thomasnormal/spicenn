@@ -1,4 +1,5 @@
 import argparse
+import shlex
 import sys
 from pathlib import Path
 
@@ -223,6 +224,23 @@ def test_fast_online_variant_sweep_row_reports_best_probe_and_improvement() -> N
         softmax_margin=1.0,
         readout_class_centering="none",
         eval_batch_size=4,
+        train_samples=2,
+        eval_samples=2,
+        image_size=2,
+        block_size=2,
+        stride=2,
+        channels=1,
+        promotion_updates=2,
+        promotion_simulator="Xyce",
+        promotion_phase=0.5e-9,
+        promotion_gap=0.05e-9,
+        promotion_edge=5e-12,
+        promotion_settle_ratio=20.0,
+        promotion_transient_step=200e-12,
+        promotion_timeout=240.0,
+        promotion_max_transient_points=2000,
+        promotion_probe_updates="",
+        promotion_tag_prefix="promote",
     )
     variant = {
         "local_activation": "tanh",
@@ -258,6 +276,18 @@ def test_fast_online_variant_sweep_row_reports_best_probe_and_improvement() -> N
     assert row["lr"] == 0.8
     assert row["readout_update_scale"] == 0.25
     assert row["softmax_temperature"] == 4.0
+    command = shlex.split(row["strict_phase_promotion_command"])
+    assert "--strict-fully-on-device" in command
+    assert command[command.index("--reference-mode") + 1] == "none"
+    assert command[command.index("--phase-output-mode") + 1] == "print"
+    assert command[command.index("--update-mode") + 1] == "direct"
+    assert command[command.index("--eval-backend") + 1] == "numpy"
+    assert command[command.index("--updates") + 1] == "2"
+    assert command[command.index("--lr") + 1] == "0.8"
+    assert command[command.index("--readout-update-scale") + 1] == "0.25"
+    assert command[command.index("--softmax-temperature") + 1] == "4.0"
+    assert row["strict_phase_promotion_updates"] == 2
+    assert row["strict_phase_promotion_max_transient_points"] == 2000
     assert row["initial_eval_accuracy"] >= 0.0
     assert row["final_eval_accuracy"] >= 0.0
     assert row["eval_improvement"] == pytest.approx(row["final_eval_accuracy"] - row["initial_eval_accuracy"])

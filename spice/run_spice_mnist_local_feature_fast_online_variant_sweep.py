@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import argparse
 import json
+import shlex
+import sys
 import time
 from typing import Any
 
@@ -176,6 +178,122 @@ def update_kwargs(args: argparse.Namespace, variant: dict[str, Any]) -> dict[str
     }
 
 
+def command_text(command: list[str]) -> str:
+    return " ".join(shlex.quote(part) for part in command)
+
+
+def strict_phase_promotion_command(args: argparse.Namespace, variant: dict[str, Any]) -> list[str]:
+    updates = int(getattr(args, "promotion_updates", 0) or args.train_samples)
+    if updates <= 0:
+        raise ValueError("--promotion-updates must be positive when set")
+    promotion_tag = fast_ref.sanitize_tag(f"{getattr(args, 'promotion_tag_prefix', 'promote')}_{variant['tag']}")
+    command = [
+        sys.executable,
+        str(ROOT / "spice/run_spice_mnist_local_feature_phase_transient.py"),
+        "--simulator",
+        getattr(args, "promotion_simulator", "Xyce"),
+        "--train-samples",
+        str(updates),
+        "--eval-samples",
+        str(args.eval_samples),
+        "--image-size",
+        str(args.image_size),
+        "--block-size",
+        str(args.block_size),
+        "--stride",
+        str(args.stride),
+        "--channels",
+        str(args.channels),
+        "--batch-size",
+        "1",
+        "--updates",
+        str(updates),
+        "--lr",
+        str(variant["lr"]),
+        "--phase",
+        str(getattr(args, "promotion_phase", 0.5e-9)),
+        "--gap",
+        str(getattr(args, "promotion_gap", 0.05e-9)),
+        "--edge",
+        str(getattr(args, "promotion_edge", 5e-12)),
+        "--settle-ratio",
+        str(getattr(args, "promotion_settle_ratio", 20.0)),
+        "--transient-step",
+        str(getattr(args, "promotion_transient_step", 200e-12)),
+        "--timeout",
+        str(getattr(args, "promotion_timeout", 240.0)),
+        "--max-transient-points",
+        str(getattr(args, "promotion_max_transient_points", 2000)),
+        "--reference-mode",
+        "none",
+        "--phase-output-mode",
+        "print",
+        "--update-mode",
+        "direct",
+        "--eval-backend",
+        "numpy",
+        "--local-activation",
+        variant["local_activation"],
+        "--relu-clip",
+        str(variant["relu_clip"]),
+        "--relu-leak",
+        str(args.relu_leak),
+        "--softplus-beta",
+        str(args.softplus_beta),
+        "--activation-derivative",
+        variant["activation_derivative"],
+        "--derivative-floor",
+        str(args.derivative_floor),
+        "--derivative-gate-threshold",
+        str(args.derivative_gate_threshold),
+        "--readout-feedback-mode",
+        variant["readout_feedback_mode"],
+        "--readout-feedback-clip",
+        str(args.readout_feedback_clip),
+        "--output-bias-update-scale",
+        str(variant["output_bias_update_scale"]),
+        "--readout-update-scale",
+        str(variant["readout_update_scale"]),
+        "--local-update-scale",
+        str(variant["local_update_scale"]),
+        "--state-decay",
+        str(variant["state_decay"]),
+        "--softmax-negative-scale",
+        str(args.softmax_negative_scale),
+        "--softmax-error-centering",
+        args.softmax_error_centering,
+        "--softmax-temperature",
+        str(variant["softmax_temperature"]),
+        "--softmax-competition-mode",
+        args.softmax_competition_mode,
+        "--softmax-competitor-power",
+        str(args.softmax_competitor_power),
+        "--softmax-error-gate",
+        args.softmax_error_gate,
+        "--softmax-margin",
+        str(args.softmax_margin),
+        "--hidden-synapse-mode",
+        variant["hidden_synapse_mode"],
+        "--readout-synapse-mode",
+        variant["readout_synapse_mode"],
+        "--synapse-clip",
+        str(variant["synapse_clip"]),
+        "--readout-class-centering",
+        args.readout_class_centering,
+        "--tag",
+        promotion_tag,
+    ]
+    if args.softmax_output:
+        command.append("--softmax-output")
+    if args.linear_output:
+        command.append("--linear-output")
+    probe_updates = getattr(args, "promotion_probe_updates", "")
+    if probe_updates:
+        command.extend(["--probe-updates", probe_updates])
+    command.append("--strict-fully-on-device")
+    return command
+
+
 def run_variant(
     args: argparse.Namespace,
     variant: dict[str, Any],
@@ -204,6 +322,7 @@ def run_variant(
     ]
     best_probe = max(probe_rows, key=lambda row: row["eval_accuracy"]) if probe_rows else None
     wall = time.perf_counter() - t0
+    phase_command = strict_phase_promotion_command(args, variant)
     return {
         **variant,
         "initial_eval_accuracy": initial_eval,
@@ -211,6 +330,9 @@ def run_variant(
         "eval_improvement": final_eval - initial_eval,
         "best_probe_eval_accuracy": best_probe["eval_accuracy"] if best_probe is not None else None,
         "best_probe_update": best_probe["update"] if best_probe is not None else None,
+        "strict_phase_promotion_updates": int(getattr(args, "promotion_updates", 0) or args.train_samples),
+        "strict_phase_promotion_max_transient_points": int(getattr(args, "promotion_max_transient_points", 2000)),
+        "strict_phase_promotion_command": command_text(phase_command),
         "wall_time_s": wall,
     }
 
@@ -265,6 +387,17 @@ def main() -> None:
     ap.add_argument("--init-weights", default="")
     ap.add_argument("--probe-updates", default="powers2")
     ap.add_argument("--eval-batch-size", type=int, default=1024)
+    ap.add_argument("--promotion-updates", type=int, default=0)
+    ap.add_argument("--promotion-simulator", default="Xyce")
+    ap.add_argument("--promotion-phase", type=float, default=0.5e-9)
+    ap.add_argument("--promotion-gap", type=float, default=0.05e-9)
+    ap.add_argument("--promotion-edge", type=float, default=5e-12)
+    ap.add_argument("--promotion-settle-ratio", type=float, default=20.0)
+    ap.add_argument("--promotion-transient-step", type=float, default=200e-12)
+    ap.add_argument("--promotion-timeout", type=float, default=240.0)
+    ap.add_argument("--promotion-max-transient-points", type=int, default=2000)
+    ap.add_argument("--promotion-probe-updates", default="")
+    ap.add_argument("--promotion-tag-prefix", default="promote")
     ap.add_argument("--seed", type=int, default=0)
     ap.add_argument("--tag", default="fast_online_variant_sweep")
     args = ap.parse_args()
@@ -289,6 +422,10 @@ def main() -> None:
         raise ValueError("update scales must be non-negative")
     if args.state_decay < 0 or args.state_decay >= 1:
         raise ValueError("--state-decay must be in [0, 1)")
+    if args.promotion_updates < 0:
+        raise ValueError("--promotion-updates must be non-negative")
+    if args.promotion_max_transient_points < 0:
+        raise ValueError("--promotion-max-transient-points must be non-negative")
 
     stride = args.block_size if args.stride is None else args.stride
     blocks = block_indices(args.image_size, args.block_size, stride)

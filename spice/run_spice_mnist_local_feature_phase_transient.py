@@ -203,6 +203,8 @@ def sample_source_pwl(values: np.ndarray, sample_starts: list[float], t_stop: fl
         raise ValueError("values length must match sample_starts length")
     if edge < 0.0:
         raise ValueError("edge must be non-negative")
+    if np.all(values == values[0]):
+        return f"{float(values[0]):.12g}"
     points: list[tuple[float, float]] = [(0.0, float(values[0]))]
     for s, val in enumerate(values):
         current = float(val)

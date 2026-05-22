@@ -188,6 +188,17 @@ def test_phase_transient_sample_source_pwl_skips_unchanged_values() -> None:
     assert source == "PWL(0 0 2.9e-09 0 3e-09 1 4.9e-09 1 5e-09 0 6e-09 0)"
 
 
+def test_phase_transient_sample_source_pwl_uses_dc_for_constant_values() -> None:
+    source = phase_transient.sample_source_pwl(
+        np.array([-0.125, -0.125, -0.125]),
+        [1.0e-9, 2.0e-9, 3.0e-9],
+        4.0e-9,
+        0.1e-9,
+    )
+
+    assert source == "-0.125"
+
+
 def test_phase_transient_sample_source_pwl_rejects_mismatched_schedule() -> None:
     with pytest.raises(ValueError, match="sample_starts"):
         phase_transient.sample_source_pwl(np.array([1.0, 2.0]), [1.0e-9], 2.0e-9, 0.1e-9)

@@ -166,6 +166,19 @@ def readout_feedback_expr(weight_expr: str, delta_expr: str, feedback_mode: str,
     raise ValueError(f"unknown readout feedback mode {feedback_mode!r}")
 
 
+def synapse_transfer_expr(weight_expr: str, transfer_mode: str, transfer_clip: float = 1.0) -> str:
+    if transfer_mode in {"linear", "full", "ideal"}:
+        return weight_expr
+    clip = max(float(transfer_clip), 1e-12)
+    if transfer_mode in {"tanh-clipped", "smooth-clipped", "clipped"}:
+        return f"({clip:.12g}*tanh(({weight_expr})/{clip:.12g}))"
+    if transfer_mode in {"hard-clipped", "bounded"}:
+        return f"({clipped_relu_expr(f'({weight_expr})+{clip:.12g}', 2.0 * clip)}-{clip:.12g})"
+    if transfer_mode in {"sign", "binary"}:
+        return f"({clip:.12g}*({weight_expr})/(abs({weight_expr})+1e-9))"
+    raise ValueError(f"unknown synapse transfer mode {transfer_mode!r}")
+
+
 def add_local_activation(
     lines: list[str],
     sample: int,

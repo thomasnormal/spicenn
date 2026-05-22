@@ -24,6 +24,15 @@ def test_cli_exposes_simulator_selector() -> None:
     )
 
     assert "--simulator" in proc.stdout
+    assert "--hidden-synapse-mode" in proc.stdout
+    assert "--readout-synapse-mode" in proc.stdout
+
+
+def test_synapse_transfer_expr_covers_linear_smooth_hard_and_sign_modes() -> None:
+    assert batch_op.synapse_transfer_expr("V(w)", "linear", 0.25) == "V(w)"
+    assert batch_op.synapse_transfer_expr("V(w)", "tanh-clipped", 0.25) == "(0.25*tanh((V(w))/0.25))"
+    assert "abs(V(w))+1e-9" in batch_op.synapse_transfer_expr("V(w)", "sign", 0.25)
+    assert "0.5*(((V(w))+0.25)" in batch_op.synapse_transfer_expr("V(w)", "hard-clipped", 0.25)
 
 
 def test_x_yce_print_reader_extracts_first_operating_point_row(tmp_path: Path) -> None:
@@ -56,11 +65,16 @@ def test_local_feature_decks_include_x_yce_operating_point_print() -> None:
         False,
         "tanh",
         1.0,
+        hidden_synapse_mode="tanh-clipped",
+        readout_synapse_mode="hard-clipped",
+        synapse_clip=0.25,
     )
 
     assert ".op" in netlist
     assert ".print DC V(y0_0) V(y0_1)" in netlist
     assert "wrdata out.dat V(y0_0) V(y0_1)" in netlist
+    assert "(0.25*tanh((V(w0_0_0))/0.25))*V(x0_0)" in netlist
+    assert "V(v0_0_0))+0.25" in netlist
 
 
 def test_x_yce_behavioral_rhs_wrapper_preserves_spaced_expressions() -> None:

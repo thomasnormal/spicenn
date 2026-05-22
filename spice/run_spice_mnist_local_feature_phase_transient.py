@@ -15,6 +15,7 @@ from run_spice_mnist_local_block_batch_op_train import (
     local_activation_expr as block_local_activation_expr,
     block_indices,
     readout_feedback_expr,
+    synapse_transfer_expr,
 )
 from run_spice_mnist_local_feature_batch_op_train import run_eval, run_train_batch, wrap_xyce_behavioral_rhs, xyce_prn_path
 from run_spice_mnist_train import load_mnist_sequence
@@ -274,6 +275,9 @@ def make_phase_transient_netlist(
     readout_feedback_clip: float = 0.05,
     relu_leak: float = 0.01,
     softplus_beta: float = 10.0,
+    hidden_synapse_mode: str = "linear",
+    readout_synapse_mode: str = "linear",
+    synapse_clip: float = 1.0,
 ) -> tuple[str, int, float]:
     total_samples = x_batch.shape[0]
     if total_samples != update_batch_size * updates:
@@ -337,13 +341,20 @@ def make_phase_transient_netlist(
     lines.append("")
     for b, idxs in enumerate(blocks):
         for c in range(channels):
-            terms = [f"V(w{b}_{c}_{p})*V(pix{idx})" for p, idx in enumerate(idxs)]
+            terms = [
+                f"{synapse_transfer_expr(f'V(w{b}_{c}_{p})', hidden_synapse_mode, synapse_clip)}*V(pix{idx})"
+                for p, idx in enumerate(idxs)
+            ]
             terms.append(f"V(hb{b}_{c})")
             lines.append(f"Bpre_h{b}_{c} ah{b}_{c} 0 V = " + " + ".join(terms))
             h_calc = local_activation_expr(f"V(ah{b}_{c})", local_activation, relu_clip, relu_leak, softplus_beta)
             lines.append(f"Bstore_h{b}_{c} h{b}_{c} 0 I = V(pact)*{{CSTATE}}/{{TAU}}*(V(h{b}_{c})-({h_calc}))")
     for k in range(n_classes):
-        score_terms = [f"V(v{k}_{b}_{c})*V(h{b}_{c})" for b in range(n_blocks) for c in range(channels)]
+        score_terms = [
+            f"{synapse_transfer_expr(f'V(v{k}_{b}_{c})', readout_synapse_mode, synapse_clip)}*V(h{b}_{c})"
+            for b in range(n_blocks)
+            for c in range(channels)
+        ]
         score_terms.append(f"V(ob{k})")
         lines.append(f"Bscore{k} scorecalc{k} 0 V = " + " + ".join(score_terms))
         lines.append(f"Bstore_score{k} score{k} 0 I = V(pscore)*{{CSTATE}}/{{TAU}}*(V(score{k})-V(scorecalc{k}))")
@@ -366,7 +377,12 @@ def make_phase_transient_netlist(
     for b, idxs in enumerate(blocks):
         for c in range(channels):
             feedback = " + ".join(
-                readout_feedback_expr(f"V(v{k}_{b}_{c})", f"V(d{k})", readout_feedback_mode, readout_feedback_clip)
+                readout_feedback_expr(
+                    synapse_transfer_expr(f"V(v{k}_{b}_{c})", readout_synapse_mode, synapse_clip),
+                    f"V(d{k})",
+                    readout_feedback_mode,
+                    readout_feedback_clip,
+                )
                 for k in range(n_classes)
             )
             deriv = local_activation_deriv_expr(
@@ -577,6 +593,10 @@ def main() -> None:
     ap.add_argument("--derivative-gate-threshold", type=float, default=1e-6)
     ap.add_argument("--readout-feedback-mode", choices=["readout", "full-readout", "exact", "sign-readout", "sign", "clipped-readout", "clipped"], default="readout")
     ap.add_argument("--readout-feedback-clip", type=float, default=0.05)
+    synapse_modes = ["linear", "full", "ideal", "tanh-clipped", "smooth-clipped", "clipped", "hard-clipped", "bounded", "sign", "binary"]
+    ap.add_argument("--hidden-synapse-mode", choices=synapse_modes, default="linear")
+    ap.add_argument("--readout-synapse-mode", choices=synapse_modes, default="linear")
+    ap.add_argument("--synapse-clip", type=float, default=1.0)
     ap.add_argument("--seed", type=int, default=0)
     ap.add_argument("--timeout", type=float, default=300.0)
     ap.add_argument("--simulator", default=None)
@@ -627,6 +647,8 @@ def main() -> None:
         raise ValueError("--derivative-gate-threshold must be non-negative")
     if args.readout_feedback_clip <= 0:
         raise ValueError("--readout-feedback-clip must be positive")
+    if args.synapse_clip <= 0:
+        raise ValueError("--synapse-clip must be positive")
     if args.phase <= 0 or args.settle_ratio <= 0:
         raise ValueError("--phase and --settle-ratio must be positive")
     if args.direction_cosine_threshold < -1 or args.direction_cosine_threshold > 1:
@@ -710,6 +732,9 @@ def main() -> None:
         args.readout_feedback_clip,
         args.relu_leak,
         args.softplus_beta,
+        args.hidden_synapse_mode,
+        args.readout_synapse_mode,
+        args.synapse_clip,
     )
     phase_netlist.write_text(prepare_phase_netlist(netlist, spice_bin))
 
@@ -762,6 +787,9 @@ def main() -> None:
             readout_feedback_clip=args.readout_feedback_clip,
             relu_leak=args.relu_leak,
             softplus_beta=args.softplus_beta,
+            hidden_synapse_mode=args.hidden_synapse_mode,
+            readout_synapse_mode=args.readout_synapse_mode,
+            synapse_clip=args.synapse_clip,
         )
         if update + 1 in probe_updates:
             op_probe_states[update + 1] = (op_w.copy(), op_hb.copy(), op_readout.copy(), op_ob.copy())
@@ -803,6 +831,9 @@ def main() -> None:
             relu_clip=args.relu_clip,
             relu_leak=args.relu_leak,
             softplus_beta=args.softplus_beta,
+            hidden_synapse_mode=args.hidden_synapse_mode,
+            readout_synapse_mode=args.readout_synapse_mode,
+            synapse_clip=args.synapse_clip,
         )
         phase_eval_accuracy = run_eval(
             spice_bin,
@@ -823,6 +854,9 @@ def main() -> None:
             relu_clip=args.relu_clip,
             relu_leak=args.relu_leak,
             softplus_beta=args.softplus_beta,
+            hidden_synapse_mode=args.hidden_synapse_mode,
+            readout_synapse_mode=args.readout_synapse_mode,
+            synapse_clip=args.synapse_clip,
         )
         op_reference_eval_accuracy = run_eval(
             spice_bin,
@@ -843,6 +877,9 @@ def main() -> None:
             relu_clip=args.relu_clip,
             relu_leak=args.relu_leak,
             softplus_beta=args.softplus_beta,
+            hidden_synapse_mode=args.hidden_synapse_mode,
+            readout_synapse_mode=args.readout_synapse_mode,
+            synapse_clip=args.synapse_clip,
         )
         if args.eval_probe_updates:
             for row in probe_rows:
@@ -868,6 +905,9 @@ def main() -> None:
                     relu_clip=args.relu_clip,
                     relu_leak=args.relu_leak,
                     softplus_beta=args.softplus_beta,
+                    hidden_synapse_mode=args.hidden_synapse_mode,
+                    readout_synapse_mode=args.readout_synapse_mode,
+                    synapse_clip=args.synapse_clip,
                 )
                 op_probe_eval = run_eval(
                     spice_bin,
@@ -888,6 +928,9 @@ def main() -> None:
                     relu_clip=args.relu_clip,
                     relu_leak=args.relu_leak,
                     softplus_beta=args.softplus_beta,
+                    hidden_synapse_mode=args.hidden_synapse_mode,
+                    readout_synapse_mode=args.readout_synapse_mode,
+                    synapse_clip=args.synapse_clip,
                 )
                 row["phase_eval_accuracy"] = phase_probe_eval
                 row["op_reference_eval_accuracy"] = op_probe_eval
@@ -979,6 +1022,9 @@ def main() -> None:
         "derivative_gate_threshold": args.derivative_gate_threshold,
         "readout_feedback_mode": args.readout_feedback_mode,
         "readout_feedback_clip": args.readout_feedback_clip,
+        "hidden_synapse_mode": args.hidden_synapse_mode,
+        "readout_synapse_mode": args.readout_synapse_mode,
+        "synapse_clip": args.synapse_clip,
         "init_weights": args.init_weights,
         "phase_netlist": str(phase_netlist),
         "phase_data": str(phase_data),

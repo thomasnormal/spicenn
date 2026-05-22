@@ -15,6 +15,7 @@ from run_spice_mnist_local_block_batch_op_train import (
     add_local_activation_deriv,
     block_indices,
     readout_feedback_expr,
+    synapse_transfer_expr,
 )
 from run_spice_mnist_train import load_mnist_sequence
 from run_spice_sweep import ROOT, detect_spice, is_xyce, prepare_netlist_for_simulator, run_tiny_test, run_simulator_netlist
@@ -106,6 +107,9 @@ def make_train_netlist(
     readout_feedback_clip=0.05,
     relu_leak=0.01,
     softplus_beta=10.0,
+    hidden_synapse_mode="linear",
+    readout_synapse_mode="linear",
+    synapse_clip=1.0,
 ):
     batch = len(y_batch)
     n_blocks, channels, block_len = w.shape
@@ -143,7 +147,10 @@ def make_train_netlist(
     for s in range(batch):
         for b, idxs in enumerate(blocks):
             for c in range(channels):
-                terms = [f"V(w{b}_{c}_{p})*V(x{s}_{idx})" for p, idx in enumerate(idxs)]
+                terms = [
+                    f"{synapse_transfer_expr(f'V(w{b}_{c}_{p})', hidden_synapse_mode, synapse_clip)}*V(x{s}_{idx})"
+                    for p, idx in enumerate(idxs)
+                ]
                 terms.append(f"V(hb{b}_{c})")
                 add_local_activation(
                     lines,
@@ -157,7 +164,11 @@ def make_train_netlist(
                     softplus_beta,
                 )
         for k in range(n_classes):
-            terms = [f"V(v{k}_{b}_{c})*{feature_expr(s, b, c, channels)}" for b in range(n_blocks) for c in range(channels)]
+            terms = [
+                f"{synapse_transfer_expr(f'V(v{k}_{b}_{c})', readout_synapse_mode, synapse_clip)}*{feature_expr(s, b, c, channels)}"
+                for b in range(n_blocks)
+                for c in range(channels)
+            ]
             terms.append(f"V(ob{k})")
             out_sum = " + ".join(terms)
             if softmax_output:
@@ -182,7 +193,12 @@ def make_train_netlist(
         for b in range(n_blocks):
             for c in range(channels):
                 fb = " + ".join(
-                    readout_feedback_expr(f"V(v{k}_{b}_{c})", f"V(d{s}_{k})", readout_feedback_mode, readout_feedback_clip)
+                    readout_feedback_expr(
+                        synapse_transfer_expr(f"V(v{k}_{b}_{c})", readout_synapse_mode, synapse_clip),
+                        f"V(d{s}_{k})",
+                        readout_feedback_mode,
+                        readout_feedback_clip,
+                    )
                     for k in range(n_classes)
                 )
                 deriv = add_local_activation_deriv(
@@ -235,6 +251,9 @@ def make_eval_netlist(
     relu_clip,
     relu_leak=0.01,
     softplus_beta=10.0,
+    hidden_synapse_mode="linear",
+    readout_synapse_mode="linear",
+    synapse_clip=1.0,
 ):
     batch = len(x_batch)
     n_blocks, channels, _block_len = w.shape
@@ -258,7 +277,10 @@ def make_eval_netlist(
     for s in range(batch):
         for b, idxs in enumerate(blocks):
             for c in range(channels):
-                terms = [f"V(w{b}_{c}_{p})*V(x{s}_{idx})" for p, idx in enumerate(idxs)]
+                terms = [
+                    f"{synapse_transfer_expr(f'V(w{b}_{c}_{p})', hidden_synapse_mode, synapse_clip)}*V(x{s}_{idx})"
+                    for p, idx in enumerate(idxs)
+                ]
                 terms.append(f"V(hb{b}_{c})")
                 add_local_activation(
                     lines,
@@ -272,7 +294,11 @@ def make_eval_netlist(
                     softplus_beta,
                 )
         for k in range(n_classes):
-            terms = [f"V(v{k}_{b}_{c})*{feature_expr(s, b, c, channels)}" for b in range(n_blocks) for c in range(channels)]
+            terms = [
+                f"{synapse_transfer_expr(f'V(v{k}_{b}_{c})', readout_synapse_mode, synapse_clip)}*{feature_expr(s, b, c, channels)}"
+                for b in range(n_blocks)
+                for c in range(channels)
+            ]
             terms.append(f"V(ob{k})")
             out_sum = " + ".join(terms)
             if softmax_output:
@@ -314,6 +340,9 @@ def run_train_batch(
     readout_feedback_clip=0.05,
     relu_leak=0.01,
     softplus_beta=10.0,
+    hidden_synapse_mode="linear",
+    readout_synapse_mode="linear",
+    synapse_clip=1.0,
 ):
     netlist_path.write_text(
         prepare_local_feature_netlist(
@@ -338,6 +367,9 @@ def run_train_batch(
                 readout_feedback_clip,
                 relu_leak,
                 softplus_beta,
+                hidden_synapse_mode,
+                readout_synapse_mode,
+                synapse_clip,
             ),
             spice_bin,
         )
@@ -379,6 +411,9 @@ def run_eval(
     relu_clip,
     relu_leak=0.01,
     softplus_beta=10.0,
+    hidden_synapse_mode="linear",
+    readout_synapse_mode="linear",
+    synapse_clip=1.0,
 ):
     correct = 0
     for start in range(0, len(y_eval), batch_size):
@@ -400,6 +435,9 @@ def run_eval(
                     relu_clip,
                     relu_leak,
                     softplus_beta,
+                    hidden_synapse_mode,
+                    readout_synapse_mode,
+                    synapse_clip,
                 ),
                 spice_bin,
             )
@@ -521,6 +559,10 @@ def main():
     ap.add_argument("--derivative-gate-threshold", type=float, default=1e-6)
     ap.add_argument("--readout-feedback-mode", choices=["readout", "full-readout", "exact", "sign-readout", "sign", "clipped-readout", "clipped"], default="readout")
     ap.add_argument("--readout-feedback-clip", type=float, default=0.05)
+    synapse_modes = ["linear", "full", "ideal", "tanh-clipped", "smooth-clipped", "clipped", "hard-clipped", "bounded", "sign", "binary"]
+    ap.add_argument("--hidden-synapse-mode", choices=synapse_modes, default="linear")
+    ap.add_argument("--readout-synapse-mode", choices=synapse_modes, default="linear")
+    ap.add_argument("--synapse-clip", type=float, default=1.0)
     ap.add_argument("--init-weights", default="")
     ap.add_argument(
         "--import-extra-readout-scale",
@@ -557,6 +599,8 @@ def main():
         raise ValueError("--derivative-gate-threshold must be non-negative")
     if args.readout_feedback_clip <= 0:
         raise ValueError("--readout-feedback-clip must be positive")
+    if args.synapse_clip <= 0:
+        raise ValueError("--synapse-clip must be positive")
     if args.start_epoch < 0:
         raise ValueError("--start-epoch must be non-negative")
     if args.skip_heldout_eval and (args.eval_only or args.epochs == 0):
@@ -646,6 +690,9 @@ def main():
             args.relu_clip,
             args.relu_leak,
             args.softplus_beta,
+            args.hidden_synapse_mode,
+            args.readout_synapse_mode,
+            args.synapse_clip,
         )
         rows.append({"epoch": 0, "heldout_accuracy": heldout, "epoch_wall_time_s": time.perf_counter() - epoch_start})
         best_acc = heldout
@@ -681,6 +728,9 @@ def main():
                     args.readout_feedback_clip,
                     args.relu_leak,
                     args.softplus_beta,
+                    args.hidden_synapse_mode,
+                    args.readout_synapse_mode,
+                    args.synapse_clip,
                 )
                 completed_train_batches += 1
                 if args.checkpoint_every_batches > 0 and completed_train_batches % args.checkpoint_every_batches == 0:
@@ -731,6 +781,9 @@ def main():
                     args.relu_clip,
                     args.relu_leak,
                     args.softplus_beta,
+                    args.hidden_synapse_mode,
+                    args.readout_synapse_mode,
+                    args.synapse_clip,
                 )
             row = {"epoch": epoch + 1, "heldout_accuracy": heldout, "epoch_wall_time_s": time.perf_counter() - epoch_start}
             rows.append(row)
@@ -779,6 +832,9 @@ def main():
         "derivative_gate_threshold": args.derivative_gate_threshold,
         "readout_feedback_mode": args.readout_feedback_mode,
         "readout_feedback_clip": args.readout_feedback_clip,
+        "hidden_synapse_mode": args.hidden_synapse_mode,
+        "readout_synapse_mode": args.readout_synapse_mode,
+        "synapse_clip": args.synapse_clip,
         "output_mode": "softmax_class_evidence" if args.softmax_output else ("linear_class_evidence" if args.linear_output else "tanh_class_evidence"),
         "image_size": args.image_size,
         "block_size": args.block_size,

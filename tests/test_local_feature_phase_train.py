@@ -46,6 +46,8 @@ def test_phase_transient_cli_exposes_agreement_gates() -> None:
     assert "--learning-improvement-threshold" in proc.stdout
     assert "--probe-updates" in proc.stdout
     assert "--local-activation" in proc.stdout
+    assert "--hidden-synapse-mode" in proc.stdout
+    assert "--readout-synapse-mode" in proc.stdout
 
 
 def test_phase_transient_x_yce_print_reader_extracts_final_transient_row(tmp_path: Path) -> None:
@@ -216,13 +218,24 @@ def test_phase_variant_sweep_dry_command_preserves_online_contract() -> None:
         derivative_floor=0.0,
         derivative_gate_threshold=1e-6,
         readout_feedback_clip=0.05,
+        hidden_synapse_modes="linear,tanh-clipped",
+        readout_synapse_modes="linear,hard-clipped",
+        synapse_clip=0.25,
         softmax_output=True,
         linear_output=False,
         final_measures=False,
         eval_probe_updates=True,
     )
 
-    command = phase_variant_sweep.build_variant_command(args, "diff-clipped-relu", 0.5, "stored-gate", "clipped-readout")
+    command = phase_variant_sweep.build_variant_command(
+        args,
+        "diff-clipped-relu",
+        0.5,
+        "stored-gate",
+        "clipped-readout",
+        "tanh-clipped",
+        "hard-clipped",
+    )
 
     assert "--batch-size" in command
     assert command[command.index("--batch-size") + 1] == "1"
@@ -234,6 +247,12 @@ def test_phase_variant_sweep_dry_command_preserves_online_contract() -> None:
     assert command[command.index("--activation-derivative") + 1] == "stored-gate"
     assert "--readout-feedback-mode" in command
     assert command[command.index("--readout-feedback-mode") + 1] == "clipped-readout"
+    assert "--hidden-synapse-mode" in command
+    assert command[command.index("--hidden-synapse-mode") + 1] == "tanh-clipped"
+    assert "--readout-synapse-mode" in command
+    assert command[command.index("--readout-synapse-mode") + 1] == "hard-clipped"
+    assert "--synapse-clip" in command
+    assert command[command.index("--synapse-clip") + 1] == "0.25"
     assert "--eval-probe-updates" in command
 
 
@@ -291,6 +310,47 @@ def test_phase_transient_softmax_deck_is_one_continuous_online_run(tmp_path: Pat
     assert netlist.count("Vpapply papply 0 PWL(") == 1
     assert netlist.count("Vpclear pclear 0 PWL(") == 1
     assert netlist.count(" 1 ") >= len(y)
+
+
+def test_phase_transient_synapse_transfer_modes_affect_forward_and_backward_paths(tmp_path: Path) -> None:
+    x = np.zeros((1, 4))
+    y = np.array([0])
+    w = np.zeros((1, 1, 4))
+    hb = np.zeros((1, 1))
+    readout = np.zeros((2, 1, 1))
+    output_bias = np.zeros(2)
+
+    netlist, _n_vec, _t_stop = phase_transient.make_phase_transient_netlist(
+        x,
+        y,
+        w,
+        hb,
+        readout,
+        output_bias,
+        [[0, 1, 2, 3]],
+        0.8,
+        tmp_path / "out.dat",
+        False,
+        1,
+        1,
+        1e-9,
+        0.1e-9,
+        5e-12,
+        40.0,
+        20e-12,
+        1e-12,
+        1e-12,
+        1e-12,
+        1e18,
+        True,
+        hidden_synapse_mode="tanh-clipped",
+        readout_synapse_mode="sign",
+        synapse_clip=0.25,
+    )
+
+    assert "(0.25*tanh((V(w0_0_0))/0.25))*V(pix0)" in netlist
+    assert "(0.25*(V(v0_0_0))/(abs(V(v0_0_0))+1e-9))*V(h0_0)" in netlist
+    assert "(0.25*(V(v0_0_0))/(abs(V(v0_0_0))+1e-9))*V(d0)" in netlist
 
 
 def test_phase_transient_relu_deck_matches_forward_and_backward_activation(tmp_path: Path) -> None:

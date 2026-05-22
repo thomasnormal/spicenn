@@ -17,7 +17,7 @@ from run_spice_mnist_local_block_batch_op_train import (
     readout_feedback_expr,
     synapse_transfer_expr,
 )
-from local_feature_error import class_centered_expr, mean_centered_expr, softmax_delta_expr, softmax_exp_expr
+from local_feature_error import append_target_margin_gate, class_centered_expr, mean_centered_expr, softmax_delta_expr, softmax_exp_expr
 from run_spice_mnist_train import load_mnist_sequence
 from run_spice_sweep import ROOT, detect_spice, is_xyce, prepare_netlist_for_simulator, run_tiny_test, run_simulator_netlist
 
@@ -114,6 +114,8 @@ def make_train_netlist(
     softmax_negative_scale=1.0,
     softmax_error_centering="none",
     softmax_temperature=1.0,
+    softmax_error_gate="none",
+    softmax_margin=1.0,
     state_decay=0.0,
     readout_class_centering="none",
 ):
@@ -125,6 +127,10 @@ def make_train_netlist(
         raise ValueError("state_decay must be in [0, 1)")
     if softmax_error_centering not in {"none", "mean"}:
         raise ValueError("softmax_error_centering must be 'none' or 'mean'")
+    if softmax_error_gate not in {"none", "target-margin"}:
+        raise ValueError("softmax_error_gate must be 'none' or 'target-margin'")
+    if softmax_error_gate == "target-margin" and softmax_margin <= 0:
+        raise ValueError("softmax_margin must be positive when softmax_error_gate is target-margin")
     if readout_class_centering not in {"none", "mean"}:
         raise ValueError("readout_class_centering must be 'none' or 'mean'")
     batch = len(y_batch)
@@ -137,6 +143,7 @@ def make_train_netlist(
         f".param BS={batch}",
         f".param SOFTMAX_NEGATIVE_SCALE={softmax_negative_scale:.12g}",
         f".param SOFTMAX_TEMPERATURE={softmax_temperature:.12g}",
+        f".param SOFTMAX_MARGIN={softmax_margin:.12g}",
         f".param STATE_DECAY={state_decay:.12g}",
         "",
     ]
@@ -209,11 +216,21 @@ def make_train_netlist(
             raw_delta_exprs = [softmax_delta_expr(f"V(t{s}_{k})", f"V(y{s}_{k})") for k in range(n_classes)]
             for k in range(n_classes):
                 lines.append(f"By{s}_{k} y{s}_{k} 0 V = {softmax_exp_expr(f'V(z{s}_{k})')}/({denom})")
+            if softmax_error_gate == "target-margin":
+                append_target_margin_gate(
+                    lines,
+                    f"gerr{s}",
+                    [f"V(z{s}_{k})" for k in range(n_classes)],
+                    [f"V(t{s}_{k})" for k in range(n_classes)],
+                )
+            for k in range(n_classes):
                 delta_expr = (
                     mean_centered_expr(raw_delta_exprs, k)
                     if softmax_error_centering == "mean"
                     else raw_delta_exprs[k]
                 )
+                if softmax_error_gate == "target-margin":
+                    delta_expr = f"V(gerr{s})*({delta_expr})"
                 lines.append(f"Be{s}_{k} e{s}_{k} 0 V = {delta_expr}")
                 lines.append(f"Bd{s}_{k} d{s}_{k} 0 V = V(e{s}_{k})")
         else:
@@ -400,6 +417,8 @@ def run_train_batch(
     softmax_negative_scale=1.0,
     softmax_error_centering="none",
     softmax_temperature=1.0,
+    softmax_error_gate="none",
+    softmax_margin=1.0,
     state_decay=0.0,
     readout_class_centering="none",
 ):
@@ -419,21 +438,23 @@ def run_train_batch(
                 softmax_output,
                 local_activation,
                 relu_clip,
-                activation_derivative,
-                derivative_floor,
-                derivative_gate_threshold,
-                readout_feedback_mode,
-                readout_feedback_clip,
-                relu_leak,
-                softplus_beta,
-                hidden_synapse_mode,
-                readout_synapse_mode,
-                synapse_clip,
-                softmax_negative_scale,
-                softmax_error_centering,
-                softmax_temperature,
-                state_decay,
-                readout_class_centering,
+                activation_derivative=activation_derivative,
+                derivative_floor=derivative_floor,
+                derivative_gate_threshold=derivative_gate_threshold,
+                readout_feedback_mode=readout_feedback_mode,
+                readout_feedback_clip=readout_feedback_clip,
+                relu_leak=relu_leak,
+                softplus_beta=softplus_beta,
+                hidden_synapse_mode=hidden_synapse_mode,
+                readout_synapse_mode=readout_synapse_mode,
+                synapse_clip=synapse_clip,
+                softmax_negative_scale=softmax_negative_scale,
+                softmax_error_centering=softmax_error_centering,
+                softmax_temperature=softmax_temperature,
+                softmax_error_gate=softmax_error_gate,
+                softmax_margin=softmax_margin,
+                state_decay=state_decay,
+                readout_class_centering=readout_class_centering,
             ),
             spice_bin,
         )
@@ -631,6 +652,8 @@ def main():
     ap.add_argument("--softmax-negative-scale", type=float, default=1.0)
     ap.add_argument("--softmax-error-centering", choices=["none", "mean"], default="none")
     ap.add_argument("--softmax-temperature", type=float, default=1.0)
+    ap.add_argument("--softmax-error-gate", choices=["none", "target-margin"], default="none")
+    ap.add_argument("--softmax-margin", type=float, default=1.0)
     synapse_modes = ["linear", "full", "ideal", "tanh-clipped", "smooth-clipped", "clipped", "hard-clipped", "bounded", "sign", "binary"]
     ap.add_argument("--hidden-synapse-mode", choices=synapse_modes, default="linear")
     ap.add_argument("--readout-synapse-mode", choices=synapse_modes, default="linear")
@@ -678,6 +701,8 @@ def main():
         raise ValueError("--softmax-negative-scale must be non-negative")
     if args.softmax_temperature <= 0:
         raise ValueError("--softmax-temperature must be positive")
+    if args.softmax_error_gate == "target-margin" and args.softmax_margin <= 0:
+        raise ValueError("--softmax-margin must be positive when --softmax-error-gate is target-margin")
     if args.synapse_clip <= 0:
         raise ValueError("--synapse-clip must be positive")
     if args.start_epoch < 0:
@@ -815,6 +840,8 @@ def main():
                     args.softmax_negative_scale,
                     args.softmax_error_centering,
                     args.softmax_temperature,
+                    args.softmax_error_gate,
+                    args.softmax_margin,
                     args.state_decay,
                     args.readout_class_centering,
                 )
@@ -924,6 +951,8 @@ def main():
         "softmax_negative_scale": args.softmax_negative_scale,
         "softmax_error_centering": args.softmax_error_centering,
         "softmax_temperature": args.softmax_temperature,
+        "softmax_error_gate": args.softmax_error_gate,
+        "softmax_margin": args.softmax_margin,
         "hidden_synapse_mode": args.hidden_synapse_mode,
         "readout_synapse_mode": args.readout_synapse_mode,
         "synapse_clip": args.synapse_clip,

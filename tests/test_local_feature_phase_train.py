@@ -60,6 +60,8 @@ def test_phase_transient_cli_exposes_agreement_gates() -> None:
     assert "--softmax-negative-scale" in proc.stdout
     assert "--softmax-error-centering" in proc.stdout
     assert "--softmax-temperature" in proc.stdout
+    assert "--softmax-error-gate" in proc.stdout
+    assert "--softmax-margin" in proc.stdout
     assert "--readout-class-centering" in proc.stdout
     assert "--eval-backend" in proc.stdout
     assert "--simulator-extra-args" in proc.stdout
@@ -930,6 +932,157 @@ def test_batch_op_softmax_negative_scale_matches_phase_error_expr(tmp_path: Path
             1.0,
             softmax_temperature=0.0,
         )
+
+
+def test_phase_and_batch_softmax_margin_gate_uses_target_competitor_margin(tmp_path: Path) -> None:
+    x = np.zeros((1, 4))
+    y = np.array([0])
+    w = np.zeros((1, 1, 4))
+    hb = np.zeros((1, 1))
+    readout = np.zeros((3, 1, 1))
+    output_bias = np.zeros(3)
+
+    phase_netlist, _n_vec, _t_stop = phase_transient.make_phase_transient_netlist(
+        x,
+        y,
+        w,
+        hb,
+        readout,
+        output_bias,
+        [[0, 1, 2, 3]],
+        0.8,
+        tmp_path / "phase.dat",
+        False,
+        1,
+        1,
+        1e-9,
+        0.1e-9,
+        5e-12,
+        40.0,
+        20e-12,
+        1e-12,
+        1e-12,
+        1e-12,
+        1e18,
+        True,
+        "measure",
+        softmax_error_gate="target-margin",
+        softmax_margin=0.5,
+    )
+
+    assert ".param SOFTMAX_MARGIN=0.5" in phase_netlist
+    assert "Bgerr gerr 0 V =" in phase_netlist
+    assert "V(target0)*V(score0)" in phase_netlist
+    assert "Bgerrcmp0_0 gerrcmp0_0 0 V =" in phase_netlist
+    assert "0.5*(V(score1)+V(score2)+abs(V(score1)-V(score2)))" in phase_netlist
+    assert "V(target0)*(V(gerrcmp0_0))" in phase_netlist
+    assert "V(gerr)*((V(target0))*(1-(V(y0)))" in phase_netlist
+
+    batch_netlist = feature_batch_train.make_train_netlist(
+        x,
+        y,
+        w,
+        hb,
+        readout,
+        output_bias,
+        [[0, 1, 2, 3]],
+        0.8,
+        tmp_path / "batch.dat",
+        False,
+        True,
+        "tanh",
+        1.0,
+        softmax_error_gate="target-margin",
+        softmax_margin=0.5,
+    )
+
+    assert ".param SOFTMAX_MARGIN=0.5" in batch_netlist
+    assert "Bgerr0 gerr0 0 V =" in batch_netlist
+    assert "Bgerr0cmp0_0 gerr0cmp0_0 0 V =" in batch_netlist
+    assert "V(t0_0)*V(z0_0)" in batch_netlist
+    assert "V(gerr0)*((V(t0_0))*(1-(V(y0_0)))" in batch_netlist
+
+    with pytest.raises(ValueError, match="softmax_error_gate"):
+        phase_transient.make_phase_transient_netlist(
+            x,
+            y,
+            w,
+            hb,
+            readout,
+            output_bias,
+            [[0, 1, 2, 3]],
+            0.8,
+            tmp_path / "bad_gate.dat",
+            False,
+            1,
+            1,
+            1e-9,
+            0.1e-9,
+            5e-12,
+            40.0,
+            20e-12,
+            1e-12,
+            1e-12,
+            1e-12,
+            1e18,
+            True,
+            "measure",
+            softmax_error_gate="bad",
+        )
+
+    with pytest.raises(ValueError, match="softmax_margin"):
+        feature_batch_train.make_train_netlist(
+            x,
+            y,
+            w,
+            hb,
+            readout,
+            output_bias,
+            [[0, 1, 2, 3]],
+            0.8,
+            tmp_path / "bad_margin.dat",
+            False,
+            True,
+            "tanh",
+            1.0,
+            softmax_error_gate="target-margin",
+            softmax_margin=0.0,
+        )
+
+    ten_class_readout = np.zeros((10, 1, 1))
+    ten_class_ob = np.zeros(10)
+    ten_class_netlist, _n_vec, _t_stop = phase_transient.make_phase_transient_netlist(
+        x,
+        y,
+        w,
+        hb,
+        ten_class_readout,
+        ten_class_ob,
+        [[0, 1, 2, 3]],
+        0.8,
+        tmp_path / "ten_class.dat",
+        False,
+        1,
+        1,
+        1e-9,
+        0.1e-9,
+        5e-12,
+        40.0,
+        20e-12,
+        1e-12,
+        1e-12,
+        1e-12,
+        1e18,
+        True,
+        "measure",
+        softmax_error_gate="target-margin",
+    )
+    margin_gate_lines = [
+        line
+        for line in ten_class_netlist.splitlines()
+        if line.startswith("Bgerr") or line.startswith("Bstore_d")
+    ]
+    assert max(len(line) for line in margin_gate_lines) < 5000
 
 
 def test_batch_op_state_decay_matches_phase_update_shape(tmp_path: Path) -> None:

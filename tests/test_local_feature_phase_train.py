@@ -156,6 +156,18 @@ def test_phase_transient_empty_reference_metrics_are_json_nulls() -> None:
     assert metrics["state_update_sign_alignment_fraction"] is None
 
 
+def test_phase_transient_phase_only_update_metrics_keep_move_magnitude() -> None:
+    initial = (np.array([0.0, 1.0]),)
+    moved = (np.array([3.0, 5.0]),)
+
+    metrics = phase_transient.phase_only_update_metrics(initial, moved)
+
+    assert metrics["reference_update_l2"] is None
+    assert metrics["phase_update_l2"] == pytest.approx(5.0)
+    assert metrics["state_update_direction_cosine"] is None
+    assert metrics["state_update_sign_alignment_fraction"] is None
+
+
 def test_phase_transient_selects_sparse_print_for_xyce_without_probes() -> None:
     assert phase_transient.select_phase_output_mode("auto", "Xyce", False, ()) == "print"
     assert phase_transient.select_phase_output_mode("auto", "Xyce", False, (1,)) == "measure"
@@ -213,6 +225,8 @@ def test_phase_transient_probe_rows_can_be_phase_only_without_reference() -> Non
     assert rows[0]["update"] == 1
     assert rows[0]["state_update_direction_cosine"] is None
     assert rows[0]["state_max_abs_diff"] is None
+    assert rows[0]["phase_update_l2"] > 0.0
+    assert rows[0]["reference_update_l2"] is None
     np.testing.assert_allclose(phase_states[1][0], [[[0.11, -0.19]]])
     np.testing.assert_allclose(phase_states[1][3], [0.03, -0.01])
 

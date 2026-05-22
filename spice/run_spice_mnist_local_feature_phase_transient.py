@@ -588,6 +588,20 @@ def update_direction_metrics(
     return metrics
 
 
+def phase_only_update_metrics(
+    initial: TrainState,
+    got: TrainState,
+) -> dict[str, float | None]:
+    got_delta = np.concatenate([(np.asarray(after) - np.asarray(before)).ravel() for before, after in zip(initial, got)])
+    return {
+        "reference_update_l2": None,
+        "phase_update_l2": float(np.linalg.norm(got_delta)),
+        "state_update_direction_cosine": None,
+        "state_update_sign_alignment_fraction": None,
+        "state_update_wrong_sign_count": None,
+    }
+
+
 def empty_reference_metrics() -> dict[str, float | None]:
     metrics: dict[str, float | None] = {}
     for name in ["local_weights", "local_bias", "readout", "output_bias"]:
@@ -634,6 +648,7 @@ def probe_diagnostic_rows(
         op_state = op_probe_states.get(update)
         if op_state is None:
             row.update(empty_reference_metrics())
+            row.update(phase_only_update_metrics(initial_state, phase_state))
         else:
             row.update(state_metrics(op_state, phase_state))
             row.update(update_direction_metrics(initial_state, op_state, phase_state))
@@ -949,6 +964,12 @@ def main() -> None:
         )
     else:
         metrics = empty_reference_metrics()
+        metrics.update(
+            phase_only_update_metrics(
+                (w, hb, readout, output_bias),
+                (phase_w, phase_hb, phase_readout, phase_ob),
+            )
+        )
     probe_rows, probe_phase_states = probe_diagnostic_rows(
         probe_updates,
         probe_vals,

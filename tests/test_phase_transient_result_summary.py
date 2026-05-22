@@ -32,6 +32,8 @@ def test_phase_summary_row_keeps_execution_contract_and_backend_fields(tmp_path:
                 "stride": 2,
                 "channels": 2,
                 "mnist_index_order": "stable_permutation_prefix",
+                "train_index_metadata": {"sha256": "trainhash", "count": 16, "prefix": [1, 2]},
+                "eval_index_metadata": {"sha256": "evalhash", "count": 100, "prefix": [3, 4]},
                 "batch_size": 1,
                 "updates": 16,
                 "eval_samples": 100,
@@ -73,6 +75,8 @@ def test_phase_summary_row_keeps_execution_contract_and_backend_fields(tmp_path:
     assert row["simulator"] == "Xyce"
     assert row["updates"] == 16
     assert row["mnist_index_order"] == "stable_permutation_prefix"
+    assert row["train_index_sha256"] == "trainhash"
+    assert row["eval_index_sha256"] == "evalhash"
     assert row["eval_backend"] == "both"
     assert row["fully_on_device_execution_contract_met"] is True
     assert row["strict_fully_on_device_contract_met"] is True

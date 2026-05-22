@@ -23,6 +23,8 @@ FIELDS = [
     "updates",
     "eval_samples",
     "mnist_index_order",
+    "train_index_sha256",
+    "eval_index_sha256",
     "batch_size",
     "update_mode",
     "reference_mode",
@@ -74,6 +76,15 @@ def topology_label(data: dict[str, Any]) -> str:
     return f"{image_size}x{image_size} b{block_size} s{stride} c{channels}"
 
 
+def nested(data: dict[str, Any], *keys: str) -> Any:
+    value: Any = data
+    for key in keys:
+        if not isinstance(value, dict):
+            return None
+        value = value.get(key)
+    return value
+
+
 def row_from_summary(path: Path) -> dict[str, Any]:
     data = json.loads(path.read_text())
     tag = path.name.removesuffix("_summary.json")
@@ -88,6 +99,8 @@ def row_from_summary(path: Path) -> dict[str, Any]:
         "updates": data.get("updates"),
         "eval_samples": data.get("eval_samples"),
         "mnist_index_order": data.get("mnist_index_order"),
+        "train_index_sha256": nested(data, "train_index_metadata", "sha256"),
+        "eval_index_sha256": nested(data, "eval_index_metadata", "sha256"),
         "batch_size": data.get("batch_size"),
         "update_mode": data.get("update_mode"),
         "reference_mode": data.get("reference_mode"),

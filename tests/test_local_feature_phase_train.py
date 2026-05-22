@@ -469,6 +469,18 @@ def test_mnist_index_splits_use_stable_train_and_test_prefixes() -> None:
         mnist_train.mnist_index_splits(101, 1, 100, 100, seed=7)
 
 
+def test_phase_transient_index_prefix_metadata_is_stable_and_compact() -> None:
+    indices = np.array([3, 1, 4, 1, 5], dtype=np.int64)
+
+    metadata = phase_transient.index_prefix_metadata(indices, prefix_len=3)
+
+    assert metadata["count"] == 5
+    assert metadata["prefix"] == [3, 1, 4]
+    assert len(metadata["sha256"]) == 64
+    assert metadata == phase_transient.index_prefix_metadata(indices, prefix_len=3)
+    assert metadata["sha256"] != phase_transient.index_prefix_metadata(indices[:4], prefix_len=3)["sha256"]
+
+
 def test_phase_variant_sweep_pairs_only_expand_clipped_activations() -> None:
     pairs = phase_variant_sweep.activation_clip_pairs(
         ["tanh", "relu", "diff-clipped-relu"],

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import re
@@ -19,11 +20,13 @@ from run_spice_mnist_local_block_batch_op_train import (
     synapse_transfer_expr,
 )
 from run_spice_mnist_local_feature_batch_op_train import run_eval, run_train_batch, wrap_xyce_behavioral_rhs, xyce_prn_path
-from run_spice_mnist_train import load_mnist_sequence
+from run_spice_mnist_train import load_mnist_sequence, mnist_index_splits
 from run_spice_sweep import ROOT, detect_spice, is_xyce, prepare_netlist_for_simulator, run_tiny_test, run_simulator_netlist
 from spice_adapter import SPICE_SIMULATOR_ARGS_ENV
 
 TrainState = tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]
+MNIST_TRAIN_COUNT = 60000
+MNIST_TEST_COUNT = 10000
 
 
 def sanitize_tag(tag: str) -> str:
@@ -123,6 +126,15 @@ def phase_execution_contract_fields(
             "training transient, batch_size=1 online updates, and no Python weight writes between "
             "samples. Reference/eval runs are diagnostics after the training transient."
         ),
+    }
+
+
+def index_prefix_metadata(indices: np.ndarray, prefix_len: int = 16) -> dict[str, object]:
+    idx = np.asarray(indices, dtype=np.int64)
+    return {
+        "count": int(idx.size),
+        "sha256": hashlib.sha256(idx.tobytes()).hexdigest(),
+        "prefix": [int(value) for value in idx[:prefix_len]],
     }
 
 
@@ -1191,6 +1203,13 @@ def main() -> None:
     if args.train_samples < total_samples:
         raise ValueError("--train-samples must cover --batch-size * --updates")
     x_train, y_train, x_test, y_test = load_mnist_sequence(args.train_samples, max(1, args.eval_samples), args.image_size, args.seed)
+    train_indices, eval_indices = mnist_index_splits(
+        args.train_samples,
+        max(1, args.eval_samples),
+        MNIST_TRAIN_COUNT,
+        MNIST_TEST_COUNT,
+        args.seed,
+    )
     x_batch = x_train[:total_samples]
     y_batch = y_train[:total_samples]
     rng = np.random.default_rng(args.seed)
@@ -1591,6 +1610,8 @@ def main() -> None:
         "channels": args.channels,
         "classes": 10,
         "mnist_index_order": "stable_permutation_prefix",
+        "train_index_metadata": index_prefix_metadata(train_indices),
+        "eval_index_metadata": index_prefix_metadata(eval_indices),
         "train_samples": args.train_samples,
         "eval_samples": args.eval_samples,
         "batch_size": args.batch_size,

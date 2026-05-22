@@ -204,6 +204,32 @@ def test_phase_transient_sample_source_pwl_rejects_mismatched_schedule() -> None
         phase_transient.sample_source_pwl(np.array([1.0, 2.0]), [1.0e-9], 2.0e-9, 0.1e-9)
 
 
+def test_phase_transient_source_complexity_counts_sample_and_clock_sources() -> None:
+    x = np.array(
+        [
+            [0.0, 0.25],
+            [0.0, 0.50],
+            [0.0, 0.50],
+        ],
+        dtype=float,
+    )
+    y = np.array([0, 1, 1])
+    phases, sample_starts, t_stop = phase_transient.make_phase_schedule(1, 3, 1.0e-9, 0.1e-9, True)
+    targets = phase_transient.target_matrix(y, 2, softmax_output=True)
+
+    complexity = phase_transient.phase_source_complexity(x, targets, phases, sample_starts, t_stop, 0.1e-9, True)
+
+    assert complexity["sample_source_count"] == 4
+    assert complexity["sample_source_dc_count"] == 1
+    assert complexity["sample_source_pwl_count"] == 3
+    assert complexity["pixel_source_dc_count"] == 1
+    assert complexity["target_source_dc_count"] == 0
+    assert complexity["sample_source_pwl_points"] == 12
+    assert complexity["phase_clock_source_count"] == 5
+    assert complexity["phase_clock_source_pwl_count"] == 5
+    assert complexity["phase_clock_source_pwl_points"] > 0
+
+
 def test_phase_transient_activation_exprs_cover_relu_families() -> None:
     assert phase_transient.local_activation_expr("x", "relu", 1.0) == "0.5*((x)+abs(x))"
     assert "0.5*(((x)-0.25)+abs((x)-0.25))" in phase_transient.local_activation_expr("x", "clipped-relu", 0.25)

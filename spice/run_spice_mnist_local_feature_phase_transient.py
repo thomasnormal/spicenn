@@ -224,6 +224,58 @@ def sample_source_pwl(values: np.ndarray, sample_starts: list[float], t_stop: fl
     return "PWL(" + " ".join(f"{t:.12g} {val:.12g}" for t, val in cleaned) + ")"
 
 
+def pwl_point_count(source: str) -> int:
+    if not source.startswith("PWL(") or not source.endswith(")"):
+        return 0
+    tokens = source[4:-1].split()
+    if len(tokens) % 2:
+        raise ValueError("PWL source has an odd number of time/value tokens")
+    return len(tokens) // 2
+
+
+def phase_source_complexity(
+    x_batch: np.ndarray,
+    targets: np.ndarray,
+    phases: dict[str, list[tuple[float, float]]],
+    sample_starts: list[float],
+    t_stop: float,
+    edge: float,
+    direct_update: bool,
+) -> dict[str, int]:
+    pixel_sources = [sample_source_pwl(x_batch[:, i], sample_starts, t_stop, edge) for i in range(x_batch.shape[1])]
+    target_sources = [sample_source_pwl(targets[:, k], sample_starts, t_stop, edge) for k in range(targets.shape[1])]
+    phase_names = ["act", "score", "err", "bwd", "acc"] if direct_update else ["act", "score", "err", "bwd", "acc", "apply", "clear"]
+    phase_sources = [phase_pwl(phases[name], t_stop, edge) for name in phase_names]
+
+    def count_dc(sources: list[str]) -> int:
+        return sum(not source.startswith("PWL(") for source in sources)
+
+    def count_pwl(sources: list[str]) -> int:
+        return sum(source.startswith("PWL(") for source in sources)
+
+    def count_points(sources: list[str]) -> int:
+        return sum(pwl_point_count(source) for source in sources)
+
+    sample_sources = pixel_sources + target_sources
+    return {
+        "sample_source_count": len(sample_sources),
+        "sample_source_dc_count": count_dc(sample_sources),
+        "sample_source_pwl_count": count_pwl(sample_sources),
+        "sample_source_pwl_points": count_points(sample_sources),
+        "pixel_source_count": len(pixel_sources),
+        "pixel_source_dc_count": count_dc(pixel_sources),
+        "pixel_source_pwl_count": count_pwl(pixel_sources),
+        "pixel_source_pwl_points": count_points(pixel_sources),
+        "target_source_count": len(target_sources),
+        "target_source_dc_count": count_dc(target_sources),
+        "target_source_pwl_count": count_pwl(target_sources),
+        "target_source_pwl_points": count_points(target_sources),
+        "phase_clock_source_count": len(phase_sources),
+        "phase_clock_source_pwl_count": count_pwl(phase_sources),
+        "phase_clock_source_pwl_points": count_points(phase_sources),
+    }
+
+
 def tanh_expr(expr: str) -> str:
     return f"(2/(1+exp(-2*({expr})))-1)"
 
@@ -1550,6 +1602,22 @@ def main() -> None:
     )
     x_batch = x_train[:total_samples]
     y_batch = y_train[:total_samples]
+    source_phases, source_sample_starts, source_t_stop = make_phase_schedule(
+        args.batch_size,
+        args.updates,
+        args.phase,
+        args.gap,
+        args.update_mode == "direct",
+    )
+    source_complexity = phase_source_complexity(
+        x_batch,
+        target_matrix(y_batch, 10, args.softmax_output),
+        source_phases,
+        source_sample_starts,
+        source_t_stop,
+        args.edge,
+        args.update_mode == "direct",
+    )
     rng = np.random.default_rng(args.seed)
     w, hb, readout, output_bias = load_or_init_weights(
         args.init_weights,
@@ -2107,6 +2175,7 @@ def main() -> None:
         "estimated_transient_points": estimated_transient_points,
         "max_transient_points": args.max_transient_points,
         "phase_output_vector_count": n_vec,
+        **source_complexity,
         "phase_s": args.phase,
         "settle_ratio": args.settle_ratio,
         "output_mode": phase_output_mode,

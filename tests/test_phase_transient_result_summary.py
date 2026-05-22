@@ -81,6 +81,14 @@ def test_phase_summary_row_keeps_execution_contract_and_backend_fields(tmp_path:
                 "estimated_transient_points": 902,
                 "max_transient_points": 2000,
                 "phase_output_vector_count": 884,
+                "sample_source_count": 110,
+                "sample_source_dc_count": 10,
+                "sample_source_pwl_count": 100,
+                "sample_source_pwl_points": 25478,
+                "pixel_source_dc_count": 10,
+                "target_source_dc_count": 0,
+                "phase_clock_source_count": 5,
+                "phase_clock_source_pwl_points": 5644,
                 "phase_wall_time_s": 36.1,
                 "eval_wall_time_s": 9.5,
                 "spice_phase_eval_accuracy": 0.12,
@@ -132,6 +140,11 @@ def test_phase_summary_row_keeps_execution_contract_and_backend_fields(tmp_path:
     assert row["estimated_transient_points"] == 902
     assert row["max_transient_points"] == 2000
     assert row["phase_output_vector_count"] == 884
+    assert row["sample_source_count"] == 110
+    assert row["sample_source_dc_count"] == 10
+    assert row["sample_source_pwl_points"] == 25478
+    assert row["phase_clock_source_count"] == 5
+    assert row["phase_clock_source_pwl_points"] == 5644
 
 
 def test_discovery_filters_to_phase_transient_summaries_and_prefers_tables(tmp_path: Path) -> None:

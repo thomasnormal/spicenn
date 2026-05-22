@@ -106,6 +106,8 @@ def build_variant_command(args: argparse.Namespace, activation: str, relu_clip: 
         command.append("--linear-output")
     if args.final_measures:
         command.append("--final-measures")
+    if args.eval_probe_updates:
+        command.append("--eval-probe-updates")
     return command
 
 
@@ -176,6 +178,7 @@ def main() -> None:
     ap.add_argument("--softmax-output", action="store_true", default=True)
     ap.add_argument("--linear-output", action="store_true")
     ap.add_argument("--final-measures", action="store_true")
+    ap.add_argument("--eval-probe-updates", action="store_true")
     ap.add_argument("--tag", default="phase_variant_sweep")
     ap.add_argument("--dry-run", action="store_true")
     args = ap.parse_args()

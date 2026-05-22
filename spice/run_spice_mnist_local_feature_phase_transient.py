@@ -601,6 +601,11 @@ def main() -> None:
         default="",
         help="Comma-separated 1-based update numbers, ranges, 'final', or 'powers2' to measure inside the same transient.",
     )
+    ap.add_argument(
+        "--eval-probe-updates",
+        action="store_true",
+        help="After the uninterrupted transient finishes, run diagnostic evals on measured probe states.",
+    )
     ap.add_argument("--tag", default="phase_local_feature")
     args = ap.parse_args()
 
@@ -635,6 +640,10 @@ def main() -> None:
     if args.learning_improvement_threshold < 0:
         raise ValueError("--learning-improvement-threshold must be non-negative")
     probe_updates = parse_probe_update_list(args.probe_updates, args.updates)
+    if args.eval_probe_updates and not probe_updates:
+        raise ValueError("--eval-probe-updates requires --probe-updates")
+    if args.eval_probe_updates and args.eval_samples <= 0:
+        raise ValueError("--eval-probe-updates requires --eval-samples > 0")
 
     stride = args.block_size if args.stride is None else args.stride
     blocks = block_indices(args.image_size, args.block_size, stride)
@@ -760,9 +769,11 @@ def main() -> None:
     metrics = state_metrics((op_w, op_hb, op_readout, op_ob), (phase_w, phase_hb, phase_readout, phase_ob))
     metrics.update(update_direction_metrics((w, hb, readout, output_bias), (op_w, op_hb, op_readout, op_ob), (phase_w, phase_hb, phase_readout, phase_ob)))
     probe_rows = []
+    probe_phase_states: dict[int, tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]] = {}
     for update in probe_updates:
         probe_w, probe_hb, probe_readout, probe_ob, _probe_y = unpack_state(probe_vals[update], w, hb, readout, output_bias)
         op_state = op_probe_states[update]
+        probe_phase_states[update] = (probe_w, probe_hb, probe_readout, probe_ob)
         row = {"update": update}
         row.update(state_metrics(op_state, (probe_w, probe_hb, probe_readout, probe_ob)))
         row.update(update_direction_metrics((w, hb, readout, output_bias), op_state, (probe_w, probe_hb, probe_readout, probe_ob)))
@@ -833,6 +844,59 @@ def main() -> None:
             relu_leak=args.relu_leak,
             softplus_beta=args.softplus_beta,
         )
+        if args.eval_probe_updates:
+            for row in probe_rows:
+                update = int(row["update"])
+                probe_w, probe_hb, probe_readout, probe_ob = probe_phase_states[update]
+                op_probe_w, op_probe_hb, op_probe_readout, op_probe_ob = op_probe_states[update]
+                phase_probe_eval = run_eval(
+                    spice_bin,
+                    generated / f"{stem}_probe_{update}_phase_eval.cir",
+                    results / f"{stem}_probe_{update}_phase_eval.dat",
+                    x_test[: args.eval_samples],
+                    y_test[: args.eval_samples],
+                    probe_w,
+                    probe_hb,
+                    probe_readout,
+                    probe_ob,
+                    blocks,
+                    max(1, min(args.eval_samples, 50)),
+                    args.timeout,
+                    linear_output=args.linear_output,
+                    softmax_output=args.softmax_output,
+                    local_activation=args.local_activation,
+                    relu_clip=args.relu_clip,
+                    relu_leak=args.relu_leak,
+                    softplus_beta=args.softplus_beta,
+                )
+                op_probe_eval = run_eval(
+                    spice_bin,
+                    generated / f"{stem}_probe_{update}_op_reference_eval.cir",
+                    results / f"{stem}_probe_{update}_op_reference_eval.dat",
+                    x_test[: args.eval_samples],
+                    y_test[: args.eval_samples],
+                    op_probe_w,
+                    op_probe_hb,
+                    op_probe_readout,
+                    op_probe_ob,
+                    blocks,
+                    max(1, min(args.eval_samples, 50)),
+                    args.timeout,
+                    linear_output=args.linear_output,
+                    softmax_output=args.softmax_output,
+                    local_activation=args.local_activation,
+                    relu_clip=args.relu_clip,
+                    relu_leak=args.relu_leak,
+                    softplus_beta=args.softplus_beta,
+                )
+                row["phase_eval_accuracy"] = phase_probe_eval
+                row["op_reference_eval_accuracy"] = op_probe_eval
+                row["eval_accuracy_abs_diff"] = abs(phase_probe_eval - op_probe_eval)
+                row["phase_eval_improvement"] = (
+                    phase_probe_eval - initial_eval_accuracy
+                    if initial_eval_accuracy is not None
+                    else None
+                )
         eval_wall = time.perf_counter() - t2
     eval_accuracy_abs_diff = (
         abs(phase_eval_accuracy - op_reference_eval_accuracy)
@@ -901,6 +965,7 @@ def main() -> None:
         "batch_size": args.batch_size,
         "updates": args.updates,
         "probe_updates": list(probe_updates),
+        "eval_probe_updates": bool(args.eval_probe_updates),
         "total_samples": total_samples,
         "lr": args.lr,
         "linear_output": bool(args.linear_output),

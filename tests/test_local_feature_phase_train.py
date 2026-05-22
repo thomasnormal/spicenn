@@ -205,6 +205,7 @@ def test_phase_variant_sweep_dry_command_preserves_online_contract() -> None:
         softmax_output=True,
         linear_output=False,
         final_measures=False,
+        eval_probe_updates=True,
     )
 
     command = phase_variant_sweep.build_variant_command(args, "diff-clipped-relu", 0.5, "stored-gate", "clipped-readout")
@@ -219,6 +220,7 @@ def test_phase_variant_sweep_dry_command_preserves_online_contract() -> None:
     assert command[command.index("--activation-derivative") + 1] == "stored-gate"
     assert "--readout-feedback-mode" in command
     assert command[command.index("--readout-feedback-mode") + 1] == "clipped-readout"
+    assert "--eval-probe-updates" in command
 
 
 def test_phase_transient_softmax_deck_is_one_continuous_online_run(tmp_path: Path) -> None:

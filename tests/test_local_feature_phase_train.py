@@ -1,3 +1,4 @@
+import subprocess
 import sys
 from pathlib import Path
 
@@ -11,6 +12,17 @@ if str(SPICE_DIR) not in sys.path:
     sys.path.insert(0, str(SPICE_DIR))
 
 import run_spice_mnist_local_feature_phase_train as phase_train  # noqa: E402
+
+
+def test_cli_exposes_simulator_selector() -> None:
+    proc = subprocess.run(
+        [sys.executable, str(SPICE_DIR / "run_spice_mnist_local_feature_phase_train.py"), "--help"],
+        text=True,
+        capture_output=True,
+        check=True,
+    )
+
+    assert "--simulator" in proc.stdout
 
 
 def test_eval_accuracy_improved_requires_finite_strict_improvement() -> None:

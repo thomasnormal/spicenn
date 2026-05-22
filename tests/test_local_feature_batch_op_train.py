@@ -1,4 +1,5 @@
 import json
+import subprocess
 import sys
 from pathlib import Path
 
@@ -12,6 +13,17 @@ if str(SPICE_DIR) not in sys.path:
     sys.path.insert(0, str(SPICE_DIR))
 
 import run_spice_mnist_local_feature_batch_op_train as batch_op  # noqa: E402
+
+
+def test_cli_exposes_simulator_selector() -> None:
+    proc = subprocess.run(
+        [sys.executable, str(SPICE_DIR / "run_spice_mnist_local_feature_batch_op_train.py"), "--help"],
+        text=True,
+        capture_output=True,
+        check=True,
+    )
+
+    assert "--simulator" in proc.stdout
 
 
 def test_epoch_order_slice_applies_offset_sample_limit_then_batch_cap() -> None:

@@ -364,6 +364,7 @@ def main():
         help="Train and checkpoint without running held-out SPICE evaluation. Use for fast resumable chunks.",
     )
     ap.add_argument("--seed", type=int, default=0)
+    ap.add_argument("--simulator", default=None)
     ap.add_argument("--timeout", type=float, default=90)
     ap.add_argument("--tag", default="local_feature")
     args = ap.parse_args()
@@ -375,7 +376,7 @@ def main():
     stride = args.block_size if args.stride is None else args.stride
     blocks = block_indices(args.image_size, args.block_size, stride)
     x_train, y_train, x_test, y_test = load_mnist_sequence(args.train_samples, args.test_samples, args.image_size, args.seed)
-    spice_bin, version = detect_spice(None)
+    spice_bin, version = detect_spice(args.simulator)
     generated = ROOT / "spice/generated"
     results = ROOT / "spice/results"
     for directory in (generated, results):
@@ -564,6 +565,7 @@ def main():
         )
     summary = {
         "simulator": version,
+        "simulator_selector": args.simulator,
         "dataset": "MNIST train/test split, downsampled",
         "architecture": "local_feature_readout",
         "local_activation": args.local_activation,

@@ -233,6 +233,7 @@ def main() -> None:
     ap.add_argument("--fast-eval-batch-size", type=int, default=1024)
     ap.add_argument("--skip-initial-eval", action="store_true")
     ap.add_argument("--seed", type=int, default=0)
+    ap.add_argument("--simulator", default=None)
     ap.add_argument("--timeout", type=float, default=300.0)
     ap.add_argument("--phase", type=float, default=2e-9)
     ap.add_argument("--gap", type=float, default=0.2e-9)
@@ -297,7 +298,7 @@ def main() -> None:
             else tuple(arr.copy() for arr in state)
         )
 
-    spice_bin, version = detect_spice(None)
+    spice_bin, version = detect_spice(args.simulator)
     generated = ROOT / "spice/generated"
     results = ROOT / "spice/results"
     tables = ROOT / "results/tables"
@@ -476,6 +477,7 @@ def main() -> None:
     final_acc = None if eval_rows.empty else float(eval_rows.iloc[-1]["heldout_accuracy"])
     summary = {
         "simulator": version,
+        "simulator_selector": args.simulator,
         "architecture": "phase_resolved_transient_local_feature_readout_training_harness",
         "status": "phase_training_smoke" if phase_train_samples_this_run < 100 else "phase_training_run",
         "dataset": "MNIST train/test split, downsampled",

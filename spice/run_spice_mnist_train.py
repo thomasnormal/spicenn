@@ -41,14 +41,29 @@ def update_gate(n_samples: int, sample_period: float, settle_frac: float = 0.45,
     return "PWL(" + " ".join(f"{t:.12g} {v:.12g}" for t, v in pts) + ")"
 
 
+def mnist_index_splits(n_train: int, n_test: int, train_count: int, test_count: int, seed: int) -> tuple[np.ndarray, np.ndarray]:
+    """Choose train/test samples from independent RNG streams.
+
+    Keeping the held-out stream independent makes eval slices comparable when
+    only the online training horizon changes.
+    """
+    if n_train < 0 or n_test < 0:
+        raise ValueError("sample counts must be non-negative")
+    if n_train > train_count or n_test > test_count:
+        raise ValueError("requested MNIST sample count exceeds dataset size")
+    seed_sequence = np.random.SeedSequence(seed)
+    train_seed, test_seed = seed_sequence.spawn(2)
+    train_idx = np.random.default_rng(train_seed).choice(train_count, size=n_train, replace=False)
+    test_idx = np.random.default_rng(test_seed).choice(test_count, size=n_test, replace=False)
+    return train_idx, test_idx
+
+
 def load_mnist_sequence(n_train: int, n_test: int, image_size: int, seed: int) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     from torchvision import datasets, transforms
 
     ds_train = datasets.MNIST(root=str(ROOT / "data"), train=True, download=True, transform=transforms.ToTensor())
     ds_test = datasets.MNIST(root=str(ROOT / "data"), train=False, download=True, transform=transforms.ToTensor())
-    rng = np.random.default_rng(seed)
-    train_idx = rng.choice(len(ds_train), size=n_train, replace=False)
-    test_idx = rng.choice(len(ds_test), size=n_test, replace=False)
+    train_idx, test_idx = mnist_index_splits(n_train, n_test, len(ds_train), len(ds_test), seed)
 
     def extract(ds, idx):
         xs, ys = [], []

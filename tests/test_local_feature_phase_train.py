@@ -15,6 +15,7 @@ if str(SPICE_DIR) not in sys.path:
 import run_spice_mnist_local_feature_phase_train as phase_train  # noqa: E402
 import run_spice_mnist_local_feature_phase_transient as phase_transient  # noqa: E402
 import run_spice_mnist_local_feature_phase_variant_sweep as phase_variant_sweep  # noqa: E402
+import run_spice_mnist_train as mnist_train  # noqa: E402
 
 
 def test_cli_exposes_simulator_selector() -> None:
@@ -167,6 +168,19 @@ def test_phase_transient_probe_measurement_parser_uses_update_order() -> None:
 
     assert parsed[2] == pytest.approx([1.0, 2.0])
     assert parsed[5] == pytest.approx([3.0, 4.0])
+
+
+def test_mnist_index_splits_keep_test_slice_independent_of_train_count() -> None:
+    _train_small, test_small = mnist_train.mnist_index_splits(5, 8, 100, 100, seed=7)
+    _train_large, test_large = mnist_train.mnist_index_splits(50, 8, 100, 100, seed=7)
+    train_again, test_again = mnist_train.mnist_index_splits(5, 8, 100, 100, seed=7)
+
+    assert test_small.tolist() == test_large.tolist()
+    assert test_small.tolist() == test_again.tolist()
+    assert train_again.shape == (5,)
+
+    with pytest.raises(ValueError, match="exceeds"):
+        mnist_train.mnist_index_splits(101, 1, 100, 100, seed=7)
 
 
 def test_phase_variant_sweep_pairs_only_expand_clipped_activations() -> None:

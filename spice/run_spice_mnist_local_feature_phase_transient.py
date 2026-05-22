@@ -395,6 +395,7 @@ def make_phase_transient_netlist(
     update_mode: str = "phased",
     output_bias_update_scale: float = 1.0,
     readout_update_scale: float = 1.0,
+    local_update_scale: float = 1.0,
 ) -> tuple[str, int, float]:
     total_samples = x_batch.shape[0]
     if total_samples != update_batch_size * updates:
@@ -407,6 +408,8 @@ def make_phase_transient_netlist(
         raise ValueError("output_bias_update_scale must be non-negative")
     if readout_update_scale < 0.0:
         raise ValueError("readout_update_scale must be non-negative")
+    if local_update_scale < 0.0:
+        raise ValueError("local_update_scale must be non-negative")
     direct_update = update_mode == "direct"
     if direct_update and update_batch_size != 1:
         raise ValueError("direct update mode requires update_batch_size=1")
@@ -430,6 +433,7 @@ def make_phase_transient_netlist(
         f".param TAU={tau:.12g}",
         f".param TPHASE={phase:.12g}",
         f".param TAREA={phase_area:.12g}",
+        f".param LOCAL_UPDATE_SCALE={local_update_scale:.12g}",
         f".param OB_UPDATE_SCALE={output_bias_update_scale:.12g}",
         f".param READOUT_UPDATE_SCALE={readout_update_scale:.12g}",
         "",
@@ -543,16 +547,16 @@ def make_phase_transient_netlist(
             for p, idx in enumerate(idxs):
                 grad = f"V(dh{b}_{c})*V(pix{idx})"
                 if direct_update:
-                    lines.append(f"Bupd_w{b}_{c}_{p} w{b}_{c}_{p} 0 I = -V(pacc)*{{CW}}*{{LR}}/({{BS}}*{{TAREA}})*({grad})")
+                    lines.append(f"Bupd_w{b}_{c}_{p} w{b}_{c}_{p} 0 I = -V(pacc)*{{CW}}*{{LR}}*{{LOCAL_UPDATE_SCALE}}/({{BS}}*{{TAREA}})*({grad})")
                 else:
                     lines.append(f"Bacc_w{b}_{c}_{p} gw{b}_{c}_{p} 0 I = -V(pacc)*{{CGRAD}}/{{TAREA}}*({grad})")
-                    lines.append(f"Bupd_w{b}_{c}_{p} w{b}_{c}_{p} 0 I = -V(papply)*{{CW}}*{{LR}}/({{BS}}*{{TAREA}})*V(gw{b}_{c}_{p})")
+                    lines.append(f"Bupd_w{b}_{c}_{p} w{b}_{c}_{p} 0 I = -V(papply)*{{CW}}*{{LR}}*{{LOCAL_UPDATE_SCALE}}/({{BS}}*{{TAREA}})*V(gw{b}_{c}_{p})")
                     lines.append(f"Bclear_gw{b}_{c}_{p} gw{b}_{c}_{p} 0 I = V(pclear)*{{CGRAD}}/{{TAU}}*V(gw{b}_{c}_{p})")
             if direct_update:
-                lines.append(f"Bupd_hb{b}_{c} hb{b}_{c} 0 I = -V(pacc)*{{CW}}*{{LR}}/({{BS}}*{{TAREA}})*V(dh{b}_{c})")
+                lines.append(f"Bupd_hb{b}_{c} hb{b}_{c} 0 I = -V(pacc)*{{CW}}*{{LR}}*{{LOCAL_UPDATE_SCALE}}/({{BS}}*{{TAREA}})*V(dh{b}_{c})")
             else:
                 lines.append(f"Bacc_hb{b}_{c} ghb{b}_{c} 0 I = -V(pacc)*{{CGRAD}}/{{TAREA}}*V(dh{b}_{c})")
-                lines.append(f"Bupd_hb{b}_{c} hb{b}_{c} 0 I = -V(papply)*{{CW}}*{{LR}}/({{BS}}*{{TAREA}})*V(ghb{b}_{c})")
+                lines.append(f"Bupd_hb{b}_{c} hb{b}_{c} 0 I = -V(papply)*{{CW}}*{{LR}}*{{LOCAL_UPDATE_SCALE}}/({{BS}}*{{TAREA}})*V(ghb{b}_{c})")
                 lines.append(f"Bclear_ghb{b}_{c} ghb{b}_{c} 0 I = V(pclear)*{{CGRAD}}/{{TAU}}*V(ghb{b}_{c})")
     for k in range(n_classes):
         for b in range(n_blocks):
@@ -1174,6 +1178,7 @@ def main() -> None:
     ap.add_argument("--readout-feedback-clip", type=float, default=0.05)
     ap.add_argument("--output-bias-update-scale", type=float, default=1.0)
     ap.add_argument("--readout-update-scale", type=float, default=1.0)
+    ap.add_argument("--local-update-scale", type=float, default=1.0)
     synapse_modes = ["linear", "full", "ideal", "tanh-clipped", "smooth-clipped", "clipped", "hard-clipped", "bounded", "sign", "binary"]
     ap.add_argument("--hidden-synapse-mode", choices=synapse_modes, default="linear")
     ap.add_argument("--readout-synapse-mode", choices=synapse_modes, default="linear")
@@ -1245,6 +1250,8 @@ def main() -> None:
         raise ValueError("--output-bias-update-scale must be non-negative")
     if args.readout_update_scale < 0:
         raise ValueError("--readout-update-scale must be non-negative")
+    if args.local_update_scale < 0:
+        raise ValueError("--local-update-scale must be non-negative")
     if args.synapse_clip <= 0:
         raise ValueError("--synapse-clip must be positive")
     if args.phase <= 0 or args.settle_ratio <= 0:
@@ -1352,6 +1359,7 @@ def main() -> None:
         args.update_mode,
         args.output_bias_update_scale,
         args.readout_update_scale,
+        args.local_update_scale,
     )
     phase_netlist.write_text(prepare_phase_netlist(netlist, spice_bin))
 
@@ -1753,6 +1761,7 @@ def main() -> None:
         "readout_feedback_clip": args.readout_feedback_clip,
         "output_bias_update_scale": args.output_bias_update_scale,
         "readout_update_scale": args.readout_update_scale,
+        "local_update_scale": args.local_update_scale,
         "hidden_synapse_mode": args.hidden_synapse_mode,
         "readout_synapse_mode": args.readout_synapse_mode,
         "synapse_clip": args.synapse_clip,

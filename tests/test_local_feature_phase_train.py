@@ -54,6 +54,7 @@ def test_phase_transient_cli_exposes_agreement_gates() -> None:
     assert "--strict-fully-on-device" in proc.stdout
     assert "--output-bias-update-scale" in proc.stdout
     assert "--readout-update-scale" in proc.stdout
+    assert "--local-update-scale" in proc.stdout
     assert "--eval-backend" in proc.stdout
     assert "--simulator-extra-args" in proc.stdout
 
@@ -654,7 +655,7 @@ def test_phase_transient_softmax_deck_is_one_continuous_online_run(tmp_path: Pat
     assert "Bstore_d0 d0 0 I = V(perr)*{CSTATE}/{TAU}*(V(d0)-(V(target0)-V(y0)))" in netlist
     assert ".param TAREA=1.005e-09" in netlist
     assert "{CGRAD}/{TAREA}" in netlist
-    assert "{LR}/({BS}*{TAREA})" in netlist
+    assert "/({BS}*{TAREA})" in netlist
     assert "{CGRAD}/{TPHASE}" not in netlist
     assert netlist.count("Vpapply papply 0 PWL(") == 1
     assert netlist.count("Vpclear pclear 0 PWL(") == 1
@@ -785,7 +786,7 @@ def test_phase_transient_direct_update_mode_omits_gradient_accumulator_family(tm
     assert "Bclear_gw0_0_0" not in netlist
     assert "gradient accumulators are capacitor voltages" not in netlist
     assert "weights are updated directly during each per-sample update phase" in netlist
-    assert "Bupd_w0_0_0 w0_0_0 0 I = -V(pacc)*{CW}*{LR}/({BS}*{TAREA})*(V(dh0_0)*V(pix0))" in netlist
+    assert "Bupd_w0_0_0 w0_0_0 0 I = -V(pacc)*{CW}*{LR}*{LOCAL_UPDATE_SCALE}/({BS}*{TAREA})*(V(dh0_0)*V(pix0))" in netlist
 
     with pytest.raises(ValueError, match="direct update mode"):
         phase_transient.make_phase_transient_netlist(
@@ -1241,6 +1242,107 @@ def test_phase_transient_readout_update_scale_controls_readout_update(tmp_path: 
             True,
             "measure",
             readout_update_scale=-1.0,
+        )
+
+
+def test_phase_transient_local_update_scale_controls_feature_updates(tmp_path: Path) -> None:
+    x = np.zeros((1, 4))
+    y = np.array([0])
+    w = np.zeros((1, 1, 4))
+    hb = np.zeros((1, 1))
+    readout = np.zeros((2, 1, 1))
+    output_bias = np.zeros(2)
+
+    direct_netlist, _n_vec, _t_stop = phase_transient.make_phase_transient_netlist(
+        x,
+        y,
+        w,
+        hb,
+        readout,
+        output_bias,
+        [[0, 1, 2, 3]],
+        0.8,
+        tmp_path / "direct.dat",
+        False,
+        1,
+        1,
+        1e-9,
+        0.1e-9,
+        5e-12,
+        40.0,
+        20e-12,
+        1e-12,
+        1e-12,
+        1e-12,
+        1e18,
+        True,
+        "measure",
+        update_mode="direct",
+        local_update_scale=0.25,
+    )
+
+    assert ".param LOCAL_UPDATE_SCALE=0.25" in direct_netlist
+    assert "Bupd_w0_0_0 w0_0_0 0 I = -V(pacc)*{CW}*{LR}*{LOCAL_UPDATE_SCALE}/({BS}*{TAREA})*(V(dh0_0)*V(pix0))" in direct_netlist
+    assert "Bupd_hb0_0 hb0_0 0 I = -V(pacc)*{CW}*{LR}*{LOCAL_UPDATE_SCALE}/({BS}*{TAREA})*V(dh0_0)" in direct_netlist
+    assert "Bupd_v0_0_0 v0_0_0 0 I = -V(pacc)*{CW}*{LR}*{READOUT_UPDATE_SCALE}/({BS}*{TAREA})*(V(d0)*V(h0_0))" in direct_netlist
+
+    phased_netlist, _n_vec, _t_stop = phase_transient.make_phase_transient_netlist(
+        x,
+        y,
+        w,
+        hb,
+        readout,
+        output_bias,
+        [[0, 1, 2, 3]],
+        0.8,
+        tmp_path / "phased.dat",
+        False,
+        1,
+        1,
+        1e-9,
+        0.1e-9,
+        5e-12,
+        40.0,
+        20e-12,
+        1e-12,
+        1e-12,
+        1e-12,
+        1e18,
+        True,
+        "measure",
+        local_update_scale=0.5,
+    )
+
+    assert ".param LOCAL_UPDATE_SCALE=0.5" in phased_netlist
+    assert "Bupd_w0_0_0 w0_0_0 0 I = -V(papply)*{CW}*{LR}*{LOCAL_UPDATE_SCALE}/({BS}*{TAREA})*V(gw0_0_0)" in phased_netlist
+    assert "Bupd_hb0_0 hb0_0 0 I = -V(papply)*{CW}*{LR}*{LOCAL_UPDATE_SCALE}/({BS}*{TAREA})*V(ghb0_0)" in phased_netlist
+
+    with pytest.raises(ValueError, match="local_update_scale"):
+        phase_transient.make_phase_transient_netlist(
+            x,
+            y,
+            w,
+            hb,
+            readout,
+            output_bias,
+            [[0, 1, 2, 3]],
+            0.8,
+            tmp_path / "bad.dat",
+            False,
+            1,
+            1,
+            1e-9,
+            0.1e-9,
+            5e-12,
+            40.0,
+            20e-12,
+            1e-12,
+            1e-12,
+            1e-12,
+            1e18,
+            True,
+            "measure",
+            local_update_scale=-1.0,
         )
 
 

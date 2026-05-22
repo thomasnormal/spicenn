@@ -318,6 +318,25 @@ def test_phase_transient_empty_probe_summary_is_json_nulls() -> None:
     assert summary["best_probe_phase_eval_accuracy"] is None
 
 
+def test_phase_transient_cleanup_simulator_sidecars_removes_only_known_sidecars(tmp_path: Path) -> None:
+    netlist = tmp_path / "deck.cir"
+    netlist.write_text("* keep\n")
+    prn = tmp_path / "deck.cir.prn"
+    mt0 = tmp_path / "deck.cir.mt0"
+    unrelated = tmp_path / "deck.cir.log"
+    prn.write_text("print data\n")
+    mt0.write_text("measure data\n")
+    unrelated.write_text("log data\n")
+
+    cleaned = phase_transient.cleanup_simulator_sidecars([netlist, netlist])
+
+    assert cleaned == 2
+    assert netlist.exists()
+    assert unrelated.exists()
+    assert not prn.exists()
+    assert not mt0.exists()
+
+
 def test_mnist_index_splits_keep_test_slice_independent_of_train_count() -> None:
     _train_small, test_small = mnist_train.mnist_index_splits(5, 8, 100, 100, seed=7)
     _train_large, test_large = mnist_train.mnist_index_splits(50, 8, 100, 100, seed=7)

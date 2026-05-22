@@ -703,6 +703,24 @@ def summarize_probe_rows(probe_rows: list[dict[str, object]]) -> dict[str, int |
     }
 
 
+def simulator_sidecar_paths(netlist_path: Path) -> tuple[Path, ...]:
+    return tuple(Path(str(netlist_path) + suffix) for suffix in (".prn", ".mt0", ".ms0", ".ma0"))
+
+
+def cleanup_simulator_sidecars(netlist_paths: list[Path]) -> int:
+    cleaned = 0
+    seen: set[Path] = set()
+    for netlist_path in netlist_paths:
+        for sidecar in simulator_sidecar_paths(netlist_path):
+            if sidecar in seen:
+                continue
+            seen.add(sidecar)
+            if sidecar.exists():
+                sidecar.unlink()
+                cleaned += 1
+    return cleaned
+
+
 def select_phase_output_mode(
     requested_mode: str,
     spice_bin: str,
@@ -895,6 +913,9 @@ def main() -> None:
     phase_data = results / f"{stem}.dat"
     op_netlist = generated / f"{stem}_op_reference.cir"
     op_data = results / f"{stem}_op_reference.dat"
+    owned_netlists = [phase_netlist]
+    if args.reference_mode == "spice":
+        owned_netlists.append(op_netlist)
     phase_output_mode = select_phase_output_mode(args.phase_output_mode, spice_bin, args.final_measures, probe_updates)
 
     netlist, n_vec, t_stop = make_phase_transient_netlist(
@@ -1029,9 +1050,12 @@ def main() -> None:
     eval_wall = 0.0
     if args.eval_samples > 0:
         t2 = time.perf_counter()
+        initial_eval_netlist = generated / f"{stem}_initial_eval.cir"
+        phase_eval_netlist = generated / f"{stem}_phase_eval.cir"
+        owned_netlists.extend([initial_eval_netlist, phase_eval_netlist])
         initial_eval_accuracy = run_eval(
             spice_bin,
-            generated / f"{stem}_initial_eval.cir",
+            initial_eval_netlist,
             results / f"{stem}_initial_eval.dat",
             x_test[: args.eval_samples],
             y_test[: args.eval_samples],
@@ -1054,7 +1078,7 @@ def main() -> None:
         )
         phase_eval_accuracy = run_eval(
             spice_bin,
-            generated / f"{stem}_phase_eval.cir",
+            phase_eval_netlist,
             results / f"{stem}_phase_eval.dat",
             x_test[: args.eval_samples],
             y_test[: args.eval_samples],
@@ -1077,9 +1101,11 @@ def main() -> None:
         )
         if args.reference_mode == "spice":
             assert op_w is not None and op_hb is not None and op_readout is not None and op_ob is not None
+            op_reference_eval_netlist = generated / f"{stem}_op_reference_eval.cir"
+            owned_netlists.append(op_reference_eval_netlist)
             op_reference_eval_accuracy = run_eval(
                 spice_bin,
-                generated / f"{stem}_op_reference_eval.cir",
+                op_reference_eval_netlist,
                 results / f"{stem}_op_reference_eval.dat",
                 x_test[: args.eval_samples],
                 y_test[: args.eval_samples],
@@ -1104,9 +1130,11 @@ def main() -> None:
             for row in probe_rows:
                 update = int(row["update"])
                 probe_w, probe_hb, probe_readout, probe_ob = probe_phase_states[update]
+                phase_probe_eval_netlist = generated / f"{stem}_probe_{update}_phase_eval.cir"
+                owned_netlists.append(phase_probe_eval_netlist)
                 phase_probe_eval = run_eval(
                     spice_bin,
-                    generated / f"{stem}_probe_{update}_phase_eval.cir",
+                    phase_probe_eval_netlist,
                     results / f"{stem}_probe_{update}_phase_eval.dat",
                     x_test[: args.eval_samples],
                     y_test[: args.eval_samples],
@@ -1139,9 +1167,11 @@ def main() -> None:
                     row["eval_accuracy_abs_diff"] = None
                 else:
                     op_probe_w, op_probe_hb, op_probe_readout, op_probe_ob = op_probe_state
+                    op_probe_eval_netlist = generated / f"{stem}_probe_{update}_op_reference_eval.cir"
+                    owned_netlists.append(op_probe_eval_netlist)
                     op_probe_eval = run_eval(
                         spice_bin,
-                        generated / f"{stem}_probe_{update}_op_reference_eval.cir",
+                        op_probe_eval_netlist,
                         results / f"{stem}_probe_{update}_op_reference_eval.dat",
                         x_test[: args.eval_samples],
                         y_test[: args.eval_samples],
@@ -1222,6 +1252,7 @@ def main() -> None:
     pd.DataFrame([metrics]).to_csv(metrics_path, index=False)
     if probe_rows:
         pd.DataFrame(probe_rows).to_csv(probe_metrics_path, index=False)
+    simulator_sidecars_cleaned = cleanup_simulator_sidecars(owned_netlists)
     state_descriptions = phase_state_descriptions(args.update_mode)
     probe_summary = summarize_probe_rows(probe_rows)
     summary = {
@@ -1275,6 +1306,7 @@ def main() -> None:
         "equivalence_metrics": str(metrics_path),
         "probe_metrics": str(probe_metrics_path) if probe_rows else None,
         **probe_summary,
+        "simulator_sidecars_cleaned": simulator_sidecars_cleaned,
         "phase_wall_time_s": phase_wall,
         "op_reference_wall_time_s": op_wall,
         "eval_wall_time_s": eval_wall,

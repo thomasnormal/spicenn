@@ -138,6 +138,25 @@ def index_prefix_metadata(indices: np.ndarray, prefix_len: int = 16) -> dict[str
     }
 
 
+def label_sequence_metadata(labels: np.ndarray, n_classes: int, prefix_len: int = 32) -> dict[str, object]:
+    y = np.asarray(labels, dtype=np.int64)
+    if n_classes <= 0:
+        raise ValueError("n_classes must be positive")
+    hist = np.bincount(y, minlength=n_classes)
+    total = max(int(y.size), 1)
+    dominant_count = int(np.max(hist)) if hist.size else 0
+    dominant_label = int(np.argmax(hist)) if hist.size else None
+    return {
+        "count": int(y.size),
+        "sha256": hashlib.sha256(y.tobytes()).hexdigest(),
+        "prefix": [int(value) for value in y[:prefix_len]],
+        "histogram": [int(value) for value in hist],
+        "dominant_label": dominant_label,
+        "dominant_label_fraction": float(dominant_count / total),
+        "unique_labels": int(np.count_nonzero(hist)),
+    }
+
+
 def sample_source_pwl(values: np.ndarray, sample_starts: list[float], t_stop: float, edge: float) -> str:
     points: list[tuple[float, float]] = [(0.0, float(values[0]))]
     for s, val in enumerate(values):
@@ -1739,6 +1758,7 @@ def main() -> None:
         "mnist_index_order": "stable_permutation_prefix",
         "train_index_metadata": index_prefix_metadata(train_indices),
         "eval_index_metadata": index_prefix_metadata(eval_indices),
+        "train_label_metadata": label_sequence_metadata(y_batch, 10),
         "train_samples": args.train_samples,
         "eval_samples": args.eval_samples,
         "batch_size": args.batch_size,

@@ -519,6 +519,22 @@ def test_phase_transient_index_prefix_metadata_is_stable_and_compact() -> None:
     assert metadata["sha256"] != phase_transient.index_prefix_metadata(indices[:4], prefix_len=3)["sha256"]
 
 
+def test_phase_transient_label_sequence_metadata_reports_class_order_and_balance() -> None:
+    labels = np.array([3, 1, 3, 2, 3], dtype=np.int64)
+
+    metadata = phase_transient.label_sequence_metadata(labels, n_classes=5, prefix_len=4)
+
+    assert metadata["count"] == 5
+    assert metadata["prefix"] == [3, 1, 3, 2]
+    assert metadata["histogram"] == [0, 1, 1, 3, 0]
+    assert metadata["dominant_label"] == 3
+    assert metadata["dominant_label_fraction"] == pytest.approx(0.6)
+    assert metadata["unique_labels"] == 3
+    assert len(metadata["sha256"]) == 64
+    assert metadata == phase_transient.label_sequence_metadata(labels, n_classes=5, prefix_len=4)
+    assert metadata["sha256"] != phase_transient.label_sequence_metadata(labels[::-1], n_classes=5, prefix_len=4)["sha256"]
+
+
 def test_phase_variant_sweep_pairs_only_expand_clipped_activations() -> None:
     pairs = phase_variant_sweep.activation_clip_pairs(
         ["tanh", "relu", "diff-clipped-relu"],

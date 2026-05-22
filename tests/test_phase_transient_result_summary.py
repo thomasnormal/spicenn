@@ -34,6 +34,14 @@ def test_phase_summary_row_keeps_execution_contract_and_backend_fields(tmp_path:
                 "mnist_index_order": "stable_permutation_prefix",
                 "train_index_metadata": {"sha256": "trainhash", "count": 16, "prefix": [1, 2]},
                 "eval_index_metadata": {"sha256": "evalhash", "count": 100, "prefix": [3, 4]},
+                "train_label_metadata": {
+                    "sha256": "labelhash",
+                    "prefix": [7, 2, 7, 1],
+                    "histogram": [0, 1, 1, 0, 0, 0, 0, 2, 0, 0],
+                    "dominant_label": 7,
+                    "dominant_label_fraction": 0.5,
+                    "unique_labels": 3,
+                },
                 "batch_size": 1,
                 "updates": 16,
                 "eval_samples": 100,
@@ -86,6 +94,12 @@ def test_phase_summary_row_keeps_execution_contract_and_backend_fields(tmp_path:
     assert row["mnist_index_order"] == "stable_permutation_prefix"
     assert row["train_index_sha256"] == "trainhash"
     assert row["eval_index_sha256"] == "evalhash"
+    assert row["train_label_sha256"] == "labelhash"
+    assert row["train_label_prefix"] == [7, 2, 7, 1]
+    assert row["train_label_histogram"] == [0, 1, 1, 0, 0, 0, 0, 2, 0, 0]
+    assert row["train_dominant_label"] == 7
+    assert row["train_dominant_label_fraction"] == 0.5
+    assert row["train_unique_labels"] == 3
     assert row["lr"] == 0.1
     assert row["local_update_scale"] == 0.75
     assert row["output_bias_update_scale"] == 0.25

@@ -126,6 +126,10 @@ def test_phase_transient_source_point_budget_fails_before_large_decks() -> None:
         phase_transient.validate_source_point_budget({"sample_source_pwl_points": 61, "phase_clock_source_pwl_points": 40}, 100)
 
 
+def test_phase_transient_total_source_pwl_points_sums_samples_and_clocks() -> None:
+    assert phase_transient.total_source_pwl_points({"sample_source_pwl_points": 61, "phase_clock_source_pwl_points": 40}) == 101
+
+
 def test_phase_transient_final_measure_time_requires_post_update_slack() -> None:
     assert phase_transient.final_state_measure_time(10.0e-9, 2.0e-9, 7.0e-9) == pytest.approx(8.0e-9)
 
@@ -239,6 +243,7 @@ def test_phase_transient_source_complexity_counts_sample_and_clock_sources() -> 
     assert complexity["phase_clock_source_count"] == 5
     assert complexity["phase_clock_source_pwl_count"] == 5
     assert complexity["phase_clock_source_pwl_points"] > 0
+    assert complexity["total_source_pwl_points"] == complexity["sample_source_pwl_points"] + complexity["phase_clock_source_pwl_points"]
 
 
 def test_phase_transient_analytic_phase_clock_expr_is_bounded_direct_clock() -> None:
@@ -283,6 +288,7 @@ def test_phase_transient_analytic_phase_clock_complexity_removes_clock_pwl_point
     assert complexity["phase_clock_source_count"] == 5
     assert complexity["phase_clock_source_pwl_count"] == 0
     assert complexity["phase_clock_source_pwl_points"] == 0
+    assert complexity["total_source_pwl_points"] == complexity["sample_source_pwl_points"]
 
 
 def test_phase_transient_activation_exprs_cover_relu_families() -> None:
@@ -1672,6 +1678,7 @@ def test_phase_transient_preflight_summary_has_no_artifact_paths() -> None:
         "phase_clock_source_count": 5,
         "phase_clock_source_pwl_count": 5,
         "phase_clock_source_pwl_points": 50,
+        "total_source_pwl_points": 110,
     }
 
     summary = phase_transient.phase_preflight_summary(
@@ -1712,6 +1719,7 @@ def test_phase_transient_preflight_summary_has_no_artifact_paths() -> None:
     assert summary["final_weights"] is None
     assert summary["sample_source_pwl_points"] == 60
     assert summary["phase_clock_source_pwl_points"] == 50
+    assert summary["total_source_pwl_points"] == 110
 
 
 def test_phase_transient_relu_deck_matches_forward_and_backward_activation(tmp_path: Path) -> None:

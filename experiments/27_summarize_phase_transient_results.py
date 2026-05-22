@@ -44,6 +44,7 @@ FIELDS = [
     "softmax_error_gate",
     "softmax_margin",
     "update_mode",
+    "phase_clock_mode",
     "reference_mode",
     "eval_backend",
     "output_mode",
@@ -90,7 +91,9 @@ FIELDS = [
     "target_source_dc_count",
     "target_source_pwl_points",
     "phase_clock_source_count",
+    "phase_clock_source_pwl_count",
     "phase_clock_source_pwl_points",
+    "total_source_pwl_points",
     "phase_wall_time_s",
     "eval_wall_time_s",
     "summary_path",
@@ -122,6 +125,17 @@ def nested(data: dict[str, Any], *keys: str) -> Any:
             return None
         value = value.get(key)
     return value
+
+
+def derived_total_source_pwl_points(data: dict[str, Any]) -> int | None:
+    total = data.get("total_source_pwl_points")
+    if total is not None:
+        return total
+    sample_points = data.get("sample_source_pwl_points")
+    clock_points = data.get("phase_clock_source_pwl_points")
+    if sample_points is None or clock_points is None:
+        return None
+    return int(sample_points) + int(clock_points)
 
 
 def row_from_summary(path: Path) -> dict[str, Any]:
@@ -156,6 +170,7 @@ def row_from_summary(path: Path) -> dict[str, Any]:
         "softmax_error_gate": data.get("softmax_error_gate"),
         "softmax_margin": data.get("softmax_margin"),
         "update_mode": data.get("update_mode"),
+        "phase_clock_mode": data.get("phase_clock_mode", "pwl"),
         "reference_mode": data.get("reference_mode"),
         "eval_backend": data.get("eval_backend", "spice"),
         "output_mode": data.get("output_mode"),
@@ -202,7 +217,9 @@ def row_from_summary(path: Path) -> dict[str, Any]:
         "target_source_dc_count": data.get("target_source_dc_count"),
         "target_source_pwl_points": data.get("target_source_pwl_points"),
         "phase_clock_source_count": data.get("phase_clock_source_count"),
+        "phase_clock_source_pwl_count": data.get("phase_clock_source_pwl_count"),
         "phase_clock_source_pwl_points": data.get("phase_clock_source_pwl_points"),
+        "total_source_pwl_points": derived_total_source_pwl_points(data),
         "phase_wall_time_s": data.get("phase_wall_time_s"),
         "eval_wall_time_s": data.get("eval_wall_time_s"),
         "summary_mtime_s": path.stat().st_mtime,
@@ -332,6 +349,7 @@ def print_markdown(rows: list[dict[str, Any]]) -> None:
         "updates",
         "eval_samples",
         "eval_backend",
+        "phase_clock_mode",
         "lr",
         "softmax_negative_scale",
         "softmax_error_centering",
@@ -363,6 +381,9 @@ def print_markdown(rows: list[dict[str, Any]]) -> None:
         "phase_update_l2",
         "estimated_transient_points",
         "phase_output_vector_count",
+        "sample_source_pwl_points",
+        "phase_clock_source_pwl_points",
+        "total_source_pwl_points",
         "phase_wall_time_s",
     ]
     print("| " + " | ".join(columns) + " |")

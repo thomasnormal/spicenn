@@ -49,6 +49,7 @@ def test_phase_summary_row_keeps_execution_contract_and_backend_fields(tmp_path:
                 "softmax_negative_scale": 0.25,
                 "softmax_error_centering": "mean",
                 "update_mode": "direct",
+                "phase_clock_mode": "analytic",
                 "reference_mode": "none",
                 "eval_backend": "both",
                 "output_mode": "print",
@@ -89,7 +90,9 @@ def test_phase_summary_row_keeps_execution_contract_and_backend_fields(tmp_path:
                 "pixel_source_dc_count": 10,
                 "target_source_dc_count": 0,
                 "phase_clock_source_count": 5,
-                "phase_clock_source_pwl_points": 5644,
+                "phase_clock_source_pwl_count": 0,
+                "phase_clock_source_pwl_points": 0,
+                "total_source_pwl_points": 25478,
                 "phase_wall_time_s": 36.1,
                 "eval_wall_time_s": 9.5,
                 "spice_phase_eval_accuracy": 0.12,
@@ -118,6 +121,7 @@ def test_phase_summary_row_keeps_execution_contract_and_backend_fields(tmp_path:
     assert row["lr"] == 0.1
     assert row["softmax_negative_scale"] == 0.25
     assert row["softmax_error_centering"] == "mean"
+    assert row["phase_clock_mode"] == "analytic"
     assert row["local_update_scale"] == 0.75
     assert row["output_bias_update_scale"] == 0.25
     assert row["readout_update_scale"] == 0.5
@@ -146,7 +150,30 @@ def test_phase_summary_row_keeps_execution_contract_and_backend_fields(tmp_path:
     assert row["sample_source_dc_count"] == 10
     assert row["sample_source_pwl_points"] == 25478
     assert row["phase_clock_source_count"] == 5
-    assert row["phase_clock_source_pwl_points"] == 5644
+    assert row["phase_clock_source_pwl_count"] == 0
+    assert row["phase_clock_source_pwl_points"] == 0
+    assert row["total_source_pwl_points"] == 25478
+
+
+def test_phase_summary_row_derives_total_source_points_for_older_summaries(tmp_path: Path) -> None:
+    module = load_summary_module()
+    summary_path = tmp_path / "spice_mnist_local_feature_phase_old_summary.json"
+    summary_path.write_text(
+        json.dumps(
+            {
+                "status": "continuous_phase_train_no_reference",
+                "architecture": "phase_resolved_transient_local_feature_readout",
+                "sample_source_pwl_points": 25,
+                "phase_clock_source_pwl_points": 15,
+            }
+        )
+        + "\n"
+    )
+
+    row = module.row_from_summary(summary_path)
+
+    assert row["phase_clock_mode"] == "pwl"
+    assert row["total_source_pwl_points"] == 40
 
 
 def test_discovery_filters_to_phase_transient_summaries_and_prefers_tables(tmp_path: Path) -> None:

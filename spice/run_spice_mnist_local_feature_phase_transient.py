@@ -148,12 +148,16 @@ def validate_transient_point_budget(estimated_points: int, max_points: int) -> N
 def validate_source_point_budget(source_complexity: dict[str, int], max_points: int) -> None:
     if max_points < 0:
         raise ValueError("--max-source-pwl-points must be non-negative")
-    estimated_points = int(source_complexity["sample_source_pwl_points"]) + int(source_complexity["phase_clock_source_pwl_points"])
+    estimated_points = total_source_pwl_points(source_complexity)
     if max_points and estimated_points > max_points:
         raise ValueError(
             f"estimated source PWL points ({estimated_points}) exceed --max-source-pwl-points ({max_points}); "
             "reduce --updates, choose a smaller training prefix, or raise the budget intentionally"
         )
+
+
+def total_source_pwl_points(source_complexity: dict[str, int]) -> int:
+    return int(source_complexity["sample_source_pwl_points"]) + int(source_complexity["phase_clock_source_pwl_points"])
 
 
 def final_state_measure_time(t_stop: float, transient_step: float, final_update_stop: float) -> float:
@@ -408,7 +412,7 @@ def phase_source_complexity(
         return sum(pwl_point_count(source) for source in sources)
 
     sample_sources = pixel_sources + target_sources
-    return {
+    complexity = {
         "sample_source_count": len(sample_sources),
         "sample_source_dc_count": count_dc(sample_sources),
         "sample_source_pwl_count": count_pwl(sample_sources),
@@ -425,6 +429,8 @@ def phase_source_complexity(
         "phase_clock_source_pwl_count": count_pwl(phase_sources),
         "phase_clock_source_pwl_points": count_points(phase_sources),
     }
+    complexity["total_source_pwl_points"] = total_source_pwl_points(complexity)
+    return complexity
 
 
 def tanh_expr(expr: str) -> str:

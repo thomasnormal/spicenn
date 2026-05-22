@@ -11,7 +11,7 @@ import pandas as pd
 
 from run_spice_mnist_batch_op_train import read_wrdata_row
 from run_spice_mnist_local_block_batch_op_train import block_indices
-from run_spice_mnist_local_feature_batch_op_train import run_train_batch
+from run_spice_mnist_local_feature_batch_op_train import run_eval, run_train_batch
 from run_spice_mnist_train import load_mnist_sequence
 from run_spice_sweep import ROOT, detect_spice, prepare_netlist_for_simulator, run_tiny_test, run_simulator_netlist
 
@@ -58,8 +58,8 @@ def tanh_expr(expr: str) -> str:
     return f"(2/(1+exp(-2*({expr})))-1)"
 
 
-def target_matrix(labels: np.ndarray, n_classes: int) -> np.ndarray:
-    targets = -np.ones((len(labels), n_classes))
+def target_matrix(labels: np.ndarray, n_classes: int, softmax_output: bool = False) -> np.ndarray:
+    targets = np.zeros((len(labels), n_classes)) if softmax_output else -np.ones((len(labels), n_classes))
     for s, label in enumerate(labels):
         targets[s, int(label)] = 1.0
     return targets
@@ -128,6 +128,7 @@ def make_phase_transient_netlist(
     cstate: float,
     cgrad: float,
     rleak: float,
+    softmax_output: bool = False,
     output_mode: str = "wrdata",
 ) -> tuple[str, int, float]:
     total_samples = x_batch.shape[0]
@@ -137,7 +138,7 @@ def make_phase_transient_netlist(
     n_classes = readout.shape[0]
     phases, sample_starts, t_stop = make_phase_schedule(update_batch_size, updates, phase, gap)
     tau = phase / settle_ratio
-    targets = target_matrix(y_batch, n_classes)
+    targets = target_matrix(y_batch, n_classes, softmax_output)
     lines = [
         "* Phase-resolved transient local-feature/readout training deck.",
         "* Persistent local feature and readout parameters are capacitor voltages.",
@@ -199,14 +200,21 @@ def make_phase_transient_netlist(
         score_terms.append(f"V(ob{k})")
         lines.append(f"Bscore{k} scorecalc{k} 0 V = " + " + ".join(score_terms))
         lines.append(f"Bstore_score{k} score{k} 0 I = V(pscore)*{{CSTATE}}/{{TAU}}*(V(score{k})-V(scorecalc{k}))")
-        if linear_output:
-            lines.append(f"By{k} y{k} 0 V = V(score{k})")
-            delta_expr = f"(V(target{k})-V(y{k}))"
-        else:
-            y_expr = tanh_expr(f"V(score{k})")
-            lines.append(f"By{k} y{k} 0 V = {y_expr}")
-            delta_expr = f"(V(target{k})-({y_expr}))*(1-({y_expr})*({y_expr}))"
-        lines.append(f"Bstore_d{k} d{k} 0 I = V(perr)*{{CSTATE}}/{{TAU}}*(V(d{k})-({delta_expr}))")
+    if softmax_output:
+        denom = " + ".join(f"exp(V(score{k}))" for k in range(n_classes))
+        for k in range(n_classes):
+            lines.append(f"By{k} y{k} 0 V = exp(V(score{k}))/({denom})")
+            lines.append(f"Bstore_d{k} d{k} 0 I = V(perr)*{{CSTATE}}/{{TAU}}*(V(d{k})-(V(target{k})-V(y{k})))")
+    else:
+        for k in range(n_classes):
+            if linear_output:
+                lines.append(f"By{k} y{k} 0 V = V(score{k})")
+                delta_expr = f"(V(target{k})-V(y{k}))"
+            else:
+                y_expr = tanh_expr(f"V(score{k})")
+                lines.append(f"By{k} y{k} 0 V = {y_expr}")
+                delta_expr = f"(V(target{k})-({y_expr}))*(1-({y_expr})*({y_expr}))"
+            lines.append(f"Bstore_d{k} d{k} 0 I = V(perr)*{{CSTATE}}/{{TAU}}*(V(d{k})-({delta_expr}))")
     lines.append("")
     for b, idxs in enumerate(blocks):
         for c in range(channels):
@@ -288,6 +296,35 @@ def state_metrics(
     return metrics
 
 
+def update_direction_metrics(
+    initial: tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray],
+    ref: tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray],
+    got: tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray],
+    eps: float = 1e-12,
+) -> dict[str, float]:
+    ref_delta = np.concatenate([(np.asarray(after) - np.asarray(before)).ravel() for before, after in zip(initial, ref)])
+    got_delta = np.concatenate([(np.asarray(after) - np.asarray(before)).ravel() for before, after in zip(initial, got)])
+    ref_norm = float(np.linalg.norm(ref_delta))
+    got_norm = float(np.linalg.norm(got_delta))
+    metrics = {
+        "reference_update_l2": ref_norm,
+        "phase_update_l2": got_norm,
+    }
+    if ref_norm > eps and got_norm > eps:
+        metrics["state_update_direction_cosine"] = float(np.dot(ref_delta, got_delta) / (ref_norm * got_norm))
+    else:
+        metrics["state_update_direction_cosine"] = float("nan")
+    mask = np.abs(ref_delta) > eps
+    if np.any(mask):
+        aligned = np.sign(ref_delta[mask]) == np.sign(got_delta[mask])
+        metrics["state_update_sign_alignment_fraction"] = float(np.mean(aligned))
+        metrics["state_update_wrong_sign_count"] = float(np.size(aligned) - int(np.sum(aligned)))
+    else:
+        metrics["state_update_sign_alignment_fraction"] = float("nan")
+        metrics["state_update_wrong_sign_count"] = 0.0
+    return metrics
+
+
 def load_or_init_weights(
     init_weights: str,
     rng: np.random.Generator,
@@ -318,6 +355,7 @@ def load_or_init_weights(
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--train-samples", type=int, default=200)
+    ap.add_argument("--eval-samples", type=int, default=0)
     ap.add_argument("--image-size", type=int, default=8)
     ap.add_argument("--block-size", type=int, default=4)
     ap.add_argument("--stride", type=int, default=None)
@@ -326,6 +364,7 @@ def main() -> None:
     ap.add_argument("--updates", type=int, default=1)
     ap.add_argument("--lr", type=float, default=0.005)
     ap.add_argument("--linear-output", action="store_true")
+    ap.add_argument("--softmax-output", action="store_true")
     ap.add_argument("--seed", type=int, default=0)
     ap.add_argument("--timeout", type=float, default=300.0)
     ap.add_argument("--init-weights", default="")
@@ -344,6 +383,8 @@ def main() -> None:
 
     if args.batch_size <= 0 or args.updates <= 0:
         raise ValueError("--batch-size and --updates must be positive")
+    if args.linear_output and args.softmax_output:
+        raise ValueError("--linear-output and --softmax-output are mutually exclusive")
     if args.channels <= 0:
         raise ValueError("--channels must be positive")
     if args.phase <= 0 or args.settle_ratio <= 0:
@@ -354,7 +395,7 @@ def main() -> None:
     total_samples = args.batch_size * args.updates
     if args.train_samples < total_samples:
         raise ValueError("--train-samples must cover --batch-size * --updates")
-    x_train, y_train, _x_test, _y_test = load_mnist_sequence(args.train_samples, 1, args.image_size, args.seed)
+    x_train, y_train, x_test, y_test = load_mnist_sequence(args.train_samples, max(1, args.eval_samples), args.image_size, args.seed)
     x_batch = x_train[:total_samples]
     y_batch = y_train[:total_samples]
     rng = np.random.default_rng(args.seed)
@@ -401,6 +442,7 @@ def main() -> None:
         args.cstate,
         args.cgrad,
         args.rleak,
+        args.softmax_output,
         "measure" if args.final_measures else "wrdata",
     )
     phase_netlist.write_text(prepare_netlist_for_simulator(netlist, spice_bin))
@@ -432,13 +474,57 @@ def main() -> None:
             args.lr,
             args.timeout,
             linear_output=args.linear_output,
-            softmax_output=False,
+            softmax_output=args.softmax_output,
             local_activation="tanh",
             relu_clip=1.0,
         )
     op_wall = time.perf_counter() - t1
     metrics = state_metrics((op_w, op_hb, op_readout, op_ob), (phase_w, phase_hb, phase_readout, phase_ob))
+    metrics.update(update_direction_metrics((w, hb, readout, output_bias), (op_w, op_hb, op_readout, op_ob), (phase_w, phase_hb, phase_readout, phase_ob)))
+    phase_eval_accuracy = None
+    op_reference_eval_accuracy = None
+    eval_wall = 0.0
+    if args.eval_samples > 0:
+        t2 = time.perf_counter()
+        phase_eval_accuracy = run_eval(
+            spice_bin,
+            generated / f"{stem}_phase_eval.cir",
+            results / f"{stem}_phase_eval.dat",
+            x_test[: args.eval_samples],
+            y_test[: args.eval_samples],
+            phase_w,
+            phase_hb,
+            phase_readout,
+            phase_ob,
+            blocks,
+            max(1, min(args.eval_samples, 50)),
+            args.timeout,
+            linear_output=args.linear_output,
+            softmax_output=args.softmax_output,
+            local_activation="tanh",
+            relu_clip=1.0,
+        )
+        op_reference_eval_accuracy = run_eval(
+            spice_bin,
+            generated / f"{stem}_op_reference_eval.cir",
+            results / f"{stem}_op_reference_eval.dat",
+            x_test[: args.eval_samples],
+            y_test[: args.eval_samples],
+            op_w,
+            op_hb,
+            op_readout,
+            op_ob,
+            blocks,
+            max(1, min(args.eval_samples, 50)),
+            args.timeout,
+            linear_output=args.linear_output,
+            softmax_output=args.softmax_output,
+            local_activation="tanh",
+            relu_clip=1.0,
+        )
+        eval_wall = time.perf_counter() - t2
     final_weights_path = results / f"{stem}_final_weights.npz"
+    reference_weights_path = results / f"{stem}_op_reference_final_weights.npz"
     metrics_path = results / f"{stem}_equivalence_metrics.csv"
     np.savez_compressed(
         final_weights_path,
@@ -447,6 +533,13 @@ def main() -> None:
         readout=phase_readout,
         output_bias=phase_ob,
         y=phase_y,
+    )
+    np.savez_compressed(
+        reference_weights_path,
+        local_weights=op_w,
+        local_bias=op_hb,
+        readout=op_readout,
+        output_bias=op_ob,
     )
     pd.DataFrame([metrics]).to_csv(metrics_path, index=False)
     summary = {
@@ -460,20 +553,31 @@ def main() -> None:
         "channels": args.channels,
         "classes": 10,
         "train_samples": args.train_samples,
+        "eval_samples": args.eval_samples,
         "batch_size": args.batch_size,
         "updates": args.updates,
         "total_samples": total_samples,
         "lr": args.lr,
         "linear_output": bool(args.linear_output),
+        "softmax_output": bool(args.softmax_output),
         "init_weights": args.init_weights,
         "phase_netlist": str(phase_netlist),
         "phase_data": str(phase_data),
         "op_reference_netlist": str(op_netlist),
         "op_reference_data": str(op_data),
         "final_weights": str(final_weights_path),
+        "op_reference_final_weights": str(reference_weights_path),
         "equivalence_metrics": str(metrics_path),
         "phase_wall_time_s": phase_wall,
         "op_reference_wall_time_s": op_wall,
+        "eval_wall_time_s": eval_wall,
+        "phase_eval_accuracy": phase_eval_accuracy,
+        "op_reference_eval_accuracy": op_reference_eval_accuracy,
+        "eval_accuracy_abs_diff": (
+            abs(phase_eval_accuracy - op_reference_eval_accuracy)
+            if phase_eval_accuracy is not None and op_reference_eval_accuracy is not None
+            else None
+        ),
         "t_stop_s": t_stop,
         "transient_step_s": args.transient_step,
         "phase_s": args.phase,
@@ -482,6 +586,7 @@ def main() -> None:
         "persistent_state": "local feature weights, local biases, class readout weights, and output biases are capacitor voltages with checkpoint ICs",
         "temporary_state": "feature activations, class scores, class deltas, hidden/backward feature deltas, and gradient accumulators are capacitor voltages",
         "python_role": "Python generates guiding waveforms and compares final state; it does not carry training state during the transient run.",
+        "python_checkpointing_between_samples": False,
         "note": "Local-feature phase-transient all-SPICE update smoke; small equivalence check against the existing operating-point SPICE update.",
         **metrics,
     }

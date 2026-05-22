@@ -12,6 +12,7 @@ if str(SPICE_DIR) not in sys.path:
     sys.path.insert(0, str(SPICE_DIR))
 
 import run_spice_mnist_local_feature_phase_train as phase_train  # noqa: E402
+import run_spice_mnist_local_feature_phase_transient as phase_transient  # noqa: E402
 
 
 def test_cli_exposes_simulator_selector() -> None:
@@ -61,3 +62,80 @@ def test_maybe_save_best_eval_checkpoint_writes_only_on_enabled_improvement(tmp_
     assert best == pytest.approx(0.9)
     assert fields == {}
     assert not path.exists()
+
+
+def test_phase_transient_softmax_targets_are_zero_one() -> None:
+    labels = np.array([2, 0])
+
+    softmax_targets = phase_transient.target_matrix(labels, 3, softmax_output=True)
+    tanh_targets = phase_transient.target_matrix(labels, 3, softmax_output=False)
+
+    assert softmax_targets.tolist() == [[0.0, 0.0, 1.0], [1.0, 0.0, 0.0]]
+    assert tanh_targets.tolist() == [[-1.0, -1.0, 1.0], [1.0, -1.0, -1.0]]
+
+
+def test_phase_transient_update_direction_metrics_detect_alignment() -> None:
+    initial = (np.array([0.0, 0.0]),)
+    ref = (np.array([1.0, -2.0]),)
+    aligned = (np.array([0.5, -1.0]),)
+    wrong = (np.array([-0.5, -1.0]),)
+
+    aligned_metrics = phase_transient.update_direction_metrics(initial, ref, aligned)
+    wrong_metrics = phase_transient.update_direction_metrics(initial, ref, wrong)
+
+    assert aligned_metrics["state_update_direction_cosine"] == pytest.approx(1.0)
+    assert aligned_metrics["state_update_sign_alignment_fraction"] == pytest.approx(1.0)
+    assert aligned_metrics["state_update_wrong_sign_count"] == pytest.approx(0.0)
+    assert wrong_metrics["state_update_sign_alignment_fraction"] == pytest.approx(0.5)
+    assert wrong_metrics["state_update_wrong_sign_count"] == pytest.approx(1.0)
+
+
+def test_phase_transient_softmax_deck_is_one_continuous_online_run(tmp_path: Path) -> None:
+    x = np.array(
+        [
+            [0.0, 0.2, 0.4, 0.6],
+            [0.1, 0.3, 0.5, 0.7],
+            [0.2, 0.4, 0.6, 0.8],
+        ],
+        dtype=float,
+    )
+    y = np.array([0, 1, 0])
+    w = np.full((1, 1, 4), 0.01)
+    hb = np.zeros((1, 1))
+    readout = np.zeros((2, 1, 1))
+    output_bias = np.zeros(2)
+
+    netlist, _n_vec, _t_stop = phase_transient.make_phase_transient_netlist(
+        x,
+        y,
+        w,
+        hb,
+        readout,
+        output_bias,
+        [[0, 1, 2, 3]],
+        0.8,
+        tmp_path / "out.dat",
+        False,
+        1,
+        len(y),
+        1e-9,
+        0.1e-9,
+        5e-12,
+        40.0,
+        20e-12,
+        1e-12,
+        1e-12,
+        1e-12,
+        1e18,
+        True,
+    )
+
+    assert netlist.count("Cw0_0_0 w0_0_0 0 {CW}") == 1
+    assert "Vw0_0_0" not in netlist
+    assert "Vpix0 pix0 0 PWL(" in netlist
+    assert "Vtarget0 target0 0 PWL(" in netlist
+    assert "By0 y0 0 V = exp(V(score0))/(exp(V(score0)) + exp(V(score1)))" in netlist
+    assert "Bstore_d0 d0 0 I = V(perr)*{CSTATE}/{TAU}*(V(d0)-(V(target0)-V(y0)))" in netlist
+    assert netlist.count("Vpapply papply 0 PWL(") == 1
+    assert netlist.count("Vpclear pclear 0 PWL(") == 1
+    assert netlist.count(" 1 ") >= len(y)

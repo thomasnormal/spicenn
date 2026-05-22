@@ -104,6 +104,14 @@ def build_variant_command(
         str(args.timeout),
         "--max-transient-points",
         str(getattr(args, "max_transient_points", 0)),
+        "--reference-mode",
+        args.reference_mode,
+        "--phase-output-mode",
+        args.phase_output_mode,
+        "--update-mode",
+        args.update_mode,
+        "--eval-backend",
+        args.eval_backend,
         "--probe-updates",
         args.probe_updates,
         "--local-activation",
@@ -124,12 +132,36 @@ def build_variant_command(
         feedback_mode,
         "--readout-feedback-clip",
         str(args.readout_feedback_clip),
+        "--output-bias-update-scale",
+        str(args.output_bias_update_scale),
+        "--readout-update-scale",
+        str(args.readout_update_scale),
+        "--local-update-scale",
+        str(args.local_update_scale),
+        "--state-decay",
+        str(args.state_decay),
+        "--softmax-negative-scale",
+        str(args.softmax_negative_scale),
+        "--softmax-error-centering",
+        args.softmax_error_centering,
+        "--softmax-temperature",
+        str(args.softmax_temperature),
+        "--softmax-competition-mode",
+        args.softmax_competition_mode,
+        "--softmax-competitor-power",
+        str(args.softmax_competitor_power),
+        "--softmax-error-gate",
+        args.softmax_error_gate,
+        "--softmax-margin",
+        str(args.softmax_margin),
         "--hidden-synapse-mode",
         hidden_synapse_mode,
         "--readout-synapse-mode",
         readout_synapse_mode,
         "--synapse-clip",
         str(synapse_clip),
+        "--readout-class-centering",
+        args.readout_class_centering,
         "--tag",
         variant_tag(
             args.tag,
@@ -150,6 +182,10 @@ def build_variant_command(
         command.append("--final-measures")
     if args.eval_probe_updates:
         command.append("--eval-probe-updates")
+    if args.strict_fully_on_device:
+        command.append("--strict-fully-on-device")
+    if args.simulator_extra_args:
+        command.extend(["--simulator-extra-args", args.simulator_extra_args])
     return command
 
 
@@ -187,6 +223,14 @@ def row_from_summary(
         "phase_wall_time_s",
         "op_reference_wall_time_s",
         "eval_wall_time_s",
+        "fully_on_device_execution_contract_met",
+        "strict_fully_on_device_contract_met",
+        "estimated_transient_points",
+        "phase_output_vector_count",
+        "output_mode",
+        "reference_mode",
+        "eval_backend",
+        "update_mode",
     ]
     row = {
         "local_activation": activation,
@@ -221,6 +265,10 @@ def main() -> None:
     ap.add_argument("--transient-step", type=float, default=50e-12)
     ap.add_argument("--timeout", type=float, default=600.0)
     ap.add_argument("--max-transient-points", type=int, default=0)
+    ap.add_argument("--reference-mode", choices=["spice", "none"], default="spice")
+    ap.add_argument("--phase-output-mode", choices=["auto", "measure", "print", "control_measure", "wrdata"], default="auto")
+    ap.add_argument("--update-mode", choices=["phased", "direct"], default="phased")
+    ap.add_argument("--eval-backend", choices=["spice", "numpy", "both"], default="spice")
     ap.add_argument("--probe-updates", default="1,2,4,8,final")
     ap.add_argument("--activations", default="tanh,diff-clipped-relu,relu,clipped-relu")
     ap.add_argument("--relu-clips", default="1.0")
@@ -231,17 +279,34 @@ def main() -> None:
     ap.add_argument("--derivative-gate-threshold", type=float, default=1e-6)
     ap.add_argument("--feedback-modes", default="readout")
     ap.add_argument("--readout-feedback-clip", type=float, default=0.05)
+    ap.add_argument("--output-bias-update-scale", type=float, default=1.0)
+    ap.add_argument("--readout-update-scale", type=float, default=1.0)
+    ap.add_argument("--local-update-scale", type=float, default=1.0)
+    ap.add_argument("--state-decay", type=float, default=0.0)
+    ap.add_argument("--softmax-negative-scale", type=float, default=1.0)
+    ap.add_argument("--softmax-error-centering", choices=["none", "mean"], default="none")
+    ap.add_argument("--softmax-temperature", type=float, default=1.0)
+    ap.add_argument("--softmax-competition-mode", choices=["all", "normalized-power"], default="all")
+    ap.add_argument("--softmax-competitor-power", type=int, default=2)
+    ap.add_argument("--softmax-error-gate", choices=["none", "target-margin"], default="none")
+    ap.add_argument("--softmax-margin", type=float, default=1.0)
     ap.add_argument("--hidden-synapse-modes", default="linear")
     ap.add_argument("--readout-synapse-modes", default="linear")
     ap.add_argument("--synapse-clip", type=float, default=1.0)
     ap.add_argument("--synapse-clips", default="")
-    ap.add_argument("--softmax-output", action="store_true", default=True)
+    ap.add_argument("--readout-class-centering", choices=["none", "mean"], default="none")
+    ap.add_argument("--softmax-output", action=argparse.BooleanOptionalAction, default=True)
     ap.add_argument("--linear-output", action="store_true")
     ap.add_argument("--final-measures", action="store_true")
     ap.add_argument("--eval-probe-updates", action="store_true")
+    ap.add_argument("--strict-fully-on-device", action="store_true")
+    ap.add_argument("--simulator-extra-args", default="")
     ap.add_argument("--tag", default="phase_variant_sweep")
     ap.add_argument("--dry-run", action="store_true")
     args = ap.parse_args()
+
+    if args.linear_output and args.softmax_output:
+        raise ValueError("--linear-output and --softmax-output are mutually exclusive; pass --no-softmax-output for linear variants")
 
     activations = parse_csv(args.activations)
     relu_clips = parse_float_csv(args.relu_clips)

@@ -589,6 +589,10 @@ def test_phase_variant_sweep_dry_command_preserves_online_contract() -> None:
         transient_step=50e-12,
         timeout=600.0,
         max_transient_points=500,
+        reference_mode="none",
+        phase_output_mode="print",
+        update_mode="direct",
+        eval_backend="numpy",
         probe_updates="1,2,4,8",
         tag="sweep",
         relu_leak=0.01,
@@ -596,14 +600,28 @@ def test_phase_variant_sweep_dry_command_preserves_online_contract() -> None:
         derivative_floor=0.0,
         derivative_gate_threshold=1e-6,
         readout_feedback_clip=0.05,
+        output_bias_update_scale=0.0,
+        readout_update_scale=0.25,
+        local_update_scale=1.0,
+        state_decay=0.0,
+        softmax_negative_scale=1.0,
+        softmax_error_centering="none",
+        softmax_temperature=4.0,
+        softmax_competition_mode="all",
+        softmax_competitor_power=2,
+        softmax_error_gate="none",
+        softmax_margin=1.0,
         hidden_synapse_modes="linear,tanh-clipped",
         readout_synapse_modes="linear,hard-clipped",
         synapse_clip=0.25,
         synapse_clips="0.25,1.0",
+        readout_class_centering="none",
         softmax_output=True,
         linear_output=False,
         final_measures=False,
         eval_probe_updates=True,
+        strict_fully_on_device=True,
+        simulator_extra_args="",
     )
 
     command = phase_variant_sweep.build_variant_command(
@@ -634,6 +652,23 @@ def test_phase_variant_sweep_dry_command_preserves_online_contract() -> None:
     assert command[command.index("--synapse-clip") + 1] == "0.25"
     assert "--max-transient-points" in command
     assert command[command.index("--max-transient-points") + 1] == "500"
+    assert "--reference-mode" in command
+    assert command[command.index("--reference-mode") + 1] == "none"
+    assert "--phase-output-mode" in command
+    assert command[command.index("--phase-output-mode") + 1] == "print"
+    assert "--update-mode" in command
+    assert command[command.index("--update-mode") + 1] == "direct"
+    assert "--eval-backend" in command
+    assert command[command.index("--eval-backend") + 1] == "numpy"
+    assert "--output-bias-update-scale" in command
+    assert command[command.index("--output-bias-update-scale") + 1] == "0.0"
+    assert "--readout-update-scale" in command
+    assert command[command.index("--readout-update-scale") + 1] == "0.25"
+    assert "--softmax-temperature" in command
+    assert command[command.index("--softmax-temperature") + 1] == "4.0"
+    assert "--readout-class-centering" in command
+    assert command[command.index("--readout-class-centering") + 1] == "none"
+    assert "--strict-fully-on-device" in command
     assert "--eval-probe-updates" in command
     assert "synclip0_25" in command[command.index("--tag") + 1]
 

@@ -178,28 +178,6 @@ def test_phase_transient_probe_update_parser_supports_ranges_and_powers() -> Non
         phase_transient.parse_probe_update_list("5-3", 8)
 
 
-def test_phase_transient_reference_none_rejects_probe_updates_before_running_dataset() -> None:
-    proc = subprocess.run(
-        [
-            sys.executable,
-            str(SPICE_DIR / "run_spice_mnist_local_feature_phase_transient.py"),
-            "--reference-mode",
-            "none",
-            "--probe-updates",
-            "final",
-            "--train-samples",
-            "1",
-            "--updates",
-            "1",
-        ],
-        text=True,
-        capture_output=True,
-    )
-
-    assert proc.returncode != 0
-    assert "--reference-mode none does not support --probe-updates" in proc.stderr
-
-
 def test_phase_transient_probe_measurement_parser_uses_update_order() -> None:
     text = "\n".join(
         [
@@ -214,6 +192,56 @@ def test_phase_transient_probe_measurement_parser_uses_update_order() -> None:
 
     assert parsed[2] == pytest.approx([1.0, 2.0])
     assert parsed[5] == pytest.approx([3.0, 4.0])
+
+
+def test_phase_transient_probe_rows_can_be_phase_only_without_reference() -> None:
+    w = np.array([[[0.1, -0.2]]])
+    hb = np.array([[0.03]])
+    readout = np.array([[[0.4]], [[-0.5]]])
+    output_bias = np.array([0.01, -0.02])
+    probe_vals = {
+        1: np.array([0.11, -0.19, 0.04, 0.42, -0.48, 0.03, -0.01, 0.8, 0.2]),
+    }
+
+    rows, phase_states = phase_transient.probe_diagnostic_rows(
+        (1,),
+        probe_vals,
+        (w, hb, readout, output_bias),
+        {},
+    )
+
+    assert rows[0]["update"] == 1
+    assert rows[0]["state_update_direction_cosine"] is None
+    assert rows[0]["state_max_abs_diff"] is None
+    np.testing.assert_allclose(phase_states[1][0], [[[0.11, -0.19]]])
+    np.testing.assert_allclose(phase_states[1][3], [0.03, -0.01])
+
+
+def test_phase_transient_probe_rows_compare_reference_when_available() -> None:
+    w = np.array([[[0.0]]])
+    hb = np.array([[0.0]])
+    readout = np.array([[[0.0]], [[0.0]]])
+    output_bias = np.array([0.0, 0.0])
+    op_state = (
+        np.array([[[1.0]]]),
+        np.array([[0.5]]),
+        np.array([[[0.25]], [[-0.25]]]),
+        np.array([0.1, -0.1]),
+    )
+    probe_vals = {
+        2: np.array([1.0, 0.5, 0.25, -0.25, 0.1, -0.1, 0.9, 0.1]),
+    }
+
+    rows, _phase_states = phase_transient.probe_diagnostic_rows(
+        (2,),
+        probe_vals,
+        (w, hb, readout, output_bias),
+        {2: op_state},
+    )
+
+    assert rows[0]["state_max_abs_diff"] == pytest.approx(0.0)
+    assert rows[0]["state_update_direction_cosine"] == pytest.approx(1.0)
+    assert rows[0]["state_update_sign_alignment_fraction"] == pytest.approx(1.0)
 
 
 def test_mnist_index_splits_keep_test_slice_independent_of_train_count() -> None:

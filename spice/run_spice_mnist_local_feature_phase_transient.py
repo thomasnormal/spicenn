@@ -23,6 +23,8 @@ from run_spice_mnist_train import load_mnist_sequence
 from run_spice_sweep import ROOT, detect_spice, is_xyce, prepare_netlist_for_simulator, run_tiny_test, run_simulator_netlist
 from spice_adapter import SPICE_SIMULATOR_ARGS_ENV
 
+TrainState = tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]
+
 
 def sanitize_tag(tag: str) -> str:
     return "".join(ch if ch.isalnum() or ch in {"_", "-"} else "_" for ch in tag)
@@ -540,8 +542,8 @@ def unpack_state(
 
 
 def state_metrics(
-    ref: tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray],
-    got: tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray],
+    ref: TrainState,
+    got: TrainState,
 ) -> dict[str, float]:
     names = ["local_weights", "local_bias", "readout", "output_bias"]
     metrics: dict[str, float] = {}
@@ -558,9 +560,9 @@ def state_metrics(
 
 
 def update_direction_metrics(
-    initial: tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray],
-    ref: tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray],
-    got: tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray],
+    initial: TrainState,
+    ref: TrainState,
+    got: TrainState,
     eps: float = 1e-12,
 ) -> dict[str, float]:
     ref_delta = np.concatenate([(np.asarray(after) - np.asarray(before)).ravel() for before, after in zip(initial, ref)])
@@ -605,6 +607,38 @@ def empty_reference_metrics() -> dict[str, float | None]:
         }
     )
     return metrics
+
+
+def probe_diagnostic_rows(
+    probe_updates: tuple[int, ...],
+    probe_vals: dict[int, np.ndarray],
+    initial_state: TrainState,
+    op_probe_states: dict[int, TrainState],
+) -> tuple[list[dict[str, float | int | None]], dict[int, TrainState]]:
+    w, hb, readout, output_bias = initial_state
+    rows: list[dict[str, float | int | None]] = []
+    phase_states: dict[int, TrainState] = {}
+    for update in probe_updates:
+        if update not in probe_vals:
+            raise ValueError(f"missing probe measurements for update {update}")
+        probe_w, probe_hb, probe_readout, probe_ob, _probe_y = unpack_state(
+            probe_vals[update],
+            w,
+            hb,
+            readout,
+            output_bias,
+        )
+        phase_state = (probe_w, probe_hb, probe_readout, probe_ob)
+        phase_states[update] = phase_state
+        row: dict[str, float | int | None] = {"update": update}
+        op_state = op_probe_states.get(update)
+        if op_state is None:
+            row.update(empty_reference_metrics())
+        else:
+            row.update(state_metrics(op_state, phase_state))
+            row.update(update_direction_metrics(initial_state, op_state, phase_state))
+        rows.append(row)
+    return rows, phase_states
 
 
 def select_phase_output_mode(
@@ -765,8 +799,6 @@ def main() -> None:
         raise ValueError("--eval-probe-updates requires --probe-updates")
     if args.eval_probe_updates and args.eval_samples <= 0:
         raise ValueError("--eval-probe-updates requires --eval-samples > 0")
-    if args.reference_mode == "none" and probe_updates:
-        raise ValueError("--reference-mode none does not support --probe-updates")
     if args.update_mode == "direct" and args.batch_size != 1:
         raise ValueError("--update-mode direct requires --batch-size 1")
     if args.simulator_extra_args:
@@ -868,7 +900,7 @@ def main() -> None:
 
     t1 = time.perf_counter()
     op_w = op_hb = op_readout = op_ob = None
-    op_probe_states: dict[int, tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]] = {}
+    op_probe_states: dict[int, TrainState] = {}
     if args.reference_mode == "spice":
         op_w, op_hb, op_readout, op_ob = w.copy(), hb.copy(), readout.copy(), output_bias.copy()
         for update in range(args.updates):
@@ -917,16 +949,12 @@ def main() -> None:
         )
     else:
         metrics = empty_reference_metrics()
-    probe_rows = []
-    probe_phase_states: dict[int, tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]] = {}
-    for update in probe_updates:
-        probe_w, probe_hb, probe_readout, probe_ob, _probe_y = unpack_state(probe_vals[update], w, hb, readout, output_bias)
-        op_state = op_probe_states[update]
-        probe_phase_states[update] = (probe_w, probe_hb, probe_readout, probe_ob)
-        row = {"update": update}
-        row.update(state_metrics(op_state, (probe_w, probe_hb, probe_readout, probe_ob)))
-        row.update(update_direction_metrics((w, hb, readout, output_bias), op_state, (probe_w, probe_hb, probe_readout, probe_ob)))
-        probe_rows.append(row)
+    probe_rows, probe_phase_states = probe_diagnostic_rows(
+        probe_updates,
+        probe_vals,
+        (w, hb, readout, output_bias),
+        op_probe_states,
+    )
     phase_eval_accuracy = None
     op_reference_eval_accuracy = None
     initial_eval_accuracy = None
@@ -1008,7 +1036,6 @@ def main() -> None:
             for row in probe_rows:
                 update = int(row["update"])
                 probe_w, probe_hb, probe_readout, probe_ob = probe_phase_states[update]
-                op_probe_w, op_probe_hb, op_probe_readout, op_probe_ob = op_probe_states[update]
                 phase_probe_eval = run_eval(
                     spice_bin,
                     generated / f"{stem}_probe_{update}_phase_eval.cir",
@@ -1032,37 +1059,43 @@ def main() -> None:
                     readout_synapse_mode=args.readout_synapse_mode,
                     synapse_clip=args.synapse_clip,
                 )
-                op_probe_eval = run_eval(
-                    spice_bin,
-                    generated / f"{stem}_probe_{update}_op_reference_eval.cir",
-                    results / f"{stem}_probe_{update}_op_reference_eval.dat",
-                    x_test[: args.eval_samples],
-                    y_test[: args.eval_samples],
-                    op_probe_w,
-                    op_probe_hb,
-                    op_probe_readout,
-                    op_probe_ob,
-                    blocks,
-                    max(1, min(args.eval_samples, 50)),
-                    args.timeout,
-                    linear_output=args.linear_output,
-                    softmax_output=args.softmax_output,
-                    local_activation=args.local_activation,
-                    relu_clip=args.relu_clip,
-                    relu_leak=args.relu_leak,
-                    softplus_beta=args.softplus_beta,
-                    hidden_synapse_mode=args.hidden_synapse_mode,
-                    readout_synapse_mode=args.readout_synapse_mode,
-                    synapse_clip=args.synapse_clip,
-                )
                 row["phase_eval_accuracy"] = phase_probe_eval
-                row["op_reference_eval_accuracy"] = op_probe_eval
-                row["eval_accuracy_abs_diff"] = abs(phase_probe_eval - op_probe_eval)
                 row["phase_eval_improvement"] = (
                     phase_probe_eval - initial_eval_accuracy
                     if initial_eval_accuracy is not None
                     else None
                 )
+                op_probe_state = op_probe_states.get(update)
+                if op_probe_state is None:
+                    row["op_reference_eval_accuracy"] = None
+                    row["eval_accuracy_abs_diff"] = None
+                else:
+                    op_probe_w, op_probe_hb, op_probe_readout, op_probe_ob = op_probe_state
+                    op_probe_eval = run_eval(
+                        spice_bin,
+                        generated / f"{stem}_probe_{update}_op_reference_eval.cir",
+                        results / f"{stem}_probe_{update}_op_reference_eval.dat",
+                        x_test[: args.eval_samples],
+                        y_test[: args.eval_samples],
+                        op_probe_w,
+                        op_probe_hb,
+                        op_probe_readout,
+                        op_probe_ob,
+                        blocks,
+                        max(1, min(args.eval_samples, 50)),
+                        args.timeout,
+                        linear_output=args.linear_output,
+                        softmax_output=args.softmax_output,
+                        local_activation=args.local_activation,
+                        relu_clip=args.relu_clip,
+                        relu_leak=args.relu_leak,
+                        softplus_beta=args.softplus_beta,
+                        hidden_synapse_mode=args.hidden_synapse_mode,
+                        readout_synapse_mode=args.readout_synapse_mode,
+                        synapse_clip=args.synapse_clip,
+                    )
+                    row["op_reference_eval_accuracy"] = op_probe_eval
+                    row["eval_accuracy_abs_diff"] = abs(phase_probe_eval - op_probe_eval)
         eval_wall = time.perf_counter() - t2
     eval_accuracy_abs_diff = (
         abs(phase_eval_accuracy - op_reference_eval_accuracy)

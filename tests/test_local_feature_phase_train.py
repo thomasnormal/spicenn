@@ -34,10 +34,25 @@ def test_phase_transient_cli_exposes_agreement_gates() -> None:
         check=True,
     )
 
+    assert "--simulator" in proc.stdout
     assert "--softmax-output" in proc.stdout
     assert "--direction-cosine-threshold" in proc.stdout
     assert "--sign-alignment-threshold" in proc.stdout
     assert "--eval-accuracy-diff-threshold" in proc.stdout
+    assert "--random-accuracy-threshold" in proc.stdout
+    assert "--learning-improvement-threshold" in proc.stdout
+
+
+def test_phase_transient_x_yce_print_reader_extracts_final_transient_row(tmp_path: Path) -> None:
+    path = tmp_path / "deck.cir.prn"
+    path.write_text(
+        "Index       TIME          V(A)          V(B)\n"
+        "0        0.0            1.00000000e+00 -1.00000000e+00\n"
+        "1        1.0e-9         1.25000000e+00 -3.50000000e-01\n"
+        "End of Xyce(TM) Simulation\n"
+    )
+
+    assert phase_transient.read_xyce_print_last_row(path, 2) == pytest.approx([1.25, -0.35])
 
 
 def test_eval_accuracy_improved_requires_finite_strict_improvement() -> None:
@@ -153,3 +168,84 @@ def test_phase_transient_softmax_deck_is_one_continuous_online_run(tmp_path: Pat
     assert netlist.count("Vpapply papply 0 PWL(") == 1
     assert netlist.count("Vpclear pclear 0 PWL(") == 1
     assert netlist.count(" 1 ") >= len(y)
+
+
+def test_phase_transient_print_mode_uses_native_tran_print(tmp_path: Path) -> None:
+    x = np.zeros((1, 4))
+    y = np.array([0])
+    w = np.zeros((1, 1, 4))
+    hb = np.zeros((1, 1))
+    readout = np.zeros((2, 1, 1))
+    output_bias = np.zeros(2)
+
+    netlist, _n_vec, _t_stop = phase_transient.make_phase_transient_netlist(
+        x,
+        y,
+        w,
+        hb,
+        readout,
+        output_bias,
+        [[0, 1, 2, 3]],
+        0.8,
+        tmp_path / "out.dat",
+        False,
+        1,
+        1,
+        1e-9,
+        0.1e-9,
+        5e-12,
+        40.0,
+        20e-12,
+        1e-12,
+        1e-12,
+        1e-12,
+        1e18,
+        True,
+        "print",
+    )
+
+    assert ".tran " in netlist
+    assert ".print TRAN " in netlist
+    assert ".control" not in netlist
+    assert "wrdata" not in netlist
+
+
+def test_phase_transient_native_measure_mode_uses_top_level_measures(tmp_path: Path) -> None:
+    x = np.zeros((1, 4))
+    y = np.array([0])
+    w = np.zeros((1, 1, 4))
+    hb = np.zeros((1, 1))
+    readout = np.zeros((2, 1, 1))
+    output_bias = np.zeros(2)
+
+    netlist, n_vec, _t_stop = phase_transient.make_phase_transient_netlist(
+        x,
+        y,
+        w,
+        hb,
+        readout,
+        output_bias,
+        [[0, 1, 2, 3]],
+        0.8,
+        tmp_path / "out.dat",
+        False,
+        1,
+        1,
+        1e-9,
+        0.1e-9,
+        5e-12,
+        40.0,
+        20e-12,
+        1e-12,
+        1e-12,
+        1e-12,
+        1e18,
+        True,
+        "native_measure",
+    )
+
+    assert ".tran " in netlist
+    assert ".measure TRAN m00000 FIND V(w0_0_0)" in netlist
+    assert f".measure TRAN m{n_vec - 1:05d}" in netlist
+    assert ".control" not in netlist
+    assert ".print TRAN" not in netlist

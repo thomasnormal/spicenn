@@ -11,9 +11,9 @@ import pandas as pd
 
 from run_spice_mnist_batch_op_train import read_wrdata_row
 from run_spice_mnist_local_block_batch_op_train import block_indices
-from run_spice_mnist_local_feature_batch_op_train import run_eval, run_train_batch
+from run_spice_mnist_local_feature_batch_op_train import run_eval, run_train_batch, wrap_xyce_behavioral_rhs, xyce_prn_path
 from run_spice_mnist_train import load_mnist_sequence
-from run_spice_sweep import ROOT, detect_spice, prepare_netlist_for_simulator, run_tiny_test, run_simulator_netlist
+from run_spice_sweep import ROOT, detect_spice, is_xyce, prepare_netlist_for_simulator, run_tiny_test, run_simulator_netlist
 
 
 def sanitize_tag(tag: str) -> str:
@@ -74,6 +74,30 @@ def parse_measured_vector(stdout: str, n_vec: int) -> np.ndarray:
             raise ValueError(f"missing final-state measurement {name}")
         vals[i] = float(m.group(1))
     return vals
+
+
+def read_xyce_print_last_row(path: Path, expected_values: int) -> np.ndarray:
+    last: np.ndarray | None = None
+    for raw in path.read_text().splitlines():
+        parts = raw.split()
+        if not parts or parts[0].lower() in {"index", "end"}:
+            continue
+        try:
+            int(float(parts[0]))
+            values = np.array([float(item) for item in parts[1:]], dtype=float)
+        except ValueError:
+            continue
+        if values.size < expected_values:
+            raise ValueError(f"Xyce print row in {path} had {values.size} values, expected {expected_values}")
+        last = values[-expected_values:]
+    if last is None:
+        raise ValueError(f"no Xyce print data rows found in {path}")
+    return last
+
+
+def prepare_phase_netlist(netlist: str, spice_bin: str) -> str:
+    rendered = prepare_netlist_for_simulator(netlist, spice_bin)
+    return wrap_xyce_behavioral_rhs(rendered) if is_xyce(spice_bin) else rendered
 
 
 def make_phase_schedule(
@@ -244,16 +268,28 @@ def make_phase_transient_netlist(
     vectors += [f"V(v{k}_{b}_{c})" for k in range(n_classes) for b in range(n_blocks) for c in range(channels)]
     vectors += [f"V(ob{k})" for k in range(n_classes)]
     vectors += [f"V(y{k})" for k in range(n_classes)]
-    if output_mode not in {"wrdata", "measure"}:
-        raise ValueError("output_mode must be 'wrdata' or 'measure'")
+    if output_mode not in {"wrdata", "measure", "native_measure", "print"}:
+        raise ValueError("output_mode must be 'wrdata', 'measure', 'native_measure', or 'print'")
     measure_time = max(0.0, t_stop - transient_step)
-    lines += ["", ".options method=gear maxord=2", ".control", f"tran {transient_step:.12g} {t_stop:.12g} uic"]
-    if output_mode == "wrdata":
-        lines.append(f"wrdata {out_path} " + " ".join(vectors))
-    else:
+    lines += ["", ".options method=gear maxord=2"]
+    if output_mode == "print":
+        lines += [
+            f".tran {transient_step:.12g} {t_stop:.12g} uic",
+            ".print TRAN " + " ".join(vectors),
+        ]
+    elif output_mode == "native_measure":
+        lines.append(f".tran {transient_step:.12g} {t_stop:.12g} uic")
         for i, vec in enumerate(vectors):
-            lines.append(f"meas tran m{i:05d} FIND {vec} AT={measure_time:.12g}")
-    lines += [".endc", ".end", ""]
+            lines.append(f".measure TRAN m{i:05d} FIND {vec} AT={measure_time:.12g}")
+    else:
+        lines += [".control", f"tran {transient_step:.12g} {t_stop:.12g} uic"]
+        if output_mode == "wrdata":
+            lines.append(f"wrdata {out_path} " + " ".join(vectors))
+        else:
+            for i, vec in enumerate(vectors):
+                lines.append(f"meas tran m{i:05d} FIND {vec} AT={measure_time:.12g}")
+        lines.append(".endc")
+    lines += [".end", ""]
     return "\n".join(lines), len(vectors), t_stop
 
 
@@ -367,6 +403,7 @@ def main() -> None:
     ap.add_argument("--softmax-output", action="store_true")
     ap.add_argument("--seed", type=int, default=0)
     ap.add_argument("--timeout", type=float, default=300.0)
+    ap.add_argument("--simulator", default=None)
     ap.add_argument("--init-weights", default="")
     ap.add_argument("--phase", type=float, default=2e-9)
     ap.add_argument("--gap", type=float, default=0.2e-9)
@@ -380,6 +417,8 @@ def main() -> None:
     ap.add_argument("--direction-cosine-threshold", type=float, default=0.999)
     ap.add_argument("--sign-alignment-threshold", type=float, default=0.98)
     ap.add_argument("--eval-accuracy-diff-threshold", type=float, default=0.0)
+    ap.add_argument("--random-accuracy-threshold", type=float, default=0.10)
+    ap.add_argument("--learning-improvement-threshold", type=float, default=0.02)
     ap.add_argument("--final-measures", action="store_true")
     ap.add_argument("--tag", default="phase_local_feature")
     args = ap.parse_args()
@@ -398,6 +437,10 @@ def main() -> None:
         raise ValueError("--sign-alignment-threshold must be between 0 and 1")
     if args.eval_accuracy_diff_threshold < 0:
         raise ValueError("--eval-accuracy-diff-threshold must be non-negative")
+    if args.random_accuracy_threshold < 0 or args.random_accuracy_threshold > 1:
+        raise ValueError("--random-accuracy-threshold must be between 0 and 1")
+    if args.learning_improvement_threshold < 0:
+        raise ValueError("--learning-improvement-threshold must be non-negative")
 
     stride = args.block_size if args.stride is None else args.stride
     blocks = block_indices(args.image_size, args.block_size, stride)
@@ -416,7 +459,7 @@ def main() -> None:
         args.block_size * args.block_size,
     )
 
-    spice_bin, version = detect_spice(None)
+    spice_bin, version = detect_spice(args.simulator)
     generated = ROOT / "spice/generated"
     results = ROOT / "spice/results"
     generated.mkdir(parents=True, exist_ok=True)
@@ -452,16 +495,24 @@ def main() -> None:
         args.cgrad,
         args.rleak,
         args.softmax_output,
-        "measure" if args.final_measures else "wrdata",
+        "native_measure" if is_xyce(spice_bin) else ("measure" if args.final_measures else "wrdata"),
     )
-    phase_netlist.write_text(prepare_netlist_for_simulator(netlist, spice_bin))
+    phase_netlist.write_text(prepare_phase_netlist(netlist, spice_bin))
 
     t0 = time.perf_counter()
     proc = run_simulator_netlist(spice_bin, phase_netlist, timeout=args.timeout)
     phase_wall = time.perf_counter() - t0
     if proc.returncode != 0:
         raise RuntimeError(proc.stderr[-3000:] or proc.stdout[-3000:])
-    vals = parse_measured_vector(proc.stdout + "\n" + proc.stderr, n_vec) if args.final_measures else read_wrdata_row(phase_data, n_vec)
+    if is_xyce(spice_bin):
+        try:
+            vals = parse_measured_vector(proc.stdout + "\n" + proc.stderr, n_vec)
+        except ValueError:
+            vals = read_xyce_print_last_row(xyce_prn_path(phase_netlist), n_vec)
+    elif args.final_measures:
+        vals = parse_measured_vector(proc.stdout + "\n" + proc.stderr, n_vec)
+    else:
+        vals = read_wrdata_row(phase_data, n_vec)
     phase_w, phase_hb, phase_readout, phase_ob, phase_y = unpack_state(vals, w, hb, readout, output_bias)
 
     t1 = time.perf_counter()
@@ -492,9 +543,28 @@ def main() -> None:
     metrics.update(update_direction_metrics((w, hb, readout, output_bias), (op_w, op_hb, op_readout, op_ob), (phase_w, phase_hb, phase_readout, phase_ob)))
     phase_eval_accuracy = None
     op_reference_eval_accuracy = None
+    initial_eval_accuracy = None
     eval_wall = 0.0
     if args.eval_samples > 0:
         t2 = time.perf_counter()
+        initial_eval_accuracy = run_eval(
+            spice_bin,
+            generated / f"{stem}_initial_eval.cir",
+            results / f"{stem}_initial_eval.dat",
+            x_test[: args.eval_samples],
+            y_test[: args.eval_samples],
+            w,
+            hb,
+            readout,
+            output_bias,
+            blocks,
+            max(1, min(args.eval_samples, 50)),
+            args.timeout,
+            linear_output=args.linear_output,
+            softmax_output=args.softmax_output,
+            local_activation="tanh",
+            relu_clip=1.0,
+        )
         phase_eval_accuracy = run_eval(
             spice_bin,
             generated / f"{stem}_phase_eval.cir",
@@ -548,6 +618,19 @@ def main() -> None:
         if eval_accuracy_abs_diff is None
         else bool(eval_accuracy_abs_diff <= args.eval_accuracy_diff_threshold)
     )
+    phase_eval_improvement = (
+        phase_eval_accuracy - initial_eval_accuracy
+        if phase_eval_accuracy is not None and initial_eval_accuracy is not None
+        else None
+    )
+    nontrivial_learning_met = (
+        None
+        if phase_eval_accuracy is None or phase_eval_improvement is None
+        else bool(
+            phase_eval_accuracy > args.random_accuracy_threshold
+            and phase_eval_improvement >= args.learning_improvement_threshold
+        )
+    )
     final_weights_path = results / f"{stem}_final_weights.npz"
     reference_weights_path = results / f"{stem}_op_reference_final_weights.npz"
     metrics_path = results / f"{stem}_equivalence_metrics.csv"
@@ -569,6 +652,7 @@ def main() -> None:
     pd.DataFrame([metrics]).to_csv(metrics_path, index=False)
     summary = {
         "simulator": version,
+        "simulator_selector": args.simulator,
         "architecture": "phase_resolved_transient_local_feature_readout",
         "status": "one_batch_equivalence_check" if args.updates == 1 else "multi_update_equivalence_check",
         "image_size": args.image_size,
@@ -596,21 +680,26 @@ def main() -> None:
         "phase_wall_time_s": phase_wall,
         "op_reference_wall_time_s": op_wall,
         "eval_wall_time_s": eval_wall,
+        "initial_eval_accuracy": initial_eval_accuracy,
         "phase_eval_accuracy": phase_eval_accuracy,
         "op_reference_eval_accuracy": op_reference_eval_accuracy,
         "eval_accuracy_abs_diff": eval_accuracy_abs_diff,
+        "phase_eval_improvement": phase_eval_improvement,
         "direction_cosine_threshold": args.direction_cosine_threshold,
         "sign_alignment_threshold": args.sign_alignment_threshold,
         "eval_accuracy_diff_threshold": args.eval_accuracy_diff_threshold,
+        "random_accuracy_threshold": args.random_accuracy_threshold,
+        "learning_improvement_threshold": args.learning_improvement_threshold,
         "direction_matches_batch_op_reference": direction_matches_reference,
         "eval_accuracy_matches_batch_op_reference": eval_matches_reference,
+        "nontrivial_learning_met": nontrivial_learning_met,
         "online_batch_size_one": args.batch_size == 1,
         "continuous_transient_contract_met": bool(args.batch_size == 1 and direction_matches_reference and (eval_matches_reference is not False)),
         "t_stop_s": t_stop,
         "transient_step_s": args.transient_step,
         "phase_s": args.phase,
         "settle_ratio": args.settle_ratio,
-        "output_mode": "measure" if args.final_measures else "wrdata",
+        "output_mode": "native_measure" if is_xyce(spice_bin) else ("measure" if args.final_measures else "wrdata"),
         "persistent_state": "local feature weights, local biases, class readout weights, and output biases are capacitor voltages with checkpoint ICs",
         "temporary_state": "feature activations, class scores, class deltas, hidden/backward feature deltas, and gradient accumulators are capacitor voltages",
         "python_role": "Python generates guiding waveforms and compares final state; it does not carry training state during the transient run.",

@@ -246,6 +246,46 @@ def test_phase_transient_numpy_eval_accuracy_is_post_transient_diagnostic(tmp_pa
         )
 
 
+def test_phase_transient_both_eval_backend_reports_spice_and_numpy(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    x = np.eye(4)
+    y = np.array([0, 1, 0, 1])
+    w = np.ones((1, 1, 4))
+    hb = np.zeros((1, 1))
+    readout = np.array([[[1.0]], [[-1.0]]])
+    output_bias = np.array([0.0, 0.0])
+
+    def fake_run_eval(*_args, **_kwargs):
+        return 0.75
+
+    monkeypatch.setattr(phase_transient, "run_eval", fake_run_eval)
+    accuracies = phase_transient.diagnostic_eval_accuracies(
+        "both",
+        "unused-spice",
+        tmp_path / "eval.cir",
+        tmp_path / "eval.dat",
+        x,
+        y,
+        (w, hb, readout, output_bias),
+        [[0, 1, 2, 3]],
+        2,
+        1.0,
+        linear_output=True,
+        softmax_output=False,
+        local_activation="tanh",
+        relu_clip=1.0,
+        relu_leak=0.01,
+        softplus_beta=10.0,
+        hidden_synapse_mode="linear",
+        readout_synapse_mode="linear",
+        synapse_clip=1.0,
+    )
+
+    assert accuracies["spice"] == pytest.approx(0.75)
+    assert accuracies["numpy"] == pytest.approx(0.5)
+    assert phase_transient.primary_eval_accuracy("both", accuracies) == pytest.approx(0.75)
+    assert phase_transient.eval_backend_abs_diff(accuracies) == pytest.approx(0.25)
+
+
 def test_phase_transient_selects_sparse_print_for_xyce_without_probes() -> None:
     assert phase_transient.select_phase_output_mode("auto", "Xyce", False, ()) == "print"
     assert phase_transient.select_phase_output_mode("auto", "Xyce", False, (1,)) == "print"

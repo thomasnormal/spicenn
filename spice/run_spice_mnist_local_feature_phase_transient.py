@@ -908,6 +908,80 @@ def diagnostic_eval_accuracy(
     raise ValueError("eval_backend must be 'spice' or 'numpy'")
 
 
+def diagnostic_eval_accuracies(
+    eval_backend: str,
+    spice_bin: str,
+    netlist_path: Path,
+    data_path: Path,
+    x_eval: np.ndarray,
+    y_eval: np.ndarray,
+    state: TrainState,
+    blocks: list[list[int]],
+    batch_size: int,
+    timeout: float,
+    **eval_kwargs,
+) -> dict[str, float]:
+    if eval_backend in {"spice", "numpy"}:
+        return {
+            eval_backend: diagnostic_eval_accuracy(
+                eval_backend,
+                spice_bin,
+                netlist_path,
+                data_path,
+                x_eval,
+                y_eval,
+                state,
+                blocks,
+                batch_size,
+                timeout,
+                **eval_kwargs,
+            )
+        }
+    if eval_backend == "both":
+        spice_accuracy = diagnostic_eval_accuracy(
+            "spice",
+            spice_bin,
+            netlist_path,
+            data_path,
+            x_eval,
+            y_eval,
+            state,
+            blocks,
+            batch_size,
+            timeout,
+            **eval_kwargs,
+        )
+        numpy_accuracy = diagnostic_eval_accuracy(
+            "numpy",
+            spice_bin,
+            netlist_path,
+            data_path,
+            x_eval,
+            y_eval,
+            state,
+            blocks,
+            batch_size,
+            timeout,
+            **eval_kwargs,
+        )
+        return {"spice": spice_accuracy, "numpy": numpy_accuracy}
+    raise ValueError("eval_backend must be 'spice', 'numpy', or 'both'")
+
+
+def primary_eval_accuracy(eval_backend: str, accuracies: dict[str, float]) -> float:
+    if eval_backend == "numpy":
+        return accuracies["numpy"]
+    if eval_backend in {"spice", "both"}:
+        return accuracies["spice"]
+    raise ValueError("eval_backend must be 'spice', 'numpy', or 'both'")
+
+
+def eval_backend_abs_diff(accuracies: dict[str, float]) -> float | None:
+    if "spice" in accuracies and "numpy" in accuracies:
+        return abs(accuracies["spice"] - accuracies["numpy"])
+    return None
+
+
 def select_phase_output_mode(
     requested_mode: str,
     spice_bin: str,
@@ -1009,7 +1083,7 @@ def main() -> None:
     ap.add_argument("--eval-accuracy-diff-threshold", type=float, default=0.0)
     ap.add_argument("--random-accuracy-threshold", type=float, default=0.10)
     ap.add_argument("--learning-improvement-threshold", type=float, default=0.02)
-    ap.add_argument("--eval-backend", choices=["spice", "numpy"], default="spice")
+    ap.add_argument("--eval-backend", choices=["spice", "numpy", "both"], default="spice")
     ap.add_argument("--reference-mode", choices=["spice", "none"], default="spice")
     ap.add_argument("--phase-output-mode", choices=["auto", "measure", "print", "control_measure", "wrdata"], default="auto")
     ap.add_argument("--update-mode", choices=["phased", "direct"], default="phased")
@@ -1252,12 +1326,21 @@ def main() -> None:
     phase_eval_accuracy = None
     op_reference_eval_accuracy = None
     initial_eval_accuracy = None
+    spice_initial_eval_accuracy = None
+    spice_phase_eval_accuracy = None
+    spice_op_reference_eval_accuracy = None
+    numpy_initial_eval_accuracy = None
+    numpy_phase_eval_accuracy = None
+    numpy_op_reference_eval_accuracy = None
+    initial_eval_backend_abs_diff = None
+    phase_eval_backend_abs_diff = None
+    op_reference_eval_backend_abs_diff = None
     eval_wall = 0.0
     if args.eval_samples > 0:
         t2 = time.perf_counter()
         initial_eval_netlist = generated / f"{stem}_initial_eval.cir"
         phase_eval_netlist = generated / f"{stem}_phase_eval.cir"
-        if args.eval_backend == "spice":
+        if args.eval_backend in {"spice", "both"}:
             owned_netlists.extend([initial_eval_netlist, phase_eval_netlist])
         eval_kwargs = {
             "linear_output": args.linear_output,
@@ -1270,7 +1353,7 @@ def main() -> None:
             "readout_synapse_mode": args.readout_synapse_mode,
             "synapse_clip": args.synapse_clip,
         }
-        initial_eval_accuracy = diagnostic_eval_accuracy(
+        initial_evals = diagnostic_eval_accuracies(
             args.eval_backend,
             spice_bin,
             initial_eval_netlist,
@@ -1283,7 +1366,11 @@ def main() -> None:
             args.timeout,
             **eval_kwargs,
         )
-        phase_eval_accuracy = diagnostic_eval_accuracy(
+        initial_eval_accuracy = primary_eval_accuracy(args.eval_backend, initial_evals)
+        spice_initial_eval_accuracy = initial_evals.get("spice")
+        numpy_initial_eval_accuracy = initial_evals.get("numpy")
+        initial_eval_backend_abs_diff = eval_backend_abs_diff(initial_evals)
+        phase_evals = diagnostic_eval_accuracies(
             args.eval_backend,
             spice_bin,
             phase_eval_netlist,
@@ -1296,12 +1383,16 @@ def main() -> None:
             args.timeout,
             **eval_kwargs,
         )
+        phase_eval_accuracy = primary_eval_accuracy(args.eval_backend, phase_evals)
+        spice_phase_eval_accuracy = phase_evals.get("spice")
+        numpy_phase_eval_accuracy = phase_evals.get("numpy")
+        phase_eval_backend_abs_diff = eval_backend_abs_diff(phase_evals)
         if args.reference_mode == "spice":
             assert op_w is not None and op_hb is not None and op_readout is not None and op_ob is not None
             op_reference_eval_netlist = generated / f"{stem}_op_reference_eval.cir"
-            if args.eval_backend == "spice":
+            if args.eval_backend in {"spice", "both"}:
                 owned_netlists.append(op_reference_eval_netlist)
-            op_reference_eval_accuracy = diagnostic_eval_accuracy(
+            op_reference_evals = diagnostic_eval_accuracies(
                 args.eval_backend,
                 spice_bin,
                 op_reference_eval_netlist,
@@ -1314,14 +1405,18 @@ def main() -> None:
                 args.timeout,
                 **eval_kwargs,
             )
+            op_reference_eval_accuracy = primary_eval_accuracy(args.eval_backend, op_reference_evals)
+            spice_op_reference_eval_accuracy = op_reference_evals.get("spice")
+            numpy_op_reference_eval_accuracy = op_reference_evals.get("numpy")
+            op_reference_eval_backend_abs_diff = eval_backend_abs_diff(op_reference_evals)
         if args.eval_probe_updates:
             for row in probe_rows:
                 update = int(row["update"])
                 probe_w, probe_hb, probe_readout, probe_ob = probe_phase_states[update]
                 phase_probe_eval_netlist = generated / f"{stem}_probe_{update}_phase_eval.cir"
-                if args.eval_backend == "spice":
+                if args.eval_backend in {"spice", "both"}:
                     owned_netlists.append(phase_probe_eval_netlist)
-                phase_probe_eval = diagnostic_eval_accuracy(
+                phase_probe_evals = diagnostic_eval_accuracies(
                     args.eval_backend,
                     spice_bin,
                     phase_probe_eval_netlist,
@@ -1334,7 +1429,11 @@ def main() -> None:
                     args.timeout,
                     **eval_kwargs,
                 )
+                phase_probe_eval = primary_eval_accuracy(args.eval_backend, phase_probe_evals)
                 row["phase_eval_accuracy"] = phase_probe_eval
+                row["phase_spice_eval_accuracy"] = phase_probe_evals.get("spice")
+                row["phase_numpy_eval_accuracy"] = phase_probe_evals.get("numpy")
+                row["phase_eval_backend_abs_diff"] = eval_backend_abs_diff(phase_probe_evals)
                 row["phase_eval_improvement"] = (
                     phase_probe_eval - initial_eval_accuracy
                     if initial_eval_accuracy is not None
@@ -1347,9 +1446,9 @@ def main() -> None:
                 else:
                     op_probe_w, op_probe_hb, op_probe_readout, op_probe_ob = op_probe_state
                     op_probe_eval_netlist = generated / f"{stem}_probe_{update}_op_reference_eval.cir"
-                    if args.eval_backend == "spice":
+                    if args.eval_backend in {"spice", "both"}:
                         owned_netlists.append(op_probe_eval_netlist)
-                    op_probe_eval = diagnostic_eval_accuracy(
+                    op_probe_evals = diagnostic_eval_accuracies(
                         args.eval_backend,
                         spice_bin,
                         op_probe_eval_netlist,
@@ -1362,7 +1461,11 @@ def main() -> None:
                         args.timeout,
                         **eval_kwargs,
                     )
+                    op_probe_eval = primary_eval_accuracy(args.eval_backend, op_probe_evals)
                     row["op_reference_eval_accuracy"] = op_probe_eval
+                    row["op_reference_spice_eval_accuracy"] = op_probe_evals.get("spice")
+                    row["op_reference_numpy_eval_accuracy"] = op_probe_evals.get("numpy")
+                    row["op_reference_eval_backend_abs_diff"] = eval_backend_abs_diff(op_probe_evals)
                     row["eval_accuracy_abs_diff"] = abs(phase_probe_eval - op_probe_eval)
         eval_wall = time.perf_counter() - t2
     eval_accuracy_abs_diff = (
@@ -1485,6 +1588,15 @@ def main() -> None:
         "initial_eval_accuracy": initial_eval_accuracy,
         "phase_eval_accuracy": phase_eval_accuracy,
         "op_reference_eval_accuracy": op_reference_eval_accuracy,
+        "spice_initial_eval_accuracy": spice_initial_eval_accuracy,
+        "spice_phase_eval_accuracy": spice_phase_eval_accuracy,
+        "spice_op_reference_eval_accuracy": spice_op_reference_eval_accuracy,
+        "numpy_initial_eval_accuracy": numpy_initial_eval_accuracy,
+        "numpy_phase_eval_accuracy": numpy_phase_eval_accuracy,
+        "numpy_op_reference_eval_accuracy": numpy_op_reference_eval_accuracy,
+        "initial_eval_backend_abs_diff": initial_eval_backend_abs_diff,
+        "phase_eval_backend_abs_diff": phase_eval_backend_abs_diff,
+        "op_reference_eval_backend_abs_diff": op_reference_eval_backend_abs_diff,
         "eval_accuracy_abs_diff": eval_accuracy_abs_diff,
         "phase_eval_improvement": phase_eval_improvement,
         "direction_cosine_threshold": args.direction_cosine_threshold,

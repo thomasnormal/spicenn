@@ -49,6 +49,7 @@ def test_phase_transient_cli_exposes_agreement_gates() -> None:
     assert "--hidden-synapse-mode" in proc.stdout
     assert "--readout-synapse-mode" in proc.stdout
     assert "--reference-mode" in proc.stdout
+    assert "--phase-output-mode" in proc.stdout
 
 
 def test_phase_transient_x_yce_print_reader_extracts_final_transient_row(tmp_path: Path) -> None:
@@ -151,6 +152,17 @@ def test_phase_transient_empty_reference_metrics_are_json_nulls() -> None:
 
     assert metrics["state_update_direction_cosine"] is None
     assert metrics["state_update_sign_alignment_fraction"] is None
+
+
+def test_phase_transient_selects_sparse_print_for_xyce_without_probes() -> None:
+    assert phase_transient.select_phase_output_mode("auto", "Xyce", False, ()) == "print"
+    assert phase_transient.select_phase_output_mode("auto", "Xyce", False, (1,)) == "measure"
+    assert phase_transient.select_phase_output_mode("auto", "ngspice", True, ()) == "control_measure"
+    assert phase_transient.select_phase_output_mode("auto", "ngspice", False, ()) == "wrdata"
+    assert phase_transient.select_phase_output_mode("measure", "Xyce", False, ()) == "measure"
+
+    with pytest.raises(ValueError, match="phase-output-mode print"):
+        phase_transient.select_phase_output_mode("print", "Xyce", False, (1,))
 
 
 def test_phase_transient_probe_update_parser_supports_ranges_and_powers() -> None:
@@ -475,6 +487,7 @@ def test_phase_transient_print_mode_uses_native_tran_print(tmp_path: Path) -> No
     )
 
     assert ".tran " in netlist
+    assert ".options output OUTPUTTIMEPOINTS=" in netlist
     assert ".print TRAN " in netlist
     assert ".control" not in netlist
     assert "wrdata" not in netlist

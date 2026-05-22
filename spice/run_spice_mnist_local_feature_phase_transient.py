@@ -432,6 +432,7 @@ def make_phase_transient_netlist(
         if probe_updates:
             raise ValueError("probe measurements require 'measure' or 'control_measure' output mode")
         lines += [
+            f".options output OUTPUTTIMEPOINTS={measure_time:.12g}",
             f".tran {transient_step:.12g} {t_stop:.12g} uic",
             ".print TRAN " + " ".join(vectors),
         ]
@@ -548,6 +549,21 @@ def empty_reference_metrics() -> dict[str, float | None]:
     return metrics
 
 
+def select_phase_output_mode(
+    requested_mode: str,
+    spice_bin: str,
+    final_measures: bool,
+    probe_updates: tuple[int, ...],
+) -> str:
+    if requested_mode != "auto":
+        if requested_mode == "print" and probe_updates:
+            raise ValueError("--phase-output-mode print does not support --probe-updates")
+        return requested_mode
+    if is_xyce(spice_bin):
+        return "measure" if probe_updates else "print"
+    return "control_measure" if final_measures or probe_updates else "wrdata"
+
+
 def load_or_init_weights(
     init_weights: str,
     rng: np.random.Generator,
@@ -637,6 +653,7 @@ def main() -> None:
     ap.add_argument("--random-accuracy-threshold", type=float, default=0.10)
     ap.add_argument("--learning-improvement-threshold", type=float, default=0.02)
     ap.add_argument("--reference-mode", choices=["spice", "none"], default="spice")
+    ap.add_argument("--phase-output-mode", choices=["auto", "measure", "print", "control_measure", "wrdata"], default="auto")
     ap.add_argument("--final-measures", action="store_true")
     ap.add_argument(
         "--probe-updates",
@@ -720,7 +737,7 @@ def main() -> None:
     phase_data = results / f"{stem}.dat"
     op_netlist = generated / f"{stem}_op_reference.cir"
     op_data = results / f"{stem}_op_reference.dat"
-    phase_output_mode = "measure" if is_xyce(spice_bin) else ("control_measure" if args.final_measures or probe_updates else "wrdata")
+    phase_output_mode = select_phase_output_mode(args.phase_output_mode, spice_bin, args.final_measures, probe_updates)
 
     netlist, n_vec, t_stop = make_phase_transient_netlist(
         x_batch,
@@ -776,6 +793,9 @@ def main() -> None:
                 raise
             vals = read_xyce_print_last_row(xyce_prn_path(phase_netlist), n_vec)
         probe_vals = parse_probe_measurements(measured_text, probe_updates, n_vec) if probe_updates else {}
+    elif phase_output_mode == "print":
+        vals = read_xyce_print_last_row(xyce_prn_path(phase_netlist), n_vec)
+        probe_vals = {}
     else:
         vals = read_wrdata_row(phase_data, n_vec)
         probe_vals = {}
@@ -1074,6 +1094,7 @@ def main() -> None:
         "readout_synapse_mode": args.readout_synapse_mode,
         "synapse_clip": args.synapse_clip,
         "reference_mode": args.reference_mode,
+        "phase_output_mode_requested": args.phase_output_mode,
         "init_weights": args.init_weights,
         "phase_netlist": str(phase_netlist),
         "phase_data": str(phase_data),

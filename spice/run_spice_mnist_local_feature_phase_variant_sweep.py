@@ -102,6 +102,8 @@ def build_variant_command(
         str(args.transient_step),
         "--timeout",
         str(args.timeout),
+        "--max-transient-points",
+        str(getattr(args, "max_transient_points", 0)),
         "--probe-updates",
         args.probe_updates,
         "--local-activation",
@@ -218,6 +220,7 @@ def main() -> None:
     ap.add_argument("--settle-ratio", type=float, default=80.0)
     ap.add_argument("--transient-step", type=float, default=50e-12)
     ap.add_argument("--timeout", type=float, default=600.0)
+    ap.add_argument("--max-transient-points", type=int, default=0)
     ap.add_argument("--probe-updates", default="1,2,4,8,final")
     ap.add_argument("--activations", default="tanh,diff-clipped-relu,relu,clipped-relu")
     ap.add_argument("--relu-clips", default="1.0")

@@ -67,6 +67,7 @@ def test_phase_transient_cli_exposes_agreement_gates() -> None:
     assert "--readout-class-centering" in proc.stdout
     assert "--eval-backend" in proc.stdout
     assert "--simulator-extra-args" in proc.stdout
+    assert "--max-transient-points" in proc.stdout
 
 
 def test_phase_transient_x_yce_print_reader_extracts_final_transient_row(tmp_path: Path) -> None:
@@ -96,6 +97,22 @@ def test_phase_transient_x_yce_print_rows_support_probe_time_lookup(tmp_path: Pa
     assert rows[0][0] == pytest.approx(1.0e-9)
     assert parsed[1] == pytest.approx([1.0, -1.0])
     assert parsed[2] == pytest.approx([1.25, -0.35])
+
+
+def test_phase_transient_estimates_transient_points_conservatively() -> None:
+    assert phase_transient.estimate_transient_points(1.0e-9, 0.25e-9) == 5
+    assert phase_transient.estimate_transient_points(1.01e-9, 0.25e-9) == 6
+
+    with pytest.raises(ValueError, match="transient_step"):
+        phase_transient.estimate_transient_points(1.0e-9, 0.0)
+
+
+def test_phase_transient_point_budget_fails_before_large_runs() -> None:
+    phase_transient.validate_transient_point_budget(101, 0)
+    phase_transient.validate_transient_point_budget(100, 100)
+
+    with pytest.raises(ValueError, match="estimated transient points"):
+        phase_transient.validate_transient_point_budget(101, 100)
 
 
 def test_eval_accuracy_improved_requires_finite_strict_improvement() -> None:
@@ -571,6 +588,7 @@ def test_phase_variant_sweep_dry_command_preserves_online_contract() -> None:
         settle_ratio=80.0,
         transient_step=50e-12,
         timeout=600.0,
+        max_transient_points=500,
         probe_updates="1,2,4,8",
         tag="sweep",
         relu_leak=0.01,
@@ -614,6 +632,8 @@ def test_phase_variant_sweep_dry_command_preserves_online_contract() -> None:
     assert command[command.index("--readout-synapse-mode") + 1] == "hard-clipped"
     assert "--synapse-clip" in command
     assert command[command.index("--synapse-clip") + 1] == "0.25"
+    assert "--max-transient-points" in command
+    assert command[command.index("--max-transient-points") + 1] == "500"
     assert "--eval-probe-updates" in command
     assert "synclip0_25" in command[command.index("--tag") + 1]
 

@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import math
 import os
 import re
 import time
@@ -63,6 +64,24 @@ def phase_pulse_area(phase: float, edge: float) -> float:
     if edge < 0.0:
         raise ValueError("edge must be non-negative")
     return phase + edge
+
+
+def estimate_transient_points(t_stop: float, transient_step: float) -> int:
+    if transient_step <= 0.0:
+        raise ValueError("transient_step must be positive")
+    if t_stop < 0.0:
+        raise ValueError("t_stop must be non-negative")
+    return int(math.ceil(t_stop / transient_step)) + 1
+
+
+def validate_transient_point_budget(estimated_points: int, max_points: int) -> None:
+    if max_points < 0:
+        raise ValueError("--max-transient-points must be non-negative")
+    if max_points and estimated_points > max_points:
+        raise ValueError(
+            f"estimated transient points ({estimated_points}) exceed --max-transient-points ({max_points}); "
+            "reduce --updates, increase --transient-step, or raise the budget intentionally"
+        )
 
 
 def phase_state_descriptions(update_mode: str) -> dict[str, str]:
@@ -1370,6 +1389,12 @@ def main() -> None:
     ap.add_argument("--seed", type=int, default=0)
     ap.add_argument("--timeout", type=float, default=300.0)
     ap.add_argument("--simulator", default=None)
+    ap.add_argument(
+        "--max-transient-points",
+        type=int,
+        default=0,
+        help="Optional preflight guard on ceil(t_stop / transient_step) + 1; 0 disables the guard.",
+    )
     ap.add_argument("--init-weights", default="")
     ap.add_argument("--phase", type=float, default=2e-9)
     ap.add_argument("--gap", type=float, default=0.2e-9)
@@ -1450,6 +1475,8 @@ def main() -> None:
         raise ValueError("--synapse-clip must be positive")
     if args.phase <= 0 or args.settle_ratio <= 0:
         raise ValueError("--phase and --settle-ratio must be positive")
+    if args.max_transient_points < 0:
+        raise ValueError("--max-transient-points must be non-negative")
     if args.direction_cosine_threshold < -1 or args.direction_cosine_threshold > 1:
         raise ValueError("--direction-cosine-threshold must be between -1 and 1")
     if args.sign_alignment_threshold < 0 or args.sign_alignment_threshold > 1:
@@ -1469,6 +1496,15 @@ def main() -> None:
         raise ValueError("--update-mode direct requires --batch-size 1")
     if args.strict_fully_on_device:
         validate_strict_fully_on_device_args(args.batch_size, args.reference_mode, args.init_weights)
+    _preflight_phases, _preflight_sample_starts, preflight_t_stop = make_phase_schedule(
+        args.batch_size,
+        args.updates,
+        args.phase,
+        args.gap,
+        args.update_mode == "direct",
+    )
+    estimated_transient_points = estimate_transient_points(preflight_t_stop, args.transient_step)
+    validate_transient_point_budget(estimated_transient_points, args.max_transient_points)
     if args.simulator_extra_args:
         os.environ[SPICE_SIMULATOR_ARGS_ENV] = args.simulator_extra_args
 
@@ -2041,6 +2077,9 @@ def main() -> None:
         ),
         "t_stop_s": t_stop,
         "transient_step_s": args.transient_step,
+        "estimated_transient_points": estimated_transient_points,
+        "max_transient_points": args.max_transient_points,
+        "phase_output_vector_count": n_vec,
         "phase_s": args.phase,
         "settle_ratio": args.settle_ratio,
         "output_mode": phase_output_mode,

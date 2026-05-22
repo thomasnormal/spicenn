@@ -301,6 +301,63 @@ def test_fast_online_variant_sweep_row_reports_best_probe_and_improvement() -> N
     assert row["promotion_probe_eval_accuracy"] == row["probe_eval_accuracy_u2"]
 
 
+def test_fast_online_strict_promotion_defaults_to_analytic_phase_clock() -> None:
+    args = argparse.Namespace(
+        train_samples=2,
+        eval_samples=2,
+        image_size=2,
+        block_size=2,
+        stride=2,
+        channels=1,
+        promotion_updates=2,
+        promotion_simulator="Xyce",
+        promotion_phase=0.5e-9,
+        promotion_gap=0.05e-9,
+        promotion_edge=5e-12,
+        promotion_settle_ratio=20.0,
+        promotion_transient_step=200e-12,
+        promotion_timeout=240.0,
+        promotion_max_transient_points=2000,
+        promotion_max_source_pwl_points=5000,
+        promotion_probe_updates="",
+        promotion_tag_prefix="promote",
+        linear_output=False,
+        softmax_output=True,
+        relu_leak=0.01,
+        softplus_beta=10.0,
+        derivative_floor=0.0,
+        derivative_gate_threshold=1e-6,
+        readout_feedback_clip=0.05,
+        softmax_negative_scale=1.0,
+        softmax_error_centering="none",
+        softmax_competition_mode="all",
+        softmax_competitor_power=2,
+        softmax_error_gate="none",
+        softmax_margin=1.0,
+        readout_class_centering="none",
+    )
+    variant = {
+        "local_activation": "tanh",
+        "relu_clip": 1.0,
+        "activation_derivative": "exact",
+        "readout_feedback_mode": "full-readout",
+        "hidden_synapse_mode": "linear",
+        "readout_synapse_mode": "linear",
+        "synapse_clip": 1.0,
+        "lr": 0.8,
+        "output_bias_update_scale": 0.0,
+        "readout_update_scale": 0.25,
+        "local_update_scale": 1.0,
+        "state_decay": 0.0,
+        "softmax_temperature": 4.0,
+        "tag": "row",
+    }
+
+    command = fast_sweep.strict_phase_promotion_command(args, variant)
+
+    assert command[command.index("--phase-clock-mode") + 1] == "analytic"
+
+
 def test_fast_online_variant_sweep_selects_best_promotion_variant() -> None:
     rows = [
         {"tag": "late", "final_eval_accuracy": 0.9, "promotion_probe_eval_accuracy": 0.4, "eval_improvement": 0.8},

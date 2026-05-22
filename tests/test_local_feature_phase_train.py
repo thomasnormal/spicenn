@@ -66,6 +66,23 @@ def test_phase_transient_x_yce_print_reader_extracts_final_transient_row(tmp_pat
     assert phase_transient.read_xyce_print_last_row(path, 2) == pytest.approx([1.25, -0.35])
 
 
+def test_phase_transient_x_yce_print_rows_support_probe_time_lookup(tmp_path: Path) -> None:
+    path = tmp_path / "deck.cir.prn"
+    path.write_text(
+        "Index       TIME          V(A)          V(B)\n"
+        "0        1.0e-9         1.00000000e+00 -1.00000000e+00\n"
+        "1        2.0e-9         1.25000000e+00 -3.50000000e-01\n"
+        "End of Xyce(TM) Simulation\n"
+    )
+
+    rows = phase_transient.read_xyce_print_rows(path, 2)
+    parsed = phase_transient.xyce_print_vectors_at_times(rows, {1: 1.0e-9, 2: 2.0e-9})
+
+    assert rows[0][0] == pytest.approx(1.0e-9)
+    assert parsed[1] == pytest.approx([1.0, -1.0])
+    assert parsed[2] == pytest.approx([1.25, -0.35])
+
+
 def test_eval_accuracy_improved_requires_finite_strict_improvement() -> None:
     assert phase_train.eval_accuracy_improved(0.9, None)
     assert phase_train.eval_accuracy_improved(0.91, 0.9)
@@ -170,13 +187,12 @@ def test_phase_transient_phase_only_update_metrics_keep_move_magnitude() -> None
 
 def test_phase_transient_selects_sparse_print_for_xyce_without_probes() -> None:
     assert phase_transient.select_phase_output_mode("auto", "Xyce", False, ()) == "print"
-    assert phase_transient.select_phase_output_mode("auto", "Xyce", False, (1,)) == "measure"
+    assert phase_transient.select_phase_output_mode("auto", "Xyce", False, (1,)) == "print"
+    assert phase_transient.select_phase_output_mode("auto", "Xyce", True, (1,)) == "measure"
     assert phase_transient.select_phase_output_mode("auto", "ngspice", True, ()) == "control_measure"
     assert phase_transient.select_phase_output_mode("auto", "ngspice", False, ()) == "wrdata"
     assert phase_transient.select_phase_output_mode("measure", "Xyce", False, ()) == "measure"
-
-    with pytest.raises(ValueError, match="phase-output-mode print"):
-        phase_transient.select_phase_output_mode("print", "Xyce", False, (1,))
+    assert phase_transient.select_phase_output_mode("print", "Xyce", False, (1,)) == "print"
 
 
 def test_phase_transient_probe_update_parser_supports_ranges_and_powers() -> None:
@@ -759,6 +775,49 @@ def test_phase_transient_print_mode_uses_native_tran_print(tmp_path: Path) -> No
     assert ".print TRAN " in netlist
     assert ".control" not in netlist
     assert "wrdata" not in netlist
+
+
+def test_phase_transient_print_mode_supports_sparse_probe_timepoints(tmp_path: Path) -> None:
+    x = np.zeros((2, 4))
+    y = np.array([0, 1])
+    w = np.zeros((1, 1, 4))
+    hb = np.zeros((1, 1))
+    readout = np.zeros((2, 1, 1))
+    output_bias = np.zeros(2)
+
+    netlist, _n_vec, _t_stop = phase_transient.make_phase_transient_netlist(
+        x,
+        y,
+        w,
+        hb,
+        readout,
+        output_bias,
+        [[0, 1, 2, 3]],
+        0.8,
+        tmp_path / "out.dat",
+        False,
+        1,
+        2,
+        1e-9,
+        0.1e-9,
+        5e-12,
+        40.0,
+        20e-12,
+        1e-12,
+        1e-12,
+        1e-12,
+        1e18,
+        True,
+        "print",
+        (1, 2),
+        update_mode="direct",
+    )
+
+    output_line = next(line for line in netlist.splitlines() if line.startswith(".options output OUTPUTTIMEPOINTS="))
+    assert output_line.count(",") == 2
+    assert ".print TRAN " in netlist
+    assert ".measure TRAN p000_00000" not in netlist
+    assert ".control" not in netlist
 
 
 def test_phase_transient_measure_mode_uses_top_level_measures(tmp_path: Path) -> None:

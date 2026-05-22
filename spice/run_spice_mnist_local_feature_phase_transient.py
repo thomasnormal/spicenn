@@ -214,7 +214,14 @@ def parse_probe_measurements(stdout: str, probe_updates: tuple[int, ...], n_vec:
 
 
 def read_xyce_print_last_row(path: Path, expected_values: int) -> np.ndarray:
-    last: np.ndarray | None = None
+    rows = read_xyce_print_rows(path, expected_values)
+    if not rows:
+        raise ValueError(f"no Xyce print data rows found in {path}")
+    return rows[-1][1]
+
+
+def read_xyce_print_rows(path: Path, expected_values: int) -> list[tuple[float, np.ndarray]]:
+    rows: list[tuple[float, np.ndarray]] = []
     for raw in path.read_text().splitlines():
         parts = raw.split()
         if not parts or parts[0].lower() in {"index", "end"}:
@@ -226,10 +233,28 @@ def read_xyce_print_last_row(path: Path, expected_values: int) -> np.ndarray:
             continue
         if values.size < expected_values:
             raise ValueError(f"Xyce print row in {path} had {values.size} values, expected {expected_values}")
-        last = values[-expected_values:]
-    if last is None:
+        rows.append((float(values[0]), values[-expected_values:]))
+    if not rows:
         raise ValueError(f"no Xyce print data rows found in {path}")
-    return last
+    return rows
+
+
+def xyce_print_vectors_at_times(
+    rows: list[tuple[float, np.ndarray]],
+    requested_times: dict[int, float],
+) -> dict[int, np.ndarray]:
+    if not requested_times:
+        return {}
+    out: dict[int, np.ndarray] = {}
+    for update, target_time in requested_times.items():
+        row_time, values = min(rows, key=lambda row: abs(row[0] - target_time))
+        tolerance = max(1e-15, abs(target_time) * 1e-6)
+        if abs(row_time - target_time) > tolerance:
+            raise ValueError(
+                f"no Xyce print row near probe update {update} time {target_time:.12g}; closest was {row_time:.12g}"
+            )
+        out[update] = values
+    return out
 
 
 def prepare_phase_netlist(netlist: str, spice_bin: str) -> str:
@@ -507,10 +532,10 @@ def make_phase_transient_netlist(
     probe_times = probe_measure_times(phases["acc" if direct_update else "clear"], probe_updates, gap, t_stop, measure_time)
     lines += ["", ".options method=gear maxord=2"]
     if output_mode == "print":
-        if probe_updates:
-            raise ValueError("probe measurements require 'measure' or 'control_measure' output mode")
+        print_times = sorted({measure_time, *probe_times.values()})
+        print_time_list = ",".join(f"{time:.12g}" for time in print_times)
         lines += [
-            f".options output OUTPUTTIMEPOINTS={measure_time:.12g}",
+            f".options output OUTPUTTIMEPOINTS={print_time_list}",
             f".tran {transient_step:.12g} {t_stop:.12g} uic",
             ".print TRAN " + " ".join(vectors),
         ]
@@ -746,11 +771,9 @@ def select_phase_output_mode(
     probe_updates: tuple[int, ...],
 ) -> str:
     if requested_mode != "auto":
-        if requested_mode == "print" and probe_updates:
-            raise ValueError("--phase-output-mode print does not support --probe-updates")
         return requested_mode
     if is_xyce(spice_bin):
-        return "measure" if probe_updates else "print"
+        return "measure" if final_measures else "print"
     return "control_measure" if final_measures or probe_updates else "wrdata"
 
 
@@ -992,8 +1015,27 @@ def main() -> None:
             vals = read_xyce_print_last_row(xyce_prn_path(phase_netlist), n_vec)
         probe_vals = parse_probe_measurements(measured_text, probe_updates, n_vec) if probe_updates else {}
     elif phase_output_mode == "print":
-        vals = read_xyce_print_last_row(xyce_prn_path(phase_netlist), n_vec)
-        probe_vals = {}
+        xyce_rows = read_xyce_print_rows(xyce_prn_path(phase_netlist), n_vec)
+        vals = xyce_rows[-1][1]
+        if probe_updates:
+            phases, _sample_starts, _t_stop = make_phase_schedule(
+                args.batch_size,
+                args.updates,
+                args.phase,
+                args.gap,
+                args.update_mode == "direct",
+            )
+            measure_time = max(0.0, t_stop - args.transient_step)
+            probe_times = probe_measure_times(
+                phases["acc" if args.update_mode == "direct" else "clear"],
+                probe_updates,
+                args.gap,
+                t_stop,
+                measure_time,
+            )
+            probe_vals = xyce_print_vectors_at_times(xyce_rows, probe_times)
+        else:
+            probe_vals = {}
     else:
         vals = read_wrdata_row(phase_data, n_vec)
         probe_vals = {}

@@ -114,12 +114,15 @@ def make_train_netlist(
     softmax_negative_scale=1.0,
     softmax_error_centering="none",
     softmax_temperature=1.0,
+    state_decay=0.0,
     readout_class_centering="none",
 ):
     if softmax_negative_scale < 0:
         raise ValueError("softmax_negative_scale must be non-negative")
     if softmax_temperature <= 0:
         raise ValueError("softmax_temperature must be positive")
+    if state_decay < 0 or state_decay >= 1:
+        raise ValueError("state_decay must be in [0, 1)")
     if softmax_error_centering not in {"none", "mean"}:
         raise ValueError("softmax_error_centering must be 'none' or 'mean'")
     if readout_class_centering not in {"none", "mean"}:
@@ -134,6 +137,7 @@ def make_train_netlist(
         f".param BS={batch}",
         f".param SOFTMAX_NEGATIVE_SCALE={softmax_negative_scale:.12g}",
         f".param SOFTMAX_TEMPERATURE={softmax_temperature:.12g}",
+        f".param STATE_DECAY={state_decay:.12g}",
         "",
     ]
     for s in range(batch):
@@ -255,16 +259,16 @@ def make_train_netlist(
         for c in range(channels):
             for p, idx in enumerate(idxs):
                 grad = " + ".join(f"V(dh{s}_{b}_{c})*V(x{s}_{idx})" for s in range(batch))
-                lines.append(f"Bnw{b}_{c}_{p} nw{b}_{c}_{p} 0 V = V(w{b}_{c}_{p}) + {{LR}}*(({grad})/{{BS}})")
+                lines.append(f"Bnw{b}_{c}_{p} nw{b}_{c}_{p} 0 V = V(w{b}_{c}_{p})*(1-{{STATE_DECAY}}) + {{LR}}*(({grad})/{{BS}})")
             grad_b = " + ".join(f"V(dh{s}_{b}_{c})" for s in range(batch))
-            lines.append(f"Bnhb{b}_{c} nhb{b}_{c} 0 V = V(hb{b}_{c}) + {{LR}}*(({grad_b})/{{BS}})")
+            lines.append(f"Bnhb{b}_{c} nhb{b}_{c} 0 V = V(hb{b}_{c})*(1-{{STATE_DECAY}}) + {{LR}}*(({grad_b})/{{BS}})")
     for k in range(n_classes):
         for b in range(n_blocks):
             for c in range(channels):
                 grad = " + ".join(f"V(d{s}_{k})*{feature_expr(s, b, c, channels)}" for s in range(batch))
-                lines.append(f"Bnv{k}_{b}_{c} nv{k}_{b}_{c} 0 V = V(v{k}_{b}_{c}) + {{LR}}*(({grad})/{{BS}})")
+                lines.append(f"Bnv{k}_{b}_{c} nv{k}_{b}_{c} 0 V = V(v{k}_{b}_{c})*(1-{{STATE_DECAY}}) + {{LR}}*(({grad})/{{BS}})")
         grad_o = " + ".join(f"V(d{s}_{k})" for s in range(batch))
-        lines.append(f"Bnob{k} nob{k} 0 V = V(ob{k}) + {{LR}}*(({grad_o})/{{BS}})")
+        lines.append(f"Bnob{k} nob{k} 0 V = V(ob{k})*(1-{{STATE_DECAY}}) + {{LR}}*(({grad_o})/{{BS}})")
     vectors = [f"V(nw{b}_{c}_{p})" for b in range(n_blocks) for c in range(channels) for p in range(block_len)]
     vectors += [f"V(nhb{b}_{c})" for b in range(n_blocks) for c in range(channels)]
     vectors += [f"V(nv{k}_{b}_{c})" for k in range(n_classes) for b in range(n_blocks) for c in range(channels)]
@@ -396,6 +400,7 @@ def run_train_batch(
     softmax_negative_scale=1.0,
     softmax_error_centering="none",
     softmax_temperature=1.0,
+    state_decay=0.0,
     readout_class_centering="none",
 ):
     netlist_path.write_text(
@@ -427,6 +432,7 @@ def run_train_batch(
                 softmax_negative_scale,
                 softmax_error_centering,
                 softmax_temperature,
+                state_decay,
                 readout_class_centering,
             ),
             spice_bin,
@@ -621,6 +627,7 @@ def main():
     ap.add_argument("--derivative-gate-threshold", type=float, default=1e-6)
     ap.add_argument("--readout-feedback-mode", choices=["readout", "full-readout", "exact", "sign-readout", "sign", "clipped-readout", "clipped"], default="readout")
     ap.add_argument("--readout-feedback-clip", type=float, default=0.05)
+    ap.add_argument("--state-decay", type=float, default=0.0)
     ap.add_argument("--softmax-negative-scale", type=float, default=1.0)
     ap.add_argument("--softmax-error-centering", choices=["none", "mean"], default="none")
     ap.add_argument("--softmax-temperature", type=float, default=1.0)
@@ -665,6 +672,8 @@ def main():
         raise ValueError("--derivative-gate-threshold must be non-negative")
     if args.readout_feedback_clip <= 0:
         raise ValueError("--readout-feedback-clip must be positive")
+    if args.state_decay < 0 or args.state_decay >= 1:
+        raise ValueError("--state-decay must be in [0, 1)")
     if args.softmax_negative_scale < 0:
         raise ValueError("--softmax-negative-scale must be non-negative")
     if args.softmax_temperature <= 0:
@@ -806,6 +815,7 @@ def main():
                     args.softmax_negative_scale,
                     args.softmax_error_centering,
                     args.softmax_temperature,
+                    args.state_decay,
                     args.readout_class_centering,
                 )
                 completed_train_batches += 1
@@ -910,6 +920,7 @@ def main():
         "derivative_gate_threshold": args.derivative_gate_threshold,
         "readout_feedback_mode": args.readout_feedback_mode,
         "readout_feedback_clip": args.readout_feedback_clip,
+        "state_decay": args.state_decay,
         "softmax_negative_scale": args.softmax_negative_scale,
         "softmax_error_centering": args.softmax_error_centering,
         "softmax_temperature": args.softmax_temperature,

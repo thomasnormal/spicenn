@@ -56,6 +56,7 @@ def test_phase_transient_cli_exposes_agreement_gates() -> None:
     assert "--output-bias-update-scale" in proc.stdout
     assert "--readout-update-scale" in proc.stdout
     assert "--local-update-scale" in proc.stdout
+    assert "--state-decay" in proc.stdout
     assert "--softmax-negative-scale" in proc.stdout
     assert "--softmax-error-centering" in proc.stdout
     assert "--softmax-temperature" in proc.stdout
@@ -931,6 +932,56 @@ def test_batch_op_softmax_negative_scale_matches_phase_error_expr(tmp_path: Path
         )
 
 
+def test_batch_op_state_decay_matches_phase_update_shape(tmp_path: Path) -> None:
+    x = np.zeros((1, 4))
+    y = np.array([0])
+    w = np.zeros((1, 1, 4))
+    hb = np.zeros((1, 1))
+    readout = np.zeros((2, 1, 1))
+    output_bias = np.zeros(2)
+
+    netlist = feature_batch_train.make_train_netlist(
+        x,
+        y,
+        w,
+        hb,
+        readout,
+        output_bias,
+        [[0, 1, 2, 3]],
+        0.8,
+        tmp_path / "out.dat",
+        False,
+        True,
+        "tanh",
+        1.0,
+        state_decay=0.05,
+    )
+
+    assert ".param STATE_DECAY=0.05" in netlist
+    assert "Bnw0_0_0 nw0_0_0 0 V = V(w0_0_0)*(1-{STATE_DECAY}) + {LR}*((V(dh0_0_0)*V(x0_0))/{BS})" in netlist
+    assert "Bnhb0_0 nhb0_0 0 V = V(hb0_0)*(1-{STATE_DECAY}) + {LR}*((V(dh0_0_0))/{BS})" in netlist
+    assert "Bnv0_0_0 nv0_0_0 0 V = V(v0_0_0)*(1-{STATE_DECAY}) + {LR}*((V(d0_0)*V(h0_0_0))/{BS})" in netlist
+    assert "Bnob0 nob0 0 V = V(ob0)*(1-{STATE_DECAY}) + {LR}*((V(d0_0))/{BS})" in netlist
+
+    with pytest.raises(ValueError, match="state_decay"):
+        feature_batch_train.make_train_netlist(
+            x,
+            y,
+            w,
+            hb,
+            readout,
+            output_bias,
+            [[0, 1, 2, 3]],
+            0.8,
+            tmp_path / "bad.dat",
+            False,
+            True,
+            "tanh",
+            1.0,
+            state_decay=-0.1,
+        )
+
+
 def test_phase_and_batch_readout_class_centering_use_effective_centered_readout(tmp_path: Path) -> None:
     x = np.zeros((1, 4))
     y = np.array([0])
@@ -1673,6 +1724,106 @@ def test_phase_transient_local_update_scale_controls_feature_updates(tmp_path: P
             True,
             "measure",
             local_update_scale=-1.0,
+        )
+
+
+def test_phase_transient_state_decay_is_on_device_update_phase_current(tmp_path: Path) -> None:
+    x = np.zeros((1, 4))
+    y = np.array([0])
+    w = np.zeros((1, 1, 4))
+    hb = np.zeros((1, 1))
+    readout = np.zeros((2, 1, 1))
+    output_bias = np.zeros(2)
+
+    direct_netlist, _n_vec, _t_stop = phase_transient.make_phase_transient_netlist(
+        x,
+        y,
+        w,
+        hb,
+        readout,
+        output_bias,
+        [[0, 1, 2, 3]],
+        0.8,
+        tmp_path / "direct.dat",
+        False,
+        1,
+        1,
+        1e-9,
+        0.1e-9,
+        5e-12,
+        40.0,
+        20e-12,
+        1e-12,
+        1e-12,
+        1e-12,
+        1e18,
+        True,
+        "measure",
+        update_mode="direct",
+        state_decay=0.05,
+    )
+
+    assert ".param STATE_DECAY=0.05" in direct_netlist
+    assert "Bdecay_w0_0_0 w0_0_0 0 I = V(pacc)*{CW}*{STATE_DECAY}/{TAREA}*V(w0_0_0)" in direct_netlist
+    assert "Bdecay_hb0_0 hb0_0 0 I = V(pacc)*{CW}*{STATE_DECAY}/{TAREA}*V(hb0_0)" in direct_netlist
+    assert "Bdecay_v0_0_0 v0_0_0 0 I = V(pacc)*{CW}*{STATE_DECAY}/{TAREA}*V(v0_0_0)" in direct_netlist
+    assert "Bdecay_ob0 ob0 0 I = V(pacc)*{CW}*{STATE_DECAY}/{TAREA}*V(ob0)" in direct_netlist
+
+    phased_netlist, _n_vec, _t_stop = phase_transient.make_phase_transient_netlist(
+        x,
+        y,
+        w,
+        hb,
+        readout,
+        output_bias,
+        [[0, 1, 2, 3]],
+        0.8,
+        tmp_path / "phased.dat",
+        False,
+        1,
+        1,
+        1e-9,
+        0.1e-9,
+        5e-12,
+        40.0,
+        20e-12,
+        1e-12,
+        1e-12,
+        1e-12,
+        1e18,
+        True,
+        "measure",
+        state_decay=0.05,
+    )
+
+    assert "Bdecay_w0_0_0 w0_0_0 0 I = V(papply)*{CW}*{STATE_DECAY}/{TAREA}*V(w0_0_0)" in phased_netlist
+
+    with pytest.raises(ValueError, match="state_decay"):
+        phase_transient.make_phase_transient_netlist(
+            x,
+            y,
+            w,
+            hb,
+            readout,
+            output_bias,
+            [[0, 1, 2, 3]],
+            0.8,
+            tmp_path / "bad.dat",
+            False,
+            1,
+            1,
+            1e-9,
+            0.1e-9,
+            5e-12,
+            40.0,
+            20e-12,
+            1e-12,
+            1e-12,
+            1e-12,
+            1e18,
+            True,
+            "measure",
+            state_decay=1.0,
         )
 
 

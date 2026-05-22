@@ -424,6 +424,7 @@ def make_phase_transient_netlist(
     output_bias_update_scale: float = 1.0,
     readout_update_scale: float = 1.0,
     local_update_scale: float = 1.0,
+    state_decay: float = 0.0,
     softmax_negative_scale: float = 1.0,
     softmax_error_centering: str = "none",
     softmax_temperature: float = 1.0,
@@ -442,6 +443,8 @@ def make_phase_transient_netlist(
         raise ValueError("readout_update_scale must be non-negative")
     if local_update_scale < 0.0:
         raise ValueError("local_update_scale must be non-negative")
+    if state_decay < 0.0 or state_decay >= 1.0:
+        raise ValueError("state_decay must be in [0, 1)")
     if softmax_negative_scale < 0.0:
         raise ValueError("softmax_negative_scale must be non-negative")
     if softmax_temperature <= 0.0:
@@ -453,6 +456,7 @@ def make_phase_transient_netlist(
     direct_update = update_mode == "direct"
     if direct_update and update_batch_size != 1:
         raise ValueError("direct update mode requires update_batch_size=1")
+    decay_phase = "pacc" if direct_update else "papply"
     n_blocks, channels, block_len = w.shape
     n_classes = readout.shape[0]
     phases, sample_starts, t_stop = make_phase_schedule(update_batch_size, updates, phase, gap, direct_update)
@@ -476,6 +480,7 @@ def make_phase_transient_netlist(
         f".param LOCAL_UPDATE_SCALE={local_update_scale:.12g}",
         f".param OB_UPDATE_SCALE={output_bias_update_scale:.12g}",
         f".param READOUT_UPDATE_SCALE={readout_update_scale:.12g}",
+        f".param STATE_DECAY={state_decay:.12g}",
         f".param SOFTMAX_NEGATIVE_SCALE={softmax_negative_scale:.12g}",
         f".param SOFTMAX_TEMPERATURE={softmax_temperature:.12g}",
         "",
@@ -616,12 +621,16 @@ def make_phase_transient_netlist(
                     lines.append(f"Bacc_w{b}_{c}_{p} gw{b}_{c}_{p} 0 I = -V(pacc)*{{CGRAD}}/{{TAREA}}*({grad})")
                     lines.append(f"Bupd_w{b}_{c}_{p} w{b}_{c}_{p} 0 I = -V(papply)*{{CW}}*{{LR}}*{{LOCAL_UPDATE_SCALE}}/({{BS}}*{{TAREA}})*V(gw{b}_{c}_{p})")
                     lines.append(f"Bclear_gw{b}_{c}_{p} gw{b}_{c}_{p} 0 I = V(pclear)*{{CGRAD}}/{{TAU}}*V(gw{b}_{c}_{p})")
+                if state_decay > 0.0:
+                    lines.append(f"Bdecay_w{b}_{c}_{p} w{b}_{c}_{p} 0 I = V({decay_phase})*{{CW}}*{{STATE_DECAY}}/{{TAREA}}*V(w{b}_{c}_{p})")
             if direct_update:
                 lines.append(f"Bupd_hb{b}_{c} hb{b}_{c} 0 I = -V(pacc)*{{CW}}*{{LR}}*{{LOCAL_UPDATE_SCALE}}/({{BS}}*{{TAREA}})*V(dh{b}_{c})")
             else:
                 lines.append(f"Bacc_hb{b}_{c} ghb{b}_{c} 0 I = -V(pacc)*{{CGRAD}}/{{TAREA}}*V(dh{b}_{c})")
                 lines.append(f"Bupd_hb{b}_{c} hb{b}_{c} 0 I = -V(papply)*{{CW}}*{{LR}}*{{LOCAL_UPDATE_SCALE}}/({{BS}}*{{TAREA}})*V(ghb{b}_{c})")
                 lines.append(f"Bclear_ghb{b}_{c} ghb{b}_{c} 0 I = V(pclear)*{{CGRAD}}/{{TAU}}*V(ghb{b}_{c})")
+            if state_decay > 0.0:
+                lines.append(f"Bdecay_hb{b}_{c} hb{b}_{c} 0 I = V({decay_phase})*{{CW}}*{{STATE_DECAY}}/{{TAREA}}*V(hb{b}_{c})")
     for k in range(n_classes):
         for b in range(n_blocks):
             for c in range(channels):
@@ -632,12 +641,16 @@ def make_phase_transient_netlist(
                     lines.append(f"Bacc_v{k}_{b}_{c} gv{k}_{b}_{c} 0 I = -V(pacc)*{{CGRAD}}/{{TAREA}}*({grad})")
                     lines.append(f"Bupd_v{k}_{b}_{c} v{k}_{b}_{c} 0 I = -V(papply)*{{CW}}*{{LR}}*{{READOUT_UPDATE_SCALE}}/({{BS}}*{{TAREA}})*V(gv{k}_{b}_{c})")
                     lines.append(f"Bclear_gv{k}_{b}_{c} gv{k}_{b}_{c} 0 I = V(pclear)*{{CGRAD}}/{{TAU}}*V(gv{k}_{b}_{c})")
+                if state_decay > 0.0:
+                    lines.append(f"Bdecay_v{k}_{b}_{c} v{k}_{b}_{c} 0 I = V({decay_phase})*{{CW}}*{{STATE_DECAY}}/{{TAREA}}*V(v{k}_{b}_{c})")
         if direct_update:
             lines.append(f"Bupd_ob{k} ob{k} 0 I = -V(pacc)*{{CW}}*{{LR}}*{{OB_UPDATE_SCALE}}/({{BS}}*{{TAREA}})*V(d{k})")
         else:
             lines.append(f"Bacc_ob{k} gob{k} 0 I = -V(pacc)*{{CGRAD}}/{{TAREA}}*V(d{k})")
             lines.append(f"Bupd_ob{k} ob{k} 0 I = -V(papply)*{{CW}}*{{LR}}*{{OB_UPDATE_SCALE}}/({{BS}}*{{TAREA}})*V(gob{k})")
             lines.append(f"Bclear_gob{k} gob{k} 0 I = V(pclear)*{{CGRAD}}/{{TAU}}*V(gob{k})")
+        if state_decay > 0.0:
+            lines.append(f"Bdecay_ob{k} ob{k} 0 I = V({decay_phase})*{{CW}}*{{STATE_DECAY}}/{{TAREA}}*V(ob{k})")
     vectors = [f"V(w{b}_{c}_{p})" for b in range(n_blocks) for c in range(channels) for p in range(block_len)]
     vectors += [f"V(hb{b}_{c})" for b in range(n_blocks) for c in range(channels)]
     vectors += [f"V(v{k}_{b}_{c})" for k in range(n_classes) for b in range(n_blocks) for c in range(channels)]
@@ -1268,6 +1281,12 @@ def main() -> None:
     ap.add_argument("--readout-update-scale", type=float, default=1.0)
     ap.add_argument("--local-update-scale", type=float, default=1.0)
     ap.add_argument(
+        "--state-decay",
+        type=float,
+        default=0.0,
+        help="Per-update on-device decay fraction for persistent local/readout/bias state; must be in [0, 1).",
+    )
+    ap.add_argument(
         "--softmax-negative-scale",
         type=float,
         default=1.0,
@@ -1359,6 +1378,8 @@ def main() -> None:
         raise ValueError("--readout-update-scale must be non-negative")
     if args.local_update_scale < 0:
         raise ValueError("--local-update-scale must be non-negative")
+    if args.state_decay < 0 or args.state_decay >= 1:
+        raise ValueError("--state-decay must be in [0, 1)")
     if args.softmax_negative_scale < 0:
         raise ValueError("--softmax-negative-scale must be non-negative")
     if args.softmax_temperature <= 0:
@@ -1471,6 +1492,7 @@ def main() -> None:
         args.output_bias_update_scale,
         args.readout_update_scale,
         args.local_update_scale,
+        args.state_decay,
         args.softmax_negative_scale,
         args.softmax_error_centering,
         args.softmax_temperature,
@@ -1558,6 +1580,7 @@ def main() -> None:
                 softmax_negative_scale=args.softmax_negative_scale,
                 softmax_error_centering=args.softmax_error_centering,
                 softmax_temperature=args.softmax_temperature,
+                state_decay=args.state_decay,
             )
             if update + 1 in probe_updates:
                 op_probe_states[update + 1] = (op_w.copy(), op_hb.copy(), op_readout.copy(), op_ob.copy())
@@ -1884,6 +1907,7 @@ def main() -> None:
         "output_bias_update_scale": args.output_bias_update_scale,
         "readout_update_scale": args.readout_update_scale,
         "local_update_scale": args.local_update_scale,
+        "state_decay": args.state_decay,
         "softmax_negative_scale": args.softmax_negative_scale,
         "softmax_error_centering": args.softmax_error_centering,
         "softmax_temperature": args.softmax_temperature,

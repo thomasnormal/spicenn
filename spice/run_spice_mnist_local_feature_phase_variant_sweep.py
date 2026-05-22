@@ -41,6 +41,7 @@ def variant_tag(
     feedback_mode: str = "readout",
     hidden_synapse_mode: str = "linear",
     readout_synapse_mode: str = "linear",
+    synapse_clip: float = 1.0,
 ) -> str:
     safe_activation = sanitize_tag(activation.replace("-", "_"))
     safe_derivative = sanitize_tag(derivative_mode.replace("-", "_"))
@@ -49,7 +50,7 @@ def variant_tag(
     safe_readout_synapse = sanitize_tag(readout_synapse_mode.replace("-", "_"))
     return sanitize_tag(
         f"{base_tag}_{safe_activation}_clip{relu_clip:g}_{safe_derivative}_{safe_feedback}"
-        f"_hsyn_{safe_hidden_synapse}_rsyn_{safe_readout_synapse}"
+        f"_hsyn_{safe_hidden_synapse}_rsyn_{safe_readout_synapse}_synclip{synapse_clip:g}"
     )
 
 
@@ -61,7 +62,10 @@ def build_variant_command(
     feedback_mode: str = "readout",
     hidden_synapse_mode: str = "linear",
     readout_synapse_mode: str = "linear",
+    synapse_clip: float | None = None,
 ) -> list[str]:
+    if synapse_clip is None:
+        synapse_clip = args.synapse_clip
     script = ROOT / "spice/run_spice_mnist_local_feature_phase_transient.py"
     command = [
         sys.executable,
@@ -123,9 +127,18 @@ def build_variant_command(
         "--readout-synapse-mode",
         readout_synapse_mode,
         "--synapse-clip",
-        str(args.synapse_clip),
+        str(synapse_clip),
         "--tag",
-        variant_tag(args.tag, activation, relu_clip, derivative_mode, feedback_mode, hidden_synapse_mode, readout_synapse_mode),
+        variant_tag(
+            args.tag,
+            activation,
+            relu_clip,
+            derivative_mode,
+            feedback_mode,
+            hidden_synapse_mode,
+            readout_synapse_mode,
+            synapse_clip,
+        ),
     ]
     if args.softmax_output:
         command.append("--softmax-output")
@@ -153,6 +166,7 @@ def row_from_summary(
     feedback_mode: str,
     hidden_synapse_mode: str,
     readout_synapse_mode: str,
+    synapse_clip: float,
     summary: dict[str, Any],
     command: list[str],
 ) -> dict[str, Any]:
@@ -179,7 +193,7 @@ def row_from_summary(
         "readout_feedback_mode": feedback_mode,
         "hidden_synapse_mode": hidden_synapse_mode,
         "readout_synapse_mode": readout_synapse_mode,
-        "synapse_clip": summary.get("synapse_clip"),
+        "synapse_clip": synapse_clip,
         "tag": summary.get("tag"),
         "command": " ".join(command),
     }
@@ -217,6 +231,7 @@ def main() -> None:
     ap.add_argument("--hidden-synapse-modes", default="linear")
     ap.add_argument("--readout-synapse-modes", default="linear")
     ap.add_argument("--synapse-clip", type=float, default=1.0)
+    ap.add_argument("--synapse-clips", default="")
     ap.add_argument("--softmax-output", action="store_true", default=True)
     ap.add_argument("--linear-output", action="store_true")
     ap.add_argument("--final-measures", action="store_true")
@@ -231,6 +246,7 @@ def main() -> None:
     feedback_modes = parse_csv(args.feedback_modes)
     hidden_synapse_modes = parse_csv(args.hidden_synapse_modes)
     readout_synapse_modes = parse_csv(args.readout_synapse_modes)
+    synapse_clips = parse_float_csv(args.synapse_clips) if args.synapse_clips else [args.synapse_clip]
     if not activations:
         raise ValueError("--activations must not be empty")
     if not relu_clips:
@@ -243,8 +259,8 @@ def main() -> None:
         raise ValueError("--hidden-synapse-modes must not be empty")
     if not readout_synapse_modes:
         raise ValueError("--readout-synapse-modes must not be empty")
-    if args.synapse_clip <= 0:
-        raise ValueError("--synapse-clip must be positive")
+    if any(clip <= 0 for clip in synapse_clips):
+        raise ValueError("--synapse-clip/--synapse-clips values must be positive")
 
     rows = []
     for activation, relu_clip in activation_clip_pairs(activations, relu_clips):
@@ -252,58 +268,64 @@ def main() -> None:
             for feedback_mode in feedback_modes:
                 for hidden_synapse_mode in hidden_synapse_modes:
                     for readout_synapse_mode in readout_synapse_modes:
-                        command = build_variant_command(
-                            args,
-                            activation,
-                            relu_clip,
-                            derivative_mode,
-                            feedback_mode,
-                            hidden_synapse_mode,
-                            readout_synapse_mode,
-                        )
-                        if args.dry_run:
-                            rows.append(
-                                {
-                                    "local_activation": activation,
-                                    "relu_clip": relu_clip,
-                                    "activation_derivative": derivative_mode,
-                                    "readout_feedback_mode": feedback_mode,
-                                    "hidden_synapse_mode": hidden_synapse_mode,
-                                    "readout_synapse_mode": readout_synapse_mode,
-                                    "command": " ".join(command),
-                                }
-                            )
-                            continue
-                        proc = subprocess.run(command, cwd=ROOT, text=True, capture_output=True, timeout=args.timeout + 60.0)
-                        if proc.returncode != 0:
-                            raise RuntimeError(
-                                f"variant {activation} clip {relu_clip:g} derivative {derivative_mode} feedback {feedback_mode} "
-                                f"hidden_synapse {hidden_synapse_mode} readout_synapse {readout_synapse_mode} failed:"
-                                f"\nSTDOUT:\n{proc.stdout[-3000:]}\nSTDERR:\n{proc.stderr[-3000:]}"
-                            )
-                        summary = parse_runner_json(proc.stdout)
-                        summary["tag"] = variant_tag(
-                            args.tag,
-                            activation,
-                            relu_clip,
-                            derivative_mode,
-                            feedback_mode,
-                            hidden_synapse_mode,
-                            readout_synapse_mode,
-                        )
-                        rows.append(
-                            row_from_summary(
+                        for synapse_clip in synapse_clips:
+                            command = build_variant_command(
+                                args,
                                 activation,
                                 relu_clip,
                                 derivative_mode,
                                 feedback_mode,
                                 hidden_synapse_mode,
                                 readout_synapse_mode,
-                                summary,
-                                command,
+                                synapse_clip,
                             )
-                        )
-                        print(json.dumps(rows[-1], indent=2))
+                            if args.dry_run:
+                                rows.append(
+                                    {
+                                        "local_activation": activation,
+                                        "relu_clip": relu_clip,
+                                        "activation_derivative": derivative_mode,
+                                        "readout_feedback_mode": feedback_mode,
+                                        "hidden_synapse_mode": hidden_synapse_mode,
+                                        "readout_synapse_mode": readout_synapse_mode,
+                                        "synapse_clip": synapse_clip,
+                                        "command": " ".join(command),
+                                    }
+                                )
+                                continue
+                            proc = subprocess.run(command, cwd=ROOT, text=True, capture_output=True, timeout=args.timeout + 60.0)
+                            if proc.returncode != 0:
+                                raise RuntimeError(
+                                    f"variant {activation} clip {relu_clip:g} derivative {derivative_mode} feedback {feedback_mode} "
+                                    f"hidden_synapse {hidden_synapse_mode} readout_synapse {readout_synapse_mode} "
+                                    f"synapse_clip {synapse_clip:g} failed:"
+                                    f"\nSTDOUT:\n{proc.stdout[-3000:]}\nSTDERR:\n{proc.stderr[-3000:]}"
+                                )
+                            summary = parse_runner_json(proc.stdout)
+                            summary["tag"] = variant_tag(
+                                args.tag,
+                                activation,
+                                relu_clip,
+                                derivative_mode,
+                                feedback_mode,
+                                hidden_synapse_mode,
+                                readout_synapse_mode,
+                                synapse_clip,
+                            )
+                            rows.append(
+                                row_from_summary(
+                                    activation,
+                                    relu_clip,
+                                    derivative_mode,
+                                    feedback_mode,
+                                    hidden_synapse_mode,
+                                    readout_synapse_mode,
+                                    synapse_clip,
+                                    summary,
+                                    command,
+                                )
+                            )
+                            print(json.dumps(rows[-1], indent=2))
 
     results = ROOT / "spice/results"
     results.mkdir(parents=True, exist_ok=True)

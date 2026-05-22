@@ -221,6 +221,7 @@ def test_phase_variant_sweep_dry_command_preserves_online_contract() -> None:
         hidden_synapse_modes="linear,tanh-clipped",
         readout_synapse_modes="linear,hard-clipped",
         synapse_clip=0.25,
+        synapse_clips="0.25,1.0",
         softmax_output=True,
         linear_output=False,
         final_measures=False,
@@ -254,6 +255,21 @@ def test_phase_variant_sweep_dry_command_preserves_online_contract() -> None:
     assert "--synapse-clip" in command
     assert command[command.index("--synapse-clip") + 1] == "0.25"
     assert "--eval-probe-updates" in command
+    assert "synclip0_25" in command[command.index("--tag") + 1]
+
+    wider_command = phase_variant_sweep.build_variant_command(
+        args,
+        "diff-clipped-relu",
+        0.5,
+        "stored-gate",
+        "clipped-readout",
+        "tanh-clipped",
+        "hard-clipped",
+        1.0,
+    )
+
+    assert wider_command[wider_command.index("--synapse-clip") + 1] == "1.0"
+    assert "synclip1" in wider_command[wider_command.index("--tag") + 1]
 
 
 def test_phase_transient_softmax_deck_is_one_continuous_online_run(tmp_path: Path) -> None:

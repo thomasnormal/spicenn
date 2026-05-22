@@ -52,6 +52,7 @@ def test_phase_transient_cli_exposes_agreement_gates() -> None:
     assert "--phase-output-mode" in proc.stdout
     assert "--update-mode" in proc.stdout
     assert "--strict-fully-on-device" in proc.stdout
+    assert "--output-bias-update-scale" in proc.stdout
     assert "--eval-backend" in proc.stdout
     assert "--simulator-extra-args" in proc.stdout
 
@@ -1073,6 +1074,74 @@ def test_phase_transient_probe_measures_are_inside_same_continuous_deck(tmp_path
     assert netlist.count(".tran ") == 1
     assert ".measure TRAN p000_00000 FIND V(w0_0_0)" in netlist
     assert ".measure TRAN p001_00000 FIND V(w0_0_0)" in netlist
+
+
+def test_phase_transient_output_bias_update_scale_controls_bias_update(tmp_path: Path) -> None:
+    x = np.zeros((1, 4))
+    y = np.array([0])
+    w = np.zeros((1, 1, 4))
+    hb = np.zeros((1, 1))
+    readout = np.zeros((2, 1, 1))
+    output_bias = np.zeros(2)
+
+    netlist, _n_vec, _t_stop = phase_transient.make_phase_transient_netlist(
+        x,
+        y,
+        w,
+        hb,
+        readout,
+        output_bias,
+        [[0, 1, 2, 3]],
+        0.8,
+        tmp_path / "out.dat",
+        False,
+        1,
+        1,
+        1e-9,
+        0.1e-9,
+        5e-12,
+        40.0,
+        20e-12,
+        1e-12,
+        1e-12,
+        1e-12,
+        1e18,
+        True,
+        "measure",
+        update_mode="direct",
+        output_bias_update_scale=0.25,
+    )
+
+    assert ".param OB_UPDATE_SCALE=0.25" in netlist
+    assert "Bupd_ob0 ob0 0 I = -V(pacc)*{CW}*{LR}*{OB_UPDATE_SCALE}/({BS}*{TAREA})*V(d0)" in netlist
+
+    with pytest.raises(ValueError, match="output_bias_update_scale"):
+        phase_transient.make_phase_transient_netlist(
+            x,
+            y,
+            w,
+            hb,
+            readout,
+            output_bias,
+            [[0, 1, 2, 3]],
+            0.8,
+            tmp_path / "out.dat",
+            False,
+            1,
+            1,
+            1e-9,
+            0.1e-9,
+            5e-12,
+            40.0,
+            20e-12,
+            1e-12,
+            1e-12,
+            1e-12,
+            1e18,
+            True,
+            "measure",
+            output_bias_update_scale=-1.0,
+        )
 
 
 def test_phase_transient_control_measure_mode_keeps_measures_inside_control(tmp_path: Path) -> None:

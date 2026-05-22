@@ -43,6 +43,7 @@ def test_phase_summary_row_keeps_execution_contract_and_backend_fields(tmp_path:
                 "eval_backend": "both",
                 "output_mode": "print",
                 "local_activation": "tanh",
+                "output_bias_update_scale": 0.25,
                 "hidden_synapse_mode": "tanh-clipped",
                 "readout_synapse_mode": "linear",
                 "single_phase_training_transient": True,
@@ -84,6 +85,7 @@ def test_phase_summary_row_keeps_execution_contract_and_backend_fields(tmp_path:
     assert row["train_index_sha256"] == "trainhash"
     assert row["eval_index_sha256"] == "evalhash"
     assert row["lr"] == 0.1
+    assert row["output_bias_update_scale"] == 0.25
     assert row["eval_backend"] == "both"
     assert row["phase_dominant_pred_class"] == 3
     assert row["phase_dominant_pred_fraction"] == 0.4

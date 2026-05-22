@@ -393,6 +393,7 @@ def make_phase_transient_netlist(
     readout_synapse_mode: str = "linear",
     synapse_clip: float = 1.0,
     update_mode: str = "phased",
+    output_bias_update_scale: float = 1.0,
 ) -> tuple[str, int, float]:
     total_samples = x_batch.shape[0]
     if total_samples != update_batch_size * updates:
@@ -401,6 +402,8 @@ def make_phase_transient_netlist(
         raise ValueError("rleak must be non-negative")
     if update_mode not in {"phased", "direct"}:
         raise ValueError("update_mode must be 'phased' or 'direct'")
+    if output_bias_update_scale < 0.0:
+        raise ValueError("output_bias_update_scale must be non-negative")
     direct_update = update_mode == "direct"
     if direct_update and update_batch_size != 1:
         raise ValueError("direct update mode requires update_batch_size=1")
@@ -424,6 +427,7 @@ def make_phase_transient_netlist(
         f".param TAU={tau:.12g}",
         f".param TPHASE={phase:.12g}",
         f".param TAREA={phase_area:.12g}",
+        f".param OB_UPDATE_SCALE={output_bias_update_scale:.12g}",
         "",
         f"Vpact pact 0 {phase_pwl(phases['act'], t_stop, edge)}",
         f"Vpscore pscore 0 {phase_pwl(phases['score'], t_stop, edge)}",
@@ -557,10 +561,10 @@ def make_phase_transient_netlist(
                     lines.append(f"Bupd_v{k}_{b}_{c} v{k}_{b}_{c} 0 I = -V(papply)*{{CW}}*{{LR}}/({{BS}}*{{TAREA}})*V(gv{k}_{b}_{c})")
                     lines.append(f"Bclear_gv{k}_{b}_{c} gv{k}_{b}_{c} 0 I = V(pclear)*{{CGRAD}}/{{TAU}}*V(gv{k}_{b}_{c})")
         if direct_update:
-            lines.append(f"Bupd_ob{k} ob{k} 0 I = -V(pacc)*{{CW}}*{{LR}}/({{BS}}*{{TAREA}})*V(d{k})")
+            lines.append(f"Bupd_ob{k} ob{k} 0 I = -V(pacc)*{{CW}}*{{LR}}*{{OB_UPDATE_SCALE}}/({{BS}}*{{TAREA}})*V(d{k})")
         else:
             lines.append(f"Bacc_ob{k} gob{k} 0 I = -V(pacc)*{{CGRAD}}/{{TAREA}}*V(d{k})")
-            lines.append(f"Bupd_ob{k} ob{k} 0 I = -V(papply)*{{CW}}*{{LR}}/({{BS}}*{{TAREA}})*V(gob{k})")
+            lines.append(f"Bupd_ob{k} ob{k} 0 I = -V(papply)*{{CW}}*{{LR}}*{{OB_UPDATE_SCALE}}/({{BS}}*{{TAREA}})*V(gob{k})")
             lines.append(f"Bclear_gob{k} gob{k} 0 I = V(pclear)*{{CGRAD}}/{{TAU}}*V(gob{k})")
     vectors = [f"V(w{b}_{c}_{p})" for b in range(n_blocks) for c in range(channels) for p in range(block_len)]
     vectors += [f"V(hb{b}_{c})" for b in range(n_blocks) for c in range(channels)]
@@ -1164,6 +1168,7 @@ def main() -> None:
     ap.add_argument("--derivative-gate-threshold", type=float, default=1e-6)
     ap.add_argument("--readout-feedback-mode", choices=["readout", "full-readout", "exact", "sign-readout", "sign", "clipped-readout", "clipped"], default="readout")
     ap.add_argument("--readout-feedback-clip", type=float, default=0.05)
+    ap.add_argument("--output-bias-update-scale", type=float, default=1.0)
     synapse_modes = ["linear", "full", "ideal", "tanh-clipped", "smooth-clipped", "clipped", "hard-clipped", "bounded", "sign", "binary"]
     ap.add_argument("--hidden-synapse-mode", choices=synapse_modes, default="linear")
     ap.add_argument("--readout-synapse-mode", choices=synapse_modes, default="linear")
@@ -1231,6 +1236,8 @@ def main() -> None:
         raise ValueError("--derivative-gate-threshold must be non-negative")
     if args.readout_feedback_clip <= 0:
         raise ValueError("--readout-feedback-clip must be positive")
+    if args.output_bias_update_scale < 0:
+        raise ValueError("--output-bias-update-scale must be non-negative")
     if args.synapse_clip <= 0:
         raise ValueError("--synapse-clip must be positive")
     if args.phase <= 0 or args.settle_ratio <= 0:
@@ -1336,6 +1343,7 @@ def main() -> None:
         args.readout_synapse_mode,
         args.synapse_clip,
         args.update_mode,
+        args.output_bias_update_scale,
     )
     phase_netlist.write_text(prepare_phase_netlist(netlist, spice_bin))
 
@@ -1735,6 +1743,7 @@ def main() -> None:
         "derivative_gate_threshold": args.derivative_gate_threshold,
         "readout_feedback_mode": args.readout_feedback_mode,
         "readout_feedback_clip": args.readout_feedback_clip,
+        "output_bias_update_scale": args.output_bias_update_scale,
         "hidden_synapse_mode": args.hidden_synapse_mode,
         "readout_synapse_mode": args.readout_synapse_mode,
         "synapse_clip": args.synapse_clip,

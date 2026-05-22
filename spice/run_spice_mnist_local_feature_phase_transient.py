@@ -77,9 +77,36 @@ def phase_state_descriptions(update_mode: str) -> dict[str, str]:
     }
 
 
-def phase_execution_contract_fields(batch_size: int, reference_mode: str) -> dict[str, bool | str]:
+def strict_fully_on_device_contract_met(
+    batch_size: int,
+    reference_mode: str,
+    init_weights: str,
+) -> bool:
+    return batch_size == 1 and reference_mode == "none" and not init_weights
+
+
+def validate_strict_fully_on_device_args(
+    batch_size: int,
+    reference_mode: str,
+    init_weights: str,
+) -> None:
+    if batch_size != 1:
+        raise ValueError("--strict-fully-on-device requires --batch-size 1")
+    if reference_mode != "none":
+        raise ValueError("--strict-fully-on-device requires --reference-mode none")
+    if init_weights:
+        raise ValueError("--strict-fully-on-device requires random init; do not pass --init-weights")
+
+
+def phase_execution_contract_fields(
+    batch_size: int,
+    reference_mode: str,
+    init_weights: str = "",
+    strict_fully_on_device: bool = False,
+) -> dict[str, bool | str]:
     if reference_mode not in {"spice", "none"}:
         raise ValueError("reference_mode must be 'spice' or 'none'")
+    strict_contract_met = strict_fully_on_device_contract_met(batch_size, reference_mode, init_weights)
     return {
         "single_phase_training_transient": True,
         "weights_persist_inside_phase_transient": True,
@@ -87,6 +114,10 @@ def phase_execution_contract_fields(batch_size: int, reference_mode: str) -> dic
         "python_checkpointing_between_samples": False,
         "reference_replay_used_for_diagnostics": reference_mode == "spice",
         "fully_on_device_execution_contract_met": batch_size == 1,
+        "strict_fully_on_device_requested": strict_fully_on_device,
+        "strict_fully_on_device_contract_met": strict_contract_met,
+        "random_init_used": not bool(init_weights),
+        "initial_weights_source": "random_init" if not init_weights else "checkpoint",
         "execution_contract_note": (
             "This gate covers the executed phase-transient training path only: one persistent-state "
             "training transient, batch_size=1 online updates, and no Python weight writes between "
@@ -1087,6 +1118,14 @@ def main() -> None:
     ap.add_argument("--reference-mode", choices=["spice", "none"], default="spice")
     ap.add_argument("--phase-output-mode", choices=["auto", "measure", "print", "control_measure", "wrdata"], default="auto")
     ap.add_argument("--update-mode", choices=["phased", "direct"], default="phased")
+    ap.add_argument(
+        "--strict-fully-on-device",
+        action="store_true",
+        help=(
+            "Fail unless the run is random-init, batch_size=1, and has no Python-side "
+            "reference replay; final SPICE/NumPy diagnostics are still allowed after the transient."
+        ),
+    )
     ap.add_argument("--simulator-extra-args", default="", help=f"Extra simulator command-line arguments, also available via {SPICE_SIMULATOR_ARGS_ENV}.")
     ap.add_argument("--final-measures", action="store_true")
     ap.add_argument(
@@ -1141,6 +1180,8 @@ def main() -> None:
         raise ValueError("--eval-probe-updates requires --eval-samples > 0")
     if args.update_mode == "direct" and args.batch_size != 1:
         raise ValueError("--update-mode direct requires --batch-size 1")
+    if args.strict_fully_on_device:
+        validate_strict_fully_on_device_args(args.batch_size, args.reference_mode, args.init_weights)
     if args.simulator_extra_args:
         os.environ[SPICE_SIMULATOR_ARGS_ENV] = args.simulator_extra_args
 
@@ -1527,7 +1568,12 @@ def main() -> None:
         pd.DataFrame(probe_rows).to_csv(probe_metrics_path, index=False)
     simulator_sidecars_cleaned = cleanup_simulator_sidecars(owned_netlists)
     state_descriptions = phase_state_descriptions(args.update_mode)
-    execution_contract = phase_execution_contract_fields(args.batch_size, args.reference_mode)
+    execution_contract = phase_execution_contract_fields(
+        args.batch_size,
+        args.reference_mode,
+        args.init_weights,
+        args.strict_fully_on_device,
+    )
     probe_summary = summarize_probe_rows(probe_rows)
     summary = {
         "simulator": version,

@@ -31,6 +31,10 @@ FIELDS = [
     "hidden_synapse_mode",
     "readout_synapse_mode",
     "fully_on_device_execution_contract_met",
+    "strict_fully_on_device_contract_met",
+    "strict_fully_on_device_requested",
+    "random_init_used",
+    "initial_weights_source",
     "continuous_transient_contract_met",
     "direction_matches_batch_op_reference",
     "eval_accuracy_matches_batch_op_reference",
@@ -91,6 +95,10 @@ def row_from_summary(path: Path) -> dict[str, Any]:
         "hidden_synapse_mode": data.get("hidden_synapse_mode"),
         "readout_synapse_mode": data.get("readout_synapse_mode"),
         "fully_on_device_execution_contract_met": data.get("fully_on_device_execution_contract_met"),
+        "strict_fully_on_device_contract_met": data.get("strict_fully_on_device_contract_met"),
+        "strict_fully_on_device_requested": data.get("strict_fully_on_device_requested"),
+        "random_init_used": data.get("random_init_used"),
+        "initial_weights_source": data.get("initial_weights_source"),
         "continuous_transient_contract_met": data.get("continuous_transient_contract_met"),
         "direction_matches_batch_op_reference": data.get("direction_matches_batch_op_reference"),
         "eval_accuracy_matches_batch_op_reference": data.get("eval_accuracy_matches_batch_op_reference"),
@@ -145,6 +153,7 @@ def filter_rows(
     *,
     target_topology: bool = False,
     contract_only: bool = False,
+    strict_contract_only: bool = False,
     min_updates: int | None = None,
 ) -> list[dict[str, Any]]:
     selected = rows
@@ -155,6 +164,12 @@ def filter_rows(
             row
             for row in selected
             if row.get("fully_on_device_execution_contract_met") is True
+        ]
+    if strict_contract_only:
+        selected = [
+            row
+            for row in selected
+            if row.get("strict_fully_on_device_contract_met") is True
         ]
     if min_updates is not None:
         selected = [row for row in selected if as_int(row.get("updates")) >= min_updates]
@@ -196,6 +211,8 @@ def print_markdown(rows: list[dict[str, Any]]) -> None:
         "eval_samples",
         "eval_backend",
         "fully_on_device_execution_contract_met",
+        "strict_fully_on_device_contract_met",
+        "random_init_used",
         "reference_mode",
         "initial_eval_accuracy",
         "phase_eval_accuracy",
@@ -230,6 +247,11 @@ def main() -> None:
     )
     ap.add_argument("--target-topology", action="store_true", help="Keep only 10x10 b4 stride2 c2 runs.")
     ap.add_argument("--contract-only", action="store_true", help="Keep only runs meeting the execution contract.")
+    ap.add_argument(
+        "--strict-contract-only",
+        action="store_true",
+        help="Keep only random-init, batch_size=1, no-reference fully-on-device runs.",
+    )
     ap.add_argument("--min-updates", type=int, help="Keep only runs with at least this many online updates.")
     ap.add_argument("--limit", type=int, help="Maximum rows to print or write after sorting.")
     ap.add_argument(
@@ -249,6 +271,7 @@ def main() -> None:
         rows,
         target_topology=args.target_topology,
         contract_only=args.contract_only,
+        strict_contract_only=args.strict_contract_only,
         min_updates=args.min_updates,
     )
     rows = sort_rows(rows, args.sort)

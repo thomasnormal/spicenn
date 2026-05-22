@@ -51,6 +51,7 @@ def test_phase_transient_cli_exposes_agreement_gates() -> None:
     assert "--reference-mode" in proc.stdout
     assert "--phase-output-mode" in proc.stdout
     assert "--update-mode" in proc.stdout
+    assert "--strict-fully-on-device" in proc.stdout
     assert "--eval-backend" in proc.stdout
     assert "--simulator-extra-args" in proc.stdout
 
@@ -781,19 +782,43 @@ def test_phase_transient_execution_contract_is_separate_from_reference_replay() 
     no_reference = phase_transient.phase_execution_contract_fields(1, "none")
     with_reference = phase_transient.phase_execution_contract_fields(1, "spice")
     batched = phase_transient.phase_execution_contract_fields(2, "none")
+    checkpoint = phase_transient.phase_execution_contract_fields(1, "none", "weights.npz")
+    strict_requested = phase_transient.phase_execution_contract_fields(1, "none", "", True)
 
     assert no_reference["fully_on_device_execution_contract_met"] is True
+    assert no_reference["strict_fully_on_device_contract_met"] is True
+    assert no_reference["strict_fully_on_device_requested"] is False
+    assert no_reference["random_init_used"] is True
+    assert no_reference["initial_weights_source"] == "random_init"
     assert no_reference["single_phase_training_transient"] is True
     assert no_reference["weights_persist_inside_phase_transient"] is True
     assert no_reference["python_weight_updates_between_samples"] is False
     assert no_reference["python_checkpointing_between_samples"] is False
     assert no_reference["reference_replay_used_for_diagnostics"] is False
     assert with_reference["fully_on_device_execution_contract_met"] is True
+    assert with_reference["strict_fully_on_device_contract_met"] is False
     assert with_reference["reference_replay_used_for_diagnostics"] is True
     assert batched["fully_on_device_execution_contract_met"] is False
+    assert batched["strict_fully_on_device_contract_met"] is False
+    assert checkpoint["fully_on_device_execution_contract_met"] is True
+    assert checkpoint["strict_fully_on_device_contract_met"] is False
+    assert checkpoint["random_init_used"] is False
+    assert checkpoint["initial_weights_source"] == "checkpoint"
+    assert strict_requested["strict_fully_on_device_requested"] is True
 
     with pytest.raises(ValueError, match="reference_mode"):
         phase_transient.phase_execution_contract_fields(1, "fast")
+
+
+def test_phase_transient_strict_fully_on_device_validation() -> None:
+    phase_transient.validate_strict_fully_on_device_args(1, "none", "")
+
+    with pytest.raises(ValueError, match="batch-size 1"):
+        phase_transient.validate_strict_fully_on_device_args(2, "none", "")
+    with pytest.raises(ValueError, match="reference-mode none"):
+        phase_transient.validate_strict_fully_on_device_args(1, "spice", "")
+    with pytest.raises(ValueError, match="random init"):
+        phase_transient.validate_strict_fully_on_device_args(1, "none", "weights.npz")
 
 
 def test_phase_transient_relu_deck_matches_forward_and_backward_activation(tmp_path: Path) -> None:

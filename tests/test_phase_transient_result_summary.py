@@ -46,6 +46,10 @@ def test_phase_summary_row_keeps_execution_contract_and_backend_fields(tmp_path:
                 "python_weight_updates_between_samples": False,
                 "python_checkpointing_between_samples": False,
                 "fully_on_device_execution_contract_met": True,
+                "strict_fully_on_device_contract_met": True,
+                "strict_fully_on_device_requested": True,
+                "random_init_used": True,
+                "initial_weights_source": "random_init",
                 "continuous_transient_contract_met": None,
                 "initial_eval_accuracy": 0.05,
                 "phase_eval_accuracy": 0.12,
@@ -69,6 +73,10 @@ def test_phase_summary_row_keeps_execution_contract_and_backend_fields(tmp_path:
     assert row["updates"] == 16
     assert row["eval_backend"] == "both"
     assert row["fully_on_device_execution_contract_met"] is True
+    assert row["strict_fully_on_device_contract_met"] is True
+    assert row["strict_fully_on_device_requested"] is True
+    assert row["random_init_used"] is True
+    assert row["initial_weights_source"] == "random_init"
     assert row["python_weight_updates_between_samples"] is False
     assert row["python_checkpointing_between_samples"] is False
     assert row["phase_eval_accuracy"] == 0.12
@@ -107,3 +115,22 @@ def test_target_topology_filter_uses_requested_milestone_c_shape(tmp_path: Path)
     ]
 
     assert module.filter_rows(rows, target_topology=True) == [{"tag": "target", **target}]
+
+
+def test_strict_contract_filter_keeps_random_init_no_reference_runs() -> None:
+    module = load_summary_module()
+    rows = [
+        {
+            "tag": "strict",
+            "fully_on_device_execution_contract_met": True,
+            "strict_fully_on_device_contract_met": True,
+        },
+        {
+            "tag": "reference_replay",
+            "fully_on_device_execution_contract_met": True,
+            "strict_fully_on_device_contract_met": False,
+        },
+    ]
+
+    assert module.filter_rows(rows, contract_only=True) == rows
+    assert module.filter_rows(rows, strict_contract_only=True) == [rows[0]]

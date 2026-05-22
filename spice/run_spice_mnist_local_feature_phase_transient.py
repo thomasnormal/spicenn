@@ -58,6 +58,67 @@ def phase_pwl(pulses: list[tuple[float, float]], t_stop: float, edge: float) -> 
     return "PWL(" + " ".join(f"{t:.12g} {val:.12g}" for t, val in cleaned) + ")"
 
 
+def direct_phase_clock_period(phase: float, gap: float) -> float:
+    if phase <= 0.0:
+        raise ValueError("phase must be positive")
+    if gap < 0.0:
+        raise ValueError("gap must be non-negative")
+    return 5.0 * phase + 6.0 * gap
+
+
+def analytic_phase_clock_expr(
+    pulses: list[tuple[float, float]],
+    phase: float,
+    gap: float,
+    edge: float,
+) -> str:
+    if not pulses:
+        return "0"
+    if edge <= 0.0:
+        raise ValueError("analytic phase clocks require positive edge")
+    period = direct_phase_clock_period(phase, gap)
+    first_on, first_off = pulses[0]
+    last_on, last_off = pulses[-1]
+    width_tol = max(1e-18, abs(phase) * 1e-9)
+    period_tol = max(1e-18, abs(period) * 1e-9)
+    for idx, (t_on, t_off) in enumerate(pulses):
+        if abs((t_off - t_on) - phase) > width_tol:
+            raise ValueError("analytic phase clocks require uniform phase width")
+        if idx and abs((t_on - pulses[idx - 1][0]) - period) > period_tol:
+            raise ValueError("analytic phase clocks require direct-mode periodic phases")
+    start = first_on - edge
+    stop = last_off + edge
+    rel = f"(time-({start:.12g}))"
+    r = f"({rel}-floor({rel}/({period:.12g}))*({period:.12g}))"
+    return (
+        f"if((time < {start:.12g}) | (time > {stop:.12g}), 0, "
+        f"if({r} < {edge:.12g}, {r}/({edge:.12g}), "
+        f"if({r} < {(edge + phase):.12g}, 1, "
+        f"if({r} < {(edge + phase + edge):.12g}, 1-({r}-{edge:.12g}-{phase:.12g})/({edge:.12g}), 0))))"
+    )
+
+
+def phase_clock_source_line(
+    name: str,
+    node: str,
+    pulses: list[tuple[float, float]],
+    t_stop: float,
+    phase: float,
+    gap: float,
+    edge: float,
+    phase_clock_mode: str,
+    direct_update: bool,
+    update_batch_size: int,
+) -> str:
+    if phase_clock_mode == "pwl":
+        return f"V{name} {node} 0 {phase_pwl(pulses, t_stop, edge)}"
+    if phase_clock_mode == "analytic":
+        if not direct_update or update_batch_size != 1:
+            raise ValueError("analytic phase clocks require direct update mode with batch_size=1")
+        return f"B{name} {node} 0 V = {analytic_phase_clock_expr(pulses, phase, gap, edge)}"
+    raise ValueError("phase_clock_mode must be 'pwl' or 'analytic'")
+
+
 def phase_pulse_area(phase: float, edge: float) -> float:
     if phase <= 0.0:
         raise ValueError("phase must be positive")
@@ -196,6 +257,7 @@ def phase_preflight_summary(
     eval_indices: np.ndarray,
     labels: np.ndarray,
     update_mode: str,
+    phase_clock_mode: str,
     reference_mode: str,
     init_weights: str,
     strict_fully_on_device: bool,
@@ -230,6 +292,7 @@ def phase_preflight_summary(
         "updates": updates,
         "total_samples": total_samples,
         "update_mode": update_mode,
+        "phase_clock_mode": phase_clock_mode,
         "reference_mode": reference_mode,
         "init_weights": init_weights,
         "phase_netlist": None,
@@ -323,11 +386,17 @@ def phase_source_complexity(
     t_stop: float,
     edge: float,
     direct_update: bool,
+    phase_clock_mode: str = "pwl",
 ) -> dict[str, int]:
     pixel_sources = [sample_source_pwl(x_batch[:, i], sample_starts, t_stop, edge) for i in range(x_batch.shape[1])]
     target_sources = [sample_source_pwl(targets[:, k], sample_starts, t_stop, edge) for k in range(targets.shape[1])]
     phase_names = ["act", "score", "err", "bwd", "acc"] if direct_update else ["act", "score", "err", "bwd", "acc", "apply", "clear"]
-    phase_sources = [phase_pwl(phases[name], t_stop, edge) for name in phase_names]
+    if phase_clock_mode == "pwl":
+        phase_sources = [phase_pwl(phases[name], t_stop, edge) for name in phase_names]
+    elif phase_clock_mode == "analytic":
+        phase_sources = ["0" for _name in phase_names]
+    else:
+        raise ValueError("phase_clock_mode must be 'pwl' or 'analytic'")
 
     def count_dc(sources: list[str]) -> int:
         return sum(not source.startswith("PWL(") for source in sources)
@@ -616,6 +685,7 @@ def make_phase_transient_netlist(
     softmax_error_gate: str = "none",
     softmax_margin: float = 1.0,
     readout_class_centering: str = "none",
+    phase_clock_mode: str = "pwl",
 ) -> tuple[str, int, float]:
     total_samples = x_batch.shape[0]
     if total_samples != update_batch_size * updates:
@@ -648,9 +718,13 @@ def make_phase_transient_netlist(
         raise ValueError("softmax_margin must be positive when softmax_error_gate is target-margin")
     if readout_class_centering not in {"none", "mean"}:
         raise ValueError("readout_class_centering must be 'none' or 'mean'")
+    if phase_clock_mode not in {"pwl", "analytic"}:
+        raise ValueError("phase_clock_mode must be 'pwl' or 'analytic'")
     direct_update = update_mode == "direct"
     if direct_update and update_batch_size != 1:
         raise ValueError("direct update mode requires update_batch_size=1")
+    if phase_clock_mode == "analytic" and (not direct_update or update_batch_size != 1):
+        raise ValueError("analytic phase clocks require direct update mode with batch_size=1")
     decay_phase = "pacc" if direct_update else "papply"
     n_blocks, channels, block_len = w.shape
     n_classes = readout.shape[0]
@@ -681,17 +755,17 @@ def make_phase_transient_netlist(
         f".param SOFTMAX_COMPETITOR_POWER={softmax_competitor_power}",
         f".param SOFTMAX_MARGIN={softmax_margin:.12g}",
         "",
-        f"Vpact pact 0 {phase_pwl(phases['act'], t_stop, edge)}",
-        f"Vpscore pscore 0 {phase_pwl(phases['score'], t_stop, edge)}",
-        f"Vperr perr 0 {phase_pwl(phases['err'], t_stop, edge)}",
-        f"Vpbwd pbwd 0 {phase_pwl(phases['bwd'], t_stop, edge)}",
-        f"Vpacc pacc 0 {phase_pwl(phases['acc'], t_stop, edge)}",
+        phase_clock_source_line("pact", "pact", phases["act"], t_stop, phase, gap, edge, phase_clock_mode, direct_update, update_batch_size),
+        phase_clock_source_line("pscore", "pscore", phases["score"], t_stop, phase, gap, edge, phase_clock_mode, direct_update, update_batch_size),
+        phase_clock_source_line("perr", "perr", phases["err"], t_stop, phase, gap, edge, phase_clock_mode, direct_update, update_batch_size),
+        phase_clock_source_line("pbwd", "pbwd", phases["bwd"], t_stop, phase, gap, edge, phase_clock_mode, direct_update, update_batch_size),
+        phase_clock_source_line("pacc", "pacc", phases["acc"], t_stop, phase, gap, edge, phase_clock_mode, direct_update, update_batch_size),
         "",
     ]
     if not direct_update:
         lines[-1:-1] = [
-            f"Vpapply papply 0 {phase_pwl(phases['apply'], t_stop, edge)}",
-            f"Vpclear pclear 0 {phase_pwl(phases['clear'], t_stop, edge)}",
+            phase_clock_source_line("papply", "papply", phases["apply"], t_stop, phase, gap, edge, phase_clock_mode, direct_update, update_batch_size),
+            phase_clock_source_line("pclear", "pclear", phases["clear"], t_stop, phase, gap, edge, phase_clock_mode, direct_update, update_batch_size),
         ]
     for i in range(x_batch.shape[1]):
         lines.append(f"Vpix{i} pix{i} 0 {sample_source_pwl(x_batch[:, i], sample_starts, t_stop, edge)}")
@@ -1580,6 +1654,15 @@ def main() -> None:
     ap.add_argument("--phase-output-mode", choices=["auto", "measure", "print", "control_measure", "wrdata"], default="auto")
     ap.add_argument("--update-mode", choices=["phased", "direct"], default="phased")
     ap.add_argument(
+        "--phase-clock-mode",
+        choices=["pwl", "analytic"],
+        default="pwl",
+        help=(
+            "Emit phase clocks as explicit PWL voltage sources or as bounded analytic behavioral clocks. "
+            "Analytic clocks are Xyce-only and require --update-mode direct with --batch-size 1."
+        ),
+    )
+    ap.add_argument(
         "--strict-fully-on-device",
         action="store_true",
         help=(
@@ -1666,6 +1749,8 @@ def main() -> None:
         raise ValueError("--eval-probe-updates requires --eval-samples > 0")
     if args.update_mode == "direct" and args.batch_size != 1:
         raise ValueError("--update-mode direct requires --batch-size 1")
+    if args.phase_clock_mode == "analytic" and (args.update_mode != "direct" or args.batch_size != 1):
+        raise ValueError("--phase-clock-mode analytic requires --update-mode direct with --batch-size 1")
     if args.strict_fully_on_device:
         validate_strict_fully_on_device_args(args.batch_size, args.reference_mode, args.init_weights)
     _preflight_phases, _preflight_sample_starts, preflight_t_stop = make_phase_schedule(
@@ -1712,6 +1797,7 @@ def main() -> None:
         source_t_stop,
         args.edge,
         args.update_mode == "direct",
+        args.phase_clock_mode,
     )
     validate_source_point_budget(source_complexity, args.max_source_pwl_points)
     if args.preflight_only:
@@ -1733,6 +1819,7 @@ def main() -> None:
                     eval_indices=eval_indices,
                     labels=y_batch,
                     update_mode=args.update_mode,
+                    phase_clock_mode=args.phase_clock_mode,
                     reference_mode=args.reference_mode,
                     init_weights=args.init_weights,
                     strict_fully_on_device=args.strict_fully_on_device,
@@ -1759,6 +1846,8 @@ def main() -> None:
     )
 
     spice_bin, version = detect_spice(args.simulator)
+    if args.phase_clock_mode == "analytic" and not is_xyce(spice_bin):
+        raise ValueError("--phase-clock-mode analytic is Xyce-only")
     generated = ROOT / "spice/generated"
     results = ROOT / "spice/results"
     generated.mkdir(parents=True, exist_ok=True)
@@ -1825,6 +1914,7 @@ def main() -> None:
         args.softmax_error_gate,
         args.softmax_margin,
         args.readout_class_centering,
+        args.phase_clock_mode,
     )
     phase_netlist.write_text(prepare_phase_netlist(netlist, spice_bin))
 
@@ -2254,6 +2344,7 @@ def main() -> None:
         "reference_mode": args.reference_mode,
         "phase_output_mode_requested": args.phase_output_mode,
         "update_mode": args.update_mode,
+        "phase_clock_mode": args.phase_clock_mode,
         "simulator_extra_args": args.simulator_extra_args or os.environ.get(SPICE_SIMULATOR_ARGS_ENV, ""),
         "init_weights": args.init_weights,
         "phase_netlist": str(phase_netlist),

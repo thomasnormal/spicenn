@@ -70,6 +70,7 @@ def test_phase_transient_cli_exposes_agreement_gates() -> None:
     assert "--max-transient-points" in proc.stdout
     assert "--max-source-pwl-points" in proc.stdout
     assert "--preflight-only" in proc.stdout
+    assert "--phase-clock-mode" in proc.stdout
 
 
 def test_phase_transient_x_yce_print_reader_extracts_final_transient_row(tmp_path: Path) -> None:
@@ -238,6 +239,50 @@ def test_phase_transient_source_complexity_counts_sample_and_clock_sources() -> 
     assert complexity["phase_clock_source_count"] == 5
     assert complexity["phase_clock_source_pwl_count"] == 5
     assert complexity["phase_clock_source_pwl_points"] > 0
+
+
+def test_phase_transient_analytic_phase_clock_expr_is_bounded_direct_clock() -> None:
+    phases, _sample_starts, t_stop = phase_transient.make_phase_schedule(1, 2, 1.0e-9, 0.1e-9, True)
+
+    expr = phase_transient.analytic_phase_clock_expr(phases["act"], 1.0e-9, 0.1e-9, 5.0e-12)
+    line = phase_transient.phase_clock_source_line(
+        "pact",
+        "pact",
+        phases["act"],
+        t_stop,
+        1.0e-9,
+        0.1e-9,
+        5.0e-12,
+        "analytic",
+        True,
+        1,
+    )
+
+    assert "floor(" in expr
+    assert "5.6e-09" in expr
+    assert line.startswith("Bpact pact 0 V = if(")
+
+
+def test_phase_transient_analytic_phase_clock_complexity_removes_clock_pwl_points() -> None:
+    x = np.zeros((2, 2), dtype=float)
+    y = np.array([0, 1])
+    phases, sample_starts, t_stop = phase_transient.make_phase_schedule(1, 2, 1.0e-9, 0.1e-9, True)
+    targets = phase_transient.target_matrix(y, 2, softmax_output=True)
+
+    complexity = phase_transient.phase_source_complexity(
+        x,
+        targets,
+        phases,
+        sample_starts,
+        t_stop,
+        0.1e-9,
+        True,
+        phase_clock_mode="analytic",
+    )
+
+    assert complexity["phase_clock_source_count"] == 5
+    assert complexity["phase_clock_source_pwl_count"] == 0
+    assert complexity["phase_clock_source_pwl_points"] == 0
 
 
 def test_phase_transient_activation_exprs_cover_relu_families() -> None:
@@ -663,6 +708,7 @@ def test_phase_variant_sweep_dry_command_preserves_online_contract() -> None:
         reference_mode="none",
         phase_output_mode="print",
         update_mode="direct",
+        phase_clock_mode="analytic",
         eval_backend="numpy",
         probe_updates="1,2,4,8",
         tag="sweep",
@@ -731,6 +777,8 @@ def test_phase_variant_sweep_dry_command_preserves_online_contract() -> None:
     assert command[command.index("--phase-output-mode") + 1] == "print"
     assert "--update-mode" in command
     assert command[command.index("--update-mode") + 1] == "direct"
+    assert "--phase-clock-mode" in command
+    assert command[command.index("--phase-clock-mode") + 1] == "analytic"
     assert "--eval-backend" in command
     assert command[command.index("--eval-backend") + 1] == "numpy"
     assert "--output-bias-update-scale" in command
@@ -1642,6 +1690,7 @@ def test_phase_transient_preflight_summary_has_no_artifact_paths() -> None:
         eval_indices=np.array([11]),
         labels=labels,
         update_mode="direct",
+        phase_clock_mode="analytic",
         reference_mode="none",
         init_weights="",
         strict_fully_on_device=True,
@@ -1658,6 +1707,7 @@ def test_phase_transient_preflight_summary_has_no_artifact_paths() -> None:
     assert summary["status"] == "phase_preflight_only"
     assert summary["preflight_only"] is True
     assert summary["strict_fully_on_device_contract_met"] is True
+    assert summary["phase_clock_mode"] == "analytic"
     assert summary["phase_netlist"] is None
     assert summary["final_weights"] is None
     assert summary["sample_source_pwl_points"] == 60

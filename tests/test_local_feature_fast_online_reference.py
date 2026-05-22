@@ -240,6 +240,7 @@ def test_fast_online_variant_sweep_row_reports_best_probe_and_improvement() -> N
         promotion_timeout=240.0,
         promotion_max_transient_points=2000,
         promotion_max_source_pwl_points=5000,
+        promotion_phase_clock_mode="analytic",
         promotion_probe_updates="",
         promotion_tag_prefix="promote",
     )
@@ -282,6 +283,7 @@ def test_fast_online_variant_sweep_row_reports_best_probe_and_improvement() -> N
     assert command[command.index("--reference-mode") + 1] == "none"
     assert command[command.index("--phase-output-mode") + 1] == "print"
     assert command[command.index("--update-mode") + 1] == "direct"
+    assert command[command.index("--phase-clock-mode") + 1] == "analytic"
     assert command[command.index("--eval-backend") + 1] == "numpy"
     assert command[command.index("--updates") + 1] == "2"
     assert command[command.index("--lr") + 1] == "0.8"

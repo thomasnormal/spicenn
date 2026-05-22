@@ -239,6 +239,8 @@ def strict_phase_promotion_command(args: argparse.Namespace, variant: dict[str, 
         "print",
         "--update-mode",
         "direct",
+        "--phase-clock-mode",
+        getattr(args, "promotion_phase_clock_mode", "pwl"),
         "--eval-backend",
         "numpy",
         "--local-activation",
@@ -414,6 +416,7 @@ def main() -> None:
     ap.add_argument("--promotion-timeout", type=float, default=240.0)
     ap.add_argument("--promotion-max-transient-points", type=int, default=2000)
     ap.add_argument("--promotion-max-source-pwl-points", type=int, default=0)
+    ap.add_argument("--promotion-phase-clock-mode", choices=["pwl", "analytic"], default="pwl")
     ap.add_argument("--promotion-probe-updates", default="")
     ap.add_argument("--promotion-tag-prefix", default="promote")
     ap.add_argument("--seed", type=int, default=0)

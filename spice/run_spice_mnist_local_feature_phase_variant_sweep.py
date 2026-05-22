@@ -112,6 +112,8 @@ def build_variant_command(
         args.phase_output_mode,
         "--update-mode",
         args.update_mode,
+        "--phase-clock-mode",
+        args.phase_clock_mode,
         "--eval-backend",
         args.eval_backend,
         "--probe-updates",
@@ -271,6 +273,7 @@ def main() -> None:
     ap.add_argument("--reference-mode", choices=["spice", "none"], default="spice")
     ap.add_argument("--phase-output-mode", choices=["auto", "measure", "print", "control_measure", "wrdata"], default="auto")
     ap.add_argument("--update-mode", choices=["phased", "direct"], default="phased")
+    ap.add_argument("--phase-clock-mode", choices=["pwl", "analytic"], default="pwl")
     ap.add_argument("--eval-backend", choices=["spice", "numpy", "both"], default="spice")
     ap.add_argument("--probe-updates", default="1,2,4,8,final")
     ap.add_argument("--activations", default="tanh,diff-clipped-relu,relu,clipped-relu")

@@ -12,7 +12,7 @@ import numpy as np
 import pandas as pd
 
 from run_spice_mnist_batch_op_train import read_wrdata_row
-from local_feature_error import class_centered_expr, mean_centered_expr, softmax_delta_expr
+from local_feature_error import class_centered_expr, mean_centered_expr, softmax_delta_expr, softmax_exp_expr
 from run_spice_mnist_local_block_batch_op_train import (
     local_activation_deriv_expr as block_local_activation_deriv_expr,
     local_activation_expr as block_local_activation_expr,
@@ -426,6 +426,7 @@ def make_phase_transient_netlist(
     local_update_scale: float = 1.0,
     softmax_negative_scale: float = 1.0,
     softmax_error_centering: str = "none",
+    softmax_temperature: float = 1.0,
     readout_class_centering: str = "none",
 ) -> tuple[str, int, float]:
     total_samples = x_batch.shape[0]
@@ -443,6 +444,8 @@ def make_phase_transient_netlist(
         raise ValueError("local_update_scale must be non-negative")
     if softmax_negative_scale < 0.0:
         raise ValueError("softmax_negative_scale must be non-negative")
+    if softmax_temperature <= 0.0:
+        raise ValueError("softmax_temperature must be positive")
     if softmax_error_centering not in {"none", "mean"}:
         raise ValueError("softmax_error_centering must be 'none' or 'mean'")
     if readout_class_centering not in {"none", "mean"}:
@@ -474,6 +477,7 @@ def make_phase_transient_netlist(
         f".param OB_UPDATE_SCALE={output_bias_update_scale:.12g}",
         f".param READOUT_UPDATE_SCALE={readout_update_scale:.12g}",
         f".param SOFTMAX_NEGATIVE_SCALE={softmax_negative_scale:.12g}",
+        f".param SOFTMAX_TEMPERATURE={softmax_temperature:.12g}",
         "",
         f"Vpact pact 0 {phase_pwl(phases['act'], t_stop, edge)}",
         f"Vpscore pscore 0 {phase_pwl(phases['score'], t_stop, edge)}",
@@ -551,9 +555,9 @@ def make_phase_transient_netlist(
         lines.append(f"Bscore{k} scorecalc{k} 0 V = " + " + ".join(score_terms))
         lines.append(f"Bstore_score{k} score{k} 0 I = V(pscore)*{{CSTATE}}/{{TAU}}*(V(score{k})-V(scorecalc{k}))")
     if softmax_output:
-        denom = " + ".join(f"exp(V(score{k}))" for k in range(n_classes))
+        denom = " + ".join(softmax_exp_expr(f"V(score{k})") for k in range(n_classes))
         for k in range(n_classes):
-            lines.append(f"By{k} y{k} 0 V = exp(V(score{k}))/({denom})")
+            lines.append(f"By{k} y{k} 0 V = {softmax_exp_expr(f'V(score{k})')}/({denom})")
         raw_delta_exprs = [softmax_delta_expr(f"V(target{k})", f"V(y{k})") for k in range(n_classes)]
         for k in range(n_classes):
             delta_expr = (
@@ -913,11 +917,19 @@ def local_activation_np(x: np.ndarray, mode: str, relu_clip: float, relu_leak: f
     raise ValueError(f"unknown local activation {mode!r}")
 
 
-def output_activation_np(score: np.ndarray, linear_output: bool, softmax_output: bool) -> np.ndarray:
+def output_activation_np(
+    score: np.ndarray,
+    linear_output: bool,
+    softmax_output: bool,
+    softmax_temperature: float = 1.0,
+) -> np.ndarray:
     if linear_output:
         return score
     if softmax_output:
-        shifted = score - np.max(score, axis=1, keepdims=True)
+        if softmax_temperature <= 0.0:
+            raise ValueError("softmax_temperature must be positive")
+        scaled = score / softmax_temperature
+        shifted = scaled - np.max(scaled, axis=1, keepdims=True)
         exp_score = np.exp(shifted)
         return exp_score / np.sum(exp_score, axis=1, keepdims=True)
     return np.tanh(score)
@@ -939,6 +951,7 @@ def numpy_eval_accuracy(
     hidden_synapse_mode: str,
     readout_synapse_mode: str,
     synapse_clip: float,
+    softmax_temperature: float = 1.0,
     readout_class_centering: str = "none",
 ) -> float:
     correct = 0
@@ -955,7 +968,7 @@ def numpy_eval_accuracy(
         pre = np.einsum("nbp,bcp->nbc", xb, eff_w) + hb
         h = local_activation_np(pre, local_activation, relu_clip, relu_leak, softplus_beta)
         score = np.einsum("nbc,kbc->nk", h, eff_readout) + output_bias
-        y = output_activation_np(score, linear_output, softmax_output)
+        y = output_activation_np(score, linear_output, softmax_output, softmax_temperature)
         correct += int(np.sum(np.argmax(y, axis=1) == labels))
     return correct / max(len(y_eval), 1)
 
@@ -976,6 +989,7 @@ def numpy_eval_diagnostics(
     hidden_synapse_mode: str,
     readout_synapse_mode: str,
     synapse_clip: float,
+    softmax_temperature: float = 1.0,
     readout_class_centering: str = "none",
 ) -> dict[str, object]:
     _w, _hb, _readout, output_bias = state
@@ -995,7 +1009,7 @@ def numpy_eval_diagnostics(
         pre = np.einsum("nbp,bcp->nbc", xb, eff_w) + hb
         h = local_activation_np(pre, local_activation, relu_clip, relu_leak, softplus_beta)
         score = np.einsum("nbc,kbc->nk", h, eff_readout) + output_bias
-        y = output_activation_np(score, linear_output, softmax_output)
+        y = output_activation_np(score, linear_output, softmax_output, softmax_temperature)
         preds.append(np.argmax(y, axis=1))
         labels_all.append(labels)
 
@@ -1045,6 +1059,7 @@ def diagnostic_eval_accuracy(
     hidden_synapse_mode: str,
     readout_synapse_mode: str,
     synapse_clip: float,
+    softmax_temperature: float = 1.0,
     readout_class_centering: str = "none",
 ) -> float:
     if eval_backend == "spice":
@@ -1071,6 +1086,7 @@ def diagnostic_eval_accuracy(
             hidden_synapse_mode=hidden_synapse_mode,
             readout_synapse_mode=readout_synapse_mode,
             synapse_clip=synapse_clip,
+            softmax_temperature=softmax_temperature,
             readout_class_centering=readout_class_centering,
         )
     if eval_backend == "numpy":
@@ -1089,6 +1105,7 @@ def diagnostic_eval_accuracy(
             hidden_synapse_mode=hidden_synapse_mode,
             readout_synapse_mode=readout_synapse_mode,
             synapse_clip=synapse_clip,
+            softmax_temperature=softmax_temperature,
             readout_class_centering=readout_class_centering,
         )
     raise ValueError("eval_backend must be 'spice' or 'numpy'")
@@ -1262,6 +1279,12 @@ def main() -> None:
         default="none",
         help="Optionally subtract the per-sample mean softmax error so class error rails remain zero-sum.",
     )
+    ap.add_argument(
+        "--softmax-temperature",
+        type=float,
+        default=1.0,
+        help="Divide score rails by this positive value before softmax error generation.",
+    )
     synapse_modes = ["linear", "full", "ideal", "tanh-clipped", "smooth-clipped", "clipped", "hard-clipped", "bounded", "sign", "binary"]
     ap.add_argument("--hidden-synapse-mode", choices=synapse_modes, default="linear")
     ap.add_argument("--readout-synapse-mode", choices=synapse_modes, default="linear")
@@ -1338,6 +1361,8 @@ def main() -> None:
         raise ValueError("--local-update-scale must be non-negative")
     if args.softmax_negative_scale < 0:
         raise ValueError("--softmax-negative-scale must be non-negative")
+    if args.softmax_temperature <= 0:
+        raise ValueError("--softmax-temperature must be positive")
     if args.synapse_clip <= 0:
         raise ValueError("--synapse-clip must be positive")
     if args.phase <= 0 or args.settle_ratio <= 0:
@@ -1448,6 +1473,7 @@ def main() -> None:
         args.local_update_scale,
         args.softmax_negative_scale,
         args.softmax_error_centering,
+        args.softmax_temperature,
         args.readout_class_centering,
     )
     phase_netlist.write_text(prepare_phase_netlist(netlist, spice_bin))
@@ -1531,6 +1557,7 @@ def main() -> None:
                 readout_class_centering=args.readout_class_centering,
                 softmax_negative_scale=args.softmax_negative_scale,
                 softmax_error_centering=args.softmax_error_centering,
+                softmax_temperature=args.softmax_temperature,
             )
             if update + 1 in probe_updates:
                 op_probe_states[update + 1] = (op_w.copy(), op_hb.copy(), op_readout.copy(), op_ob.copy())
@@ -1591,6 +1618,7 @@ def main() -> None:
             "hidden_synapse_mode": args.hidden_synapse_mode,
             "readout_synapse_mode": args.readout_synapse_mode,
             "synapse_clip": args.synapse_clip,
+            "softmax_temperature": args.softmax_temperature,
             "readout_class_centering": args.readout_class_centering,
         }
         initial_evals = diagnostic_eval_accuracies(
@@ -1858,6 +1886,7 @@ def main() -> None:
         "local_update_scale": args.local_update_scale,
         "softmax_negative_scale": args.softmax_negative_scale,
         "softmax_error_centering": args.softmax_error_centering,
+        "softmax_temperature": args.softmax_temperature,
         "hidden_synapse_mode": args.hidden_synapse_mode,
         "readout_synapse_mode": args.readout_synapse_mode,
         "synapse_clip": args.synapse_clip,

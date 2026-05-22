@@ -17,7 +17,7 @@ from run_spice_mnist_local_block_batch_op_train import (
     readout_feedback_expr,
     synapse_transfer_expr,
 )
-from local_feature_error import class_centered_expr, mean_centered_expr, softmax_delta_expr
+from local_feature_error import class_centered_expr, mean_centered_expr, softmax_delta_expr, softmax_exp_expr
 from run_spice_mnist_train import load_mnist_sequence
 from run_spice_sweep import ROOT, detect_spice, is_xyce, prepare_netlist_for_simulator, run_tiny_test, run_simulator_netlist
 
@@ -113,10 +113,13 @@ def make_train_netlist(
     synapse_clip=1.0,
     softmax_negative_scale=1.0,
     softmax_error_centering="none",
+    softmax_temperature=1.0,
     readout_class_centering="none",
 ):
     if softmax_negative_scale < 0:
         raise ValueError("softmax_negative_scale must be non-negative")
+    if softmax_temperature <= 0:
+        raise ValueError("softmax_temperature must be positive")
     if softmax_error_centering not in {"none", "mean"}:
         raise ValueError("softmax_error_centering must be 'none' or 'mean'")
     if readout_class_centering not in {"none", "mean"}:
@@ -130,6 +133,7 @@ def make_train_netlist(
         f".param LR={lr:.12g}",
         f".param BS={batch}",
         f".param SOFTMAX_NEGATIVE_SCALE={softmax_negative_scale:.12g}",
+        f".param SOFTMAX_TEMPERATURE={softmax_temperature:.12g}",
         "",
     ]
     for s in range(batch):
@@ -197,10 +201,10 @@ def make_train_netlist(
             else:
                 lines.append(f"By{s}_{k} y{s}_{k} 0 V = 2/(1+exp(-2*({out_sum})))-1")
         if softmax_output:
-            denom = " + ".join(f"exp(V(z{s}_{k}))" for k in range(n_classes))
+            denom = " + ".join(softmax_exp_expr(f"V(z{s}_{k})") for k in range(n_classes))
             raw_delta_exprs = [softmax_delta_expr(f"V(t{s}_{k})", f"V(y{s}_{k})") for k in range(n_classes)]
             for k in range(n_classes):
-                lines.append(f"By{s}_{k} y{s}_{k} 0 V = exp(V(z{s}_{k}))/({denom})")
+                lines.append(f"By{s}_{k} y{s}_{k} 0 V = {softmax_exp_expr(f'V(z{s}_{k})')}/({denom})")
                 delta_expr = (
                     mean_centered_expr(raw_delta_exprs, k)
                     if softmax_error_centering == "mean"
@@ -286,12 +290,17 @@ def make_eval_netlist(
     hidden_synapse_mode="linear",
     readout_synapse_mode="linear",
     synapse_clip=1.0,
+    softmax_temperature=1.0,
     readout_class_centering="none",
 ):
+    if softmax_temperature <= 0:
+        raise ValueError("softmax_temperature must be positive")
     batch = len(x_batch)
     n_blocks, channels, _block_len = w.shape
     n_classes = v.shape[0]
     lines = ["* Local feature batch operating-point SPICE inference.", ""]
+    if softmax_output:
+        lines += [f".param SOFTMAX_TEMPERATURE={softmax_temperature:.12g}", ""]
     for s in range(batch):
         for i, val in enumerate(x_batch[s]):
             lines.append(f"Vx{s}_{i} x{s}_{i} 0 DC {float(val):.12g}")
@@ -349,9 +358,9 @@ def make_eval_netlist(
             else:
                 lines.append(f"By{s}_{k} y{s}_{k} 0 V = 2/(1+exp(-2*({out_sum})))-1")
         if softmax_output:
-            denom = " + ".join(f"exp(V(z{s}_{k}))" for k in range(n_classes))
+            denom = " + ".join(softmax_exp_expr(f"V(z{s}_{k})") for k in range(n_classes))
             for k in range(n_classes):
-                lines.append(f"By{s}_{k} y{s}_{k} 0 V = exp(V(z{s}_{k}))/({denom})")
+                lines.append(f"By{s}_{k} y{s}_{k} 0 V = {softmax_exp_expr(f'V(z{s}_{k})')}/({denom})")
     vectors = [f"V(y{s}_{k})" for s in range(batch) for k in range(n_classes)]
     append_op_output(lines, out_path, vectors)
     return "\n".join(lines)
@@ -386,6 +395,7 @@ def run_train_batch(
     synapse_clip=1.0,
     softmax_negative_scale=1.0,
     softmax_error_centering="none",
+    softmax_temperature=1.0,
     readout_class_centering="none",
 ):
     netlist_path.write_text(
@@ -416,6 +426,7 @@ def run_train_batch(
                 synapse_clip,
                 softmax_negative_scale,
                 softmax_error_centering,
+                softmax_temperature,
                 readout_class_centering,
             ),
             spice_bin,
@@ -461,6 +472,7 @@ def run_eval(
     hidden_synapse_mode="linear",
     readout_synapse_mode="linear",
     synapse_clip=1.0,
+    softmax_temperature=1.0,
     readout_class_centering="none",
 ):
     correct = 0
@@ -486,6 +498,7 @@ def run_eval(
                     hidden_synapse_mode,
                     readout_synapse_mode,
                     synapse_clip,
+                    softmax_temperature,
                     readout_class_centering,
                 ),
                 spice_bin,
@@ -610,6 +623,7 @@ def main():
     ap.add_argument("--readout-feedback-clip", type=float, default=0.05)
     ap.add_argument("--softmax-negative-scale", type=float, default=1.0)
     ap.add_argument("--softmax-error-centering", choices=["none", "mean"], default="none")
+    ap.add_argument("--softmax-temperature", type=float, default=1.0)
     synapse_modes = ["linear", "full", "ideal", "tanh-clipped", "smooth-clipped", "clipped", "hard-clipped", "bounded", "sign", "binary"]
     ap.add_argument("--hidden-synapse-mode", choices=synapse_modes, default="linear")
     ap.add_argument("--readout-synapse-mode", choices=synapse_modes, default="linear")
@@ -653,6 +667,8 @@ def main():
         raise ValueError("--readout-feedback-clip must be positive")
     if args.softmax_negative_scale < 0:
         raise ValueError("--softmax-negative-scale must be non-negative")
+    if args.softmax_temperature <= 0:
+        raise ValueError("--softmax-temperature must be positive")
     if args.synapse_clip <= 0:
         raise ValueError("--synapse-clip must be positive")
     if args.start_epoch < 0:
@@ -747,6 +763,7 @@ def main():
             args.hidden_synapse_mode,
             args.readout_synapse_mode,
             args.synapse_clip,
+            args.softmax_temperature,
             args.readout_class_centering,
         )
         rows.append({"epoch": 0, "heldout_accuracy": heldout, "epoch_wall_time_s": time.perf_counter() - epoch_start})
@@ -788,6 +805,7 @@ def main():
                     args.synapse_clip,
                     args.softmax_negative_scale,
                     args.softmax_error_centering,
+                    args.softmax_temperature,
                     args.readout_class_centering,
                 )
                 completed_train_batches += 1
@@ -842,6 +860,7 @@ def main():
                     args.hidden_synapse_mode,
                     args.readout_synapse_mode,
                     args.synapse_clip,
+                    args.softmax_temperature,
                     args.readout_class_centering,
                 )
             row = {"epoch": epoch + 1, "heldout_accuracy": heldout, "epoch_wall_time_s": time.perf_counter() - epoch_start}
@@ -893,6 +912,7 @@ def main():
         "readout_feedback_clip": args.readout_feedback_clip,
         "softmax_negative_scale": args.softmax_negative_scale,
         "softmax_error_centering": args.softmax_error_centering,
+        "softmax_temperature": args.softmax_temperature,
         "hidden_synapse_mode": args.hidden_synapse_mode,
         "readout_synapse_mode": args.readout_synapse_mode,
         "synapse_clip": args.synapse_clip,

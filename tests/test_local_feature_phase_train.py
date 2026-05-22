@@ -58,6 +58,7 @@ def test_phase_transient_cli_exposes_agreement_gates() -> None:
     assert "--local-update-scale" in proc.stdout
     assert "--softmax-negative-scale" in proc.stdout
     assert "--softmax-error-centering" in proc.stdout
+    assert "--softmax-temperature" in proc.stdout
     assert "--readout-class-centering" in proc.stdout
     assert "--eval-backend" in proc.stdout
     assert "--simulator-extra-args" in proc.stdout
@@ -671,7 +672,7 @@ def test_phase_transient_softmax_deck_is_one_continuous_online_run(tmp_path: Pat
     assert "Vpix0 pix0 0 PWL(" in netlist
     assert "Vtarget0 target0 0 PWL(" in netlist
     assert "Bpre_h0_0 ah0_0 0 V =" in netlist
-    assert "By0 y0 0 V = exp(V(score0))/(exp(V(score0)) + exp(V(score1)))" in netlist
+    assert "By0 y0 0 V = exp((V(score0))/{SOFTMAX_TEMPERATURE})/(exp((V(score0))/{SOFTMAX_TEMPERATURE}) + exp((V(score1))/{SOFTMAX_TEMPERATURE}))" in netlist
     assert "Bstore_d0 d0 0 I = V(perr)*{CSTATE}/{TAU}*(V(d0)-((V(target0))*(1-(V(y0))) - (1-(V(target0)))*{SOFTMAX_NEGATIVE_SCALE}*(V(y0))))" in netlist
     assert ".param SOFTMAX_NEGATIVE_SCALE=1" in netlist
     assert ".param TAREA=1.005e-09" in netlist
@@ -716,9 +717,12 @@ def test_phase_transient_softmax_negative_scale_controls_non_target_error(tmp_pa
         True,
         "measure",
         softmax_negative_scale=0.25,
+        softmax_temperature=2.0,
     )
 
     assert ".param SOFTMAX_NEGATIVE_SCALE=0.25" in netlist
+    assert ".param SOFTMAX_TEMPERATURE=2" in netlist
+    assert "By0 y0 0 V = exp((V(score0))/{SOFTMAX_TEMPERATURE})/(exp((V(score0))/{SOFTMAX_TEMPERATURE}) + exp((V(score1))/{SOFTMAX_TEMPERATURE}))" in netlist
     assert "(1-(V(target1)))*{SOFTMAX_NEGATIVE_SCALE}*(V(y1))" in netlist
 
     centered_netlist, _n_vec, _t_stop = phase_transient.make_phase_transient_netlist(
@@ -809,6 +813,34 @@ def test_phase_transient_softmax_negative_scale_controls_non_target_error(tmp_pa
             softmax_error_centering="median",
         )
 
+    with pytest.raises(ValueError, match="softmax_temperature"):
+        phase_transient.make_phase_transient_netlist(
+            x,
+            y,
+            w,
+            hb,
+            readout,
+            output_bias,
+            [[0, 1, 2, 3]],
+            0.8,
+            tmp_path / "bad_temperature.dat",
+            False,
+            1,
+            1,
+            1e-9,
+            0.1e-9,
+            5e-12,
+            40.0,
+            20e-12,
+            1e-12,
+            1e-12,
+            1e-12,
+            1e18,
+            True,
+            "measure",
+            softmax_temperature=0.0,
+        )
+
 
 def test_batch_op_softmax_negative_scale_matches_phase_error_expr(tmp_path: Path) -> None:
     x = np.zeros((1, 4))
@@ -833,9 +865,12 @@ def test_batch_op_softmax_negative_scale_matches_phase_error_expr(tmp_path: Path
         "tanh",
         1.0,
         softmax_negative_scale=0.25,
+        softmax_temperature=2.0,
     )
 
     assert ".param SOFTMAX_NEGATIVE_SCALE=0.25" in netlist
+    assert ".param SOFTMAX_TEMPERATURE=2" in netlist
+    assert "By0_0 y0_0 0 V = exp((V(z0_0))/{SOFTMAX_TEMPERATURE})/(exp((V(z0_0))/{SOFTMAX_TEMPERATURE}) + exp((V(z0_1))/{SOFTMAX_TEMPERATURE}))" in netlist
     assert "Be0_1 e0_1 0 V = (V(t0_1))*(1-(V(y0_1))) - (1-(V(t0_1)))*{SOFTMAX_NEGATIVE_SCALE}*(V(y0_1))" in netlist
 
     centered_netlist = feature_batch_train.make_train_netlist(
@@ -875,6 +910,24 @@ def test_batch_op_softmax_negative_scale_matches_phase_error_expr(tmp_path: Path
             "tanh",
             1.0,
             softmax_negative_scale=-1.0,
+        )
+
+    with pytest.raises(ValueError, match="softmax_temperature"):
+        feature_batch_train.make_train_netlist(
+            x,
+            y,
+            w,
+            hb,
+            readout,
+            output_bias,
+            [[0, 1, 2, 3]],
+            0.8,
+            tmp_path / "bad_temperature.dat",
+            False,
+            True,
+            "tanh",
+            1.0,
+            softmax_temperature=0.0,
         )
 
 

@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import os
 import re
+import shlex
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
@@ -11,6 +13,7 @@ from spicelib.simulators.xyce_simulator import XyceSimulator
 
 
 SimulatorKind = Literal["ngspice", "xyce", "generic"]
+SPICE_SIMULATOR_ARGS_ENV = "SPICENN_SIMULATOR_ARGS"
 
 
 CONTROL_RE = re.compile(r"(?ims)^\.control\b.*?^\.endc\s*\n?")
@@ -101,16 +104,22 @@ def simulator_exe_tokens(spice_bin: str) -> list[str]:
     return list(simulator.spice_exe)
 
 
+def simulator_extra_args() -> list[str]:
+    raw = os.environ.get(SPICE_SIMULATOR_ARGS_ENV, "")
+    return shlex.split(raw) if raw else []
+
+
 def spice_batch_command(spice_bin: str, netlist: Path) -> list[str]:
     exe = simulator_exe_tokens(spice_bin)
+    extra_args = simulator_extra_args()
     # Keep SPICENN's text-output contract: ngspice control measurements arrive
     # on stdout, and Xyce .print decks create .prn files. spicelib's default
     # rawfile switches change both behaviors.
     if is_ngspice(spice_bin):
-        return exe + ["-b", netlist.as_posix()]
+        return exe + ["-b"] + extra_args + [netlist.as_posix()]
     if is_xyce(spice_bin):
-        return exe + [netlist.as_posix()]
-    return exe + [netlist.as_posix()]
+        return exe + extra_args + [netlist.as_posix()]
+    return exe + extra_args + [netlist.as_posix()]
 
 
 def write_simulator_netlist(path: Path, netlist: str, spice_bin: str) -> None:

@@ -50,6 +50,7 @@ def test_phase_transient_cli_exposes_agreement_gates() -> None:
     assert "--readout-synapse-mode" in proc.stdout
     assert "--reference-mode" in proc.stdout
     assert "--phase-output-mode" in proc.stdout
+    assert "--simulator-extra-args" in proc.stdout
 
 
 def test_phase_transient_x_yce_print_reader_extracts_final_transient_row(tmp_path: Path) -> None:
@@ -409,6 +410,45 @@ def test_phase_transient_synapse_transfer_modes_affect_forward_and_backward_path
     assert "(0.25*tanh((V(w0_0_0))/0.25))*V(pix0)" in netlist
     assert "(0.25*(V(v0_0_0))/(abs(V(v0_0_0))+1e-9))*V(h0_0)" in netlist
     assert "(0.25*(V(v0_0_0))/(abs(V(v0_0_0))+1e-9))*V(d0)" in netlist
+
+
+def test_phase_transient_zero_rleak_omits_state_leak_resistors(tmp_path: Path) -> None:
+    x = np.zeros((1, 4))
+    y = np.array([0])
+    w = np.zeros((1, 1, 4))
+    hb = np.zeros((1, 1))
+    readout = np.zeros((2, 1, 1))
+    output_bias = np.zeros(2)
+
+    netlist, _n_vec, _t_stop = phase_transient.make_phase_transient_netlist(
+        x,
+        y,
+        w,
+        hb,
+        readout,
+        output_bias,
+        [[0, 1, 2, 3]],
+        0.8,
+        tmp_path / "out.dat",
+        False,
+        1,
+        1,
+        1e-9,
+        0.1e-9,
+        5e-12,
+        40.0,
+        20e-12,
+        1e-12,
+        1e-12,
+        1e-12,
+        0.0,
+        True,
+    )
+
+    assert "Rw0_0_0" not in netlist
+    assert "Rhb0_0" not in netlist
+    assert "Rv0_0_0" not in netlist
+    assert "Rob0" not in netlist
 
 
 def test_phase_transient_relu_deck_matches_forward_and_backward_activation(tmp_path: Path) -> None:

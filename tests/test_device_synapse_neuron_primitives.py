@@ -289,6 +289,16 @@ def test_spicelib_resolves_executable_without_forcing_raw_output(
     assert "-l" not in cmd
 
 
+def test_simulator_extra_args_are_inserted_before_netlist(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    netlist = tmp_path / "deck.cir"
+    netlist.write_text(".title deck\n.end\n")
+    monkeypatch.setenv(spice_adapter.SPICE_SIMULATOR_ARGS_ENV, "-quiet -linsolv KLU")
+
+    cmd = spice_adapter.spice_batch_command("Xyce", netlist)
+
+    assert cmd == ["Xyce", "-quiet", "-linsolv", "KLU", netlist.as_posix()]
+
+
 def test_simulator_auto_modes_make_fast_xyce_choice_explicit(monkeypatch: pytest.MonkeyPatch) -> None:
     versions = {
         "/sim/ngspice": "ngspice-46 : Circuit level simulation program\n",

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import re
 import time
 from pathlib import Path
@@ -20,6 +21,7 @@ from run_spice_mnist_local_block_batch_op_train import (
 from run_spice_mnist_local_feature_batch_op_train import run_eval, run_train_batch, wrap_xyce_behavioral_rhs, xyce_prn_path
 from run_spice_mnist_train import load_mnist_sequence
 from run_spice_sweep import ROOT, detect_spice, is_xyce, prepare_netlist_for_simulator, run_tiny_test, run_simulator_netlist
+from spice_adapter import SPICE_SIMULATOR_ARGS_ENV
 
 
 def sanitize_tag(tag: str) -> str:
@@ -282,6 +284,8 @@ def make_phase_transient_netlist(
     total_samples = x_batch.shape[0]
     if total_samples != update_batch_size * updates:
         raise ValueError("x_batch length must equal update_batch_size * updates")
+    if rleak < 0:
+        raise ValueError("rleak must be non-negative")
     n_blocks, channels, block_len = w.shape
     n_classes = readout.shape[0]
     phases, sample_starts, t_stop = make_phase_schedule(update_batch_size, updates, phase, gap)
@@ -320,10 +324,12 @@ def make_phase_transient_netlist(
         for c in range(channels):
             for p in range(block_len):
                 lines.append(f"Cw{b}_{c}_{p} w{b}_{c}_{p} 0 {{CW}} IC={w[b, c, p]:.12g}")
-                lines.append(f"Rw{b}_{c}_{p} w{b}_{c}_{p} 0 {{RLEAK}}")
+                if rleak > 0:
+                    lines.append(f"Rw{b}_{c}_{p} w{b}_{c}_{p} 0 {{RLEAK}}")
                 lines.append(f"Cgw{b}_{c}_{p} gw{b}_{c}_{p} 0 {{CGRAD}} IC=0")
             lines.append(f"Chb{b}_{c} hb{b}_{c} 0 {{CW}} IC={hb[b, c]:.12g}")
-            lines.append(f"Rhb{b}_{c} hb{b}_{c} 0 {{RLEAK}}")
+            if rleak > 0:
+                lines.append(f"Rhb{b}_{c} hb{b}_{c} 0 {{RLEAK}}")
             lines.append(f"Cghb{b}_{c} ghb{b}_{c} 0 {{CGRAD}} IC=0")
             lines.append(f"Ch{b}_{c} h{b}_{c} 0 {{CSTATE}} IC=0")
             lines.append(f"Cdh{b}_{c} dh{b}_{c} 0 {{CSTATE}} IC=0")
@@ -331,10 +337,12 @@ def make_phase_transient_netlist(
         for b in range(n_blocks):
             for c in range(channels):
                 lines.append(f"Cv{k}_{b}_{c} v{k}_{b}_{c} 0 {{CW}} IC={readout[k, b, c]:.12g}")
-                lines.append(f"Rv{k}_{b}_{c} v{k}_{b}_{c} 0 {{RLEAK}}")
+                if rleak > 0:
+                    lines.append(f"Rv{k}_{b}_{c} v{k}_{b}_{c} 0 {{RLEAK}}")
                 lines.append(f"Cgv{k}_{b}_{c} gv{k}_{b}_{c} 0 {{CGRAD}} IC=0")
         lines.append(f"Cob{k} ob{k} 0 {{CW}} IC={output_bias[k]:.12g}")
-        lines.append(f"Rob{k} ob{k} 0 {{RLEAK}}")
+        if rleak > 0:
+            lines.append(f"Rob{k} ob{k} 0 {{RLEAK}}")
         lines.append(f"Cgob{k} gob{k} 0 {{CGRAD}} IC=0")
         lines.append(f"Cscore{k} score{k} 0 {{CSTATE}} IC=0")
         lines.append(f"Cd{k} d{k} 0 {{CSTATE}} IC=0")
@@ -654,6 +662,7 @@ def main() -> None:
     ap.add_argument("--learning-improvement-threshold", type=float, default=0.02)
     ap.add_argument("--reference-mode", choices=["spice", "none"], default="spice")
     ap.add_argument("--phase-output-mode", choices=["auto", "measure", "print", "control_measure", "wrdata"], default="auto")
+    ap.add_argument("--simulator-extra-args", default="", help=f"Extra simulator command-line arguments, also available via {SPICE_SIMULATOR_ARGS_ENV}.")
     ap.add_argument("--final-measures", action="store_true")
     ap.add_argument(
         "--probe-updates",
@@ -707,6 +716,8 @@ def main() -> None:
         raise ValueError("--eval-probe-updates requires --eval-samples > 0")
     if args.reference_mode == "none" and probe_updates:
         raise ValueError("--reference-mode none does not support --probe-updates")
+    if args.simulator_extra_args:
+        os.environ[SPICE_SIMULATOR_ARGS_ENV] = args.simulator_extra_args
 
     stride = args.block_size if args.stride is None else args.stride
     blocks = block_indices(args.image_size, args.block_size, stride)
@@ -1095,6 +1106,7 @@ def main() -> None:
         "synapse_clip": args.synapse_clip,
         "reference_mode": args.reference_mode,
         "phase_output_mode_requested": args.phase_output_mode,
+        "simulator_extra_args": args.simulator_extra_args or os.environ.get(SPICE_SIMULATOR_ARGS_ENV, ""),
         "init_weights": args.init_weights,
         "phase_netlist": str(phase_netlist),
         "phase_data": str(phase_data),

@@ -81,6 +81,22 @@ def test_epoch_order_slice_applies_offset_sample_limit_then_batch_cap() -> None:
         batch_op.epoch_order_slice(order, 0, 0, 1, 0)
 
 
+def test_skip_epoch_shuffles_advances_resume_order() -> None:
+    first_rng = np.random.default_rng(123)
+    first_order = np.arange(10)
+    first_rng.shuffle(first_order)
+    second_order = np.arange(10)
+    first_rng.shuffle(second_order)
+
+    resumed_rng = np.random.default_rng(123)
+    batch_op.skip_epoch_shuffles(resumed_rng, 1, 10)
+    resumed_order = np.arange(10)
+    resumed_rng.shuffle(resumed_order)
+
+    assert first_order.tolist() != second_order.tolist()
+    assert resumed_order.tolist() == second_order.tolist()
+
+
 def test_save_weight_checkpoint_is_init_weights_compatible(tmp_path: Path) -> None:
     path = tmp_path / "latest_weights.npz"
     w = np.arange(8, dtype=float).reshape(1, 2, 4)

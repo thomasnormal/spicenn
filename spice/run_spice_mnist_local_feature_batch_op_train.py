@@ -337,6 +337,14 @@ def epoch_order_slice(order: np.ndarray, epoch_train_samples: int, epoch_train_o
     return order
 
 
+def skip_epoch_shuffles(rng: np.random.Generator, epochs: int, train_count: int) -> None:
+    if epochs < 0:
+        raise ValueError("epochs must be non-negative")
+    for _ in range(epochs):
+        order = np.arange(train_count)
+        rng.shuffle(order)
+
+
 def save_weight_checkpoint(path: Path, w: np.ndarray, hb: np.ndarray, v: np.ndarray, ob: np.ndarray, **metadata) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     np.savez_compressed(
@@ -383,6 +391,12 @@ def main():
     ap.add_argument("--stride", type=int, default=None)
     ap.add_argument("--channels", type=int, default=4)
     ap.add_argument("--epochs", type=int, default=20)
+    ap.add_argument(
+        "--start-epoch",
+        type=int,
+        default=0,
+        help="Advance the epoch shuffle RNG before training. Use when resuming from an init-weights checkpoint.",
+    )
     ap.add_argument("--epoch-train-samples", type=int, default=0)
     ap.add_argument("--epoch-train-offset", type=int, default=0)
     ap.add_argument(
@@ -427,6 +441,8 @@ def main():
     args = ap.parse_args()
     if args.linear_output and args.softmax_output:
         raise ValueError("--linear-output and --softmax-output are mutually exclusive")
+    if args.start_epoch < 0:
+        raise ValueError("--start-epoch must be non-negative")
     if args.skip_heldout_eval and (args.eval_only or args.epochs == 0):
         raise ValueError("--skip-heldout-eval cannot be used with --eval-only or --epochs 0")
 
@@ -518,7 +534,9 @@ def main():
         best_state = (w.copy(), hb.copy(), v.copy(), ob.copy())
         print(json.dumps(rows[-1]), flush=True)
     else:
-        for epoch in range(args.epochs):
+        skip_epoch_shuffles(rng, args.start_epoch, len(y_train))
+        for local_epoch in range(args.epochs):
+            epoch = args.start_epoch + local_epoch
             order = np.arange(len(y_train))
             rng.shuffle(order)
             order = epoch_order_slice(
@@ -642,6 +660,7 @@ def main():
         "max_train_batches": int(args.max_train_batches),
         "test_samples": args.test_samples,
         "epochs": args.epochs,
+        "start_epoch": args.start_epoch,
         "eval_only": bool(args.eval_only),
         "skip_heldout_eval": bool(args.skip_heldout_eval),
         "batch_size": args.batch_size,

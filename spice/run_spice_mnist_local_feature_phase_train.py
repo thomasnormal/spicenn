@@ -119,6 +119,23 @@ def save_checkpoint_pair(
     return paths
 
 
+def eval_accuracy_improved(accuracy: float, best_accuracy: float | None) -> bool:
+    return bool(np.isfinite(accuracy) and (best_accuracy is None or accuracy > best_accuracy))
+
+
+def maybe_save_best_eval_checkpoint(
+    enabled: bool,
+    path: Path,
+    state: tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray],
+    accuracy: float,
+    best_accuracy: float | None,
+) -> tuple[float | None, dict[str, str]]:
+    if not enabled or not eval_accuracy_improved(accuracy, best_accuracy):
+        return best_accuracy, {}
+    save_checkpoint(path, state)
+    return accuracy, {"best_eval_checkpoint": str(path)}
+
+
 def block_tensor_np(x: np.ndarray, blocks: list[list[int]]) -> np.ndarray:
     return np.stack([x[:, idxs] for idxs in blocks], axis=1)
 
@@ -211,6 +228,7 @@ def main() -> None:
     ap.add_argument("--checkpoint-every", type=int, default=1)
     ap.add_argument("--eval-batch-size", type=int, default=20)
     ap.add_argument("--eval-every", type=int, default=1)
+    ap.add_argument("--save-best-eval-weights", action="store_true")
     ap.add_argument("--track-fast-reference", action="store_true")
     ap.add_argument("--fast-eval-batch-size", type=int, default=1024)
     ap.add_argument("--skip-initial-eval", action="store_true")
@@ -291,10 +309,13 @@ def main() -> None:
     stem = f"spice_mnist_local_feature_phase_train_{safe_tag}"
     eval_netlist = generated / f"{stem}_eval.cir"
     eval_data = results / f"{stem}_eval.dat"
+    best_eval_weights_path = results / f"{stem}_best_eval_weights.npz"
     checkpoint_dir = results / f"{stem}_checkpoints"
     curve_rows: list[dict[str, float | int | str]] = []
     phase_wall_total = 0.0
     eval_wall_total = 0.0
+    best_eval_accuracy: float | None = None
+    best_eval_weights: str | None = None
 
     def tracking_fields() -> dict[str, float | int]:
         if reference_state is None:
@@ -345,7 +366,7 @@ def main() -> None:
         note: str,
         extra_fields: dict[str, str] | None = None,
     ) -> None:
-        nonlocal eval_wall_total
+        nonlocal best_eval_accuracy, best_eval_weights, eval_wall_total
         t_eval = time.perf_counter()
         acc = run_eval(
             spice_bin,
@@ -364,7 +385,18 @@ def main() -> None:
         )
         eval_wall = time.perf_counter() - t_eval
         eval_wall_total += eval_wall
-        append_curve_row(chunk, samples_seen, phase_wall, eval_wall, acc, note, extra_fields)
+        fields = dict(extra_fields or {})
+        best_eval_accuracy, best_fields = maybe_save_best_eval_checkpoint(
+            args.save_best_eval_weights,
+            best_eval_weights_path,
+            state,
+            acc,
+            best_eval_accuracy,
+        )
+        fields.update(best_fields)
+        if "best_eval_checkpoint" in best_fields:
+            best_eval_weights = best_fields["best_eval_checkpoint"]
+        append_curve_row(chunk, samples_seen, phase_wall, eval_wall, acc, note, fields)
 
     if not args.skip_initial_eval and args.eval_every != 0:
         append_eval_row(args.start_chunk, start_sample, 0.0, "initial_spice_eval")
@@ -468,6 +500,8 @@ def main() -> None:
         "linear_output": bool(args.linear_output),
         "checkpoint_every": args.checkpoint_every,
         "checkpoint_dir": str(checkpoint_dir),
+        "save_best_eval_weights": bool(args.save_best_eval_weights),
+        "best_eval_weights": best_eval_weights,
         "phase_s": args.phase,
         "settle_ratio": args.settle_ratio,
         "transient_step_s": args.transient_step,

@@ -26,6 +26,20 @@ def test_cli_exposes_simulator_selector() -> None:
     assert "--simulator" in proc.stdout
 
 
+def test_phase_transient_cli_exposes_agreement_gates() -> None:
+    proc = subprocess.run(
+        [sys.executable, str(SPICE_DIR / "run_spice_mnist_local_feature_phase_transient.py"), "--help"],
+        text=True,
+        capture_output=True,
+        check=True,
+    )
+
+    assert "--softmax-output" in proc.stdout
+    assert "--direction-cosine-threshold" in proc.stdout
+    assert "--sign-alignment-threshold" in proc.stdout
+    assert "--eval-accuracy-diff-threshold" in proc.stdout
+
+
 def test_eval_accuracy_improved_requires_finite_strict_improvement() -> None:
     assert phase_train.eval_accuracy_improved(0.9, None)
     assert phase_train.eval_accuracy_improved(0.91, 0.9)

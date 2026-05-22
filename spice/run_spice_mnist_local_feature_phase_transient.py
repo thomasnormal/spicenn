@@ -377,6 +377,9 @@ def main() -> None:
     ap.add_argument("--cstate", type=float, default=1e-12)
     ap.add_argument("--cgrad", type=float, default=1e-12)
     ap.add_argument("--rleak", type=float, default=1e18)
+    ap.add_argument("--direction-cosine-threshold", type=float, default=0.999)
+    ap.add_argument("--sign-alignment-threshold", type=float, default=0.98)
+    ap.add_argument("--eval-accuracy-diff-threshold", type=float, default=0.0)
     ap.add_argument("--final-measures", action="store_true")
     ap.add_argument("--tag", default="phase_local_feature")
     args = ap.parse_args()
@@ -389,6 +392,12 @@ def main() -> None:
         raise ValueError("--channels must be positive")
     if args.phase <= 0 or args.settle_ratio <= 0:
         raise ValueError("--phase and --settle-ratio must be positive")
+    if args.direction_cosine_threshold < -1 or args.direction_cosine_threshold > 1:
+        raise ValueError("--direction-cosine-threshold must be between -1 and 1")
+    if args.sign_alignment_threshold < 0 or args.sign_alignment_threshold > 1:
+        raise ValueError("--sign-alignment-threshold must be between 0 and 1")
+    if args.eval_accuracy_diff_threshold < 0:
+        raise ValueError("--eval-accuracy-diff-threshold must be non-negative")
 
     stride = args.block_size if args.stride is None else args.stride
     blocks = block_indices(args.image_size, args.block_size, stride)
@@ -523,6 +532,22 @@ def main() -> None:
             relu_clip=1.0,
         )
         eval_wall = time.perf_counter() - t2
+    eval_accuracy_abs_diff = (
+        abs(phase_eval_accuracy - op_reference_eval_accuracy)
+        if phase_eval_accuracy is not None and op_reference_eval_accuracy is not None
+        else None
+    )
+    direction_matches_reference = bool(
+        np.isfinite(metrics["state_update_direction_cosine"])
+        and metrics["state_update_direction_cosine"] >= args.direction_cosine_threshold
+        and np.isfinite(metrics["state_update_sign_alignment_fraction"])
+        and metrics["state_update_sign_alignment_fraction"] >= args.sign_alignment_threshold
+    )
+    eval_matches_reference = (
+        None
+        if eval_accuracy_abs_diff is None
+        else bool(eval_accuracy_abs_diff <= args.eval_accuracy_diff_threshold)
+    )
     final_weights_path = results / f"{stem}_final_weights.npz"
     reference_weights_path = results / f"{stem}_op_reference_final_weights.npz"
     metrics_path = results / f"{stem}_equivalence_metrics.csv"
@@ -573,11 +598,14 @@ def main() -> None:
         "eval_wall_time_s": eval_wall,
         "phase_eval_accuracy": phase_eval_accuracy,
         "op_reference_eval_accuracy": op_reference_eval_accuracy,
-        "eval_accuracy_abs_diff": (
-            abs(phase_eval_accuracy - op_reference_eval_accuracy)
-            if phase_eval_accuracy is not None and op_reference_eval_accuracy is not None
-            else None
-        ),
+        "eval_accuracy_abs_diff": eval_accuracy_abs_diff,
+        "direction_cosine_threshold": args.direction_cosine_threshold,
+        "sign_alignment_threshold": args.sign_alignment_threshold,
+        "eval_accuracy_diff_threshold": args.eval_accuracy_diff_threshold,
+        "direction_matches_batch_op_reference": direction_matches_reference,
+        "eval_accuracy_matches_batch_op_reference": eval_matches_reference,
+        "online_batch_size_one": args.batch_size == 1,
+        "continuous_transient_contract_met": bool(args.batch_size == 1 and direction_matches_reference and (eval_matches_reference is not False)),
         "t_stop_s": t_stop,
         "transient_step_s": args.transient_step,
         "phase_s": args.phase,

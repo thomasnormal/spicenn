@@ -884,6 +884,66 @@ def numpy_eval_accuracy(
     return correct / max(len(y_eval), 1)
 
 
+def numpy_eval_diagnostics(
+    x_eval: np.ndarray,
+    y_eval: np.ndarray,
+    state: TrainState,
+    blocks: list[list[int]],
+    batch_size: int,
+    *,
+    linear_output: bool,
+    softmax_output: bool,
+    local_activation: str,
+    relu_clip: float,
+    relu_leak: float,
+    softplus_beta: float,
+    hidden_synapse_mode: str,
+    readout_synapse_mode: str,
+    synapse_clip: float,
+) -> dict[str, object]:
+    _w, _hb, _readout, output_bias = state
+    n_classes = int(output_bias.shape[0])
+    preds: list[np.ndarray] = []
+    labels_all: list[np.ndarray] = []
+    w, hb, readout, output_bias = state
+    eff_w = synapse_transfer_np(w, hidden_synapse_mode, synapse_clip)
+    eff_readout = synapse_transfer_np(readout, readout_synapse_mode, synapse_clip)
+    for start in range(0, len(y_eval), batch_size):
+        x = x_eval[start : start + batch_size]
+        labels = y_eval[start : start + batch_size]
+        xb = block_tensor_np(x, blocks)
+        pre = np.einsum("nbp,bcp->nbc", xb, eff_w) + hb
+        h = local_activation_np(pre, local_activation, relu_clip, relu_leak, softplus_beta)
+        score = np.einsum("nbc,kbc->nk", h, eff_readout) + output_bias
+        y = output_activation_np(score, linear_output, softmax_output)
+        preds.append(np.argmax(y, axis=1))
+        labels_all.append(labels)
+
+    pred = np.concatenate(preds) if preds else np.zeros((0,), dtype=int)
+    labels = np.concatenate(labels_all) if labels_all else np.zeros((0,), dtype=int)
+    correct_mask = pred == labels
+    label_hist = np.bincount(labels, minlength=n_classes)
+    pred_hist = np.bincount(pred, minlength=n_classes)
+    correct_hist = np.bincount(labels[correct_mask], minlength=n_classes)
+    per_class_accuracy = [
+        None if int(total) == 0 else float(correct / total)
+        for correct, total in zip(correct_hist, label_hist)
+    ]
+    total = max(int(labels.size), 1)
+    dominant_pred_count = int(np.max(pred_hist)) if pred_hist.size else 0
+    dominant_pred_class = int(np.argmax(pred_hist)) if pred_hist.size else None
+    return {
+        "accuracy": float(np.sum(correct_mask) / total),
+        "label_histogram": [int(value) for value in label_hist],
+        "prediction_histogram": [int(value) for value in pred_hist],
+        "correct_by_label": [int(value) for value in correct_hist],
+        "per_class_accuracy": per_class_accuracy,
+        "dominant_pred_class": dominant_pred_class,
+        "dominant_pred_fraction": float(dominant_pred_count / total),
+        "unique_predicted_classes": int(np.count_nonzero(pred_hist)),
+    }
+
+
 def diagnostic_eval_accuracy(
     eval_backend: str,
     spice_bin: str,
@@ -1392,6 +1452,9 @@ def main() -> None:
     numpy_initial_eval_accuracy = None
     numpy_phase_eval_accuracy = None
     numpy_op_reference_eval_accuracy = None
+    initial_numpy_eval_diagnostics = None
+    phase_numpy_eval_diagnostics = None
+    op_reference_numpy_eval_diagnostics = None
     initial_eval_backend_abs_diff = None
     phase_eval_backend_abs_diff = None
     op_reference_eval_backend_abs_diff = None
@@ -1430,6 +1493,15 @@ def main() -> None:
         spice_initial_eval_accuracy = initial_evals.get("spice")
         numpy_initial_eval_accuracy = initial_evals.get("numpy")
         initial_eval_backend_abs_diff = eval_backend_abs_diff(initial_evals)
+        if args.eval_backend in {"numpy", "both"}:
+            initial_numpy_eval_diagnostics = numpy_eval_diagnostics(
+                x_test[: args.eval_samples],
+                y_test[: args.eval_samples],
+                (w, hb, readout, output_bias),
+                blocks,
+                max(1, min(args.eval_samples, 50)),
+                **eval_kwargs,
+            )
         phase_evals = diagnostic_eval_accuracies(
             args.eval_backend,
             spice_bin,
@@ -1447,6 +1519,15 @@ def main() -> None:
         spice_phase_eval_accuracy = phase_evals.get("spice")
         numpy_phase_eval_accuracy = phase_evals.get("numpy")
         phase_eval_backend_abs_diff = eval_backend_abs_diff(phase_evals)
+        if args.eval_backend in {"numpy", "both"}:
+            phase_numpy_eval_diagnostics = numpy_eval_diagnostics(
+                x_test[: args.eval_samples],
+                y_test[: args.eval_samples],
+                (phase_w, phase_hb, phase_readout, phase_ob),
+                blocks,
+                max(1, min(args.eval_samples, 50)),
+                **eval_kwargs,
+            )
         if args.reference_mode == "spice":
             assert op_w is not None and op_hb is not None and op_readout is not None and op_ob is not None
             op_reference_eval_netlist = generated / f"{stem}_op_reference_eval.cir"
@@ -1469,6 +1550,15 @@ def main() -> None:
             spice_op_reference_eval_accuracy = op_reference_evals.get("spice")
             numpy_op_reference_eval_accuracy = op_reference_evals.get("numpy")
             op_reference_eval_backend_abs_diff = eval_backend_abs_diff(op_reference_evals)
+            if args.eval_backend in {"numpy", "both"}:
+                op_reference_numpy_eval_diagnostics = numpy_eval_diagnostics(
+                    x_test[: args.eval_samples],
+                    y_test[: args.eval_samples],
+                    (op_w, op_hb, op_readout, op_ob),
+                    blocks,
+                    max(1, min(args.eval_samples, 50)),
+                    **eval_kwargs,
+                )
         if args.eval_probe_updates:
             for row in probe_rows:
                 update = int(row["update"])
@@ -1494,6 +1584,19 @@ def main() -> None:
                 row["phase_spice_eval_accuracy"] = phase_probe_evals.get("spice")
                 row["phase_numpy_eval_accuracy"] = phase_probe_evals.get("numpy")
                 row["phase_eval_backend_abs_diff"] = eval_backend_abs_diff(phase_probe_evals)
+                if args.eval_backend in {"numpy", "both"}:
+                    phase_probe_stats = numpy_eval_diagnostics(
+                        x_test[: args.eval_samples],
+                        y_test[: args.eval_samples],
+                        (probe_w, probe_hb, probe_readout, probe_ob),
+                        blocks,
+                        max(1, min(args.eval_samples, 50)),
+                        **eval_kwargs,
+                    )
+                    row["phase_numpy_eval_dominant_pred_class"] = phase_probe_stats["dominant_pred_class"]
+                    row["phase_numpy_eval_dominant_pred_fraction"] = phase_probe_stats["dominant_pred_fraction"]
+                    row["phase_numpy_eval_unique_predicted_classes"] = phase_probe_stats["unique_predicted_classes"]
+                    row["phase_numpy_eval_prediction_histogram"] = phase_probe_stats["prediction_histogram"]
                 row["phase_eval_improvement"] = (
                     phase_probe_eval - initial_eval_accuracy
                     if initial_eval_accuracy is not None
@@ -1662,6 +1765,9 @@ def main() -> None:
         "numpy_initial_eval_accuracy": numpy_initial_eval_accuracy,
         "numpy_phase_eval_accuracy": numpy_phase_eval_accuracy,
         "numpy_op_reference_eval_accuracy": numpy_op_reference_eval_accuracy,
+        "initial_numpy_eval_diagnostics": initial_numpy_eval_diagnostics,
+        "phase_numpy_eval_diagnostics": phase_numpy_eval_diagnostics,
+        "op_reference_numpy_eval_diagnostics": op_reference_numpy_eval_diagnostics,
         "initial_eval_backend_abs_diff": initial_eval_backend_abs_diff,
         "phase_eval_backend_abs_diff": phase_eval_backend_abs_diff,
         "op_reference_eval_backend_abs_diff": op_reference_eval_backend_abs_diff,

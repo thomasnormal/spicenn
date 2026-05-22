@@ -58,6 +58,11 @@ def test_phase_summary_row_keeps_execution_contract_and_backend_fields(tmp_path:
                 "initial_eval_accuracy": 0.05,
                 "phase_eval_accuracy": 0.12,
                 "phase_eval_improvement": 0.07,
+                "phase_numpy_eval_diagnostics": {
+                    "dominant_pred_class": 3,
+                    "dominant_pred_fraction": 0.4,
+                    "unique_predicted_classes": 5,
+                },
                 "phase_update_l2": 0.364,
                 "phase_wall_time_s": 36.1,
                 "eval_wall_time_s": 9.5,
@@ -80,6 +85,9 @@ def test_phase_summary_row_keeps_execution_contract_and_backend_fields(tmp_path:
     assert row["eval_index_sha256"] == "evalhash"
     assert row["lr"] == 0.1
     assert row["eval_backend"] == "both"
+    assert row["phase_dominant_pred_class"] == 3
+    assert row["phase_dominant_pred_fraction"] == 0.4
+    assert row["phase_unique_predicted_classes"] == 5
     assert row["fully_on_device_execution_contract_met"] is True
     assert row["strict_fully_on_device_contract_met"] is True
     assert row["strict_fully_on_device_requested"] is True

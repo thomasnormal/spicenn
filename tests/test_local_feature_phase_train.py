@@ -247,6 +247,41 @@ def test_phase_transient_numpy_eval_accuracy_is_post_transient_diagnostic(tmp_pa
         )
 
 
+def test_phase_transient_numpy_eval_diagnostics_reports_prediction_collapse() -> None:
+    x = np.eye(4)
+    y = np.array([0, 1, 0, 1])
+    w = np.ones((1, 1, 4))
+    hb = np.zeros((1, 1))
+    readout = np.array([[[1.0]], [[-1.0]]])
+    output_bias = np.array([0.0, 0.0])
+
+    stats = phase_transient.numpy_eval_diagnostics(
+        x,
+        y,
+        (w, hb, readout, output_bias),
+        [[0, 1, 2, 3]],
+        2,
+        linear_output=True,
+        softmax_output=False,
+        local_activation="tanh",
+        relu_clip=1.0,
+        relu_leak=0.01,
+        softplus_beta=10.0,
+        hidden_synapse_mode="linear",
+        readout_synapse_mode="linear",
+        synapse_clip=1.0,
+    )
+
+    assert stats["accuracy"] == pytest.approx(0.5)
+    assert stats["label_histogram"] == [2, 2]
+    assert stats["prediction_histogram"] == [4, 0]
+    assert stats["correct_by_label"] == [2, 0]
+    assert stats["per_class_accuracy"] == [1.0, 0.0]
+    assert stats["dominant_pred_class"] == 0
+    assert stats["dominant_pred_fraction"] == pytest.approx(1.0)
+    assert stats["unique_predicted_classes"] == 1
+
+
 def test_phase_transient_both_eval_backend_reports_spice_and_numpy(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     x = np.eye(4)
     y = np.array([0, 1, 0, 1])

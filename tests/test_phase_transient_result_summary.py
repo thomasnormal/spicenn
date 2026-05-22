@@ -46,6 +46,8 @@ def test_phase_summary_row_keeps_execution_contract_and_backend_fields(tmp_path:
                 "updates": 16,
                 "eval_samples": 100,
                 "lr": 0.1,
+                "softmax_negative_scale": 0.25,
+                "softmax_error_centering": "mean",
                 "update_mode": "direct",
                 "reference_mode": "none",
                 "eval_backend": "both",
@@ -101,6 +103,8 @@ def test_phase_summary_row_keeps_execution_contract_and_backend_fields(tmp_path:
     assert row["train_dominant_label_fraction"] == 0.5
     assert row["train_unique_labels"] == 3
     assert row["lr"] == 0.1
+    assert row["softmax_negative_scale"] == 0.25
+    assert row["softmax_error_centering"] == "mean"
     assert row["local_update_scale"] == 0.75
     assert row["output_bias_update_scale"] == 0.25
     assert row["readout_update_scale"] == 0.5

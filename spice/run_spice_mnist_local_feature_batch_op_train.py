@@ -17,6 +17,7 @@ from run_spice_mnist_local_block_batch_op_train import (
     readout_feedback_expr,
     synapse_transfer_expr,
 )
+from local_feature_error import mean_centered_expr, softmax_delta_expr
 from run_spice_mnist_train import load_mnist_sequence
 from run_spice_sweep import ROOT, detect_spice, is_xyce, prepare_netlist_for_simulator, run_tiny_test, run_simulator_netlist
 
@@ -110,7 +111,13 @@ def make_train_netlist(
     hidden_synapse_mode="linear",
     readout_synapse_mode="linear",
     synapse_clip=1.0,
+    softmax_negative_scale=1.0,
+    softmax_error_centering="none",
 ):
+    if softmax_negative_scale < 0:
+        raise ValueError("softmax_negative_scale must be non-negative")
+    if softmax_error_centering not in {"none", "mean"}:
+        raise ValueError("softmax_error_centering must be 'none' or 'mean'")
     batch = len(y_batch)
     n_blocks, channels, block_len = w.shape
     n_classes = v.shape[0]
@@ -119,6 +126,7 @@ def make_train_netlist(
         "* Local learned features feed trainable class evidence; ngspice computes backprop/update.",
         f".param LR={lr:.12g}",
         f".param BS={batch}",
+        f".param SOFTMAX_NEGATIVE_SCALE={softmax_negative_scale:.12g}",
         "",
     ]
     for s in range(batch):
@@ -179,9 +187,15 @@ def make_train_netlist(
                 lines.append(f"By{s}_{k} y{s}_{k} 0 V = 2/(1+exp(-2*({out_sum})))-1")
         if softmax_output:
             denom = " + ".join(f"exp(V(z{s}_{k}))" for k in range(n_classes))
+            raw_delta_exprs = [softmax_delta_expr(f"V(t{s}_{k})", f"V(y{s}_{k})") for k in range(n_classes)]
             for k in range(n_classes):
                 lines.append(f"By{s}_{k} y{s}_{k} 0 V = exp(V(z{s}_{k}))/({denom})")
-                lines.append(f"Be{s}_{k} e{s}_{k} 0 V = V(t{s}_{k})-V(y{s}_{k})")
+                delta_expr = (
+                    mean_centered_expr(raw_delta_exprs, k)
+                    if softmax_error_centering == "mean"
+                    else raw_delta_exprs[k]
+                )
+                lines.append(f"Be{s}_{k} e{s}_{k} 0 V = {delta_expr}")
                 lines.append(f"Bd{s}_{k} d{s}_{k} 0 V = V(e{s}_{k})")
         else:
             for k in range(n_classes):
@@ -343,6 +357,8 @@ def run_train_batch(
     hidden_synapse_mode="linear",
     readout_synapse_mode="linear",
     synapse_clip=1.0,
+    softmax_negative_scale=1.0,
+    softmax_error_centering="none",
 ):
     netlist_path.write_text(
         prepare_local_feature_netlist(
@@ -370,6 +386,8 @@ def run_train_batch(
                 hidden_synapse_mode,
                 readout_synapse_mode,
                 synapse_clip,
+                softmax_negative_scale,
+                softmax_error_centering,
             ),
             spice_bin,
         )
@@ -559,6 +577,8 @@ def main():
     ap.add_argument("--derivative-gate-threshold", type=float, default=1e-6)
     ap.add_argument("--readout-feedback-mode", choices=["readout", "full-readout", "exact", "sign-readout", "sign", "clipped-readout", "clipped"], default="readout")
     ap.add_argument("--readout-feedback-clip", type=float, default=0.05)
+    ap.add_argument("--softmax-negative-scale", type=float, default=1.0)
+    ap.add_argument("--softmax-error-centering", choices=["none", "mean"], default="none")
     synapse_modes = ["linear", "full", "ideal", "tanh-clipped", "smooth-clipped", "clipped", "hard-clipped", "bounded", "sign", "binary"]
     ap.add_argument("--hidden-synapse-mode", choices=synapse_modes, default="linear")
     ap.add_argument("--readout-synapse-mode", choices=synapse_modes, default="linear")
@@ -599,6 +619,8 @@ def main():
         raise ValueError("--derivative-gate-threshold must be non-negative")
     if args.readout_feedback_clip <= 0:
         raise ValueError("--readout-feedback-clip must be positive")
+    if args.softmax_negative_scale < 0:
+        raise ValueError("--softmax-negative-scale must be non-negative")
     if args.synapse_clip <= 0:
         raise ValueError("--synapse-clip must be positive")
     if args.start_epoch < 0:
@@ -731,6 +753,8 @@ def main():
                     args.hidden_synapse_mode,
                     args.readout_synapse_mode,
                     args.synapse_clip,
+                    args.softmax_negative_scale,
+                    args.softmax_error_centering,
                 )
                 completed_train_batches += 1
                 if args.checkpoint_every_batches > 0 and completed_train_batches % args.checkpoint_every_batches == 0:
@@ -832,6 +856,8 @@ def main():
         "derivative_gate_threshold": args.derivative_gate_threshold,
         "readout_feedback_mode": args.readout_feedback_mode,
         "readout_feedback_clip": args.readout_feedback_clip,
+        "softmax_negative_scale": args.softmax_negative_scale,
+        "softmax_error_centering": args.softmax_error_centering,
         "hidden_synapse_mode": args.hidden_synapse_mode,
         "readout_synapse_mode": args.readout_synapse_mode,
         "synapse_clip": args.synapse_clip,

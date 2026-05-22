@@ -12,6 +12,7 @@ import numpy as np
 import pandas as pd
 
 from run_spice_mnist_batch_op_train import read_wrdata_row
+from local_feature_error import mean_centered_expr, softmax_delta_expr
 from run_spice_mnist_local_block_batch_op_train import (
     local_activation_deriv_expr as block_local_activation_deriv_expr,
     local_activation_expr as block_local_activation_expr,
@@ -415,6 +416,8 @@ def make_phase_transient_netlist(
     output_bias_update_scale: float = 1.0,
     readout_update_scale: float = 1.0,
     local_update_scale: float = 1.0,
+    softmax_negative_scale: float = 1.0,
+    softmax_error_centering: str = "none",
 ) -> tuple[str, int, float]:
     total_samples = x_batch.shape[0]
     if total_samples != update_batch_size * updates:
@@ -429,6 +432,10 @@ def make_phase_transient_netlist(
         raise ValueError("readout_update_scale must be non-negative")
     if local_update_scale < 0.0:
         raise ValueError("local_update_scale must be non-negative")
+    if softmax_negative_scale < 0.0:
+        raise ValueError("softmax_negative_scale must be non-negative")
+    if softmax_error_centering not in {"none", "mean"}:
+        raise ValueError("softmax_error_centering must be 'none' or 'mean'")
     direct_update = update_mode == "direct"
     if direct_update and update_batch_size != 1:
         raise ValueError("direct update mode requires update_batch_size=1")
@@ -455,6 +462,7 @@ def make_phase_transient_netlist(
         f".param LOCAL_UPDATE_SCALE={local_update_scale:.12g}",
         f".param OB_UPDATE_SCALE={output_bias_update_scale:.12g}",
         f".param READOUT_UPDATE_SCALE={readout_update_scale:.12g}",
+        f".param SOFTMAX_NEGATIVE_SCALE={softmax_negative_scale:.12g}",
         "",
         f"Vpact pact 0 {phase_pwl(phases['act'], t_stop, edge)}",
         f"Vpscore pscore 0 {phase_pwl(phases['score'], t_stop, edge)}",
@@ -527,7 +535,14 @@ def make_phase_transient_netlist(
         denom = " + ".join(f"exp(V(score{k}))" for k in range(n_classes))
         for k in range(n_classes):
             lines.append(f"By{k} y{k} 0 V = exp(V(score{k}))/({denom})")
-            lines.append(f"Bstore_d{k} d{k} 0 I = V(perr)*{{CSTATE}}/{{TAU}}*(V(d{k})-(V(target{k})-V(y{k})))")
+        raw_delta_exprs = [softmax_delta_expr(f"V(target{k})", f"V(y{k})") for k in range(n_classes)]
+        for k in range(n_classes):
+            delta_expr = (
+                mean_centered_expr(raw_delta_exprs, k)
+                if softmax_error_centering == "mean"
+                else raw_delta_exprs[k]
+            )
+            lines.append(f"Bstore_d{k} d{k} 0 I = V(perr)*{{CSTATE}}/{{TAU}}*(V(d{k})-({delta_expr}))")
     else:
         for k in range(n_classes):
             if linear_output:
@@ -1198,6 +1213,18 @@ def main() -> None:
     ap.add_argument("--output-bias-update-scale", type=float, default=1.0)
     ap.add_argument("--readout-update-scale", type=float, default=1.0)
     ap.add_argument("--local-update-scale", type=float, default=1.0)
+    ap.add_argument(
+        "--softmax-negative-scale",
+        type=float,
+        default=1.0,
+        help="Scale non-target softmax error rails: target error is 1-y_target, non-target error is -scale*y_k.",
+    )
+    ap.add_argument(
+        "--softmax-error-centering",
+        choices=["none", "mean"],
+        default="none",
+        help="Optionally subtract the per-sample mean softmax error so class error rails remain zero-sum.",
+    )
     synapse_modes = ["linear", "full", "ideal", "tanh-clipped", "smooth-clipped", "clipped", "hard-clipped", "bounded", "sign", "binary"]
     ap.add_argument("--hidden-synapse-mode", choices=synapse_modes, default="linear")
     ap.add_argument("--readout-synapse-mode", choices=synapse_modes, default="linear")
@@ -1271,6 +1298,8 @@ def main() -> None:
         raise ValueError("--readout-update-scale must be non-negative")
     if args.local_update_scale < 0:
         raise ValueError("--local-update-scale must be non-negative")
+    if args.softmax_negative_scale < 0:
+        raise ValueError("--softmax-negative-scale must be non-negative")
     if args.synapse_clip <= 0:
         raise ValueError("--synapse-clip must be positive")
     if args.phase <= 0 or args.settle_ratio <= 0:
@@ -1379,6 +1408,8 @@ def main() -> None:
         args.output_bias_update_scale,
         args.readout_update_scale,
         args.local_update_scale,
+        args.softmax_negative_scale,
+        args.softmax_error_centering,
     )
     phase_netlist.write_text(prepare_phase_netlist(netlist, spice_bin))
 
@@ -1458,6 +1489,8 @@ def main() -> None:
                 hidden_synapse_mode=args.hidden_synapse_mode,
                 readout_synapse_mode=args.readout_synapse_mode,
                 synapse_clip=args.synapse_clip,
+                softmax_negative_scale=args.softmax_negative_scale,
+                softmax_error_centering=args.softmax_error_centering,
             )
             if update + 1 in probe_updates:
                 op_probe_states[update + 1] = (op_w.copy(), op_hb.copy(), op_readout.copy(), op_ob.copy())
@@ -1782,6 +1815,8 @@ def main() -> None:
         "output_bias_update_scale": args.output_bias_update_scale,
         "readout_update_scale": args.readout_update_scale,
         "local_update_scale": args.local_update_scale,
+        "softmax_negative_scale": args.softmax_negative_scale,
+        "softmax_error_centering": args.softmax_error_centering,
         "hidden_synapse_mode": args.hidden_synapse_mode,
         "readout_synapse_mode": args.readout_synapse_mode,
         "synapse_clip": args.synapse_clip,

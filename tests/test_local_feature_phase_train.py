@@ -15,6 +15,7 @@ if str(SPICE_DIR) not in sys.path:
 import run_spice_mnist_local_feature_phase_train as phase_train  # noqa: E402
 import run_spice_mnist_local_feature_phase_transient as phase_transient  # noqa: E402
 import run_spice_mnist_local_feature_phase_variant_sweep as phase_variant_sweep  # noqa: E402
+import run_spice_mnist_local_feature_batch_op_train as feature_batch_train  # noqa: E402
 import run_spice_mnist_train as mnist_train  # noqa: E402
 
 
@@ -55,6 +56,8 @@ def test_phase_transient_cli_exposes_agreement_gates() -> None:
     assert "--output-bias-update-scale" in proc.stdout
     assert "--readout-update-scale" in proc.stdout
     assert "--local-update-scale" in proc.stdout
+    assert "--softmax-negative-scale" in proc.stdout
+    assert "--softmax-error-centering" in proc.stdout
     assert "--eval-backend" in proc.stdout
     assert "--simulator-extra-args" in proc.stdout
 
@@ -668,7 +671,8 @@ def test_phase_transient_softmax_deck_is_one_continuous_online_run(tmp_path: Pat
     assert "Vtarget0 target0 0 PWL(" in netlist
     assert "Bpre_h0_0 ah0_0 0 V =" in netlist
     assert "By0 y0 0 V = exp(V(score0))/(exp(V(score0)) + exp(V(score1)))" in netlist
-    assert "Bstore_d0 d0 0 I = V(perr)*{CSTATE}/{TAU}*(V(d0)-(V(target0)-V(y0)))" in netlist
+    assert "Bstore_d0 d0 0 I = V(perr)*{CSTATE}/{TAU}*(V(d0)-((V(target0))*(1-(V(y0))) - (1-(V(target0)))*{SOFTMAX_NEGATIVE_SCALE}*(V(y0))))" in netlist
+    assert ".param SOFTMAX_NEGATIVE_SCALE=1" in netlist
     assert ".param TAREA=1.005e-09" in netlist
     assert "{CGRAD}/{TAREA}" in netlist
     assert "/({BS}*{TAREA})" in netlist
@@ -676,6 +680,201 @@ def test_phase_transient_softmax_deck_is_one_continuous_online_run(tmp_path: Pat
     assert netlist.count("Vpapply papply 0 PWL(") == 1
     assert netlist.count("Vpclear pclear 0 PWL(") == 1
     assert netlist.count(" 1 ") >= len(y)
+
+
+def test_phase_transient_softmax_negative_scale_controls_non_target_error(tmp_path: Path) -> None:
+    x = np.zeros((1, 4))
+    y = np.array([0])
+    w = np.zeros((1, 1, 4))
+    hb = np.zeros((1, 1))
+    readout = np.zeros((2, 1, 1))
+    output_bias = np.zeros(2)
+
+    netlist, _n_vec, _t_stop = phase_transient.make_phase_transient_netlist(
+        x,
+        y,
+        w,
+        hb,
+        readout,
+        output_bias,
+        [[0, 1, 2, 3]],
+        0.8,
+        tmp_path / "out.dat",
+        False,
+        1,
+        1,
+        1e-9,
+        0.1e-9,
+        5e-12,
+        40.0,
+        20e-12,
+        1e-12,
+        1e-12,
+        1e-12,
+        1e18,
+        True,
+        "measure",
+        softmax_negative_scale=0.25,
+    )
+
+    assert ".param SOFTMAX_NEGATIVE_SCALE=0.25" in netlist
+    assert "(1-(V(target1)))*{SOFTMAX_NEGATIVE_SCALE}*(V(y1))" in netlist
+
+    centered_netlist, _n_vec, _t_stop = phase_transient.make_phase_transient_netlist(
+        x,
+        y,
+        w,
+        hb,
+        readout,
+        output_bias,
+        [[0, 1, 2, 3]],
+        0.8,
+        tmp_path / "centered.dat",
+        False,
+        1,
+        1,
+        1e-9,
+        0.1e-9,
+        5e-12,
+        40.0,
+        20e-12,
+        1e-12,
+        1e-12,
+        1e-12,
+        1e18,
+        True,
+        "measure",
+        softmax_negative_scale=0.25,
+        softmax_error_centering="mean",
+    )
+
+    assert "Bstore_d1 d1 0 I = V(perr)*{CSTATE}/{TAU}*(V(d1)-(" in centered_netlist
+    assert "((V(target1))*(1-(V(y1))) - (1-(V(target1)))*{SOFTMAX_NEGATIVE_SCALE}*(V(y1)))" in centered_netlist
+    assert ")/2)))" in centered_netlist
+
+    with pytest.raises(ValueError, match="softmax_negative_scale"):
+        phase_transient.make_phase_transient_netlist(
+            x,
+            y,
+            w,
+            hb,
+            readout,
+            output_bias,
+            [[0, 1, 2, 3]],
+            0.8,
+            tmp_path / "bad.dat",
+            False,
+            1,
+            1,
+            1e-9,
+            0.1e-9,
+            5e-12,
+            40.0,
+            20e-12,
+            1e-12,
+            1e-12,
+            1e-12,
+            1e18,
+            True,
+            "measure",
+            softmax_negative_scale=-1.0,
+        )
+
+    with pytest.raises(ValueError, match="softmax_error_centering"):
+        phase_transient.make_phase_transient_netlist(
+            x,
+            y,
+            w,
+            hb,
+            readout,
+            output_bias,
+            [[0, 1, 2, 3]],
+            0.8,
+            tmp_path / "bad_centering.dat",
+            False,
+            1,
+            1,
+            1e-9,
+            0.1e-9,
+            5e-12,
+            40.0,
+            20e-12,
+            1e-12,
+            1e-12,
+            1e-12,
+            1e18,
+            True,
+            "measure",
+            softmax_error_centering="median",
+        )
+
+
+def test_batch_op_softmax_negative_scale_matches_phase_error_expr(tmp_path: Path) -> None:
+    x = np.zeros((1, 4))
+    y = np.array([0])
+    w = np.zeros((1, 1, 4))
+    hb = np.zeros((1, 1))
+    readout = np.zeros((2, 1, 1))
+    output_bias = np.zeros(2)
+
+    netlist = feature_batch_train.make_train_netlist(
+        x,
+        y,
+        w,
+        hb,
+        readout,
+        output_bias,
+        [[0, 1, 2, 3]],
+        0.8,
+        tmp_path / "out.dat",
+        False,
+        True,
+        "tanh",
+        1.0,
+        softmax_negative_scale=0.25,
+    )
+
+    assert ".param SOFTMAX_NEGATIVE_SCALE=0.25" in netlist
+    assert "Be0_1 e0_1 0 V = (V(t0_1))*(1-(V(y0_1))) - (1-(V(t0_1)))*{SOFTMAX_NEGATIVE_SCALE}*(V(y0_1))" in netlist
+
+    centered_netlist = feature_batch_train.make_train_netlist(
+        x,
+        y,
+        w,
+        hb,
+        readout,
+        output_bias,
+        [[0, 1, 2, 3]],
+        0.8,
+        tmp_path / "centered.dat",
+        False,
+        True,
+        "tanh",
+        1.0,
+        softmax_negative_scale=0.25,
+        softmax_error_centering="mean",
+    )
+
+    assert "Be0_1 e0_1 0 V = ((V(t0_1))*(1-(V(y0_1)))" in centered_netlist
+    assert ")/2)" in centered_netlist
+
+    with pytest.raises(ValueError, match="softmax_negative_scale"):
+        feature_batch_train.make_train_netlist(
+            x,
+            y,
+            w,
+            hb,
+            readout,
+            output_bias,
+            [[0, 1, 2, 3]],
+            0.8,
+            tmp_path / "bad.dat",
+            False,
+            True,
+            "tanh",
+            1.0,
+            softmax_negative_scale=-1.0,
+        )
 
 
 def test_phase_transient_synapse_transfer_modes_affect_forward_and_backward_paths(tmp_path: Path) -> None:

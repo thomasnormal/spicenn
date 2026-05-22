@@ -764,6 +764,150 @@ def cleanup_simulator_sidecars(netlist_paths: list[Path]) -> int:
     return cleaned
 
 
+def block_tensor_np(x: np.ndarray, blocks: list[list[int]]) -> np.ndarray:
+    return np.stack([x[:, idxs] for idxs in blocks], axis=1)
+
+
+def synapse_transfer_np(weight: np.ndarray, mode: str, clip: float) -> np.ndarray:
+    if mode in {"linear", "full", "ideal"}:
+        return weight
+    clip = max(float(clip), 1e-12)
+    if mode in {"tanh-clipped", "smooth-clipped", "clipped"}:
+        return clip * np.tanh(weight / clip)
+    if mode in {"hard-clipped", "bounded"}:
+        return np.clip(weight, -clip, clip)
+    if mode in {"sign", "binary"}:
+        return clip * weight / (np.abs(weight) + 1e-9)
+    raise ValueError(f"unknown synapse transfer mode {mode!r}")
+
+
+def local_activation_np(x: np.ndarray, mode: str, relu_clip: float, relu_leak: float, softplus_beta: float) -> np.ndarray:
+    if mode == "tanh":
+        return np.tanh(x)
+    if mode == "relu":
+        return np.maximum(x, 0.0)
+    if mode in {"clipped-relu", "clipped_relu"}:
+        return np.clip(x, 0.0, relu_clip)
+    if mode in {"diff-clipped-relu", "differential-clipped-relu", "diff_clipped_relu"}:
+        return np.clip(x, 0.0, relu_clip) - np.clip(-x, 0.0, relu_clip)
+    if mode in {"leaky-relu", "leaky_relu"}:
+        return np.where(x >= 0.0, x, relu_leak * x)
+    if mode in {"softplus", "softplus-relu", "softplus_relu"}:
+        beta = max(float(softplus_beta), 1e-12)
+        return np.logaddexp(0.0, beta * x) / beta
+    raise ValueError(f"unknown local activation {mode!r}")
+
+
+def output_activation_np(score: np.ndarray, linear_output: bool, softmax_output: bool) -> np.ndarray:
+    if linear_output:
+        return score
+    if softmax_output:
+        shifted = score - np.max(score, axis=1, keepdims=True)
+        exp_score = np.exp(shifted)
+        return exp_score / np.sum(exp_score, axis=1, keepdims=True)
+    return np.tanh(score)
+
+
+def numpy_eval_accuracy(
+    x_eval: np.ndarray,
+    y_eval: np.ndarray,
+    state: TrainState,
+    blocks: list[list[int]],
+    batch_size: int,
+    *,
+    linear_output: bool,
+    softmax_output: bool,
+    local_activation: str,
+    relu_clip: float,
+    relu_leak: float,
+    softplus_beta: float,
+    hidden_synapse_mode: str,
+    readout_synapse_mode: str,
+    synapse_clip: float,
+) -> float:
+    correct = 0
+    w, hb, readout, output_bias = state
+    eff_w = synapse_transfer_np(w, hidden_synapse_mode, synapse_clip)
+    eff_readout = synapse_transfer_np(readout, readout_synapse_mode, synapse_clip)
+    for start in range(0, len(y_eval), batch_size):
+        x = x_eval[start : start + batch_size]
+        labels = y_eval[start : start + batch_size]
+        xb = block_tensor_np(x, blocks)
+        pre = np.einsum("nbp,bcp->nbc", xb, eff_w) + hb
+        h = local_activation_np(pre, local_activation, relu_clip, relu_leak, softplus_beta)
+        score = np.einsum("nbc,kbc->nk", h, eff_readout) + output_bias
+        y = output_activation_np(score, linear_output, softmax_output)
+        correct += int(np.sum(np.argmax(y, axis=1) == labels))
+    return correct / max(len(y_eval), 1)
+
+
+def diagnostic_eval_accuracy(
+    eval_backend: str,
+    spice_bin: str,
+    netlist_path: Path,
+    data_path: Path,
+    x_eval: np.ndarray,
+    y_eval: np.ndarray,
+    state: TrainState,
+    blocks: list[list[int]],
+    batch_size: int,
+    timeout: float,
+    *,
+    linear_output: bool,
+    softmax_output: bool,
+    local_activation: str,
+    relu_clip: float,
+    relu_leak: float,
+    softplus_beta: float,
+    hidden_synapse_mode: str,
+    readout_synapse_mode: str,
+    synapse_clip: float,
+) -> float:
+    if eval_backend == "spice":
+        w, hb, readout, output_bias = state
+        return run_eval(
+            spice_bin,
+            netlist_path,
+            data_path,
+            x_eval,
+            y_eval,
+            w,
+            hb,
+            readout,
+            output_bias,
+            blocks,
+            batch_size,
+            timeout,
+            linear_output=linear_output,
+            softmax_output=softmax_output,
+            local_activation=local_activation,
+            relu_clip=relu_clip,
+            relu_leak=relu_leak,
+            softplus_beta=softplus_beta,
+            hidden_synapse_mode=hidden_synapse_mode,
+            readout_synapse_mode=readout_synapse_mode,
+            synapse_clip=synapse_clip,
+        )
+    if eval_backend == "numpy":
+        return numpy_eval_accuracy(
+            x_eval,
+            y_eval,
+            state,
+            blocks,
+            batch_size,
+            linear_output=linear_output,
+            softmax_output=softmax_output,
+            local_activation=local_activation,
+            relu_clip=relu_clip,
+            relu_leak=relu_leak,
+            softplus_beta=softplus_beta,
+            hidden_synapse_mode=hidden_synapse_mode,
+            readout_synapse_mode=readout_synapse_mode,
+            synapse_clip=synapse_clip,
+        )
+    raise ValueError("eval_backend must be 'spice' or 'numpy'")
+
+
 def select_phase_output_mode(
     requested_mode: str,
     spice_bin: str,
@@ -865,6 +1009,7 @@ def main() -> None:
     ap.add_argument("--eval-accuracy-diff-threshold", type=float, default=0.0)
     ap.add_argument("--random-accuracy-threshold", type=float, default=0.10)
     ap.add_argument("--learning-improvement-threshold", type=float, default=0.02)
+    ap.add_argument("--eval-backend", choices=["spice", "numpy"], default="spice")
     ap.add_argument("--reference-mode", choices=["spice", "none"], default="spice")
     ap.add_argument("--phase-output-mode", choices=["auto", "measure", "print", "control_measure", "wrdata"], default="auto")
     ap.add_argument("--update-mode", choices=["phased", "direct"], default="phased")
@@ -1112,108 +1257,82 @@ def main() -> None:
         t2 = time.perf_counter()
         initial_eval_netlist = generated / f"{stem}_initial_eval.cir"
         phase_eval_netlist = generated / f"{stem}_phase_eval.cir"
-        owned_netlists.extend([initial_eval_netlist, phase_eval_netlist])
-        initial_eval_accuracy = run_eval(
+        if args.eval_backend == "spice":
+            owned_netlists.extend([initial_eval_netlist, phase_eval_netlist])
+        eval_kwargs = {
+            "linear_output": args.linear_output,
+            "softmax_output": args.softmax_output,
+            "local_activation": args.local_activation,
+            "relu_clip": args.relu_clip,
+            "relu_leak": args.relu_leak,
+            "softplus_beta": args.softplus_beta,
+            "hidden_synapse_mode": args.hidden_synapse_mode,
+            "readout_synapse_mode": args.readout_synapse_mode,
+            "synapse_clip": args.synapse_clip,
+        }
+        initial_eval_accuracy = diagnostic_eval_accuracy(
+            args.eval_backend,
             spice_bin,
             initial_eval_netlist,
             results / f"{stem}_initial_eval.dat",
             x_test[: args.eval_samples],
             y_test[: args.eval_samples],
-            w,
-            hb,
-            readout,
-            output_bias,
+            (w, hb, readout, output_bias),
             blocks,
             max(1, min(args.eval_samples, 50)),
             args.timeout,
-            linear_output=args.linear_output,
-            softmax_output=args.softmax_output,
-            local_activation=args.local_activation,
-            relu_clip=args.relu_clip,
-            relu_leak=args.relu_leak,
-            softplus_beta=args.softplus_beta,
-            hidden_synapse_mode=args.hidden_synapse_mode,
-            readout_synapse_mode=args.readout_synapse_mode,
-            synapse_clip=args.synapse_clip,
+            **eval_kwargs,
         )
-        phase_eval_accuracy = run_eval(
+        phase_eval_accuracy = diagnostic_eval_accuracy(
+            args.eval_backend,
             spice_bin,
             phase_eval_netlist,
             results / f"{stem}_phase_eval.dat",
             x_test[: args.eval_samples],
             y_test[: args.eval_samples],
-            phase_w,
-            phase_hb,
-            phase_readout,
-            phase_ob,
+            (phase_w, phase_hb, phase_readout, phase_ob),
             blocks,
             max(1, min(args.eval_samples, 50)),
             args.timeout,
-            linear_output=args.linear_output,
-            softmax_output=args.softmax_output,
-            local_activation=args.local_activation,
-            relu_clip=args.relu_clip,
-            relu_leak=args.relu_leak,
-            softplus_beta=args.softplus_beta,
-            hidden_synapse_mode=args.hidden_synapse_mode,
-            readout_synapse_mode=args.readout_synapse_mode,
-            synapse_clip=args.synapse_clip,
+            **eval_kwargs,
         )
         if args.reference_mode == "spice":
             assert op_w is not None and op_hb is not None and op_readout is not None and op_ob is not None
             op_reference_eval_netlist = generated / f"{stem}_op_reference_eval.cir"
-            owned_netlists.append(op_reference_eval_netlist)
-            op_reference_eval_accuracy = run_eval(
+            if args.eval_backend == "spice":
+                owned_netlists.append(op_reference_eval_netlist)
+            op_reference_eval_accuracy = diagnostic_eval_accuracy(
+                args.eval_backend,
                 spice_bin,
                 op_reference_eval_netlist,
                 results / f"{stem}_op_reference_eval.dat",
                 x_test[: args.eval_samples],
                 y_test[: args.eval_samples],
-                op_w,
-                op_hb,
-                op_readout,
-                op_ob,
+                (op_w, op_hb, op_readout, op_ob),
                 blocks,
                 max(1, min(args.eval_samples, 50)),
                 args.timeout,
-                linear_output=args.linear_output,
-                softmax_output=args.softmax_output,
-                local_activation=args.local_activation,
-                relu_clip=args.relu_clip,
-                relu_leak=args.relu_leak,
-                softplus_beta=args.softplus_beta,
-                hidden_synapse_mode=args.hidden_synapse_mode,
-                readout_synapse_mode=args.readout_synapse_mode,
-                synapse_clip=args.synapse_clip,
+                **eval_kwargs,
             )
         if args.eval_probe_updates:
             for row in probe_rows:
                 update = int(row["update"])
                 probe_w, probe_hb, probe_readout, probe_ob = probe_phase_states[update]
                 phase_probe_eval_netlist = generated / f"{stem}_probe_{update}_phase_eval.cir"
-                owned_netlists.append(phase_probe_eval_netlist)
-                phase_probe_eval = run_eval(
+                if args.eval_backend == "spice":
+                    owned_netlists.append(phase_probe_eval_netlist)
+                phase_probe_eval = diagnostic_eval_accuracy(
+                    args.eval_backend,
                     spice_bin,
                     phase_probe_eval_netlist,
                     results / f"{stem}_probe_{update}_phase_eval.dat",
                     x_test[: args.eval_samples],
                     y_test[: args.eval_samples],
-                    probe_w,
-                    probe_hb,
-                    probe_readout,
-                    probe_ob,
+                    (probe_w, probe_hb, probe_readout, probe_ob),
                     blocks,
                     max(1, min(args.eval_samples, 50)),
                     args.timeout,
-                    linear_output=args.linear_output,
-                    softmax_output=args.softmax_output,
-                    local_activation=args.local_activation,
-                    relu_clip=args.relu_clip,
-                    relu_leak=args.relu_leak,
-                    softplus_beta=args.softplus_beta,
-                    hidden_synapse_mode=args.hidden_synapse_mode,
-                    readout_synapse_mode=args.readout_synapse_mode,
-                    synapse_clip=args.synapse_clip,
+                    **eval_kwargs,
                 )
                 row["phase_eval_accuracy"] = phase_probe_eval
                 row["phase_eval_improvement"] = (
@@ -1228,29 +1347,20 @@ def main() -> None:
                 else:
                     op_probe_w, op_probe_hb, op_probe_readout, op_probe_ob = op_probe_state
                     op_probe_eval_netlist = generated / f"{stem}_probe_{update}_op_reference_eval.cir"
-                    owned_netlists.append(op_probe_eval_netlist)
-                    op_probe_eval = run_eval(
+                    if args.eval_backend == "spice":
+                        owned_netlists.append(op_probe_eval_netlist)
+                    op_probe_eval = diagnostic_eval_accuracy(
+                        args.eval_backend,
                         spice_bin,
                         op_probe_eval_netlist,
                         results / f"{stem}_probe_{update}_op_reference_eval.dat",
                         x_test[: args.eval_samples],
                         y_test[: args.eval_samples],
-                        op_probe_w,
-                        op_probe_hb,
-                        op_probe_readout,
-                        op_probe_ob,
+                        (op_probe_w, op_probe_hb, op_probe_readout, op_probe_ob),
                         blocks,
                         max(1, min(args.eval_samples, 50)),
                         args.timeout,
-                        linear_output=args.linear_output,
-                        softmax_output=args.softmax_output,
-                        local_activation=args.local_activation,
-                        relu_clip=args.relu_clip,
-                        relu_leak=args.relu_leak,
-                        softplus_beta=args.softplus_beta,
-                        hidden_synapse_mode=args.hidden_synapse_mode,
-                        readout_synapse_mode=args.readout_synapse_mode,
-                        synapse_clip=args.synapse_clip,
+                        **eval_kwargs,
                     )
                     row["op_reference_eval_accuracy"] = op_probe_eval
                     row["eval_accuracy_abs_diff"] = abs(phase_probe_eval - op_probe_eval)
@@ -1337,6 +1447,7 @@ def main() -> None:
         "updates": args.updates,
         "probe_updates": list(probe_updates),
         "eval_probe_updates": bool(args.eval_probe_updates),
+        "eval_backend": args.eval_backend,
         "total_samples": total_samples,
         "lr": args.lr,
         "linear_output": bool(args.linear_output),

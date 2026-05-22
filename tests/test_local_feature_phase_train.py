@@ -51,6 +51,7 @@ def test_phase_transient_cli_exposes_agreement_gates() -> None:
     assert "--reference-mode" in proc.stdout
     assert "--phase-output-mode" in proc.stdout
     assert "--update-mode" in proc.stdout
+    assert "--eval-backend" in proc.stdout
     assert "--simulator-extra-args" in proc.stdout
 
 
@@ -183,6 +184,66 @@ def test_phase_transient_phase_only_update_metrics_keep_move_magnitude() -> None
     assert metrics["phase_update_l2"] == pytest.approx(5.0)
     assert metrics["state_update_direction_cosine"] is None
     assert metrics["state_update_sign_alignment_fraction"] is None
+
+
+def test_phase_transient_numpy_eval_accuracy_is_post_transient_diagnostic(tmp_path: Path) -> None:
+    x = np.eye(4)
+    y = np.array([0, 1, 0, 1])
+    w = np.ones((1, 1, 4))
+    hb = np.zeros((1, 1))
+    readout = np.array([[[1.0]], [[-1.0]]])
+    output_bias = np.array([0.0, 0.0])
+    netlist_path = tmp_path / "unused_eval.cir"
+    data_path = tmp_path / "unused_eval.dat"
+
+    acc = phase_transient.diagnostic_eval_accuracy(
+        "numpy",
+        "unused-spice",
+        netlist_path,
+        data_path,
+        x,
+        y,
+        (w, hb, readout, output_bias),
+        [[0, 1, 2, 3]],
+        2,
+        1.0,
+        linear_output=True,
+        softmax_output=False,
+        local_activation="tanh",
+        relu_clip=1.0,
+        relu_leak=0.01,
+        softplus_beta=10.0,
+        hidden_synapse_mode="linear",
+        readout_synapse_mode="linear",
+        synapse_clip=1.0,
+    )
+
+    assert acc == pytest.approx(0.5)
+    assert not netlist_path.exists()
+    assert not data_path.exists()
+
+    with pytest.raises(ValueError, match="eval_backend"):
+        phase_transient.diagnostic_eval_accuracy(
+            "fast",
+            "unused-spice",
+            netlist_path,
+            data_path,
+            x,
+            y,
+            (w, hb, readout, output_bias),
+            [[0, 1, 2, 3]],
+            2,
+            1.0,
+            linear_output=True,
+            softmax_output=False,
+            local_activation="tanh",
+            relu_clip=1.0,
+            relu_leak=0.01,
+            softplus_beta=10.0,
+            hidden_synapse_mode="linear",
+            readout_synapse_mode="linear",
+            synapse_clip=1.0,
+        )
 
 
 def test_phase_transient_selects_sparse_print_for_xyce_without_probes() -> None:

@@ -964,6 +964,7 @@ def test_phase_variant_sweep_dry_command_preserves_online_contract() -> None:
         phase_output_mode="print",
         update_mode="direct",
         phase_clock_mode="analytic",
+        target_source_mode="label",
         eval_backend="numpy",
         probe_updates="1,2,4,8",
         tag="sweep",
@@ -1036,6 +1037,8 @@ def test_phase_variant_sweep_dry_command_preserves_online_contract() -> None:
     assert command[command.index("--update-mode") + 1] == "direct"
     assert "--phase-clock-mode" in command
     assert command[command.index("--phase-clock-mode") + 1] == "analytic"
+    assert "--target-source-mode" in command
+    assert command[command.index("--target-source-mode") + 1] == "label"
     assert "--eval-backend" in command
     assert command[command.index("--eval-backend") + 1] == "numpy"
     assert "--output-bias-update-scale" in command

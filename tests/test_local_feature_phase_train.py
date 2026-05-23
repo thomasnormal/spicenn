@@ -74,6 +74,7 @@ def test_phase_transient_cli_exposes_agreement_gates() -> None:
     assert "--sample-edge" in proc.stdout
     assert "--hidden-preactivation-mode" in proc.stdout
     assert "--hidden-activation-mode" in proc.stdout
+    assert "--hidden-delta-mode" in proc.stdout
     assert "--score-calculation-mode" in proc.stdout
     assert "--score-state-mode" in proc.stdout
     assert "--output-rail-mode" in proc.stdout
@@ -199,6 +200,8 @@ def test_phase_transient_hidden_activation_state_count_tracks_fusion_mode() -> N
 
 def test_phase_transient_temporary_state_count_tracks_fused_state_modes() -> None:
     assert phase_transient.hidden_delta_state_count(16, 2) == 32
+    assert phase_transient.hidden_delta_state_count(16, 2, "stored") == 32
+    assert phase_transient.hidden_delta_state_count(16, 2, "inline") == 0
     assert phase_transient.score_state_count(10) == 10
     assert phase_transient.score_state_count(10, "stored") == 10
     assert phase_transient.score_state_count(10, "inline") == 0
@@ -227,6 +230,8 @@ def test_phase_transient_temporary_state_count_tracks_fused_state_modes() -> Non
         )
     with pytest.raises(ValueError, match="score_state_mode"):
         phase_transient.score_state_count(10, "bad")
+    with pytest.raises(ValueError, match="hidden_delta_mode"):
+        phase_transient.hidden_delta_state_count(16, 2, "bad")
 
 
 def test_phase_transient_gradient_accumulator_state_count_tracks_update_mode_and_zero_pixels() -> None:
@@ -307,11 +312,12 @@ def test_phase_transient_deck_mode_fields_are_shared_by_preflight_and_runtime_su
         hidden_preactivation_source_count=0,
         hidden_activation_mode="inline",
         hidden_activation_state_count=0,
-        hidden_delta_state_count=32,
+        hidden_delta_mode="inline",
+        hidden_delta_state_count=0,
         score_state_mode="inline",
         score_state_count=0,
         gradient_accumulator_state_count=0,
-        temporary_state_count=32,
+        temporary_state_count=0,
         score_calculation_mode="inline",
         score_calculation_source_count=0,
         output_rail_mode="inline",
@@ -328,11 +334,12 @@ def test_phase_transient_deck_mode_fields_are_shared_by_preflight_and_runtime_su
         "hidden_preactivation_source_count": 0,
         "hidden_activation_mode": "inline",
         "hidden_activation_state_count": 0,
-        "hidden_delta_state_count": 32,
+        "hidden_delta_mode": "inline",
+        "hidden_delta_state_count": 0,
         "score_state_mode": "inline",
         "score_state_count": 0,
         "gradient_accumulator_state_count": 0,
-        "temporary_state_count": 32,
+        "temporary_state_count": 0,
         "score_calculation_mode": "inline",
         "score_calculation_source_count": 0,
         "output_rail_mode": "inline",
@@ -1247,6 +1254,7 @@ def test_phase_variant_sweep_generated_defaults_use_efficient_deck_shape() -> No
     assert phase_variant_sweep.DEFAULT_SAMPLE_EDGE == pytest.approx(0.0)
     assert phase_variant_sweep.DEFAULT_HIDDEN_PREACTIVATION_MODE == "inline"
     assert phase_variant_sweep.DEFAULT_HIDDEN_ACTIVATION_MODE == "stored"
+    assert phase_variant_sweep.DEFAULT_HIDDEN_DELTA_MODE == "stored"
     assert phase_variant_sweep.DEFAULT_SCORE_STATE_MODE == "stored"
     assert phase_variant_sweep.DEFAULT_SCORE_CALCULATION_MODE == "inline"
     assert phase_variant_sweep.DEFAULT_OUTPUT_RAIL_MODE == "inline"
@@ -1369,6 +1377,8 @@ def test_phase_variant_sweep_dry_command_preserves_online_contract() -> None:
     assert command[command.index("--hidden-preactivation-mode") + 1] == "inline"
     assert "--hidden-activation-mode" in command
     assert command[command.index("--hidden-activation-mode") + 1] == "stored"
+    assert "--hidden-delta-mode" in command
+    assert command[command.index("--hidden-delta-mode") + 1] == "stored"
     assert "--score-state-mode" in command
     assert command[command.index("--score-state-mode") + 1] == "stored"
     assert "--score-calculation-mode" in command
@@ -1645,6 +1655,51 @@ def test_phase_transient_inline_hidden_activation_removes_h_latch(tmp_path: Path
     assert "V(v0_0_0)*((2/(1+exp(-2*((V(w0_0_1)*0.2" in netlist
     assert "Bupd_v0_0_0 v0_0_0 0 I =" in netlist
     assert "*((2/(1+exp(-2*((V(w0_0_1)*0.2" in netlist
+
+
+def test_phase_transient_inline_hidden_delta_removes_dh_latch(tmp_path: Path) -> None:
+    x = np.array([[0.0, 0.2, 0.4, 0.6]], dtype=float)
+    y = np.array([0])
+    w = np.ones((1, 1, 4))
+    hb = np.zeros((1, 1))
+    readout = np.ones((2, 1, 1))
+    output_bias = np.zeros(2)
+
+    netlist, _n_vec, _t_stop = phase_transient.make_phase_transient_netlist(
+        x,
+        y,
+        w,
+        hb,
+        readout,
+        output_bias,
+        [[0, 1, 2, 3]],
+        0.8,
+        tmp_path / "out.dat",
+        False,
+        1,
+        1,
+        1e-9,
+        0.1e-9,
+        5e-12,
+        40.0,
+        20e-12,
+        1e-12,
+        1e-12,
+        1e-12,
+        1e18,
+        True,
+        local_activation="tanh",
+        activation_derivative="exact",
+        hidden_delta_mode="inline",
+    )
+
+    assert "Cdh0_0 dh0_0 0 {CSTATE}" not in netlist
+    assert "Bstore_dh0_0 dh0_0 0 I =" not in netlist
+    assert "V(dh0_0)" not in netlist
+    assert "Bupd_w0_0_1 w0_0_1 0 I =" in netlist
+    assert "V(v0_0_0)*V(d0)" in netlist
+    assert "*(1-(V(h0_0))*(V(h0_0)))" in netlist
+    assert "*0.2" in netlist
 
 
 def test_phase_transient_inline_score_calculation_removes_scorecalc_source(tmp_path: Path) -> None:
@@ -2649,6 +2704,9 @@ def test_phase_transient_state_descriptions_follow_update_mode() -> None:
     inline_score = phase_transient.phase_state_descriptions("direct", score_state_mode="inline")
     assert "class scores are inline expressions" in inline_score["temporary_state"]
     assert "class scores, class deltas" not in inline_score["temporary_state"]
+    inline_delta = phase_transient.phase_state_descriptions("direct", hidden_delta_mode="inline")
+    assert "hidden/backward feature deltas are inline expressions" in inline_delta["temporary_state"]
+    assert "hidden/backward feature deltas are capacitor voltages" not in inline_delta["temporary_state"]
 
     with pytest.raises(ValueError, match="update_mode"):
         phase_transient.phase_state_descriptions("online")
@@ -2656,6 +2714,8 @@ def test_phase_transient_state_descriptions_follow_update_mode() -> None:
         phase_transient.phase_state_descriptions("direct", hidden_activation_mode="bad")
     with pytest.raises(ValueError, match="score_state_mode"):
         phase_transient.phase_state_descriptions("direct", score_state_mode="bad")
+    with pytest.raises(ValueError, match="hidden_delta_mode"):
+        phase_transient.phase_state_descriptions("direct", hidden_delta_mode="bad")
 
 
 def test_phase_transient_execution_contract_is_separate_from_reference_replay() -> None:
@@ -2751,11 +2811,12 @@ def test_phase_transient_preflight_summary_has_no_artifact_paths() -> None:
         hidden_preactivation_source_count=0,
         hidden_activation_mode="inline",
         hidden_activation_state_count=0,
-        hidden_delta_state_count=4,
+        hidden_delta_mode="inline",
+        hidden_delta_state_count=0,
         score_state_mode="inline",
         score_state_count=0,
         gradient_accumulator_state_count=0,
-        temporary_state_count=4,
+        temporary_state_count=0,
         score_calculation_mode="inline",
         score_calculation_source_count=0,
         output_rail_mode="inline",
@@ -2794,11 +2855,12 @@ def test_phase_transient_preflight_summary_has_no_artifact_paths() -> None:
     assert summary["hidden_preactivation_source_count"] == 0
     assert summary["hidden_activation_mode"] == "inline"
     assert summary["hidden_activation_state_count"] == 0
-    assert summary["hidden_delta_state_count"] == 4
+    assert summary["hidden_delta_mode"] == "inline"
+    assert summary["hidden_delta_state_count"] == 0
     assert summary["score_state_mode"] == "inline"
     assert summary["score_state_count"] == 0
     assert summary["gradient_accumulator_state_count"] == 0
-    assert summary["temporary_state_count"] == 4
+    assert summary["temporary_state_count"] == 0
     assert summary["score_calculation_mode"] == "inline"
     assert summary["score_calculation_source_count"] == 0
     assert summary["output_rail_mode"] == "inline"

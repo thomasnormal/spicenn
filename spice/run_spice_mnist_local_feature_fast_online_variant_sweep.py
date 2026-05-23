@@ -38,6 +38,7 @@ DEFAULT_PROMOTION_PHASE_CLOCK_MODE = "pwl"
 DEFAULT_PROMOTION_SAMPLE_EDGE = 0.0
 DEFAULT_PROMOTION_HIDDEN_PREACTIVATION_MODE = "inline"
 DEFAULT_PROMOTION_HIDDEN_ACTIVATION_MODE = "stored"
+DEFAULT_PROMOTION_HIDDEN_DELTA_MODE = "stored"
 DEFAULT_PROMOTION_SCORE_STATE_MODE = "stored"
 DEFAULT_PROMOTION_SCORE_CALCULATION_MODE = "inline"
 DEFAULT_PROMOTION_OUTPUT_RAIL_MODE = "inline"
@@ -675,6 +676,8 @@ def strict_phase_promotion_command(args: argparse.Namespace, variant: dict[str, 
         getattr(args, "promotion_hidden_preactivation_mode", DEFAULT_PROMOTION_HIDDEN_PREACTIVATION_MODE),
         "--hidden-activation-mode",
         getattr(args, "promotion_hidden_activation_mode", DEFAULT_PROMOTION_HIDDEN_ACTIVATION_MODE),
+        "--hidden-delta-mode",
+        getattr(args, "promotion_hidden_delta_mode", DEFAULT_PROMOTION_HIDDEN_DELTA_MODE),
         "--score-state-mode",
         getattr(args, "promotion_score_state_mode", DEFAULT_PROMOTION_SCORE_STATE_MODE),
         "--score-calculation-mode",
@@ -750,6 +753,11 @@ def strict_phase_cost_fields_for_updates(
         "promotion_hidden_activation_mode",
         DEFAULT_PROMOTION_HIDDEN_ACTIVATION_MODE,
     )
+    hidden_delta_mode = getattr(
+        args,
+        "promotion_hidden_delta_mode",
+        DEFAULT_PROMOTION_HIDDEN_DELTA_MODE,
+    )
     score_state_mode = getattr(
         args,
         "promotion_score_state_mode",
@@ -818,7 +826,7 @@ def strict_phase_cost_fields_for_updates(
         len(blocks),
         channels,
     )
-    hidden_delta_states = hidden_delta_state_count(len(blocks), channels)
+    hidden_delta_states = hidden_delta_state_count(len(blocks), channels, hidden_delta_mode)
     score_states = score_state_count(10, score_state_mode)
     gradient_accumulator_states = 0
     score_sources = score_calculation_source_count(score_calculation_mode, 10)
@@ -844,6 +852,7 @@ def strict_phase_cost_fields_for_updates(
         f"{prefix}_hidden_preactivation_source_count": hidden_sources,
         f"{prefix}_hidden_activation_mode": hidden_activation_mode,
         f"{prefix}_hidden_activation_state_count": hidden_activation_states,
+        f"{prefix}_hidden_delta_mode": hidden_delta_mode,
         f"{prefix}_hidden_delta_state_count": hidden_delta_states,
         f"{prefix}_score_state_mode": score_state_mode,
         f"{prefix}_score_state_count": score_states,
@@ -1086,6 +1095,11 @@ def main() -> None:
         "--promotion-hidden-activation-mode",
         choices=["stored", "inline"],
         default=DEFAULT_PROMOTION_HIDDEN_ACTIVATION_MODE,
+    )
+    ap.add_argument(
+        "--promotion-hidden-delta-mode",
+        choices=["stored", "inline"],
+        default=DEFAULT_PROMOTION_HIDDEN_DELTA_MODE,
     )
     ap.add_argument(
         "--promotion-score-state-mode",

@@ -57,6 +57,7 @@ def test_phase_summary_row_keeps_execution_contract_and_backend_fields(tmp_path:
                 "hidden_preactivation_source_count": 32,
                 "hidden_activation_mode": "inline",
                 "hidden_activation_state_count": 0,
+                "hidden_delta_mode": "inline",
                 "hidden_delta_state_count": 32,
                 "score_state_mode": "inline",
                 "score_state_count": 0,
@@ -173,6 +174,7 @@ def test_phase_summary_row_keeps_execution_contract_and_backend_fields(tmp_path:
     assert row["hidden_preactivation_source_count"] == 32
     assert row["hidden_activation_mode"] == "inline"
     assert row["hidden_activation_state_count"] == 0
+    assert row["hidden_delta_mode"] == "inline"
     assert row["hidden_delta_state_count"] == 32
     assert row["score_state_mode"] == "inline"
     assert row["score_state_count"] == 0

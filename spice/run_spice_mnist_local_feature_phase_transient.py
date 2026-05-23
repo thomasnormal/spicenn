@@ -181,8 +181,12 @@ def hidden_activation_state_count(mode: str, blocks: int, channels: int) -> int:
     raise ValueError("hidden_activation_mode must be 'stored' or 'inline'")
 
 
-def hidden_delta_state_count(blocks: int, channels: int) -> int:
-    return int(blocks) * int(channels)
+def hidden_delta_state_count(blocks: int, channels: int, mode: str = "stored") -> int:
+    if mode == "stored":
+        return int(blocks) * int(channels)
+    if mode == "inline":
+        return 0
+    raise ValueError("hidden_delta_mode must be 'stored' or 'inline'")
 
 
 def score_state_count(classes: int, mode: str = "stored") -> int:
@@ -383,6 +387,7 @@ def phase_state_descriptions(
     output_delta_mode: str = "node",
     hidden_activation_mode: str = "stored",
     score_state_mode: str = "stored",
+    hidden_delta_mode: str = "stored",
 ) -> dict[str, str]:
     if output_delta_mode not in {"node", "inline"}:
         raise ValueError("output_delta_mode must be 'node' or 'inline'")
@@ -390,12 +395,19 @@ def phase_state_descriptions(
         raise ValueError("hidden_activation_mode must be 'stored' or 'inline'")
     if score_state_mode not in {"stored", "inline"}:
         raise ValueError("score_state_mode must be 'stored' or 'inline'")
+    if hidden_delta_mode not in {"stored", "inline"}:
+        raise ValueError("hidden_delta_mode must be 'stored' or 'inline'")
     stored_feature_prefix = (
         "feature activations, "
         if hidden_activation_mode == "stored"
         else ""
     )
     stored_score_prefix = "class scores, " if score_state_mode == "stored" else ""
+    stored_hidden_delta = (
+        "hidden/backward feature deltas"
+        if hidden_delta_mode == "stored"
+        else ""
+    )
     inline_feature_note = (
         ""
         if hidden_activation_mode == "stored"
@@ -406,28 +418,63 @@ def phase_state_descriptions(
         if score_state_mode == "stored"
         else "; class scores are inline expressions"
     )
-    inline_notes = inline_feature_note + inline_score_note
+    inline_hidden_delta_note = (
+        ""
+        if hidden_delta_mode == "stored"
+        else "; hidden/backward feature deltas are inline expressions"
+    )
+    inline_notes = inline_feature_note + inline_score_note + inline_hidden_delta_note
+    def state_list(*items: str) -> str:
+        present = [item for item in items if item]
+        if not present:
+            return "no non-persistent values"
+        if len(present) == 1:
+            return present[0]
+        if len(present) == 2:
+            return " and ".join(present)
+        return ", ".join(present[:-1]) + f", and {present[-1]}"
+
     if update_mode == "phased":
         if output_delta_mode == "node":
+            states = state_list(
+                stored_feature_prefix.rstrip(", "),
+                stored_score_prefix.rstrip(", "),
+                "class deltas",
+                stored_hidden_delta,
+                "gradient accumulators",
+            )
             temporary = (
-                f"{stored_feature_prefix}{stored_score_prefix}class deltas, hidden/backward feature deltas, "
-                f"and gradient accumulators are capacitor voltages{inline_notes}"
+                f"{states} are capacitor voltages{inline_notes}"
             )
         else:
+            states = state_list(
+                stored_feature_prefix.rstrip(", "),
+                stored_score_prefix.rstrip(", "),
+                stored_hidden_delta,
+                "gradient accumulators",
+            )
             temporary = (
-                f"{stored_feature_prefix}{stored_score_prefix}hidden/backward feature deltas, and gradient accumulators "
-                f"are capacitor voltages; class deltas are inline expressions{inline_notes}"
+                f"{states} are capacitor voltages; class deltas are inline expressions{inline_notes}"
             )
     elif update_mode == "direct":
         if output_delta_mode == "node":
+            states = state_list(
+                stored_feature_prefix.rstrip(", "),
+                stored_score_prefix.rstrip(", "),
+                "class deltas",
+                stored_hidden_delta,
+            )
             temporary = (
-                f"{stored_feature_prefix}{stored_score_prefix}class deltas, and hidden/backward feature deltas "
-                f"are capacitor voltages{inline_notes}; weights are updated directly during each per-sample update phase"
+                f"{states} are capacitor voltages{inline_notes}; weights are updated directly during each per-sample update phase"
             )
         else:
+            states = state_list(
+                stored_feature_prefix.rstrip(", "),
+                stored_score_prefix.rstrip(", "),
+                stored_hidden_delta,
+            )
             temporary = (
-                f"{stored_feature_prefix}{stored_score_prefix}hidden/backward feature deltas are capacitor voltages; "
-                f"class deltas are inline expressions{inline_notes}; "
+                f"{states} are capacitor voltages; class deltas are inline expressions{inline_notes}; "
                 "weights are updated directly during each per-sample update phase"
             )
     else:
@@ -457,6 +504,7 @@ def phase_deck_mode_fields(
     hidden_preactivation_source_count: int,
     hidden_activation_mode: str = "stored",
     hidden_activation_state_count: int | None = None,
+    hidden_delta_mode: str = "stored",
     hidden_delta_state_count: int | None = None,
     score_state_mode: str = "stored",
     score_state_count: int | None = None,
@@ -486,6 +534,7 @@ def phase_deck_mode_fields(
             if hidden_activation_state_count is not None
             else None
         ),
+        "hidden_delta_mode": hidden_delta_mode,
         "hidden_delta_state_count": hidden_delta_state_count,
         "score_state_mode": score_state_mode,
         "score_state_count": score_state_count,
@@ -576,6 +625,7 @@ def phase_preflight_summary(
     hidden_preactivation_source_count: int,
     hidden_activation_mode: str,
     hidden_activation_state_count: int,
+    hidden_delta_mode: str,
     hidden_delta_state_count: int,
     score_state_mode: str,
     score_state_count: int,
@@ -657,6 +707,7 @@ def phase_preflight_summary(
             hidden_preactivation_source_count=hidden_preactivation_source_count,
             hidden_activation_mode=hidden_activation_mode,
             hidden_activation_state_count=hidden_activation_state_count,
+            hidden_delta_mode=hidden_delta_mode,
             hidden_delta_state_count=hidden_delta_state_count,
             score_state_mode=score_state_mode,
             score_state_count=score_state_count,
@@ -695,10 +746,11 @@ def phase_preflight_summary(
         "settle_ratio": settle_ratio,
         **phase_state_descriptions(
             update_mode,
-            output_bias_state_frozen,
-            output_delta_mode,
-            hidden_activation_mode,
-            score_state_mode,
+            output_bias_state_frozen=output_bias_state_frozen,
+            output_delta_mode=output_delta_mode,
+            hidden_activation_mode=hidden_activation_mode,
+            score_state_mode=score_state_mode,
+            hidden_delta_mode=hidden_delta_mode,
         ),
     }
 
@@ -1254,6 +1306,7 @@ def make_phase_transient_netlist(
     hidden_preactivation_mode: str = "node",
     hidden_activation_mode: str = "stored",
     score_state_mode: str = "stored",
+    hidden_delta_mode: str = "stored",
     score_calculation_mode: str = "node",
     output_rail_mode: str = "node",
     output_delta_mode: str = "node",
@@ -1301,6 +1354,8 @@ def make_phase_transient_netlist(
         raise ValueError("hidden_activation_mode must be 'stored' or 'inline'")
     if score_state_mode not in {"stored", "inline"}:
         raise ValueError("score_state_mode must be 'stored' or 'inline'")
+    if hidden_delta_mode not in {"stored", "inline"}:
+        raise ValueError("hidden_delta_mode must be 'stored' or 'inline'")
     if score_calculation_mode not in {"node", "inline"}:
         raise ValueError("score_calculation_mode must be 'node' or 'inline'")
     if output_rail_mode not in {"node", "inline"}:
@@ -1337,10 +1392,11 @@ def make_phase_transient_netlist(
     ]
     state_descriptions = phase_state_descriptions(
         update_mode,
-        output_bias_state_frozen,
-        output_delta_mode,
-        hidden_activation_mode,
-        score_state_mode,
+        output_bias_state_frozen=output_bias_state_frozen,
+        output_delta_mode=output_delta_mode,
+        hidden_activation_mode=hidden_activation_mode,
+        score_state_mode=score_state_mode,
+        hidden_delta_mode=hidden_delta_mode,
     )
     lines = [
         "* Phase-resolved transient local-feature/readout training deck.",
@@ -1414,7 +1470,8 @@ def make_phase_transient_netlist(
                 lines.append(f"Cghb{b}_{c} ghb{b}_{c} 0 {{CGRAD}} IC=0")
             if hidden_activation_mode == "stored":
                 lines.append(f"Ch{b}_{c} h{b}_{c} 0 {{CSTATE}} IC=0")
-            lines.append(f"Cdh{b}_{c} dh{b}_{c} 0 {{CSTATE}} IC=0")
+            if hidden_delta_mode == "stored":
+                lines.append(f"Cdh{b}_{c} dh{b}_{c} 0 {{CSTATE}} IC=0")
     for k in range(n_classes):
         for b in range(n_blocks):
             for c in range(channels):
@@ -1540,6 +1597,7 @@ def make_phase_transient_netlist(
             else:
                 delta_refs.append(f"({delta_expr})")
     lines.append("")
+    hidden_delta_refs: dict[tuple[int, int], str] = {}
     for b, idxs in enumerate(blocks):
         for c in range(channels):
             feedback = " + ".join(
@@ -1570,10 +1628,14 @@ def make_phase_transient_netlist(
                 softplus_beta,
             )
             local_delta = f"({feedback})*{deriv}"
-            lines.append(f"Bstore_dh{b}_{c} dh{b}_{c} 0 I = V(pbwd)*{{CSTATE}}/{{TAU}}*(V(dh{b}_{c})-({local_delta}))")
+            if hidden_delta_mode == "stored":
+                lines.append(f"Bstore_dh{b}_{c} dh{b}_{c} 0 I = V(pbwd)*{{CSTATE}}/{{TAU}}*(V(dh{b}_{c})-({local_delta}))")
+                hidden_delta_refs[(b, c)] = f"V(dh{b}_{c})"
+            else:
+                hidden_delta_refs[(b, c)] = f"({local_delta})"
             for p, idx in enumerate(idxs):
                 pixel_expr = pixel_drives[idx].expr
-                grad = f"V(dh{b}_{c})*{pixel_expr}"
+                grad = f"{hidden_delta_refs[(b, c)]}*{pixel_expr}"
                 if direct_update and local_updates_enabled and pixel_expr != "0":
                     lines.append(f"Bupd_w{b}_{c}_{p} w{b}_{c}_{p} 0 I = -V(pacc)*{{CW}}*{lr_control}*{{LOCAL_UPDATE_SCALE}}/({{BS}}*{{TAREA}})*({grad})")
                 elif not direct_update and local_updates_enabled and pixel_expr != "0":
@@ -1583,9 +1645,9 @@ def make_phase_transient_netlist(
                 if state_decay > 0.0:
                     lines.append(f"Bdecay_w{b}_{c}_{p} w{b}_{c}_{p} 0 I = V({decay_phase})*{{CW}}*{{STATE_DECAY}}/{{TAREA}}*V(w{b}_{c}_{p})")
             if direct_update and local_updates_enabled:
-                lines.append(f"Bupd_hb{b}_{c} hb{b}_{c} 0 I = -V(pacc)*{{CW}}*{lr_control}*{{LOCAL_UPDATE_SCALE}}/({{BS}}*{{TAREA}})*V(dh{b}_{c})")
+                lines.append(f"Bupd_hb{b}_{c} hb{b}_{c} 0 I = -V(pacc)*{{CW}}*{lr_control}*{{LOCAL_UPDATE_SCALE}}/({{BS}}*{{TAREA}})*{hidden_delta_refs[(b, c)]}")
             elif not direct_update and local_updates_enabled:
-                lines.append(f"Bacc_hb{b}_{c} ghb{b}_{c} 0 I = -V(pacc)*{{CGRAD}}/{{TAREA}}*V(dh{b}_{c})")
+                lines.append(f"Bacc_hb{b}_{c} ghb{b}_{c} 0 I = -V(pacc)*{{CGRAD}}/{{TAREA}}*{hidden_delta_refs[(b, c)]}")
                 lines.append(f"Bupd_hb{b}_{c} hb{b}_{c} 0 I = -V(papply)*{{CW}}*{lr_control}*{{LOCAL_UPDATE_SCALE}}/({{BS}}*{{TAREA}})*V(ghb{b}_{c})")
                 lines.append(f"Bclear_ghb{b}_{c} ghb{b}_{c} 0 I = V(pclear)*{{CGRAD}}/{{TAU}}*V(ghb{b}_{c})")
             if state_decay > 0.0:
@@ -2346,6 +2408,15 @@ def main() -> None:
         ),
     )
     ap.add_argument(
+        "--hidden-delta-mode",
+        choices=["stored", "inline"],
+        default="stored",
+        help=(
+            "Store hidden/backward feature deltas on phase-latched capacitors, or inline the "
+            "backward-delta expression directly into local update paths."
+        ),
+    )
+    ap.add_argument(
         "--output-rail-mode",
         choices=["node", "inline"],
         default="node",
@@ -2594,7 +2665,11 @@ def main() -> None:
         len(blocks),
         args.channels,
     )
-    preflight_hidden_delta_state_count = hidden_delta_state_count(len(blocks), args.channels)
+    preflight_hidden_delta_state_count = hidden_delta_state_count(
+        len(blocks),
+        args.channels,
+        args.hidden_delta_mode,
+    )
     preflight_score_state_count = score_state_count(10, args.score_state_mode)
     preflight_score_calculation_source_count = score_calculation_source_count(args.score_calculation_mode, 10)
     preflight_output_rail_source_count = output_rail_source_count(args.output_rail_mode, 10)
@@ -2701,6 +2776,7 @@ def main() -> None:
                     hidden_preactivation_source_count=preflight_hidden_preactivation_source_count,
                     hidden_activation_mode=args.hidden_activation_mode,
                     hidden_activation_state_count=preflight_hidden_activation_state_count,
+                    hidden_delta_mode=args.hidden_delta_mode,
                     hidden_delta_state_count=preflight_hidden_delta_state_count,
                     score_state_mode=args.score_state_mode,
                     score_state_count=preflight_score_state_count,
@@ -2825,6 +2901,7 @@ def main() -> None:
         args.hidden_preactivation_mode,
         args.hidden_activation_mode,
         args.score_state_mode,
+        args.hidden_delta_mode,
         args.score_calculation_mode,
         args.output_rail_mode,
         args.output_delta_mode,
@@ -3204,10 +3281,11 @@ def main() -> None:
     simulator_sidecars_cleaned = cleanup_simulator_sidecars(owned_netlists)
     state_descriptions = phase_state_descriptions(
         args.update_mode,
-        output_bias_state_frozen,
-        args.output_delta_mode,
-        args.hidden_activation_mode,
-        args.score_state_mode,
+        output_bias_state_frozen=output_bias_state_frozen,
+        output_delta_mode=args.output_delta_mode,
+        hidden_activation_mode=args.hidden_activation_mode,
+        score_state_mode=args.score_state_mode,
+        hidden_delta_mode=args.hidden_delta_mode,
     )
     execution_contract = phase_execution_contract_fields(
         args.batch_size,
@@ -3296,6 +3374,7 @@ def main() -> None:
             hidden_preactivation_source_count=preflight_hidden_preactivation_source_count,
             hidden_activation_mode=args.hidden_activation_mode,
             hidden_activation_state_count=preflight_hidden_activation_state_count,
+            hidden_delta_mode=args.hidden_delta_mode,
             hidden_delta_state_count=preflight_hidden_delta_state_count,
             score_state_mode=args.score_state_mode,
             score_state_count=preflight_score_state_count,

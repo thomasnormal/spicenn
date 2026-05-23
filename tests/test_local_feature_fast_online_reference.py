@@ -377,6 +377,7 @@ def test_fast_online_variant_sweep_row_reports_best_probe_and_improvement() -> N
     assert row["strict_phase_promotion_estimated_transient_points"] == 34
     assert row["strict_phase_promotion_transient_budget_met"] is True
     assert row["strict_phase_promotion_phase_clock_source_pwl_points"] == 0
+    assert row["strict_phase_promotion_control_source_pwl_points"] > 0
     assert row["strict_phase_promotion_total_source_pwl_points"] > row["strict_phase_promotion_sample_source_pwl_points"]
     assert row["strict_phase_promotion_source_pwl_budget_met"] is True
     assert row["initial_eval_accuracy"] >= 0.0
@@ -452,6 +453,7 @@ def test_fast_online_strict_promotion_defaults_to_pwl_phase_clock() -> None:
     assert command[command.index("--target-source-mode") + 1] == "label"
     assert fields["strict_phase_promotion_phase_clock_mode"] == "pwl"
     assert fields["strict_phase_promotion_phase_clock_source_pwl_points"] > 0
+    assert fields["strict_phase_promotion_control_source_pwl_points"] == 0
 
 
 def test_fast_online_strict_promotion_timeout_auto_scales_with_updates() -> None:
@@ -541,6 +543,7 @@ def test_fast_online_strict_promotion_cost_fields_respect_pwl_clock_override() -
     assert fields["strict_phase_promotion_output_vector_budget_met"] is True
     assert fields["strict_phase_promotion_estimated_transient_points"] == 34
     assert fields["strict_phase_promotion_phase_clock_source_pwl_points"] == 50
+    assert fields["strict_phase_promotion_control_source_pwl_points"] == 0
     assert fields["strict_phase_promotion_total_source_pwl_points"] > fields["strict_phase_promotion_sample_source_pwl_points"]
     assert fields["strict_phase_promotion_source_pwl_budget_met"] is False
 

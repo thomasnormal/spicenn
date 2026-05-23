@@ -438,6 +438,7 @@ def strict_phase_promotion_cost_fields(
         "strict_phase_promotion_transient_budget_met": bool(not max_transient_points or estimated_points <= max_transient_points),
         "strict_phase_promotion_sample_source_pwl_points": source_complexity["sample_source_pwl_points"],
         "strict_phase_promotion_phase_clock_source_pwl_points": source_complexity["phase_clock_source_pwl_points"],
+        "strict_phase_promotion_control_source_pwl_points": source_complexity["control_source_pwl_points"],
         "strict_phase_promotion_total_source_pwl_points": source_complexity["total_source_pwl_points"],
         "strict_phase_promotion_source_pwl_budget_met": bool(
             not max_source_pwl_points or source_complexity["total_source_pwl_points"] <= max_source_pwl_points

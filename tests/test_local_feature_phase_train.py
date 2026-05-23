@@ -500,7 +500,11 @@ def test_phase_transient_sample_source_pwl_supports_sharp_sample_steps() -> None
 def test_phase_transient_sample_rom_expr_decodes_sample_index() -> None:
     expr = phase_transient.sample_rom_expr(np.array([0.25, 0.5, 0.5, 1.0]), "idx")
 
-    assert expr == "if(idx < 0.5, 0.25, if(idx < 1.5, 0.5, if(idx < 2.5, 0.5, 1)))"
+    assert "if(" not in expr
+    assert "{SAMPLE_ROM_SMOOTH}" in expr
+    assert "idx-0.5" in expr
+    assert "idx-1.5" in expr
+    assert "idx-2.5" in expr
 
 
 def test_phase_transient_sample_source_pwl_rejects_mismatched_schedule() -> None:
@@ -785,8 +789,11 @@ def test_phase_transient_rom_input_source_mode_emits_sample_index_decoder(tmp_pa
     assert "Vsampleidx sampleidx 0 PWL(" in netlist
     assert "Vpix1 pix1 0 PWL(" not in netlist
     assert "Vpix3 pix3 0 PWL(" not in netlist
-    assert "Bpix1 pix1 0 V = if(V(sampleidx) < 0.5, 0.2, 0.4)" in netlist
-    assert "Bpix3 pix3 0 V = if(V(sampleidx) < 0.5, 0, 1)" in netlist
+    assert "Bpix1 pix1 0 V =" in netlist
+    assert "Bpix3 pix3 0 V =" in netlist
+    assert "V(sampleidx)-0.5" in netlist
+    assert "{SAMPLE_ROM_SMOOTH}" in netlist
+    assert "Bpix1 pix1 0 V = if(" not in netlist
     assert "* elided constant pixel sources: pix0=0, pix2=0.5" in netlist
     assert "V(w0_0_1)*V(pix1)" in netlist
     assert "V(w0_0_2)*0.5" in netlist

@@ -936,7 +936,8 @@ def sample_rom_expr(values: np.ndarray, index_expr: str = "V(sampleidx)") -> str
     expr = spice_literal(float(vals[-1]))
     for idx in range(len(vals) - 2, -1, -1):
         threshold = idx + 0.5
-        expr = f"if({index_expr} < {threshold:.12g}, {spice_literal(float(vals[idx]))}, {expr})"
+        sel = f"(0.5*(1+tanh(({index_expr}-{threshold:.12g})/{{SAMPLE_ROM_SMOOTH}})))"
+        expr = f"(({spice_literal(float(vals[idx]))})*(1-({sel}))+({expr})*({sel}))"
     return expr
 
 
@@ -1584,6 +1585,7 @@ def make_phase_transient_netlist(
         f".param SOFTMAX_COMPETITOR_POWER={softmax_competitor_power}",
         f".param SOFTMAX_MARGIN={softmax_margin:.12g}",
         ".param TARGET_LABEL_SMOOTH=0.02",
+        ".param SAMPLE_ROM_SMOOTH=0.02",
         "",
         phase_clock_source_line("pact", "pact", phases["act"], t_stop, phase, gap, edge, phase_clock_mode, direct_update, update_batch_size),
         phase_clock_source_line("pscore", "pscore", phases["score"], t_stop, phase, gap, edge, phase_clock_mode, direct_update, update_batch_size),

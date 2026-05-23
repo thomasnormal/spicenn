@@ -22,6 +22,13 @@ FIELDS = [
     "target_topology",
     "strict_target_contract_met",
     "strict_target_contract_issues",
+    "strict_target_nontrivial_learning_met",
+    "full_eval_10k_met",
+    "full_objective_accuracy_met",
+    "full_objective_accuracy_gap",
+    "milestone_b_nontrivial_learning_met",
+    "milestone_c_target_topology_met",
+    "milestone_d_full_objective_met",
     "simulator",
     "updates",
     "eval_samples",
@@ -74,6 +81,9 @@ FIELDS = [
     "initial_eval_accuracy",
     "phase_eval_accuracy",
     "phase_eval_improvement",
+    "random_accuracy_threshold",
+    "learning_improvement_threshold",
+    "nontrivial_learning_met",
     "phase_dominant_pred_class",
     "phase_dominant_pred_fraction",
     "phase_unique_predicted_classes",
@@ -149,6 +159,38 @@ def derived_total_source_pwl_points(data: dict[str, Any]) -> int | None:
     return int(sample_points) + int(clock_points) + int(control_points or 0)
 
 
+def as_float_or_none(value: Any) -> float | None:
+    if value is None:
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def derived_nontrivial_learning_met(row: dict[str, Any]) -> bool:
+    if row.get("nontrivial_learning_met") is True:
+        return True
+    accuracy = as_float_or_none(row.get("phase_eval_accuracy"))
+    improvement = as_float_or_none(row.get("phase_eval_improvement"))
+    random_threshold = as_float_or_none(row.get("random_accuracy_threshold"))
+    improvement_threshold = as_float_or_none(row.get("learning_improvement_threshold"))
+    if accuracy is None or improvement is None:
+        return False
+    if random_threshold is None:
+        random_threshold = 0.1
+    if improvement_threshold is None:
+        improvement_threshold = 0.02
+    return accuracy > random_threshold and improvement >= improvement_threshold
+
+
+def full_objective_accuracy_gap(row: dict[str, Any], threshold: float = 0.9) -> float | None:
+    accuracy = as_float_or_none(row.get("phase_eval_accuracy"))
+    if accuracy is None:
+        return None
+    return max(0.0, threshold - accuracy)
+
+
 def row_from_summary(path: Path) -> dict[str, Any]:
     data = json.loads(path.read_text())
     tag = path.name.removesuffix("_summary.json")
@@ -211,6 +253,9 @@ def row_from_summary(path: Path) -> dict[str, Any]:
         "initial_eval_accuracy": data.get("initial_eval_accuracy"),
         "phase_eval_accuracy": data.get("phase_eval_accuracy"),
         "phase_eval_improvement": data.get("phase_eval_improvement"),
+        "random_accuracy_threshold": data.get("random_accuracy_threshold"),
+        "learning_improvement_threshold": data.get("learning_improvement_threshold"),
+        "nontrivial_learning_met": data.get("nontrivial_learning_met"),
         "phase_dominant_pred_class": nested(data, "phase_numpy_eval_diagnostics", "dominant_pred_class"),
         "phase_dominant_pred_fraction": nested(data, "phase_numpy_eval_diagnostics", "dominant_pred_fraction"),
         "phase_unique_predicted_classes": nested(data, "phase_numpy_eval_diagnostics", "unique_predicted_classes"),
@@ -250,6 +295,16 @@ def row_from_summary(path: Path) -> dict[str, Any]:
     row["target_topology"] = same_target_topology(row)
     row["strict_target_contract_met"] = not issues
     row["strict_target_contract_issues"] = issues
+    nontrivial_learning = derived_nontrivial_learning_met(row)
+    full_eval_10k = as_int(row.get("eval_samples")) >= 10000
+    full_accuracy = (as_float_or_none(row.get("phase_eval_accuracy")) or -1.0) >= 0.9
+    row["strict_target_nontrivial_learning_met"] = row["strict_target_contract_met"] and nontrivial_learning
+    row["full_eval_10k_met"] = full_eval_10k
+    row["full_objective_accuracy_met"] = full_accuracy
+    row["full_objective_accuracy_gap"] = full_objective_accuracy_gap(row)
+    row["milestone_b_nontrivial_learning_met"] = row["strict_target_nontrivial_learning_met"]
+    row["milestone_c_target_topology_met"] = row["strict_target_contract_met"]
+    row["milestone_d_full_objective_met"] = row["strict_target_contract_met"] and full_eval_10k and full_accuracy
     return row
 
 
@@ -392,6 +447,11 @@ def print_markdown(rows: list[dict[str, Any]]) -> None:
         "readout_class_centering",
         "strict_target_contract_met",
         "strict_target_contract_issues",
+        "strict_target_nontrivial_learning_met",
+        "full_eval_10k_met",
+        "full_objective_accuracy_met",
+        "full_objective_accuracy_gap",
+        "milestone_d_full_objective_met",
         "fully_on_device_execution_contract_met",
         "strict_fully_on_device_contract_met",
         "random_init_used",
@@ -399,6 +459,7 @@ def print_markdown(rows: list[dict[str, Any]]) -> None:
         "initial_eval_accuracy",
         "phase_eval_accuracy",
         "phase_eval_improvement",
+        "nontrivial_learning_met",
         "phase_dominant_pred_class",
         "phase_dominant_pred_fraction",
         "phase_unique_predicted_classes",

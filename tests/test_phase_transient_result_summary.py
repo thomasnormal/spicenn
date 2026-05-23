@@ -75,6 +75,8 @@ def test_phase_summary_row_keeps_execution_contract_and_backend_fields(tmp_path:
                 "initial_eval_accuracy": 0.05,
                 "phase_eval_accuracy": 0.12,
                 "phase_eval_improvement": 0.07,
+                "random_accuracy_threshold": 0.1,
+                "learning_improvement_threshold": 0.02,
                 "phase_numpy_eval_diagnostics": {
                     "dominant_pred_class": 3,
                     "dominant_pred_fraction": 0.4,
@@ -147,6 +149,13 @@ def test_phase_summary_row_keeps_execution_contract_and_backend_fields(tmp_path:
     assert row["target_topology"] is True
     assert row["strict_target_contract_met"] is True
     assert row["strict_target_contract_issues"] == []
+    assert row["strict_target_nontrivial_learning_met"] is True
+    assert row["full_eval_10k_met"] is False
+    assert row["full_objective_accuracy_met"] is False
+    assert row["full_objective_accuracy_gap"] == 0.78
+    assert row["milestone_b_nontrivial_learning_met"] is True
+    assert row["milestone_c_target_topology_met"] is True
+    assert row["milestone_d_full_objective_met"] is False
     assert row["estimated_transient_points"] == 902
     assert row["max_transient_points"] == 2000
     assert row["phase_output_vector_count"] == 884
@@ -265,6 +274,101 @@ def test_strict_target_contract_audit_reports_missing_requirements() -> None:
         "no_python_weight_updates",
         "no_python_checkpointing",
     ]
+
+
+def test_phase_summary_full_objective_requires_full_eval_accuracy_and_strict_contract(tmp_path: Path) -> None:
+    module = load_summary_module()
+    strict_full_path = tmp_path / "spice_mnist_local_feature_phase_full_summary.json"
+    strict_full_path.write_text(
+        json.dumps(
+            {
+                "status": "continuous_phase_train_no_reference",
+                "architecture": "phase_resolved_transient_local_feature_readout",
+                "image_size": 10,
+                "block_size": 4,
+                "stride": 2,
+                "channels": 2,
+                "batch_size": 1,
+                "eval_samples": 10000,
+                "reference_mode": "none",
+                "strict_fully_on_device_contract_met": True,
+                "strict_fully_on_device_requested": True,
+                "random_init_used": True,
+                "initial_weights_source": "random_init",
+                "python_weight_updates_between_samples": False,
+                "python_checkpointing_between_samples": False,
+                "phase_eval_accuracy": 0.91,
+                "phase_eval_improvement": 0.8,
+            }
+        )
+        + "\n"
+    )
+    small_eval_path = tmp_path / "spice_mnist_local_feature_phase_smalleval_summary.json"
+    small_eval_path.write_text(
+        json.dumps(
+            {
+                "status": "continuous_phase_train_no_reference",
+                "architecture": "phase_resolved_transient_local_feature_readout",
+                "image_size": 10,
+                "block_size": 4,
+                "stride": 2,
+                "channels": 2,
+                "batch_size": 1,
+                "eval_samples": 300,
+                "reference_mode": "none",
+                "strict_fully_on_device_contract_met": True,
+                "strict_fully_on_device_requested": True,
+                "random_init_used": True,
+                "initial_weights_source": "random_init",
+                "python_weight_updates_between_samples": False,
+                "python_checkpointing_between_samples": False,
+                "phase_eval_accuracy": 0.91,
+                "phase_eval_improvement": 0.8,
+            }
+        )
+        + "\n"
+    )
+    weak_accuracy_path = tmp_path / "spice_mnist_local_feature_phase_weak_summary.json"
+    weak_accuracy_path.write_text(
+        json.dumps(
+            {
+                "status": "continuous_phase_train_no_reference",
+                "architecture": "phase_resolved_transient_local_feature_readout",
+                "image_size": 10,
+                "block_size": 4,
+                "stride": 2,
+                "channels": 2,
+                "batch_size": 1,
+                "eval_samples": 10000,
+                "reference_mode": "none",
+                "strict_fully_on_device_contract_met": True,
+                "strict_fully_on_device_requested": True,
+                "random_init_used": True,
+                "initial_weights_source": "random_init",
+                "python_weight_updates_between_samples": False,
+                "python_checkpointing_between_samples": False,
+                "phase_eval_accuracy": 0.89,
+                "phase_eval_improvement": 0.8,
+            }
+        )
+        + "\n"
+    )
+
+    strict_full = module.row_from_summary(strict_full_path)
+    small_eval = module.row_from_summary(small_eval_path)
+    weak_accuracy = module.row_from_summary(weak_accuracy_path)
+
+    assert strict_full["milestone_d_full_objective_met"] is True
+    assert strict_full["full_eval_10k_met"] is True
+    assert strict_full["full_objective_accuracy_met"] is True
+    assert strict_full["full_objective_accuracy_gap"] == 0.0
+    assert small_eval["milestone_d_full_objective_met"] is False
+    assert small_eval["full_eval_10k_met"] is False
+    assert small_eval["full_objective_accuracy_met"] is True
+    assert weak_accuracy["milestone_d_full_objective_met"] is False
+    assert weak_accuracy["full_eval_10k_met"] is True
+    assert weak_accuracy["full_objective_accuracy_met"] is False
+    assert weak_accuracy["full_objective_accuracy_gap"] == 0.010000000000000009
 
 
 def test_accuracy_sort_ranks_phase_accuracy_then_updates() -> None:

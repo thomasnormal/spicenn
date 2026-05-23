@@ -18,6 +18,7 @@ DEFAULT_SAMPLE_EDGE = 0.0
 DEFAULT_HIDDEN_PREACTIVATION_MODE = "inline"
 DEFAULT_SCORE_CALCULATION_MODE = "inline"
 DEFAULT_OUTPUT_RAIL_MODE = "inline"
+DEFAULT_OUTPUT_DELTA_MODE = "node"
 
 
 def parse_csv(text: str) -> list[str]:
@@ -186,6 +187,8 @@ def build_variant_command(
         args.score_calculation_mode,
         "--output-rail-mode",
         args.output_rail_mode,
+        "--output-delta-mode",
+        args.output_delta_mode,
         "--tag",
         variant_tag(
             args.tag,
@@ -289,6 +292,8 @@ def row_from_summary(
         "score_calculation_source_count",
         "output_rail_mode",
         "output_rail_source_count",
+        "output_delta_mode",
+        "output_delta_state_count",
         "auxiliary_algebraic_source_count",
         "target_source_mode",
     ]
@@ -366,6 +371,7 @@ def main() -> None:
     ap.add_argument("--hidden-preactivation-mode", choices=["node", "inline"], default=DEFAULT_HIDDEN_PREACTIVATION_MODE)
     ap.add_argument("--score-calculation-mode", choices=["node", "inline"], default=DEFAULT_SCORE_CALCULATION_MODE)
     ap.add_argument("--output-rail-mode", choices=["node", "inline"], default=DEFAULT_OUTPUT_RAIL_MODE)
+    ap.add_argument("--output-delta-mode", choices=["node", "inline"], default=DEFAULT_OUTPUT_DELTA_MODE)
     ap.add_argument("--softmax-output", action=argparse.BooleanOptionalAction, default=True)
     ap.add_argument("--linear-output", action="store_true")
     ap.add_argument("--final-measures", action="store_true")

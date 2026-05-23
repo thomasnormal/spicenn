@@ -19,6 +19,7 @@ from run_spice_mnist_local_feature_phase_transient import (
     hidden_preactivation_source_count,
     lr_schedule_values,
     make_phase_schedule,
+    output_delta_state_count,
     output_rail_source_count,
     phase_output_vector_count,
     phase_source_complexity,
@@ -34,6 +35,7 @@ DEFAULT_PROMOTION_SAMPLE_EDGE = 0.0
 DEFAULT_PROMOTION_HIDDEN_PREACTIVATION_MODE = "inline"
 DEFAULT_PROMOTION_SCORE_CALCULATION_MODE = "inline"
 DEFAULT_PROMOTION_OUTPUT_RAIL_MODE = "inline"
+DEFAULT_PROMOTION_OUTPUT_DELTA_MODE = "node"
 
 TrainState = tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]
 PROBE_ACCURACY_RE = re.compile(r"^probe_eval_accuracy_u(\d+)$")
@@ -669,6 +671,8 @@ def strict_phase_promotion_command(args: argparse.Namespace, variant: dict[str, 
         getattr(args, "promotion_score_calculation_mode", DEFAULT_PROMOTION_SCORE_CALCULATION_MODE),
         "--output-rail-mode",
         effective_promotion_output_rail_mode(args),
+        "--output-delta-mode",
+        getattr(args, "promotion_output_delta_mode", DEFAULT_PROMOTION_OUTPUT_DELTA_MODE),
         "--tag",
         promotion_tag,
     ]
@@ -737,6 +741,11 @@ def strict_phase_cost_fields_for_updates(
         DEFAULT_PROMOTION_SCORE_CALCULATION_MODE,
     )
     output_rail_mode = effective_promotion_output_rail_mode(args)
+    output_delta_mode = getattr(
+        args,
+        "promotion_output_delta_mode",
+        DEFAULT_PROMOTION_OUTPUT_DELTA_MODE,
+    )
     phases, sample_starts, t_stop = make_phase_schedule(1, updates, phase, gap, True)
     lr_values = None
     lr_schedule = variant.get("lr_schedule", "constant")
@@ -786,6 +795,7 @@ def strict_phase_cost_fields_for_updates(
     )
     score_sources = score_calculation_source_count(score_calculation_mode, 10)
     output_sources = output_rail_source_count(output_rail_mode, 10)
+    output_delta_states = output_delta_state_count(output_delta_mode, 10)
     auxiliary_sources = auxiliary_algebraic_source_count(
         hidden_sources,
         score_sources,
@@ -801,6 +811,8 @@ def strict_phase_cost_fields_for_updates(
         f"{prefix}_score_calculation_source_count": score_sources,
         f"{prefix}_output_rail_mode": output_rail_mode,
         f"{prefix}_output_rail_source_count": output_sources,
+        f"{prefix}_output_delta_mode": output_delta_mode,
+        f"{prefix}_output_delta_state_count": output_delta_states,
         f"{prefix}_auxiliary_algebraic_source_count": auxiliary_sources,
         f"{prefix}_auxiliary_algebraic_source_budget_met": bool(
             not max_auxiliary_algebraic_sources or auxiliary_sources <= max_auxiliary_algebraic_sources
@@ -1037,6 +1049,11 @@ def main() -> None:
         "--promotion-output-rail-mode",
         choices=["node", "inline"],
         default=DEFAULT_PROMOTION_OUTPUT_RAIL_MODE,
+    )
+    ap.add_argument(
+        "--promotion-output-delta-mode",
+        choices=["node", "inline"],
+        default=DEFAULT_PROMOTION_OUTPUT_DELTA_MODE,
     )
     ap.add_argument("--promotion-phase-output-include-y", action="store_true")
     ap.add_argument("--promotion-probe-updates", default="")

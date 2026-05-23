@@ -189,6 +189,14 @@ def output_rail_source_count(mode: str, classes: int) -> int:
     raise ValueError("output_rail_mode must be 'node' or 'inline'")
 
 
+def output_delta_state_count(mode: str, classes: int) -> int:
+    if mode == "node":
+        return int(classes)
+    if mode == "inline":
+        return 0
+    raise ValueError("output_delta_mode must be 'node' or 'inline'")
+
+
 def auxiliary_algebraic_source_count(
     hidden_preactivation_sources: int,
     score_calculation_sources: int,
@@ -290,17 +298,35 @@ def final_state_measure_time(t_stop: float, transient_step: float, final_update_
     return measure_time
 
 
-def phase_state_descriptions(update_mode: str, output_bias_state_frozen: bool = False) -> dict[str, str]:
+def phase_state_descriptions(
+    update_mode: str,
+    output_bias_state_frozen: bool = False,
+    output_delta_mode: str = "node",
+) -> dict[str, str]:
+    if output_delta_mode not in {"node", "inline"}:
+        raise ValueError("output_delta_mode must be 'node' or 'inline'")
     if update_mode == "phased":
-        temporary = (
-            "feature activations, class scores, class deltas, hidden/backward feature deltas, "
-            "and gradient accumulators are capacitor voltages"
-        )
+        if output_delta_mode == "node":
+            temporary = (
+                "feature activations, class scores, class deltas, hidden/backward feature deltas, "
+                "and gradient accumulators are capacitor voltages"
+            )
+        else:
+            temporary = (
+                "feature activations, class scores, hidden/backward feature deltas, and gradient accumulators "
+                "are capacitor voltages; class deltas are inline expressions"
+            )
     elif update_mode == "direct":
-        temporary = (
-            "feature activations, class scores, class deltas, and hidden/backward feature deltas "
-            "are capacitor voltages; weights are updated directly during each per-sample update phase"
-        )
+        if output_delta_mode == "node":
+            temporary = (
+                "feature activations, class scores, class deltas, and hidden/backward feature deltas "
+                "are capacitor voltages; weights are updated directly during each per-sample update phase"
+            )
+        else:
+            temporary = (
+                "feature activations, class scores, and hidden/backward feature deltas are capacitor voltages; "
+                "class deltas are inline expressions; weights are updated directly during each per-sample update phase"
+            )
     else:
         raise ValueError("update_mode must be 'phased' or 'direct'")
     if output_bias_state_frozen:
@@ -330,6 +356,8 @@ def phase_deck_mode_fields(
     score_calculation_source_count: int,
     output_rail_mode: str,
     output_rail_source_count: int,
+    output_delta_mode: str,
+    output_delta_state_count: int,
 ) -> dict[str, object]:
     auxiliary_sources = auxiliary_algebraic_source_count(
         hidden_preactivation_source_count,
@@ -346,6 +374,8 @@ def phase_deck_mode_fields(
         "score_calculation_source_count": score_calculation_source_count,
         "output_rail_mode": output_rail_mode,
         "output_rail_source_count": output_rail_source_count,
+        "output_delta_mode": output_delta_mode,
+        "output_delta_state_count": output_delta_state_count,
         "auxiliary_algebraic_source_count": auxiliary_sources,
     }
 
@@ -427,6 +457,8 @@ def phase_preflight_summary(
     score_calculation_source_count: int,
     output_rail_mode: str,
     output_rail_source_count: int,
+    output_delta_mode: str,
+    output_delta_state_count: int,
     output_bias_state_frozen: bool,
     phase_output_vector_count: int,
     phase_output_includes_y: bool,
@@ -499,6 +531,8 @@ def phase_preflight_summary(
             score_calculation_source_count=score_calculation_source_count,
             output_rail_mode=output_rail_mode,
             output_rail_source_count=output_rail_source_count,
+            output_delta_mode=output_delta_mode,
+            output_delta_state_count=output_delta_state_count,
         ),
         "output_bias_state_frozen": output_bias_state_frozen,
         "phase_output_vector_count": phase_output_vector_count,
@@ -524,7 +558,7 @@ def phase_preflight_summary(
         **cost_fields,
         "phase_s": phase,
         "settle_ratio": settle_ratio,
-        **phase_state_descriptions(update_mode, output_bias_state_frozen),
+        **phase_state_descriptions(update_mode, output_bias_state_frozen, output_delta_mode),
     }
 
 
@@ -1074,6 +1108,7 @@ def make_phase_transient_netlist(
     hidden_preactivation_mode: str = "node",
     score_calculation_mode: str = "node",
     output_rail_mode: str = "node",
+    output_delta_mode: str = "node",
 ) -> tuple[str, int, float]:
     total_samples = x_batch.shape[0]
     if total_samples != update_batch_size * updates:
@@ -1118,6 +1153,8 @@ def make_phase_transient_netlist(
         raise ValueError("score_calculation_mode must be 'node' or 'inline'")
     if output_rail_mode not in {"node", "inline"}:
         raise ValueError("output_rail_mode must be 'node' or 'inline'")
+    if output_delta_mode not in {"node", "inline"}:
+        raise ValueError("output_delta_mode must be 'node' or 'inline'")
     if output_rail_mode == "inline" and include_output_y_vectors:
         raise ValueError("output_rail_mode=inline cannot print final y vectors")
     sample_transition_edge = edge if sample_edge is None else sample_edge
@@ -1146,7 +1183,7 @@ def make_phase_transient_netlist(
         sample_drive(f"Vpix{i}", f"pix{i}", x_batch[:, i], sample_starts, t_stop, sample_transition_edge, elide_dc=True)
         for i in range(x_batch.shape[1])
     ]
-    state_descriptions = phase_state_descriptions(update_mode, output_bias_state_frozen)
+    state_descriptions = phase_state_descriptions(update_mode, output_bias_state_frozen, output_delta_mode)
     lines = [
         "* Phase-resolved transient local-feature/readout training deck.",
         f"* {state_descriptions['persistent_state']}.",
@@ -1234,7 +1271,8 @@ def make_phase_transient_netlist(
             if not direct_update and output_bias_updates_enabled:
                 lines.append(f"Cgob{k} gob{k} 0 {{CGRAD}} IC=0")
         lines.append(f"Cscore{k} score{k} 0 {{CSTATE}} IC=0")
-        lines.append(f"Cd{k} d{k} 0 {{CSTATE}} IC=0")
+        if output_delta_mode == "node":
+            lines.append(f"Cd{k} d{k} 0 {{CSTATE}} IC=0")
     lines.append("")
     hidden_preactivation_exprs: dict[tuple[int, int], str] = {}
     for b, idxs in enumerate(blocks):
@@ -1277,6 +1315,7 @@ def make_phase_transient_netlist(
         else:
             store_score_expr = f"({score_expr})"
         lines.append(f"Bstore_score{k} score{k} 0 I = V(pscore)*{{CSTATE}}/{{TAU}}*(V(score{k})-({store_score_expr}))")
+    delta_refs: list[str] = []
     if softmax_output:
         denom = " + ".join(softmax_exp_expr(f"V(score{k})") for k in range(n_classes))
         y_exprs = [f"{softmax_exp_expr(f'V(score{k})')}/({denom})" for k in range(n_classes)]
@@ -1304,7 +1343,11 @@ def make_phase_transient_netlist(
             )
             if softmax_error_gate == "target-margin":
                 delta_expr = f"V(gerr)*({delta_expr})"
-            lines.append(f"Bstore_d{k} d{k} 0 I = V(perr)*{{CSTATE}}/{{TAU}}*(V(d{k})-({delta_expr}))")
+            if output_delta_mode == "node":
+                lines.append(f"Bstore_d{k} d{k} 0 I = V(perr)*{{CSTATE}}/{{TAU}}*(V(d{k})-({delta_expr}))")
+                delta_refs.append(f"V(d{k})")
+            else:
+                delta_refs.append(f"({delta_expr})")
     else:
         for k in range(n_classes):
             if linear_output:
@@ -1318,7 +1361,11 @@ def make_phase_transient_netlist(
                 if output_rail_mode == "node":
                     lines.append(f"By{k} y{k} 0 V = {y_expr}")
                 delta_expr = f"(V(target{k})-({y_expr}))*(1-({y_expr})*({y_expr}))"
-            lines.append(f"Bstore_d{k} d{k} 0 I = V(perr)*{{CSTATE}}/{{TAU}}*(V(d{k})-({delta_expr}))")
+            if output_delta_mode == "node":
+                lines.append(f"Bstore_d{k} d{k} 0 I = V(perr)*{{CSTATE}}/{{TAU}}*(V(d{k})-({delta_expr}))")
+                delta_refs.append(f"V(d{k})")
+            else:
+                delta_refs.append(f"({delta_expr})")
     lines.append("")
     for b, idxs in enumerate(blocks):
         for c in range(channels):
@@ -1332,7 +1379,7 @@ def make_phase_transient_netlist(
                         k,
                         readout_class_centering,
                     ),
-                    f"V(d{k})",
+                    delta_refs[k],
                     readout_feedback_mode,
                     readout_feedback_clip,
                 )
@@ -1373,7 +1420,7 @@ def make_phase_transient_netlist(
     for k in range(n_classes):
         for b in range(n_blocks):
             for c in range(channels):
-                grad = f"V(d{k})*V(h{b}_{c})"
+                grad = f"{delta_refs[k]}*V(h{b}_{c})"
                 if direct_update and readout_updates_enabled:
                     lines.append(f"Bupd_v{k}_{b}_{c} v{k}_{b}_{c} 0 I = -V(pacc)*{{CW}}*{lr_control}*{{READOUT_UPDATE_SCALE}}/({{BS}}*{{TAREA}})*({grad})")
                 elif not direct_update and readout_updates_enabled:
@@ -1383,9 +1430,9 @@ def make_phase_transient_netlist(
                 if state_decay > 0.0:
                     lines.append(f"Bdecay_v{k}_{b}_{c} v{k}_{b}_{c} 0 I = V({decay_phase})*{{CW}}*{{STATE_DECAY}}/{{TAREA}}*V(v{k}_{b}_{c})")
         if direct_update and output_bias_updates_enabled:
-            lines.append(f"Bupd_ob{k} ob{k} 0 I = -V(pacc)*{{CW}}*{lr_control}*{{OB_UPDATE_SCALE}}/({{BS}}*{{TAREA}})*V(d{k})")
+            lines.append(f"Bupd_ob{k} ob{k} 0 I = -V(pacc)*{{CW}}*{lr_control}*{{OB_UPDATE_SCALE}}/({{BS}}*{{TAREA}})*{delta_refs[k]}")
         elif not direct_update and output_bias_updates_enabled:
-            lines.append(f"Bacc_ob{k} gob{k} 0 I = -V(pacc)*{{CGRAD}}/{{TAREA}}*V(d{k})")
+            lines.append(f"Bacc_ob{k} gob{k} 0 I = -V(pacc)*{{CGRAD}}/{{TAREA}}*{delta_refs[k]}")
             lines.append(f"Bupd_ob{k} ob{k} 0 I = -V(papply)*{{CW}}*{lr_control}*{{OB_UPDATE_SCALE}}/({{BS}}*{{TAREA}})*V(gob{k})")
             lines.append(f"Bclear_gob{k} gob{k} 0 I = V(pclear)*{{CGRAD}}/{{TAU}}*V(gob{k})")
         if state_decay > 0.0:
@@ -2117,6 +2164,15 @@ def main() -> None:
         ),
     )
     ap.add_argument(
+        "--output-delta-mode",
+        choices=["node", "inline"],
+        default="node",
+        help=(
+            "Use separate stored class-delta capacitors, or inline class-delta expressions into "
+            "backward and update sources for direct fused error-head experiments."
+        ),
+    )
+    ap.add_argument(
         "--target-source-mode",
         choices=["rails", "label"],
         default="rails",
@@ -2344,6 +2400,7 @@ def main() -> None:
     )
     preflight_score_calculation_source_count = score_calculation_source_count(args.score_calculation_mode, 10)
     preflight_output_rail_source_count = output_rail_source_count(args.output_rail_mode, 10)
+    preflight_output_delta_state_count = output_delta_state_count(args.output_delta_mode, 10)
     preflight_auxiliary_algebraic_source_count = auxiliary_algebraic_source_count(
         preflight_hidden_preactivation_source_count,
         preflight_score_calculation_source_count,
@@ -2431,6 +2488,8 @@ def main() -> None:
                     score_calculation_source_count=preflight_score_calculation_source_count,
                     output_rail_mode=args.output_rail_mode,
                     output_rail_source_count=preflight_output_rail_source_count,
+                    output_delta_mode=args.output_delta_mode,
+                    output_delta_state_count=preflight_output_delta_state_count,
                     output_bias_state_frozen=output_bias_state_frozen,
                     phase_output_vector_count=preflight_phase_output_vector_count,
                     phase_output_includes_y=args.phase_output_include_y,
@@ -2544,6 +2603,7 @@ def main() -> None:
         args.hidden_preactivation_mode,
         args.score_calculation_mode,
         args.output_rail_mode,
+        args.output_delta_mode,
     )
     phase_netlist.write_text(prepare_phase_netlist(netlist, spice_bin))
 
@@ -2918,7 +2978,7 @@ def main() -> None:
     if probe_rows:
         pd.DataFrame(probe_rows).to_csv(probe_metrics_path, index=False)
     simulator_sidecars_cleaned = cleanup_simulator_sidecars(owned_netlists)
-    state_descriptions = phase_state_descriptions(args.update_mode, output_bias_state_frozen)
+    state_descriptions = phase_state_descriptions(args.update_mode, output_bias_state_frozen, args.output_delta_mode)
     execution_contract = phase_execution_contract_fields(
         args.batch_size,
         args.reference_mode,
@@ -3008,6 +3068,8 @@ def main() -> None:
             score_calculation_source_count=preflight_score_calculation_source_count,
             output_rail_mode=args.output_rail_mode,
             output_rail_source_count=preflight_output_rail_source_count,
+            output_delta_mode=args.output_delta_mode,
+            output_delta_state_count=preflight_output_delta_state_count,
         ),
         "output_bias_state_frozen": output_bias_state_frozen,
         "phase_output_includes_y": include_y_vectors,

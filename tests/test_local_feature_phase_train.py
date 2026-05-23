@@ -75,6 +75,7 @@ def test_phase_transient_cli_exposes_agreement_gates() -> None:
     assert "--hidden-preactivation-mode" in proc.stdout
     assert "--score-calculation-mode" in proc.stdout
     assert "--output-rail-mode" in proc.stdout
+    assert "--output-delta-mode" in proc.stdout
 
 
 def test_phase_transient_x_yce_print_reader_extracts_final_transient_row(tmp_path: Path) -> None:
@@ -202,6 +203,14 @@ def test_phase_transient_output_rail_source_count_tracks_fusion_mode() -> None:
         phase_transient.output_rail_source_count("bad", 10)
 
 
+def test_phase_transient_output_delta_state_count_tracks_fusion_mode() -> None:
+    assert phase_transient.output_delta_state_count("node", 10) == 10
+    assert phase_transient.output_delta_state_count("inline", 10) == 0
+
+    with pytest.raises(ValueError, match="output_delta_mode"):
+        phase_transient.output_delta_state_count("bad", 10)
+
+
 def test_phase_transient_auxiliary_algebraic_source_count_sums_fused_families() -> None:
     assert phase_transient.auxiliary_algebraic_source_count(32, 10, 10) == 52
     assert phase_transient.auxiliary_algebraic_source_count(0, 0, 0) == 0
@@ -218,6 +227,8 @@ def test_phase_transient_deck_mode_fields_are_shared_by_preflight_and_runtime_su
         score_calculation_source_count=0,
         output_rail_mode="inline",
         output_rail_source_count=0,
+        output_delta_mode="inline",
+        output_delta_state_count=0,
     )
 
     assert fields == {
@@ -230,6 +241,8 @@ def test_phase_transient_deck_mode_fields_are_shared_by_preflight_and_runtime_su
         "score_calculation_source_count": 0,
         "output_rail_mode": "inline",
         "output_rail_source_count": 0,
+        "output_delta_mode": "inline",
+        "output_delta_state_count": 0,
         "auxiliary_algebraic_source_count": 0,
     }
 
@@ -1139,6 +1152,7 @@ def test_phase_variant_sweep_generated_defaults_use_efficient_deck_shape() -> No
     assert phase_variant_sweep.DEFAULT_HIDDEN_PREACTIVATION_MODE == "inline"
     assert phase_variant_sweep.DEFAULT_SCORE_CALCULATION_MODE == "inline"
     assert phase_variant_sweep.DEFAULT_OUTPUT_RAIL_MODE == "inline"
+    assert phase_variant_sweep.DEFAULT_OUTPUT_DELTA_MODE == "node"
 
 
 def test_phase_variant_sweep_dry_command_preserves_online_contract() -> None:
@@ -1173,6 +1187,7 @@ def test_phase_variant_sweep_dry_command_preserves_online_contract() -> None:
         hidden_preactivation_mode="inline",
         score_calculation_mode="inline",
         output_rail_mode="inline",
+        output_delta_mode="node",
         eval_backend="numpy",
         probe_updates="1,2,4,8",
         tag="sweep",
@@ -1258,6 +1273,8 @@ def test_phase_variant_sweep_dry_command_preserves_online_contract() -> None:
     assert command[command.index("--score-calculation-mode") + 1] == "inline"
     assert "--output-rail-mode" in command
     assert command[command.index("--output-rail-mode") + 1] == "inline"
+    assert "--output-delta-mode" in command
+    assert command[command.index("--output-delta-mode") + 1] == "node"
     assert "--sample-edge" in command
     assert command[command.index("--sample-edge") + 1] == "0.0"
     assert "--eval-backend" in command
@@ -1328,6 +1345,8 @@ def test_phase_variant_sweep_row_preserves_phase_cost_fields() -> None:
         "score_calculation_source_count": 0,
         "output_rail_mode": "inline",
         "output_rail_source_count": 0,
+        "output_delta_mode": "inline",
+        "output_delta_state_count": 0,
         "auxiliary_algebraic_source_count": 0,
     }
 
@@ -1374,6 +1393,8 @@ def test_phase_variant_sweep_row_preserves_phase_cost_fields() -> None:
     assert row["score_calculation_source_count"] == 0
     assert row["output_rail_mode"] == "inline"
     assert row["output_rail_source_count"] == 0
+    assert row["output_delta_mode"] == "inline"
+    assert row["output_delta_state_count"] == 0
     assert row["auxiliary_algebraic_source_count"] == 0
 
 
@@ -1559,6 +1580,50 @@ def test_phase_transient_inline_output_rails_remove_y_sources(tmp_path: Path) ->
     assert "V(y0)" not in netlist
     assert "V(y1)" not in netlist
     assert "Bstore_d0 d0 0 I = V(perr)*{CSTATE}/{TAU}*(V(d0)-((V(target0))*(1-(exp((V(score0))" in netlist
+
+
+def test_phase_transient_inline_output_delta_removes_stored_delta_state(tmp_path: Path) -> None:
+    x = np.array([[0.0, 0.2, 0.4, 0.6]], dtype=float)
+    y = np.array([0])
+    w = np.ones((1, 1, 4))
+    hb = np.zeros((1, 1))
+    readout = np.ones((2, 1, 1))
+    output_bias = np.zeros(2)
+
+    netlist, _n_vec, _t_stop = phase_transient.make_phase_transient_netlist(
+        x,
+        y,
+        w,
+        hb,
+        readout,
+        output_bias,
+        [[0, 1, 2, 3]],
+        0.8,
+        tmp_path / "out.dat",
+        False,
+        1,
+        1,
+        1e-9,
+        0.1e-9,
+        5e-12,
+        40.0,
+        20e-12,
+        1e-12,
+        1e-12,
+        1e-12,
+        1e18,
+        True,
+        output_delta_mode="inline",
+    )
+
+    assert "Cd0 d0 0 {CSTATE}" not in netlist
+    assert "Cd1 d1 0 {CSTATE}" not in netlist
+    assert "Bstore_d0 d0 0 I =" not in netlist
+    assert "Bstore_d1 d1 0 I =" not in netlist
+    assert "V(d0)" not in netlist
+    assert "V(d1)" not in netlist
+    assert "Bstore_dh0_0 dh0_0 0 I =" in netlist
+    assert "Bupd_v0_0_0 v0_0_0 0 I =" in netlist
 
 
 def test_phase_transient_inline_output_rails_cannot_print_y_vectors(tmp_path: Path) -> None:
@@ -2484,6 +2549,8 @@ def test_phase_transient_preflight_summary_has_no_artifact_paths() -> None:
         score_calculation_source_count=0,
         output_rail_mode="inline",
         output_rail_source_count=0,
+        output_delta_mode="inline",
+        output_delta_state_count=0,
         output_bias_state_frozen=True,
         phase_output_vector_count=70,
         phase_output_includes_y=False,
@@ -2518,6 +2585,8 @@ def test_phase_transient_preflight_summary_has_no_artifact_paths() -> None:
     assert summary["score_calculation_source_count"] == 0
     assert summary["output_rail_mode"] == "inline"
     assert summary["output_rail_source_count"] == 0
+    assert summary["output_delta_mode"] == "inline"
+    assert summary["output_delta_state_count"] == 0
     assert summary["auxiliary_algebraic_source_count"] == 0
     assert summary["target_source_mode"] == "rails"
     assert summary["output_bias_state_frozen"] is True

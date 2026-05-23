@@ -366,6 +366,17 @@ def phase_preflight_summary(
     settle_ratio: float,
     source_complexity: dict[str, int],
 ) -> dict[str, object]:
+    cost_fields = phase_cost_summary_fields(
+        updates=updates,
+        estimated_transient_points=estimated_transient_points,
+        phase_output_vector_count=phase_output_vector_count,
+        source_complexity=source_complexity,
+        max_transient_points=max_transient_points,
+        max_source_pwl_points=max_source_pwl_points,
+        max_sample_sources=max_sample_sources,
+        max_total_sources=max_total_sources,
+        max_output_vectors=max_output_vectors,
+    )
     return {
         "simulator_selector": simulator_selector,
         "architecture": "phase_resolved_transient_local_feature_readout",
@@ -413,9 +424,41 @@ def phase_preflight_summary(
         "max_total_sources": max_total_sources,
         "max_output_vectors": max_output_vectors,
         **source_complexity,
+        **cost_fields,
         "phase_s": phase,
         "settle_ratio": settle_ratio,
         **phase_state_descriptions(update_mode, output_bias_state_frozen),
+    }
+
+
+def phase_cost_summary_fields(
+    *,
+    updates: int,
+    estimated_transient_points: int,
+    phase_output_vector_count: int,
+    source_complexity: dict[str, int],
+    max_transient_points: int,
+    max_source_pwl_points: int,
+    max_sample_sources: int,
+    max_total_sources: int,
+    max_output_vectors: int,
+) -> dict[str, object]:
+    if updates <= 0:
+        raise ValueError("updates must be positive")
+    total_source_points = total_source_pwl_points(source_complexity)
+    sample_source_count = int(source_complexity.get("sample_source_count", 0))
+    total_sources = int(source_complexity.get("total_source_count", 0))
+    return {
+        "estimated_transient_points_per_update": float(estimated_transient_points) / float(updates),
+        "sample_source_pwl_points_per_update": float(source_complexity["sample_source_pwl_points"]) / float(updates),
+        "phase_clock_source_pwl_points_per_update": float(source_complexity["phase_clock_source_pwl_points"]) / float(updates),
+        "control_source_pwl_points_per_update": float(source_complexity.get("control_source_pwl_points", 0)) / float(updates),
+        "total_source_pwl_points_per_update": float(total_source_points) / float(updates),
+        "transient_budget_met": bool(not max_transient_points or estimated_transient_points <= max_transient_points),
+        "source_pwl_budget_met": bool(not max_source_pwl_points or total_source_points <= max_source_pwl_points),
+        "sample_source_budget_met": bool(not max_sample_sources or sample_source_count <= max_sample_sources),
+        "total_source_budget_met": bool(not max_total_sources or total_sources <= max_total_sources),
+        "output_vector_budget_met": bool(not max_output_vectors or phase_output_vector_count <= max_output_vectors),
     }
 
 
@@ -2656,6 +2699,17 @@ def main() -> None:
         args.strict_fully_on_device,
     )
     probe_summary = summarize_probe_rows(probe_rows)
+    cost_fields = phase_cost_summary_fields(
+        updates=args.updates,
+        estimated_transient_points=estimated_transient_points,
+        phase_output_vector_count=n_vec,
+        source_complexity=source_complexity,
+        max_transient_points=args.max_transient_points,
+        max_source_pwl_points=args.max_source_pwl_points,
+        max_sample_sources=args.max_sample_sources,
+        max_total_sources=args.max_total_sources,
+        max_output_vectors=args.max_output_vectors,
+    )
     summary = {
         "simulator": version,
         "simulator_selector": args.simulator,
@@ -2776,6 +2830,7 @@ def main() -> None:
         "max_sample_sources": args.max_sample_sources,
         "max_total_sources": args.max_total_sources,
         **source_complexity,
+        **cost_fields,
         "phase_s": args.phase,
         "settle_ratio": args.settle_ratio,
         "output_mode": phase_output_mode,

@@ -84,17 +84,25 @@ def test_phase_summary_row_keeps_execution_contract_and_backend_fields(tmp_path:
                 },
                 "phase_update_l2": 0.364,
                 "estimated_transient_points": 902,
+                "estimated_transient_points_per_update": 56.375,
                 "max_transient_points": 2000,
+                "transient_budget_met": True,
                 "phase_output_vector_count": 884,
+                "max_output_vectors": 900,
+                "output_vector_budget_met": True,
                 "sample_source_count": 103,
                 "max_source_pwl_points": 50000,
+                "source_pwl_budget_met": True,
                 "max_sample_sources": 120,
+                "sample_source_budget_met": True,
                 "max_total_sources": 130,
+                "total_source_budget_met": True,
                 "total_source_count": 109,
                 "sample_source_dc_count": 0,
                 "sample_source_pwl_count": 100,
                 "sample_source_elided_dc_count": 7,
                 "sample_source_pwl_points": 25478,
+                "sample_source_pwl_points_per_update": 1592.375,
                 "pixel_source_count": 93,
                 "pixel_source_dc_count": 0,
                 "pixel_source_pwl_count": 93,
@@ -104,9 +112,12 @@ def test_phase_summary_row_keeps_execution_contract_and_backend_fields(tmp_path:
                 "phase_clock_source_count": 5,
                 "phase_clock_source_pwl_count": 0,
                 "phase_clock_source_pwl_points": 0,
+                "phase_clock_source_pwl_points_per_update": 0.0,
                 "control_source_count": 1,
                 "control_source_pwl_points": 4,
+                "control_source_pwl_points_per_update": 0.25,
                 "total_source_pwl_points": 25482,
+                "total_source_pwl_points_per_update": 1592.625,
                 "phase_wall_time_s": 36.1,
                 "eval_wall_time_s": 9.5,
                 "spice_phase_eval_accuracy": 0.12,
@@ -166,24 +177,35 @@ def test_phase_summary_row_keeps_execution_contract_and_backend_fields(tmp_path:
     assert row["milestone_c_target_topology_met"] is True
     assert row["milestone_d_full_objective_met"] is False
     assert row["estimated_transient_points"] == 902
+    assert row["estimated_transient_points_per_update"] == 56.375
     assert row["max_transient_points"] == 2000
+    assert row["transient_budget_met"] is True
     assert row["phase_output_vector_count"] == 884
+    assert row["max_output_vectors"] == 900
+    assert row["output_vector_budget_met"] is True
     assert row["sample_source_count"] == 103
     assert row["max_source_pwl_points"] == 50000
+    assert row["source_pwl_budget_met"] is True
     assert row["max_sample_sources"] == 120
+    assert row["sample_source_budget_met"] is True
     assert row["max_total_sources"] == 130
+    assert row["total_source_budget_met"] is True
     assert row["total_source_count"] == 109
     assert row["sample_source_dc_count"] == 0
     assert row["sample_source_elided_dc_count"] == 7
     assert row["pixel_source_count"] == 93
     assert row["pixel_source_elided_dc_count"] == 7
     assert row["sample_source_pwl_points"] == 25478
+    assert row["sample_source_pwl_points_per_update"] == 1592.375
     assert row["phase_clock_source_count"] == 5
     assert row["phase_clock_source_pwl_count"] == 0
     assert row["phase_clock_source_pwl_points"] == 0
+    assert row["phase_clock_source_pwl_points_per_update"] == 0.0
     assert row["control_source_count"] == 1
     assert row["control_source_pwl_points"] == 4
+    assert row["control_source_pwl_points_per_update"] == 0.25
     assert row["total_source_pwl_points"] == 25482
+    assert row["total_source_pwl_points_per_update"] == 1592.625
 
 
 def test_phase_summary_row_derives_total_source_points_for_older_summaries(tmp_path: Path) -> None:

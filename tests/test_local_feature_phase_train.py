@@ -163,6 +163,51 @@ def test_phase_transient_total_source_pwl_points_sums_samples_and_clocks() -> No
     assert phase_transient.total_source_pwl_points({"sample_source_pwl_points": 61, "phase_clock_source_pwl_points": 40}) == 101
 
 
+def test_phase_transient_cost_summary_fields_report_rates_and_budgets() -> None:
+    fields = phase_transient.phase_cost_summary_fields(
+        updates=4,
+        estimated_transient_points=100,
+        phase_output_vector_count=30,
+        source_complexity={
+            "sample_source_count": 12,
+            "sample_source_pwl_points": 60,
+            "phase_clock_source_pwl_points": 40,
+            "control_source_pwl_points": 8,
+            "total_source_count": 20,
+            "total_source_pwl_points": 108,
+        },
+        max_transient_points=100,
+        max_source_pwl_points=107,
+        max_sample_sources=12,
+        max_total_sources=19,
+        max_output_vectors=30,
+    )
+
+    assert fields["estimated_transient_points_per_update"] == pytest.approx(25.0)
+    assert fields["sample_source_pwl_points_per_update"] == pytest.approx(15.0)
+    assert fields["phase_clock_source_pwl_points_per_update"] == pytest.approx(10.0)
+    assert fields["control_source_pwl_points_per_update"] == pytest.approx(2.0)
+    assert fields["total_source_pwl_points_per_update"] == pytest.approx(27.0)
+    assert fields["transient_budget_met"] is True
+    assert fields["source_pwl_budget_met"] is False
+    assert fields["sample_source_budget_met"] is True
+    assert fields["total_source_budget_met"] is False
+    assert fields["output_vector_budget_met"] is True
+
+    with pytest.raises(ValueError, match="updates"):
+        phase_transient.phase_cost_summary_fields(
+            updates=0,
+            estimated_transient_points=1,
+            phase_output_vector_count=1,
+            source_complexity={"sample_source_count": 1, "sample_source_pwl_points": 1, "phase_clock_source_pwl_points": 1},
+            max_transient_points=0,
+            max_source_pwl_points=0,
+            max_sample_sources=0,
+            max_total_sources=0,
+            max_output_vectors=0,
+        )
+
+
 def test_phase_transient_final_measure_time_requires_post_update_slack() -> None:
     assert phase_transient.final_state_measure_time(10.0e-9, 2.0e-9, 7.0e-9) == pytest.approx(8.0e-9)
 
@@ -1099,12 +1144,18 @@ def test_phase_variant_sweep_row_preserves_phase_cost_fields() -> None:
     summary = {
         "tag": "variant",
         "estimated_transient_points": 34,
+        "estimated_transient_points_per_update": 17.0,
         "max_transient_points": 100,
+        "transient_budget_met": True,
         "phase_output_vector_count": 70,
         "max_output_vectors": 80,
+        "output_vector_budget_met": True,
         "max_source_pwl_points": 200,
+        "source_pwl_budget_met": True,
         "max_sample_sources": 30,
+        "sample_source_budget_met": True,
         "max_total_sources": 50,
+        "total_source_budget_met": True,
         "sample_source_count": 12,
         "sample_source_elided_dc_count": 2,
         "sample_source_pwl_points": 60,
@@ -1116,6 +1167,7 @@ def test_phase_variant_sweep_row_preserves_phase_cost_fields() -> None:
         "control_source_pwl_points": 4,
         "total_source_count": 28,
         "total_source_pwl_points": 104,
+        "total_source_pwl_points_per_update": 52.0,
         "target_source_mode": "label",
     }
 
@@ -1134,10 +1186,16 @@ def test_phase_variant_sweep_row_preserves_phase_cost_fields() -> None:
     assert row["tag"] == "variant"
     assert row["command"] == "python3 phase.py --max-output-vectors 80"
     assert row["estimated_transient_points"] == 34
+    assert row["estimated_transient_points_per_update"] == 17.0
     assert row["max_transient_points"] == 100
+    assert row["transient_budget_met"] is True
     assert row["phase_output_vector_count"] == 70
     assert row["max_output_vectors"] == 80
+    assert row["output_vector_budget_met"] is True
     assert row["max_source_pwl_points"] == 200
+    assert row["source_pwl_budget_met"] is True
+    assert row["sample_source_budget_met"] is True
+    assert row["total_source_budget_met"] is True
     assert row["sample_source_count"] == 12
     assert row["sample_source_elided_dc_count"] == 2
     assert row["pixel_source_count"] == 9
@@ -1146,6 +1204,7 @@ def test_phase_variant_sweep_row_preserves_phase_cost_fields() -> None:
     assert row["control_source_pwl_points"] == 4
     assert row["total_source_count"] == 28
     assert row["total_source_pwl_points"] == 104
+    assert row["total_source_pwl_points_per_update"] == 52.0
 
 
 def test_phase_transient_softmax_deck_is_one_continuous_online_run(tmp_path: Path) -> None:
@@ -2123,6 +2182,13 @@ def test_phase_transient_preflight_summary_has_no_artifact_paths() -> None:
     assert summary["max_output_vectors"] == 80
     assert summary["phase_clock_source_pwl_points"] == 50
     assert summary["total_source_pwl_points"] == 110
+    assert summary["estimated_transient_points_per_update"] == pytest.approx(17.0)
+    assert summary["total_source_pwl_points_per_update"] == pytest.approx(55.0)
+    assert summary["transient_budget_met"] is True
+    assert summary["source_pwl_budget_met"] is True
+    assert summary["sample_source_budget_met"] is True
+    assert summary["total_source_budget_met"] is True
+    assert summary["output_vector_budget_met"] is True
 
 
 def test_phase_transient_relu_deck_matches_forward_and_backward_activation(tmp_path: Path) -> None:

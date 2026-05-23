@@ -250,6 +250,16 @@ def validate_output_vector_budget(vector_count: int, max_vectors: int) -> None:
         )
 
 
+def validate_auxiliary_algebraic_source_budget(source_count: int, max_sources: int) -> None:
+    if max_sources < 0:
+        raise ValueError("--max-auxiliary-algebraic-sources must be non-negative")
+    if max_sources and source_count > max_sources:
+        raise ValueError(
+            f"estimated auxiliary algebraic sources ({source_count}) exceed --max-auxiliary-algebraic-sources ({max_sources}); "
+            "use inline fused deck modes or raise the budget intentionally"
+        )
+
+
 def total_source_pwl_points(source_complexity: dict[str, int]) -> int:
     return (
         int(source_complexity["sample_source_pwl_points"])
@@ -429,6 +439,7 @@ def phase_preflight_summary(
     max_sample_sources: int,
     max_total_sources: int,
     max_output_vectors: int,
+    max_auxiliary_algebraic_sources: int,
     t_stop: float,
     transient_step: float,
     phase: float,
@@ -440,12 +451,18 @@ def phase_preflight_summary(
         updates=updates,
         estimated_transient_points=estimated_transient_points,
         phase_output_vector_count=phase_output_vector_count,
+        auxiliary_algebraic_source_count=auxiliary_algebraic_source_count(
+            hidden_preactivation_source_count,
+            score_calculation_source_count,
+            output_rail_source_count,
+        ),
         source_complexity=source_complexity,
         max_transient_points=max_transient_points,
         max_source_pwl_points=max_source_pwl_points,
         max_sample_sources=max_sample_sources,
         max_total_sources=max_total_sources,
         max_output_vectors=max_output_vectors,
+        max_auxiliary_algebraic_sources=max_auxiliary_algebraic_sources,
     )
     return {
         "simulator_selector": simulator_selector,
@@ -502,6 +519,7 @@ def phase_preflight_summary(
         "max_sample_sources": max_sample_sources,
         "max_total_sources": max_total_sources,
         "max_output_vectors": max_output_vectors,
+        "max_auxiliary_algebraic_sources": max_auxiliary_algebraic_sources,
         **source_complexity,
         **cost_fields,
         "phase_s": phase,
@@ -515,12 +533,14 @@ def phase_cost_summary_fields(
     updates: int,
     estimated_transient_points: int,
     phase_output_vector_count: int,
+    auxiliary_algebraic_source_count: int,
     source_complexity: dict[str, int],
     max_transient_points: int,
     max_source_pwl_points: int,
     max_sample_sources: int,
     max_total_sources: int,
     max_output_vectors: int,
+    max_auxiliary_algebraic_sources: int,
 ) -> dict[str, object]:
     if updates <= 0:
         raise ValueError("updates must be positive")
@@ -538,6 +558,10 @@ def phase_cost_summary_fields(
         "sample_source_budget_met": bool(not max_sample_sources or sample_source_count <= max_sample_sources),
         "total_source_budget_met": bool(not max_total_sources or total_sources <= max_total_sources),
         "output_vector_budget_met": bool(not max_output_vectors or phase_output_vector_count <= max_output_vectors),
+        "auxiliary_algebraic_source_budget_met": bool(
+            not max_auxiliary_algebraic_sources
+            or auxiliary_algebraic_source_count <= max_auxiliary_algebraic_sources
+        ),
     }
 
 
@@ -2131,6 +2155,15 @@ def main() -> None:
         default=0,
         help="Optional preflight guard on final/probe output vector count; 0 disables the guard.",
     )
+    ap.add_argument(
+        "--max-auxiliary-algebraic-sources",
+        type=int,
+        default=0,
+        help=(
+            "Optional preflight guard on non-persistent algebraic source families controlled by fused deck modes; "
+            "0 disables the guard."
+        ),
+    )
     ap.add_argument("--init-weights", default="")
     ap.add_argument("--phase", type=float, default=2e-9)
     ap.add_argument("--gap", type=float, default=0.2e-9)
@@ -2258,6 +2291,8 @@ def main() -> None:
         raise ValueError("--max-total-sources must be non-negative")
     if args.max_output_vectors < 0:
         raise ValueError("--max-output-vectors must be non-negative")
+    if args.max_auxiliary_algebraic_sources < 0:
+        raise ValueError("--max-auxiliary-algebraic-sources must be non-negative")
     if args.direction_cosine_threshold < -1 or args.direction_cosine_threshold > 1:
         raise ValueError("--direction-cosine-threshold must be between -1 and 1")
     if args.sign_alignment_threshold < 0 or args.sign_alignment_threshold > 1:
@@ -2309,6 +2344,11 @@ def main() -> None:
     )
     preflight_score_calculation_source_count = score_calculation_source_count(args.score_calculation_mode, 10)
     preflight_output_rail_source_count = output_rail_source_count(args.output_rail_mode, 10)
+    preflight_auxiliary_algebraic_source_count = auxiliary_algebraic_source_count(
+        preflight_hidden_preactivation_source_count,
+        preflight_score_calculation_source_count,
+        preflight_output_rail_source_count,
+    )
     preflight_phase_output_vector_count = int(
         np.prod(expected_w_shape)
         + np.prod(expected_hb_shape)
@@ -2317,6 +2357,10 @@ def main() -> None:
         + (np.prod(expected_ob_shape) if args.phase_output_include_y else 0)
     )
     validate_output_vector_budget(preflight_phase_output_vector_count, args.max_output_vectors)
+    validate_auxiliary_algebraic_source_budget(
+        preflight_auxiliary_algebraic_source_count,
+        args.max_auxiliary_algebraic_sources,
+    )
     total_samples = args.batch_size * args.updates
     if args.train_samples < total_samples:
         raise ValueError("--train-samples must cover --batch-size * --updates")
@@ -2399,6 +2443,7 @@ def main() -> None:
                     max_sample_sources=args.max_sample_sources,
                     max_total_sources=args.max_total_sources,
                     max_output_vectors=args.max_output_vectors,
+                    max_auxiliary_algebraic_sources=args.max_auxiliary_algebraic_sources,
                     t_stop=preflight_t_stop,
                     transient_step=args.transient_step,
                     phase=args.phase,
@@ -2885,12 +2930,14 @@ def main() -> None:
         updates=args.updates,
         estimated_transient_points=estimated_transient_points,
         phase_output_vector_count=n_vec,
+        auxiliary_algebraic_source_count=preflight_auxiliary_algebraic_source_count,
         source_complexity=source_complexity,
         max_transient_points=args.max_transient_points,
         max_source_pwl_points=args.max_source_pwl_points,
         max_sample_sources=args.max_sample_sources,
         max_total_sources=args.max_total_sources,
         max_output_vectors=args.max_output_vectors,
+        max_auxiliary_algebraic_sources=args.max_auxiliary_algebraic_sources,
     )
     summary = {
         "simulator": version,
@@ -3020,6 +3067,7 @@ def main() -> None:
         "max_source_pwl_points": args.max_source_pwl_points,
         "max_sample_sources": args.max_sample_sources,
         "max_total_sources": args.max_total_sources,
+        "max_auxiliary_algebraic_sources": args.max_auxiliary_algebraic_sources,
         **source_complexity,
         **cost_fields,
         "phase_s": args.phase,

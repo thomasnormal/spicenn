@@ -105,6 +105,8 @@ def test_phase_summary_row_keeps_execution_contract_and_backend_fields(tmp_path:
                 "sample_source_budget_met": True,
                 "max_total_sources": 130,
                 "total_source_budget_met": True,
+                "max_auxiliary_algebraic_sources": 40,
+                "auxiliary_algebraic_source_budget_met": True,
                 "total_source_count": 109,
                 "sample_source_dc_count": 0,
                 "sample_source_pwl_count": 100,
@@ -206,6 +208,8 @@ def test_phase_summary_row_keeps_execution_contract_and_backend_fields(tmp_path:
     assert row["sample_source_budget_met"] is True
     assert row["max_total_sources"] == 130
     assert row["total_source_budget_met"] is True
+    assert row["max_auxiliary_algebraic_sources"] == 40
+    assert row["auxiliary_algebraic_source_budget_met"] is True
     assert row["total_source_count"] == 109
     assert row["sample_source_dc_count"] == 0
     assert row["sample_source_elided_dc_count"] == 7

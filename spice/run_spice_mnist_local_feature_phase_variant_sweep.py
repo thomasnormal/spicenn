@@ -116,6 +116,8 @@ def build_variant_command(
         str(getattr(args, "max_total_sources", 0)),
         "--max-output-vectors",
         str(getattr(args, "max_output_vectors", 0)),
+        "--max-auxiliary-algebraic-sources",
+        str(getattr(args, "max_auxiliary_algebraic_sources", 0)),
         "--reference-mode",
         args.reference_mode,
         "--phase-output-mode",
@@ -262,6 +264,8 @@ def row_from_summary(
         "sample_source_budget_met",
         "max_total_sources",
         "total_source_budget_met",
+        "max_auxiliary_algebraic_sources",
+        "auxiliary_algebraic_source_budget_met",
         "sample_source_count",
         "sample_source_elided_dc_count",
         "sample_source_pwl_points",
@@ -326,6 +330,7 @@ def main() -> None:
     ap.add_argument("--max-sample-sources", type=int, default=0)
     ap.add_argument("--max-total-sources", type=int, default=0)
     ap.add_argument("--max-output-vectors", type=int, default=0)
+    ap.add_argument("--max-auxiliary-algebraic-sources", type=int, default=0)
     ap.add_argument("--reference-mode", choices=["spice", "none"], default="spice")
     ap.add_argument("--phase-output-mode", choices=["auto", "measure", "print", "control_measure", "wrdata"], default="auto")
     ap.add_argument("--update-mode", choices=["phased", "direct"], default="phased")
@@ -380,6 +385,8 @@ def main() -> None:
         raise ValueError("--max-total-sources must be non-negative")
     if args.max_output_vectors < 0:
         raise ValueError("--max-output-vectors must be non-negative")
+    if args.max_auxiliary_algebraic_sources < 0:
+        raise ValueError("--max-auxiliary-algebraic-sources must be non-negative")
 
     if args.linear_output and args.softmax_output:
         raise ValueError("--linear-output and --softmax-output are mutually exclusive; pass --no-softmax-output for linear variants")

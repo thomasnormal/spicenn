@@ -375,6 +375,7 @@ def cost_projection_budget_met(row: dict[str, Any]) -> bool:
         and row.get("strict_phase_cost_projection_sample_source_budget_met", True) is True
         and row.get("strict_phase_cost_projection_total_source_budget_met", True) is True
         and row.get("strict_phase_cost_projection_output_vector_budget_met", True) is True
+        and row.get("strict_phase_cost_projection_auxiliary_algebraic_source_budget_met", True) is True
     )
 
 
@@ -409,6 +410,9 @@ def cost_projection_summary_fields(rows: list[dict[str, Any]], cost_projection_u
         "cost_projection_output_vector_budget_feasible_rows": count_met(
             projection_rows, "strict_phase_cost_projection_output_vector_budget_met"
         ),
+        "cost_projection_auxiliary_algebraic_source_budget_feasible_rows": count_met(
+            projection_rows, "strict_phase_cost_projection_auxiliary_algebraic_source_budget_met"
+        ),
         "fast_reference_full_objective_candidate_count": len(full_objective_rows),
         "fast_reference_full_objective_cost_feasible_candidate_count": len(full_objective_cost_feasible_rows),
         "fast_reference_full_objective_cost_infeasible_candidate_count": len(full_objective_rows) - len(full_objective_cost_feasible_rows),
@@ -426,6 +430,9 @@ def cost_projection_summary_fields(rows: list[dict[str, Any]], cost_projection_u
         ),
         "fast_reference_full_objective_output_vector_budget_infeasible_count": count_failed(
             full_objective_rows, "strict_phase_cost_projection_output_vector_budget_met"
+        ),
+        "fast_reference_full_objective_auxiliary_algebraic_source_budget_infeasible_count": count_failed(
+            full_objective_rows, "strict_phase_cost_projection_auxiliary_algebraic_source_budget_met"
         ),
     }
 
@@ -478,6 +485,7 @@ def promotion_budget_met(row: dict[str, Any]) -> bool:
         and row.get("strict_phase_promotion_sample_source_budget_met", True) is True
         and row.get("strict_phase_promotion_total_source_budget_met", True) is True
         and row.get("strict_phase_promotion_output_vector_budget_met", True) is True
+        and row.get("strict_phase_promotion_auxiliary_algebraic_source_budget_met", True) is True
     )
 
 
@@ -593,6 +601,8 @@ def strict_phase_promotion_command(args: argparse.Namespace, variant: dict[str, 
         str(getattr(args, "promotion_max_total_sources", 0)),
         "--max-output-vectors",
         str(getattr(args, "promotion_max_output_vectors", 0)),
+        "--max-auxiliary-algebraic-sources",
+        str(getattr(args, "promotion_max_auxiliary_algebraic_sources", 0)),
         "--reference-mode",
         "none",
         "--phase-output-mode",
@@ -753,6 +763,7 @@ def strict_phase_cost_fields_for_updates(
     max_sample_sources = int(getattr(args, "promotion_max_sample_sources", 0))
     max_total_sources = int(getattr(args, "promotion_max_total_sources", 0))
     max_output_vectors = int(getattr(args, "promotion_max_output_vectors", 0))
+    max_auxiliary_algebraic_sources = int(getattr(args, "promotion_max_auxiliary_algebraic_sources", 0))
     inferred_image_size = int(round(float(x_train.shape[1]) ** 0.5))
     image_size = int(getattr(args, "image_size", inferred_image_size))
     block_size = int(getattr(args, "block_size", image_size))
@@ -775,6 +786,11 @@ def strict_phase_cost_fields_for_updates(
     )
     score_sources = score_calculation_source_count(score_calculation_mode, 10)
     output_sources = output_rail_source_count(output_rail_mode, 10)
+    auxiliary_sources = auxiliary_algebraic_source_count(
+        hidden_sources,
+        score_sources,
+        output_sources,
+    )
     return {
         f"{prefix}_updates": updates,
         f"{prefix}_phase_clock_mode": phase_clock_mode,
@@ -785,10 +801,9 @@ def strict_phase_cost_fields_for_updates(
         f"{prefix}_score_calculation_source_count": score_sources,
         f"{prefix}_output_rail_mode": output_rail_mode,
         f"{prefix}_output_rail_source_count": output_sources,
-        f"{prefix}_auxiliary_algebraic_source_count": auxiliary_algebraic_source_count(
-            hidden_sources,
-            score_sources,
-            output_sources,
+        f"{prefix}_auxiliary_algebraic_source_count": auxiliary_sources,
+        f"{prefix}_auxiliary_algebraic_source_budget_met": bool(
+            not max_auxiliary_algebraic_sources or auxiliary_sources <= max_auxiliary_algebraic_sources
         ),
         f"{prefix}_target_source_mode": getattr(args, "promotion_target_source_mode", "label"),
         f"{prefix}_output_bias_state_frozen": output_bias_state_frozen,
@@ -904,6 +919,9 @@ def run_variant(
         "strict_phase_promotion_max_sample_sources": int(getattr(args, "promotion_max_sample_sources", 0)),
         "strict_phase_promotion_max_total_sources": int(getattr(args, "promotion_max_total_sources", 0)),
         "strict_phase_promotion_max_output_vectors": int(getattr(args, "promotion_max_output_vectors", 0)),
+        "strict_phase_promotion_max_auxiliary_algebraic_sources": int(
+            getattr(args, "promotion_max_auxiliary_algebraic_sources", 0)
+        ),
         **promotion_costs,
         **cost_projection,
         **promotion_efficiency,
@@ -994,6 +1012,7 @@ def main() -> None:
     ap.add_argument("--promotion-max-sample-sources", type=int, default=0)
     ap.add_argument("--promotion-max-total-sources", type=int, default=0)
     ap.add_argument("--promotion-max-output-vectors", type=int, default=0)
+    ap.add_argument("--promotion-max-auxiliary-algebraic-sources", type=int, default=0)
     ap.add_argument(
         "--promotion-phase-clock-mode",
         choices=["pwl", "analytic"],
@@ -1094,6 +1113,8 @@ def main() -> None:
         raise ValueError("--promotion-max-total-sources must be non-negative")
     if args.promotion_max_output_vectors < 0:
         raise ValueError("--promotion-max-output-vectors must be non-negative")
+    if args.promotion_max_auxiliary_algebraic_sources < 0:
+        raise ValueError("--promotion-max-auxiliary-algebraic-sources must be non-negative")
     if args.full_objective_eval_samples <= 0:
         raise ValueError("--full-objective-eval-samples must be positive")
     if args.full_objective_accuracy < 0.0 or args.full_objective_accuracy > 1.0:

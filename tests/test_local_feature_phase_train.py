@@ -152,6 +152,17 @@ def test_phase_transient_total_source_budget_counts_behavioral_sources() -> None
         phase_transient.validate_total_source_budget({"total_source_count": 42}, -1)
 
 
+def test_phase_transient_auxiliary_algebraic_source_budget_fails_before_large_decks() -> None:
+    phase_transient.validate_auxiliary_algebraic_source_budget(42, 0)
+    phase_transient.validate_auxiliary_algebraic_source_budget(42, 42)
+
+    with pytest.raises(ValueError, match="auxiliary algebraic sources"):
+        phase_transient.validate_auxiliary_algebraic_source_budget(43, 42)
+
+    with pytest.raises(ValueError, match="non-negative"):
+        phase_transient.validate_auxiliary_algebraic_source_budget(42, -1)
+
+
 def test_phase_transient_output_vector_budget_fails_before_large_diagnostics() -> None:
     phase_transient.validate_output_vector_budget(101, 0)
     phase_transient.validate_output_vector_budget(100, 100)
@@ -228,6 +239,7 @@ def test_phase_transient_cost_summary_fields_report_rates_and_budgets() -> None:
         updates=4,
         estimated_transient_points=100,
         phase_output_vector_count=30,
+        auxiliary_algebraic_source_count=4,
         source_complexity={
             "sample_source_count": 12,
             "sample_source_pwl_points": 60,
@@ -241,6 +253,7 @@ def test_phase_transient_cost_summary_fields_report_rates_and_budgets() -> None:
         max_sample_sources=12,
         max_total_sources=19,
         max_output_vectors=30,
+        max_auxiliary_algebraic_sources=3,
     )
 
     assert fields["estimated_transient_points_per_update"] == pytest.approx(25.0)
@@ -253,18 +266,21 @@ def test_phase_transient_cost_summary_fields_report_rates_and_budgets() -> None:
     assert fields["sample_source_budget_met"] is True
     assert fields["total_source_budget_met"] is False
     assert fields["output_vector_budget_met"] is True
+    assert fields["auxiliary_algebraic_source_budget_met"] is False
 
     with pytest.raises(ValueError, match="updates"):
         phase_transient.phase_cost_summary_fields(
             updates=0,
             estimated_transient_points=1,
             phase_output_vector_count=1,
+            auxiliary_algebraic_source_count=0,
             source_complexity={"sample_source_count": 1, "sample_source_pwl_points": 1, "phase_clock_source_pwl_points": 1},
             max_transient_points=0,
             max_source_pwl_points=0,
             max_sample_sources=0,
             max_total_sources=0,
             max_output_vectors=0,
+            max_auxiliary_algebraic_sources=0,
         )
 
 
@@ -1148,6 +1164,7 @@ def test_phase_variant_sweep_dry_command_preserves_online_contract() -> None:
         max_sample_sources=100,
         max_total_sources=120,
         max_output_vectors=900,
+        max_auxiliary_algebraic_sources=1,
         reference_mode="none",
         phase_output_mode="print",
         update_mode="direct",
@@ -1224,6 +1241,7 @@ def test_phase_variant_sweep_dry_command_preserves_online_contract() -> None:
     assert command[command.index("--max-total-sources") + 1] == "120"
     assert "--max-output-vectors" in command
     assert command[command.index("--max-output-vectors") + 1] == "900"
+    assert command[command.index("--max-auxiliary-algebraic-sources") + 1] == "1"
     assert "--reference-mode" in command
     assert command[command.index("--reference-mode") + 1] == "none"
     assert "--phase-output-mode" in command
@@ -1288,6 +1306,8 @@ def test_phase_variant_sweep_row_preserves_phase_cost_fields() -> None:
         "sample_source_budget_met": True,
         "max_total_sources": 50,
         "total_source_budget_met": True,
+        "max_auxiliary_algebraic_sources": 1,
+        "auxiliary_algebraic_source_budget_met": True,
         "sample_source_count": 12,
         "sample_source_elided_dc_count": 2,
         "sample_source_pwl_points": 60,
@@ -1336,6 +1356,8 @@ def test_phase_variant_sweep_row_preserves_phase_cost_fields() -> None:
     assert row["source_pwl_budget_met"] is True
     assert row["sample_source_budget_met"] is True
     assert row["total_source_budget_met"] is True
+    assert row["max_auxiliary_algebraic_sources"] == 1
+    assert row["auxiliary_algebraic_source_budget_met"] is True
     assert row["sample_source_count"] == 12
     assert row["sample_source_elided_dc_count"] == 2
     assert row["pixel_source_count"] == 9
@@ -2474,6 +2496,7 @@ def test_phase_transient_preflight_summary_has_no_artifact_paths() -> None:
         max_sample_sources=30,
         max_total_sources=50,
         max_output_vectors=80,
+        max_auxiliary_algebraic_sources=1,
         t_stop=6.6e-9,
         transient_step=200e-12,
         phase=0.5e-9,
@@ -2507,6 +2530,7 @@ def test_phase_transient_preflight_summary_has_no_artifact_paths() -> None:
     assert summary["max_total_sources"] == 50
     assert summary["total_source_count"] == 42
     assert summary["max_output_vectors"] == 80
+    assert summary["max_auxiliary_algebraic_sources"] == 1
     assert summary["phase_clock_source_pwl_points"] == 50
     assert summary["total_source_pwl_points"] == 110
     assert summary["estimated_transient_points_per_update"] == pytest.approx(17.0)
@@ -2516,6 +2540,7 @@ def test_phase_transient_preflight_summary_has_no_artifact_paths() -> None:
     assert summary["sample_source_budget_met"] is True
     assert summary["total_source_budget_met"] is True
     assert summary["output_vector_budget_met"] is True
+    assert summary["auxiliary_algebraic_source_budget_met"] is True
 
 
 def test_phase_transient_relu_deck_matches_forward_and_backward_activation(tmp_path: Path) -> None:

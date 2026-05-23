@@ -778,6 +778,9 @@ def make_phase_transient_netlist(
     phases, sample_starts, t_stop = make_phase_schedule(update_batch_size, updates, phase, gap, direct_update)
     lr_sample_values = np.repeat(lr_values, update_batch_size)
     lr_control = "{LR}" if lr_schedule == "constant" else "V(lrctrl)"
+    local_updates_enabled = local_update_scale != 0.0
+    readout_updates_enabled = readout_update_scale != 0.0
+    output_bias_updates_enabled = output_bias_update_scale != 0.0
     tau = phase / settle_ratio
     phase_area = phase_pulse_area(phase, edge)
     targets = target_matrix(y_batch, n_classes, softmax_output)
@@ -830,12 +833,12 @@ def make_phase_transient_netlist(
                 lines.append(f"Cw{b}_{c}_{p} w{b}_{c}_{p} 0 {{CW}} IC={w[b, c, p]:.12g}")
                 if rleak > 0:
                     lines.append(f"Rw{b}_{c}_{p} w{b}_{c}_{p} 0 {{RLEAK}}")
-                if not direct_update:
+                if not direct_update and local_updates_enabled:
                     lines.append(f"Cgw{b}_{c}_{p} gw{b}_{c}_{p} 0 {{CGRAD}} IC=0")
             lines.append(f"Chb{b}_{c} hb{b}_{c} 0 {{CW}} IC={hb[b, c]:.12g}")
             if rleak > 0:
                 lines.append(f"Rhb{b}_{c} hb{b}_{c} 0 {{RLEAK}}")
-            if not direct_update:
+            if not direct_update and local_updates_enabled:
                 lines.append(f"Cghb{b}_{c} ghb{b}_{c} 0 {{CGRAD}} IC=0")
             lines.append(f"Ch{b}_{c} h{b}_{c} 0 {{CSTATE}} IC=0")
             lines.append(f"Cdh{b}_{c} dh{b}_{c} 0 {{CSTATE}} IC=0")
@@ -845,12 +848,12 @@ def make_phase_transient_netlist(
                 lines.append(f"Cv{k}_{b}_{c} v{k}_{b}_{c} 0 {{CW}} IC={readout[k, b, c]:.12g}")
                 if rleak > 0:
                     lines.append(f"Rv{k}_{b}_{c} v{k}_{b}_{c} 0 {{RLEAK}}")
-                if not direct_update:
+                if not direct_update and readout_updates_enabled:
                     lines.append(f"Cgv{k}_{b}_{c} gv{k}_{b}_{c} 0 {{CGRAD}} IC=0")
         lines.append(f"Cob{k} ob{k} 0 {{CW}} IC={output_bias[k]:.12g}")
         if rleak > 0:
             lines.append(f"Rob{k} ob{k} 0 {{RLEAK}}")
-        if not direct_update:
+        if not direct_update and output_bias_updates_enabled:
             lines.append(f"Cgob{k} gob{k} 0 {{CGRAD}} IC=0")
         lines.append(f"Cscore{k} score{k} 0 {{CSTATE}} IC=0")
         lines.append(f"Cd{k} d{k} 0 {{CSTATE}} IC=0")
@@ -952,17 +955,17 @@ def make_phase_transient_netlist(
             lines.append(f"Bstore_dh{b}_{c} dh{b}_{c} 0 I = V(pbwd)*{{CSTATE}}/{{TAU}}*(V(dh{b}_{c})-({local_delta}))")
             for p, idx in enumerate(idxs):
                 grad = f"V(dh{b}_{c})*V(pix{idx})"
-                if direct_update:
+                if direct_update and local_updates_enabled:
                     lines.append(f"Bupd_w{b}_{c}_{p} w{b}_{c}_{p} 0 I = -V(pacc)*{{CW}}*{lr_control}*{{LOCAL_UPDATE_SCALE}}/({{BS}}*{{TAREA}})*({grad})")
-                else:
+                elif not direct_update and local_updates_enabled:
                     lines.append(f"Bacc_w{b}_{c}_{p} gw{b}_{c}_{p} 0 I = -V(pacc)*{{CGRAD}}/{{TAREA}}*({grad})")
                     lines.append(f"Bupd_w{b}_{c}_{p} w{b}_{c}_{p} 0 I = -V(papply)*{{CW}}*{lr_control}*{{LOCAL_UPDATE_SCALE}}/({{BS}}*{{TAREA}})*V(gw{b}_{c}_{p})")
                     lines.append(f"Bclear_gw{b}_{c}_{p} gw{b}_{c}_{p} 0 I = V(pclear)*{{CGRAD}}/{{TAU}}*V(gw{b}_{c}_{p})")
                 if state_decay > 0.0:
                     lines.append(f"Bdecay_w{b}_{c}_{p} w{b}_{c}_{p} 0 I = V({decay_phase})*{{CW}}*{{STATE_DECAY}}/{{TAREA}}*V(w{b}_{c}_{p})")
-            if direct_update:
+            if direct_update and local_updates_enabled:
                 lines.append(f"Bupd_hb{b}_{c} hb{b}_{c} 0 I = -V(pacc)*{{CW}}*{lr_control}*{{LOCAL_UPDATE_SCALE}}/({{BS}}*{{TAREA}})*V(dh{b}_{c})")
-            else:
+            elif not direct_update and local_updates_enabled:
                 lines.append(f"Bacc_hb{b}_{c} ghb{b}_{c} 0 I = -V(pacc)*{{CGRAD}}/{{TAREA}}*V(dh{b}_{c})")
                 lines.append(f"Bupd_hb{b}_{c} hb{b}_{c} 0 I = -V(papply)*{{CW}}*{lr_control}*{{LOCAL_UPDATE_SCALE}}/({{BS}}*{{TAREA}})*V(ghb{b}_{c})")
                 lines.append(f"Bclear_ghb{b}_{c} ghb{b}_{c} 0 I = V(pclear)*{{CGRAD}}/{{TAU}}*V(ghb{b}_{c})")
@@ -972,17 +975,17 @@ def make_phase_transient_netlist(
         for b in range(n_blocks):
             for c in range(channels):
                 grad = f"V(d{k})*V(h{b}_{c})"
-                if direct_update:
+                if direct_update and readout_updates_enabled:
                     lines.append(f"Bupd_v{k}_{b}_{c} v{k}_{b}_{c} 0 I = -V(pacc)*{{CW}}*{lr_control}*{{READOUT_UPDATE_SCALE}}/({{BS}}*{{TAREA}})*({grad})")
-                else:
+                elif not direct_update and readout_updates_enabled:
                     lines.append(f"Bacc_v{k}_{b}_{c} gv{k}_{b}_{c} 0 I = -V(pacc)*{{CGRAD}}/{{TAREA}}*({grad})")
                     lines.append(f"Bupd_v{k}_{b}_{c} v{k}_{b}_{c} 0 I = -V(papply)*{{CW}}*{lr_control}*{{READOUT_UPDATE_SCALE}}/({{BS}}*{{TAREA}})*V(gv{k}_{b}_{c})")
                     lines.append(f"Bclear_gv{k}_{b}_{c} gv{k}_{b}_{c} 0 I = V(pclear)*{{CGRAD}}/{{TAU}}*V(gv{k}_{b}_{c})")
                 if state_decay > 0.0:
                     lines.append(f"Bdecay_v{k}_{b}_{c} v{k}_{b}_{c} 0 I = V({decay_phase})*{{CW}}*{{STATE_DECAY}}/{{TAREA}}*V(v{k}_{b}_{c})")
-        if direct_update:
+        if direct_update and output_bias_updates_enabled:
             lines.append(f"Bupd_ob{k} ob{k} 0 I = -V(pacc)*{{CW}}*{lr_control}*{{OB_UPDATE_SCALE}}/({{BS}}*{{TAREA}})*V(d{k})")
-        else:
+        elif not direct_update and output_bias_updates_enabled:
             lines.append(f"Bacc_ob{k} gob{k} 0 I = -V(pacc)*{{CGRAD}}/{{TAREA}}*V(d{k})")
             lines.append(f"Bupd_ob{k} ob{k} 0 I = -V(papply)*{{CW}}*{lr_control}*{{OB_UPDATE_SCALE}}/({{BS}}*{{TAREA}})*V(gob{k})")
             lines.append(f"Bclear_gob{k} gob{k} 0 I = V(pclear)*{{CGRAD}}/{{TAU}}*V(gob{k})")

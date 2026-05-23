@@ -2276,6 +2276,90 @@ def test_phase_transient_local_update_scale_controls_feature_updates(tmp_path: P
         )
 
 
+def test_phase_transient_zero_update_scales_omit_write_sources(tmp_path: Path) -> None:
+    x = np.zeros((1, 4))
+    y = np.array([0])
+    w = np.zeros((1, 1, 4))
+    hb = np.zeros((1, 1))
+    readout = np.zeros((2, 1, 1))
+    output_bias = np.zeros(2)
+
+    direct_netlist, _n_vec, _t_stop = phase_transient.make_phase_transient_netlist(
+        x,
+        y,
+        w,
+        hb,
+        readout,
+        output_bias,
+        [[0, 1, 2, 3]],
+        0.8,
+        tmp_path / "direct.dat",
+        False,
+        1,
+        1,
+        1e-9,
+        0.1e-9,
+        5e-12,
+        40.0,
+        20e-12,
+        1e-12,
+        1e-12,
+        1e-12,
+        1e18,
+        True,
+        "measure",
+        update_mode="direct",
+        local_update_scale=0.0,
+        readout_update_scale=0.0,
+        output_bias_update_scale=0.0,
+    )
+
+    assert ".param LOCAL_UPDATE_SCALE=0" in direct_netlist
+    assert ".param READOUT_UPDATE_SCALE=0" in direct_netlist
+    assert ".param OB_UPDATE_SCALE=0" in direct_netlist
+    assert "Bupd_w0_0_0" not in direct_netlist
+    assert "Bupd_hb0_0" not in direct_netlist
+    assert "Bupd_v0_0_0" not in direct_netlist
+    assert "Bupd_ob0" not in direct_netlist
+
+    phased_netlist, _n_vec, _t_stop = phase_transient.make_phase_transient_netlist(
+        x,
+        y,
+        w,
+        hb,
+        readout,
+        output_bias,
+        [[0, 1, 2, 3]],
+        0.8,
+        tmp_path / "phased.dat",
+        False,
+        1,
+        1,
+        1e-9,
+        0.1e-9,
+        5e-12,
+        40.0,
+        20e-12,
+        1e-12,
+        1e-12,
+        1e-12,
+        1e18,
+        True,
+        "measure",
+        local_update_scale=0.0,
+        readout_update_scale=0.0,
+        output_bias_update_scale=0.0,
+    )
+
+    assert "Cgw0_0_0" not in phased_netlist
+    assert "Cghb0_0" not in phased_netlist
+    assert "Cgv0_0_0" not in phased_netlist
+    assert "Cgob0" not in phased_netlist
+    assert "Bacc_w0_0_0" not in phased_netlist
+    assert "Bacc_v0_0_0" not in phased_netlist
+    assert "Bacc_ob0" not in phased_netlist
+
+
 def test_phase_transient_state_decay_is_on_device_update_phase_current(tmp_path: Path) -> None:
     x = np.zeros((1, 4))
     y = np.array([0])

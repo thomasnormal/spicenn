@@ -189,6 +189,14 @@ def output_rail_source_count(mode: str, classes: int) -> int:
     raise ValueError("output_rail_mode must be 'node' or 'inline'")
 
 
+def auxiliary_algebraic_source_count(
+    hidden_preactivation_sources: int,
+    score_calculation_sources: int,
+    output_rail_sources: int,
+) -> int:
+    return int(hidden_preactivation_sources) + int(score_calculation_sources) + int(output_rail_sources)
+
+
 def validate_transient_point_budget(estimated_points: int, max_points: int) -> None:
     if max_points < 0:
         raise ValueError("--max-transient-points must be non-negative")
@@ -313,6 +321,11 @@ def phase_deck_mode_fields(
     output_rail_mode: str,
     output_rail_source_count: int,
 ) -> dict[str, object]:
+    auxiliary_sources = auxiliary_algebraic_source_count(
+        hidden_preactivation_source_count,
+        score_calculation_source_count,
+        output_rail_source_count,
+    )
     return {
         "phase_clock_mode": phase_clock_mode,
         "target_source_mode": target_source_mode,
@@ -323,6 +336,7 @@ def phase_deck_mode_fields(
         "score_calculation_source_count": score_calculation_source_count,
         "output_rail_mode": output_rail_mode,
         "output_rail_source_count": output_rail_source_count,
+        "auxiliary_algebraic_source_count": auxiliary_sources,
     }
 
 

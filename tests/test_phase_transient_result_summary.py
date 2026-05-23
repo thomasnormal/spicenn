@@ -59,6 +59,7 @@ def test_phase_summary_row_keeps_execution_contract_and_backend_fields(tmp_path:
                 "score_calculation_source_count": 0,
                 "output_rail_mode": "inline",
                 "output_rail_source_count": 0,
+                "auxiliary_algebraic_source_count": 32,
                 "reference_mode": "none",
                 "eval_backend": "both",
                 "output_mode": "print",
@@ -163,6 +164,7 @@ def test_phase_summary_row_keeps_execution_contract_and_backend_fields(tmp_path:
     assert row["score_calculation_source_count"] == 0
     assert row["output_rail_mode"] == "inline"
     assert row["output_rail_source_count"] == 0
+    assert row["auxiliary_algebraic_source_count"] == 32
     assert row["local_update_scale"] == 0.75
     assert row["output_bias_update_scale"] == 0.25
     assert row["readout_update_scale"] == 0.5

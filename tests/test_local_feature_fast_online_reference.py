@@ -428,6 +428,7 @@ def test_fast_online_variant_sweep_row_reports_best_probe_and_improvement() -> N
     assert row["strict_phase_promotion_score_calculation_source_count"] == 0
     assert row["strict_phase_promotion_output_rail_mode"] == "inline"
     assert row["strict_phase_promotion_output_rail_source_count"] == 0
+    assert row["strict_phase_promotion_auxiliary_algebraic_source_count"] == 0
     assert row["strict_phase_promotion_output_bias_state_frozen"] is True
     assert row["strict_phase_promotion_phase_output_includes_y"] is False
     assert row["strict_phase_promotion_output_vector_count"] == 15
@@ -543,6 +544,7 @@ def test_fast_online_strict_promotion_defaults_to_pwl_clock_and_efficient_deck_s
     assert fields["strict_phase_promotion_score_calculation_source_count"] == 0
     assert fields["strict_phase_promotion_output_rail_mode"] == "inline"
     assert fields["strict_phase_promotion_output_rail_source_count"] == 0
+    assert fields["strict_phase_promotion_auxiliary_algebraic_source_count"] == 0
     assert fields["strict_phase_promotion_phase_clock_source_pwl_points"] > 0
     assert fields["strict_phase_promotion_control_source_pwl_points"] == 0
 
@@ -600,12 +602,14 @@ def test_fast_online_strict_promotion_sample_edge_is_projected_separately() -> N
     assert finite["strict_phase_promotion_hidden_preactivation_source_count"] == 1
     assert finite["strict_phase_promotion_score_calculation_source_count"] == 10
     assert finite["strict_phase_promotion_output_rail_source_count"] == 10
+    assert finite["strict_phase_promotion_auxiliary_algebraic_source_count"] == 21
     assert sharp["strict_phase_promotion_hidden_preactivation_mode"] == "inline"
     assert sharp["strict_phase_promotion_hidden_preactivation_source_count"] == 0
     assert sharp["strict_phase_promotion_score_calculation_mode"] == "inline"
     assert sharp["strict_phase_promotion_score_calculation_source_count"] == 0
     assert sharp["strict_phase_promotion_output_rail_mode"] == "inline"
     assert sharp["strict_phase_promotion_output_rail_source_count"] == 0
+    assert sharp["strict_phase_promotion_auxiliary_algebraic_source_count"] == 0
     assert sharp["strict_phase_promotion_phase_clock_source_pwl_points"] == finite["strict_phase_promotion_phase_clock_source_pwl_points"]
     assert sharp["strict_phase_promotion_sample_source_pwl_points"] < finite["strict_phase_promotion_sample_source_pwl_points"]
     assert sharp["strict_phase_promotion_total_source_pwl_points"] < finite["strict_phase_promotion_total_source_pwl_points"]
@@ -702,6 +706,7 @@ def test_fast_online_strict_promotion_cost_fields_respect_pwl_clock_override() -
     assert fields["strict_phase_promotion_score_calculation_source_count"] == 0
     assert fields["strict_phase_promotion_output_rail_mode"] == "inline"
     assert fields["strict_phase_promotion_output_rail_source_count"] == 0
+    assert fields["strict_phase_promotion_auxiliary_algebraic_source_count"] == 0
     assert fields["strict_phase_promotion_target_source_mode"] == "label"
     assert fields["strict_phase_promotion_output_vector_count"] > 0
     assert fields["strict_phase_promotion_output_vector_budget_met"] is True

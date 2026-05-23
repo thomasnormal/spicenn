@@ -285,6 +285,7 @@ def row_from_summary(
         "score_calculation_source_count",
         "output_rail_mode",
         "output_rail_source_count",
+        "auxiliary_algebraic_source_count",
         "target_source_mode",
     ]
     row = {

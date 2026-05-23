@@ -191,6 +191,11 @@ def test_phase_transient_output_rail_source_count_tracks_fusion_mode() -> None:
         phase_transient.output_rail_source_count("bad", 10)
 
 
+def test_phase_transient_auxiliary_algebraic_source_count_sums_fused_families() -> None:
+    assert phase_transient.auxiliary_algebraic_source_count(32, 10, 10) == 52
+    assert phase_transient.auxiliary_algebraic_source_count(0, 0, 0) == 0
+
+
 def test_phase_transient_deck_mode_fields_are_shared_by_preflight_and_runtime_summaries() -> None:
     fields = phase_transient.phase_deck_mode_fields(
         phase_clock_mode="pwl",
@@ -214,6 +219,7 @@ def test_phase_transient_deck_mode_fields_are_shared_by_preflight_and_runtime_su
         "score_calculation_source_count": 0,
         "output_rail_mode": "inline",
         "output_rail_source_count": 0,
+        "auxiliary_algebraic_source_count": 0,
     }
 
 
@@ -1302,6 +1308,7 @@ def test_phase_variant_sweep_row_preserves_phase_cost_fields() -> None:
         "score_calculation_source_count": 0,
         "output_rail_mode": "inline",
         "output_rail_source_count": 0,
+        "auxiliary_algebraic_source_count": 0,
     }
 
     row = phase_variant_sweep.row_from_summary(
@@ -1345,6 +1352,7 @@ def test_phase_variant_sweep_row_preserves_phase_cost_fields() -> None:
     assert row["score_calculation_source_count"] == 0
     assert row["output_rail_mode"] == "inline"
     assert row["output_rail_source_count"] == 0
+    assert row["auxiliary_algebraic_source_count"] == 0
 
 
 def test_phase_transient_softmax_deck_is_one_continuous_online_run(tmp_path: Path) -> None:
@@ -2487,6 +2495,7 @@ def test_phase_transient_preflight_summary_has_no_artifact_paths() -> None:
     assert summary["score_calculation_source_count"] == 0
     assert summary["output_rail_mode"] == "inline"
     assert summary["output_rail_source_count"] == 0
+    assert summary["auxiliary_algebraic_source_count"] == 0
     assert summary["target_source_mode"] == "rails"
     assert summary["output_bias_state_frozen"] is True
     assert summary["phase_output_vector_count"] == 70

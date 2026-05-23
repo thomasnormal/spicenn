@@ -14,6 +14,7 @@ import pandas as pd
 import run_spice_mnist_local_feature_fast_online_reference as fast_ref
 from run_spice_mnist_local_block_batch_op_train import block_indices
 from run_spice_mnist_local_feature_phase_transient import (
+    auxiliary_algebraic_source_count,
     estimate_transient_points,
     hidden_preactivation_source_count,
     lr_schedule_values,
@@ -767,20 +768,28 @@ def strict_phase_cost_fields_for_updates(
         include_output_bias_vectors=not output_bias_state_frozen,
         include_y_vectors=bool(getattr(args, "promotion_phase_output_include_y", False)),
     )
+    hidden_sources = hidden_preactivation_source_count(
+        hidden_preactivation_mode,
+        len(blocks),
+        channels,
+    )
+    score_sources = score_calculation_source_count(score_calculation_mode, 10)
+    output_sources = output_rail_source_count(output_rail_mode, 10)
     return {
         f"{prefix}_updates": updates,
         f"{prefix}_phase_clock_mode": phase_clock_mode,
         f"{prefix}_sample_edge_s": edge if sample_edge is None else sample_edge,
         f"{prefix}_hidden_preactivation_mode": hidden_preactivation_mode,
-        f"{prefix}_hidden_preactivation_source_count": hidden_preactivation_source_count(
-            hidden_preactivation_mode,
-            len(blocks),
-            channels,
-        ),
+        f"{prefix}_hidden_preactivation_source_count": hidden_sources,
         f"{prefix}_score_calculation_mode": score_calculation_mode,
-        f"{prefix}_score_calculation_source_count": score_calculation_source_count(score_calculation_mode, 10),
+        f"{prefix}_score_calculation_source_count": score_sources,
         f"{prefix}_output_rail_mode": output_rail_mode,
-        f"{prefix}_output_rail_source_count": output_rail_source_count(output_rail_mode, 10),
+        f"{prefix}_output_rail_source_count": output_sources,
+        f"{prefix}_auxiliary_algebraic_source_count": auxiliary_algebraic_source_count(
+            hidden_sources,
+            score_sources,
+            output_sources,
+        ),
         f"{prefix}_target_source_mode": getattr(args, "promotion_target_source_mode", "label"),
         f"{prefix}_output_bias_state_frozen": output_bias_state_frozen,
         f"{prefix}_phase_output_includes_y": bool(getattr(args, "promotion_phase_output_include_y", False)),

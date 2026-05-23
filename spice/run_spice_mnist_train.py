@@ -59,6 +59,17 @@ def mnist_index_splits(n_train: int, n_test: int, train_count: int, test_count: 
     return train_idx, test_idx
 
 
+def quantize_input_values(x: np.ndarray, levels: int) -> np.ndarray:
+    if levels < 0:
+        raise ValueError("input quantization levels must be non-negative")
+    if levels == 0:
+        return x
+    if levels < 2:
+        raise ValueError("input quantization levels must be 0 or at least 2")
+    scaled = (np.clip(x, -1.0, 1.0) + 1.0) * (float(levels) - 1.0) / 2.0
+    return (np.rint(scaled) * 2.0 / (float(levels) - 1.0) - 1.0).astype(np.float64)
+
+
 def load_mnist_sequence(n_train: int, n_test: int, image_size: int, seed: int) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     from torchvision import datasets, transforms
 

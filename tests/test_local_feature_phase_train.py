@@ -72,6 +72,7 @@ def test_phase_transient_cli_exposes_agreement_gates() -> None:
     assert "--preflight-only" in proc.stdout
     assert "--phase-clock-mode" in proc.stdout
     assert "--sample-edge" in proc.stdout
+    assert "--input-quantization-levels" in proc.stdout
     assert "--hidden-preactivation-mode" in proc.stdout
     assert "--hidden-activation-mode" in proc.stdout
     assert "--hidden-delta-mode" in proc.stdout
@@ -495,6 +496,17 @@ def test_phase_transient_sample_source_pwl_supports_sharp_sample_steps() -> None
     )
 
     assert source == "PWL(0 0 3e-09 0 3e-09 1 5e-09 1 5e-09 0)"
+
+
+def test_mnist_input_quantization_uses_uniform_levels_and_can_be_disabled() -> None:
+    x = np.array([[-1.2, -0.141, 0.0, 0.74, 1.2]], dtype=float)
+
+    assert mnist_train.quantize_input_values(x, 0) is x
+    quantized = mnist_train.quantize_input_values(x, 8)
+
+    np.testing.assert_allclose(quantized, [[-1.0, -1.0 / 7.0, 1.0 / 7.0, 5.0 / 7.0, 1.0]])
+    with pytest.raises(ValueError, match="0 or at least 2"):
+        mnist_train.quantize_input_values(x, 1)
 
 
 def test_phase_transient_sample_rom_expr_decodes_sample_index() -> None:
@@ -3080,6 +3092,7 @@ def test_phase_transient_preflight_summary_has_no_artifact_paths() -> None:
         batch_size=1,
         updates=2,
         total_samples=2,
+        input_quantization_levels=8,
         train_indices=np.array([5, 7]),
         eval_indices=np.array([11]),
         labels=labels,
@@ -3132,6 +3145,7 @@ def test_phase_transient_preflight_summary_has_no_artifact_paths() -> None:
     assert summary["strict_fully_on_device_contract_met"] is True
     assert summary["lr_schedule"] == "linear-decay"
     assert summary["lr_final_scale"] == 0.25
+    assert summary["input_quantization_levels"] == 8
     assert summary["phase_clock_mode"] == "analytic"
     assert summary["input_source_mode"] == "pwl"
     assert summary["sample_edge_s"] == pytest.approx(5e-12)

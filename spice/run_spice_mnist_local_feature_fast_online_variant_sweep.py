@@ -31,7 +31,7 @@ from run_spice_mnist_local_feature_phase_transient import (
     temporary_state_count,
 )
 from run_spice_mnist_local_feature_phase_variant_sweep import activation_clip_pairs, parse_csv, parse_float_csv, variant_tag
-from run_spice_mnist_train import load_mnist_sequence
+from run_spice_mnist_train import load_mnist_sequence, quantize_input_values
 from run_spice_sweep import ROOT
 
 DEFAULT_PROMOTION_PHASE_CLOCK_MODE = "pwl"
@@ -579,6 +579,8 @@ def strict_phase_promotion_command(args: argparse.Namespace, variant: dict[str, 
         str(args.stride),
         "--channels",
         str(args.channels),
+        "--input-quantization-levels",
+        str(getattr(args, "input_quantization_levels", 0)),
         "--batch-size",
         "1",
         "--updates",
@@ -853,6 +855,7 @@ def strict_phase_cost_fields_for_updates(
         f"{prefix}_updates": updates,
         f"{prefix}_phase_clock_mode": phase_clock_mode,
         f"{prefix}_input_source_mode": input_source_mode,
+        f"{prefix}_input_quantization_levels": int(getattr(args, "input_quantization_levels", 0)),
         f"{prefix}_sample_edge_s": edge if sample_edge is None else sample_edge,
         f"{prefix}_hidden_preactivation_mode": hidden_preactivation_mode,
         f"{prefix}_hidden_preactivation_source_count": hidden_sources,
@@ -1012,6 +1015,12 @@ def main() -> None:
     ap.add_argument("--block-size", type=int, default=4)
     ap.add_argument("--stride", type=int, default=2)
     ap.add_argument("--channels", type=int, default=2)
+    ap.add_argument(
+        "--input-quantization-levels",
+        type=int,
+        default=0,
+        help="Optionally quantize normalized MNIST input rails to this many uniform levels in [-1, 1].",
+    )
     ap.add_argument("--lr", type=float, default=0.8)
     ap.add_argument("--lrs", default="")
     ap.add_argument("--lr-schedule", choices=["constant", "linear-decay"], default="constant")
@@ -1175,6 +1184,8 @@ def main() -> None:
         raise ValueError("sample counts must be positive")
     if args.channels <= 0:
         raise ValueError("--channels must be positive")
+    if args.input_quantization_levels < 0 or args.input_quantization_levels == 1:
+        raise ValueError("--input-quantization-levels must be 0 or at least 2")
     if args.synapse_clip <= 0:
         raise ValueError("--synapse-clip must be positive")
     if args.softmax_negative_scale < 0:
@@ -1226,6 +1237,9 @@ def main() -> None:
     if 1 <= promotion_updates <= args.train_samples:
         probe_updates = tuple(sorted(set(probe_updates) | {promotion_updates}))
     x_train, y_train, x_eval, y_eval = load_mnist_sequence(args.train_samples, args.eval_samples, args.image_size, args.seed)
+    if args.input_quantization_levels:
+        x_train = quantize_input_values(x_train, args.input_quantization_levels)
+        x_eval = quantize_input_values(x_eval, args.input_quantization_levels)
     rng = np.random.default_rng(args.seed)
     initial_state = fast_ref.load_or_init_weights(
         args.init_weights,
@@ -1260,6 +1274,7 @@ def main() -> None:
         "stride": stride,
         "channels": args.channels,
         "batch_size": 1,
+        "input_quantization_levels": args.input_quantization_levels,
         "variants": len(rows),
         "best_variant": rows[0] if rows else None,
         "best_promotion_variant": best_promotion_variant(rows),

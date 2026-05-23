@@ -335,6 +335,7 @@ def test_fast_online_variant_sweep_row_reports_best_probe_and_improvement() -> N
         block_size=2,
         stride=2,
         channels=1,
+        input_quantization_levels=8,
         promotion_updates=2,
         promotion_simulator="Xyce",
         promotion_phase=0.5e-9,
@@ -398,6 +399,7 @@ def test_fast_online_variant_sweep_row_reports_best_probe_and_improvement() -> N
     assert command[command.index("--update-mode") + 1] == "direct"
     assert command[command.index("--phase-clock-mode") + 1] == "analytic"
     assert command[command.index("--input-source-mode") + 1] == "pwl"
+    assert command[command.index("--input-quantization-levels") + 1] == "8"
     assert command[command.index("--target-source-mode") + 1] == "label"
     assert command[command.index("--hidden-preactivation-mode") + 1] == "inline"
     assert command[command.index("--hidden-activation-mode") + 1] == "stored"
@@ -429,6 +431,7 @@ def test_fast_online_variant_sweep_row_reports_best_probe_and_improvement() -> N
     assert row["strict_phase_promotion_max_auxiliary_algebraic_sources"] == 0
     assert row["strict_phase_promotion_phase_clock_mode"] == "analytic"
     assert row["strict_phase_promotion_input_source_mode"] == "pwl"
+    assert row["strict_phase_promotion_input_quantization_levels"] == 8
     assert row["strict_phase_promotion_target_source_mode"] == "label"
     assert row["strict_phase_promotion_sample_edge_s"] == pytest.approx(5e-12)
     assert row["strict_phase_promotion_hidden_preactivation_mode"] == "inline"

@@ -22,7 +22,7 @@ from run_spice_mnist_local_feature_phase_transient import (
     sanitize_tag,
     synapse_transfer_np,
 )
-from run_spice_mnist_train import load_mnist_sequence
+from run_spice_mnist_train import load_mnist_sequence, quantize_input_values
 from run_spice_sweep import ROOT
 
 
@@ -314,6 +314,12 @@ def main() -> None:
     ap.add_argument("--block-size", type=int, default=4)
     ap.add_argument("--stride", type=int, default=2)
     ap.add_argument("--channels", type=int, default=2)
+    ap.add_argument(
+        "--input-quantization-levels",
+        type=int,
+        default=0,
+        help="Optionally quantize normalized MNIST input rails to this many uniform levels in [-1, 1].",
+    )
     ap.add_argument("--lr", type=float, default=0.8)
     ap.add_argument("--lr-schedule", choices=["constant", "linear-decay"], default="constant")
     ap.add_argument("--lr-final-scale", type=float, default=1.0)
@@ -356,6 +362,8 @@ def main() -> None:
         raise ValueError("--linear-output and --softmax-output are mutually exclusive")
     if args.train_samples <= 0 or args.eval_samples <= 0:
         raise ValueError("sample counts must be positive")
+    if args.input_quantization_levels < 0 or args.input_quantization_levels == 1:
+        raise ValueError("--input-quantization-levels must be 0 or at least 2")
     if args.lr < 0:
         raise ValueError("--lr must be non-negative")
     if args.lr_final_scale < 0:
@@ -382,6 +390,9 @@ def main() -> None:
     blocks = block_indices(args.image_size, args.block_size, stride)
     probe_updates = parse_probe_update_list(args.probe_updates, args.train_samples)
     x_train, y_train, x_test, y_test = load_mnist_sequence(args.train_samples, args.eval_samples, args.image_size, args.seed)
+    if args.input_quantization_levels:
+        x_train = quantize_input_values(x_train, args.input_quantization_levels)
+        x_test = quantize_input_values(x_test, args.input_quantization_levels)
     rng = np.random.default_rng(args.seed)
     initial_state = load_or_init_weights(args.init_weights, rng, len(blocks), args.channels, args.block_size * args.block_size)
 
@@ -455,6 +466,7 @@ def main() -> None:
         "train_samples": args.train_samples,
         "eval_samples": args.eval_samples,
         "batch_size": 1,
+        "input_quantization_levels": args.input_quantization_levels,
         "lr": args.lr,
         "lr_schedule": args.lr_schedule,
         "lr_final_scale": args.lr_final_scale,

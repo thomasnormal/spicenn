@@ -29,7 +29,7 @@ from run_spice_mnist_local_block_batch_op_train import (
     synapse_transfer_expr,
 )
 from run_spice_mnist_local_feature_batch_op_train import run_eval, run_train_batch, wrap_xyce_behavioral_rhs, xyce_prn_path
-from run_spice_mnist_train import load_mnist_sequence, mnist_index_splits
+from run_spice_mnist_train import load_mnist_sequence, mnist_index_splits, quantize_input_values
 from run_spice_sweep import ROOT, detect_spice, is_xyce, prepare_netlist_for_simulator, run_tiny_test, run_simulator_netlist
 from spice_adapter import SPICE_SIMULATOR_ARGS_ENV
 
@@ -686,6 +686,7 @@ def phase_preflight_summary(
     batch_size: int,
     updates: int,
     total_samples: int,
+    input_quantization_levels: int,
     train_indices: np.ndarray,
     eval_indices: np.ndarray,
     labels: np.ndarray,
@@ -770,6 +771,7 @@ def phase_preflight_summary(
         "batch_size": batch_size,
         "updates": updates,
         "total_samples": total_samples,
+        "input_quantization_levels": input_quantization_levels,
         "lr": lr,
         "lr_schedule": lr_schedule,
         "lr_final_scale": lr_final_scale,
@@ -2449,6 +2451,15 @@ def main() -> None:
     ap.add_argument("--block-size", type=int, default=4)
     ap.add_argument("--stride", type=int, default=None)
     ap.add_argument("--channels", type=int, default=4)
+    ap.add_argument(
+        "--input-quantization-levels",
+        type=int,
+        default=0,
+        help=(
+            "Optionally quantize normalized MNIST input rails to this many uniform levels in [-1, 1] "
+            "before building sample waveforms. 0 preserves the original floating inputs."
+        ),
+    )
     ap.add_argument("--batch-size", type=int, default=1)
     ap.add_argument("--updates", type=int, default=1)
     ap.add_argument("--lr", type=float, default=0.005)
@@ -2740,6 +2751,8 @@ def main() -> None:
         raise ValueError("--linear-output and --softmax-output are mutually exclusive")
     if args.channels <= 0:
         raise ValueError("--channels must be positive")
+    if args.input_quantization_levels < 0 or args.input_quantization_levels == 1:
+        raise ValueError("--input-quantization-levels must be 0 or at least 2")
     if args.relu_clip <= 0:
         raise ValueError("--relu-clip must be positive")
     if args.relu_leak < 0:
@@ -2871,6 +2884,9 @@ def main() -> None:
     if args.train_samples < total_samples:
         raise ValueError("--train-samples must cover --batch-size * --updates")
     x_train, y_train, x_test, y_test = load_mnist_sequence(args.train_samples, max(1, args.eval_samples), args.image_size, args.seed)
+    if args.input_quantization_levels:
+        x_train = quantize_input_values(x_train, args.input_quantization_levels)
+        x_test = quantize_input_values(x_test, args.input_quantization_levels)
     train_indices, eval_indices = mnist_index_splits(
         args.train_samples,
         max(1, args.eval_samples),
@@ -2940,6 +2956,7 @@ def main() -> None:
                     batch_size=args.batch_size,
                     updates=args.updates,
                     total_samples=total_samples,
+                    input_quantization_levels=args.input_quantization_levels,
                     train_indices=train_indices,
                     eval_indices=eval_indices,
                     labels=y_batch,
@@ -3516,6 +3533,7 @@ def main() -> None:
         "eval_probe_updates": bool(args.eval_probe_updates),
         "eval_backend": args.eval_backend,
         "total_samples": total_samples,
+        "input_quantization_levels": args.input_quantization_levels,
         "lr": args.lr,
         "lr_schedule": args.lr_schedule,
         "lr_final_scale": args.lr_final_scale,

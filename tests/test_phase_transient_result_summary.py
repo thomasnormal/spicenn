@@ -52,7 +52,7 @@ def test_phase_summary_row_keeps_execution_contract_and_backend_fields(tmp_path:
                 "softmax_error_centering": "mean",
                 "update_mode": "direct",
                 "phase_clock_mode": "analytic",
-                "sample_edge_s": 0.0,
+                "sample_edge_s": 5e-12,
                 "hidden_preactivation_mode": "inline",
                 "hidden_preactivation_source_count": 32,
                 "hidden_activation_mode": "inline",
@@ -169,7 +169,8 @@ def test_phase_summary_row_keeps_execution_contract_and_backend_fields(tmp_path:
     assert row["softmax_negative_scale"] == 0.25
     assert row["softmax_error_centering"] == "mean"
     assert row["phase_clock_mode"] == "analytic"
-    assert row["sample_edge_s"] == 0.0
+    assert row["sample_edge_s"] == 5e-12
+    assert row["robust_sample_transitions"] is True
     assert row["hidden_preactivation_mode"] == "inline"
     assert row["hidden_preactivation_source_count"] == 32
     assert row["hidden_activation_mode"] == "inline"
@@ -352,6 +353,28 @@ def test_strict_target_contract_audit_reports_missing_requirements() -> None:
         "no_python_weight_updates",
         "no_python_checkpointing",
     ]
+
+
+def test_strict_target_contract_rejects_zero_edge_sample_transitions() -> None:
+    module = load_summary_module()
+    row = {
+        "image_size": 10,
+        "block_size": 4,
+        "stride": 2,
+        "channels": 2,
+        "batch_size": 1,
+        "sample_edge_s": 0.0,
+        "strict_fully_on_device_contract_met": True,
+        "strict_fully_on_device_requested": True,
+        "random_init_used": True,
+        "initial_weights_source": "random_init",
+        "reference_mode": "none",
+        "python_weight_updates_between_samples": False,
+        "python_checkpointing_between_samples": False,
+    }
+
+    assert module.robust_sample_transitions(row) is False
+    assert module.strict_target_contract_issues(row) == ["robust_sample_transitions"]
 
 
 def test_phase_summary_full_objective_requires_full_eval_accuracy_and_strict_contract(tmp_path: Path) -> None:

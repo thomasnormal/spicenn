@@ -54,6 +54,7 @@ FIELDS = [
     "softmax_margin",
     "update_mode",
     "phase_clock_mode",
+    "robust_sample_transitions",
     "target_source_mode",
     "hidden_activation_mode",
     "hidden_activation_state_count",
@@ -215,6 +216,14 @@ def derived_nontrivial_learning_met(row: dict[str, Any]) -> bool:
     return accuracy > random_threshold and improvement >= improvement_threshold
 
 
+def robust_sample_transitions(row: dict[str, Any]) -> bool:
+    sample_edge = row.get("sample_edge_s")
+    if sample_edge is None:
+        return True
+    edge = as_float_or_none(sample_edge)
+    return edge is None or edge > 0.0
+
+
 def full_objective_accuracy_gap(row: dict[str, Any], threshold: float = 0.9) -> float | None:
     accuracy = as_float_or_none(row.get("phase_eval_accuracy"))
     if accuracy is None:
@@ -361,8 +370,9 @@ def row_from_summary(path: Path) -> dict[str, Any]:
         "summary_mtime_s": path.stat().st_mtime,
         "summary_path": str(path),
     }
-    issues = strict_target_contract_issues(row)
     row["target_topology"] = same_target_topology(row)
+    row["robust_sample_transitions"] = robust_sample_transitions(row)
+    issues = strict_target_contract_issues(row)
     row["strict_target_contract_met"] = not issues
     row["strict_target_contract_issues"] = issues
     nontrivial_learning = derived_nontrivial_learning_met(row)
@@ -410,6 +420,7 @@ def strict_target_contract_issues(row: dict[str, Any]) -> list[str]:
     checks = [
         ("target_topology", same_target_topology(row)),
         ("batch_size_1", row.get("batch_size") == 1),
+        ("robust_sample_transitions", robust_sample_transitions(row)),
         ("strict_contract", row.get("strict_fully_on_device_contract_met") is True),
         ("strict_requested", row.get("strict_fully_on_device_requested") is True),
         ("random_init", row.get("random_init_used") is True),
@@ -497,6 +508,7 @@ def print_markdown(rows: list[dict[str, Any]]) -> None:
         "eval_backend",
         "phase_clock_mode",
         "sample_edge_s",
+        "robust_sample_transitions",
         "hidden_preactivation_mode",
         "hidden_preactivation_source_count",
         "hidden_activation_mode",

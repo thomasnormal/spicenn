@@ -177,7 +177,7 @@ def final_state_measure_time(t_stop: float, transient_step: float, final_update_
     return measure_time
 
 
-def phase_state_descriptions(update_mode: str) -> dict[str, str]:
+def phase_state_descriptions(update_mode: str, output_bias_state_frozen: bool = False) -> dict[str, str]:
     if update_mode == "phased":
         temporary = (
             "feature activations, class scores, class deltas, hidden/backward feature deltas, "
@@ -190,11 +190,18 @@ def phase_state_descriptions(update_mode: str) -> dict[str, str]:
         )
     else:
         raise ValueError("update_mode must be 'phased' or 'direct'")
-    return {
-        "persistent_state": (
+    if output_bias_state_frozen:
+        persistent = (
+            "local feature weights, local biases, and class readout weights are persistent capacitor "
+            "voltages initialized once at the start of the transient; output biases are frozen constants"
+        )
+    else:
+        persistent = (
             "local feature weights, local biases, class readout weights, and output biases are "
             "persistent capacitor voltages initialized once at the start of the transient"
-        ),
+        )
+    return {
+        "persistent_state": persistent,
         "temporary_state": temporary,
     }
 
@@ -270,6 +277,7 @@ def phase_preflight_summary(
     update_mode: str,
     phase_clock_mode: str,
     target_source_mode: str,
+    output_bias_state_frozen: bool,
     reference_mode: str,
     init_weights: str,
     strict_fully_on_device: bool,
@@ -309,6 +317,7 @@ def phase_preflight_summary(
         "update_mode": update_mode,
         "phase_clock_mode": phase_clock_mode,
         "target_source_mode": target_source_mode,
+        "output_bias_state_frozen": output_bias_state_frozen,
         "reference_mode": reference_mode,
         "init_weights": init_weights,
         "phase_netlist": None,
@@ -325,7 +334,7 @@ def phase_preflight_summary(
         **source_complexity,
         "phase_s": phase,
         "settle_ratio": settle_ratio,
-        **phase_state_descriptions(update_mode),
+        **phase_state_descriptions(update_mode, output_bias_state_frozen),
     }
 
 
@@ -824,10 +833,11 @@ def make_phase_transient_netlist(
     local_updates_enabled = local_update_scale != 0.0
     readout_updates_enabled = readout_update_scale != 0.0
     output_bias_updates_enabled = output_bias_update_scale != 0.0
+    output_bias_state_frozen = not output_bias_updates_enabled and state_decay == 0.0
     tau = phase / settle_ratio
     phase_area = phase_pulse_area(phase, edge)
     targets = target_matrix(y_batch, n_classes, softmax_output)
-    state_descriptions = phase_state_descriptions(update_mode)
+    state_descriptions = phase_state_descriptions(update_mode, output_bias_state_frozen)
     lines = [
         "* Phase-resolved transient local-feature/readout training deck.",
         f"* {state_descriptions['persistent_state']}.",
@@ -903,11 +913,12 @@ def make_phase_transient_netlist(
                     lines.append(f"Rv{k}_{b}_{c} v{k}_{b}_{c} 0 {{RLEAK}}")
                 if not direct_update and readout_updates_enabled:
                     lines.append(f"Cgv{k}_{b}_{c} gv{k}_{b}_{c} 0 {{CGRAD}} IC=0")
-        lines.append(f"Cob{k} ob{k} 0 {{CW}} IC={output_bias[k]:.12g}")
-        if rleak > 0:
-            lines.append(f"Rob{k} ob{k} 0 {{RLEAK}}")
-        if not direct_update and output_bias_updates_enabled:
-            lines.append(f"Cgob{k} gob{k} 0 {{CGRAD}} IC=0")
+        if not output_bias_state_frozen:
+            lines.append(f"Cob{k} ob{k} 0 {{CW}} IC={output_bias[k]:.12g}")
+            if rleak > 0:
+                lines.append(f"Rob{k} ob{k} 0 {{RLEAK}}")
+            if not direct_update and output_bias_updates_enabled:
+                lines.append(f"Cgob{k} gob{k} 0 {{CGRAD}} IC=0")
         lines.append(f"Cscore{k} score{k} 0 {{CSTATE}} IC=0")
         lines.append(f"Cd{k} d{k} 0 {{CSTATE}} IC=0")
     lines.append("")
@@ -935,7 +946,7 @@ def make_phase_transient_netlist(
             for b in range(n_blocks)
             for c in range(channels)
         ]
-        score_terms.append(f"V(ob{k})")
+        score_terms.append(f"{output_bias[k]:.12g}" if output_bias_state_frozen else f"V(ob{k})")
         lines.append(f"Bscore{k} scorecalc{k} 0 V = " + " + ".join(score_terms))
         lines.append(f"Bstore_score{k} score{k} 0 I = V(pscore)*{{CSTATE}}/{{TAU}}*(V(score{k})-V(scorecalc{k}))")
     if softmax_output:
@@ -1047,7 +1058,8 @@ def make_phase_transient_netlist(
     vectors = [f"V(w{b}_{c}_{p})" for b in range(n_blocks) for c in range(channels) for p in range(block_len)]
     vectors += [f"V(hb{b}_{c})" for b in range(n_blocks) for c in range(channels)]
     vectors += [f"V(v{k}_{b}_{c})" for k in range(n_classes) for b in range(n_blocks) for c in range(channels)]
-    vectors += [f"V(ob{k})" for k in range(n_classes)]
+    if not output_bias_state_frozen:
+        vectors += [f"V(ob{k})" for k in range(n_classes)]
     vectors += [f"V(y{k})" for k in range(n_classes)]
     if output_mode == "native_measure":
         output_mode = "measure"
@@ -1095,6 +1107,7 @@ def unpack_state(
     hb: np.ndarray,
     readout: np.ndarray,
     output_bias: np.ndarray,
+    include_output_bias_vectors: bool = True,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     n_classes = readout.shape[0]
     offset = 0
@@ -1104,8 +1117,11 @@ def unpack_state(
     offset += hb.size
     nv = vals[offset : offset + readout.size].reshape(readout.shape)
     offset += readout.size
-    nob = vals[offset : offset + output_bias.size]
-    offset += output_bias.size
+    if include_output_bias_vectors:
+        nob = vals[offset : offset + output_bias.size]
+        offset += output_bias.size
+    else:
+        nob = output_bias.copy()
     y = vals[offset : offset + n_classes]
     return nw, nhb, nv, nob, y
 
@@ -1197,6 +1213,7 @@ def probe_diagnostic_rows(
     probe_vals: dict[int, np.ndarray],
     initial_state: TrainState,
     op_probe_states: dict[int, TrainState],
+    include_output_bias_vectors: bool = True,
 ) -> tuple[list[dict[str, float | int | None]], dict[int, TrainState]]:
     w, hb, readout, output_bias = initial_state
     rows: list[dict[str, float | int | None]] = []
@@ -1210,6 +1227,7 @@ def probe_diagnostic_rows(
             hb,
             readout,
             output_bias,
+            include_output_bias_vectors,
         )
         phase_state = (probe_w, probe_hb, probe_readout, probe_ob)
         phase_states[update] = phase_state
@@ -1875,6 +1893,7 @@ def main() -> None:
         raise ValueError("--phase-clock-mode analytic requires --update-mode direct with --batch-size 1")
     if args.strict_fully_on_device:
         validate_strict_fully_on_device_args(args.batch_size, args.reference_mode, args.init_weights)
+    output_bias_state_frozen = args.output_bias_update_scale == 0.0 and args.state_decay == 0.0
     _preflight_phases, _preflight_sample_starts, preflight_t_stop = make_phase_schedule(
         args.batch_size,
         args.updates,
@@ -1952,6 +1971,7 @@ def main() -> None:
                     update_mode=args.update_mode,
                     phase_clock_mode=args.phase_clock_mode,
                     target_source_mode=args.target_source_mode,
+                    output_bias_state_frozen=output_bias_state_frozen,
                     reference_mode=args.reference_mode,
                     init_weights=args.init_weights,
                     strict_fully_on_device=args.strict_fully_on_device,
@@ -1995,6 +2015,7 @@ def main() -> None:
     if args.reference_mode == "spice":
         owned_netlists.append(op_netlist)
     phase_output_mode = select_phase_output_mode(args.phase_output_mode, spice_bin, args.final_measures, probe_updates)
+    include_output_bias_vectors = not output_bias_state_frozen
 
     netlist, n_vec, t_stop = make_phase_transient_netlist(
         x_batch,
@@ -2092,7 +2113,14 @@ def main() -> None:
     else:
         vals = read_wrdata_row(phase_data, n_vec)
         probe_vals = {}
-    phase_w, phase_hb, phase_readout, phase_ob, phase_y = unpack_state(vals, w, hb, readout, output_bias)
+    phase_w, phase_hb, phase_readout, phase_ob, phase_y = unpack_state(
+        vals,
+        w,
+        hb,
+        readout,
+        output_bias,
+        include_output_bias_vectors,
+    )
 
     t1 = time.perf_counter()
     op_w = op_hb = op_readout = op_ob = None
@@ -2165,6 +2193,7 @@ def main() -> None:
         probe_vals,
         (w, hb, readout, output_bias),
         op_probe_states,
+        include_output_bias_vectors,
     )
     phase_eval_accuracy = None
     op_reference_eval_accuracy = None
@@ -2414,7 +2443,7 @@ def main() -> None:
     if probe_rows:
         pd.DataFrame(probe_rows).to_csv(probe_metrics_path, index=False)
     simulator_sidecars_cleaned = cleanup_simulator_sidecars(owned_netlists)
-    state_descriptions = phase_state_descriptions(args.update_mode)
+    state_descriptions = phase_state_descriptions(args.update_mode, output_bias_state_frozen)
     execution_contract = phase_execution_contract_fields(
         args.batch_size,
         args.reference_mode,
@@ -2483,6 +2512,7 @@ def main() -> None:
         "update_mode": args.update_mode,
         "phase_clock_mode": args.phase_clock_mode,
         "target_source_mode": args.target_source_mode,
+        "output_bias_state_frozen": output_bias_state_frozen,
         "simulator_extra_args": args.simulator_extra_args or os.environ.get(SPICE_SIMULATOR_ARGS_ENV, ""),
         "init_weights": args.init_weights,
         "phase_netlist": str(phase_netlist),

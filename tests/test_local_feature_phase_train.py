@@ -1724,6 +1724,9 @@ def test_phase_transient_state_descriptions_follow_update_mode() -> None:
     assert "gradient accumulators" not in direct["temporary_state"]
     assert "updated directly during each per-sample update phase" in direct["temporary_state"]
     assert "checkpoint" not in direct["persistent_state"].lower()
+    frozen_ob = phase_transient.phase_state_descriptions("direct", output_bias_state_frozen=True)
+    assert "output biases are frozen constants" in frozen_ob["persistent_state"]
+    assert "output biases are persistent capacitor" not in frozen_ob["persistent_state"]
 
     with pytest.raises(ValueError, match="update_mode"):
         phase_transient.phase_state_descriptions("online")
@@ -1816,6 +1819,7 @@ def test_phase_transient_preflight_summary_has_no_artifact_paths() -> None:
         update_mode="direct",
         phase_clock_mode="analytic",
         target_source_mode="rails",
+        output_bias_state_frozen=True,
         reference_mode="none",
         init_weights="",
         strict_fully_on_device=True,
@@ -1836,6 +1840,7 @@ def test_phase_transient_preflight_summary_has_no_artifact_paths() -> None:
     assert summary["lr_final_scale"] == 0.25
     assert summary["phase_clock_mode"] == "analytic"
     assert summary["target_source_mode"] == "rails"
+    assert summary["output_bias_state_frozen"] is True
     assert summary["phase_netlist"] is None
     assert summary["final_weights"] is None
     assert summary["sample_source_pwl_points"] == 60
@@ -2325,7 +2330,7 @@ def test_phase_transient_zero_update_scales_omit_write_sources(tmp_path: Path) -
     readout = np.zeros((2, 1, 1))
     output_bias = np.zeros(2)
 
-    direct_netlist, _n_vec, _t_stop = phase_transient.make_phase_transient_netlist(
+    direct_netlist, direct_n_vec, _t_stop = phase_transient.make_phase_transient_netlist(
         x,
         y,
         w,
@@ -2362,8 +2367,11 @@ def test_phase_transient_zero_update_scales_omit_write_sources(tmp_path: Path) -
     assert "Bupd_hb0_0" not in direct_netlist
     assert "Bupd_v0_0_0" not in direct_netlist
     assert "Bupd_ob0" not in direct_netlist
+    assert "Cob0" not in direct_netlist
+    assert "V(ob0)" not in direct_netlist
+    assert direct_n_vec == 9
 
-    phased_netlist, _n_vec, _t_stop = phase_transient.make_phase_transient_netlist(
+    phased_netlist, phased_n_vec, _t_stop = phase_transient.make_phase_transient_netlist(
         x,
         y,
         w,
@@ -2399,6 +2407,9 @@ def test_phase_transient_zero_update_scales_omit_write_sources(tmp_path: Path) -
     assert "Bacc_w0_0_0" not in phased_netlist
     assert "Bacc_v0_0_0" not in phased_netlist
     assert "Bacc_ob0" not in phased_netlist
+    assert "Cob0" not in phased_netlist
+    assert "V(ob0)" not in phased_netlist
+    assert phased_n_vec == 9
 
 
 def test_phase_transient_state_decay_is_on_device_update_phase_current(tmp_path: Path) -> None:
@@ -2442,6 +2453,7 @@ def test_phase_transient_state_decay_is_on_device_update_phase_current(tmp_path:
     assert "Bdecay_hb0_0 hb0_0 0 I = V(pacc)*{CW}*{STATE_DECAY}/{TAREA}*V(hb0_0)" in direct_netlist
     assert "Bdecay_v0_0_0 v0_0_0 0 I = V(pacc)*{CW}*{STATE_DECAY}/{TAREA}*V(v0_0_0)" in direct_netlist
     assert "Bdecay_ob0 ob0 0 I = V(pacc)*{CW}*{STATE_DECAY}/{TAREA}*V(ob0)" in direct_netlist
+    assert "Cob0 ob0 0 {CW}" in direct_netlist
 
     phased_netlist, _n_vec, _t_stop = phase_transient.make_phase_transient_netlist(
         x,

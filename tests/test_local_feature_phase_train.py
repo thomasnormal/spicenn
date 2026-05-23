@@ -364,6 +364,55 @@ def test_phase_transient_constant_pixel_sources_are_elided_from_deck(tmp_path: P
     assert "Bupd_w0_0_2 w0_0_2 0 I =" in netlist
 
 
+def test_phase_transient_phased_mode_elides_zero_pixel_local_accumulator_family(tmp_path: Path) -> None:
+    x = np.array(
+        [
+            [0.0, 0.2, 0.5, 0.0],
+            [0.0, 0.4, 0.5, 1.0],
+        ],
+        dtype=float,
+    )
+    y = np.array([0, 1])
+    w = np.zeros((1, 1, 4))
+    hb = np.zeros((1, 1))
+    readout = np.zeros((2, 1, 1))
+    output_bias = np.zeros(2)
+
+    netlist, _n_vec, _t_stop = phase_transient.make_phase_transient_netlist(
+        x,
+        y,
+        w,
+        hb,
+        readout,
+        output_bias,
+        [[0, 1, 2, 3]],
+        0.8,
+        tmp_path / "out.dat",
+        False,
+        1,
+        len(y),
+        1e-9,
+        0.1e-9,
+        5e-12,
+        40.0,
+        20e-12,
+        1e-12,
+        1e-12,
+        1e-12,
+        1e18,
+        True,
+    )
+
+    assert "Cgw0_0_0 " not in netlist
+    assert "Bacc_w0_0_0 " not in netlist
+    assert "Bupd_w0_0_0 " not in netlist
+    assert "Bclear_gw0_0_0 " not in netlist
+    assert "Cgw0_0_2 gw0_0_2 0 {CGRAD}" in netlist
+    assert "Bacc_w0_0_2 gw0_0_2 0 I =" in netlist
+    assert "Bupd_w0_0_2 w0_0_2 0 I =" in netlist
+    assert "Bclear_gw0_0_2 gw0_0_2 0 I =" in netlist
+
+
 def test_phase_transient_label_target_source_mode_decodes_one_label_waveform() -> None:
     labels = np.array([0, 1, 1, 0])
     phases, sample_starts, t_stop = phase_transient.make_phase_schedule(1, 4, 1.0e-9, 0.1e-9, True)

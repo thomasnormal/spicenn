@@ -1003,7 +1003,7 @@ def make_phase_transient_netlist(
                 lines.append(f"Cw{b}_{c}_{p} w{b}_{c}_{p} 0 {{CW}} IC={w[b, c, p]:.12g}")
                 if rleak > 0:
                     lines.append(f"Rw{b}_{c}_{p} w{b}_{c}_{p} 0 {{RLEAK}}")
-                if not direct_update and local_updates_enabled:
+                if not direct_update and local_updates_enabled and pixel_drives[blocks[b][p]].expr != "0":
                     lines.append(f"Cgw{b}_{c}_{p} gw{b}_{c}_{p} 0 {{CGRAD}} IC=0")
             lines.append(f"Chb{b}_{c} hb{b}_{c} 0 {{CW}} IC={hb[b, c]:.12g}")
             if rleak > 0:
@@ -1131,7 +1131,7 @@ def make_phase_transient_netlist(
                 grad = f"V(dh{b}_{c})*{pixel_expr}"
                 if direct_update and local_updates_enabled and pixel_expr != "0":
                     lines.append(f"Bupd_w{b}_{c}_{p} w{b}_{c}_{p} 0 I = -V(pacc)*{{CW}}*{lr_control}*{{LOCAL_UPDATE_SCALE}}/({{BS}}*{{TAREA}})*({grad})")
-                elif not direct_update and local_updates_enabled:
+                elif not direct_update and local_updates_enabled and pixel_expr != "0":
                     lines.append(f"Bacc_w{b}_{c}_{p} gw{b}_{c}_{p} 0 I = -V(pacc)*{{CGRAD}}/{{TAREA}}*({grad})")
                     lines.append(f"Bupd_w{b}_{c}_{p} w{b}_{c}_{p} 0 I = -V(papply)*{{CW}}*{lr_control}*{{LOCAL_UPDATE_SCALE}}/({{BS}}*{{TAREA}})*V(gw{b}_{c}_{p})")
                     lines.append(f"Bclear_gw{b}_{c}_{p} gw{b}_{c}_{p} 0 I = V(pclear)*{{CGRAD}}/{{TAU}}*V(gw{b}_{c}_{p})")

@@ -246,6 +246,38 @@ def promotion_timeout_seconds(args: argparse.Namespace, updates: int) -> float:
     return max(240.0, 1.25 * float(updates))
 
 
+def promotion_efficiency_fields(
+    *,
+    initial_eval_accuracy: float,
+    promotion_probe_eval_accuracy: float | None,
+    promotion_updates: int,
+    promotion_costs: dict[str, Any],
+) -> dict[str, float | None]:
+    if promotion_updates <= 0:
+        raise ValueError("promotion_updates must be positive")
+    total_source_points = float(promotion_costs.get("strict_phase_promotion_total_source_pwl_points") or 0.0)
+    transient_points = float(promotion_costs.get("strict_phase_promotion_estimated_transient_points") or 0.0)
+    source_points_per_update = total_source_points / float(promotion_updates) if total_source_points > 0.0 else None
+    if promotion_probe_eval_accuracy is None:
+        return {
+            "promotion_probe_eval_improvement": None,
+            "strict_phase_promotion_source_pwl_points_per_update": source_points_per_update,
+            "strict_phase_promotion_eval_improvement_per_1k_source_pwl": None,
+            "strict_phase_promotion_eval_improvement_per_1k_transient_points": None,
+        }
+    improvement = float(promotion_probe_eval_accuracy) - float(initial_eval_accuracy)
+    return {
+        "promotion_probe_eval_improvement": improvement,
+        "strict_phase_promotion_source_pwl_points_per_update": source_points_per_update,
+        "strict_phase_promotion_eval_improvement_per_1k_source_pwl": (
+            1000.0 * improvement / total_source_points if total_source_points > 0.0 else None
+        ),
+        "strict_phase_promotion_eval_improvement_per_1k_transient_points": (
+            1000.0 * improvement / transient_points if transient_points > 0.0 else None
+        ),
+    }
+
+
 def strict_phase_promotion_command(args: argparse.Namespace, variant: dict[str, Any]) -> list[str]:
     updates = int(getattr(args, "promotion_updates", 0) or args.train_samples)
     if updates <= 0:
@@ -481,6 +513,12 @@ def run_variant(
     wall = time.perf_counter() - t0
     phase_command = strict_phase_promotion_command(args, variant)
     promotion_costs = strict_phase_promotion_cost_fields(args, variant, x_train, y_train)
+    promotion_efficiency = promotion_efficiency_fields(
+        initial_eval_accuracy=initial_eval,
+        promotion_probe_eval_accuracy=promotion_probe_eval_accuracy,
+        promotion_updates=promotion_updates,
+        promotion_costs=promotion_costs,
+    )
     return {
         **variant,
         "initial_eval_accuracy": initial_eval,
@@ -495,6 +533,7 @@ def run_variant(
         "strict_phase_promotion_max_source_pwl_points": int(getattr(args, "promotion_max_source_pwl_points", 0)),
         "strict_phase_promotion_max_output_vectors": int(getattr(args, "promotion_max_output_vectors", 0)),
         **promotion_costs,
+        **promotion_efficiency,
         "strict_phase_promotion_command": command_text(phase_command),
         **probe_columns,
         "wall_time_s": wall,

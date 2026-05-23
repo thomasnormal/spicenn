@@ -379,6 +379,14 @@ def test_fast_online_variant_sweep_row_reports_best_probe_and_improvement() -> N
     assert row["strict_phase_promotion_phase_clock_source_pwl_points"] == 0
     assert row["strict_phase_promotion_control_source_pwl_points"] > 0
     assert row["strict_phase_promotion_total_source_pwl_points"] > row["strict_phase_promotion_sample_source_pwl_points"]
+    assert row["promotion_probe_eval_improvement"] == pytest.approx(
+        row["promotion_probe_eval_accuracy"] - row["initial_eval_accuracy"]
+    )
+    assert row["strict_phase_promotion_source_pwl_points_per_update"] == pytest.approx(
+        row["strict_phase_promotion_total_source_pwl_points"] / row["strict_phase_promotion_updates"]
+    )
+    assert row["strict_phase_promotion_eval_improvement_per_1k_source_pwl"] is not None
+    assert row["strict_phase_promotion_eval_improvement_per_1k_transient_points"] is not None
     assert row["strict_phase_promotion_source_pwl_budget_met"] is True
     assert row["initial_eval_accuracy"] >= 0.0
     assert row["final_eval_accuracy"] >= 0.0
@@ -555,6 +563,40 @@ def test_fast_online_variant_sweep_selects_best_promotion_variant() -> None:
     ]
 
     assert fast_sweep.best_promotion_variant(rows)["tag"] == "early"
+
+
+def test_fast_online_promotion_efficiency_fields_normalize_gain_by_cost() -> None:
+    fields = fast_sweep.promotion_efficiency_fields(
+        initial_eval_accuracy=0.1,
+        promotion_probe_eval_accuracy=0.6,
+        promotion_updates=10,
+        promotion_costs={
+            "strict_phase_promotion_total_source_pwl_points": 2000,
+            "strict_phase_promotion_estimated_transient_points": 500,
+        },
+    )
+
+    assert fields["promotion_probe_eval_improvement"] == pytest.approx(0.5)
+    assert fields["strict_phase_promotion_source_pwl_points_per_update"] == pytest.approx(200.0)
+    assert fields["strict_phase_promotion_eval_improvement_per_1k_source_pwl"] == pytest.approx(0.25)
+    assert fields["strict_phase_promotion_eval_improvement_per_1k_transient_points"] == pytest.approx(1.0)
+
+
+def test_fast_online_promotion_efficiency_fields_handle_missing_probe_accuracy() -> None:
+    fields = fast_sweep.promotion_efficiency_fields(
+        initial_eval_accuracy=0.1,
+        promotion_probe_eval_accuracy=None,
+        promotion_updates=10,
+        promotion_costs={
+            "strict_phase_promotion_total_source_pwl_points": 2000,
+            "strict_phase_promotion_estimated_transient_points": 500,
+        },
+    )
+
+    assert fields["promotion_probe_eval_improvement"] is None
+    assert fields["strict_phase_promotion_source_pwl_points_per_update"] == pytest.approx(200.0)
+    assert fields["strict_phase_promotion_eval_improvement_per_1k_source_pwl"] is None
+    assert fields["strict_phase_promotion_eval_improvement_per_1k_transient_points"] is None
 
 
 def test_fast_online_variant_sweep_prefers_budget_feasible_promotion_variant() -> None:

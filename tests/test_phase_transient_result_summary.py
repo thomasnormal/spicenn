@@ -94,7 +94,8 @@ def test_phase_summary_row_keeps_execution_contract_and_backend_fields(tmp_path:
                 "phase_clock_source_count": 5,
                 "phase_clock_source_pwl_count": 0,
                 "phase_clock_source_pwl_points": 0,
-                "total_source_pwl_points": 25478,
+                "control_source_pwl_points": 4,
+                "total_source_pwl_points": 25482,
                 "phase_wall_time_s": 36.1,
                 "eval_wall_time_s": 9.5,
                 "spice_phase_eval_accuracy": 0.12,
@@ -156,7 +157,8 @@ def test_phase_summary_row_keeps_execution_contract_and_backend_fields(tmp_path:
     assert row["phase_clock_source_count"] == 5
     assert row["phase_clock_source_pwl_count"] == 0
     assert row["phase_clock_source_pwl_points"] == 0
-    assert row["total_source_pwl_points"] == 25478
+    assert row["control_source_pwl_points"] == 4
+    assert row["total_source_pwl_points"] == 25482
 
 
 def test_phase_summary_row_derives_total_source_points_for_older_summaries(tmp_path: Path) -> None:
@@ -169,6 +171,7 @@ def test_phase_summary_row_derives_total_source_points_for_older_summaries(tmp_p
                 "architecture": "phase_resolved_transient_local_feature_readout",
                 "sample_source_pwl_points": 25,
                 "phase_clock_source_pwl_points": 15,
+                "control_source_pwl_points": 7,
             }
         )
         + "\n"
@@ -177,7 +180,8 @@ def test_phase_summary_row_derives_total_source_points_for_older_summaries(tmp_p
     row = module.row_from_summary(summary_path)
 
     assert row["phase_clock_mode"] == "pwl"
-    assert row["total_source_pwl_points"] == 40
+    assert row["control_source_pwl_points"] == 7
+    assert row["total_source_pwl_points"] == 47
 
 
 def test_discovery_filters_to_phase_transient_summaries_and_prefers_tables(tmp_path: Path) -> None:

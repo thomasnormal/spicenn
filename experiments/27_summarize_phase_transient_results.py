@@ -102,6 +102,7 @@ FIELDS = [
     "phase_clock_source_count",
     "phase_clock_source_pwl_count",
     "phase_clock_source_pwl_points",
+    "control_source_pwl_points",
     "total_source_pwl_points",
     "phase_wall_time_s",
     "eval_wall_time_s",
@@ -142,9 +143,10 @@ def derived_total_source_pwl_points(data: dict[str, Any]) -> int | None:
         return total
     sample_points = data.get("sample_source_pwl_points")
     clock_points = data.get("phase_clock_source_pwl_points")
+    control_points = data.get("control_source_pwl_points", 0)
     if sample_points is None or clock_points is None:
         return None
-    return int(sample_points) + int(clock_points)
+    return int(sample_points) + int(clock_points) + int(control_points or 0)
 
 
 def row_from_summary(path: Path) -> dict[str, Any]:
@@ -237,6 +239,7 @@ def row_from_summary(path: Path) -> dict[str, Any]:
         "phase_clock_source_count": data.get("phase_clock_source_count"),
         "phase_clock_source_pwl_count": data.get("phase_clock_source_pwl_count"),
         "phase_clock_source_pwl_points": data.get("phase_clock_source_pwl_points"),
+        "control_source_pwl_points": data.get("control_source_pwl_points"),
         "total_source_pwl_points": derived_total_source_pwl_points(data),
         "phase_wall_time_s": data.get("phase_wall_time_s"),
         "eval_wall_time_s": data.get("eval_wall_time_s"),
@@ -406,6 +409,7 @@ def print_markdown(rows: list[dict[str, Any]]) -> None:
         "sample_source_pwl_points",
         "target_source_pwl_points",
         "phase_clock_source_pwl_points",
+        "control_source_pwl_points",
         "total_source_pwl_points",
         "phase_wall_time_s",
     ]

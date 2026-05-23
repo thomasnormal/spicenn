@@ -550,7 +550,7 @@ def test_fast_online_strict_promotion_cost_fields_respect_pwl_clock_override() -
     assert fields["strict_phase_promotion_output_vector_count"] > 0
     assert fields["strict_phase_promotion_output_vector_budget_met"] is True
     assert fields["strict_phase_promotion_estimated_transient_points"] == 34
-    assert fields["strict_phase_promotion_phase_clock_source_pwl_points"] == 50
+    assert fields["strict_phase_promotion_phase_clock_source_pwl_points"] == 45
     assert fields["strict_phase_promotion_control_source_pwl_points"] == 0
     assert fields["strict_phase_promotion_total_source_pwl_points"] > fields["strict_phase_promotion_sample_source_pwl_points"]
     assert fields["strict_phase_promotion_source_pwl_budget_met"] is False

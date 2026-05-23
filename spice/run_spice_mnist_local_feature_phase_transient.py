@@ -48,7 +48,6 @@ def phase_pwl(pulses: list[tuple[float, float]], t_stop: float, edge: float) -> 
         points.append((t_on, 1.0))
         points.append((t_off, 1.0))
         points.append((min(t_stop, t_off + edge), 0.0))
-    points.append((t_stop, 0.0))
     cleaned: list[tuple[float, float]] = []
     for t, val in sorted(points):
         if cleaned and abs(cleaned[-1][0] - t) < 1e-18:
@@ -417,7 +416,6 @@ def sample_source_pwl(values: np.ndarray, sample_starts: list[float], t_stop: fl
         t = sample_starts[s]
         points.append((max(0.0, t - edge), prev))
         points.append((t, current))
-    points.append((t_stop, float(values[-1])))
     cleaned: list[tuple[float, float]] = []
     for t, val in points:
         if cleaned and abs(cleaned[-1][0] - t) < 1e-18:

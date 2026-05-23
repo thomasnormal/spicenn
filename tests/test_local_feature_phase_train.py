@@ -211,7 +211,7 @@ def test_phase_transient_sample_source_pwl_skips_unchanged_values() -> None:
         0.1e-9,
     )
 
-    assert source == "PWL(0 0 2.9e-09 0 3e-09 1 4.9e-09 1 5e-09 0 6e-09 0)"
+    assert source == "PWL(0 0 2.9e-09 0 3e-09 1 4.9e-09 1 5e-09 0)"
 
 
 def test_phase_transient_sample_source_pwl_uses_dc_for_constant_values() -> None:
@@ -250,7 +250,7 @@ def test_phase_transient_source_complexity_counts_sample_and_clock_sources() -> 
     assert complexity["sample_source_pwl_count"] == 3
     assert complexity["pixel_source_dc_count"] == 1
     assert complexity["target_source_dc_count"] == 0
-    assert complexity["sample_source_pwl_points"] == 12
+    assert complexity["sample_source_pwl_points"] == 9
     assert complexity["phase_clock_source_count"] == 5
     assert complexity["phase_clock_source_pwl_count"] == 5
     assert complexity["phase_clock_source_pwl_points"] > 0

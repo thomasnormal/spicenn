@@ -400,6 +400,7 @@ def test_fast_online_variant_sweep_row_reports_best_probe_and_improvement() -> N
     assert command[command.index("--target-source-mode") + 1] == "label"
     assert command[command.index("--hidden-preactivation-mode") + 1] == "inline"
     assert command[command.index("--hidden-activation-mode") + 1] == "stored"
+    assert command[command.index("--score-state-mode") + 1] == "stored"
     assert command[command.index("--score-calculation-mode") + 1] == "inline"
     assert command[command.index("--output-rail-mode") + 1] == "inline"
     assert command[command.index("--output-delta-mode") + 1] == "node"
@@ -432,6 +433,7 @@ def test_fast_online_variant_sweep_row_reports_best_probe_and_improvement() -> N
     assert row["strict_phase_promotion_hidden_activation_mode"] == "stored"
     assert row["strict_phase_promotion_hidden_activation_state_count"] == 1
     assert row["strict_phase_promotion_hidden_delta_state_count"] == 1
+    assert row["strict_phase_promotion_score_state_mode"] == "stored"
     assert row["strict_phase_promotion_score_state_count"] == 10
     assert row["strict_phase_promotion_gradient_accumulator_state_count"] == 0
     assert row["strict_phase_promotion_temporary_state_count"] == 22
@@ -548,6 +550,7 @@ def test_fast_online_strict_promotion_defaults_to_pwl_clock_and_efficient_deck_s
     assert command[command.index("--target-source-mode") + 1] == "label"
     assert command[command.index("--hidden-preactivation-mode") + 1] == "inline"
     assert command[command.index("--hidden-activation-mode") + 1] == "stored"
+    assert command[command.index("--score-state-mode") + 1] == "stored"
     assert command[command.index("--score-calculation-mode") + 1] == "inline"
     assert command[command.index("--output-rail-mode") + 1] == "inline"
     assert command[command.index("--output-delta-mode") + 1] == "node"
@@ -559,6 +562,7 @@ def test_fast_online_strict_promotion_defaults_to_pwl_clock_and_efficient_deck_s
     assert fields["strict_phase_promotion_hidden_activation_mode"] == "stored"
     assert fields["strict_phase_promotion_hidden_activation_state_count"] == 1
     assert fields["strict_phase_promotion_hidden_delta_state_count"] == 1
+    assert fields["strict_phase_promotion_score_state_mode"] == "stored"
     assert fields["strict_phase_promotion_score_state_count"] == 10
     assert fields["strict_phase_promotion_gradient_accumulator_state_count"] == 0
     assert fields["strict_phase_promotion_temporary_state_count"] == 22
@@ -629,6 +633,7 @@ def test_fast_online_strict_promotion_sample_edge_is_projected_separately() -> N
     assert finite["strict_phase_promotion_hidden_preactivation_source_count"] == 1
     assert finite["strict_phase_promotion_hidden_activation_state_count"] == 1
     assert finite["strict_phase_promotion_hidden_delta_state_count"] == 1
+    assert finite["strict_phase_promotion_score_state_mode"] == "stored"
     assert finite["strict_phase_promotion_score_state_count"] == 10
     assert finite["strict_phase_promotion_temporary_state_count"] == 22
     assert finite["strict_phase_promotion_score_calculation_source_count"] == 10
@@ -641,6 +646,7 @@ def test_fast_online_strict_promotion_sample_edge_is_projected_separately() -> N
     assert sharp["strict_phase_promotion_hidden_activation_mode"] == "stored"
     assert sharp["strict_phase_promotion_hidden_activation_state_count"] == 1
     assert sharp["strict_phase_promotion_hidden_delta_state_count"] == 1
+    assert sharp["strict_phase_promotion_score_state_mode"] == "stored"
     assert sharp["strict_phase_promotion_score_state_count"] == 10
     assert sharp["strict_phase_promotion_temporary_state_count"] == 12
     assert sharp["strict_phase_promotion_score_calculation_mode"] == "inline"
@@ -747,6 +753,7 @@ def test_fast_online_strict_promotion_cost_fields_respect_pwl_clock_override() -
     assert fields["strict_phase_promotion_hidden_activation_mode"] == "stored"
     assert fields["strict_phase_promotion_hidden_activation_state_count"] == 1
     assert fields["strict_phase_promotion_hidden_delta_state_count"] == 1
+    assert fields["strict_phase_promotion_score_state_mode"] == "stored"
     assert fields["strict_phase_promotion_score_state_count"] == 10
     assert fields["strict_phase_promotion_gradient_accumulator_state_count"] == 0
     assert fields["strict_phase_promotion_temporary_state_count"] == 22

@@ -53,6 +53,7 @@ def test_phase_summary_row_keeps_execution_contract_and_backend_fields(tmp_path:
                 "update_mode": "direct",
                 "phase_clock_mode": "analytic",
                 "input_source_mode": "rom",
+                "input_quantization_levels": 8,
                 "sample_edge_s": 5e-12,
                 "hidden_preactivation_mode": "inline",
                 "hidden_preactivation_source_count": 32,
@@ -171,6 +172,7 @@ def test_phase_summary_row_keeps_execution_contract_and_backend_fields(tmp_path:
     assert row["softmax_error_centering"] == "mean"
     assert row["phase_clock_mode"] == "analytic"
     assert row["input_source_mode"] == "rom"
+    assert row["input_quantization_levels"] == 8
     assert row["sample_edge_s"] == 5e-12
     assert row["robust_sample_transitions"] is True
     assert row["hidden_preactivation_mode"] == "inline"

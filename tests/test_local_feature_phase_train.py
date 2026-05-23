@@ -492,7 +492,7 @@ def test_phase_transient_sample_source_pwl_supports_sharp_sample_steps() -> None
         0.0,
     )
 
-    assert source == "PWL(0 0 3e-09 1 5e-09 0)"
+    assert source == "PWL(0 0 3e-09 0 3e-09 1 5e-09 1 5e-09 0)"
 
 
 def test_phase_transient_sample_source_pwl_rejects_mismatched_schedule() -> None:
@@ -530,7 +530,7 @@ def test_phase_transient_source_complexity_counts_sample_and_clock_sources() -> 
     assert complexity["total_source_pwl_points"] == complexity["sample_source_pwl_points"] + complexity["phase_clock_source_pwl_points"]
 
 
-def test_phase_transient_sample_edge_reduces_sample_pwl_without_changing_clock_cost() -> None:
+def test_phase_transient_sample_edge_zero_keeps_step_semantics_without_changing_clock_cost() -> None:
     x = np.array(
         [
             [0.0, 0.25],
@@ -567,7 +567,7 @@ def test_phase_transient_sample_edge_reduces_sample_pwl_without_changing_clock_c
         sample_edge=0.0,
     )
 
-    assert sharp["sample_source_pwl_points"] < finite["sample_source_pwl_points"]
+    assert sharp["sample_source_pwl_points"] == finite["sample_source_pwl_points"]
     assert sharp["phase_clock_source_pwl_points"] == finite["phase_clock_source_pwl_points"]
     assert sharp["total_source_count"] == finite["total_source_count"]
 
@@ -1348,7 +1348,7 @@ def test_phase_variant_sweep_pairs_only_expand_clipped_activations() -> None:
 
 
 def test_phase_variant_sweep_generated_defaults_use_efficient_deck_shape() -> None:
-    assert phase_variant_sweep.DEFAULT_SAMPLE_EDGE == pytest.approx(0.0)
+    assert phase_variant_sweep.DEFAULT_SAMPLE_EDGE is None
     assert phase_variant_sweep.DEFAULT_HIDDEN_PREACTIVATION_MODE == "inline"
     assert phase_variant_sweep.DEFAULT_HIDDEN_ACTIVATION_MODE == "stored"
     assert phase_variant_sweep.DEFAULT_HIDDEN_DELTA_MODE == "stored"

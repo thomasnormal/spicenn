@@ -14,7 +14,7 @@ from run_spice_sweep import ROOT
 
 
 CLIPPED_ACTIVATIONS = {"clipped-relu", "clipped_relu", "diff-clipped-relu", "differential-clipped-relu", "diff_clipped_relu"}
-DEFAULT_SAMPLE_EDGE = 0.0
+DEFAULT_SAMPLE_EDGE = None
 DEFAULT_HIDDEN_PREACTIVATION_MODE = "inline"
 DEFAULT_HIDDEN_ACTIVATION_MODE = "stored"
 DEFAULT_HIDDEN_DELTA_MODE = "stored"

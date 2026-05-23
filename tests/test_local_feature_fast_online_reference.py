@@ -405,7 +405,7 @@ def test_fast_online_variant_sweep_row_reports_best_probe_and_improvement() -> N
     assert command[command.index("--score-calculation-mode") + 1] == "inline"
     assert command[command.index("--output-rail-mode") + 1] == "inline"
     assert command[command.index("--output-delta-mode") + 1] == "node"
-    assert command[command.index("--sample-edge") + 1] == "0.0"
+    assert "--sample-edge" not in command
     assert command[command.index("--max-output-vectors") + 1] == "0"
     assert command[command.index("--max-sample-sources") + 1] == "0"
     assert command[command.index("--max-total-sources") + 1] == "0"
@@ -428,7 +428,7 @@ def test_fast_online_variant_sweep_row_reports_best_probe_and_improvement() -> N
     assert row["strict_phase_promotion_max_auxiliary_algebraic_sources"] == 0
     assert row["strict_phase_promotion_phase_clock_mode"] == "analytic"
     assert row["strict_phase_promotion_target_source_mode"] == "label"
-    assert row["strict_phase_promotion_sample_edge_s"] == pytest.approx(0.0)
+    assert row["strict_phase_promotion_sample_edge_s"] == pytest.approx(5e-12)
     assert row["strict_phase_promotion_hidden_preactivation_mode"] == "inline"
     assert row["strict_phase_promotion_hidden_preactivation_source_count"] == 0
     assert row["strict_phase_promotion_hidden_activation_mode"] == "stored"
@@ -557,9 +557,9 @@ def test_fast_online_strict_promotion_defaults_to_pwl_clock_and_efficient_deck_s
     assert command[command.index("--score-calculation-mode") + 1] == "inline"
     assert command[command.index("--output-rail-mode") + 1] == "inline"
     assert command[command.index("--output-delta-mode") + 1] == "node"
-    assert command[command.index("--sample-edge") + 1] == "0.0"
+    assert "--sample-edge" not in command
     assert fields["strict_phase_promotion_phase_clock_mode"] == "pwl"
-    assert fields["strict_phase_promotion_sample_edge_s"] == pytest.approx(0.0)
+    assert fields["strict_phase_promotion_sample_edge_s"] == pytest.approx(5e-12)
     assert fields["strict_phase_promotion_hidden_preactivation_mode"] == "inline"
     assert fields["strict_phase_promotion_hidden_preactivation_source_count"] == 0
     assert fields["strict_phase_promotion_hidden_activation_mode"] == "stored"
@@ -664,8 +664,8 @@ def test_fast_online_strict_promotion_sample_edge_is_projected_separately() -> N
     assert sharp["strict_phase_promotion_auxiliary_algebraic_source_count"] == 0
     assert sharp["strict_phase_promotion_auxiliary_algebraic_source_budget_met"] is True
     assert sharp["strict_phase_promotion_phase_clock_source_pwl_points"] == finite["strict_phase_promotion_phase_clock_source_pwl_points"]
-    assert sharp["strict_phase_promotion_sample_source_pwl_points"] < finite["strict_phase_promotion_sample_source_pwl_points"]
-    assert sharp["strict_phase_promotion_total_source_pwl_points"] < finite["strict_phase_promotion_total_source_pwl_points"]
+    assert sharp["strict_phase_promotion_sample_source_pwl_points"] == finite["strict_phase_promotion_sample_source_pwl_points"]
+    assert sharp["strict_phase_promotion_total_source_pwl_points"] == finite["strict_phase_promotion_total_source_pwl_points"]
 
 
 def test_fast_online_strict_promotion_timeout_auto_scales_with_updates() -> None:
@@ -735,7 +735,7 @@ def test_fast_online_strict_promotion_cost_fields_respect_pwl_clock_override() -
         promotion_edge=5e-12,
         promotion_transient_step=200e-12,
         promotion_max_transient_points=100,
-        promotion_max_source_pwl_points=50,
+        promotion_max_source_pwl_points=51,
         promotion_max_sample_sources=1,
         promotion_max_total_sources=17,
         promotion_max_auxiliary_algebraic_sources=0,
@@ -753,7 +753,7 @@ def test_fast_online_strict_promotion_cost_fields_respect_pwl_clock_override() -
     fields = fast_sweep.strict_phase_promotion_cost_fields(args, variant, x_train, y_train)
 
     assert fields["strict_phase_promotion_phase_clock_mode"] == "pwl"
-    assert fields["strict_phase_promotion_sample_edge_s"] == pytest.approx(0.0)
+    assert fields["strict_phase_promotion_sample_edge_s"] == pytest.approx(5e-12)
     assert fields["strict_phase_promotion_hidden_preactivation_mode"] == "inline"
     assert fields["strict_phase_promotion_hidden_preactivation_source_count"] == 0
     assert fields["strict_phase_promotion_hidden_activation_mode"] == "stored"

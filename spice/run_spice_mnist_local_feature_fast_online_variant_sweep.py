@@ -35,7 +35,7 @@ from run_spice_mnist_train import load_mnist_sequence
 from run_spice_sweep import ROOT
 
 DEFAULT_PROMOTION_PHASE_CLOCK_MODE = "pwl"
-DEFAULT_PROMOTION_SAMPLE_EDGE = 0.0
+DEFAULT_PROMOTION_SAMPLE_EDGE = None
 DEFAULT_PROMOTION_HIDDEN_PREACTIVATION_MODE = "inline"
 DEFAULT_PROMOTION_HIDDEN_ACTIVATION_MODE = "stored"
 DEFAULT_PROMOTION_HIDDEN_DELTA_MODE = "stored"
@@ -1059,7 +1059,7 @@ def main() -> None:
         default=DEFAULT_PROMOTION_SAMPLE_EDGE,
         help=(
             "Sample/label/LR-control PWL transition edge for generated strict promotion commands and "
-            "cost projections. The default 0 emits sharp sample steps while phase clocks keep finite edges."
+            "cost projections. The default uses the phase-clock edge for robust finite sample transitions."
         ),
     )
     ap.add_argument("--promotion-settle-ratio", type=float, default=20.0)

@@ -912,7 +912,7 @@ def sample_source_pwl(values: np.ndarray, sample_starts: list[float], t_stop: fl
         points.append((t, current))
     cleaned: list[tuple[float, float]] = []
     for t, val in points:
-        if cleaned and abs(cleaned[-1][0] - t) < 1e-18:
+        if cleaned and abs(cleaned[-1][0] - t) < 1e-18 and cleaned[-1][1] == val:
             cleaned[-1] = (t, val)
         else:
             cleaned.append((t, val))

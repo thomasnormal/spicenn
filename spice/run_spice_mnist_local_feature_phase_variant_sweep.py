@@ -16,6 +16,7 @@ from run_spice_sweep import ROOT
 CLIPPED_ACTIVATIONS = {"clipped-relu", "clipped_relu", "diff-clipped-relu", "differential-clipped-relu", "diff_clipped_relu"}
 DEFAULT_SAMPLE_EDGE = 0.0
 DEFAULT_HIDDEN_PREACTIVATION_MODE = "inline"
+DEFAULT_HIDDEN_ACTIVATION_MODE = "stored"
 DEFAULT_SCORE_CALCULATION_MODE = "inline"
 DEFAULT_OUTPUT_RAIL_MODE = "inline"
 DEFAULT_OUTPUT_DELTA_MODE = "node"
@@ -183,6 +184,8 @@ def build_variant_command(
         args.readout_class_centering,
         "--hidden-preactivation-mode",
         args.hidden_preactivation_mode,
+        "--hidden-activation-mode",
+        getattr(args, "hidden_activation_mode", DEFAULT_HIDDEN_ACTIVATION_MODE),
         "--score-calculation-mode",
         args.score_calculation_mode,
         "--output-rail-mode",
@@ -369,6 +372,7 @@ def main() -> None:
     ap.add_argument("--synapse-clips", default="")
     ap.add_argument("--readout-class-centering", choices=["none", "mean"], default="none")
     ap.add_argument("--hidden-preactivation-mode", choices=["node", "inline"], default=DEFAULT_HIDDEN_PREACTIVATION_MODE)
+    ap.add_argument("--hidden-activation-mode", choices=["stored", "inline"], default=DEFAULT_HIDDEN_ACTIVATION_MODE)
     ap.add_argument("--score-calculation-mode", choices=["node", "inline"], default=DEFAULT_SCORE_CALCULATION_MODE)
     ap.add_argument("--output-rail-mode", choices=["node", "inline"], default=DEFAULT_OUTPUT_RAIL_MODE)
     ap.add_argument("--output-delta-mode", choices=["node", "inline"], default=DEFAULT_OUTPUT_DELTA_MODE)

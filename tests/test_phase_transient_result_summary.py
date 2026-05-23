@@ -55,6 +55,8 @@ def test_phase_summary_row_keeps_execution_contract_and_backend_fields(tmp_path:
                 "sample_edge_s": 0.0,
                 "hidden_preactivation_mode": "inline",
                 "hidden_preactivation_source_count": 32,
+                "hidden_activation_mode": "inline",
+                "hidden_activation_state_count": 0,
                 "score_calculation_mode": "inline",
                 "score_calculation_source_count": 0,
                 "output_rail_mode": "inline",
@@ -164,6 +166,8 @@ def test_phase_summary_row_keeps_execution_contract_and_backend_fields(tmp_path:
     assert row["sample_edge_s"] == 0.0
     assert row["hidden_preactivation_mode"] == "inline"
     assert row["hidden_preactivation_source_count"] == 32
+    assert row["hidden_activation_mode"] == "inline"
+    assert row["hidden_activation_state_count"] == 0
     assert row["score_calculation_mode"] == "inline"
     assert row["score_calculation_source_count"] == 0
     assert row["output_rail_mode"] == "inline"

@@ -16,6 +16,7 @@ from run_spice_mnist_local_block_batch_op_train import block_indices
 from run_spice_mnist_local_feature_phase_transient import (
     auxiliary_algebraic_source_count,
     estimate_transient_points,
+    hidden_activation_state_count,
     hidden_preactivation_source_count,
     lr_schedule_values,
     make_phase_schedule,
@@ -33,6 +34,7 @@ from run_spice_sweep import ROOT
 DEFAULT_PROMOTION_PHASE_CLOCK_MODE = "pwl"
 DEFAULT_PROMOTION_SAMPLE_EDGE = 0.0
 DEFAULT_PROMOTION_HIDDEN_PREACTIVATION_MODE = "inline"
+DEFAULT_PROMOTION_HIDDEN_ACTIVATION_MODE = "stored"
 DEFAULT_PROMOTION_SCORE_CALCULATION_MODE = "inline"
 DEFAULT_PROMOTION_OUTPUT_RAIL_MODE = "inline"
 DEFAULT_PROMOTION_OUTPUT_DELTA_MODE = "node"
@@ -667,6 +669,8 @@ def strict_phase_promotion_command(args: argparse.Namespace, variant: dict[str, 
         args.readout_class_centering,
         "--hidden-preactivation-mode",
         getattr(args, "promotion_hidden_preactivation_mode", DEFAULT_PROMOTION_HIDDEN_PREACTIVATION_MODE),
+        "--hidden-activation-mode",
+        getattr(args, "promotion_hidden_activation_mode", DEFAULT_PROMOTION_HIDDEN_ACTIVATION_MODE),
         "--score-calculation-mode",
         getattr(args, "promotion_score_calculation_mode", DEFAULT_PROMOTION_SCORE_CALCULATION_MODE),
         "--output-rail-mode",
@@ -735,6 +739,11 @@ def strict_phase_cost_fields_for_updates(
         "promotion_hidden_preactivation_mode",
         DEFAULT_PROMOTION_HIDDEN_PREACTIVATION_MODE,
     )
+    hidden_activation_mode = getattr(
+        args,
+        "promotion_hidden_activation_mode",
+        DEFAULT_PROMOTION_HIDDEN_ACTIVATION_MODE,
+    )
     score_calculation_mode = getattr(
         args,
         "promotion_score_calculation_mode",
@@ -793,6 +802,11 @@ def strict_phase_cost_fields_for_updates(
         len(blocks),
         channels,
     )
+    hidden_activation_states = hidden_activation_state_count(
+        hidden_activation_mode,
+        len(blocks),
+        channels,
+    )
     score_sources = score_calculation_source_count(score_calculation_mode, 10)
     output_sources = output_rail_source_count(output_rail_mode, 10)
     output_delta_states = output_delta_state_count(output_delta_mode, 10)
@@ -807,6 +821,8 @@ def strict_phase_cost_fields_for_updates(
         f"{prefix}_sample_edge_s": edge if sample_edge is None else sample_edge,
         f"{prefix}_hidden_preactivation_mode": hidden_preactivation_mode,
         f"{prefix}_hidden_preactivation_source_count": hidden_sources,
+        f"{prefix}_hidden_activation_mode": hidden_activation_mode,
+        f"{prefix}_hidden_activation_state_count": hidden_activation_states,
         f"{prefix}_score_calculation_mode": score_calculation_mode,
         f"{prefix}_score_calculation_source_count": score_sources,
         f"{prefix}_output_rail_mode": output_rail_mode,
@@ -1039,6 +1055,11 @@ def main() -> None:
         "--promotion-hidden-preactivation-mode",
         choices=["node", "inline"],
         default=DEFAULT_PROMOTION_HIDDEN_PREACTIVATION_MODE,
+    )
+    ap.add_argument(
+        "--promotion-hidden-activation-mode",
+        choices=["stored", "inline"],
+        default=DEFAULT_PROMOTION_HIDDEN_ACTIVATION_MODE,
     )
     ap.add_argument(
         "--promotion-score-calculation-mode",

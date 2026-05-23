@@ -173,6 +173,14 @@ def hidden_preactivation_source_count(mode: str, blocks: int, channels: int) -> 
     raise ValueError("hidden_preactivation_mode must be 'node' or 'inline'")
 
 
+def hidden_activation_state_count(mode: str, blocks: int, channels: int) -> int:
+    if mode == "stored":
+        return int(blocks) * int(channels)
+    if mode == "inline":
+        return 0
+    raise ValueError("hidden_activation_mode must be 'stored' or 'inline'")
+
+
 def score_calculation_source_count(mode: str, classes: int) -> int:
     if mode == "node":
         return int(classes)
@@ -302,30 +310,44 @@ def phase_state_descriptions(
     update_mode: str,
     output_bias_state_frozen: bool = False,
     output_delta_mode: str = "node",
+    hidden_activation_mode: str = "stored",
 ) -> dict[str, str]:
     if output_delta_mode not in {"node", "inline"}:
         raise ValueError("output_delta_mode must be 'node' or 'inline'")
+    if hidden_activation_mode not in {"stored", "inline"}:
+        raise ValueError("hidden_activation_mode must be 'stored' or 'inline'")
+    stored_feature_prefix = (
+        "feature activations, "
+        if hidden_activation_mode == "stored"
+        else ""
+    )
+    inline_feature_note = (
+        ""
+        if hidden_activation_mode == "stored"
+        else "; hidden activations are inline expressions"
+    )
     if update_mode == "phased":
         if output_delta_mode == "node":
             temporary = (
-                "feature activations, class scores, class deltas, hidden/backward feature deltas, "
-                "and gradient accumulators are capacitor voltages"
+                f"{stored_feature_prefix}class scores, class deltas, hidden/backward feature deltas, "
+                f"and gradient accumulators are capacitor voltages{inline_feature_note}"
             )
         else:
             temporary = (
-                "feature activations, class scores, hidden/backward feature deltas, and gradient accumulators "
-                "are capacitor voltages; class deltas are inline expressions"
+                f"{stored_feature_prefix}class scores, hidden/backward feature deltas, and gradient accumulators "
+                f"are capacitor voltages; class deltas are inline expressions{inline_feature_note}"
             )
     elif update_mode == "direct":
         if output_delta_mode == "node":
             temporary = (
-                "feature activations, class scores, class deltas, and hidden/backward feature deltas "
-                "are capacitor voltages; weights are updated directly during each per-sample update phase"
+                f"{stored_feature_prefix}class scores, class deltas, and hidden/backward feature deltas "
+                f"are capacitor voltages{inline_feature_note}; weights are updated directly during each per-sample update phase"
             )
         else:
             temporary = (
-                "feature activations, class scores, and hidden/backward feature deltas are capacitor voltages; "
-                "class deltas are inline expressions; weights are updated directly during each per-sample update phase"
+                f"{stored_feature_prefix}class scores and hidden/backward feature deltas are capacitor voltages; "
+                f"class deltas are inline expressions{inline_feature_note}; "
+                "weights are updated directly during each per-sample update phase"
             )
     else:
         raise ValueError("update_mode must be 'phased' or 'direct'")
@@ -352,6 +374,8 @@ def phase_deck_mode_fields(
     sample_edge: float,
     hidden_preactivation_mode: str,
     hidden_preactivation_source_count: int,
+    hidden_activation_mode: str = "stored",
+    hidden_activation_state_count: int | None = None,
     score_calculation_mode: str,
     score_calculation_source_count: int,
     output_rail_mode: str,
@@ -370,6 +394,12 @@ def phase_deck_mode_fields(
         "sample_edge_s": sample_edge,
         "hidden_preactivation_mode": hidden_preactivation_mode,
         "hidden_preactivation_source_count": hidden_preactivation_source_count,
+        "hidden_activation_mode": hidden_activation_mode,
+        "hidden_activation_state_count": (
+            hidden_activation_state_count
+            if hidden_activation_state_count is not None
+            else None
+        ),
         "score_calculation_mode": score_calculation_mode,
         "score_calculation_source_count": score_calculation_source_count,
         "output_rail_mode": output_rail_mode,
@@ -453,6 +483,8 @@ def phase_preflight_summary(
     target_source_mode: str,
     hidden_preactivation_mode: str,
     hidden_preactivation_source_count: int,
+    hidden_activation_mode: str,
+    hidden_activation_state_count: int,
     score_calculation_mode: str,
     score_calculation_source_count: int,
     output_rail_mode: str,
@@ -527,6 +559,8 @@ def phase_preflight_summary(
             sample_edge=sample_edge,
             hidden_preactivation_mode=hidden_preactivation_mode,
             hidden_preactivation_source_count=hidden_preactivation_source_count,
+            hidden_activation_mode=hidden_activation_mode,
+            hidden_activation_state_count=hidden_activation_state_count,
             score_calculation_mode=score_calculation_mode,
             score_calculation_source_count=score_calculation_source_count,
             output_rail_mode=output_rail_mode,
@@ -558,7 +592,7 @@ def phase_preflight_summary(
         **cost_fields,
         "phase_s": phase,
         "settle_ratio": settle_ratio,
-        **phase_state_descriptions(update_mode, output_bias_state_frozen, output_delta_mode),
+        **phase_state_descriptions(update_mode, output_bias_state_frozen, output_delta_mode, hidden_activation_mode),
     }
 
 
@@ -824,7 +858,7 @@ def local_activation_expr(
 
 def local_activation_deriv_expr(
     preactivation_expr: str,
-    activation_node: str,
+    activation_ref: str,
     local_activation: str,
     relu_clip: float,
     activation_derivative: str = "exact",
@@ -833,9 +867,14 @@ def local_activation_deriv_expr(
     relu_leak: float = 0.01,
     softplus_beta: float = 10.0,
 ) -> str:
+    activation_expr = (
+        activation_ref
+        if activation_ref.startswith(("V(", "("))
+        else f"V({activation_ref})"
+    )
     return block_local_activation_deriv_expr(
         preactivation_expr,
-        f"V({activation_node})",
+        activation_expr,
         local_activation,
         relu_clip,
         activation_derivative,
@@ -1106,6 +1145,7 @@ def make_phase_transient_netlist(
     include_output_y_vectors: bool = True,
     sample_edge: float | None = None,
     hidden_preactivation_mode: str = "node",
+    hidden_activation_mode: str = "stored",
     score_calculation_mode: str = "node",
     output_rail_mode: str = "node",
     output_delta_mode: str = "node",
@@ -1149,6 +1189,8 @@ def make_phase_transient_netlist(
         raise ValueError("target_source_mode must be 'rails' or 'label'")
     if hidden_preactivation_mode not in {"node", "inline"}:
         raise ValueError("hidden_preactivation_mode must be 'node' or 'inline'")
+    if hidden_activation_mode not in {"stored", "inline"}:
+        raise ValueError("hidden_activation_mode must be 'stored' or 'inline'")
     if score_calculation_mode not in {"node", "inline"}:
         raise ValueError("score_calculation_mode must be 'node' or 'inline'")
     if output_rail_mode not in {"node", "inline"}:
@@ -1183,7 +1225,12 @@ def make_phase_transient_netlist(
         sample_drive(f"Vpix{i}", f"pix{i}", x_batch[:, i], sample_starts, t_stop, sample_transition_edge, elide_dc=True)
         for i in range(x_batch.shape[1])
     ]
-    state_descriptions = phase_state_descriptions(update_mode, output_bias_state_frozen, output_delta_mode)
+    state_descriptions = phase_state_descriptions(
+        update_mode,
+        output_bias_state_frozen,
+        output_delta_mode,
+        hidden_activation_mode,
+    )
     lines = [
         "* Phase-resolved transient local-feature/readout training deck.",
         f"* {state_descriptions['persistent_state']}.",
@@ -1254,7 +1301,8 @@ def make_phase_transient_netlist(
                 lines.append(f"Rhb{b}_{c} hb{b}_{c} 0 {{RLEAK}}")
             if not direct_update and local_updates_enabled:
                 lines.append(f"Cghb{b}_{c} ghb{b}_{c} 0 {{CGRAD}} IC=0")
-            lines.append(f"Ch{b}_{c} h{b}_{c} 0 {{CSTATE}} IC=0")
+            if hidden_activation_mode == "stored":
+                lines.append(f"Ch{b}_{c} h{b}_{c} 0 {{CSTATE}} IC=0")
             lines.append(f"Cdh{b}_{c} dh{b}_{c} 0 {{CSTATE}} IC=0")
     for k in range(n_classes):
         for b in range(n_blocks):
@@ -1275,6 +1323,8 @@ def make_phase_transient_netlist(
             lines.append(f"Cd{k} d{k} 0 {{CSTATE}} IC=0")
     lines.append("")
     hidden_preactivation_exprs: dict[tuple[int, int], str] = {}
+    hidden_activation_refs: dict[tuple[int, int], str] = {}
+    hidden_activation_deriv_refs: dict[tuple[int, int], str] = {}
     for b, idxs in enumerate(blocks):
         for c in range(channels):
             terms = []
@@ -1292,7 +1342,13 @@ def make_phase_transient_netlist(
             else:
                 activation_input = f"({preactivation_expr})"
             h_calc = local_activation_expr(activation_input, local_activation, relu_clip, relu_leak, softplus_beta)
-            lines.append(f"Bstore_h{b}_{c} h{b}_{c} 0 I = V(pact)*{{CSTATE}}/{{TAU}}*(V(h{b}_{c})-({h_calc}))")
+            if hidden_activation_mode == "stored":
+                lines.append(f"Bstore_h{b}_{c} h{b}_{c} 0 I = V(pact)*{{CSTATE}}/{{TAU}}*(V(h{b}_{c})-({h_calc}))")
+                hidden_activation_refs[(b, c)] = f"V(h{b}_{c})"
+                hidden_activation_deriv_refs[(b, c)] = f"h{b}_{c}"
+            else:
+                hidden_activation_refs[(b, c)] = f"({h_calc})"
+                hidden_activation_deriv_refs[(b, c)] = f"({h_calc})"
     for k in range(n_classes):
         readout_exprs_for_class: dict[tuple[int, int], str] = {}
         for b in range(n_blocks):
@@ -1303,7 +1359,7 @@ def make_phase_transient_netlist(
                 ]
                 readout_exprs_for_class[(b, c)] = class_centered_expr(class_exprs, k, readout_class_centering)
         score_terms = [
-            f"{readout_exprs_for_class[(b, c)]}*V(h{b}_{c})"
+            f"{readout_exprs_for_class[(b, c)]}*{hidden_activation_refs[(b, c)]}"
             for b in range(n_blocks)
             for c in range(channels)
         ]
@@ -1387,7 +1443,7 @@ def make_phase_transient_netlist(
             )
             deriv = local_activation_deriv_expr(
                 f"V(ah{b}_{c})" if hidden_preactivation_mode == "node" else f"({hidden_preactivation_exprs[(b, c)]})",
-                f"h{b}_{c}",
+                hidden_activation_deriv_refs[(b, c)],
                 local_activation,
                 relu_clip,
                 activation_derivative,
@@ -1420,7 +1476,7 @@ def make_phase_transient_netlist(
     for k in range(n_classes):
         for b in range(n_blocks):
             for c in range(channels):
-                grad = f"{delta_refs[k]}*V(h{b}_{c})"
+                grad = f"{delta_refs[k]}*{hidden_activation_refs[(b, c)]}"
                 if direct_update and readout_updates_enabled:
                     lines.append(f"Bupd_v{k}_{b}_{c} v{k}_{b}_{c} 0 I = -V(pacc)*{{CW}}*{lr_control}*{{READOUT_UPDATE_SCALE}}/({{BS}}*{{TAREA}})*({grad})")
                 elif not direct_update and readout_updates_enabled:
@@ -2146,6 +2202,15 @@ def main() -> None:
         ),
     )
     ap.add_argument(
+        "--hidden-activation-mode",
+        choices=["stored", "inline"],
+        default="stored",
+        help=(
+            "Store hidden activations on phase-latched capacitors, or inline the activation expression "
+            "directly into score/readout-gradient paths for aggressive fused-cell experiments."
+        ),
+    )
+    ap.add_argument(
         "--score-calculation-mode",
         choices=["node", "inline"],
         default="node",
@@ -2398,6 +2463,11 @@ def main() -> None:
         len(blocks),
         args.channels,
     )
+    preflight_hidden_activation_state_count = hidden_activation_state_count(
+        args.hidden_activation_mode,
+        len(blocks),
+        args.channels,
+    )
     preflight_score_calculation_source_count = score_calculation_source_count(args.score_calculation_mode, 10)
     preflight_output_rail_source_count = output_rail_source_count(args.output_rail_mode, 10)
     preflight_output_delta_state_count = output_delta_state_count(args.output_delta_mode, 10)
@@ -2484,6 +2554,8 @@ def main() -> None:
                     target_source_mode=args.target_source_mode,
                     hidden_preactivation_mode=args.hidden_preactivation_mode,
                     hidden_preactivation_source_count=preflight_hidden_preactivation_source_count,
+                    hidden_activation_mode=args.hidden_activation_mode,
+                    hidden_activation_state_count=preflight_hidden_activation_state_count,
                     score_calculation_mode=args.score_calculation_mode,
                     score_calculation_source_count=preflight_score_calculation_source_count,
                     output_rail_mode=args.output_rail_mode,
@@ -2601,6 +2673,7 @@ def main() -> None:
         include_y_vectors,
         sample_edge,
         args.hidden_preactivation_mode,
+        args.hidden_activation_mode,
         args.score_calculation_mode,
         args.output_rail_mode,
         args.output_delta_mode,
@@ -2978,7 +3051,12 @@ def main() -> None:
     if probe_rows:
         pd.DataFrame(probe_rows).to_csv(probe_metrics_path, index=False)
     simulator_sidecars_cleaned = cleanup_simulator_sidecars(owned_netlists)
-    state_descriptions = phase_state_descriptions(args.update_mode, output_bias_state_frozen, args.output_delta_mode)
+    state_descriptions = phase_state_descriptions(
+        args.update_mode,
+        output_bias_state_frozen,
+        args.output_delta_mode,
+        args.hidden_activation_mode,
+    )
     execution_contract = phase_execution_contract_fields(
         args.batch_size,
         args.reference_mode,
@@ -3064,6 +3142,8 @@ def main() -> None:
             sample_edge=sample_edge,
             hidden_preactivation_mode=args.hidden_preactivation_mode,
             hidden_preactivation_source_count=preflight_hidden_preactivation_source_count,
+            hidden_activation_mode=args.hidden_activation_mode,
+            hidden_activation_state_count=preflight_hidden_activation_state_count,
             score_calculation_mode=args.score_calculation_mode,
             score_calculation_source_count=preflight_score_calculation_source_count,
             output_rail_mode=args.output_rail_mode,

@@ -257,6 +257,55 @@ def test_phase_transient_source_complexity_counts_sample_and_clock_sources() -> 
     assert complexity["total_source_pwl_points"] == complexity["sample_source_pwl_points"] + complexity["phase_clock_source_pwl_points"]
 
 
+def test_phase_transient_target_topology_strict_512_preflight_cost_regression() -> None:
+    if not (ROOT / "data/MNIST/raw/train-images-idx3-ubyte").exists():
+        pytest.skip("local MNIST cache is required for exact target-topology source-cost regression")
+    pytest.importorskip("torchvision")
+
+    x_train, y_train, _x_eval, _y_eval = mnist_train.load_mnist_sequence(512, 300, 10, seed=0)
+    phases, sample_starts, t_stop = phase_transient.make_phase_schedule(
+        update_batch_size=1,
+        updates=512,
+        phase=0.5e-9,
+        gap=0.05e-9,
+        direct_update=True,
+    )
+    source_complexity = phase_transient.phase_source_complexity(
+        x_train,
+        phase_transient.target_matrix(y_train, 10, softmax_output=True),
+        phases,
+        sample_starts,
+        t_stop,
+        edge=5e-12,
+        direct_update=True,
+        phase_clock_mode="pwl",
+        lr_values=None,
+        labels=y_train,
+        target_source_mode="label",
+    )
+    blocks = feature_batch_train.block_indices(10, 4, 2)
+    vector_count = phase_transient.phase_output_vector_count(
+        np.empty((len(blocks), 2, 16)),
+        np.empty((len(blocks), 2)),
+        np.empty((10, len(blocks), 2)),
+        np.empty((10,)),
+        include_output_bias_vectors=False,
+        include_y_vectors=False,
+    )
+
+    assert len(blocks) == 16
+    assert phase_transient.estimate_transient_points(t_stop, 200e-12) == 7174
+    assert vector_count == 864
+    assert source_complexity["sample_source_count"] == 101
+    assert source_complexity["sample_source_dc_count"] == 7
+    assert source_complexity["pixel_source_pwl_points"] == 48359
+    assert source_complexity["target_source_pwl_points"] == 943
+    assert source_complexity["sample_source_pwl_points"] == 49302
+    assert source_complexity["phase_clock_source_pwl_points"] == 10245
+    assert source_complexity["control_source_pwl_points"] == 0
+    assert source_complexity["total_source_pwl_points"] == 59547
+
+
 def test_phase_transient_label_target_source_mode_decodes_one_label_waveform() -> None:
     labels = np.array([0, 1, 1, 0])
     phases, sample_starts, t_stop = phase_transient.make_phase_schedule(1, 4, 1.0e-9, 0.1e-9, True)

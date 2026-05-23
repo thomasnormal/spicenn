@@ -1086,6 +1086,11 @@ def test_phase_variant_sweep_pairs_only_expand_clipped_activations() -> None:
     assert pairs == [("tanh", 0.5), ("relu", 0.5), ("diff-clipped-relu", 0.5), ("diff-clipped-relu", 1.0)]
 
 
+def test_phase_variant_sweep_generated_defaults_use_efficient_deck_shape() -> None:
+    assert phase_variant_sweep.DEFAULT_SAMPLE_EDGE == pytest.approx(0.0)
+    assert phase_variant_sweep.DEFAULT_HIDDEN_PREACTIVATION_MODE == "inline"
+
+
 def test_phase_variant_sweep_dry_command_preserves_online_contract() -> None:
     args = argparse.Namespace(
         simulator="Xyce",

@@ -14,6 +14,8 @@ from run_spice_sweep import ROOT
 
 
 CLIPPED_ACTIVATIONS = {"clipped-relu", "clipped_relu", "diff-clipped-relu", "differential-clipped-relu", "diff_clipped_relu"}
+DEFAULT_SAMPLE_EDGE = 0.0
+DEFAULT_HIDDEN_PREACTIVATION_MODE = "inline"
 
 
 def parse_csv(text: str) -> list[str]:
@@ -304,7 +306,7 @@ def main() -> None:
     ap.add_argument("--phase", type=float, default=1e-9)
     ap.add_argument("--gap", type=float, default=0.1e-9)
     ap.add_argument("--edge", type=float, default=10e-12)
-    ap.add_argument("--sample-edge", type=float, default=None)
+    ap.add_argument("--sample-edge", type=float, default=DEFAULT_SAMPLE_EDGE)
     ap.add_argument("--settle-ratio", type=float, default=80.0)
     ap.add_argument("--transient-step", type=float, default=50e-12)
     ap.add_argument("--timeout", type=float, default=600.0)
@@ -345,7 +347,7 @@ def main() -> None:
     ap.add_argument("--synapse-clip", type=float, default=1.0)
     ap.add_argument("--synapse-clips", default="")
     ap.add_argument("--readout-class-centering", choices=["none", "mean"], default="none")
-    ap.add_argument("--hidden-preactivation-mode", choices=["node", "inline"], default="node")
+    ap.add_argument("--hidden-preactivation-mode", choices=["node", "inline"], default=DEFAULT_HIDDEN_PREACTIVATION_MODE)
     ap.add_argument("--softmax-output", action=argparse.BooleanOptionalAction, default=True)
     ap.add_argument("--linear-output", action="store_true")
     ap.add_argument("--final-measures", action="store_true")

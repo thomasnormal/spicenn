@@ -981,6 +981,7 @@ def test_phase_variant_sweep_dry_command_preserves_online_contract() -> None:
         max_source_pwl_points=1200,
         max_sample_sources=100,
         max_total_sources=120,
+        max_output_vectors=900,
         reference_mode="none",
         phase_output_mode="print",
         update_mode="direct",
@@ -1052,6 +1053,8 @@ def test_phase_variant_sweep_dry_command_preserves_online_contract() -> None:
     assert command[command.index("--max-sample-sources") + 1] == "100"
     assert "--max-total-sources" in command
     assert command[command.index("--max-total-sources") + 1] == "120"
+    assert "--max-output-vectors" in command
+    assert command[command.index("--max-output-vectors") + 1] == "900"
     assert "--reference-mode" in command
     assert command[command.index("--reference-mode") + 1] == "none"
     assert "--phase-output-mode" in command
@@ -1089,6 +1092,60 @@ def test_phase_variant_sweep_dry_command_preserves_online_contract() -> None:
 
     assert wider_command[wider_command.index("--synapse-clip") + 1] == "1.0"
     assert "synclip1" in wider_command[wider_command.index("--tag") + 1]
+
+
+def test_phase_variant_sweep_row_preserves_phase_cost_fields() -> None:
+    command = ["python3", "phase.py", "--max-output-vectors", "80"]
+    summary = {
+        "tag": "variant",
+        "estimated_transient_points": 34,
+        "max_transient_points": 100,
+        "phase_output_vector_count": 70,
+        "max_output_vectors": 80,
+        "max_source_pwl_points": 200,
+        "max_sample_sources": 30,
+        "max_total_sources": 50,
+        "sample_source_count": 12,
+        "sample_source_elided_dc_count": 2,
+        "sample_source_pwl_points": 60,
+        "pixel_source_count": 9,
+        "pixel_source_elided_dc_count": 2,
+        "target_source_count": 1,
+        "target_behavioral_source_count": 10,
+        "phase_clock_source_pwl_points": 40,
+        "control_source_pwl_points": 4,
+        "total_source_count": 28,
+        "total_source_pwl_points": 104,
+        "target_source_mode": "label",
+    }
+
+    row = phase_variant_sweep.row_from_summary(
+        "tanh",
+        1.0,
+        "exact",
+        "readout",
+        "linear",
+        "linear",
+        1.0,
+        summary,
+        command,
+    )
+
+    assert row["tag"] == "variant"
+    assert row["command"] == "python3 phase.py --max-output-vectors 80"
+    assert row["estimated_transient_points"] == 34
+    assert row["max_transient_points"] == 100
+    assert row["phase_output_vector_count"] == 70
+    assert row["max_output_vectors"] == 80
+    assert row["max_source_pwl_points"] == 200
+    assert row["sample_source_count"] == 12
+    assert row["sample_source_elided_dc_count"] == 2
+    assert row["pixel_source_count"] == 9
+    assert row["pixel_source_elided_dc_count"] == 2
+    assert row["target_behavioral_source_count"] == 10
+    assert row["control_source_pwl_points"] == 4
+    assert row["total_source_count"] == 28
+    assert row["total_source_pwl_points"] == 104
 
 
 def test_phase_transient_softmax_deck_is_one_continuous_online_run(tmp_path: Path) -> None:

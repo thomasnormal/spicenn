@@ -361,6 +361,7 @@ def test_fast_online_variant_sweep_row_reports_best_probe_and_improvement() -> N
     assert command[command.index("--readout-update-scale") + 1] == "0.25"
     assert command[command.index("--softmax-temperature") + 1] == "4.0"
     assert row["strict_phase_promotion_updates"] == 2
+    assert row["strict_phase_promotion_timeout_s"] == 240.0
     assert row["strict_phase_promotion_max_transient_points"] == 2000
     assert row["strict_phase_promotion_max_source_pwl_points"] == 5000
     assert row["strict_phase_promotion_phase_clock_mode"] == "analytic"
@@ -433,6 +434,64 @@ def test_fast_online_strict_promotion_defaults_to_pwl_phase_clock() -> None:
     command = fast_sweep.strict_phase_promotion_command(args, variant)
 
     assert command[command.index("--phase-clock-mode") + 1] == "pwl"
+
+
+def test_fast_online_strict_promotion_timeout_auto_scales_with_updates() -> None:
+    args = argparse.Namespace(
+        train_samples=512,
+        eval_samples=1000,
+        image_size=10,
+        block_size=4,
+        stride=2,
+        channels=2,
+        promotion_updates=512,
+        promotion_simulator="Xyce",
+        promotion_phase=0.5e-9,
+        promotion_gap=0.05e-9,
+        promotion_edge=5e-12,
+        promotion_settle_ratio=20.0,
+        promotion_transient_step=200e-12,
+        promotion_timeout=0.0,
+        promotion_max_transient_points=8000,
+        promotion_max_source_pwl_points=80000,
+        promotion_probe_updates="",
+        promotion_tag_prefix="promote",
+        linear_output=False,
+        softmax_output=True,
+        relu_leak=0.01,
+        softplus_beta=10.0,
+        derivative_floor=0.0,
+        derivative_gate_threshold=1e-6,
+        readout_feedback_clip=0.05,
+        softmax_negative_scale=1.0,
+        softmax_error_centering="none",
+        softmax_competition_mode="all",
+        softmax_competitor_power=2,
+        softmax_error_gate="none",
+        softmax_margin=1.0,
+        readout_class_centering="none",
+    )
+    variant = {
+        "local_activation": "tanh",
+        "relu_clip": 1.0,
+        "activation_derivative": "exact",
+        "readout_feedback_mode": "full-readout",
+        "hidden_synapse_mode": "tanh-clipped",
+        "readout_synapse_mode": "linear",
+        "synapse_clip": 2.0,
+        "lr": 0.5,
+        "output_bias_update_scale": 0.0,
+        "readout_update_scale": 0.35,
+        "local_update_scale": 1.0,
+        "state_decay": 0.0,
+        "softmax_temperature": 2.5,
+        "tag": "row",
+    }
+
+    command = fast_sweep.strict_phase_promotion_command(args, variant)
+
+    assert fast_sweep.promotion_timeout_seconds(args, 512) == pytest.approx(640.0)
+    assert command[command.index("--timeout") + 1] == "640.0"
 
 
 def test_fast_online_strict_promotion_cost_fields_respect_pwl_clock_override() -> None:

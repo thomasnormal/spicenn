@@ -235,10 +235,18 @@ def best_promotion_variant(rows: list[dict[str, Any]]) -> dict[str, Any] | None:
     return max(candidates, key=lambda row: (row["promotion_probe_eval_accuracy"], row["eval_improvement"]))
 
 
+def promotion_timeout_seconds(args: argparse.Namespace, updates: int) -> float:
+    configured = float(getattr(args, "promotion_timeout", 0.0))
+    if configured > 0.0:
+        return configured
+    return max(240.0, 1.25 * float(updates))
+
+
 def strict_phase_promotion_command(args: argparse.Namespace, variant: dict[str, Any]) -> list[str]:
     updates = int(getattr(args, "promotion_updates", 0) or args.train_samples)
     if updates <= 0:
         raise ValueError("--promotion-updates must be positive when set")
+    timeout = promotion_timeout_seconds(args, updates)
     promotion_tag = fast_ref.sanitize_tag(f"{getattr(args, 'promotion_tag_prefix', 'promote')}_{variant['tag']}")
     command = [
         sys.executable,
@@ -278,7 +286,7 @@ def strict_phase_promotion_command(args: argparse.Namespace, variant: dict[str, 
         "--transient-step",
         str(getattr(args, "promotion_transient_step", 200e-12)),
         "--timeout",
-        str(getattr(args, "promotion_timeout", 240.0)),
+        str(timeout),
         "--max-transient-points",
         str(getattr(args, "promotion_max_transient_points", 2000)),
         "--max-source-pwl-points",
@@ -448,6 +456,7 @@ def run_variant(
         "best_probe_update": best_probe["update"] if best_probe is not None else None,
         "promotion_probe_eval_accuracy": promotion_probe_eval_accuracy,
         "strict_phase_promotion_updates": promotion_updates,
+        "strict_phase_promotion_timeout_s": promotion_timeout_seconds(args, promotion_updates),
         "strict_phase_promotion_max_transient_points": int(getattr(args, "promotion_max_transient_points", 2000)),
         "strict_phase_promotion_max_source_pwl_points": int(getattr(args, "promotion_max_source_pwl_points", 0)),
         **promotion_costs,
@@ -518,7 +527,12 @@ def main() -> None:
     ap.add_argument("--promotion-edge", type=float, default=5e-12)
     ap.add_argument("--promotion-settle-ratio", type=float, default=20.0)
     ap.add_argument("--promotion-transient-step", type=float, default=200e-12)
-    ap.add_argument("--promotion-timeout", type=float, default=240.0)
+    ap.add_argument(
+        "--promotion-timeout",
+        type=float,
+        default=0.0,
+        help="Strict promotion simulator timeout in seconds; 0 auto-scales with --promotion-updates.",
+    )
     ap.add_argument("--promotion-max-transient-points", type=int, default=2000)
     ap.add_argument("--promotion-max-source-pwl-points", type=int, default=0)
     ap.add_argument("--promotion-phase-clock-mode", choices=["pwl", "analytic"], default="pwl")
@@ -552,6 +566,8 @@ def main() -> None:
         raise ValueError("--state-decay must be in [0, 1)")
     if args.promotion_updates < 0:
         raise ValueError("--promotion-updates must be non-negative")
+    if args.promotion_timeout < 0:
+        raise ValueError("--promotion-timeout must be non-negative")
     if args.promotion_max_transient_points < 0:
         raise ValueError("--promotion-max-transient-points must be non-negative")
     if args.promotion_max_source_pwl_points < 0:

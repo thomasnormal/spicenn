@@ -245,10 +245,12 @@ def test_phase_transient_source_complexity_counts_sample_and_clock_sources() -> 
 
     complexity = phase_transient.phase_source_complexity(x, targets, phases, sample_starts, t_stop, 0.1e-9, True)
 
-    assert complexity["sample_source_count"] == 4
-    assert complexity["sample_source_dc_count"] == 1
+    assert complexity["sample_source_count"] == 3
+    assert complexity["sample_source_dc_count"] == 0
     assert complexity["sample_source_pwl_count"] == 3
-    assert complexity["pixel_source_dc_count"] == 1
+    assert complexity["sample_source_elided_dc_count"] == 1
+    assert complexity["pixel_source_dc_count"] == 0
+    assert complexity["pixel_source_elided_dc_count"] == 1
     assert complexity["target_source_dc_count"] == 0
     assert complexity["sample_source_pwl_points"] == 9
     assert complexity["phase_clock_source_count"] == 5
@@ -296,14 +298,70 @@ def test_phase_transient_target_topology_strict_512_preflight_cost_regression() 
     assert len(blocks) == 16
     assert phase_transient.estimate_transient_points(t_stop, 200e-12) == 7174
     assert vector_count == 864
-    assert source_complexity["sample_source_count"] == 101
-    assert source_complexity["sample_source_dc_count"] == 7
+    assert source_complexity["sample_source_count"] == 94
+    assert source_complexity["sample_source_dc_count"] == 0
+    assert source_complexity["sample_source_elided_dc_count"] == 7
+    assert source_complexity["pixel_source_count"] == 93
+    assert source_complexity["pixel_source_dc_count"] == 0
+    assert source_complexity["pixel_source_pwl_count"] == 93
+    assert source_complexity["pixel_source_elided_dc_count"] == 7
     assert source_complexity["pixel_source_pwl_points"] == 48359
     assert source_complexity["target_source_pwl_points"] == 943
     assert source_complexity["sample_source_pwl_points"] == 49302
     assert source_complexity["phase_clock_source_pwl_points"] == 10245
     assert source_complexity["control_source_pwl_points"] == 0
     assert source_complexity["total_source_pwl_points"] == 59547
+
+
+def test_phase_transient_constant_pixel_sources_are_elided_from_deck(tmp_path: Path) -> None:
+    x = np.array(
+        [
+            [0.0, 0.2, 0.5, 0.0],
+            [0.0, 0.4, 0.5, 1.0],
+        ],
+        dtype=float,
+    )
+    y = np.array([0, 1])
+    w = np.zeros((1, 1, 4))
+    hb = np.zeros((1, 1))
+    readout = np.zeros((2, 1, 1))
+    output_bias = np.zeros(2)
+
+    netlist, _n_vec, _t_stop = phase_transient.make_phase_transient_netlist(
+        x,
+        y,
+        w,
+        hb,
+        readout,
+        output_bias,
+        [[0, 1, 2, 3]],
+        0.8,
+        tmp_path / "out.dat",
+        False,
+        1,
+        len(y),
+        1e-9,
+        0.1e-9,
+        5e-12,
+        40.0,
+        20e-12,
+        1e-12,
+        1e-12,
+        1e-12,
+        1e18,
+        True,
+        update_mode="direct",
+    )
+
+    assert "Vpix0 pix0 0" not in netlist
+    assert "Vpix2 pix2 0" not in netlist
+    assert "Vpix1 pix1 0 PWL(" in netlist
+    assert "Vpix3 pix3 0 PWL(" in netlist
+    assert "* elided constant pixel sources: pix0=0, pix2=0.5" in netlist
+    assert "V(w0_0_0)*V(pix0)" not in netlist
+    assert "V(w0_0_2)*0.5" in netlist
+    assert "Bupd_w0_0_0" not in netlist
+    assert "Bupd_w0_0_2 w0_0_2 0 I =" in netlist
 
 
 def test_phase_transient_label_target_source_mode_decodes_one_label_waveform() -> None:
@@ -1581,8 +1639,8 @@ def test_phase_and_batch_readout_class_centering_use_effective_centered_readout(
 
 
 def test_phase_transient_synapse_transfer_modes_affect_forward_and_backward_paths(tmp_path: Path) -> None:
-    x = np.zeros((1, 4))
-    y = np.array([0])
+    x = np.array([[0.0, 0.0, 0.0, 0.0], [0.25, 0.25, 0.25, 0.25]], dtype=float)
+    y = np.array([0, 0])
     w = np.zeros((1, 1, 4))
     hb = np.zeros((1, 1))
     readout = np.zeros((2, 1, 1))
@@ -1600,7 +1658,7 @@ def test_phase_transient_synapse_transfer_modes_affect_forward_and_backward_path
         tmp_path / "out.dat",
         False,
         1,
-        1,
+        2,
         1e-9,
         0.1e-9,
         5e-12,
@@ -1661,7 +1719,7 @@ def test_phase_transient_zero_rleak_omits_state_leak_resistors(tmp_path: Path) -
 
 
 def test_phase_transient_direct_update_mode_omits_gradient_accumulator_family(tmp_path: Path) -> None:
-    x = np.zeros((1, 4))
+    x = np.ones((1, 4))
     y = np.array([0])
     w = np.zeros((1, 1, 4))
     hb = np.zeros((1, 1))
@@ -1704,7 +1762,7 @@ def test_phase_transient_direct_update_mode_omits_gradient_accumulator_family(tm
     assert "Bclear_gw0_0_0" not in netlist
     assert "gradient accumulators are capacitor voltages" not in netlist
     assert "weights are updated directly during each per-sample update phase" in netlist
-    assert "Bupd_w0_0_0 w0_0_0 0 I = -V(pacc)*{CW}*{LR}*{LOCAL_UPDATE_SCALE}/({BS}*{TAREA})*(V(dh0_0)*V(pix0))" in netlist
+    assert "Bupd_w0_0_0 w0_0_0 0 I = -V(pacc)*{CW}*{LR}*{LOCAL_UPDATE_SCALE}/({BS}*{TAREA})*(V(dh0_0)*1)" in netlist
 
     with pytest.raises(ValueError, match="direct update mode"):
         phase_transient.make_phase_transient_netlist(
@@ -1735,7 +1793,7 @@ def test_phase_transient_direct_update_mode_omits_gradient_accumulator_family(tm
 
 
 def test_phase_transient_linear_decay_lr_schedule_uses_control_waveform(tmp_path: Path) -> None:
-    x = np.zeros((2, 4))
+    x = np.array([[0.0, 0.0, 0.0, 0.0], [1.0, 1.0, 1.0, 1.0]], dtype=float)
     y = np.array([0, 1])
     w = np.zeros((1, 1, 4))
     hb = np.zeros((1, 1))
@@ -2288,7 +2346,7 @@ def test_phase_transient_readout_update_scale_controls_readout_update(tmp_path: 
 
 
 def test_phase_transient_local_update_scale_controls_feature_updates(tmp_path: Path) -> None:
-    x = np.zeros((1, 4))
+    x = np.ones((1, 4))
     y = np.array([0])
     w = np.zeros((1, 1, 4))
     hb = np.zeros((1, 1))
@@ -2324,7 +2382,7 @@ def test_phase_transient_local_update_scale_controls_feature_updates(tmp_path: P
     )
 
     assert ".param LOCAL_UPDATE_SCALE=0.25" in direct_netlist
-    assert "Bupd_w0_0_0 w0_0_0 0 I = -V(pacc)*{CW}*{LR}*{LOCAL_UPDATE_SCALE}/({BS}*{TAREA})*(V(dh0_0)*V(pix0))" in direct_netlist
+    assert "Bupd_w0_0_0 w0_0_0 0 I = -V(pacc)*{CW}*{LR}*{LOCAL_UPDATE_SCALE}/({BS}*{TAREA})*(V(dh0_0)*1)" in direct_netlist
     assert "Bupd_hb0_0 hb0_0 0 I = -V(pacc)*{CW}*{LR}*{LOCAL_UPDATE_SCALE}/({BS}*{TAREA})*V(dh0_0)" in direct_netlist
     assert "Bupd_v0_0_0 v0_0_0 0 I = -V(pacc)*{CW}*{LR}*{READOUT_UPDATE_SCALE}/({BS}*{TAREA})*(V(d0)*V(h0_0))" in direct_netlist
 

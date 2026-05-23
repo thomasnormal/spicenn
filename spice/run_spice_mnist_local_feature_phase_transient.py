@@ -7,6 +7,7 @@ import math
 import os
 import re
 import time
+from dataclasses import dataclass
 from pathlib import Path
 
 import numpy as np
@@ -35,6 +36,19 @@ from spice_adapter import SPICE_SIMULATOR_ARGS_ENV
 TrainState = tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]
 MNIST_TRAIN_COUNT = 60000
 MNIST_TEST_COUNT = 10000
+
+
+@dataclass(frozen=True)
+class SampleDrive:
+    node: str
+    source: str
+    expr: str
+    line: str | None
+    constant_value: float | None
+
+    @property
+    def elided(self) -> bool:
+        return self.line is None
 
 
 def sanitize_tag(tag: str) -> str:
@@ -425,6 +439,51 @@ def sample_source_pwl(values: np.ndarray, sample_starts: list[float], t_stop: fl
     return "PWL(" + " ".join(f"{t:.12g} {val:.12g}" for t, val in cleaned) + ")"
 
 
+def dc_source_value(source: str) -> float | None:
+    if source.startswith("PWL("):
+        return None
+    try:
+        value = float(source)
+    except ValueError:
+        return None
+    return 0.0 if value == 0.0 else value
+
+
+def spice_literal(value: float) -> str:
+    return "0" if value == 0.0 else f"{value:.12g}"
+
+
+def sample_drive(
+    source_name: str,
+    node: str,
+    values: np.ndarray,
+    sample_starts: list[float],
+    t_stop: float,
+    edge: float,
+    *,
+    elide_dc: bool = False,
+) -> SampleDrive:
+    source = sample_source_pwl(values, sample_starts, t_stop, edge)
+    constant = dc_source_value(source)
+    if elide_dc and constant is not None:
+        return SampleDrive(node=node, source=source, expr=spice_literal(constant), line=None, constant_value=constant)
+    return SampleDrive(
+        node=node,
+        source=source,
+        expr=f"V({node})",
+        line=f"{source_name} {node} 0 {source}",
+        constant_value=constant,
+    )
+
+
+def emitted_sources(drives: list[SampleDrive]) -> list[str]:
+    return [drive.source for drive in drives if not drive.elided]
+
+
+def elided_dc_count(drives: list[SampleDrive]) -> int:
+    return sum(1 for drive in drives if drive.elided and drive.constant_value is not None)
+
+
 def lr_schedule_values(base_lr: float, updates: int, schedule: str = "constant", final_scale: float = 1.0) -> np.ndarray:
     if base_lr < 0.0:
         raise ValueError("base_lr must be non-negative")
@@ -467,7 +526,11 @@ def phase_source_complexity(
 ) -> dict[str, int]:
     if target_source_mode not in {"rails", "label"}:
         raise ValueError("target_source_mode must be 'rails' or 'label'")
-    pixel_sources = [sample_source_pwl(x_batch[:, i], sample_starts, t_stop, edge) for i in range(x_batch.shape[1])]
+    pixel_drives = [
+        sample_drive(f"Vpix{i}", f"pix{i}", x_batch[:, i], sample_starts, t_stop, edge, elide_dc=True)
+        for i in range(x_batch.shape[1])
+    ]
+    pixel_sources = emitted_sources(pixel_drives)
     target_behavioral_source_count = 0
     if target_source_mode == "rails":
         target_sources = [sample_source_pwl(targets[:, k], sample_starts, t_stop, edge) for k in range(targets.shape[1])]
@@ -496,19 +559,23 @@ def phase_source_complexity(
         return sum(pwl_point_count(source) for source in sources)
 
     sample_sources = pixel_sources + target_sources
+    sample_elided_dc_count = elided_dc_count(pixel_drives)
     complexity = {
         "sample_source_count": len(sample_sources),
         "sample_source_dc_count": count_dc(sample_sources),
         "sample_source_pwl_count": count_pwl(sample_sources),
         "sample_source_pwl_points": count_points(sample_sources),
+        "sample_source_elided_dc_count": sample_elided_dc_count,
         "pixel_source_count": len(pixel_sources),
         "pixel_source_dc_count": count_dc(pixel_sources),
         "pixel_source_pwl_count": count_pwl(pixel_sources),
         "pixel_source_pwl_points": count_points(pixel_sources),
+        "pixel_source_elided_dc_count": sample_elided_dc_count,
         "target_source_count": len(target_sources),
         "target_source_dc_count": count_dc(target_sources),
         "target_source_pwl_count": count_pwl(target_sources),
         "target_source_pwl_points": count_points(target_sources),
+        "target_source_elided_dc_count": 0,
         "target_behavioral_source_count": target_behavioral_source_count,
         "target_source_mode_label": int(target_source_mode == "label"),
         "phase_clock_source_count": len(phase_sources),
@@ -869,6 +936,10 @@ def make_phase_transient_netlist(
     tau = phase / settle_ratio
     phase_area = phase_pulse_area(phase, edge)
     targets = target_matrix(y_batch, n_classes, softmax_output)
+    pixel_drives = [
+        sample_drive(f"Vpix{i}", f"pix{i}", x_batch[:, i], sample_starts, t_stop, edge, elide_dc=True)
+        for i in range(x_batch.shape[1])
+    ]
     state_descriptions = phase_state_descriptions(update_mode, output_bias_state_frozen)
     lines = [
         "* Phase-resolved transient local-feature/readout training deck.",
@@ -908,8 +979,12 @@ def make_phase_transient_netlist(
             phase_clock_source_line("papply", "papply", phases["apply"], t_stop, phase, gap, edge, phase_clock_mode, direct_update, update_batch_size),
             phase_clock_source_line("pclear", "pclear", phases["clear"], t_stop, phase, gap, edge, phase_clock_mode, direct_update, update_batch_size),
         ]
-    for i in range(x_batch.shape[1]):
-        lines.append(f"Vpix{i} pix{i} 0 {sample_source_pwl(x_batch[:, i], sample_starts, t_stop, edge)}")
+    elided_pixels = [f"{drive.node}={drive.expr}" for drive in pixel_drives if drive.elided]
+    if elided_pixels:
+        lines.append("* elided constant pixel sources: " + ", ".join(elided_pixels))
+    for drive in pixel_drives:
+        if drive.line is not None:
+            lines.append(drive.line)
     lines.extend(
         target_source_lines(
             y_batch,
@@ -956,10 +1031,12 @@ def make_phase_transient_netlist(
     lines.append("")
     for b, idxs in enumerate(blocks):
         for c in range(channels):
-            terms = [
-                f"{synapse_transfer_expr(f'V(w{b}_{c}_{p})', hidden_synapse_mode, synapse_clip)}*V(pix{idx})"
-                for p, idx in enumerate(idxs)
-            ]
+            terms = []
+            for p, idx in enumerate(idxs):
+                pixel_expr = pixel_drives[idx].expr
+                if pixel_expr == "0":
+                    continue
+                terms.append(f"{synapse_transfer_expr(f'V(w{b}_{c}_{p})', hidden_synapse_mode, synapse_clip)}*{pixel_expr}")
             terms.append(f"V(hb{b}_{c})")
             lines.append(f"Bpre_h{b}_{c} ah{b}_{c} 0 V = " + " + ".join(terms))
             h_calc = local_activation_expr(f"V(ah{b}_{c})", local_activation, relu_clip, relu_leak, softplus_beta)
@@ -1050,8 +1127,9 @@ def make_phase_transient_netlist(
             local_delta = f"({feedback})*{deriv}"
             lines.append(f"Bstore_dh{b}_{c} dh{b}_{c} 0 I = V(pbwd)*{{CSTATE}}/{{TAU}}*(V(dh{b}_{c})-({local_delta}))")
             for p, idx in enumerate(idxs):
-                grad = f"V(dh{b}_{c})*V(pix{idx})"
-                if direct_update and local_updates_enabled:
+                pixel_expr = pixel_drives[idx].expr
+                grad = f"V(dh{b}_{c})*{pixel_expr}"
+                if direct_update and local_updates_enabled and pixel_expr != "0":
                     lines.append(f"Bupd_w{b}_{c}_{p} w{b}_{c}_{p} 0 I = -V(pacc)*{{CW}}*{lr_control}*{{LOCAL_UPDATE_SCALE}}/({{BS}}*{{TAREA}})*({grad})")
                 elif not direct_update and local_updates_enabled:
                     lines.append(f"Bacc_w{b}_{c}_{p} gw{b}_{c}_{p} 0 I = -V(pacc)*{{CGRAD}}/{{TAREA}}*({grad})")

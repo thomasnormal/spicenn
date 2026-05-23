@@ -441,9 +441,17 @@ def test_fast_online_strict_promotion_defaults_to_pwl_phase_clock() -> None:
     }
 
     command = fast_sweep.strict_phase_promotion_command(args, variant)
+    fields = fast_sweep.strict_phase_promotion_cost_fields(
+        args,
+        variant,
+        np.array([[0.5, 0.0], [0.0, 0.5]]),
+        np.array([0, 1]),
+    )
 
     assert command[command.index("--phase-clock-mode") + 1] == "pwl"
     assert command[command.index("--target-source-mode") + 1] == "label"
+    assert fields["strict_phase_promotion_phase_clock_mode"] == "pwl"
+    assert fields["strict_phase_promotion_phase_clock_source_pwl_points"] > 0
 
 
 def test_fast_online_strict_promotion_timeout_auto_scales_with_updates() -> None:

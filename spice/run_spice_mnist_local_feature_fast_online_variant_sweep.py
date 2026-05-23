@@ -24,6 +24,8 @@ from run_spice_mnist_local_feature_phase_variant_sweep import activation_clip_pa
 from run_spice_mnist_train import load_mnist_sequence
 from run_spice_sweep import ROOT
 
+DEFAULT_PROMOTION_PHASE_CLOCK_MODE = "pwl"
+
 TrainState = tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]
 
 
@@ -302,7 +304,7 @@ def strict_phase_promotion_command(args: argparse.Namespace, variant: dict[str, 
         "--update-mode",
         "direct",
         "--phase-clock-mode",
-        getattr(args, "promotion_phase_clock_mode", "pwl"),
+        getattr(args, "promotion_phase_clock_mode", DEFAULT_PROMOTION_PHASE_CLOCK_MODE),
         "--target-source-mode",
         getattr(args, "promotion_target_source_mode", "label"),
         "--eval-backend",
@@ -386,7 +388,7 @@ def strict_phase_promotion_cost_fields(
     gap = float(getattr(args, "promotion_gap", 0.05e-9))
     edge = float(getattr(args, "promotion_edge", 5e-12))
     transient_step = float(getattr(args, "promotion_transient_step", 200e-12))
-    phase_clock_mode = getattr(args, "promotion_phase_clock_mode", "pwl")
+    phase_clock_mode = getattr(args, "promotion_phase_clock_mode", DEFAULT_PROMOTION_PHASE_CLOCK_MODE)
     phases, sample_starts, t_stop = make_phase_schedule(1, updates, phase, gap, True)
     lr_values = None
     lr_schedule = variant.get("lr_schedule", "constant")
@@ -568,7 +570,15 @@ def main() -> None:
     ap.add_argument("--promotion-max-transient-points", type=int, default=2000)
     ap.add_argument("--promotion-max-source-pwl-points", type=int, default=0)
     ap.add_argument("--promotion-max-output-vectors", type=int, default=0)
-    ap.add_argument("--promotion-phase-clock-mode", choices=["pwl", "analytic"], default="pwl")
+    ap.add_argument(
+        "--promotion-phase-clock-mode",
+        choices=["pwl", "analytic"],
+        default=DEFAULT_PROMOTION_PHASE_CLOCK_MODE,
+        help=(
+            "Clock source style for generated strict Xyce promotion commands. PWL is the robust default; "
+            "analytic removes per-update clock PWL points but is currently an opt-in experiment knob."
+        ),
+    )
     ap.add_argument("--promotion-target-source-mode", choices=["rails", "label"], default="label")
     ap.add_argument("--promotion-phase-output-include-y", action="store_true")
     ap.add_argument("--promotion-probe-updates", default="")

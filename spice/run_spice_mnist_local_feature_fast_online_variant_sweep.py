@@ -374,14 +374,45 @@ def cost_projection_summary_fields(rows: list[dict[str, Any]], cost_projection_u
     projection_rows = [row for row in rows if row.get("strict_phase_cost_projection_updates") is not None]
     full_objective_rows = [row for row in rows if row.get("fast_reference_full_objective_candidate") is True]
     full_objective_cost_feasible_rows = [row for row in full_objective_rows if cost_projection_budget_met(row)]
+
+    def count_met(selected_rows: list[dict[str, Any]], field: str) -> int:
+        return sum(row.get(field, True) is True for row in selected_rows)
+
+    def count_failed(selected_rows: list[dict[str, Any]], field: str) -> int:
+        return sum(row.get(field, True) is not True for row in selected_rows)
+
     return {
         "cost_projection_enabled": int(cost_projection_updates) > 0,
         "cost_projection_updates": int(cost_projection_updates),
         "cost_projection_rows": len(projection_rows),
         "cost_projection_budget_feasible_rows": sum(cost_projection_budget_met(row) for row in projection_rows),
+        "cost_projection_transient_budget_feasible_rows": count_met(
+            projection_rows, "strict_phase_cost_projection_transient_budget_met"
+        ),
+        "cost_projection_source_pwl_budget_feasible_rows": count_met(
+            projection_rows, "strict_phase_cost_projection_source_pwl_budget_met"
+        ),
+        "cost_projection_sample_source_budget_feasible_rows": count_met(
+            projection_rows, "strict_phase_cost_projection_sample_source_budget_met"
+        ),
+        "cost_projection_output_vector_budget_feasible_rows": count_met(
+            projection_rows, "strict_phase_cost_projection_output_vector_budget_met"
+        ),
         "fast_reference_full_objective_candidate_count": len(full_objective_rows),
         "fast_reference_full_objective_cost_feasible_candidate_count": len(full_objective_cost_feasible_rows),
         "fast_reference_full_objective_cost_infeasible_candidate_count": len(full_objective_rows) - len(full_objective_cost_feasible_rows),
+        "fast_reference_full_objective_transient_budget_infeasible_count": count_failed(
+            full_objective_rows, "strict_phase_cost_projection_transient_budget_met"
+        ),
+        "fast_reference_full_objective_source_pwl_budget_infeasible_count": count_failed(
+            full_objective_rows, "strict_phase_cost_projection_source_pwl_budget_met"
+        ),
+        "fast_reference_full_objective_sample_source_budget_infeasible_count": count_failed(
+            full_objective_rows, "strict_phase_cost_projection_sample_source_budget_met"
+        ),
+        "fast_reference_full_objective_output_vector_budget_infeasible_count": count_failed(
+            full_objective_rows, "strict_phase_cost_projection_output_vector_budget_met"
+        ),
     }
 
 

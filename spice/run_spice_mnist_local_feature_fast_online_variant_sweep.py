@@ -17,6 +17,7 @@ from run_spice_mnist_local_feature_phase_transient import (
     auxiliary_algebraic_source_count,
     estimate_transient_points,
     hidden_activation_state_count,
+    hidden_delta_state_count,
     hidden_preactivation_source_count,
     lr_schedule_values,
     make_phase_schedule,
@@ -25,7 +26,9 @@ from run_spice_mnist_local_feature_phase_transient import (
     phase_output_vector_count,
     phase_source_complexity,
     score_calculation_source_count,
+    score_state_count,
     target_matrix,
+    temporary_state_count,
 )
 from run_spice_mnist_local_feature_phase_variant_sweep import activation_clip_pairs, parse_csv, parse_float_csv, variant_tag
 from run_spice_mnist_train import load_mnist_sequence
@@ -807,9 +810,19 @@ def strict_phase_cost_fields_for_updates(
         len(blocks),
         channels,
     )
+    hidden_delta_states = hidden_delta_state_count(len(blocks), channels)
+    score_states = score_state_count(10)
+    gradient_accumulator_states = 0
     score_sources = score_calculation_source_count(score_calculation_mode, 10)
     output_sources = output_rail_source_count(output_rail_mode, 10)
     output_delta_states = output_delta_state_count(output_delta_mode, 10)
+    temporary_states = temporary_state_count(
+        hidden_activation_states=hidden_activation_states,
+        hidden_delta_states=hidden_delta_states,
+        score_states=score_states,
+        output_delta_states=output_delta_states,
+        gradient_accumulator_states=gradient_accumulator_states,
+    )
     auxiliary_sources = auxiliary_algebraic_source_count(
         hidden_sources,
         score_sources,
@@ -823,6 +836,10 @@ def strict_phase_cost_fields_for_updates(
         f"{prefix}_hidden_preactivation_source_count": hidden_sources,
         f"{prefix}_hidden_activation_mode": hidden_activation_mode,
         f"{prefix}_hidden_activation_state_count": hidden_activation_states,
+        f"{prefix}_hidden_delta_state_count": hidden_delta_states,
+        f"{prefix}_score_state_count": score_states,
+        f"{prefix}_gradient_accumulator_state_count": gradient_accumulator_states,
+        f"{prefix}_temporary_state_count": temporary_states,
         f"{prefix}_score_calculation_mode": score_calculation_mode,
         f"{prefix}_score_calculation_source_count": score_sources,
         f"{prefix}_output_rail_mode": output_rail_mode,

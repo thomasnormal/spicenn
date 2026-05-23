@@ -181,6 +181,14 @@ def hidden_activation_state_count(mode: str, blocks: int, channels: int) -> int:
     raise ValueError("hidden_activation_mode must be 'stored' or 'inline'")
 
 
+def hidden_delta_state_count(blocks: int, channels: int) -> int:
+    return int(blocks) * int(channels)
+
+
+def score_state_count(classes: int) -> int:
+    return int(classes)
+
+
 def score_calculation_source_count(mode: str, classes: int) -> int:
     if mode == "node":
         return int(classes)
@@ -203,6 +211,65 @@ def output_delta_state_count(mode: str, classes: int) -> int:
     if mode == "inline":
         return 0
     raise ValueError("output_delta_mode must be 'node' or 'inline'")
+
+
+def gradient_accumulator_state_count(
+    update_mode: str,
+    blocks: list[list[int]],
+    channels: int,
+    classes: int,
+    x_batch: np.ndarray | None = None,
+    *,
+    local_updates_enabled: bool = True,
+    readout_updates_enabled: bool = True,
+    output_bias_updates_enabled: bool = True,
+) -> int:
+    if update_mode == "direct":
+        return 0
+    if update_mode != "phased":
+        raise ValueError("update_mode must be 'phased' or 'direct'")
+    count = 0
+    n_blocks = len(blocks)
+    channels = int(channels)
+    classes = int(classes)
+    if local_updates_enabled:
+        count += n_blocks * channels
+        if x_batch is None:
+            active_block_pixels = sum(len(idxs) for idxs in blocks)
+        else:
+            x_arr = np.asarray(x_batch)
+            active_block_pixels = sum(
+                1
+                for idxs in blocks
+                for idx in idxs
+                if np.any(x_arr[:, idx] != 0.0)
+            )
+        count += active_block_pixels * channels
+    if readout_updates_enabled:
+        count += classes * n_blocks * channels
+    if output_bias_updates_enabled:
+        count += classes
+    return count
+
+
+def temporary_state_count(
+    *,
+    hidden_activation_states: int,
+    hidden_delta_states: int,
+    score_states: int,
+    output_delta_states: int,
+    gradient_accumulator_states: int,
+) -> int:
+    counts = [
+        hidden_activation_states,
+        hidden_delta_states,
+        score_states,
+        output_delta_states,
+        gradient_accumulator_states,
+    ]
+    if any(int(count) < 0 for count in counts):
+        raise ValueError("temporary state counts must be non-negative")
+    return sum(int(count) for count in counts)
 
 
 def auxiliary_algebraic_source_count(
@@ -376,6 +443,10 @@ def phase_deck_mode_fields(
     hidden_preactivation_source_count: int,
     hidden_activation_mode: str = "stored",
     hidden_activation_state_count: int | None = None,
+    hidden_delta_state_count: int | None = None,
+    score_state_count: int | None = None,
+    gradient_accumulator_state_count: int | None = None,
+    temporary_state_count: int | None = None,
     score_calculation_mode: str,
     score_calculation_source_count: int,
     output_rail_mode: str,
@@ -400,6 +471,10 @@ def phase_deck_mode_fields(
             if hidden_activation_state_count is not None
             else None
         ),
+        "hidden_delta_state_count": hidden_delta_state_count,
+        "score_state_count": score_state_count,
+        "gradient_accumulator_state_count": gradient_accumulator_state_count,
+        "temporary_state_count": temporary_state_count,
         "score_calculation_mode": score_calculation_mode,
         "score_calculation_source_count": score_calculation_source_count,
         "output_rail_mode": output_rail_mode,
@@ -485,6 +560,10 @@ def phase_preflight_summary(
     hidden_preactivation_source_count: int,
     hidden_activation_mode: str,
     hidden_activation_state_count: int,
+    hidden_delta_state_count: int,
+    score_state_count: int,
+    gradient_accumulator_state_count: int,
+    temporary_state_count: int,
     score_calculation_mode: str,
     score_calculation_source_count: int,
     output_rail_mode: str,
@@ -561,6 +640,10 @@ def phase_preflight_summary(
             hidden_preactivation_source_count=hidden_preactivation_source_count,
             hidden_activation_mode=hidden_activation_mode,
             hidden_activation_state_count=hidden_activation_state_count,
+            hidden_delta_state_count=hidden_delta_state_count,
+            score_state_count=score_state_count,
+            gradient_accumulator_state_count=gradient_accumulator_state_count,
+            temporary_state_count=temporary_state_count,
             score_calculation_mode=score_calculation_mode,
             score_calculation_source_count=score_calculation_source_count,
             output_rail_mode=output_rail_mode,
@@ -2468,6 +2551,8 @@ def main() -> None:
         len(blocks),
         args.channels,
     )
+    preflight_hidden_delta_state_count = hidden_delta_state_count(len(blocks), args.channels)
+    preflight_score_state_count = score_state_count(10)
     preflight_score_calculation_source_count = score_calculation_source_count(args.score_calculation_mode, 10)
     preflight_output_rail_source_count = output_rail_source_count(args.output_rail_mode, 10)
     preflight_output_delta_state_count = output_delta_state_count(args.output_delta_mode, 10)
@@ -2501,6 +2586,23 @@ def main() -> None:
     )
     x_batch = x_train[:total_samples]
     y_batch = y_train[:total_samples]
+    preflight_gradient_accumulator_state_count = gradient_accumulator_state_count(
+        args.update_mode,
+        blocks,
+        args.channels,
+        10,
+        x_batch,
+        local_updates_enabled=args.local_update_scale != 0.0,
+        readout_updates_enabled=args.readout_update_scale != 0.0,
+        output_bias_updates_enabled=args.output_bias_update_scale != 0.0,
+    )
+    preflight_temporary_state_count = temporary_state_count(
+        hidden_activation_states=preflight_hidden_activation_state_count,
+        hidden_delta_states=preflight_hidden_delta_state_count,
+        score_states=preflight_score_state_count,
+        output_delta_states=preflight_output_delta_state_count,
+        gradient_accumulator_states=preflight_gradient_accumulator_state_count,
+    )
     source_phases, source_sample_starts, source_t_stop = make_phase_schedule(
         args.batch_size,
         args.updates,
@@ -2556,6 +2658,10 @@ def main() -> None:
                     hidden_preactivation_source_count=preflight_hidden_preactivation_source_count,
                     hidden_activation_mode=args.hidden_activation_mode,
                     hidden_activation_state_count=preflight_hidden_activation_state_count,
+                    hidden_delta_state_count=preflight_hidden_delta_state_count,
+                    score_state_count=preflight_score_state_count,
+                    gradient_accumulator_state_count=preflight_gradient_accumulator_state_count,
+                    temporary_state_count=preflight_temporary_state_count,
                     score_calculation_mode=args.score_calculation_mode,
                     score_calculation_source_count=preflight_score_calculation_source_count,
                     output_rail_mode=args.output_rail_mode,
@@ -3144,6 +3250,10 @@ def main() -> None:
             hidden_preactivation_source_count=preflight_hidden_preactivation_source_count,
             hidden_activation_mode=args.hidden_activation_mode,
             hidden_activation_state_count=preflight_hidden_activation_state_count,
+            hidden_delta_state_count=preflight_hidden_delta_state_count,
+            score_state_count=preflight_score_state_count,
+            gradient_accumulator_state_count=preflight_gradient_accumulator_state_count,
+            temporary_state_count=preflight_temporary_state_count,
             score_calculation_mode=args.score_calculation_mode,
             score_calculation_source_count=preflight_score_calculation_source_count,
             output_rail_mode=args.output_rail_mode,

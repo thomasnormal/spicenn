@@ -196,6 +196,74 @@ def test_phase_transient_hidden_activation_state_count_tracks_fusion_mode() -> N
         phase_transient.hidden_activation_state_count("bad", 16, 2)
 
 
+def test_phase_transient_temporary_state_count_tracks_fused_state_modes() -> None:
+    assert phase_transient.hidden_delta_state_count(16, 2) == 32
+    assert phase_transient.score_state_count(10) == 10
+    assert phase_transient.temporary_state_count(
+        hidden_activation_states=32,
+        hidden_delta_states=32,
+        score_states=10,
+        output_delta_states=10,
+        gradient_accumulator_states=0,
+    ) == 84
+    assert phase_transient.temporary_state_count(
+        hidden_activation_states=0,
+        hidden_delta_states=32,
+        score_states=10,
+        output_delta_states=0,
+        gradient_accumulator_states=0,
+    ) == 42
+
+    with pytest.raises(ValueError, match="temporary state counts"):
+        phase_transient.temporary_state_count(
+            hidden_activation_states=0,
+            hidden_delta_states=0,
+            score_states=-1,
+            output_delta_states=0,
+            gradient_accumulator_states=0,
+        )
+
+
+def test_phase_transient_gradient_accumulator_state_count_tracks_update_mode_and_zero_pixels() -> None:
+    x = np.array(
+        [
+            [0.0, 0.5, 0.0, 1.0],
+            [0.0, 0.0, 0.0, 1.0],
+        ]
+    )
+    blocks = [[0, 1], [2, 3]]
+
+    assert phase_transient.gradient_accumulator_state_count(
+        "direct",
+        blocks,
+        channels=2,
+        classes=3,
+        x_batch=x,
+        output_bias_updates_enabled=True,
+    ) == 0
+    assert phase_transient.gradient_accumulator_state_count(
+        "phased",
+        blocks,
+        channels=2,
+        classes=3,
+        x_batch=x,
+        output_bias_updates_enabled=True,
+    ) == 23
+    assert phase_transient.gradient_accumulator_state_count(
+        "phased",
+        blocks,
+        channels=2,
+        classes=3,
+        x_batch=x,
+        local_updates_enabled=False,
+        readout_updates_enabled=False,
+        output_bias_updates_enabled=False,
+    ) == 0
+
+    with pytest.raises(ValueError, match="update_mode"):
+        phase_transient.gradient_accumulator_state_count("bad", blocks, 2, 3, x)
+
+
 def test_phase_transient_score_calculation_source_count_tracks_fusion_mode() -> None:
     assert phase_transient.score_calculation_source_count("node", 10) == 10
     assert phase_transient.score_calculation_source_count("inline", 10) == 0
@@ -234,6 +302,10 @@ def test_phase_transient_deck_mode_fields_are_shared_by_preflight_and_runtime_su
         hidden_preactivation_source_count=0,
         hidden_activation_mode="inline",
         hidden_activation_state_count=0,
+        hidden_delta_state_count=32,
+        score_state_count=10,
+        gradient_accumulator_state_count=0,
+        temporary_state_count=42,
         score_calculation_mode="inline",
         score_calculation_source_count=0,
         output_rail_mode="inline",
@@ -250,6 +322,10 @@ def test_phase_transient_deck_mode_fields_are_shared_by_preflight_and_runtime_su
         "hidden_preactivation_source_count": 0,
         "hidden_activation_mode": "inline",
         "hidden_activation_state_count": 0,
+        "hidden_delta_state_count": 32,
+        "score_state_count": 10,
+        "gradient_accumulator_state_count": 0,
+        "temporary_state_count": 42,
         "score_calculation_mode": "inline",
         "score_calculation_source_count": 0,
         "output_rail_mode": "inline",
@@ -2615,6 +2691,10 @@ def test_phase_transient_preflight_summary_has_no_artifact_paths() -> None:
         hidden_preactivation_source_count=0,
         hidden_activation_mode="inline",
         hidden_activation_state_count=0,
+        hidden_delta_state_count=4,
+        score_state_count=10,
+        gradient_accumulator_state_count=0,
+        temporary_state_count=14,
         score_calculation_mode="inline",
         score_calculation_source_count=0,
         output_rail_mode="inline",
@@ -2653,6 +2733,10 @@ def test_phase_transient_preflight_summary_has_no_artifact_paths() -> None:
     assert summary["hidden_preactivation_source_count"] == 0
     assert summary["hidden_activation_mode"] == "inline"
     assert summary["hidden_activation_state_count"] == 0
+    assert summary["hidden_delta_state_count"] == 4
+    assert summary["score_state_count"] == 10
+    assert summary["gradient_accumulator_state_count"] == 0
+    assert summary["temporary_state_count"] == 14
     assert summary["score_calculation_mode"] == "inline"
     assert summary["score_calculation_source_count"] == 0
     assert summary["output_rail_mode"] == "inline"

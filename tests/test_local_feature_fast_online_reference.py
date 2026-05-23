@@ -563,6 +563,53 @@ def test_fast_online_strict_promotion_cost_fields_respect_pwl_clock_override() -
     assert fields["strict_phase_promotion_source_pwl_budget_met"] is False
 
 
+def test_fast_online_strict_cost_projection_can_use_a_different_horizon() -> None:
+    args = argparse.Namespace(
+        train_samples=4,
+        promotion_updates=2,
+        cost_projection_updates=4,
+        promotion_phase=0.5e-9,
+        promotion_gap=0.05e-9,
+        promotion_edge=5e-12,
+        promotion_transient_step=200e-12,
+        promotion_max_transient_points=100,
+        promotion_max_source_pwl_points=500,
+        promotion_max_output_vectors=80,
+        promotion_phase_clock_mode="pwl",
+        promotion_target_source_mode="label",
+        promotion_phase_output_include_y=False,
+        image_size=2,
+        block_size=2,
+        stride=2,
+        channels=1,
+        softmax_output=True,
+    )
+    x_train = np.array([[0.5, 0.0], [0.0, 0.5], [0.5, 0.5], [0.0, 0.0]])
+    y_train = np.array([0, 1, 0, 1])
+    variant = {
+        "lr": 0.8,
+        "lr_schedule": "constant",
+        "lr_final_scale": 1.0,
+        "output_bias_update_scale": 0.0,
+        "state_decay": 0.0,
+    }
+
+    promotion = fast_sweep.strict_phase_promotion_cost_fields(args, variant, x_train, y_train)
+    projection = fast_sweep.strict_phase_cost_projection_fields(args, variant, x_train, y_train)
+
+    assert promotion["strict_phase_promotion_updates"] == 2
+    assert projection["strict_phase_cost_projection_updates"] == 4
+    assert (
+        projection["strict_phase_cost_projection_estimated_transient_points"]
+        > promotion["strict_phase_promotion_estimated_transient_points"]
+    )
+    assert (
+        projection["strict_phase_cost_projection_total_source_pwl_points"]
+        > promotion["strict_phase_promotion_total_source_pwl_points"]
+    )
+    assert projection["strict_phase_cost_projection_output_vector_count"] == promotion["strict_phase_promotion_output_vector_count"]
+
+
 def test_fast_online_variant_sweep_selects_best_promotion_variant() -> None:
     rows = [
         {"tag": "late", "final_eval_accuracy": 0.9, "promotion_probe_eval_accuracy": 0.4, "eval_improvement": 0.8},

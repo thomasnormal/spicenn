@@ -579,10 +579,29 @@ def strict_phase_promotion_cost_fields(
     y_train: np.ndarray,
 ) -> dict[str, Any]:
     updates = int(getattr(args, "promotion_updates", 0) or args.train_samples)
+    return strict_phase_cost_fields_for_updates(
+        args,
+        variant,
+        x_train,
+        y_train,
+        updates=updates,
+        prefix="strict_phase_promotion",
+    )
+
+
+def strict_phase_cost_fields_for_updates(
+    args: argparse.Namespace,
+    variant: dict[str, Any],
+    x_train: np.ndarray,
+    y_train: np.ndarray,
+    *,
+    updates: int,
+    prefix: str,
+) -> dict[str, Any]:
     if updates <= 0:
-        raise ValueError("--promotion-updates must be positive when set")
+        raise ValueError("strict phase cost projection updates must be positive")
     if len(x_train) < updates or len(y_train) < updates:
-        raise ValueError("training prefix is shorter than promotion updates")
+        raise ValueError("training prefix is shorter than strict phase cost projection updates")
     phase = float(getattr(args, "promotion_phase", 0.5e-9))
     gap = float(getattr(args, "promotion_gap", 0.05e-9))
     edge = float(getattr(args, "promotion_edge", 5e-12))
@@ -627,22 +646,42 @@ def strict_phase_promotion_cost_fields(
         include_y_vectors=bool(getattr(args, "promotion_phase_output_include_y", False)),
     )
     return {
-        "strict_phase_promotion_phase_clock_mode": phase_clock_mode,
-        "strict_phase_promotion_target_source_mode": getattr(args, "promotion_target_source_mode", "label"),
-        "strict_phase_promotion_output_bias_state_frozen": output_bias_state_frozen,
-        "strict_phase_promotion_phase_output_includes_y": bool(getattr(args, "promotion_phase_output_include_y", False)),
-        "strict_phase_promotion_output_vector_count": output_vector_count,
-        "strict_phase_promotion_output_vector_budget_met": bool(not max_output_vectors or output_vector_count <= max_output_vectors),
-        "strict_phase_promotion_estimated_transient_points": estimated_points,
-        "strict_phase_promotion_transient_budget_met": bool(not max_transient_points or estimated_points <= max_transient_points),
-        "strict_phase_promotion_sample_source_pwl_points": source_complexity["sample_source_pwl_points"],
-        "strict_phase_promotion_phase_clock_source_pwl_points": source_complexity["phase_clock_source_pwl_points"],
-        "strict_phase_promotion_control_source_pwl_points": source_complexity["control_source_pwl_points"],
-        "strict_phase_promotion_total_source_pwl_points": source_complexity["total_source_pwl_points"],
-        "strict_phase_promotion_source_pwl_budget_met": bool(
+        f"{prefix}_updates": updates,
+        f"{prefix}_phase_clock_mode": phase_clock_mode,
+        f"{prefix}_target_source_mode": getattr(args, "promotion_target_source_mode", "label"),
+        f"{prefix}_output_bias_state_frozen": output_bias_state_frozen,
+        f"{prefix}_phase_output_includes_y": bool(getattr(args, "promotion_phase_output_include_y", False)),
+        f"{prefix}_output_vector_count": output_vector_count,
+        f"{prefix}_output_vector_budget_met": bool(not max_output_vectors or output_vector_count <= max_output_vectors),
+        f"{prefix}_estimated_transient_points": estimated_points,
+        f"{prefix}_transient_budget_met": bool(not max_transient_points or estimated_points <= max_transient_points),
+        f"{prefix}_sample_source_pwl_points": source_complexity["sample_source_pwl_points"],
+        f"{prefix}_phase_clock_source_pwl_points": source_complexity["phase_clock_source_pwl_points"],
+        f"{prefix}_control_source_pwl_points": source_complexity["control_source_pwl_points"],
+        f"{prefix}_total_source_pwl_points": source_complexity["total_source_pwl_points"],
+        f"{prefix}_source_pwl_budget_met": bool(
             not max_source_pwl_points or source_complexity["total_source_pwl_points"] <= max_source_pwl_points
         ),
     }
+
+
+def strict_phase_cost_projection_fields(
+    args: argparse.Namespace,
+    variant: dict[str, Any],
+    x_train: np.ndarray,
+    y_train: np.ndarray,
+) -> dict[str, Any]:
+    updates = int(getattr(args, "cost_projection_updates", 0) or 0)
+    if updates <= 0:
+        return {}
+    return strict_phase_cost_fields_for_updates(
+        args,
+        variant,
+        x_train,
+        y_train,
+        updates=updates,
+        prefix="strict_phase_cost_projection",
+    )
 
 
 def run_variant(
@@ -686,6 +725,7 @@ def run_variant(
     wall = time.perf_counter() - t0
     phase_command = strict_phase_promotion_command(args, variant)
     promotion_costs = strict_phase_promotion_cost_fields(args, variant, x_train, y_train)
+    cost_projection = strict_phase_cost_projection_fields(args, variant, x_train, y_train)
     promotion_efficiency = promotion_efficiency_fields(
         initial_eval_accuracy=initial_eval,
         promotion_probe_eval_accuracy=promotion_probe_eval_accuracy,
@@ -707,6 +747,7 @@ def run_variant(
         "strict_phase_promotion_max_source_pwl_points": int(getattr(args, "promotion_max_source_pwl_points", 0)),
         "strict_phase_promotion_max_output_vectors": int(getattr(args, "promotion_max_output_vectors", 0)),
         **promotion_costs,
+        **cost_projection,
         **promotion_efficiency,
         "strict_phase_promotion_command": command_text(phase_command),
         **probe_columns,
@@ -798,6 +839,15 @@ def main() -> None:
     ap.add_argument("--promotion-probe-updates", default="")
     ap.add_argument("--promotion-tag-prefix", default="promote")
     ap.add_argument(
+        "--cost-projection-updates",
+        type=int,
+        default=0,
+        help=(
+            "Optional strict phase training-cost projection horizon. This can differ from --promotion-updates "
+            "to estimate a long fast-reference trajectory while generating a shorter promotion command."
+        ),
+    )
+    ap.add_argument(
         "--learning-thresholds",
         default="0.2,0.5,0.75,0.9",
         help="Comma-separated accuracy thresholds summarized by earliest configured probe horizon.",
@@ -842,6 +892,10 @@ def main() -> None:
         raise ValueError("--state-decay must be in [0, 1)")
     if args.promotion_updates < 0:
         raise ValueError("--promotion-updates must be non-negative")
+    if args.cost_projection_updates < 0:
+        raise ValueError("--cost-projection-updates must be non-negative")
+    if args.cost_projection_updates and args.cost_projection_updates > args.train_samples:
+        raise ValueError("--cost-projection-updates cannot exceed --train-samples")
     if args.promotion_timeout < 0:
         raise ValueError("--promotion-timeout must be non-negative")
     if args.promotion_max_transient_points < 0:
@@ -908,6 +962,7 @@ def main() -> None:
         "full_objective_eval_samples": args.full_objective_eval_samples,
         "full_objective_accuracy": args.full_objective_accuracy,
         "fast_reference_full_eval_sample_count_met": args.eval_samples >= args.full_objective_eval_samples,
+        "cost_projection_updates": args.cost_projection_updates,
         "csv": str(csv_path),
         "table_csv": str(table_csv_path),
     }

@@ -82,6 +82,7 @@ FIELDS = [
     "fully_on_device_execution_contract_met",
     "strict_fully_on_device_contract_met",
     "strict_fully_on_device_requested",
+    "strict_contract_inferred_from_legacy_summary",
     "random_init_used",
     "initial_weights_source",
     "continuous_transient_contract_met",
@@ -200,6 +201,118 @@ def as_float_or_none(value: Any) -> float | None:
         return None
 
 
+def is_phase_architecture(data: dict[str, Any]) -> bool:
+    return data.get("architecture") == "phase_resolved_transient_local_feature_readout"
+
+
+def is_continuous_phase_status(data: dict[str, Any]) -> bool:
+    return str(data.get("status") or "").startswith("continuous_phase_train")
+
+
+def inferred_random_init_used(data: dict[str, Any]) -> bool | None:
+    random_init = data.get("random_init_used")
+    if random_init is not None:
+        return bool(random_init)
+    source = data.get("initial_weights_source")
+    if source is not None:
+        return source == "random_init"
+    init_weights = data.get("init_weights")
+    if init_weights is not None:
+        return init_weights == ""
+    return None
+
+
+def inferred_initial_weights_source(data: dict[str, Any]) -> str | None:
+    source = data.get("initial_weights_source")
+    if source is not None:
+        return str(source)
+    if data.get("random_init_used") is True:
+        return "random_init"
+    if data.get("init_weights") == "":
+        return "random_init"
+    return None
+
+
+def inferred_python_weight_updates_between_samples(data: dict[str, Any]) -> bool | None:
+    value = data.get("python_weight_updates_between_samples")
+    if value is not None:
+        return bool(value)
+    if (
+        is_phase_architecture(data)
+        and is_continuous_phase_status(data)
+        and data.get("python_checkpointing_between_samples") is False
+    ):
+        return False
+    return None
+
+
+def inferred_fully_on_device_execution_contract_met(data: dict[str, Any]) -> bool | None:
+    value = data.get("fully_on_device_execution_contract_met")
+    if value is not None:
+        return bool(value)
+    no_checkpointing = data.get("python_checkpointing_between_samples") is False
+    no_weight_updates = inferred_python_weight_updates_between_samples(data) is False
+    if (
+        is_phase_architecture(data)
+        and is_continuous_phase_status(data)
+        and data.get("batch_size") == 1
+        and no_checkpointing
+        and no_weight_updates
+    ):
+        return True
+    return None
+
+
+def inferred_strict_fully_on_device_contract_met(data: dict[str, Any]) -> bool | None:
+    value = data.get("strict_fully_on_device_contract_met")
+    if value is not None:
+        return bool(value)
+    random_init = inferred_random_init_used(data) is True
+    no_checkpointing = data.get("python_checkpointing_between_samples") is False
+    no_weight_updates = inferred_python_weight_updates_between_samples(data) is False
+    fully_on_device = inferred_fully_on_device_execution_contract_met(data) is True
+    if (
+        fully_on_device
+        and data.get("batch_size") == 1
+        and data.get("reference_mode") == "none"
+        and random_init
+        and no_checkpointing
+        and no_weight_updates
+    ):
+        return True
+    return None
+
+
+def strict_contract_inferred_from_legacy_summary(data: dict[str, Any]) -> bool:
+    return data.get("strict_fully_on_device_contract_met") is None and inferred_strict_fully_on_device_contract_met(data) is True
+
+
+def inferred_strict_fully_on_device_requested(data: dict[str, Any]) -> bool | None:
+    value = data.get("strict_fully_on_device_requested")
+    if value is not None:
+        return bool(value)
+    if strict_contract_inferred_from_legacy_summary(data):
+        return True
+    return None
+
+
+def inferred_eval_backend(data: dict[str, Any]) -> str | None:
+    backend = data.get("eval_backend")
+    if backend is not None:
+        return str(backend)
+    has_spice_eval = data.get("spice_phase_eval_accuracy") is not None
+    has_numpy_eval = data.get("numpy_phase_eval_accuracy") is not None
+    if has_spice_eval and has_numpy_eval:
+        return "both"
+    if has_spice_eval:
+        return "spice"
+    if has_numpy_eval:
+        return "numpy"
+    if data.get("phase_eval_accuracy") is not None:
+        return "legacy_phase_eval"
+    return None
+
+
 def derived_nontrivial_learning_met(row: dict[str, Any]) -> bool:
     if row.get("nontrivial_learning_met") is True:
         return True
@@ -287,7 +400,7 @@ def row_from_summary(path: Path) -> dict[str, Any]:
         "target_source_mode": data.get("target_source_mode", "rails"),
         "output_bias_state_frozen": data.get("output_bias_state_frozen"),
         "reference_mode": data.get("reference_mode"),
-        "eval_backend": data.get("eval_backend", "spice"),
+        "eval_backend": inferred_eval_backend(data),
         "output_mode": data.get("output_mode"),
         "phase_output_includes_y": data.get("phase_output_includes_y"),
         "local_activation": data.get("local_activation"),
@@ -298,15 +411,16 @@ def row_from_summary(path: Path) -> dict[str, Any]:
         "hidden_synapse_mode": data.get("hidden_synapse_mode"),
         "readout_synapse_mode": data.get("readout_synapse_mode"),
         "readout_class_centering": data.get("readout_class_centering"),
-        "fully_on_device_execution_contract_met": data.get("fully_on_device_execution_contract_met"),
-        "strict_fully_on_device_contract_met": data.get("strict_fully_on_device_contract_met"),
-        "strict_fully_on_device_requested": data.get("strict_fully_on_device_requested"),
-        "random_init_used": data.get("random_init_used"),
-        "initial_weights_source": data.get("initial_weights_source"),
+        "fully_on_device_execution_contract_met": inferred_fully_on_device_execution_contract_met(data),
+        "strict_fully_on_device_contract_met": inferred_strict_fully_on_device_contract_met(data),
+        "strict_fully_on_device_requested": inferred_strict_fully_on_device_requested(data),
+        "strict_contract_inferred_from_legacy_summary": strict_contract_inferred_from_legacy_summary(data),
+        "random_init_used": inferred_random_init_used(data),
+        "initial_weights_source": inferred_initial_weights_source(data),
         "continuous_transient_contract_met": data.get("continuous_transient_contract_met"),
         "direction_matches_batch_op_reference": data.get("direction_matches_batch_op_reference"),
         "eval_accuracy_matches_batch_op_reference": data.get("eval_accuracy_matches_batch_op_reference"),
-        "python_weight_updates_between_samples": data.get("python_weight_updates_between_samples"),
+        "python_weight_updates_between_samples": inferred_python_weight_updates_between_samples(data),
         "python_checkpointing_between_samples": data.get("python_checkpointing_between_samples"),
         "initial_eval_accuracy": data.get("initial_eval_accuracy"),
         "phase_eval_accuracy": data.get("phase_eval_accuracy"),
@@ -555,6 +669,7 @@ def print_markdown(rows: list[dict[str, Any]]) -> None:
         "fully_on_device_execution_contract_met",
         "strict_fully_on_device_contract_met",
         "random_init_used",
+        "strict_contract_inferred_from_legacy_summary",
         "reference_mode",
         "initial_eval_accuracy",
         "phase_eval_accuracy",

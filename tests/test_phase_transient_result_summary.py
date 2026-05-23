@@ -325,6 +325,79 @@ def test_strict_contract_filter_keeps_random_init_no_reference_runs() -> None:
     assert module.filter_rows(rows, strict_contract_only=True) == [rows[0]]
 
 
+def test_legacy_no_reference_phase_summary_infers_strict_contract_fields(tmp_path: Path) -> None:
+    module = load_summary_module()
+    summary_path = tmp_path / "spice_mnist_local_feature_phase_legacy_direct_summary.json"
+    summary_path.write_text(
+        json.dumps(
+            {
+                "status": "continuous_phase_train_no_reference",
+                "architecture": "phase_resolved_transient_local_feature_readout",
+                "image_size": 10,
+                "block_size": 4,
+                "stride": 2,
+                "channels": 2,
+                "batch_size": 1,
+                "updates": 256,
+                "eval_samples": 300,
+                "reference_mode": "none",
+                "init_weights": "",
+                "python_checkpointing_between_samples": False,
+                "initial_eval_accuracy": 0.10333333333333333,
+                "phase_eval_accuracy": 0.44,
+                "phase_eval_improvement": 0.33666666666666667,
+            }
+        )
+        + "\n"
+    )
+
+    row = module.row_from_summary(summary_path)
+
+    assert row["fully_on_device_execution_contract_met"] is True
+    assert row["strict_fully_on_device_contract_met"] is True
+    assert row["strict_fully_on_device_requested"] is True
+    assert row["strict_contract_inferred_from_legacy_summary"] is True
+    assert row["random_init_used"] is True
+    assert row["initial_weights_source"] == "random_init"
+    assert row["python_weight_updates_between_samples"] is False
+    assert row["eval_backend"] == "legacy_phase_eval"
+    assert row["strict_target_contract_met"] is True
+    assert row["strict_target_contract_issues"] == []
+    assert row["strict_target_nontrivial_learning_met"] is True
+
+
+def test_legacy_reference_replay_summary_does_not_infer_strict_contract(tmp_path: Path) -> None:
+    module = load_summary_module()
+    summary_path = tmp_path / "spice_mnist_local_feature_phase_legacy_ref_summary.json"
+    summary_path.write_text(
+        json.dumps(
+            {
+                "status": "multi_update_equivalence_check",
+                "architecture": "phase_resolved_transient_local_feature_readout",
+                "image_size": 10,
+                "block_size": 4,
+                "stride": 2,
+                "channels": 2,
+                "batch_size": 1,
+                "reference_mode": "spice",
+                "init_weights": "",
+                "python_checkpointing_between_samples": False,
+            }
+        )
+        + "\n"
+    )
+
+    row = module.row_from_summary(summary_path)
+
+    assert row["fully_on_device_execution_contract_met"] is None
+    assert row["strict_fully_on_device_contract_met"] is None
+    assert row["strict_fully_on_device_requested"] is None
+    assert row["strict_contract_inferred_from_legacy_summary"] is False
+    assert "strict_contract" in row["strict_target_contract_issues"]
+    assert "strict_requested" in row["strict_target_contract_issues"]
+    assert "reference_mode_none" in row["strict_target_contract_issues"]
+
+
 def test_strict_target_contract_audit_reports_missing_requirements() -> None:
     module = load_summary_module()
     row = {

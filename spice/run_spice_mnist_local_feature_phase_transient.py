@@ -165,6 +165,14 @@ def phase_output_vector_count(
     return count
 
 
+def hidden_preactivation_source_count(mode: str, blocks: int, channels: int) -> int:
+    if mode == "node":
+        return int(blocks) * int(channels)
+    if mode == "inline":
+        return 0
+    raise ValueError("hidden_preactivation_mode must be 'node' or 'inline'")
+
+
 def validate_transient_point_budget(estimated_points: int, max_points: int) -> None:
     if max_points < 0:
         raise ValueError("--max-transient-points must be non-negative")
@@ -348,6 +356,8 @@ def phase_preflight_summary(
     update_mode: str,
     phase_clock_mode: str,
     target_source_mode: str,
+    hidden_preactivation_mode: str,
+    hidden_preactivation_source_count: int,
     output_bias_state_frozen: bool,
     phase_output_vector_count: int,
     phase_output_includes_y: bool,
@@ -405,6 +415,8 @@ def phase_preflight_summary(
         "update_mode": update_mode,
         "phase_clock_mode": phase_clock_mode,
         "target_source_mode": target_source_mode,
+        "hidden_preactivation_mode": hidden_preactivation_mode,
+        "hidden_preactivation_source_count": hidden_preactivation_source_count,
         "output_bias_state_frozen": output_bias_state_frozen,
         "phase_output_vector_count": phase_output_vector_count,
         "phase_output_includes_y": phase_output_includes_y,
@@ -970,6 +982,7 @@ def make_phase_transient_netlist(
     target_source_mode: str = "rails",
     include_output_y_vectors: bool = True,
     sample_edge: float | None = None,
+    hidden_preactivation_mode: str = "node",
 ) -> tuple[str, int, float]:
     total_samples = x_batch.shape[0]
     if total_samples != update_batch_size * updates:
@@ -1008,6 +1021,8 @@ def make_phase_transient_netlist(
         raise ValueError("lr_schedule must be 'constant' or 'linear-decay'")
     if target_source_mode not in {"rails", "label"}:
         raise ValueError("target_source_mode must be 'rails' or 'label'")
+    if hidden_preactivation_mode not in {"node", "inline"}:
+        raise ValueError("hidden_preactivation_mode must be 'node' or 'inline'")
     sample_transition_edge = edge if sample_edge is None else sample_edge
     if sample_transition_edge < 0.0:
         raise ValueError("sample_edge must be non-negative")
@@ -1124,6 +1139,7 @@ def make_phase_transient_netlist(
         lines.append(f"Cscore{k} score{k} 0 {{CSTATE}} IC=0")
         lines.append(f"Cd{k} d{k} 0 {{CSTATE}} IC=0")
     lines.append("")
+    hidden_preactivation_exprs: dict[tuple[int, int], str] = {}
     for b, idxs in enumerate(blocks):
         for c in range(channels):
             terms = []
@@ -1133,8 +1149,14 @@ def make_phase_transient_netlist(
                     continue
                 terms.append(f"{synapse_transfer_expr(f'V(w{b}_{c}_{p})', hidden_synapse_mode, synapse_clip)}*{pixel_expr}")
             terms.append(f"V(hb{b}_{c})")
-            lines.append(f"Bpre_h{b}_{c} ah{b}_{c} 0 V = " + " + ".join(terms))
-            h_calc = local_activation_expr(f"V(ah{b}_{c})", local_activation, relu_clip, relu_leak, softplus_beta)
+            preactivation_expr = " + ".join(terms)
+            hidden_preactivation_exprs[(b, c)] = preactivation_expr
+            activation_input = f"V(ah{b}_{c})"
+            if hidden_preactivation_mode == "node":
+                lines.append(f"Bpre_h{b}_{c} ah{b}_{c} 0 V = {preactivation_expr}")
+            else:
+                activation_input = f"({preactivation_expr})"
+            h_calc = local_activation_expr(activation_input, local_activation, relu_clip, relu_leak, softplus_beta)
             lines.append(f"Bstore_h{b}_{c} h{b}_{c} 0 I = V(pact)*{{CSTATE}}/{{TAU}}*(V(h{b}_{c})-({h_calc}))")
     for k in range(n_classes):
         readout_exprs_for_class: dict[tuple[int, int], str] = {}
@@ -1209,7 +1231,7 @@ def make_phase_transient_netlist(
                 for k in range(n_classes)
             )
             deriv = local_activation_deriv_expr(
-                f"V(ah{b}_{c})",
+                f"V(ah{b}_{c})" if hidden_preactivation_mode == "node" else f"({hidden_preactivation_exprs[(b, c)]})",
                 f"h{b}_{c}",
                 local_activation,
                 relu_clip,
@@ -1960,6 +1982,15 @@ def main() -> None:
     ap.add_argument("--synapse-clip", type=float, default=1.0)
     ap.add_argument("--readout-class-centering", choices=["none", "mean"], default="none")
     ap.add_argument(
+        "--hidden-preactivation-mode",
+        choices=["node", "inline"],
+        default="node",
+        help=(
+            "Use separate hidden preactivation behavioral nodes, or inline each hidden preactivation "
+            "expression into the activation/derivative equations for fused-cell experiments."
+        ),
+    )
+    ap.add_argument(
         "--target-source-mode",
         choices=["rails", "label"],
         default="rails",
@@ -2167,6 +2198,11 @@ def main() -> None:
     expected_hb_shape = (len(blocks), args.channels)
     expected_readout_shape = (10, len(blocks), args.channels)
     expected_ob_shape = (10,)
+    preflight_hidden_preactivation_source_count = hidden_preactivation_source_count(
+        args.hidden_preactivation_mode,
+        len(blocks),
+        args.channels,
+    )
     preflight_phase_output_vector_count = int(
         np.prod(expected_w_shape)
         + np.prod(expected_hb_shape)
@@ -2239,6 +2275,8 @@ def main() -> None:
                     update_mode=args.update_mode,
                     phase_clock_mode=args.phase_clock_mode,
                     target_source_mode=args.target_source_mode,
+                    hidden_preactivation_mode=args.hidden_preactivation_mode,
+                    hidden_preactivation_source_count=preflight_hidden_preactivation_source_count,
                     output_bias_state_frozen=output_bias_state_frozen,
                     phase_output_vector_count=preflight_phase_output_vector_count,
                     phase_output_includes_y=args.phase_output_include_y,
@@ -2348,6 +2386,7 @@ def main() -> None:
         args.target_source_mode,
         include_y_vectors,
         sample_edge,
+        args.hidden_preactivation_mode,
     )
     phase_netlist.write_text(prepare_phase_netlist(netlist, spice_bin))
 

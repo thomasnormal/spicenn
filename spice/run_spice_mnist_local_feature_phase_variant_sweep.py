@@ -174,6 +174,8 @@ def build_variant_command(
         str(synapse_clip),
         "--readout-class-centering",
         args.readout_class_centering,
+        "--hidden-preactivation-mode",
+        args.hidden_preactivation_mode,
         "--tag",
         variant_tag(
             args.tag,
@@ -269,6 +271,8 @@ def row_from_summary(
         "eval_backend",
         "update_mode",
         "sample_edge_s",
+        "hidden_preactivation_mode",
+        "hidden_preactivation_source_count",
         "target_source_mode",
     ]
     row = {
@@ -341,6 +345,7 @@ def main() -> None:
     ap.add_argument("--synapse-clip", type=float, default=1.0)
     ap.add_argument("--synapse-clips", default="")
     ap.add_argument("--readout-class-centering", choices=["none", "mean"], default="none")
+    ap.add_argument("--hidden-preactivation-mode", choices=["node", "inline"], default="node")
     ap.add_argument("--softmax-output", action=argparse.BooleanOptionalAction, default=True)
     ap.add_argument("--linear-output", action="store_true")
     ap.add_argument("--final-measures", action="store_true")

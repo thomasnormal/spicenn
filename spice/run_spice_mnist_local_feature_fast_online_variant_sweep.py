@@ -15,6 +15,7 @@ import run_spice_mnist_local_feature_fast_online_reference as fast_ref
 from run_spice_mnist_local_block_batch_op_train import block_indices
 from run_spice_mnist_local_feature_phase_transient import (
     estimate_transient_points,
+    hidden_preactivation_source_count,
     lr_schedule_values,
     make_phase_schedule,
     phase_output_vector_count,
@@ -638,6 +639,8 @@ def strict_phase_promotion_command(args: argparse.Namespace, variant: dict[str, 
         str(variant["synapse_clip"]),
         "--readout-class-centering",
         args.readout_class_centering,
+        "--hidden-preactivation-mode",
+        getattr(args, "promotion_hidden_preactivation_mode", "node"),
         "--tag",
         promotion_tag,
     ]
@@ -695,6 +698,7 @@ def strict_phase_cost_fields_for_updates(
         sample_edge = float(sample_edge)
     transient_step = float(getattr(args, "promotion_transient_step", 200e-12))
     phase_clock_mode = getattr(args, "promotion_phase_clock_mode", DEFAULT_PROMOTION_PHASE_CLOCK_MODE)
+    hidden_preactivation_mode = getattr(args, "promotion_hidden_preactivation_mode", "node")
     phases, sample_starts, t_stop = make_phase_schedule(1, updates, phase, gap, True)
     lr_values = None
     lr_schedule = variant.get("lr_schedule", "constant")
@@ -740,6 +744,12 @@ def strict_phase_cost_fields_for_updates(
         f"{prefix}_updates": updates,
         f"{prefix}_phase_clock_mode": phase_clock_mode,
         f"{prefix}_sample_edge_s": edge if sample_edge is None else sample_edge,
+        f"{prefix}_hidden_preactivation_mode": hidden_preactivation_mode,
+        f"{prefix}_hidden_preactivation_source_count": hidden_preactivation_source_count(
+            hidden_preactivation_mode,
+            len(blocks),
+            channels,
+        ),
         f"{prefix}_target_source_mode": getattr(args, "promotion_target_source_mode", "label"),
         f"{prefix}_output_bias_state_frozen": output_bias_state_frozen,
         f"{prefix}_phase_output_includes_y": bool(getattr(args, "promotion_phase_output_include_y", False)),
@@ -954,6 +964,7 @@ def main() -> None:
         ),
     )
     ap.add_argument("--promotion-target-source-mode", choices=["rails", "label"], default="label")
+    ap.add_argument("--promotion-hidden-preactivation-mode", choices=["node", "inline"], default="node")
     ap.add_argument("--promotion-phase-output-include-y", action="store_true")
     ap.add_argument("--promotion-probe-updates", default="")
     ap.add_argument("--promotion-tag-prefix", default="promote")

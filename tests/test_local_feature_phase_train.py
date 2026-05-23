@@ -72,6 +72,7 @@ def test_phase_transient_cli_exposes_agreement_gates() -> None:
     assert "--preflight-only" in proc.stdout
     assert "--phase-clock-mode" in proc.stdout
     assert "--sample-edge" in proc.stdout
+    assert "--hidden-preactivation-mode" in proc.stdout
 
 
 def test_phase_transient_x_yce_print_reader_extracts_final_transient_row(tmp_path: Path) -> None:
@@ -162,6 +163,14 @@ def test_phase_transient_output_vector_budget_fails_before_large_diagnostics() -
 
 def test_phase_transient_total_source_pwl_points_sums_samples_and_clocks() -> None:
     assert phase_transient.total_source_pwl_points({"sample_source_pwl_points": 61, "phase_clock_source_pwl_points": 40}) == 101
+
+
+def test_phase_transient_hidden_preactivation_source_count_tracks_fusion_mode() -> None:
+    assert phase_transient.hidden_preactivation_source_count("node", 16, 2) == 32
+    assert phase_transient.hidden_preactivation_source_count("inline", 16, 2) == 0
+
+    with pytest.raises(ValueError, match="hidden_preactivation_mode"):
+        phase_transient.hidden_preactivation_source_count("bad", 16, 2)
 
 
 def test_phase_transient_cost_summary_fields_report_rates_and_budgets() -> None:
@@ -1087,6 +1096,7 @@ def test_phase_variant_sweep_dry_command_preserves_online_contract() -> None:
         update_mode="direct",
         phase_clock_mode="analytic",
         target_source_mode="label",
+        hidden_preactivation_mode="inline",
         eval_backend="numpy",
         probe_updates="1,2,4,8",
         tag="sweep",
@@ -1165,6 +1175,8 @@ def test_phase_variant_sweep_dry_command_preserves_online_contract() -> None:
     assert command[command.index("--phase-clock-mode") + 1] == "analytic"
     assert "--target-source-mode" in command
     assert command[command.index("--target-source-mode") + 1] == "label"
+    assert "--hidden-preactivation-mode" in command
+    assert command[command.index("--hidden-preactivation-mode") + 1] == "inline"
     assert "--sample-edge" in command
     assert command[command.index("--sample-edge") + 1] == "0.0"
     assert "--eval-backend" in command
@@ -1227,6 +1239,8 @@ def test_phase_variant_sweep_row_preserves_phase_cost_fields() -> None:
         "total_source_pwl_points_per_update": 52.0,
         "target_source_mode": "label",
         "sample_edge_s": 0.0,
+        "hidden_preactivation_mode": "inline",
+        "hidden_preactivation_source_count": 0,
     }
 
     row = phase_variant_sweep.row_from_summary(
@@ -1264,6 +1278,8 @@ def test_phase_variant_sweep_row_preserves_phase_cost_fields() -> None:
     assert row["total_source_pwl_points"] == 104
     assert row["total_source_pwl_points_per_update"] == 52.0
     assert row["sample_edge_s"] == 0.0
+    assert row["hidden_preactivation_mode"] == "inline"
+    assert row["hidden_preactivation_source_count"] == 0
 
 
 def test_phase_transient_softmax_deck_is_one_continuous_online_run(tmp_path: Path) -> None:
@@ -1321,6 +1337,49 @@ def test_phase_transient_softmax_deck_is_one_continuous_online_run(tmp_path: Pat
     assert netlist.count("Vpapply papply 0 PWL(") == 1
     assert netlist.count("Vpclear pclear 0 PWL(") == 1
     assert netlist.count(" 1 ") >= len(y)
+
+
+def test_phase_transient_inline_hidden_preactivation_removes_ah_source(tmp_path: Path) -> None:
+    x = np.array([[0.0, 0.2, 0.4, 0.6]], dtype=float)
+    y = np.array([0])
+    w = np.ones((1, 1, 4))
+    hb = np.zeros((1, 1))
+    readout = np.ones((2, 1, 1))
+    output_bias = np.zeros(2)
+
+    netlist, _n_vec, _t_stop = phase_transient.make_phase_transient_netlist(
+        x,
+        y,
+        w,
+        hb,
+        readout,
+        output_bias,
+        [[0, 1, 2, 3]],
+        0.8,
+        tmp_path / "out.dat",
+        False,
+        1,
+        1,
+        1e-9,
+        0.1e-9,
+        5e-12,
+        40.0,
+        20e-12,
+        1e-12,
+        1e-12,
+        1e-12,
+        1e18,
+        True,
+        local_activation="tanh",
+        activation_derivative="exact",
+        hidden_preactivation_mode="inline",
+    )
+
+    assert "Bpre_h0_0 ah0_0 0 V =" not in netlist
+    assert "V(ah0_0)" not in netlist
+    assert "Bstore_h0_0 h0_0 0 I =" in netlist
+    assert "V(w0_0_1)*0.2" in netlist
+    assert "Bstore_dh0_0 dh0_0 0 I =" in netlist
 
 
 def test_phase_transient_softmax_negative_scale_controls_non_target_error(tmp_path: Path) -> None:
@@ -2203,6 +2262,8 @@ def test_phase_transient_preflight_summary_has_no_artifact_paths() -> None:
         update_mode="direct",
         phase_clock_mode="analytic",
         target_source_mode="rails",
+        hidden_preactivation_mode="inline",
+        hidden_preactivation_source_count=0,
         output_bias_state_frozen=True,
         phase_output_vector_count=70,
         phase_output_includes_y=False,
@@ -2230,6 +2291,8 @@ def test_phase_transient_preflight_summary_has_no_artifact_paths() -> None:
     assert summary["lr_final_scale"] == 0.25
     assert summary["phase_clock_mode"] == "analytic"
     assert summary["sample_edge_s"] == pytest.approx(5e-12)
+    assert summary["hidden_preactivation_mode"] == "inline"
+    assert summary["hidden_preactivation_source_count"] == 0
     assert summary["target_source_mode"] == "rails"
     assert summary["output_bias_state_frozen"] is True
     assert summary["phase_output_vector_count"] == 70

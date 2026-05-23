@@ -397,6 +397,7 @@ def test_fast_online_variant_sweep_row_reports_best_probe_and_improvement() -> N
     assert command[command.index("--update-mode") + 1] == "direct"
     assert command[command.index("--phase-clock-mode") + 1] == "analytic"
     assert command[command.index("--target-source-mode") + 1] == "label"
+    assert command[command.index("--hidden-preactivation-mode") + 1] == "node"
     assert command[command.index("--max-output-vectors") + 1] == "0"
     assert command[command.index("--max-sample-sources") + 1] == "0"
     assert command[command.index("--max-total-sources") + 1] == "0"
@@ -417,6 +418,8 @@ def test_fast_online_variant_sweep_row_reports_best_probe_and_improvement() -> N
     assert row["strict_phase_promotion_max_output_vectors"] == 0
     assert row["strict_phase_promotion_phase_clock_mode"] == "analytic"
     assert row["strict_phase_promotion_target_source_mode"] == "label"
+    assert row["strict_phase_promotion_hidden_preactivation_mode"] == "node"
+    assert row["strict_phase_promotion_hidden_preactivation_source_count"] == 1
     assert row["strict_phase_promotion_output_bias_state_frozen"] is True
     assert row["strict_phase_promotion_phase_output_includes_y"] is False
     assert row["strict_phase_promotion_output_vector_count"] == 15
@@ -520,9 +523,12 @@ def test_fast_online_strict_promotion_defaults_to_pwl_phase_clock() -> None:
 
     assert command[command.index("--phase-clock-mode") + 1] == "pwl"
     assert command[command.index("--target-source-mode") + 1] == "label"
+    assert command[command.index("--hidden-preactivation-mode") + 1] == "node"
     assert "--sample-edge" not in command
     assert fields["strict_phase_promotion_phase_clock_mode"] == "pwl"
     assert fields["strict_phase_promotion_sample_edge_s"] == pytest.approx(5e-12)
+    assert fields["strict_phase_promotion_hidden_preactivation_mode"] == "node"
+    assert fields["strict_phase_promotion_hidden_preactivation_source_count"] == 1
     assert fields["strict_phase_promotion_phase_clock_source_pwl_points"] > 0
     assert fields["strict_phase_promotion_control_source_pwl_points"] == 0
 
@@ -557,10 +563,14 @@ def test_fast_online_strict_promotion_sample_edge_is_projected_separately() -> N
 
     finite = fast_sweep.strict_phase_promotion_cost_fields(args, variant, x_train, y_train)
     args.promotion_sample_edge = 0.0
+    args.promotion_hidden_preactivation_mode = "inline"
     sharp = fast_sweep.strict_phase_promotion_cost_fields(args, variant, x_train, y_train)
 
     assert finite["strict_phase_promotion_sample_edge_s"] == pytest.approx(5e-12)
     assert sharp["strict_phase_promotion_sample_edge_s"] == pytest.approx(0.0)
+    assert finite["strict_phase_promotion_hidden_preactivation_source_count"] == 1
+    assert sharp["strict_phase_promotion_hidden_preactivation_mode"] == "inline"
+    assert sharp["strict_phase_promotion_hidden_preactivation_source_count"] == 0
     assert sharp["strict_phase_promotion_phase_clock_source_pwl_points"] == finite["strict_phase_promotion_phase_clock_source_pwl_points"]
     assert sharp["strict_phase_promotion_sample_source_pwl_points"] < finite["strict_phase_promotion_sample_source_pwl_points"]
     assert sharp["strict_phase_promotion_total_source_pwl_points"] < finite["strict_phase_promotion_total_source_pwl_points"]

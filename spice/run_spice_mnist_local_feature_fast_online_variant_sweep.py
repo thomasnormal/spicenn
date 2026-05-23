@@ -369,6 +369,21 @@ def cost_projection_budget_met(row: dict[str, Any]) -> bool:
     )
 
 
+def cost_projection_summary_fields(rows: list[dict[str, Any]], cost_projection_updates: int) -> dict[str, Any]:
+    projection_rows = [row for row in rows if row.get("strict_phase_cost_projection_updates") is not None]
+    full_objective_rows = [row for row in rows if row.get("fast_reference_full_objective_candidate") is True]
+    full_objective_cost_feasible_rows = [row for row in full_objective_rows if cost_projection_budget_met(row)]
+    return {
+        "cost_projection_enabled": int(cost_projection_updates) > 0,
+        "cost_projection_updates": int(cost_projection_updates),
+        "cost_projection_rows": len(projection_rows),
+        "cost_projection_budget_feasible_rows": sum(cost_projection_budget_met(row) for row in projection_rows),
+        "fast_reference_full_objective_candidate_count": len(full_objective_rows),
+        "fast_reference_full_objective_cost_feasible_candidate_count": len(full_objective_cost_feasible_rows),
+        "fast_reference_full_objective_cost_infeasible_candidate_count": len(full_objective_rows) - len(full_objective_cost_feasible_rows),
+    }
+
+
 def best_fast_reference_full_objective_cost_feasible_variant(rows: list[dict[str, Any]]) -> dict[str, Any] | None:
     candidates = [
         row
@@ -990,7 +1005,7 @@ def main() -> None:
         "full_objective_eval_samples": args.full_objective_eval_samples,
         "full_objective_accuracy": args.full_objective_accuracy,
         "fast_reference_full_eval_sample_count_met": args.eval_samples >= args.full_objective_eval_samples,
-        "cost_projection_updates": args.cost_projection_updates,
+        **cost_projection_summary_fields(rows, args.cost_projection_updates),
         "csv": str(csv_path),
         "table_csv": str(table_csv_path),
     }

@@ -135,6 +135,23 @@ def estimate_transient_points(t_stop: float, transient_step: float) -> int:
     return int(math.ceil(t_stop / transient_step)) + 1
 
 
+def phase_output_vector_count(
+    w: np.ndarray,
+    hb: np.ndarray,
+    readout: np.ndarray,
+    output_bias: np.ndarray,
+    *,
+    include_output_bias_vectors: bool = True,
+    include_y_vectors: bool = True,
+) -> int:
+    count = int(w.size + hb.size + readout.size)
+    if include_output_bias_vectors:
+        count += int(output_bias.size)
+    if include_y_vectors:
+        count += int(readout.shape[0])
+    return count
+
+
 def validate_transient_point_budget(estimated_points: int, max_points: int) -> None:
     if max_points < 0:
         raise ValueError("--max-transient-points must be non-negative")
@@ -278,6 +295,8 @@ def phase_preflight_summary(
     phase_clock_mode: str,
     target_source_mode: str,
     output_bias_state_frozen: bool,
+    phase_output_vector_count: int,
+    phase_output_includes_y: bool,
     reference_mode: str,
     init_weights: str,
     strict_fully_on_device: bool,
@@ -318,6 +337,8 @@ def phase_preflight_summary(
         "phase_clock_mode": phase_clock_mode,
         "target_source_mode": target_source_mode,
         "output_bias_state_frozen": output_bias_state_frozen,
+        "phase_output_vector_count": phase_output_vector_count,
+        "phase_output_includes_y": phase_output_includes_y,
         "reference_mode": reference_mode,
         "init_weights": init_weights,
         "phase_netlist": None,
@@ -780,6 +801,7 @@ def make_phase_transient_netlist(
     lr_schedule: str = "constant",
     lr_final_scale: float = 1.0,
     target_source_mode: str = "rails",
+    include_output_y_vectors: bool = True,
 ) -> tuple[str, int, float]:
     total_samples = x_batch.shape[0]
     if total_samples != update_batch_size * updates:
@@ -1060,7 +1082,8 @@ def make_phase_transient_netlist(
     vectors += [f"V(v{k}_{b}_{c})" for k in range(n_classes) for b in range(n_blocks) for c in range(channels)]
     if not output_bias_state_frozen:
         vectors += [f"V(ob{k})" for k in range(n_classes)]
-    vectors += [f"V(y{k})" for k in range(n_classes)]
+    if include_output_y_vectors:
+        vectors += [f"V(y{k})" for k in range(n_classes)]
     if output_mode == "native_measure":
         output_mode = "measure"
     if output_mode not in {"wrdata", "control_measure", "measure", "print"}:
@@ -1108,6 +1131,7 @@ def unpack_state(
     readout: np.ndarray,
     output_bias: np.ndarray,
     include_output_bias_vectors: bool = True,
+    include_y_vectors: bool = True,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     n_classes = readout.shape[0]
     offset = 0
@@ -1122,7 +1146,10 @@ def unpack_state(
         offset += output_bias.size
     else:
         nob = output_bias.copy()
-    y = vals[offset : offset + n_classes]
+    if include_y_vectors:
+        y = vals[offset : offset + n_classes]
+    else:
+        y = np.array([], dtype=float)
     return nw, nhb, nv, nob, y
 
 
@@ -1214,6 +1241,7 @@ def probe_diagnostic_rows(
     initial_state: TrainState,
     op_probe_states: dict[int, TrainState],
     include_output_bias_vectors: bool = True,
+    include_y_vectors: bool = True,
 ) -> tuple[list[dict[str, float | int | None]], dict[int, TrainState]]:
     w, hb, readout, output_bias = initial_state
     rows: list[dict[str, float | int | None]] = []
@@ -1228,6 +1256,7 @@ def probe_diagnostic_rows(
             readout,
             output_bias,
             include_output_bias_vectors,
+            include_y_vectors,
         )
         phase_state = (probe_w, probe_hb, probe_readout, probe_ob)
         phase_states[update] = phase_state
@@ -1786,6 +1815,11 @@ def main() -> None:
     ap.add_argument("--eval-backend", choices=["spice", "numpy", "both"], default="spice")
     ap.add_argument("--reference-mode", choices=["spice", "none"], default="spice")
     ap.add_argument("--phase-output-mode", choices=["auto", "measure", "print", "control_measure", "wrdata"], default="auto")
+    ap.add_argument(
+        "--phase-output-include-y",
+        action="store_true",
+        help="Also print/measure final class output rails. Final eval recomputes outputs from weights, so strict runs omit these by default.",
+    )
     ap.add_argument("--update-mode", choices=["phased", "direct"], default="phased")
     ap.add_argument(
         "--phase-clock-mode",
@@ -1910,6 +1944,17 @@ def main() -> None:
 
     stride = args.block_size if args.stride is None else args.stride
     blocks = block_indices(args.image_size, args.block_size, stride)
+    expected_w_shape = (len(blocks), args.channels, args.block_size * args.block_size)
+    expected_hb_shape = (len(blocks), args.channels)
+    expected_readout_shape = (10, len(blocks), args.channels)
+    expected_ob_shape = (10,)
+    preflight_phase_output_vector_count = int(
+        np.prod(expected_w_shape)
+        + np.prod(expected_hb_shape)
+        + np.prod(expected_readout_shape)
+        + (0 if output_bias_state_frozen else np.prod(expected_ob_shape))
+        + (np.prod(expected_ob_shape) if args.phase_output_include_y else 0)
+    )
     total_samples = args.batch_size * args.updates
     if args.train_samples < total_samples:
         raise ValueError("--train-samples must cover --batch-size * --updates")
@@ -1972,6 +2017,8 @@ def main() -> None:
                     phase_clock_mode=args.phase_clock_mode,
                     target_source_mode=args.target_source_mode,
                     output_bias_state_frozen=output_bias_state_frozen,
+                    phase_output_vector_count=preflight_phase_output_vector_count,
+                    phase_output_includes_y=args.phase_output_include_y,
                     reference_mode=args.reference_mode,
                     init_weights=args.init_weights,
                     strict_fully_on_device=args.strict_fully_on_device,
@@ -2016,6 +2063,7 @@ def main() -> None:
         owned_netlists.append(op_netlist)
     phase_output_mode = select_phase_output_mode(args.phase_output_mode, spice_bin, args.final_measures, probe_updates)
     include_output_bias_vectors = not output_bias_state_frozen
+    include_y_vectors = args.phase_output_include_y
 
     netlist, n_vec, t_stop = make_phase_transient_netlist(
         x_batch,
@@ -2071,6 +2119,7 @@ def main() -> None:
         args.lr_schedule,
         args.lr_final_scale,
         args.target_source_mode,
+        include_y_vectors,
     )
     phase_netlist.write_text(prepare_phase_netlist(netlist, spice_bin))
 
@@ -2120,6 +2169,7 @@ def main() -> None:
         readout,
         output_bias,
         include_output_bias_vectors,
+        include_y_vectors,
     )
 
     t1 = time.perf_counter()
@@ -2194,6 +2244,7 @@ def main() -> None:
         (w, hb, readout, output_bias),
         op_probe_states,
         include_output_bias_vectors,
+        include_y_vectors,
     )
     phase_eval_accuracy = None
     op_reference_eval_accuracy = None
@@ -2513,6 +2564,7 @@ def main() -> None:
         "phase_clock_mode": args.phase_clock_mode,
         "target_source_mode": args.target_source_mode,
         "output_bias_state_frozen": output_bias_state_frozen,
+        "phase_output_includes_y": include_y_vectors,
         "simulator_extra_args": args.simulator_extra_args or os.environ.get(SPICE_SIMULATOR_ARGS_ENV, ""),
         "init_weights": args.init_weights,
         "phase_netlist": str(phase_netlist),

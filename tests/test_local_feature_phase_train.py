@@ -1820,6 +1820,8 @@ def test_phase_transient_preflight_summary_has_no_artifact_paths() -> None:
         phase_clock_mode="analytic",
         target_source_mode="rails",
         output_bias_state_frozen=True,
+        phase_output_vector_count=70,
+        phase_output_includes_y=False,
         reference_mode="none",
         init_weights="",
         strict_fully_on_device=True,
@@ -1841,6 +1843,8 @@ def test_phase_transient_preflight_summary_has_no_artifact_paths() -> None:
     assert summary["phase_clock_mode"] == "analytic"
     assert summary["target_source_mode"] == "rails"
     assert summary["output_bias_state_frozen"] is True
+    assert summary["phase_output_vector_count"] == 70
+    assert summary["phase_output_includes_y"] is False
     assert summary["phase_netlist"] is None
     assert summary["final_weights"] is None
     assert summary["sample_source_pwl_points"] == 60
@@ -2410,6 +2414,63 @@ def test_phase_transient_zero_update_scales_omit_write_sources(tmp_path: Path) -
     assert "Cob0" not in phased_netlist
     assert "V(ob0)" not in phased_netlist
     assert phased_n_vec == 9
+
+
+def test_phase_transient_can_omit_output_y_measurement_vectors(tmp_path: Path) -> None:
+    x = np.zeros((1, 4))
+    y = np.array([0])
+    w = np.zeros((1, 1, 4))
+    hb = np.zeros((1, 1))
+    readout = np.zeros((2, 1, 1))
+    output_bias = np.zeros(2)
+
+    netlist, n_vec, _t_stop = phase_transient.make_phase_transient_netlist(
+        x,
+        y,
+        w,
+        hb,
+        readout,
+        output_bias,
+        [[0, 1, 2, 3]],
+        0.8,
+        tmp_path / "direct.dat",
+        False,
+        1,
+        1,
+        1e-9,
+        0.1e-9,
+        5e-12,
+        40.0,
+        20e-12,
+        1e-12,
+        1e-12,
+        1e-12,
+        1e18,
+        True,
+        "print",
+        update_mode="direct",
+        output_bias_update_scale=0.0,
+        include_output_y_vectors=False,
+    )
+    print_line = next(line for line in netlist.splitlines() if line.startswith(".print TRAN "))
+
+    assert n_vec == 7
+    assert "V(y0)" in netlist
+    assert "V(y0)" not in print_line
+    nw, nhb, nv, nob, yy = phase_transient.unpack_state(
+        np.zeros(n_vec),
+        w,
+        hb,
+        readout,
+        output_bias,
+        include_output_bias_vectors=False,
+        include_y_vectors=False,
+    )
+    assert nw.shape == w.shape
+    assert nhb.shape == hb.shape
+    assert nv.shape == readout.shape
+    assert nob.tolist() == output_bias.tolist()
+    assert yy.size == 0
 
 
 def test_phase_transient_state_decay_is_on_device_update_phase_current(tmp_path: Path) -> None:

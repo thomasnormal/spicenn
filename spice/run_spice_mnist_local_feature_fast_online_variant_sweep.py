@@ -34,6 +34,27 @@ def float_axis(args: argparse.Namespace, plural_name: str, single_name: str, fla
     return values
 
 
+def lr_schedule_scale_axis(args: argparse.Namespace) -> list[tuple[str, float]]:
+    raw = getattr(args, "lr_schedules", "")
+    schedules = parse_csv(raw) if raw else [args.lr_schedule]
+    if not schedules:
+        raise ValueError("--lr-schedules must not be empty")
+    invalid = sorted(set(schedules) - {"constant", "linear-decay"})
+    if invalid:
+        raise ValueError(f"unsupported --lr-schedules values: {', '.join(invalid)}")
+    final_scales = float_axis(args, "lr_final_scales", "lr_final_scale", "lr-final-scales")
+    if any(scale < 0 for scale in final_scales):
+        raise ValueError("--lr-final-scale/--lr-final-scales values must be non-negative")
+
+    pairs: list[tuple[str, float]] = []
+    for schedule in schedules:
+        if schedule == "constant":
+            pairs.append((schedule, 1.0))
+        else:
+            pairs.extend((schedule, scale) for scale in final_scales)
+    return pairs
+
+
 def hparam_tag(
     base_tag: str,
     lr: float,
@@ -60,7 +81,7 @@ def variant_grid(args: argparse.Namespace) -> list[dict[str, Any]]:
     readout_synapse_modes = parse_csv(args.readout_synapse_modes)
     synapse_clips = parse_float_csv(args.synapse_clips) if args.synapse_clips else [args.synapse_clip]
     lrs = float_axis(args, "lrs", "lr", "lrs")
-    lr_final_scales = float_axis(args, "lr_final_scales", "lr_final_scale", "lr-final-scales")
+    lr_schedule_scales = lr_schedule_scale_axis(args)
     output_bias_update_scales = float_axis(
         args,
         "output_bias_update_scales",
@@ -87,8 +108,6 @@ def variant_grid(args: argparse.Namespace) -> list[dict[str, Any]]:
         raise ValueError("--synapse-clip/--synapse-clips values must be positive")
     if any(lr < 0 for lr in lrs):
         raise ValueError("--lr/--lrs values must be non-negative")
-    if any(scale < 0 for scale in lr_final_scales):
-        raise ValueError("--lr-final-scale/--lr-final-scales values must be non-negative")
     if any(scale < 0 for scale in output_bias_update_scales):
         raise ValueError("--output-bias-update-scale/--output-bias-update-scales values must be non-negative")
     if any(scale < 0 for scale in readout_update_scales):
@@ -118,7 +137,7 @@ def variant_grid(args: argparse.Namespace) -> list[dict[str, Any]]:
                                 synapse_clip,
                             )
                             for lr in lrs:
-                                for lr_final_scale in lr_final_scales:
+                                for lr_schedule, lr_final_scale in lr_schedule_scales:
                                     for output_bias_update_scale in output_bias_update_scales:
                                         for readout_update_scale in readout_update_scales:
                                             for local_update_scale in local_update_scales:
@@ -134,7 +153,7 @@ def variant_grid(args: argparse.Namespace) -> list[dict[str, Any]]:
                                                                 "readout_synapse_mode": readout_synapse_mode,
                                                                 "synapse_clip": synapse_clip,
                                                                 "lr": lr,
-                                                                "lr_schedule": args.lr_schedule,
+                                                                "lr_schedule": lr_schedule,
                                                                 "lr_final_scale": lr_final_scale,
                                                                 "output_bias_update_scale": output_bias_update_scale,
                                                                 "readout_update_scale": readout_update_scale,
@@ -144,7 +163,7 @@ def variant_grid(args: argparse.Namespace) -> list[dict[str, Any]]:
                                                                 "tag": hparam_tag(
                                                                     family_tag,
                                                                     lr,
-                                                                    args.lr_schedule,
+                                                                    lr_schedule,
                                                                     lr_final_scale,
                                                                     output_bias_update_scale,
                                                                     readout_update_scale,
@@ -449,6 +468,7 @@ def main() -> None:
     ap.add_argument("--lr", type=float, default=0.8)
     ap.add_argument("--lrs", default="")
     ap.add_argument("--lr-schedule", choices=["constant", "linear-decay"], default="constant")
+    ap.add_argument("--lr-schedules", default="")
     ap.add_argument("--lr-final-scale", type=float, default=1.0)
     ap.add_argument("--lr-final-scales", default="")
     ap.add_argument("--linear-output", action="store_true")

@@ -232,8 +232,9 @@ def test_fast_online_variant_sweep_grid_uses_phase_variant_family_axes() -> None
         lr=0.8,
         lrs="0.4,0.8",
         lr_schedule="constant",
+        lr_schedules="constant,linear-decay",
         lr_final_scale=1.0,
-        lr_final_scales="",
+        lr_final_scales="0.25,0.5",
         output_bias_update_scale=0.0,
         output_bias_update_scales="",
         readout_update_scale=0.25,
@@ -249,14 +250,18 @@ def test_fast_online_variant_sweep_grid_uses_phase_variant_family_axes() -> None
 
     rows = fast_sweep.variant_grid(args)
 
-    assert len(rows) == 384
+    assert len(rows) == 1152
     assert rows[0]["local_activation"] == "tanh"
     assert rows[0]["relu_clip"] == 0.5
     assert rows[0]["lr"] == 0.4
+    assert rows[0]["lr_schedule"] == "constant"
+    assert rows[0]["lr_final_scale"] == 1.0
     assert rows[0]["readout_update_scale"] == 0.25
     assert rows[0]["softmax_temperature"] == 2.0
     assert any(row["local_activation"] == "diff-clipped-relu" and row["relu_clip"] == 1.0 for row in rows)
     assert any(row["lr"] == 0.8 and row["readout_update_scale"] == 0.5 for row in rows)
+    assert any(row["lr_schedule"] == "linear-decay" and row["lr_final_scale"] == 0.25 for row in rows)
+    assert not any(row["lr_schedule"] == "constant" and row["lr_final_scale"] != 1.0 for row in rows)
     assert all("tag" in row for row in rows)
     assert all("_lr" in row["tag"] and "_temp" in row["tag"] for row in rows)
 

@@ -306,6 +306,7 @@ def test_phase_transient_auxiliary_algebraic_source_count_sums_fused_families() 
 def test_phase_transient_deck_mode_fields_are_shared_by_preflight_and_runtime_summaries() -> None:
     fields = phase_transient.phase_deck_mode_fields(
         phase_clock_mode="pwl",
+        input_source_mode="rom",
         target_source_mode="label",
         sample_edge=0.0,
         hidden_preactivation_mode="inline",
@@ -328,6 +329,7 @@ def test_phase_transient_deck_mode_fields_are_shared_by_preflight_and_runtime_su
 
     assert fields == {
         "phase_clock_mode": "pwl",
+        "input_source_mode": "rom",
         "target_source_mode": "label",
         "sample_edge_s": 0.0,
         "hidden_preactivation_mode": "inline",
@@ -495,6 +497,12 @@ def test_phase_transient_sample_source_pwl_supports_sharp_sample_steps() -> None
     assert source == "PWL(0 0 3e-09 0 3e-09 1 5e-09 1 5e-09 0)"
 
 
+def test_phase_transient_sample_rom_expr_decodes_sample_index() -> None:
+    expr = phase_transient.sample_rom_expr(np.array([0.25, 0.5, 0.5, 1.0]), "idx")
+
+    assert expr == "if(idx < 0.5, 0.25, if(idx < 1.5, 0.5, if(idx < 2.5, 0.5, 1)))"
+
+
 def test_phase_transient_sample_source_pwl_rejects_mismatched_schedule() -> None:
     with pytest.raises(ValueError, match="sample_starts"):
         phase_transient.sample_source_pwl(np.array([1.0, 2.0]), [1.0e-9], 2.0e-9, 0.1e-9)
@@ -528,6 +536,62 @@ def test_phase_transient_source_complexity_counts_sample_and_clock_sources() -> 
     assert complexity["phase_clock_source_pwl_points"] > 0
     assert complexity["total_source_count"] == 8
     assert complexity["total_source_pwl_points"] == complexity["sample_source_pwl_points"] + complexity["phase_clock_source_pwl_points"]
+
+
+def test_phase_transient_rom_input_source_mode_replaces_pixel_pwl_sources() -> None:
+    x = np.array(
+        [
+            [0.0, 0.25, 0.75],
+            [0.0, 0.50, 0.75],
+            [0.0, 0.50, 1.00],
+        ],
+        dtype=float,
+    )
+    y = np.array([0, 1, 1])
+    phases, sample_starts, t_stop = phase_transient.make_phase_schedule(1, 3, 1.0e-9, 0.1e-9, True)
+    targets = phase_transient.target_matrix(y, 2, softmax_output=True)
+
+    pwl = phase_transient.phase_source_complexity(
+        x,
+        targets,
+        phases,
+        sample_starts,
+        t_stop,
+        0.1e-9,
+        True,
+        labels=y,
+        target_source_mode="label",
+        input_source_mode="pwl",
+    )
+    rom = phase_transient.phase_source_complexity(
+        x,
+        targets,
+        phases,
+        sample_starts,
+        t_stop,
+        0.1e-9,
+        True,
+        labels=y,
+        target_source_mode="label",
+        input_source_mode="rom",
+    )
+
+    assert rom["input_source_mode_rom"] == 1
+    assert rom["pixel_rom_index_source_count"] == 1
+    assert rom["pixel_rom_behavioral_source_count"] == 2
+    assert rom["pixel_rom_value_count"] == 6
+    assert rom["pixel_source_pwl_count"] == 1
+    assert rom["pixel_source_pwl_points"] == phase_transient.pwl_point_count(
+        phase_transient.sample_index_source_pwl(sample_starts, t_stop, 0.1e-9)
+    )
+    assert rom["pixel_source_pwl_points"] < pwl["pixel_source_pwl_points"]
+    assert rom["sample_source_count"] == 4
+    assert rom["total_source_count"] == (
+        rom["sample_source_count"]
+        + rom["target_behavioral_source_count"]
+        + rom["phase_clock_source_count"]
+        + rom["control_source_count"]
+    )
 
 
 def test_phase_transient_sample_edge_zero_keeps_step_semantics_without_changing_clock_cost() -> None:
@@ -675,6 +739,57 @@ def test_phase_transient_constant_pixel_sources_are_elided_from_deck(tmp_path: P
     assert "V(w0_0_2)*0.5" in netlist
     assert "Bupd_w0_0_0" not in netlist
     assert "Bupd_w0_0_2 w0_0_2 0 I =" in netlist
+
+
+def test_phase_transient_rom_input_source_mode_emits_sample_index_decoder(tmp_path: Path) -> None:
+    x = np.array(
+        [
+            [0.0, 0.2, 0.5, 0.0],
+            [0.0, 0.4, 0.5, 1.0],
+        ],
+        dtype=float,
+    )
+    y = np.array([0, 1])
+    w = np.zeros((1, 1, 4))
+    hb = np.zeros((1, 1))
+    readout = np.zeros((2, 1, 1))
+    output_bias = np.zeros(2)
+
+    netlist, _n_vec, _t_stop = phase_transient.make_phase_transient_netlist(
+        x,
+        y,
+        w,
+        hb,
+        readout,
+        output_bias,
+        [[0, 1, 2, 3]],
+        0.8,
+        tmp_path / "out.dat",
+        False,
+        1,
+        len(y),
+        1e-9,
+        0.1e-9,
+        5e-12,
+        40.0,
+        20e-12,
+        1e-12,
+        1e-12,
+        1e-12,
+        1e18,
+        True,
+        update_mode="direct",
+        input_source_mode="rom",
+    )
+
+    assert "Vsampleidx sampleidx 0 PWL(" in netlist
+    assert "Vpix1 pix1 0 PWL(" not in netlist
+    assert "Vpix3 pix3 0 PWL(" not in netlist
+    assert "Bpix1 pix1 0 V = if(V(sampleidx) < 0.5, 0.2, 0.4)" in netlist
+    assert "Bpix3 pix3 0 V = if(V(sampleidx) < 0.5, 0, 1)" in netlist
+    assert "* elided constant pixel sources: pix0=0, pix2=0.5" in netlist
+    assert "V(w0_0_1)*V(pix1)" in netlist
+    assert "V(w0_0_2)*0.5" in netlist
 
 
 def test_phase_transient_phased_mode_elides_zero_pixel_local_accumulator_family(tmp_path: Path) -> None:
@@ -2920,6 +3035,7 @@ def test_phase_transient_strict_fully_on_device_validation() -> None:
 def test_phase_transient_preflight_summary_has_no_artifact_paths() -> None:
     labels = np.array([2, 0])
     source_complexity = {
+        "input_source_mode_rom": 0,
         "sample_source_count": 26,
         "sample_source_dc_count": 11,
         "sample_source_pwl_count": 15,
@@ -2928,6 +3044,9 @@ def test_phase_transient_preflight_summary_has_no_artifact_paths() -> None:
         "pixel_source_dc_count": 3,
         "pixel_source_pwl_count": 13,
         "pixel_source_pwl_points": 52,
+        "pixel_rom_index_source_count": 0,
+        "pixel_rom_behavioral_source_count": 0,
+        "pixel_rom_value_count": 0,
         "target_source_count": 10,
         "target_source_dc_count": 8,
         "target_source_pwl_count": 2,
@@ -2962,6 +3081,7 @@ def test_phase_transient_preflight_summary_has_no_artifact_paths() -> None:
         lr_final_scale=0.25,
         update_mode="direct",
         phase_clock_mode="analytic",
+        input_source_mode="pwl",
         target_source_mode="rails",
         hidden_preactivation_mode="inline",
         hidden_preactivation_source_count=0,
@@ -3006,6 +3126,7 @@ def test_phase_transient_preflight_summary_has_no_artifact_paths() -> None:
     assert summary["lr_schedule"] == "linear-decay"
     assert summary["lr_final_scale"] == 0.25
     assert summary["phase_clock_mode"] == "analytic"
+    assert summary["input_source_mode"] == "pwl"
     assert summary["sample_edge_s"] == pytest.approx(5e-12)
     assert summary["hidden_preactivation_mode"] == "inline"
     assert summary["hidden_preactivation_source_count"] == 0

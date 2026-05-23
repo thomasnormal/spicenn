@@ -35,6 +35,7 @@ from run_spice_mnist_train import load_mnist_sequence
 from run_spice_sweep import ROOT
 
 DEFAULT_PROMOTION_PHASE_CLOCK_MODE = "pwl"
+DEFAULT_PROMOTION_INPUT_SOURCE_MODE = "pwl"
 DEFAULT_PROMOTION_SAMPLE_EDGE = None
 DEFAULT_PROMOTION_HIDDEN_PREACTIVATION_MODE = "inline"
 DEFAULT_PROMOTION_HIDDEN_ACTIVATION_MODE = "stored"
@@ -620,6 +621,8 @@ def strict_phase_promotion_command(args: argparse.Namespace, variant: dict[str, 
         "direct",
         "--phase-clock-mode",
         getattr(args, "promotion_phase_clock_mode", DEFAULT_PROMOTION_PHASE_CLOCK_MODE),
+        "--input-source-mode",
+        getattr(args, "promotion_input_source_mode", DEFAULT_PROMOTION_INPUT_SOURCE_MODE),
         "--target-source-mode",
         getattr(args, "promotion_target_source_mode", "label"),
         "--eval-backend",
@@ -743,6 +746,7 @@ def strict_phase_cost_fields_for_updates(
         sample_edge = float(sample_edge)
     transient_step = float(getattr(args, "promotion_transient_step", 200e-12))
     phase_clock_mode = getattr(args, "promotion_phase_clock_mode", DEFAULT_PROMOTION_PHASE_CLOCK_MODE)
+    input_source_mode = getattr(args, "promotion_input_source_mode", DEFAULT_PROMOTION_INPUT_SOURCE_MODE)
     hidden_preactivation_mode = getattr(
         args,
         "promotion_hidden_preactivation_mode",
@@ -793,6 +797,7 @@ def strict_phase_cost_fields_for_updates(
         labels=y_train[:updates],
         target_source_mode=getattr(args, "promotion_target_source_mode", "label"),
         sample_edge=sample_edge,
+        input_source_mode=input_source_mode,
     )
     estimated_points = estimate_transient_points(t_stop, transient_step)
     max_transient_points = int(getattr(args, "promotion_max_transient_points", 0))
@@ -847,6 +852,7 @@ def strict_phase_cost_fields_for_updates(
     return {
         f"{prefix}_updates": updates,
         f"{prefix}_phase_clock_mode": phase_clock_mode,
+        f"{prefix}_input_source_mode": input_source_mode,
         f"{prefix}_sample_edge_s": edge if sample_edge is None else sample_edge,
         f"{prefix}_hidden_preactivation_mode": hidden_preactivation_mode,
         f"{prefix}_hidden_preactivation_source_count": hidden_sources,
@@ -881,7 +887,11 @@ def strict_phase_cost_fields_for_updates(
         ),
         f"{prefix}_sample_source_elided_dc_count": source_complexity["sample_source_elided_dc_count"],
         f"{prefix}_pixel_source_count": source_complexity["pixel_source_count"],
+        f"{prefix}_pixel_source_pwl_points": source_complexity["pixel_source_pwl_points"],
         f"{prefix}_pixel_source_elided_dc_count": source_complexity["pixel_source_elided_dc_count"],
+        f"{prefix}_pixel_rom_index_source_count": source_complexity.get("pixel_rom_index_source_count", 0),
+        f"{prefix}_pixel_rom_behavioral_source_count": source_complexity.get("pixel_rom_behavioral_source_count", 0),
+        f"{prefix}_pixel_rom_value_count": source_complexity.get("pixel_rom_value_count", 0),
         f"{prefix}_target_source_count": source_complexity["target_source_count"],
         f"{prefix}_target_behavioral_source_count": source_complexity["target_behavioral_source_count"],
         f"{prefix}_total_source_count": source_complexity["total_source_count"],
@@ -1084,6 +1094,11 @@ def main() -> None:
             "Clock source style for generated strict Xyce promotion commands. PWL is the robust default; "
             "analytic modes remove per-update clock PWL points but are currently opt-in experiment knobs."
         ),
+    )
+    ap.add_argument(
+        "--promotion-input-source-mode",
+        choices=["pwl", "rom"],
+        default=DEFAULT_PROMOTION_INPUT_SOURCE_MODE,
     )
     ap.add_argument("--promotion-target-source-mode", choices=["rails", "label"], default="label")
     ap.add_argument(

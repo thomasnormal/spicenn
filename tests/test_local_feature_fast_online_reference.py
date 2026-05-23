@@ -397,6 +397,7 @@ def test_fast_online_variant_sweep_row_reports_best_probe_and_improvement() -> N
     assert command[command.index("--phase-output-mode") + 1] == "print"
     assert command[command.index("--update-mode") + 1] == "direct"
     assert command[command.index("--phase-clock-mode") + 1] == "analytic"
+    assert command[command.index("--input-source-mode") + 1] == "pwl"
     assert command[command.index("--target-source-mode") + 1] == "label"
     assert command[command.index("--hidden-preactivation-mode") + 1] == "inline"
     assert command[command.index("--hidden-activation-mode") + 1] == "stored"
@@ -427,6 +428,7 @@ def test_fast_online_variant_sweep_row_reports_best_probe_and_improvement() -> N
     assert row["strict_phase_promotion_max_output_vectors"] == 0
     assert row["strict_phase_promotion_max_auxiliary_algebraic_sources"] == 0
     assert row["strict_phase_promotion_phase_clock_mode"] == "analytic"
+    assert row["strict_phase_promotion_input_source_mode"] == "pwl"
     assert row["strict_phase_promotion_target_source_mode"] == "label"
     assert row["strict_phase_promotion_sample_edge_s"] == pytest.approx(5e-12)
     assert row["strict_phase_promotion_hidden_preactivation_mode"] == "inline"
@@ -549,6 +551,7 @@ def test_fast_online_strict_promotion_defaults_to_pwl_clock_and_efficient_deck_s
     )
 
     assert command[command.index("--phase-clock-mode") + 1] == "pwl"
+    assert command[command.index("--input-source-mode") + 1] == "pwl"
     assert command[command.index("--target-source-mode") + 1] == "label"
     assert command[command.index("--hidden-preactivation-mode") + 1] == "inline"
     assert command[command.index("--hidden-activation-mode") + 1] == "stored"
@@ -559,6 +562,7 @@ def test_fast_online_strict_promotion_defaults_to_pwl_clock_and_efficient_deck_s
     assert command[command.index("--output-delta-mode") + 1] == "node"
     assert "--sample-edge" not in command
     assert fields["strict_phase_promotion_phase_clock_mode"] == "pwl"
+    assert fields["strict_phase_promotion_input_source_mode"] == "pwl"
     assert fields["strict_phase_promotion_sample_edge_s"] == pytest.approx(5e-12)
     assert fields["strict_phase_promotion_hidden_preactivation_mode"] == "inline"
     assert fields["strict_phase_promotion_hidden_preactivation_source_count"] == 0
@@ -753,6 +757,7 @@ def test_fast_online_strict_promotion_cost_fields_respect_pwl_clock_override() -
     fields = fast_sweep.strict_phase_promotion_cost_fields(args, variant, x_train, y_train)
 
     assert fields["strict_phase_promotion_phase_clock_mode"] == "pwl"
+    assert fields["strict_phase_promotion_input_source_mode"] == "pwl"
     assert fields["strict_phase_promotion_sample_edge_s"] == pytest.approx(5e-12)
     assert fields["strict_phase_promotion_hidden_preactivation_mode"] == "inline"
     assert fields["strict_phase_promotion_hidden_preactivation_source_count"] == 0
@@ -789,6 +794,42 @@ def test_fast_online_strict_promotion_cost_fields_respect_pwl_clock_override() -
     assert fields["strict_phase_promotion_control_source_pwl_points"] == 0
     assert fields["strict_phase_promotion_total_source_pwl_points"] > fields["strict_phase_promotion_sample_source_pwl_points"]
     assert fields["strict_phase_promotion_source_pwl_budget_met"] is True
+
+
+def test_fast_online_strict_promotion_cost_fields_respect_rom_input_override() -> None:
+    args = argparse.Namespace(
+        train_samples=3,
+        promotion_updates=3,
+        promotion_phase=0.5e-9,
+        promotion_gap=0.05e-9,
+        promotion_edge=5e-12,
+        promotion_transient_step=200e-12,
+        promotion_max_transient_points=100,
+        promotion_max_source_pwl_points=500,
+        promotion_max_sample_sources=0,
+        promotion_max_total_sources=0,
+        promotion_max_auxiliary_algebraic_sources=0,
+        promotion_phase_clock_mode="pwl",
+        promotion_input_source_mode="rom",
+        promotion_target_source_mode="label",
+        softmax_output=True,
+    )
+    x_train = np.array([[0.0, 0.5], [1.0, 0.25], [0.0, 0.25]])
+    y_train = np.array([0, 1, 0])
+    variant = {
+        "lr": 0.8,
+        "lr_schedule": "constant",
+        "lr_final_scale": 1.0,
+    }
+
+    fields = fast_sweep.strict_phase_promotion_cost_fields(args, variant, x_train, y_train)
+
+    assert fields["strict_phase_promotion_input_source_mode"] == "rom"
+    assert fields["strict_phase_promotion_pixel_rom_index_source_count"] == 1
+    assert fields["strict_phase_promotion_pixel_rom_behavioral_source_count"] == 2
+    assert fields["strict_phase_promotion_pixel_rom_value_count"] == 6
+    assert fields["strict_phase_promotion_pixel_source_pwl_points"] == 5
+    assert fields["strict_phase_promotion_sample_source_pwl_points"] == 10
 
 
 def test_fast_online_strict_cost_projection_can_use_a_different_horizon() -> None:

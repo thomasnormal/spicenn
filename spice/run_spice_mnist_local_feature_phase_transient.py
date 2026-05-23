@@ -570,6 +570,7 @@ def phase_state_descriptions(
 def phase_deck_mode_fields(
     *,
     phase_clock_mode: str,
+    input_source_mode: str,
     target_source_mode: str,
     sample_edge: float,
     hidden_preactivation_mode: str,
@@ -596,6 +597,7 @@ def phase_deck_mode_fields(
     )
     return {
         "phase_clock_mode": phase_clock_mode,
+        "input_source_mode": input_source_mode,
         "target_source_mode": target_source_mode,
         "sample_edge_s": sample_edge,
         "hidden_preactivation_mode": hidden_preactivation_mode,
@@ -692,6 +694,7 @@ def phase_preflight_summary(
     lr_final_scale: float,
     update_mode: str,
     phase_clock_mode: str,
+    input_source_mode: str,
     target_source_mode: str,
     hidden_preactivation_mode: str,
     hidden_preactivation_source_count: int,
@@ -773,6 +776,7 @@ def phase_preflight_summary(
         "update_mode": update_mode,
         **phase_deck_mode_fields(
             phase_clock_mode=phase_clock_mode,
+            input_source_mode=input_source_mode,
             target_source_mode=target_source_mode,
             sample_edge=sample_edge,
             hidden_preactivation_mode=hidden_preactivation_mode,
@@ -919,6 +923,23 @@ def sample_source_pwl(values: np.ndarray, sample_starts: list[float], t_stop: fl
     return "PWL(" + " ".join(f"{t:.12g} {val:.12g}" for t, val in cleaned) + ")"
 
 
+def sample_index_source_pwl(sample_starts: list[float], t_stop: float, edge: float) -> str:
+    return sample_source_pwl(np.arange(len(sample_starts), dtype=float), sample_starts, t_stop, edge)
+
+
+def sample_rom_expr(values: np.ndarray, index_expr: str = "V(sampleidx)") -> str:
+    if len(values) == 0:
+        raise ValueError("values must not be empty")
+    vals = np.asarray(values, dtype=float)
+    if np.all(vals == vals[0]):
+        return spice_literal(float(vals[0]))
+    expr = spice_literal(float(vals[-1]))
+    for idx in range(len(vals) - 2, -1, -1):
+        threshold = idx + 0.5
+        expr = f"if({index_expr} < {threshold:.12g}, {spice_literal(float(vals[idx]))}, {expr})"
+    return expr
+
+
 def dc_source_value(source: str) -> float | None:
     if source.startswith("PWL("):
         return None
@@ -956,8 +977,53 @@ def sample_drive(
     )
 
 
+def pixel_sample_drives(
+    x_batch: np.ndarray,
+    sample_starts: list[float],
+    t_stop: float,
+    edge: float,
+    *,
+    input_source_mode: str = "pwl",
+) -> tuple[list[SampleDrive], list[str]]:
+    if input_source_mode == "pwl":
+        drives = [
+            sample_drive(f"Vpix{i}", f"pix{i}", x_batch[:, i], sample_starts, t_stop, edge, elide_dc=True)
+            for i in range(x_batch.shape[1])
+        ]
+        return drives, []
+    if input_source_mode == "rom":
+        lines = [f"Vsampleidx sampleidx 0 {sample_index_source_pwl(sample_starts, t_stop, edge)}"]
+        drives: list[SampleDrive] = []
+        for i in range(x_batch.shape[1]):
+            values = x_batch[:, i]
+            if np.all(values == values[0]):
+                constant = float(values[0])
+                drives.append(
+                    SampleDrive(
+                        node=f"pix{i}",
+                        source=spice_literal(constant),
+                        expr=spice_literal(constant),
+                        line=None,
+                        constant_value=constant,
+                    )
+                )
+                continue
+            line = f"Bpix{i} pix{i} 0 V = {sample_rom_expr(values)}"
+            drives.append(
+                SampleDrive(
+                    node=f"pix{i}",
+                    source="ROM",
+                    expr=f"V(pix{i})",
+                    line=line,
+                    constant_value=None,
+                )
+            )
+        return drives, lines
+    raise ValueError("input_source_mode must be 'pwl' or 'rom'")
+
+
 def emitted_sources(drives: list[SampleDrive]) -> list[str]:
-    return [drive.source for drive in drives if not drive.elided]
+    return [drive.source for drive in drives if not drive.elided and drive.source != "ROM"]
 
 
 def elided_dc_count(drives: list[SampleDrive]) -> int:
@@ -1004,15 +1070,28 @@ def phase_source_complexity(
     labels: np.ndarray | None = None,
     target_source_mode: str = "rails",
     sample_edge: float | None = None,
+    input_source_mode: str = "pwl",
 ) -> dict[str, int]:
     if target_source_mode not in {"rails", "label"}:
         raise ValueError("target_source_mode must be 'rails' or 'label'")
+    if input_source_mode not in {"pwl", "rom"}:
+        raise ValueError("input_source_mode must be 'pwl' or 'rom'")
     sample_transition_edge = edge if sample_edge is None else sample_edge
-    pixel_drives = [
-        sample_drive(f"Vpix{i}", f"pix{i}", x_batch[:, i], sample_starts, t_stop, sample_transition_edge, elide_dc=True)
-        for i in range(x_batch.shape[1])
-    ]
+    pixel_drives, _pixel_source_lines = pixel_sample_drives(
+        x_batch,
+        sample_starts,
+        t_stop,
+        sample_transition_edge,
+        input_source_mode=input_source_mode,
+    )
     pixel_sources = emitted_sources(pixel_drives)
+    pixel_rom_behavioral_source_count = 0
+    pixel_rom_index_sources = []
+    pixel_rom_value_count = 0
+    if input_source_mode == "rom":
+        pixel_rom_behavioral_source_count = sum(1 for drive in pixel_drives if not drive.elided)
+        pixel_rom_index_sources = [sample_index_source_pwl(sample_starts, t_stop, sample_transition_edge)]
+        pixel_rom_value_count = int(sum(len(x_batch[:, i]) for i, drive in enumerate(pixel_drives) if not drive.elided))
     target_behavioral_source_count = 0
     if target_source_mode == "rails":
         target_sources = [sample_source_pwl(targets[:, k], sample_starts, t_stop, sample_transition_edge) for k in range(targets.shape[1])]
@@ -1042,19 +1121,24 @@ def phase_source_complexity(
     def count_points(sources: list[str]) -> int:
         return sum(pwl_point_count(source) for source in sources)
 
-    sample_sources = pixel_sources + target_sources
+    pixel_count_sources = pixel_sources + pixel_rom_index_sources
+    sample_sources = pixel_count_sources + target_sources
     sample_elided_dc_count = elided_dc_count(pixel_drives)
     complexity = {
-        "sample_source_count": len(sample_sources),
+        "input_source_mode_rom": int(input_source_mode == "rom"),
+        "sample_source_count": len(sample_sources) + pixel_rom_behavioral_source_count,
         "sample_source_dc_count": count_dc(sample_sources),
         "sample_source_pwl_count": count_pwl(sample_sources),
         "sample_source_pwl_points": count_points(sample_sources),
         "sample_source_elided_dc_count": sample_elided_dc_count,
-        "pixel_source_count": len(pixel_sources),
-        "pixel_source_dc_count": count_dc(pixel_sources),
-        "pixel_source_pwl_count": count_pwl(pixel_sources),
-        "pixel_source_pwl_points": count_points(pixel_sources),
+        "pixel_source_count": len(pixel_count_sources) + pixel_rom_behavioral_source_count,
+        "pixel_source_dc_count": count_dc(pixel_count_sources),
+        "pixel_source_pwl_count": count_pwl(pixel_count_sources),
+        "pixel_source_pwl_points": count_points(pixel_count_sources),
         "pixel_source_elided_dc_count": sample_elided_dc_count,
+        "pixel_rom_index_source_count": len(pixel_rom_index_sources),
+        "pixel_rom_behavioral_source_count": pixel_rom_behavioral_source_count,
+        "pixel_rom_value_count": pixel_rom_value_count,
         "target_source_count": len(target_sources),
         "target_source_dc_count": count_dc(target_sources),
         "target_source_pwl_count": count_pwl(target_sources),
@@ -1375,6 +1459,7 @@ def make_phase_transient_netlist(
     lr_schedule: str = "constant",
     lr_final_scale: float = 1.0,
     target_source_mode: str = "rails",
+    input_source_mode: str = "pwl",
     include_output_y_vectors: bool = True,
     sample_edge: float | None = None,
     hidden_preactivation_mode: str = "node",
@@ -1422,6 +1507,8 @@ def make_phase_transient_netlist(
         raise ValueError("lr_schedule must be 'constant' or 'linear-decay'")
     if target_source_mode not in {"rails", "label"}:
         raise ValueError("target_source_mode must be 'rails' or 'label'")
+    if input_source_mode not in {"pwl", "rom"}:
+        raise ValueError("input_source_mode must be 'pwl' or 'rom'")
     if hidden_preactivation_mode not in {"node", "inline"}:
         raise ValueError("hidden_preactivation_mode must be 'node' or 'inline'")
     if hidden_activation_mode not in {"stored", "inline"}:
@@ -1460,10 +1547,13 @@ def make_phase_transient_netlist(
     tau = phase / settle_ratio
     phase_area = phase_pulse_area(phase, edge)
     targets = target_matrix(y_batch, n_classes, softmax_output)
-    pixel_drives = [
-        sample_drive(f"Vpix{i}", f"pix{i}", x_batch[:, i], sample_starts, t_stop, sample_transition_edge, elide_dc=True)
-        for i in range(x_batch.shape[1])
-    ]
+    pixel_drives, pixel_source_lines = pixel_sample_drives(
+        x_batch,
+        sample_starts,
+        t_stop,
+        sample_transition_edge,
+        input_source_mode=input_source_mode,
+    )
     state_descriptions = phase_state_descriptions(
         update_mode,
         output_bias_state_frozen=output_bias_state_frozen,
@@ -1513,6 +1603,7 @@ def make_phase_transient_netlist(
     elided_pixels = [f"{drive.node}={drive.expr}" for drive in pixel_drives if drive.elided]
     if elided_pixels:
         lines.append("* elided constant pixel sources: " + ", ".join(elided_pixels))
+    lines.extend(pixel_source_lines)
     for drive in pixel_drives:
         if drive.line is not None:
             lines.append(drive.line)
@@ -2514,6 +2605,15 @@ def main() -> None:
         default="rails",
         help="Drive target rails directly as per-class PWL sources, or decode them from one label PWL source.",
     )
+    ap.add_argument(
+        "--input-source-mode",
+        choices=["pwl", "rom"],
+        default="pwl",
+        help=(
+            "Drive pixels as independent PWL sources, or drive one sample-index waveform and decode pixel "
+            "values with behavioral input-ROM sources."
+        ),
+    )
     ap.add_argument("--seed", type=int, default=0)
     ap.add_argument("--timeout", type=float, default=300.0)
     ap.add_argument("--simulator", default=None)
@@ -2818,6 +2918,7 @@ def main() -> None:
         labels=y_batch,
         target_source_mode=args.target_source_mode,
         sample_edge=sample_edge,
+        input_source_mode=args.input_source_mode,
     )
     validate_source_point_budget(source_complexity, args.max_source_pwl_points)
     validate_sample_source_budget(source_complexity, args.max_sample_sources)
@@ -2845,6 +2946,7 @@ def main() -> None:
                     lr_final_scale=args.lr_final_scale,
                     update_mode=args.update_mode,
                     phase_clock_mode=args.phase_clock_mode,
+                    input_source_mode=args.input_source_mode,
                     target_source_mode=args.target_source_mode,
                     hidden_preactivation_mode=args.hidden_preactivation_mode,
                     hidden_preactivation_source_count=preflight_hidden_preactivation_source_count,
@@ -2970,6 +3072,7 @@ def main() -> None:
         args.lr_schedule,
         args.lr_final_scale,
         args.target_source_mode,
+        args.input_source_mode,
         include_y_vectors,
         sample_edge,
         args.hidden_preactivation_mode,
@@ -3445,6 +3548,7 @@ def main() -> None:
         "update_mode": args.update_mode,
         **phase_deck_mode_fields(
             phase_clock_mode=args.phase_clock_mode,
+            input_source_mode=args.input_source_mode,
             target_source_mode=args.target_source_mode,
             sample_edge=sample_edge,
             hidden_preactivation_mode=args.hidden_preactivation_mode,

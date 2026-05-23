@@ -126,6 +126,17 @@ def test_phase_transient_source_point_budget_fails_before_large_decks() -> None:
         phase_transient.validate_source_point_budget({"sample_source_pwl_points": 61, "phase_clock_source_pwl_points": 40}, 100)
 
 
+def test_phase_transient_output_vector_budget_fails_before_large_diagnostics() -> None:
+    phase_transient.validate_output_vector_budget(101, 0)
+    phase_transient.validate_output_vector_budget(100, 100)
+
+    with pytest.raises(ValueError, match="estimated output vectors"):
+        phase_transient.validate_output_vector_budget(101, 100)
+
+    with pytest.raises(ValueError, match="non-negative"):
+        phase_transient.validate_output_vector_budget(100, -1)
+
+
 def test_phase_transient_total_source_pwl_points_sums_samples_and_clocks() -> None:
     assert phase_transient.total_source_pwl_points({"sample_source_pwl_points": 61, "phase_clock_source_pwl_points": 40}) == 101
 
@@ -1828,6 +1839,7 @@ def test_phase_transient_preflight_summary_has_no_artifact_paths() -> None:
         estimated_transient_points=34,
         max_transient_points=100,
         max_source_pwl_points=200,
+        max_output_vectors=80,
         t_stop=6.6e-9,
         transient_step=200e-12,
         phase=0.5e-9,
@@ -1848,6 +1860,7 @@ def test_phase_transient_preflight_summary_has_no_artifact_paths() -> None:
     assert summary["phase_netlist"] is None
     assert summary["final_weights"] is None
     assert summary["sample_source_pwl_points"] == 60
+    assert summary["max_output_vectors"] == 80
     assert summary["phase_clock_source_pwl_points"] == 50
     assert summary["total_source_pwl_points"] == 110
 

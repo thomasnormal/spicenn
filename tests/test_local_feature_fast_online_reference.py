@@ -354,6 +354,7 @@ def test_fast_online_variant_sweep_row_reports_best_probe_and_improvement() -> N
     assert command[command.index("--update-mode") + 1] == "direct"
     assert command[command.index("--phase-clock-mode") + 1] == "analytic"
     assert command[command.index("--target-source-mode") + 1] == "label"
+    assert command[command.index("--max-output-vectors") + 1] == "0"
     assert "--phase-output-include-y" not in command
     assert command[command.index("--eval-backend") + 1] == "numpy"
     assert command[command.index("--updates") + 1] == "2"

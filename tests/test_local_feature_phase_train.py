@@ -959,6 +959,7 @@ def test_phase_variant_sweep_dry_command_preserves_online_contract() -> None:
         timeout=600.0,
         max_transient_points=500,
         max_source_pwl_points=1200,
+        max_sample_sources=100,
         reference_mode="none",
         phase_output_mode="print",
         update_mode="direct",
@@ -1025,6 +1026,8 @@ def test_phase_variant_sweep_dry_command_preserves_online_contract() -> None:
     assert command[command.index("--max-transient-points") + 1] == "500"
     assert "--max-source-pwl-points" in command
     assert command[command.index("--max-source-pwl-points") + 1] == "1200"
+    assert "--max-sample-sources" in command
+    assert command[command.index("--max-sample-sources") + 1] == "100"
     assert "--reference-mode" in command
     assert command[command.index("--reference-mode") + 1] == "none"
     assert "--phase-output-mode" in command

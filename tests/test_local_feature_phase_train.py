@@ -2503,10 +2503,10 @@ def test_batch_op_state_decay_matches_phase_update_shape(tmp_path: Path) -> None
     )
 
     assert ".param STATE_DECAY=0.05" in netlist
-    assert "Bnw0_0_0 nw0_0_0 0 V = V(w0_0_0)*(1-{STATE_DECAY}) + {LR}*((V(dh0_0_0)*V(x0_0))/{BS})" in netlist
-    assert "Bnhb0_0 nhb0_0 0 V = V(hb0_0)*(1-{STATE_DECAY}) + {LR}*((V(dh0_0_0))/{BS})" in netlist
-    assert "Bnv0_0_0 nv0_0_0 0 V = V(v0_0_0)*(1-{STATE_DECAY}) + {LR}*((V(d0_0)*V(h0_0_0))/{BS})" in netlist
-    assert "Bnob0 nob0 0 V = V(ob0)*(1-{STATE_DECAY}) + {LR}*((V(d0_0))/{BS})" in netlist
+    assert "Bnw0_0_0 nw0_0_0 0 V = V(w0_0_0)*(1-{STATE_DECAY}) + {LR}*{LOCAL_UPDATE_SCALE}*((V(dh0_0_0)*V(x0_0))/{BS})" in netlist
+    assert "Bnhb0_0 nhb0_0 0 V = V(hb0_0)*(1-{STATE_DECAY}) + {LR}*{LOCAL_UPDATE_SCALE}*((V(dh0_0_0))/{BS})" in netlist
+    assert "Bnv0_0_0 nv0_0_0 0 V = V(v0_0_0)*(1-{STATE_DECAY}) + {LR}*{READOUT_UPDATE_SCALE}*((V(d0_0)*V(h0_0_0))/{BS})" in netlist
+    assert "Bnob0 nob0 0 V = V(ob0)*(1-{STATE_DECAY}) + {LR}*{OB_UPDATE_SCALE}*((V(d0_0))/{BS})" in netlist
 
     with pytest.raises(ValueError, match="state_decay"):
         feature_batch_train.make_train_netlist(
@@ -2525,6 +2525,65 @@ def test_batch_op_state_decay_matches_phase_update_shape(tmp_path: Path) -> None
             1.0,
             state_decay=-0.1,
         )
+
+
+def test_batch_op_update_scales_match_phase_update_shape(tmp_path: Path) -> None:
+    x = np.zeros((1, 4))
+    y = np.array([0])
+    w = np.zeros((1, 1, 4))
+    hb = np.zeros((1, 1))
+    readout = np.zeros((2, 1, 1))
+    output_bias = np.zeros(2)
+
+    netlist = feature_batch_train.make_train_netlist(
+        x,
+        y,
+        w,
+        hb,
+        readout,
+        output_bias,
+        [[0, 1, 2, 3]],
+        0.8,
+        tmp_path / "out.dat",
+        False,
+        True,
+        "tanh",
+        1.0,
+        output_bias_update_scale=0.0,
+        readout_update_scale=0.25,
+        local_update_scale=0.5,
+    )
+
+    assert ".param LOCAL_UPDATE_SCALE=0.5" in netlist
+    assert ".param READOUT_UPDATE_SCALE=0.25" in netlist
+    assert ".param OB_UPDATE_SCALE=0" in netlist
+    assert "Bnw0_0_0 nw0_0_0 0 V = V(w0_0_0)*(1-{STATE_DECAY}) + {LR}*{LOCAL_UPDATE_SCALE}*((V(dh0_0_0)*V(x0_0))/{BS})" in netlist
+    assert "Bnhb0_0 nhb0_0 0 V = V(hb0_0)*(1-{STATE_DECAY}) + {LR}*{LOCAL_UPDATE_SCALE}*((V(dh0_0_0))/{BS})" in netlist
+    assert "Bnv0_0_0 nv0_0_0 0 V = V(v0_0_0)*(1-{STATE_DECAY}) + {LR}*{READOUT_UPDATE_SCALE}*((V(d0_0)*V(h0_0_0))/{BS})" in netlist
+    assert "Bnob0 nob0 0 V = V(ob0)*(1-{STATE_DECAY}) + {LR}*{OB_UPDATE_SCALE}*((V(d0_0))/{BS})" in netlist
+
+    for kwargs, message in (
+        ({"output_bias_update_scale": -1.0}, "output_bias_update_scale"),
+        ({"readout_update_scale": -1.0}, "readout_update_scale"),
+        ({"local_update_scale": -1.0}, "local_update_scale"),
+    ):
+        with pytest.raises(ValueError, match=message):
+            feature_batch_train.make_train_netlist(
+                x,
+                y,
+                w,
+                hb,
+                readout,
+                output_bias,
+                [[0, 1, 2, 3]],
+                0.8,
+                tmp_path / "bad.dat",
+                False,
+                True,
+                "tanh",
+                1.0,
+                **kwargs,
+            )
 
 
 def test_phase_and_batch_readout_class_centering_use_effective_centered_readout(tmp_path: Path) -> None:

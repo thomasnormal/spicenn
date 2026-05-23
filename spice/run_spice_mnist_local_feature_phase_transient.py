@@ -3075,6 +3075,9 @@ def main() -> None:
                 softmax_error_gate=args.softmax_error_gate,
                 softmax_margin=args.softmax_margin,
                 state_decay=args.state_decay,
+                output_bias_update_scale=args.output_bias_update_scale,
+                readout_update_scale=args.readout_update_scale,
+                local_update_scale=args.local_update_scale,
             )
             if update + 1 in probe_updates:
                 op_probe_states[update + 1] = (op_w.copy(), op_hb.copy(), op_readout.copy(), op_ob.copy())

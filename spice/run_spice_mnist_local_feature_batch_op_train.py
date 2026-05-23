@@ -120,6 +120,9 @@ def make_train_netlist(
     softmax_margin=1.0,
     state_decay=0.0,
     readout_class_centering="none",
+    output_bias_update_scale=1.0,
+    readout_update_scale=1.0,
+    local_update_scale=1.0,
 ):
     if softmax_negative_scale < 0:
         raise ValueError("softmax_negative_scale must be non-negative")
@@ -131,6 +134,12 @@ def make_train_netlist(
         raise ValueError("softmax_competitor_power must be positive")
     if state_decay < 0 or state_decay >= 1:
         raise ValueError("state_decay must be in [0, 1)")
+    if output_bias_update_scale < 0:
+        raise ValueError("output_bias_update_scale must be non-negative")
+    if readout_update_scale < 0:
+        raise ValueError("readout_update_scale must be non-negative")
+    if local_update_scale < 0:
+        raise ValueError("local_update_scale must be non-negative")
     if softmax_error_centering not in {"none", "mean"}:
         raise ValueError("softmax_error_centering must be 'none' or 'mean'")
     if softmax_error_gate not in {"none", "target-margin"}:
@@ -152,6 +161,9 @@ def make_train_netlist(
         f".param SOFTMAX_COMPETITOR_POWER={softmax_competitor_power}",
         f".param SOFTMAX_MARGIN={softmax_margin:.12g}",
         f".param STATE_DECAY={state_decay:.12g}",
+        f".param LOCAL_UPDATE_SCALE={local_update_scale:.12g}",
+        f".param OB_UPDATE_SCALE={output_bias_update_scale:.12g}",
+        f".param READOUT_UPDATE_SCALE={readout_update_scale:.12g}",
         "",
     ]
     for s in range(batch):
@@ -288,16 +300,28 @@ def make_train_netlist(
         for c in range(channels):
             for p, idx in enumerate(idxs):
                 grad = " + ".join(f"V(dh{s}_{b}_{c})*V(x{s}_{idx})" for s in range(batch))
-                lines.append(f"Bnw{b}_{c}_{p} nw{b}_{c}_{p} 0 V = V(w{b}_{c}_{p})*(1-{{STATE_DECAY}}) + {{LR}}*(({grad})/{{BS}})")
+                lines.append(
+                    f"Bnw{b}_{c}_{p} nw{b}_{c}_{p} 0 V = V(w{b}_{c}_{p})*(1-{{STATE_DECAY}}) + "
+                    f"{{LR}}*{{LOCAL_UPDATE_SCALE}}*(({grad})/{{BS}})"
+                )
             grad_b = " + ".join(f"V(dh{s}_{b}_{c})" for s in range(batch))
-            lines.append(f"Bnhb{b}_{c} nhb{b}_{c} 0 V = V(hb{b}_{c})*(1-{{STATE_DECAY}}) + {{LR}}*(({grad_b})/{{BS}})")
+            lines.append(
+                f"Bnhb{b}_{c} nhb{b}_{c} 0 V = V(hb{b}_{c})*(1-{{STATE_DECAY}}) + "
+                f"{{LR}}*{{LOCAL_UPDATE_SCALE}}*(({grad_b})/{{BS}})"
+            )
     for k in range(n_classes):
         for b in range(n_blocks):
             for c in range(channels):
                 grad = " + ".join(f"V(d{s}_{k})*{feature_expr(s, b, c, channels)}" for s in range(batch))
-                lines.append(f"Bnv{k}_{b}_{c} nv{k}_{b}_{c} 0 V = V(v{k}_{b}_{c})*(1-{{STATE_DECAY}}) + {{LR}}*(({grad})/{{BS}})")
+                lines.append(
+                    f"Bnv{k}_{b}_{c} nv{k}_{b}_{c} 0 V = V(v{k}_{b}_{c})*(1-{{STATE_DECAY}}) + "
+                    f"{{LR}}*{{READOUT_UPDATE_SCALE}}*(({grad})/{{BS}})"
+                )
         grad_o = " + ".join(f"V(d{s}_{k})" for s in range(batch))
-        lines.append(f"Bnob{k} nob{k} 0 V = V(ob{k})*(1-{{STATE_DECAY}}) + {{LR}}*(({grad_o})/{{BS}})")
+        lines.append(
+            f"Bnob{k} nob{k} 0 V = V(ob{k})*(1-{{STATE_DECAY}}) + "
+            f"{{LR}}*{{OB_UPDATE_SCALE}}*(({grad_o})/{{BS}})"
+        )
     vectors = [f"V(nw{b}_{c}_{p})" for b in range(n_blocks) for c in range(channels) for p in range(block_len)]
     vectors += [f"V(nhb{b}_{c})" for b in range(n_blocks) for c in range(channels)]
     vectors += [f"V(nv{k}_{b}_{c})" for k in range(n_classes) for b in range(n_blocks) for c in range(channels)]
@@ -435,6 +459,9 @@ def run_train_batch(
     softmax_margin=1.0,
     state_decay=0.0,
     readout_class_centering="none",
+    output_bias_update_scale=1.0,
+    readout_update_scale=1.0,
+    local_update_scale=1.0,
 ):
     netlist_path.write_text(
         prepare_local_feature_netlist(
@@ -471,6 +498,9 @@ def run_train_batch(
                 softmax_margin=softmax_margin,
                 state_decay=state_decay,
                 readout_class_centering=readout_class_centering,
+                output_bias_update_scale=output_bias_update_scale,
+                readout_update_scale=readout_update_scale,
+                local_update_scale=local_update_scale,
             ),
             spice_bin,
         )
@@ -672,6 +702,9 @@ def main():
     ap.add_argument("--softmax-competitor-power", type=int, default=2)
     ap.add_argument("--softmax-error-gate", choices=["none", "target-margin"], default="none")
     ap.add_argument("--softmax-margin", type=float, default=1.0)
+    ap.add_argument("--output-bias-update-scale", type=float, default=1.0)
+    ap.add_argument("--readout-update-scale", type=float, default=1.0)
+    ap.add_argument("--local-update-scale", type=float, default=1.0)
     synapse_modes = ["linear", "full", "ideal", "tanh-clipped", "smooth-clipped", "clipped", "hard-clipped", "bounded", "sign", "binary"]
     ap.add_argument("--hidden-synapse-mode", choices=synapse_modes, default="linear")
     ap.add_argument("--readout-synapse-mode", choices=synapse_modes, default="linear")
@@ -723,6 +756,12 @@ def main():
         raise ValueError("--softmax-competitor-power must be positive")
     if args.softmax_error_gate == "target-margin" and args.softmax_margin <= 0:
         raise ValueError("--softmax-margin must be positive when --softmax-error-gate is target-margin")
+    if args.output_bias_update_scale < 0:
+        raise ValueError("--output-bias-update-scale must be non-negative")
+    if args.readout_update_scale < 0:
+        raise ValueError("--readout-update-scale must be non-negative")
+    if args.local_update_scale < 0:
+        raise ValueError("--local-update-scale must be non-negative")
     if args.synapse_clip <= 0:
         raise ValueError("--synapse-clip must be positive")
     if args.start_epoch < 0:
@@ -866,6 +905,9 @@ def main():
                     args.softmax_margin,
                     args.state_decay,
                     args.readout_class_centering,
+                    output_bias_update_scale=args.output_bias_update_scale,
+                    readout_update_scale=args.readout_update_scale,
+                    local_update_scale=args.local_update_scale,
                 )
                 completed_train_batches += 1
                 if args.checkpoint_every_batches > 0 and completed_train_batches % args.checkpoint_every_batches == 0:
@@ -888,6 +930,9 @@ def main():
                         channels=args.channels,
                         batch_size=args.batch_size,
                         lr=args.lr,
+                        output_bias_update_scale=args.output_bias_update_scale,
+                        readout_update_scale=args.readout_update_scale,
+                        local_update_scale=args.local_update_scale,
                         seed=args.seed,
                     )
                     latest_checkpoint_written = True
@@ -1002,6 +1047,9 @@ def main():
         "batch_size": args.batch_size,
         "checkpoint_every_batches": int(args.checkpoint_every_batches),
         "lr": args.lr,
+        "output_bias_update_scale": args.output_bias_update_scale,
+        "readout_update_scale": args.readout_update_scale,
+        "local_update_scale": args.local_update_scale,
         "init_weights": args.init_weights,
         "import_extra_readout_scale": args.import_extra_readout_scale,
         "linear_output": bool(args.linear_output),

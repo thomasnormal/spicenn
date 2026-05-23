@@ -305,6 +305,7 @@ def test_fast_online_variant_sweep_row_reports_best_probe_and_improvement() -> N
         promotion_timeout=240.0,
         promotion_max_transient_points=2000,
         promotion_max_source_pwl_points=5000,
+        promotion_max_total_sources=0,
         promotion_phase_clock_mode="analytic",
         promotion_probe_updates="",
         promotion_tag_prefix="promote",
@@ -358,6 +359,7 @@ def test_fast_online_variant_sweep_row_reports_best_probe_and_improvement() -> N
     assert command[command.index("--target-source-mode") + 1] == "label"
     assert command[command.index("--max-output-vectors") + 1] == "0"
     assert command[command.index("--max-sample-sources") + 1] == "0"
+    assert command[command.index("--max-total-sources") + 1] == "0"
     assert "--phase-output-include-y" not in command
     assert command[command.index("--eval-backend") + 1] == "numpy"
     assert command[command.index("--updates") + 1] == "2"
@@ -371,6 +373,7 @@ def test_fast_online_variant_sweep_row_reports_best_probe_and_improvement() -> N
     assert row["strict_phase_promotion_max_transient_points"] == 2000
     assert row["strict_phase_promotion_max_source_pwl_points"] == 5000
     assert row["strict_phase_promotion_max_sample_sources"] == 0
+    assert row["strict_phase_promotion_max_total_sources"] == 0
     assert row["strict_phase_promotion_max_output_vectors"] == 0
     assert row["strict_phase_promotion_phase_clock_mode"] == "analytic"
     assert row["strict_phase_promotion_target_source_mode"] == "label"
@@ -382,6 +385,8 @@ def test_fast_online_variant_sweep_row_reports_best_probe_and_improvement() -> N
     assert row["strict_phase_promotion_transient_budget_met"] is True
     assert row["strict_phase_promotion_sample_source_count"] == 2
     assert row["strict_phase_promotion_sample_source_budget_met"] is True
+    assert row["strict_phase_promotion_total_source_count"] == 18
+    assert row["strict_phase_promotion_total_source_budget_met"] is True
     assert row["strict_phase_promotion_sample_source_elided_dc_count"] == 1
     assert row["strict_phase_promotion_pixel_source_count"] == 1
     assert row["strict_phase_promotion_pixel_source_elided_dc_count"] == 1
@@ -549,6 +554,7 @@ def test_fast_online_strict_promotion_cost_fields_respect_pwl_clock_override() -
         promotion_max_transient_points=100,
         promotion_max_source_pwl_points=50,
         promotion_max_sample_sources=1,
+        promotion_max_total_sources=17,
         promotion_phase_clock_mode="pwl",
         softmax_output=True,
     )
@@ -569,6 +575,8 @@ def test_fast_online_strict_promotion_cost_fields_respect_pwl_clock_override() -
     assert fields["strict_phase_promotion_estimated_transient_points"] == 34
     assert fields["strict_phase_promotion_sample_source_count"] == 2
     assert fields["strict_phase_promotion_sample_source_budget_met"] is False
+    assert fields["strict_phase_promotion_total_source_count"] == 17
+    assert fields["strict_phase_promotion_total_source_budget_met"] is True
     assert fields["strict_phase_promotion_sample_source_elided_dc_count"] == 1
     assert fields["strict_phase_promotion_pixel_source_count"] == 1
     assert fields["strict_phase_promotion_pixel_source_elided_dc_count"] == 1
@@ -591,6 +599,8 @@ def test_fast_online_strict_cost_projection_can_use_a_different_horizon() -> Non
         promotion_transient_step=200e-12,
         promotion_max_transient_points=100,
         promotion_max_source_pwl_points=500,
+        promotion_max_sample_sources=0,
+        promotion_max_total_sources=18,
         promotion_max_output_vectors=80,
         promotion_phase_clock_mode="pwl",
         promotion_target_source_mode="label",
@@ -626,6 +636,8 @@ def test_fast_online_strict_cost_projection_can_use_a_different_horizon() -> Non
     )
     assert projection["strict_phase_cost_projection_sample_source_count"] == promotion["strict_phase_promotion_sample_source_count"]
     assert projection["strict_phase_cost_projection_sample_source_budget_met"] is True
+    assert projection["strict_phase_cost_projection_total_source_count"] == promotion["strict_phase_promotion_total_source_count"]
+    assert projection["strict_phase_cost_projection_total_source_budget_met"] is True
     assert projection["strict_phase_cost_projection_target_behavioral_source_count"] == 10
     assert projection["strict_phase_cost_projection_source_pwl_points_per_update"] == pytest.approx(
         projection["strict_phase_cost_projection_total_source_pwl_points"] / 4.0
@@ -828,6 +840,7 @@ def test_fast_online_variant_sweep_marks_full_objective_candidates_as_fast_refer
             "strict_phase_cost_projection_transient_budget_met": True,
             "strict_phase_cost_projection_source_pwl_budget_met": True,
             "strict_phase_cost_projection_sample_source_budget_met": True,
+            "strict_phase_cost_projection_total_source_budget_met": True,
             "strict_phase_cost_projection_output_vector_budget_met": True,
             "strict_phase_cost_projection_updates": 10000,
             "strict_phase_cost_projection_total_source_pwl_points": 1000,
@@ -840,6 +853,7 @@ def test_fast_online_variant_sweep_marks_full_objective_candidates_as_fast_refer
             "strict_phase_cost_projection_transient_budget_met": True,
             "strict_phase_cost_projection_source_pwl_budget_met": False,
             "strict_phase_cost_projection_sample_source_budget_met": True,
+            "strict_phase_cost_projection_total_source_budget_met": True,
             "strict_phase_cost_projection_output_vector_budget_met": True,
             "strict_phase_cost_projection_updates": 10000,
             "strict_phase_cost_projection_total_source_pwl_points": 900,
@@ -852,6 +866,7 @@ def test_fast_online_variant_sweep_marks_full_objective_candidates_as_fast_refer
             "strict_phase_cost_projection_transient_budget_met": True,
             "strict_phase_cost_projection_source_pwl_budget_met": True,
             "strict_phase_cost_projection_sample_source_budget_met": True,
+            "strict_phase_cost_projection_total_source_budget_met": True,
             "strict_phase_cost_projection_output_vector_budget_met": True,
             "strict_phase_cost_projection_updates": 10000,
             "strict_phase_cost_projection_total_source_pwl_points": 100,
@@ -864,9 +879,23 @@ def test_fast_online_variant_sweep_marks_full_objective_candidates_as_fast_refer
             "strict_phase_cost_projection_transient_budget_met": True,
             "strict_phase_cost_projection_source_pwl_budget_met": True,
             "strict_phase_cost_projection_sample_source_budget_met": False,
+            "strict_phase_cost_projection_total_source_budget_met": True,
             "strict_phase_cost_projection_output_vector_budget_met": True,
             "strict_phase_cost_projection_updates": 10000,
             "strict_phase_cost_projection_total_source_pwl_points": 800,
+            **hit,
+        },
+        {
+            "tag": "too_many_total_sources",
+            "final_eval_accuracy": 0.906,
+            "eval_improvement": 0.55,
+            "strict_phase_cost_projection_transient_budget_met": True,
+            "strict_phase_cost_projection_source_pwl_budget_met": True,
+            "strict_phase_cost_projection_sample_source_budget_met": True,
+            "strict_phase_cost_projection_total_source_budget_met": False,
+            "strict_phase_cost_projection_output_vector_budget_met": True,
+            "strict_phase_cost_projection_updates": 10000,
+            "strict_phase_cost_projection_total_source_pwl_points": 700,
             **hit,
         },
     ]
@@ -876,18 +905,20 @@ def test_fast_online_variant_sweep_marks_full_objective_candidates_as_fast_refer
     assert fast_sweep.cost_projection_summary_fields(rows, cost_projection_updates=10000) == {
         "cost_projection_enabled": True,
         "cost_projection_updates": 10000,
-        "cost_projection_rows": 4,
+        "cost_projection_rows": 5,
         "cost_projection_budget_feasible_rows": 2,
-        "cost_projection_transient_budget_feasible_rows": 4,
-        "cost_projection_source_pwl_budget_feasible_rows": 3,
-        "cost_projection_sample_source_budget_feasible_rows": 3,
-        "cost_projection_output_vector_budget_feasible_rows": 4,
-        "fast_reference_full_objective_candidate_count": 3,
+        "cost_projection_transient_budget_feasible_rows": 5,
+        "cost_projection_source_pwl_budget_feasible_rows": 4,
+        "cost_projection_sample_source_budget_feasible_rows": 4,
+        "cost_projection_total_source_budget_feasible_rows": 4,
+        "cost_projection_output_vector_budget_feasible_rows": 5,
+        "fast_reference_full_objective_candidate_count": 4,
         "fast_reference_full_objective_cost_feasible_candidate_count": 1,
-        "fast_reference_full_objective_cost_infeasible_candidate_count": 2,
+        "fast_reference_full_objective_cost_infeasible_candidate_count": 3,
         "fast_reference_full_objective_transient_budget_infeasible_count": 0,
         "fast_reference_full_objective_source_pwl_budget_infeasible_count": 1,
         "fast_reference_full_objective_sample_source_budget_infeasible_count": 1,
+        "fast_reference_full_objective_total_source_budget_infeasible_count": 1,
         "fast_reference_full_objective_output_vector_budget_infeasible_count": 0,
     }
     assert fast_sweep.cost_projection_summary_fields([], cost_projection_updates=0) == {
@@ -898,6 +929,7 @@ def test_fast_online_variant_sweep_marks_full_objective_candidates_as_fast_refer
         "cost_projection_transient_budget_feasible_rows": 0,
         "cost_projection_source_pwl_budget_feasible_rows": 0,
         "cost_projection_sample_source_budget_feasible_rows": 0,
+        "cost_projection_total_source_budget_feasible_rows": 0,
         "cost_projection_output_vector_budget_feasible_rows": 0,
         "fast_reference_full_objective_candidate_count": 0,
         "fast_reference_full_objective_cost_feasible_candidate_count": 0,
@@ -905,6 +937,7 @@ def test_fast_online_variant_sweep_marks_full_objective_candidates_as_fast_refer
         "fast_reference_full_objective_transient_budget_infeasible_count": 0,
         "fast_reference_full_objective_source_pwl_budget_infeasible_count": 0,
         "fast_reference_full_objective_sample_source_budget_infeasible_count": 0,
+        "fast_reference_full_objective_total_source_budget_infeasible_count": 0,
         "fast_reference_full_objective_output_vector_budget_infeasible_count": 0,
     }
 
@@ -971,6 +1004,18 @@ def test_fast_online_variant_sweep_prefers_budget_feasible_promotion_variant() -
             "strict_phase_promotion_transient_budget_met": True,
             "strict_phase_promotion_source_pwl_budget_met": True,
             "strict_phase_promotion_sample_source_budget_met": False,
+            "strict_phase_promotion_total_source_budget_met": True,
+            "strict_phase_promotion_output_vector_budget_met": True,
+        },
+        {
+            "tag": "too_many_total_sources",
+            "final_eval_accuracy": 0.96,
+            "promotion_probe_eval_accuracy": 0.91,
+            "eval_improvement": 0.91,
+            "strict_phase_promotion_transient_budget_met": True,
+            "strict_phase_promotion_source_pwl_budget_met": True,
+            "strict_phase_promotion_sample_source_budget_met": True,
+            "strict_phase_promotion_total_source_budget_met": False,
             "strict_phase_promotion_output_vector_budget_met": True,
         },
         {

@@ -137,6 +137,17 @@ def test_phase_transient_sample_source_budget_fails_before_large_decks() -> None
         phase_transient.validate_sample_source_budget({"sample_source_count": 100}, -1)
 
 
+def test_phase_transient_total_source_budget_counts_behavioral_sources() -> None:
+    phase_transient.validate_total_source_budget({"total_source_count": 42}, 0)
+    phase_transient.validate_total_source_budget({"total_source_count": 42}, 42)
+
+    with pytest.raises(ValueError, match="estimated total source elements"):
+        phase_transient.validate_total_source_budget({"total_source_count": 43}, 42)
+
+    with pytest.raises(ValueError, match="non-negative"):
+        phase_transient.validate_total_source_budget({"total_source_count": 42}, -1)
+
+
 def test_phase_transient_output_vector_budget_fails_before_large_diagnostics() -> None:
     phase_transient.validate_output_vector_budget(101, 0)
     phase_transient.validate_output_vector_budget(100, 100)
@@ -267,6 +278,7 @@ def test_phase_transient_source_complexity_counts_sample_and_clock_sources() -> 
     assert complexity["phase_clock_source_count"] == 5
     assert complexity["phase_clock_source_pwl_count"] == 5
     assert complexity["phase_clock_source_pwl_points"] > 0
+    assert complexity["total_source_count"] == 8
     assert complexity["total_source_pwl_points"] == complexity["sample_source_pwl_points"] + complexity["phase_clock_source_pwl_points"]
 
 
@@ -455,6 +467,12 @@ def test_phase_transient_label_target_source_mode_decodes_one_label_waveform() -
     assert lines[2] == "Btarget1 target1 0 V = (0.5*(1+tanh((0.5-abs(V(label)-1))/{TARGET_LABEL_SMOOTH})))"
     assert complexity["target_source_count"] == 1
     assert complexity["target_behavioral_source_count"] == 2
+    assert complexity["total_source_count"] == (
+        complexity["sample_source_count"]
+        + complexity["target_behavioral_source_count"]
+        + complexity["phase_clock_source_count"]
+        + complexity["control_source_count"]
+    )
     assert complexity["target_source_pwl_points"] < sum(
         phase_transient.pwl_point_count(phase_transient.sample_source_pwl(targets[:, k], sample_starts, t_stop, 0.1e-9))
         for k in range(targets.shape[1])
@@ -503,6 +521,7 @@ def test_phase_transient_analytic_phase_clock_complexity_removes_clock_pwl_point
     assert complexity["phase_clock_source_count"] == 5
     assert complexity["phase_clock_source_pwl_count"] == 0
     assert complexity["phase_clock_source_pwl_points"] == 0
+    assert complexity["total_source_count"] == 7
     assert complexity["total_source_pwl_points"] == complexity["sample_source_pwl_points"]
 
 
@@ -532,6 +551,7 @@ def test_phase_transient_source_complexity_counts_lr_control_waveform() -> None:
     assert complexity["control_source_count"] == 1
     assert complexity["control_source_pwl_count"] == 1
     assert complexity["control_source_pwl_points"] > 0
+    assert complexity["total_source_count"] == 8
     assert complexity["total_source_pwl_points"] == (
         complexity["sample_source_pwl_points"]
         + complexity["phase_clock_source_pwl_points"]
@@ -960,6 +980,7 @@ def test_phase_variant_sweep_dry_command_preserves_online_contract() -> None:
         max_transient_points=500,
         max_source_pwl_points=1200,
         max_sample_sources=100,
+        max_total_sources=120,
         reference_mode="none",
         phase_output_mode="print",
         update_mode="direct",
@@ -1029,6 +1050,8 @@ def test_phase_variant_sweep_dry_command_preserves_online_contract() -> None:
     assert command[command.index("--max-source-pwl-points") + 1] == "1200"
     assert "--max-sample-sources" in command
     assert command[command.index("--max-sample-sources") + 1] == "100"
+    assert "--max-total-sources" in command
+    assert command[command.index("--max-total-sources") + 1] == "120"
     assert "--reference-mode" in command
     assert command[command.index("--reference-mode") + 1] == "none"
     assert "--phase-output-mode" in command
@@ -1979,6 +2002,8 @@ def test_phase_transient_preflight_summary_has_no_artifact_paths() -> None:
         "phase_clock_source_count": 5,
         "phase_clock_source_pwl_count": 5,
         "phase_clock_source_pwl_points": 50,
+        "control_source_count": 1,
+        "total_source_count": 42,
         "total_source_pwl_points": 110,
     }
 
@@ -2013,6 +2038,7 @@ def test_phase_transient_preflight_summary_has_no_artifact_paths() -> None:
         max_transient_points=100,
         max_source_pwl_points=200,
         max_sample_sources=30,
+        max_total_sources=50,
         max_output_vectors=80,
         t_stop=6.6e-9,
         transient_step=200e-12,
@@ -2035,6 +2061,8 @@ def test_phase_transient_preflight_summary_has_no_artifact_paths() -> None:
     assert summary["final_weights"] is None
     assert summary["sample_source_pwl_points"] == 60
     assert summary["max_sample_sources"] == 30
+    assert summary["max_total_sources"] == 50
+    assert summary["total_source_count"] == 42
     assert summary["max_output_vectors"] == 80
     assert summary["phase_clock_source_pwl_points"] == 50
     assert summary["total_source_pwl_points"] == 110

@@ -89,6 +89,8 @@ def test_phase_summary_row_keeps_execution_contract_and_backend_fields(tmp_path:
                 "sample_source_count": 103,
                 "max_source_pwl_points": 50000,
                 "max_sample_sources": 120,
+                "max_total_sources": 130,
+                "total_source_count": 109,
                 "sample_source_dc_count": 0,
                 "sample_source_pwl_count": 100,
                 "sample_source_elided_dc_count": 7,
@@ -102,6 +104,7 @@ def test_phase_summary_row_keeps_execution_contract_and_backend_fields(tmp_path:
                 "phase_clock_source_count": 5,
                 "phase_clock_source_pwl_count": 0,
                 "phase_clock_source_pwl_points": 0,
+                "control_source_count": 1,
                 "control_source_pwl_points": 4,
                 "total_source_pwl_points": 25482,
                 "phase_wall_time_s": 36.1,
@@ -168,6 +171,8 @@ def test_phase_summary_row_keeps_execution_contract_and_backend_fields(tmp_path:
     assert row["sample_source_count"] == 103
     assert row["max_source_pwl_points"] == 50000
     assert row["max_sample_sources"] == 120
+    assert row["max_total_sources"] == 130
+    assert row["total_source_count"] == 109
     assert row["sample_source_dc_count"] == 0
     assert row["sample_source_elided_dc_count"] == 7
     assert row["pixel_source_count"] == 93
@@ -176,6 +181,7 @@ def test_phase_summary_row_keeps_execution_contract_and_backend_fields(tmp_path:
     assert row["phase_clock_source_count"] == 5
     assert row["phase_clock_source_pwl_count"] == 0
     assert row["phase_clock_source_pwl_points"] == 0
+    assert row["control_source_count"] == 1
     assert row["control_source_pwl_points"] == 4
     assert row["total_source_pwl_points"] == 25482
 

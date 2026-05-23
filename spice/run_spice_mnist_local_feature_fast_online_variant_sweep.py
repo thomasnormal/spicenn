@@ -366,6 +366,7 @@ def cost_projection_budget_met(row: dict[str, Any]) -> bool:
         row.get("strict_phase_cost_projection_transient_budget_met") is True
         and row.get("strict_phase_cost_projection_source_pwl_budget_met") is True
         and row.get("strict_phase_cost_projection_sample_source_budget_met", True) is True
+        and row.get("strict_phase_cost_projection_total_source_budget_met", True) is True
         and row.get("strict_phase_cost_projection_output_vector_budget_met", True) is True
     )
 
@@ -395,6 +396,9 @@ def cost_projection_summary_fields(rows: list[dict[str, Any]], cost_projection_u
         "cost_projection_sample_source_budget_feasible_rows": count_met(
             projection_rows, "strict_phase_cost_projection_sample_source_budget_met"
         ),
+        "cost_projection_total_source_budget_feasible_rows": count_met(
+            projection_rows, "strict_phase_cost_projection_total_source_budget_met"
+        ),
         "cost_projection_output_vector_budget_feasible_rows": count_met(
             projection_rows, "strict_phase_cost_projection_output_vector_budget_met"
         ),
@@ -409,6 +413,9 @@ def cost_projection_summary_fields(rows: list[dict[str, Any]], cost_projection_u
         ),
         "fast_reference_full_objective_sample_source_budget_infeasible_count": count_failed(
             full_objective_rows, "strict_phase_cost_projection_sample_source_budget_met"
+        ),
+        "fast_reference_full_objective_total_source_budget_infeasible_count": count_failed(
+            full_objective_rows, "strict_phase_cost_projection_total_source_budget_met"
         ),
         "fast_reference_full_objective_output_vector_budget_infeasible_count": count_failed(
             full_objective_rows, "strict_phase_cost_projection_output_vector_budget_met"
@@ -462,6 +469,7 @@ def promotion_budget_met(row: dict[str, Any]) -> bool:
         row.get("strict_phase_promotion_transient_budget_met") is True
         and row.get("strict_phase_promotion_source_pwl_budget_met") is True
         and row.get("strict_phase_promotion_sample_source_budget_met", True) is True
+        and row.get("strict_phase_promotion_total_source_budget_met", True) is True
         and row.get("strict_phase_promotion_output_vector_budget_met", True) is True
     )
 
@@ -574,6 +582,8 @@ def strict_phase_promotion_command(args: argparse.Namespace, variant: dict[str, 
         str(getattr(args, "promotion_max_source_pwl_points", 0)),
         "--max-sample-sources",
         str(getattr(args, "promotion_max_sample_sources", 0)),
+        "--max-total-sources",
+        str(getattr(args, "promotion_max_total_sources", 0)),
         "--max-output-vectors",
         str(getattr(args, "promotion_max_output_vectors", 0)),
         "--reference-mode",
@@ -710,6 +720,7 @@ def strict_phase_cost_fields_for_updates(
     max_transient_points = int(getattr(args, "promotion_max_transient_points", 0))
     max_source_pwl_points = int(getattr(args, "promotion_max_source_pwl_points", 0))
     max_sample_sources = int(getattr(args, "promotion_max_sample_sources", 0))
+    max_total_sources = int(getattr(args, "promotion_max_total_sources", 0))
     max_output_vectors = int(getattr(args, "promotion_max_output_vectors", 0))
     inferred_image_size = int(round(float(x_train.shape[1]) ** 0.5))
     image_size = int(getattr(args, "image_size", inferred_image_size))
@@ -745,6 +756,10 @@ def strict_phase_cost_fields_for_updates(
         f"{prefix}_pixel_source_elided_dc_count": source_complexity["pixel_source_elided_dc_count"],
         f"{prefix}_target_source_count": source_complexity["target_source_count"],
         f"{prefix}_target_behavioral_source_count": source_complexity["target_behavioral_source_count"],
+        f"{prefix}_total_source_count": source_complexity["total_source_count"],
+        f"{prefix}_total_source_budget_met": bool(
+            not max_total_sources or source_complexity["total_source_count"] <= max_total_sources
+        ),
         f"{prefix}_sample_source_pwl_points": source_complexity["sample_source_pwl_points"],
         f"{prefix}_phase_clock_source_pwl_points": source_complexity["phase_clock_source_pwl_points"],
         f"{prefix}_control_source_pwl_points": source_complexity["control_source_pwl_points"],
@@ -837,6 +852,7 @@ def run_variant(
         "strict_phase_promotion_max_transient_points": int(getattr(args, "promotion_max_transient_points", 2000)),
         "strict_phase_promotion_max_source_pwl_points": int(getattr(args, "promotion_max_source_pwl_points", 0)),
         "strict_phase_promotion_max_sample_sources": int(getattr(args, "promotion_max_sample_sources", 0)),
+        "strict_phase_promotion_max_total_sources": int(getattr(args, "promotion_max_total_sources", 0)),
         "strict_phase_promotion_max_output_vectors": int(getattr(args, "promotion_max_output_vectors", 0)),
         **promotion_costs,
         **cost_projection,
@@ -917,6 +933,7 @@ def main() -> None:
     ap.add_argument("--promotion-max-transient-points", type=int, default=2000)
     ap.add_argument("--promotion-max-source-pwl-points", type=int, default=0)
     ap.add_argument("--promotion-max-sample-sources", type=int, default=0)
+    ap.add_argument("--promotion-max-total-sources", type=int, default=0)
     ap.add_argument("--promotion-max-output-vectors", type=int, default=0)
     ap.add_argument(
         "--promotion-phase-clock-mode",
@@ -997,6 +1014,8 @@ def main() -> None:
         raise ValueError("--promotion-max-source-pwl-points must be non-negative")
     if args.promotion_max_sample_sources < 0:
         raise ValueError("--promotion-max-sample-sources must be non-negative")
+    if args.promotion_max_total_sources < 0:
+        raise ValueError("--promotion-max-total-sources must be non-negative")
     if args.promotion_max_output_vectors < 0:
         raise ValueError("--promotion-max-output-vectors must be non-negative")
     if args.full_objective_eval_samples <= 0:

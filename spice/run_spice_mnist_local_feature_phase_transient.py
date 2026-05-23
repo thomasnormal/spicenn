@@ -197,6 +197,17 @@ def validate_sample_source_budget(source_complexity: dict[str, int], max_sources
         )
 
 
+def validate_total_source_budget(source_complexity: dict[str, int], max_sources: int) -> None:
+    if max_sources < 0:
+        raise ValueError("--max-total-sources must be non-negative")
+    estimated_sources = int(source_complexity.get("total_source_count", 0))
+    if max_sources and estimated_sources > max_sources:
+        raise ValueError(
+            f"estimated total source elements ({estimated_sources}) exceed --max-total-sources ({max_sources}); "
+            "use compact/elided source modes, reduce clocks/controls, or raise the budget intentionally"
+        )
+
+
 def validate_output_vector_budget(vector_count: int, max_vectors: int) -> None:
     if max_vectors < 0:
         raise ValueError("--max-output-vectors must be non-negative")
@@ -212,6 +223,15 @@ def total_source_pwl_points(source_complexity: dict[str, int]) -> int:
         int(source_complexity["sample_source_pwl_points"])
         + int(source_complexity["phase_clock_source_pwl_points"])
         + int(source_complexity.get("control_source_pwl_points", 0))
+    )
+
+
+def total_source_count(source_complexity: dict[str, int]) -> int:
+    return (
+        int(source_complexity["sample_source_count"])
+        + int(source_complexity.get("target_behavioral_source_count", 0))
+        + int(source_complexity["phase_clock_source_count"])
+        + int(source_complexity.get("control_source_count", 0))
     )
 
 
@@ -338,6 +358,7 @@ def phase_preflight_summary(
     max_transient_points: int,
     max_source_pwl_points: int,
     max_sample_sources: int,
+    max_total_sources: int,
     max_output_vectors: int,
     t_stop: float,
     transient_step: float,
@@ -389,6 +410,7 @@ def phase_preflight_summary(
         "max_transient_points": max_transient_points,
         "max_source_pwl_points": max_source_pwl_points,
         "max_sample_sources": max_sample_sources,
+        "max_total_sources": max_total_sources,
         "max_output_vectors": max_output_vectors,
         **source_complexity,
         "phase_s": phase,
@@ -599,6 +621,7 @@ def phase_source_complexity(
         "control_source_pwl_count": count_pwl(control_sources),
         "control_source_pwl_points": count_points(control_sources),
     }
+    complexity["total_source_count"] = total_source_count(complexity)
     complexity["total_source_pwl_points"] = total_source_pwl_points(complexity)
     return complexity
 
@@ -1905,6 +1928,12 @@ def main() -> None:
         help="Optional preflight guard on emitted input/target voltage-source count; 0 disables the guard.",
     )
     ap.add_argument(
+        "--max-total-sources",
+        type=int,
+        default=0,
+        help="Optional preflight guard on emitted voltage/behavioral source element count; 0 disables the guard.",
+    )
+    ap.add_argument(
         "--max-output-vectors",
         type=int,
         default=0,
@@ -2021,6 +2050,8 @@ def main() -> None:
         raise ValueError("--max-source-pwl-points must be non-negative")
     if args.max_sample_sources < 0:
         raise ValueError("--max-sample-sources must be non-negative")
+    if args.max_total_sources < 0:
+        raise ValueError("--max-total-sources must be non-negative")
     if args.max_output_vectors < 0:
         raise ValueError("--max-output-vectors must be non-negative")
     if args.direction_cosine_threshold < -1 or args.direction_cosine_threshold > 1:
@@ -2111,6 +2142,7 @@ def main() -> None:
     )
     validate_source_point_budget(source_complexity, args.max_source_pwl_points)
     validate_sample_source_budget(source_complexity, args.max_sample_sources)
+    validate_total_source_budget(source_complexity, args.max_total_sources)
     if args.preflight_only:
         print(
             json.dumps(
@@ -2145,6 +2177,7 @@ def main() -> None:
                     max_transient_points=args.max_transient_points,
                     max_source_pwl_points=args.max_source_pwl_points,
                     max_sample_sources=args.max_sample_sources,
+                    max_total_sources=args.max_total_sources,
                     max_output_vectors=args.max_output_vectors,
                     t_stop=preflight_t_stop,
                     transient_step=args.transient_step,
@@ -2741,6 +2774,7 @@ def main() -> None:
         "max_output_vectors": args.max_output_vectors,
         "max_source_pwl_points": args.max_source_pwl_points,
         "max_sample_sources": args.max_sample_sources,
+        "max_total_sources": args.max_total_sources,
         **source_complexity,
         "phase_s": args.phase,
         "settle_ratio": args.settle_ratio,

@@ -108,6 +108,8 @@ def build_variant_command(
         str(getattr(args, "max_source_pwl_points", 0)),
         "--max-sample-sources",
         str(getattr(args, "max_sample_sources", 0)),
+        "--max-total-sources",
+        str(getattr(args, "max_total_sources", 0)),
         "--reference-mode",
         args.reference_mode,
         "--phase-output-mode",
@@ -236,7 +238,9 @@ def row_from_summary(
         "estimated_transient_points",
         "phase_output_vector_count",
         "max_sample_sources",
+        "max_total_sources",
         "sample_source_count",
+        "total_source_count",
         "output_mode",
         "reference_mode",
         "eval_backend",
@@ -278,6 +282,7 @@ def main() -> None:
     ap.add_argument("--max-transient-points", type=int, default=0)
     ap.add_argument("--max-source-pwl-points", type=int, default=0)
     ap.add_argument("--max-sample-sources", type=int, default=0)
+    ap.add_argument("--max-total-sources", type=int, default=0)
     ap.add_argument("--reference-mode", choices=["spice", "none"], default="spice")
     ap.add_argument("--phase-output-mode", choices=["auto", "measure", "print", "control_measure", "wrdata"], default="auto")
     ap.add_argument("--update-mode", choices=["phased", "direct"], default="phased")
@@ -323,6 +328,8 @@ def main() -> None:
         raise ValueError("--max-source-pwl-points must be non-negative")
     if args.max_sample_sources < 0:
         raise ValueError("--max-sample-sources must be non-negative")
+    if args.max_total_sources < 0:
+        raise ValueError("--max-total-sources must be non-negative")
 
     if args.linear_output and args.softmax_output:
         raise ValueError("--linear-output and --softmax-output are mutually exclusive; pass --no-softmax-output for linear variants")

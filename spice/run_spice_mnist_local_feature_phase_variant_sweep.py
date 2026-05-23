@@ -186,6 +186,8 @@ def build_variant_command(
             synapse_clip,
         ),
     ]
+    if getattr(args, "sample_edge", None) is not None:
+        command.extend(["--sample-edge", str(args.sample_edge)])
     if args.softmax_output:
         command.append("--softmax-output")
     if args.linear_output:
@@ -266,6 +268,7 @@ def row_from_summary(
         "reference_mode",
         "eval_backend",
         "update_mode",
+        "sample_edge_s",
         "target_source_mode",
     ]
     row = {
@@ -297,6 +300,7 @@ def main() -> None:
     ap.add_argument("--phase", type=float, default=1e-9)
     ap.add_argument("--gap", type=float, default=0.1e-9)
     ap.add_argument("--edge", type=float, default=10e-12)
+    ap.add_argument("--sample-edge", type=float, default=None)
     ap.add_argument("--settle-ratio", type=float, default=80.0)
     ap.add_argument("--transient-step", type=float, default=50e-12)
     ap.add_argument("--timeout", type=float, default=600.0)
@@ -346,6 +350,8 @@ def main() -> None:
     ap.add_argument("--tag", default="phase_variant_sweep")
     ap.add_argument("--dry-run", action="store_true")
     args = ap.parse_args()
+    if args.sample_edge is not None and args.sample_edge < 0:
+        raise ValueError("--sample-edge must be non-negative")
     if args.max_source_pwl_points < 0:
         raise ValueError("--max-source-pwl-points must be non-negative")
     if args.max_sample_sources < 0:

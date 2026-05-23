@@ -520,9 +520,50 @@ def test_fast_online_strict_promotion_defaults_to_pwl_phase_clock() -> None:
 
     assert command[command.index("--phase-clock-mode") + 1] == "pwl"
     assert command[command.index("--target-source-mode") + 1] == "label"
+    assert "--sample-edge" not in command
     assert fields["strict_phase_promotion_phase_clock_mode"] == "pwl"
+    assert fields["strict_phase_promotion_sample_edge_s"] == pytest.approx(5e-12)
     assert fields["strict_phase_promotion_phase_clock_source_pwl_points"] > 0
     assert fields["strict_phase_promotion_control_source_pwl_points"] == 0
+
+
+def test_fast_online_strict_promotion_sample_edge_is_projected_separately() -> None:
+    args = argparse.Namespace(
+        train_samples=3,
+        promotion_updates=3,
+        promotion_phase=0.5e-9,
+        promotion_gap=0.05e-9,
+        promotion_edge=5e-12,
+        promotion_transient_step=200e-12,
+        promotion_max_transient_points=100,
+        promotion_max_source_pwl_points=0,
+        promotion_max_sample_sources=0,
+        promotion_max_total_sources=0,
+        promotion_max_output_vectors=0,
+        promotion_phase_clock_mode="pwl",
+        promotion_target_source_mode="label",
+        promotion_phase_output_include_y=False,
+        softmax_output=True,
+    )
+    x_train = np.array([[0.0, 0.5], [1.0, 0.25], [0.0, 0.25]])
+    y_train = np.array([0, 1, 0])
+    variant = {
+        "lr": 0.8,
+        "lr_schedule": "constant",
+        "lr_final_scale": 1.0,
+        "output_bias_update_scale": 0.0,
+        "state_decay": 0.0,
+    }
+
+    finite = fast_sweep.strict_phase_promotion_cost_fields(args, variant, x_train, y_train)
+    args.promotion_sample_edge = 0.0
+    sharp = fast_sweep.strict_phase_promotion_cost_fields(args, variant, x_train, y_train)
+
+    assert finite["strict_phase_promotion_sample_edge_s"] == pytest.approx(5e-12)
+    assert sharp["strict_phase_promotion_sample_edge_s"] == pytest.approx(0.0)
+    assert sharp["strict_phase_promotion_phase_clock_source_pwl_points"] == finite["strict_phase_promotion_phase_clock_source_pwl_points"]
+    assert sharp["strict_phase_promotion_sample_source_pwl_points"] < finite["strict_phase_promotion_sample_source_pwl_points"]
+    assert sharp["strict_phase_promotion_total_source_pwl_points"] < finite["strict_phase_promotion_total_source_pwl_points"]
 
 
 def test_fast_online_strict_promotion_timeout_auto_scales_with_updates() -> None:
@@ -609,6 +650,7 @@ def test_fast_online_strict_promotion_cost_fields_respect_pwl_clock_override() -
     fields = fast_sweep.strict_phase_promotion_cost_fields(args, variant, x_train, y_train)
 
     assert fields["strict_phase_promotion_phase_clock_mode"] == "pwl"
+    assert fields["strict_phase_promotion_sample_edge_s"] == pytest.approx(5e-12)
     assert fields["strict_phase_promotion_target_source_mode"] == "label"
     assert fields["strict_phase_promotion_output_vector_count"] > 0
     assert fields["strict_phase_promotion_output_vector_budget_met"] is True

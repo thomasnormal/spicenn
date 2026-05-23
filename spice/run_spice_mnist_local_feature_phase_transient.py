@@ -363,6 +363,7 @@ def phase_preflight_summary(
     t_stop: float,
     transient_step: float,
     phase: float,
+    sample_edge: float,
     settle_ratio: float,
     source_complexity: dict[str, int],
 ) -> dict[str, object]:
@@ -426,6 +427,7 @@ def phase_preflight_summary(
         **source_complexity,
         **cost_fields,
         "phase_s": phase,
+        "sample_edge_s": sample_edge,
         "settle_ratio": settle_ratio,
         **phase_state_descriptions(update_mode, output_bias_state_frozen),
     }
@@ -601,20 +603,22 @@ def phase_source_complexity(
     lr_values: np.ndarray | None = None,
     labels: np.ndarray | None = None,
     target_source_mode: str = "rails",
+    sample_edge: float | None = None,
 ) -> dict[str, int]:
     if target_source_mode not in {"rails", "label"}:
         raise ValueError("target_source_mode must be 'rails' or 'label'")
+    sample_transition_edge = edge if sample_edge is None else sample_edge
     pixel_drives = [
-        sample_drive(f"Vpix{i}", f"pix{i}", x_batch[:, i], sample_starts, t_stop, edge, elide_dc=True)
+        sample_drive(f"Vpix{i}", f"pix{i}", x_batch[:, i], sample_starts, t_stop, sample_transition_edge, elide_dc=True)
         for i in range(x_batch.shape[1])
     ]
     pixel_sources = emitted_sources(pixel_drives)
     target_behavioral_source_count = 0
     if target_source_mode == "rails":
-        target_sources = [sample_source_pwl(targets[:, k], sample_starts, t_stop, edge) for k in range(targets.shape[1])]
+        target_sources = [sample_source_pwl(targets[:, k], sample_starts, t_stop, sample_transition_edge) for k in range(targets.shape[1])]
     else:
         label_values = np.asarray(labels if labels is not None else np.argmax(targets, axis=1), dtype=float)
-        target_sources = [sample_source_pwl(label_values, sample_starts, t_stop, edge)]
+        target_sources = [sample_source_pwl(label_values, sample_starts, t_stop, sample_transition_edge)]
         target_behavioral_source_count = int(targets.shape[1])
     phase_names = ["act", "score", "err", "bwd", "acc"] if direct_update else ["act", "score", "err", "bwd", "acc", "apply", "clear"]
     if phase_clock_mode == "pwl":
@@ -625,7 +629,7 @@ def phase_source_complexity(
         raise ValueError("phase_clock_mode must be 'pwl' or 'analytic'")
     control_sources = []
     if lr_values is not None:
-        control_sources.append(sample_source_pwl(np.asarray(lr_values, dtype=float), sample_starts, t_stop, edge))
+        control_sources.append(sample_source_pwl(np.asarray(lr_values, dtype=float), sample_starts, t_stop, sample_transition_edge))
 
     def count_dc(sources: list[str]) -> int:
         return sum(not source.startswith("PWL(") for source in sources)
@@ -728,11 +732,18 @@ def target_source_lines(
     *,
     target_source_mode: str,
     softmax_output: bool,
+    sample_edge: float | None = None,
 ) -> list[str]:
+    sample_transition_edge = edge if sample_edge is None else sample_edge
     if target_source_mode == "rails":
-        return [f"Vtarget{k} target{k} 0 {sample_source_pwl(targets[:, k], sample_starts, t_stop, edge)}" for k in range(targets.shape[1])]
+        return [
+            f"Vtarget{k} target{k} 0 {sample_source_pwl(targets[:, k], sample_starts, t_stop, sample_transition_edge)}"
+            for k in range(targets.shape[1])
+        ]
     if target_source_mode == "label":
-        lines = [f"Vlabel label 0 {sample_source_pwl(np.asarray(labels, dtype=float), sample_starts, t_stop, edge)}"]
+        lines = [
+            f"Vlabel label 0 {sample_source_pwl(np.asarray(labels, dtype=float), sample_starts, t_stop, sample_transition_edge)}"
+        ]
         lines.extend(
             f"Btarget{k} target{k} 0 V = {target_from_label_expr(k, softmax_output)}" for k in range(targets.shape[1])
         )
@@ -958,6 +969,7 @@ def make_phase_transient_netlist(
     lr_final_scale: float = 1.0,
     target_source_mode: str = "rails",
     include_output_y_vectors: bool = True,
+    sample_edge: float | None = None,
 ) -> tuple[str, int, float]:
     total_samples = x_batch.shape[0]
     if total_samples != update_batch_size * updates:
@@ -996,6 +1008,9 @@ def make_phase_transient_netlist(
         raise ValueError("lr_schedule must be 'constant' or 'linear-decay'")
     if target_source_mode not in {"rails", "label"}:
         raise ValueError("target_source_mode must be 'rails' or 'label'")
+    sample_transition_edge = edge if sample_edge is None else sample_edge
+    if sample_transition_edge < 0.0:
+        raise ValueError("sample_edge must be non-negative")
     lr_values = lr_schedule_values(lr, updates, lr_schedule, lr_final_scale)
     direct_update = update_mode == "direct"
     if direct_update and update_batch_size != 1:
@@ -1016,7 +1031,7 @@ def make_phase_transient_netlist(
     phase_area = phase_pulse_area(phase, edge)
     targets = target_matrix(y_batch, n_classes, softmax_output)
     pixel_drives = [
-        sample_drive(f"Vpix{i}", f"pix{i}", x_batch[:, i], sample_starts, t_stop, edge, elide_dc=True)
+        sample_drive(f"Vpix{i}", f"pix{i}", x_batch[:, i], sample_starts, t_stop, sample_transition_edge, elide_dc=True)
         for i in range(x_batch.shape[1])
     ]
     state_descriptions = phase_state_descriptions(update_mode, output_bias_state_frozen)
@@ -1051,7 +1066,7 @@ def make_phase_transient_netlist(
         "",
     ]
     if lr_control == "V(lrctrl)":
-        lines.append(f"Vlrctrl lrctrl 0 {sample_source_pwl(lr_sample_values, sample_starts, t_stop, edge)}")
+        lines.append(f"Vlrctrl lrctrl 0 {sample_source_pwl(lr_sample_values, sample_starts, t_stop, sample_transition_edge)}")
         lines.append("")
     if not direct_update:
         lines[-1:-1] = [
@@ -1073,6 +1088,7 @@ def make_phase_transient_netlist(
             edge,
             target_source_mode=target_source_mode,
             softmax_output=softmax_output,
+            sample_edge=sample_transition_edge,
         )
     )
     lines.append("")
@@ -1986,6 +2002,15 @@ def main() -> None:
     ap.add_argument("--phase", type=float, default=2e-9)
     ap.add_argument("--gap", type=float, default=0.2e-9)
     ap.add_argument("--edge", type=float, default=10e-12)
+    ap.add_argument(
+        "--sample-edge",
+        type=float,
+        default=None,
+        help=(
+            "Optional transition edge for input, label, and LR-control PWL sources. "
+            "Unset uses --edge; 0 emits sharp sample steps while keeping phase-clock edges finite."
+        ),
+    )
     ap.add_argument("--settle-ratio", type=float, default=40.0)
     ap.add_argument("--transient-step", type=float, default=20e-12)
     ap.add_argument("--cw", type=float, default=1e-12)
@@ -2087,6 +2112,9 @@ def main() -> None:
         raise ValueError("--synapse-clip must be positive")
     if args.phase <= 0 or args.settle_ratio <= 0:
         raise ValueError("--phase and --settle-ratio must be positive")
+    sample_edge = args.edge if args.sample_edge is None else args.sample_edge
+    if sample_edge < 0.0:
+        raise ValueError("--sample-edge must be non-negative")
     if args.max_transient_points < 0:
         raise ValueError("--max-transient-points must be non-negative")
     if args.max_source_pwl_points < 0:
@@ -2182,6 +2210,7 @@ def main() -> None:
         source_lr_values,
         labels=y_batch,
         target_source_mode=args.target_source_mode,
+        sample_edge=sample_edge,
     )
     validate_source_point_budget(source_complexity, args.max_source_pwl_points)
     validate_sample_source_budget(source_complexity, args.max_sample_sources)
@@ -2225,6 +2254,7 @@ def main() -> None:
                     t_stop=preflight_t_stop,
                     transient_step=args.transient_step,
                     phase=args.phase,
+                    sample_edge=sample_edge,
                     settle_ratio=args.settle_ratio,
                     source_complexity=source_complexity,
                 ),
@@ -2317,6 +2347,7 @@ def main() -> None:
         args.lr_final_scale,
         args.target_source_mode,
         include_y_vectors,
+        sample_edge,
     )
     phase_netlist.write_text(prepare_phase_netlist(netlist, spice_bin))
 

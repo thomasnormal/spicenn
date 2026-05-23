@@ -645,6 +645,9 @@ def strict_phase_promotion_command(args: argparse.Namespace, variant: dict[str, 
         command.append("--softmax-output")
     if args.linear_output:
         command.append("--linear-output")
+    promotion_sample_edge = getattr(args, "promotion_sample_edge", None)
+    if promotion_sample_edge is not None:
+        command.extend(["--sample-edge", str(promotion_sample_edge)])
     probe_updates = getattr(args, "promotion_probe_updates", "")
     if probe_updates:
         command.extend(["--probe-updates", probe_updates])
@@ -687,6 +690,9 @@ def strict_phase_cost_fields_for_updates(
     phase = float(getattr(args, "promotion_phase", 0.5e-9))
     gap = float(getattr(args, "promotion_gap", 0.05e-9))
     edge = float(getattr(args, "promotion_edge", 5e-12))
+    sample_edge = getattr(args, "promotion_sample_edge", None)
+    if sample_edge is not None:
+        sample_edge = float(sample_edge)
     transient_step = float(getattr(args, "promotion_transient_step", 200e-12))
     phase_clock_mode = getattr(args, "promotion_phase_clock_mode", DEFAULT_PROMOTION_PHASE_CLOCK_MODE)
     phases, sample_starts, t_stop = make_phase_schedule(1, updates, phase, gap, True)
@@ -707,6 +713,7 @@ def strict_phase_cost_fields_for_updates(
         lr_values,
         labels=y_train[:updates],
         target_source_mode=getattr(args, "promotion_target_source_mode", "label"),
+        sample_edge=sample_edge,
     )
     estimated_points = estimate_transient_points(t_stop, transient_step)
     max_transient_points = int(getattr(args, "promotion_max_transient_points", 0))
@@ -732,6 +739,7 @@ def strict_phase_cost_fields_for_updates(
     return {
         f"{prefix}_updates": updates,
         f"{prefix}_phase_clock_mode": phase_clock_mode,
+        f"{prefix}_sample_edge_s": edge if sample_edge is None else sample_edge,
         f"{prefix}_target_source_mode": getattr(args, "promotion_target_source_mode", "label"),
         f"{prefix}_output_bias_state_frozen": output_bias_state_frozen,
         f"{prefix}_phase_output_includes_y": bool(getattr(args, "promotion_phase_output_include_y", False)),
@@ -914,6 +922,15 @@ def main() -> None:
     ap.add_argument("--promotion-phase", type=float, default=0.5e-9)
     ap.add_argument("--promotion-gap", type=float, default=0.05e-9)
     ap.add_argument("--promotion-edge", type=float, default=5e-12)
+    ap.add_argument(
+        "--promotion-sample-edge",
+        type=float,
+        default=None,
+        help=(
+            "Optional --sample-edge for generated strict promotion commands and cost projections. "
+            "Unset preserves --promotion-edge; 0 projects sharp sample/label/LR PWL steps."
+        ),
+    )
     ap.add_argument("--promotion-settle-ratio", type=float, default=20.0)
     ap.add_argument("--promotion-transient-step", type=float, default=200e-12)
     ap.add_argument(
@@ -1000,6 +1017,8 @@ def main() -> None:
         raise ValueError("--cost-projection-updates cannot exceed --train-samples")
     if args.promotion_timeout < 0:
         raise ValueError("--promotion-timeout must be non-negative")
+    if args.promotion_sample_edge is not None and args.promotion_sample_edge < 0:
+        raise ValueError("--promotion-sample-edge must be non-negative")
     if args.promotion_max_transient_points < 0:
         raise ValueError("--promotion-max-transient-points must be non-negative")
     if args.promotion_max_source_pwl_points < 0:

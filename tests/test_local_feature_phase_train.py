@@ -71,6 +71,7 @@ def test_phase_transient_cli_exposes_agreement_gates() -> None:
     assert "--max-source-pwl-points" in proc.stdout
     assert "--preflight-only" in proc.stdout
     assert "--phase-clock-mode" in proc.stdout
+    assert "--sample-edge" in proc.stdout
 
 
 def test_phase_transient_x_yce_print_reader_extracts_final_transient_row(tmp_path: Path) -> None:
@@ -292,6 +293,17 @@ def test_phase_transient_sample_source_pwl_uses_dc_for_constant_values() -> None
     assert source == "-0.125"
 
 
+def test_phase_transient_sample_source_pwl_supports_sharp_sample_steps() -> None:
+    source = phase_transient.sample_source_pwl(
+        np.array([0.0, 0.0, 1.0, 1.0, 0.0]),
+        [1.0e-9, 2.0e-9, 3.0e-9, 4.0e-9, 5.0e-9],
+        6.0e-9,
+        0.0,
+    )
+
+    assert source == "PWL(0 0 3e-09 1 5e-09 0)"
+
+
 def test_phase_transient_sample_source_pwl_rejects_mismatched_schedule() -> None:
     with pytest.raises(ValueError, match="sample_starts"):
         phase_transient.sample_source_pwl(np.array([1.0, 2.0]), [1.0e-9], 2.0e-9, 0.1e-9)
@@ -325,6 +337,48 @@ def test_phase_transient_source_complexity_counts_sample_and_clock_sources() -> 
     assert complexity["phase_clock_source_pwl_points"] > 0
     assert complexity["total_source_count"] == 8
     assert complexity["total_source_pwl_points"] == complexity["sample_source_pwl_points"] + complexity["phase_clock_source_pwl_points"]
+
+
+def test_phase_transient_sample_edge_reduces_sample_pwl_without_changing_clock_cost() -> None:
+    x = np.array(
+        [
+            [0.0, 0.25],
+            [1.0, 0.50],
+            [0.0, 0.50],
+        ],
+        dtype=float,
+    )
+    y = np.array([0, 1, 0])
+    phases, sample_starts, t_stop = phase_transient.make_phase_schedule(1, 3, 1.0e-9, 0.1e-9, True)
+    targets = phase_transient.target_matrix(y, 2, softmax_output=True)
+
+    finite = phase_transient.phase_source_complexity(
+        x,
+        targets,
+        phases,
+        sample_starts,
+        t_stop,
+        0.1e-9,
+        True,
+        labels=y,
+        target_source_mode="label",
+    )
+    sharp = phase_transient.phase_source_complexity(
+        x,
+        targets,
+        phases,
+        sample_starts,
+        t_stop,
+        0.1e-9,
+        True,
+        labels=y,
+        target_source_mode="label",
+        sample_edge=0.0,
+    )
+
+    assert sharp["sample_source_pwl_points"] < finite["sample_source_pwl_points"]
+    assert sharp["phase_clock_source_pwl_points"] == finite["phase_clock_source_pwl_points"]
+    assert sharp["total_source_count"] == finite["total_source_count"]
 
 
 def test_phase_transient_target_topology_strict_512_preflight_cost_regression() -> None:
@@ -1019,6 +1073,7 @@ def test_phase_variant_sweep_dry_command_preserves_online_contract() -> None:
         phase=1e-9,
         gap=0.1e-9,
         edge=10e-12,
+        sample_edge=0.0,
         settle_ratio=80.0,
         transient_step=50e-12,
         timeout=600.0,
@@ -1110,6 +1165,8 @@ def test_phase_variant_sweep_dry_command_preserves_online_contract() -> None:
     assert command[command.index("--phase-clock-mode") + 1] == "analytic"
     assert "--target-source-mode" in command
     assert command[command.index("--target-source-mode") + 1] == "label"
+    assert "--sample-edge" in command
+    assert command[command.index("--sample-edge") + 1] == "0.0"
     assert "--eval-backend" in command
     assert command[command.index("--eval-backend") + 1] == "numpy"
     assert "--output-bias-update-scale" in command
@@ -1169,6 +1226,7 @@ def test_phase_variant_sweep_row_preserves_phase_cost_fields() -> None:
         "total_source_pwl_points": 104,
         "total_source_pwl_points_per_update": 52.0,
         "target_source_mode": "label",
+        "sample_edge_s": 0.0,
     }
 
     row = phase_variant_sweep.row_from_summary(
@@ -1205,6 +1263,7 @@ def test_phase_variant_sweep_row_preserves_phase_cost_fields() -> None:
     assert row["total_source_count"] == 28
     assert row["total_source_pwl_points"] == 104
     assert row["total_source_pwl_points_per_update"] == 52.0
+    assert row["sample_edge_s"] == 0.0
 
 
 def test_phase_transient_softmax_deck_is_one_continuous_online_run(tmp_path: Path) -> None:
@@ -2159,6 +2218,7 @@ def test_phase_transient_preflight_summary_has_no_artifact_paths() -> None:
         t_stop=6.6e-9,
         transient_step=200e-12,
         phase=0.5e-9,
+        sample_edge=5e-12,
         settle_ratio=20.0,
         source_complexity=source_complexity,
     )
@@ -2169,6 +2229,7 @@ def test_phase_transient_preflight_summary_has_no_artifact_paths() -> None:
     assert summary["lr_schedule"] == "linear-decay"
     assert summary["lr_final_scale"] == 0.25
     assert summary["phase_clock_mode"] == "analytic"
+    assert summary["sample_edge_s"] == pytest.approx(5e-12)
     assert summary["target_source_mode"] == "rails"
     assert summary["output_bias_state_frozen"] is True
     assert summary["phase_output_vector_count"] == 70

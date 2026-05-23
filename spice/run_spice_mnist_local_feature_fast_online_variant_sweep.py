@@ -361,6 +361,32 @@ def best_fast_reference_full_objective_variant(rows: list[dict[str, Any]]) -> di
     )
 
 
+def cost_projection_budget_met(row: dict[str, Any]) -> bool:
+    return (
+        row.get("strict_phase_cost_projection_transient_budget_met") is True
+        and row.get("strict_phase_cost_projection_source_pwl_budget_met") is True
+        and row.get("strict_phase_cost_projection_output_vector_budget_met", True) is True
+    )
+
+
+def best_fast_reference_full_objective_cost_feasible_variant(rows: list[dict[str, Any]]) -> dict[str, Any] | None:
+    candidates = [
+        row
+        for row in rows
+        if row.get("fast_reference_full_objective_candidate") is True and cost_projection_budget_met(row)
+    ]
+    if not candidates:
+        return None
+    return max(
+        candidates,
+        key=lambda row: (
+            row.get("final_eval_accuracy") if row.get("final_eval_accuracy") is not None else -1.0,
+            row.get("eval_improvement") if row.get("eval_improvement") is not None else -999.0,
+            -float(row.get("strict_phase_cost_projection_total_source_pwl_points") or 0.0),
+        ),
+    )
+
+
 def best_promotion_variant(rows: list[dict[str, Any]]) -> dict[str, Any] | None:
     candidates = [row for row in rows if row.get("promotion_probe_eval_accuracy") is not None]
     if not candidates:
@@ -659,6 +685,7 @@ def strict_phase_cost_fields_for_updates(
         f"{prefix}_phase_clock_source_pwl_points": source_complexity["phase_clock_source_pwl_points"],
         f"{prefix}_control_source_pwl_points": source_complexity["control_source_pwl_points"],
         f"{prefix}_total_source_pwl_points": source_complexity["total_source_pwl_points"],
+        f"{prefix}_source_pwl_points_per_update": source_complexity["total_source_pwl_points"] / float(updates),
         f"{prefix}_source_pwl_budget_met": bool(
             not max_source_pwl_points or source_complexity["total_source_pwl_points"] <= max_source_pwl_points
         ),
@@ -956,6 +983,7 @@ def main() -> None:
         "best_promotion_variant": best_promotion_variant(rows),
         "best_promotion_efficiency_variant": best_promotion_efficiency_variant(rows),
         "best_fast_reference_full_objective_variant": best_fast_reference_full_objective_variant(rows),
+        "best_fast_reference_full_objective_cost_feasible_variant": best_fast_reference_full_objective_cost_feasible_variant(rows),
         "best_probe_variants_by_update": probe_best,
         "learning_thresholds": learning_thresholds,
         "learning_threshold_hits": learning_threshold_hits(probe_best, learning_thresholds),

@@ -607,6 +607,9 @@ def test_fast_online_strict_cost_projection_can_use_a_different_horizon() -> Non
         projection["strict_phase_cost_projection_total_source_pwl_points"]
         > promotion["strict_phase_promotion_total_source_pwl_points"]
     )
+    assert projection["strict_phase_cost_projection_source_pwl_points_per_update"] == pytest.approx(
+        projection["strict_phase_cost_projection_total_source_pwl_points"] / 4.0
+    )
     assert projection["strict_phase_cost_projection_output_vector_count"] == promotion["strict_phase_promotion_output_vector_count"]
 
 
@@ -798,12 +801,40 @@ def test_fast_online_variant_sweep_marks_full_objective_candidates_as_fast_refer
     assert hit["fast_reference_full_objective_candidate"] is True
 
     rows = [
-        {"tag": "low", "final_eval_accuracy": 0.91, "eval_improvement": 0.7, **hit},
-        {"tag": "high", "final_eval_accuracy": 0.92, "eval_improvement": 0.6, **hit},
-        {"tag": "small_eval", "final_eval_accuracy": 0.99, "eval_improvement": 0.8, **miss_eval},
+        {
+            "tag": "low",
+            "final_eval_accuracy": 0.91,
+            "eval_improvement": 0.7,
+            "strict_phase_cost_projection_transient_budget_met": True,
+            "strict_phase_cost_projection_source_pwl_budget_met": True,
+            "strict_phase_cost_projection_output_vector_budget_met": True,
+            "strict_phase_cost_projection_total_source_pwl_points": 1000,
+            **hit,
+        },
+        {
+            "tag": "high",
+            "final_eval_accuracy": 0.92,
+            "eval_improvement": 0.6,
+            "strict_phase_cost_projection_transient_budget_met": True,
+            "strict_phase_cost_projection_source_pwl_budget_met": False,
+            "strict_phase_cost_projection_output_vector_budget_met": True,
+            "strict_phase_cost_projection_total_source_pwl_points": 900,
+            **hit,
+        },
+        {
+            "tag": "small_eval",
+            "final_eval_accuracy": 0.99,
+            "eval_improvement": 0.8,
+            "strict_phase_cost_projection_transient_budget_met": True,
+            "strict_phase_cost_projection_source_pwl_budget_met": True,
+            "strict_phase_cost_projection_output_vector_budget_met": True,
+            "strict_phase_cost_projection_total_source_pwl_points": 100,
+            **miss_eval,
+        },
     ]
 
     assert fast_sweep.best_fast_reference_full_objective_variant(rows)["tag"] == "high"
+    assert fast_sweep.best_fast_reference_full_objective_cost_feasible_variant(rows)["tag"] == "low"
 
 
 def test_fast_online_promotion_efficiency_fields_normalize_gain_by_cost() -> None:

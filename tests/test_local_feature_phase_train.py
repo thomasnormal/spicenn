@@ -173,6 +173,24 @@ def test_phase_transient_hidden_preactivation_source_count_tracks_fusion_mode() 
         phase_transient.hidden_preactivation_source_count("bad", 16, 2)
 
 
+def test_phase_transient_deck_mode_fields_are_shared_by_preflight_and_runtime_summaries() -> None:
+    fields = phase_transient.phase_deck_mode_fields(
+        phase_clock_mode="pwl",
+        target_source_mode="label",
+        sample_edge=0.0,
+        hidden_preactivation_mode="inline",
+        hidden_preactivation_source_count=0,
+    )
+
+    assert fields == {
+        "phase_clock_mode": "pwl",
+        "target_source_mode": "label",
+        "sample_edge_s": 0.0,
+        "hidden_preactivation_mode": "inline",
+        "hidden_preactivation_source_count": 0,
+    }
+
+
 def test_phase_transient_cost_summary_fields_report_rates_and_budgets() -> None:
     fields = phase_transient.phase_cost_summary_fields(
         updates=4,

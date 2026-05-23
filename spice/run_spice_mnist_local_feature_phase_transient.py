@@ -285,6 +285,23 @@ def phase_state_descriptions(update_mode: str, output_bias_state_frozen: bool = 
     }
 
 
+def phase_deck_mode_fields(
+    *,
+    phase_clock_mode: str,
+    target_source_mode: str,
+    sample_edge: float,
+    hidden_preactivation_mode: str,
+    hidden_preactivation_source_count: int,
+) -> dict[str, object]:
+    return {
+        "phase_clock_mode": phase_clock_mode,
+        "target_source_mode": target_source_mode,
+        "sample_edge_s": sample_edge,
+        "hidden_preactivation_mode": hidden_preactivation_mode,
+        "hidden_preactivation_source_count": hidden_preactivation_source_count,
+    }
+
+
 def strict_fully_on_device_contract_met(
     batch_size: int,
     reference_mode: str,
@@ -413,10 +430,13 @@ def phase_preflight_summary(
         "lr_schedule": lr_schedule,
         "lr_final_scale": lr_final_scale,
         "update_mode": update_mode,
-        "phase_clock_mode": phase_clock_mode,
-        "target_source_mode": target_source_mode,
-        "hidden_preactivation_mode": hidden_preactivation_mode,
-        "hidden_preactivation_source_count": hidden_preactivation_source_count,
+        **phase_deck_mode_fields(
+            phase_clock_mode=phase_clock_mode,
+            target_source_mode=target_source_mode,
+            sample_edge=sample_edge,
+            hidden_preactivation_mode=hidden_preactivation_mode,
+            hidden_preactivation_source_count=hidden_preactivation_source_count,
+        ),
         "output_bias_state_frozen": output_bias_state_frozen,
         "phase_output_vector_count": phase_output_vector_count,
         "phase_output_includes_y": phase_output_includes_y,
@@ -439,7 +459,6 @@ def phase_preflight_summary(
         **source_complexity,
         **cost_fields,
         "phase_s": phase,
-        "sample_edge_s": sample_edge,
         "settle_ratio": settle_ratio,
         **phase_state_descriptions(update_mode, output_bias_state_frozen),
     }
@@ -2839,8 +2858,13 @@ def main() -> None:
         "reference_mode": args.reference_mode,
         "phase_output_mode_requested": args.phase_output_mode,
         "update_mode": args.update_mode,
-        "phase_clock_mode": args.phase_clock_mode,
-        "target_source_mode": args.target_source_mode,
+        **phase_deck_mode_fields(
+            phase_clock_mode=args.phase_clock_mode,
+            target_source_mode=args.target_source_mode,
+            sample_edge=sample_edge,
+            hidden_preactivation_mode=args.hidden_preactivation_mode,
+            hidden_preactivation_source_count=preflight_hidden_preactivation_source_count,
+        ),
         "output_bias_state_frozen": output_bias_state_frozen,
         "phase_output_includes_y": include_y_vectors,
         "simulator_extra_args": args.simulator_extra_args or os.environ.get(SPICE_SIMULATOR_ARGS_ENV, ""),

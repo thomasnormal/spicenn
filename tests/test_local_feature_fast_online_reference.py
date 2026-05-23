@@ -329,7 +329,7 @@ def test_fast_online_variant_sweep_row_reports_best_probe_and_improvement() -> N
         "softmax_temperature": 4.0,
         "tag": "row",
     }
-    x_train = np.array([[0.5, 0.0], [0.0, 0.5]])
+    x_train = np.array([[0.0, 0.5], [0.0, 0.25]])
     y_train = np.array([0, 1])
     x_eval = x_train.copy()
     y_eval = y_train.copy()
@@ -378,6 +378,12 @@ def test_fast_online_variant_sweep_row_reports_best_probe_and_improvement() -> N
     assert row["strict_phase_promotion_output_vector_budget_met"] is True
     assert row["strict_phase_promotion_estimated_transient_points"] == 34
     assert row["strict_phase_promotion_transient_budget_met"] is True
+    assert row["strict_phase_promotion_sample_source_count"] == 2
+    assert row["strict_phase_promotion_sample_source_elided_dc_count"] == 1
+    assert row["strict_phase_promotion_pixel_source_count"] == 1
+    assert row["strict_phase_promotion_pixel_source_elided_dc_count"] == 1
+    assert row["strict_phase_promotion_target_source_count"] == 1
+    assert row["strict_phase_promotion_target_behavioral_source_count"] == 10
     assert row["strict_phase_promotion_phase_clock_source_pwl_points"] == 0
     assert row["strict_phase_promotion_control_source_pwl_points"] > 0
     assert row["strict_phase_promotion_total_source_pwl_points"] > row["strict_phase_promotion_sample_source_pwl_points"]
@@ -542,7 +548,7 @@ def test_fast_online_strict_promotion_cost_fields_respect_pwl_clock_override() -
         promotion_phase_clock_mode="pwl",
         softmax_output=True,
     )
-    x_train = np.array([[0.5, 0.0], [0.0, 0.5]])
+    x_train = np.array([[0.0, 0.5], [0.0, 0.25]])
     y_train = np.array([0, 1])
     variant = {
         "lr": 0.8,
@@ -557,6 +563,12 @@ def test_fast_online_strict_promotion_cost_fields_respect_pwl_clock_override() -
     assert fields["strict_phase_promotion_output_vector_count"] > 0
     assert fields["strict_phase_promotion_output_vector_budget_met"] is True
     assert fields["strict_phase_promotion_estimated_transient_points"] == 34
+    assert fields["strict_phase_promotion_sample_source_count"] == 2
+    assert fields["strict_phase_promotion_sample_source_elided_dc_count"] == 1
+    assert fields["strict_phase_promotion_pixel_source_count"] == 1
+    assert fields["strict_phase_promotion_pixel_source_elided_dc_count"] == 1
+    assert fields["strict_phase_promotion_target_source_count"] == 1
+    assert fields["strict_phase_promotion_target_behavioral_source_count"] == 10
     assert fields["strict_phase_promotion_phase_clock_source_pwl_points"] == 45
     assert fields["strict_phase_promotion_control_source_pwl_points"] == 0
     assert fields["strict_phase_promotion_total_source_pwl_points"] > fields["strict_phase_promotion_sample_source_pwl_points"]
@@ -607,6 +619,8 @@ def test_fast_online_strict_cost_projection_can_use_a_different_horizon() -> Non
         projection["strict_phase_cost_projection_total_source_pwl_points"]
         > promotion["strict_phase_promotion_total_source_pwl_points"]
     )
+    assert projection["strict_phase_cost_projection_sample_source_count"] == promotion["strict_phase_promotion_sample_source_count"]
+    assert projection["strict_phase_cost_projection_target_behavioral_source_count"] == 10
     assert projection["strict_phase_cost_projection_source_pwl_points_per_update"] == pytest.approx(
         projection["strict_phase_cost_projection_total_source_pwl_points"] / 4.0
     )

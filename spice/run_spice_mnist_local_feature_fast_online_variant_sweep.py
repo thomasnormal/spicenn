@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import shlex
 import sys
 import time
@@ -27,6 +28,7 @@ from run_spice_sweep import ROOT
 DEFAULT_PROMOTION_PHASE_CLOCK_MODE = "pwl"
 
 TrainState = tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]
+PROBE_ACCURACY_RE = re.compile(r"^probe_eval_accuracy_u(\d+)$")
 
 
 def float_axis(args: argparse.Namespace, plural_name: str, single_name: str, flag_name: str) -> list[float]:
@@ -221,6 +223,106 @@ def update_kwargs(args: argparse.Namespace, variant: dict[str, Any]) -> dict[str
 
 def command_text(command: list[str]) -> str:
     return " ".join(shlex.quote(part) for part in command)
+
+
+def parse_accuracy_thresholds(raw: str) -> list[float]:
+    if not raw:
+        return []
+    thresholds = parse_float_csv(raw)
+    if any(threshold < 0.0 or threshold > 1.0 for threshold in thresholds):
+        raise ValueError("--learning-thresholds values must be in [0, 1]")
+    return thresholds
+
+
+def probe_accuracy_items(row: dict[str, Any]) -> list[tuple[int, float]]:
+    items: list[tuple[int, float]] = []
+    for key, value in row.items():
+        match = PROBE_ACCURACY_RE.match(key)
+        if match is None or value is None:
+            continue
+        items.append((int(match.group(1)), float(value)))
+    return sorted(items)
+
+
+def compact_probe_variant(row: dict[str, Any], update: int, accuracy: float) -> dict[str, Any]:
+    initial = row.get("initial_eval_accuracy")
+    return {
+        "probe_update": update,
+        "probe_eval_accuracy": accuracy,
+        "probe_eval_improvement": accuracy - float(initial) if initial is not None else None,
+        "tag": row.get("tag"),
+        "local_activation": row.get("local_activation"),
+        "relu_clip": row.get("relu_clip"),
+        "activation_derivative": row.get("activation_derivative"),
+        "readout_feedback_mode": row.get("readout_feedback_mode"),
+        "hidden_synapse_mode": row.get("hidden_synapse_mode"),
+        "readout_synapse_mode": row.get("readout_synapse_mode"),
+        "synapse_clip": row.get("synapse_clip"),
+        "lr": row.get("lr"),
+        "lr_schedule": row.get("lr_schedule", "constant"),
+        "lr_final_scale": row.get("lr_final_scale", 1.0),
+        "output_bias_update_scale": row.get("output_bias_update_scale"),
+        "readout_update_scale": row.get("readout_update_scale"),
+        "local_update_scale": row.get("local_update_scale"),
+        "state_decay": row.get("state_decay"),
+        "softmax_temperature": row.get("softmax_temperature"),
+        "initial_eval_accuracy": row.get("initial_eval_accuracy"),
+        "final_eval_accuracy": row.get("final_eval_accuracy"),
+        "best_probe_update": row.get("best_probe_update"),
+        "best_probe_eval_accuracy": row.get("best_probe_eval_accuracy"),
+    }
+
+
+def best_probe_variants_by_update(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    by_update: dict[int, list[tuple[float, dict[str, Any]]]] = {}
+    for row in rows:
+        for update, accuracy in probe_accuracy_items(row):
+            by_update.setdefault(update, []).append((accuracy, row))
+    best: list[dict[str, Any]] = []
+    for update in sorted(by_update):
+        accuracy, row = max(
+            by_update[update],
+            key=lambda item: (
+                item[0],
+                item[1].get("eval_improvement") if item[1].get("eval_improvement") is not None else -999.0,
+                item[1].get("final_eval_accuracy") if item[1].get("final_eval_accuracy") is not None else -1.0,
+            ),
+        )
+        best.append(compact_probe_variant(row, update, accuracy))
+    return best
+
+
+def learning_threshold_hits(
+    probe_best: list[dict[str, Any]],
+    thresholds: list[float],
+) -> list[dict[str, Any]]:
+    hits: list[dict[str, Any]] = []
+    fallback = max(probe_best, key=lambda row: row["probe_eval_accuracy"]) if probe_best else None
+    for threshold in thresholds:
+        first_hit: dict[str, Any] | None = None
+        for row in probe_best:
+            accuracy = row.get("probe_eval_accuracy")
+            if accuracy is None:
+                continue
+            if float(accuracy) >= threshold:
+                first_hit = row
+                break
+        if first_hit is not None:
+            hits.append({"threshold": threshold, "met": True, **first_hit})
+        else:
+            if fallback is None:
+                hits.append({"threshold": threshold, "met": False, "probe_update": None, "probe_eval_accuracy": None})
+            else:
+                hits.append(
+                    {
+                        "threshold": threshold,
+                        "met": False,
+                        "best_available_probe_update": fallback["probe_update"],
+                        "best_available_probe_eval_accuracy": fallback["probe_eval_accuracy"],
+                        "best_available_tag": fallback.get("tag"),
+                    }
+                )
+    return hits
 
 
 def best_promotion_variant(rows: list[dict[str, Any]]) -> dict[str, Any] | None:
@@ -652,6 +754,11 @@ def main() -> None:
     ap.add_argument("--promotion-phase-output-include-y", action="store_true")
     ap.add_argument("--promotion-probe-updates", default="")
     ap.add_argument("--promotion-tag-prefix", default="promote")
+    ap.add_argument(
+        "--learning-thresholds",
+        default="0.2,0.5,0.75,0.9",
+        help="Comma-separated accuracy thresholds summarized by earliest configured probe horizon.",
+    )
     ap.add_argument("--seed", type=int, default=0)
     ap.add_argument("--tag", default="fast_online_variant_sweep")
     args = ap.parse_args()
@@ -688,6 +795,7 @@ def main() -> None:
         raise ValueError("--promotion-max-source-pwl-points must be non-negative")
     if args.promotion_max_output_vectors < 0:
         raise ValueError("--promotion-max-output-vectors must be non-negative")
+    learning_thresholds = parse_accuracy_thresholds(args.learning_thresholds)
 
     stride = args.block_size if args.stride is None else args.stride
     blocks = block_indices(args.image_size, args.block_size, stride)
@@ -709,6 +817,7 @@ def main() -> None:
         for variant in variant_grid(args)
     ]
     rows.sort(key=lambda row: (row["final_eval_accuracy"], row["eval_improvement"]), reverse=True)
+    probe_best = best_probe_variants_by_update(rows)
 
     results = ROOT / "spice/results"
     tables = ROOT / "results/tables"
@@ -733,6 +842,9 @@ def main() -> None:
         "best_variant": rows[0] if rows else None,
         "best_promotion_variant": best_promotion_variant(rows),
         "best_promotion_efficiency_variant": best_promotion_efficiency_variant(rows),
+        "best_probe_variants_by_update": probe_best,
+        "learning_thresholds": learning_thresholds,
+        "learning_threshold_hits": learning_threshold_hits(probe_best, learning_thresholds),
         "csv": str(csv_path),
         "table_csv": str(table_csv_path),
     }

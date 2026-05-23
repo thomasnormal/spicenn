@@ -626,6 +626,89 @@ def test_fast_online_variant_sweep_has_no_efficiency_variant_without_feasible_ga
     assert fast_sweep.best_promotion_efficiency_variant(rows) is None
 
 
+def test_fast_online_variant_sweep_reports_best_probe_horizons_and_threshold_hits() -> None:
+    rows = [
+        {
+            "tag": "fast_start",
+            "local_activation": "tanh",
+            "relu_clip": 1.0,
+            "activation_derivative": "exact",
+            "readout_feedback_mode": "full-readout",
+            "hidden_synapse_mode": "tanh-clipped",
+            "readout_synapse_mode": "linear",
+            "synapse_clip": 2.0,
+            "lr": 0.8,
+            "lr_schedule": "constant",
+            "lr_final_scale": 1.0,
+            "output_bias_update_scale": 0.0,
+            "readout_update_scale": 0.25,
+            "local_update_scale": 1.0,
+            "state_decay": 0.0,
+            "softmax_temperature": 4.0,
+            "initial_eval_accuracy": 0.1,
+            "final_eval_accuracy": 0.5,
+            "eval_improvement": 0.4,
+            "best_probe_update": 128,
+            "best_probe_eval_accuracy": 0.5,
+            "probe_eval_accuracy_u64": 0.3,
+            "probe_eval_accuracy_u128": 0.5,
+        },
+        {
+            "tag": "slow_better",
+            "local_activation": "tanh",
+            "relu_clip": 1.0,
+            "activation_derivative": "exact",
+            "readout_feedback_mode": "full-readout",
+            "hidden_synapse_mode": "tanh-clipped",
+            "readout_synapse_mode": "linear",
+            "synapse_clip": 2.0,
+            "lr": 0.2,
+            "lr_schedule": "constant",
+            "lr_final_scale": 1.0,
+            "output_bias_update_scale": 0.0,
+            "readout_update_scale": 0.35,
+            "local_update_scale": 1.0,
+            "state_decay": 0.0,
+            "softmax_temperature": 2.5,
+            "initial_eval_accuracy": 0.1,
+            "final_eval_accuracy": 0.7,
+            "eval_improvement": 0.6,
+            "best_probe_update": 128,
+            "best_probe_eval_accuracy": 0.7,
+            "probe_eval_accuracy_u64": 0.25,
+            "probe_eval_accuracy_u128": 0.7,
+        },
+    ]
+
+    probe_best = fast_sweep.best_probe_variants_by_update(rows)
+    hits = fast_sweep.learning_threshold_hits(probe_best, [0.2, 0.5, 0.75])
+
+    assert [row["probe_update"] for row in probe_best] == [64, 128]
+    assert probe_best[0]["tag"] == "fast_start"
+    assert probe_best[0]["probe_eval_accuracy"] == pytest.approx(0.3)
+    assert probe_best[0]["probe_eval_improvement"] == pytest.approx(0.2)
+    assert probe_best[1]["tag"] == "slow_better"
+    assert probe_best[1]["probe_eval_accuracy"] == pytest.approx(0.7)
+    assert hits[0]["met"] is True
+    assert hits[0]["probe_update"] == 64
+    assert hits[1]["met"] is True
+    assert hits[1]["probe_update"] == 128
+    assert hits[2] == {
+        "threshold": 0.75,
+        "met": False,
+        "best_available_probe_update": 128,
+        "best_available_probe_eval_accuracy": 0.7,
+        "best_available_tag": "slow_better",
+    }
+
+
+def test_fast_online_variant_sweep_rejects_invalid_learning_thresholds() -> None:
+    assert fast_sweep.parse_accuracy_thresholds("") == []
+    assert fast_sweep.parse_accuracy_thresholds("0.2,0.9") == [0.2, 0.9]
+    with pytest.raises(ValueError, match="learning-thresholds"):
+        fast_sweep.parse_accuracy_thresholds("1.1")
+
+
 def test_fast_online_promotion_efficiency_fields_normalize_gain_by_cost() -> None:
     fields = fast_sweep.promotion_efficiency_fields(
         initial_eval_accuracy=0.1,

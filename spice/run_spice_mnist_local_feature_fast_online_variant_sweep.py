@@ -239,6 +239,35 @@ def best_promotion_variant(rows: list[dict[str, Any]]) -> dict[str, Any] | None:
     return max(candidates, key=lambda row: (row["promotion_probe_eval_accuracy"], row["eval_improvement"]))
 
 
+def budget_feasible_promotion_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    return [
+        row
+        for row in rows
+        if row.get("promotion_probe_eval_accuracy") is not None
+        and row.get("strict_phase_promotion_transient_budget_met") is True
+        and row.get("strict_phase_promotion_source_pwl_budget_met") is True
+        and row.get("strict_phase_promotion_output_vector_budget_met", True) is True
+    ]
+
+
+def best_promotion_efficiency_variant(rows: list[dict[str, Any]]) -> dict[str, Any] | None:
+    candidates = [
+        row
+        for row in budget_feasible_promotion_rows(rows)
+        if row.get("strict_phase_promotion_eval_improvement_per_1k_source_pwl") is not None
+    ]
+    if not candidates:
+        return None
+    return max(
+        candidates,
+        key=lambda row: (
+            row["strict_phase_promotion_eval_improvement_per_1k_source_pwl"],
+            row.get("promotion_probe_eval_accuracy") or -1.0,
+            row.get("promotion_probe_eval_improvement") or -999.0,
+        ),
+    )
+
+
 def promotion_timeout_seconds(args: argparse.Namespace, updates: int) -> float:
     configured = float(getattr(args, "promotion_timeout", 0.0))
     if configured > 0.0:
@@ -703,6 +732,7 @@ def main() -> None:
         "variants": len(rows),
         "best_variant": rows[0] if rows else None,
         "best_promotion_variant": best_promotion_variant(rows),
+        "best_promotion_efficiency_variant": best_promotion_efficiency_variant(rows),
         "csv": str(csv_path),
         "table_csv": str(table_csv_path),
     }

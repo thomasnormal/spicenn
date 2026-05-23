@@ -565,6 +565,67 @@ def test_fast_online_variant_sweep_selects_best_promotion_variant() -> None:
     assert fast_sweep.best_promotion_variant(rows)["tag"] == "early"
 
 
+def test_fast_online_variant_sweep_selects_best_budget_feasible_efficiency_variant() -> None:
+    rows = [
+        {
+            "tag": "highest_accuracy",
+            "promotion_probe_eval_accuracy": 0.8,
+            "promotion_probe_eval_improvement": 0.7,
+            "eval_improvement": 0.7,
+            "strict_phase_promotion_eval_improvement_per_1k_source_pwl": 0.2,
+            "strict_phase_promotion_transient_budget_met": True,
+            "strict_phase_promotion_source_pwl_budget_met": True,
+            "strict_phase_promotion_output_vector_budget_met": True,
+        },
+        {
+            "tag": "most_efficient",
+            "promotion_probe_eval_accuracy": 0.7,
+            "promotion_probe_eval_improvement": 0.6,
+            "eval_improvement": 0.6,
+            "strict_phase_promotion_eval_improvement_per_1k_source_pwl": 0.4,
+            "strict_phase_promotion_transient_budget_met": True,
+            "strict_phase_promotion_source_pwl_budget_met": True,
+            "strict_phase_promotion_output_vector_budget_met": True,
+        },
+        {
+            "tag": "efficient_but_too_expensive",
+            "promotion_probe_eval_accuracy": 0.6,
+            "promotion_probe_eval_improvement": 0.5,
+            "eval_improvement": 0.5,
+            "strict_phase_promotion_eval_improvement_per_1k_source_pwl": 0.8,
+            "strict_phase_promotion_transient_budget_met": True,
+            "strict_phase_promotion_source_pwl_budget_met": False,
+            "strict_phase_promotion_output_vector_budget_met": True,
+        },
+    ]
+
+    assert fast_sweep.best_promotion_variant(rows)["tag"] == "highest_accuracy"
+    assert fast_sweep.best_promotion_efficiency_variant(rows)["tag"] == "most_efficient"
+
+
+def test_fast_online_variant_sweep_has_no_efficiency_variant_without_feasible_gain() -> None:
+    rows = [
+        {
+            "tag": "missing_efficiency",
+            "promotion_probe_eval_accuracy": 0.8,
+            "strict_phase_promotion_eval_improvement_per_1k_source_pwl": None,
+            "strict_phase_promotion_transient_budget_met": True,
+            "strict_phase_promotion_source_pwl_budget_met": True,
+            "strict_phase_promotion_output_vector_budget_met": True,
+        },
+        {
+            "tag": "infeasible",
+            "promotion_probe_eval_accuracy": 0.7,
+            "strict_phase_promotion_eval_improvement_per_1k_source_pwl": 0.4,
+            "strict_phase_promotion_transient_budget_met": False,
+            "strict_phase_promotion_source_pwl_budget_met": True,
+            "strict_phase_promotion_output_vector_budget_met": True,
+        },
+    ]
+
+    assert fast_sweep.best_promotion_efficiency_variant(rows) is None
+
+
 def test_fast_online_promotion_efficiency_fields_normalize_gain_by_cost() -> None:
     fields = fast_sweep.promotion_efficiency_fields(
         initial_eval_accuracy=0.1,

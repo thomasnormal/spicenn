@@ -1,5 +1,9 @@
 # Engineering Log
 
+## 2026-05-23
+
+- Promoted the refined 128-update target candidate from fast reference to a strict fully-on-device Xyce run: `10x10 b4 stride2 c2`, direct `batch_size=1`, random init, no reference replay, `tanh` with hidden `tanh-clipped`, frozen output-bias writes, readout scale `0.3`, temperature `2.5`, and `lr=0.5`. A first attempt using analytic phase clocks failed in Xyce with "time step too small" near the end of the transient after about 119 s, while the same candidate with PWL phase clocks completed and exactly hit the fast prediction: `9.0% -> 49.33%` on the 300-image eval slice, strict contract true, no Python checkpointing between samples, 1,798 estimated transient points, 15,086 total source PWL points, and 109.4 s phase time. This is now the best strict 128-update target-topology result, and generated strict promotions default back to PWL clocks for robustness; analytic clocks remain an explicit opt-in preflight/runtime knob rather than the default.
+
 ## 2026-05-22
 
 - Generalized the fast online variant sweep so learning-rate schedules are a real grid axis via `--lr-schedules`, with constant LR canonicalized to a single `lr_final_scale=1.0` row because final scale has no electrical effect there. A bounded NumPy-only target-topology screen over 24 variants (`10x10 b4 stride2 c2`, 256 online updates, 300 eval samples, current `tanh`/hidden `tanh-clipped` branch) found that linear decay is slightly better at the final 256-update horizon: best was `lr=0.8`, decay to `0.25`, readout scale `0.3`, temperature `3.0`, moving `9.0% -> 69.0%`. For a 128-update Xyce promotion horizon, constant `lr=0.5`, readout scale `0.25`, temperature `3.0` still had the best predicted probe (`48.0%`), so LR decay is promising for later horizons but not the next 128-update promotion target.

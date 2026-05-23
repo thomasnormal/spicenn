@@ -290,7 +290,7 @@ def strict_phase_promotion_command(args: argparse.Namespace, variant: dict[str, 
         "--update-mode",
         "direct",
         "--phase-clock-mode",
-        getattr(args, "promotion_phase_clock_mode", "analytic"),
+        getattr(args, "promotion_phase_clock_mode", "pwl"),
         "--eval-backend",
         "numpy",
         "--local-activation",
@@ -370,7 +370,7 @@ def strict_phase_promotion_cost_fields(
     gap = float(getattr(args, "promotion_gap", 0.05e-9))
     edge = float(getattr(args, "promotion_edge", 5e-12))
     transient_step = float(getattr(args, "promotion_transient_step", 200e-12))
-    phase_clock_mode = getattr(args, "promotion_phase_clock_mode", "analytic")
+    phase_clock_mode = getattr(args, "promotion_phase_clock_mode", "pwl")
     phases, sample_starts, t_stop = make_phase_schedule(1, updates, phase, gap, True)
     lr_values = None
     lr_schedule = variant.get("lr_schedule", "constant")
@@ -521,7 +521,7 @@ def main() -> None:
     ap.add_argument("--promotion-timeout", type=float, default=240.0)
     ap.add_argument("--promotion-max-transient-points", type=int, default=2000)
     ap.add_argument("--promotion-max-source-pwl-points", type=int, default=0)
-    ap.add_argument("--promotion-phase-clock-mode", choices=["pwl", "analytic"], default="analytic")
+    ap.add_argument("--promotion-phase-clock-mode", choices=["pwl", "analytic"], default="pwl")
     ap.add_argument("--promotion-probe-updates", default="")
     ap.add_argument("--promotion-tag-prefix", default="promote")
     ap.add_argument("--seed", type=int, default=0)

@@ -378,7 +378,7 @@ def test_fast_online_variant_sweep_row_reports_best_probe_and_improvement() -> N
     assert row["promotion_probe_eval_accuracy"] == row["probe_eval_accuracy_u2"]
 
 
-def test_fast_online_strict_promotion_defaults_to_analytic_phase_clock() -> None:
+def test_fast_online_strict_promotion_defaults_to_pwl_phase_clock() -> None:
     args = argparse.Namespace(
         train_samples=2,
         eval_samples=2,
@@ -432,7 +432,7 @@ def test_fast_online_strict_promotion_defaults_to_analytic_phase_clock() -> None
 
     command = fast_sweep.strict_phase_promotion_command(args, variant)
 
-    assert command[command.index("--phase-clock-mode") + 1] == "analytic"
+    assert command[command.index("--phase-clock-mode") + 1] == "pwl"
 
 
 def test_fast_online_strict_promotion_cost_fields_respect_pwl_clock_override() -> None:

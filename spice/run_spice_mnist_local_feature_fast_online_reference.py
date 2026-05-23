@@ -110,6 +110,28 @@ def target_matrix(labels: np.ndarray, n_classes: int, softmax_output: bool) -> n
     return targets
 
 
+def fast_reference_objective_fields(
+    final_eval_accuracy: float | None,
+    eval_samples: int,
+    full_objective_eval_samples: int,
+    full_objective_accuracy: float,
+) -> dict[str, object]:
+    if full_objective_eval_samples <= 0:
+        raise ValueError("full_objective_eval_samples must be positive")
+    if full_objective_accuracy < 0.0 or full_objective_accuracy > 1.0:
+        raise ValueError("full_objective_accuracy must be in [0, 1]")
+    accuracy = None if final_eval_accuracy is None else float(final_eval_accuracy)
+    accuracy_gap = None if accuracy is None else max(0.0, float(full_objective_accuracy) - accuracy)
+    full_eval_met = int(eval_samples) >= int(full_objective_eval_samples)
+    accuracy_met = accuracy is not None and accuracy >= float(full_objective_accuracy)
+    return {
+        "fast_reference_full_eval_sample_count_met": full_eval_met,
+        "fast_reference_full_objective_accuracy_met": accuracy_met,
+        "fast_reference_full_objective_accuracy_gap": accuracy_gap,
+        "fast_reference_full_objective_candidate": full_eval_met and accuracy_met,
+    }
+
+
 def softmax_delta_np(
     targets: np.ndarray,
     y: np.ndarray,
@@ -324,6 +346,8 @@ def main() -> None:
     ap.add_argument("--init-weights", default="")
     ap.add_argument("--probe-updates", default="powers2")
     ap.add_argument("--eval-batch-size", type=int, default=1024)
+    ap.add_argument("--full-objective-eval-samples", type=int, default=10000)
+    ap.add_argument("--full-objective-accuracy", type=float, default=0.9)
     ap.add_argument("--seed", type=int, default=0)
     ap.add_argument("--tag", default="fast_online_reference")
     args = ap.parse_args()
@@ -350,6 +374,10 @@ def main() -> None:
         raise ValueError("update scales must be non-negative")
     if args.state_decay < 0 or args.state_decay >= 1:
         raise ValueError("--state-decay must be in [0, 1)")
+    if args.full_objective_eval_samples <= 0:
+        raise ValueError("--full-objective-eval-samples must be positive")
+    if args.full_objective_accuracy < 0.0 or args.full_objective_accuracy > 1.0:
+        raise ValueError("--full-objective-accuracy must be in [0, 1]")
     stride = args.block_size if args.stride is None else args.stride
     blocks = block_indices(args.image_size, args.block_size, stride)
     probe_updates = parse_probe_update_list(args.probe_updates, args.train_samples)
@@ -453,6 +481,14 @@ def main() -> None:
         "initial_eval_accuracy": initial_eval,
         "final_eval_accuracy": final_eval,
         "eval_improvement": final_eval - initial_eval,
+        "full_objective_eval_samples": args.full_objective_eval_samples,
+        "full_objective_accuracy": args.full_objective_accuracy,
+        **fast_reference_objective_fields(
+            final_eval,
+            args.eval_samples,
+            args.full_objective_eval_samples,
+            args.full_objective_accuracy,
+        ),
         "probe_curve": str(curve_path),
         "table_probe_curve": str(table_curve_path),
         "wall_time_s": wall,

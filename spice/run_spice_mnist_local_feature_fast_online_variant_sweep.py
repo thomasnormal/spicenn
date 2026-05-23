@@ -332,20 +332,12 @@ def fast_reference_objective_fields(
     full_objective_eval_samples: int,
     full_objective_accuracy: float,
 ) -> dict[str, Any]:
-    if full_objective_eval_samples <= 0:
-        raise ValueError("full_objective_eval_samples must be positive")
-    if full_objective_accuracy < 0.0 or full_objective_accuracy > 1.0:
-        raise ValueError("full_objective_accuracy must be in [0, 1]")
-    accuracy = None if final_eval_accuracy is None else float(final_eval_accuracy)
-    accuracy_gap = None if accuracy is None else max(0.0, full_objective_accuracy - accuracy)
-    full_eval_met = int(eval_samples) >= int(full_objective_eval_samples)
-    accuracy_met = accuracy is not None and accuracy >= full_objective_accuracy
-    return {
-        "fast_reference_full_eval_sample_count_met": full_eval_met,
-        "fast_reference_full_objective_accuracy_met": accuracy_met,
-        "fast_reference_full_objective_accuracy_gap": accuracy_gap,
-        "fast_reference_full_objective_candidate": full_eval_met and accuracy_met,
-    }
+    return fast_ref.fast_reference_objective_fields(
+        final_eval_accuracy,
+        eval_samples,
+        full_objective_eval_samples,
+        full_objective_accuracy,
+    )
 
 
 def best_fast_reference_full_objective_variant(rows: list[dict[str, Any]]) -> dict[str, Any] | None:

@@ -120,6 +120,46 @@ def test_fast_online_reference_matches_phase_softmax_error_knobs() -> None:
     assert gated == pytest.approx(default * np.clip(gate, 0.0, 1.0))
 
 
+def test_fast_online_reference_full_objective_fields_require_full_eval_and_accuracy() -> None:
+    small_eval = fast_ref.fast_reference_objective_fields(
+        final_eval_accuracy=0.95,
+        eval_samples=1000,
+        full_objective_eval_samples=10000,
+        full_objective_accuracy=0.9,
+    )
+    weak_accuracy = fast_ref.fast_reference_objective_fields(
+        final_eval_accuracy=0.89,
+        eval_samples=10000,
+        full_objective_eval_samples=10000,
+        full_objective_accuracy=0.9,
+    )
+    hit = fast_ref.fast_reference_objective_fields(
+        final_eval_accuracy=0.91,
+        eval_samples=10000,
+        full_objective_eval_samples=10000,
+        full_objective_accuracy=0.9,
+    )
+
+    assert small_eval == {
+        "fast_reference_full_eval_sample_count_met": False,
+        "fast_reference_full_objective_accuracy_met": True,
+        "fast_reference_full_objective_accuracy_gap": 0.0,
+        "fast_reference_full_objective_candidate": False,
+    }
+    assert weak_accuracy == {
+        "fast_reference_full_eval_sample_count_met": True,
+        "fast_reference_full_objective_accuracy_met": False,
+        "fast_reference_full_objective_accuracy_gap": 0.010000000000000009,
+        "fast_reference_full_objective_candidate": False,
+    }
+    assert hit["fast_reference_full_objective_candidate"] is True
+
+    with pytest.raises(ValueError, match="full_objective_eval_samples"):
+        fast_ref.fast_reference_objective_fields(0.9, 10000, 0, 0.9)
+    with pytest.raises(ValueError, match="full_objective_accuracy"):
+        fast_ref.fast_reference_objective_fields(0.9, 10000, 10000, 1.1)
+
+
 def test_fast_online_reference_honors_update_scales_and_decay() -> None:
     x = np.array([[0.5, 1.0]])
     labels = np.array([1])

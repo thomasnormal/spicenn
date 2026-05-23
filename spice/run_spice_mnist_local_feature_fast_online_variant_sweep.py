@@ -1078,11 +1078,11 @@ def main() -> None:
     ap.add_argument("--promotion-max-auxiliary-algebraic-sources", type=int, default=0)
     ap.add_argument(
         "--promotion-phase-clock-mode",
-        choices=["pwl", "analytic"],
+        choices=["pwl", "analytic", "smooth-analytic"],
         default=DEFAULT_PROMOTION_PHASE_CLOCK_MODE,
         help=(
             "Clock source style for generated strict Xyce promotion commands. PWL is the robust default; "
-            "analytic removes per-update clock PWL points but is currently an opt-in experiment knob."
+            "analytic modes remove per-update clock PWL points but are currently opt-in experiment knobs."
         ),
     )
     ap.add_argument("--promotion-target-source-mode", choices=["rails", "label"], default="label")

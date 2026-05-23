@@ -111,6 +111,39 @@ def analytic_phase_clock_expr(
     )
 
 
+def smooth_analytic_phase_clock_expr(
+    pulses: list[tuple[float, float]],
+    phase: float,
+    gap: float,
+    edge: float,
+) -> str:
+    if not pulses:
+        return "0"
+    if edge <= 0.0:
+        raise ValueError("smooth analytic phase clocks require positive edge")
+    period = direct_phase_clock_period(phase, gap)
+    first_on, first_off = pulses[0]
+    last_on, last_off = pulses[-1]
+    width_tol = max(1e-18, abs(phase) * 1e-9)
+    period_tol = max(1e-18, abs(period) * 1e-9)
+    for idx, (t_on, t_off) in enumerate(pulses):
+        if abs((t_off - t_on) - phase) > width_tol:
+            raise ValueError("smooth analytic phase clocks require uniform phase width")
+        if idx and abs((t_on - pulses[idx - 1][0]) - period) > period_tol:
+            raise ValueError("smooth analytic phase clocks require direct-mode periodic phases")
+    center = 0.5 * (first_on + first_off)
+    duty_angle = math.pi * (phase + edge) / period
+    threshold = math.cos(duty_angle)
+    edge_scale = max(1e-6, (2.0 * math.pi / period) * max(1e-18, math.sin(duty_angle)) * edge)
+    theta = f"(6.28318530717959*(time-({center:.12g}))/({period:.12g}))"
+    periodic_gate = f"(0.5*(1+tanh((cos({theta})-{threshold:.12g})/({edge_scale:.12g}))))"
+    start = first_on - 4.0 * edge
+    stop = last_off + 4.0 * edge
+    start_gate = f"(0.5*(1+tanh((time-({start:.12g}))/({edge:.12g}))))"
+    stop_gate = f"(0.5*(1+tanh((({stop:.12g})-time)/({edge:.12g}))))"
+    return f"({periodic_gate}*{start_gate}*{stop_gate})"
+
+
 def phase_clock_source_line(
     name: str,
     node: str,
@@ -129,7 +162,11 @@ def phase_clock_source_line(
         if not direct_update or update_batch_size != 1:
             raise ValueError("analytic phase clocks require direct update mode with batch_size=1")
         return f"B{name} {node} 0 V = {analytic_phase_clock_expr(pulses, phase, gap, edge)}"
-    raise ValueError("phase_clock_mode must be 'pwl' or 'analytic'")
+    if phase_clock_mode == "smooth-analytic":
+        if not direct_update or update_batch_size != 1:
+            raise ValueError("smooth analytic phase clocks require direct update mode with batch_size=1")
+        return f"B{name} {node} 0 V = {smooth_analytic_phase_clock_expr(pulses, phase, gap, edge)}"
+    raise ValueError("phase_clock_mode must be 'pwl', 'analytic', or 'smooth-analytic'")
 
 
 def phase_pulse_area(phase: float, edge: float) -> float:
@@ -951,10 +988,10 @@ def phase_source_complexity(
     phase_names = ["act", "score", "err", "bwd", "acc"] if direct_update else ["act", "score", "err", "bwd", "acc", "apply", "clear"]
     if phase_clock_mode == "pwl":
         phase_sources = [phase_pwl(phases[name], t_stop, edge) for name in phase_names]
-    elif phase_clock_mode == "analytic":
+    elif phase_clock_mode in {"analytic", "smooth-analytic"}:
         phase_sources = ["0" for _name in phase_names]
     else:
-        raise ValueError("phase_clock_mode must be 'pwl' or 'analytic'")
+        raise ValueError("phase_clock_mode must be 'pwl', 'analytic', or 'smooth-analytic'")
     control_sources = []
     if lr_values is not None:
         control_sources.append(sample_source_pwl(np.asarray(lr_values, dtype=float), sample_starts, t_stop, sample_transition_edge))
@@ -1342,8 +1379,8 @@ def make_phase_transient_netlist(
         raise ValueError("softmax_margin must be positive when softmax_error_gate is target-margin")
     if readout_class_centering not in {"none", "mean"}:
         raise ValueError("readout_class_centering must be 'none' or 'mean'")
-    if phase_clock_mode not in {"pwl", "analytic"}:
-        raise ValueError("phase_clock_mode must be 'pwl' or 'analytic'")
+    if phase_clock_mode not in {"pwl", "analytic", "smooth-analytic"}:
+        raise ValueError("phase_clock_mode must be 'pwl', 'analytic', or 'smooth-analytic'")
     if lr_schedule not in {"constant", "linear-decay"}:
         raise ValueError("lr_schedule must be 'constant' or 'linear-decay'")
     if target_source_mode not in {"rails", "label"}:
@@ -1371,8 +1408,8 @@ def make_phase_transient_netlist(
     direct_update = update_mode == "direct"
     if direct_update and update_batch_size != 1:
         raise ValueError("direct update mode requires update_batch_size=1")
-    if phase_clock_mode == "analytic" and (not direct_update or update_batch_size != 1):
-        raise ValueError("analytic phase clocks require direct update mode with batch_size=1")
+    if phase_clock_mode in {"analytic", "smooth-analytic"} and (not direct_update or update_batch_size != 1):
+        raise ValueError(f"{phase_clock_mode} phase clocks require direct update mode with batch_size=1")
     decay_phase = "pacc" if direct_update else "papply"
     n_blocks, channels, block_len = w.shape
     n_classes = readout.shape[0]
@@ -2517,7 +2554,7 @@ def main() -> None:
     ap.add_argument("--update-mode", choices=["phased", "direct"], default="phased")
     ap.add_argument(
         "--phase-clock-mode",
-        choices=["pwl", "analytic"],
+        choices=["pwl", "analytic", "smooth-analytic"],
         default="pwl",
         help=(
             "Emit phase clocks as explicit PWL voltage sources or as bounded analytic behavioral clocks. "
@@ -2630,8 +2667,8 @@ def main() -> None:
         raise ValueError("--output-rail-mode inline cannot be combined with --phase-output-include-y")
     if args.update_mode == "direct" and args.batch_size != 1:
         raise ValueError("--update-mode direct requires --batch-size 1")
-    if args.phase_clock_mode == "analytic" and (args.update_mode != "direct" or args.batch_size != 1):
-        raise ValueError("--phase-clock-mode analytic requires --update-mode direct with --batch-size 1")
+    if args.phase_clock_mode in {"analytic", "smooth-analytic"} and (args.update_mode != "direct" or args.batch_size != 1):
+        raise ValueError(f"--phase-clock-mode {args.phase_clock_mode} requires --update-mode direct with --batch-size 1")
     if args.strict_fully_on_device:
         validate_strict_fully_on_device_args(args.batch_size, args.reference_mode, args.init_weights)
     output_bias_state_frozen = args.output_bias_update_scale == 0.0 and args.state_decay == 0.0
@@ -2822,8 +2859,8 @@ def main() -> None:
     )
 
     spice_bin, version = detect_spice(args.simulator)
-    if args.phase_clock_mode == "analytic" and not is_xyce(spice_bin):
-        raise ValueError("--phase-clock-mode analytic is Xyce-only")
+    if args.phase_clock_mode in {"analytic", "smooth-analytic"} and not is_xyce(spice_bin):
+        raise ValueError(f"--phase-clock-mode {args.phase_clock_mode} is Xyce-only")
     generated = ROOT / "spice/generated"
     results = ROOT / "spice/results"
     generated.mkdir(parents=True, exist_ok=True)

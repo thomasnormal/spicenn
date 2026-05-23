@@ -791,6 +791,30 @@ def test_phase_transient_analytic_phase_clock_expr_is_bounded_direct_clock() -> 
     assert line.startswith("Bpact pact 0 V = if(")
 
 
+def test_phase_transient_smooth_analytic_phase_clock_expr_avoids_floor_discontinuity() -> None:
+    phases, _sample_starts, t_stop = phase_transient.make_phase_schedule(1, 2, 1.0e-9, 0.1e-9, True)
+
+    expr = phase_transient.smooth_analytic_phase_clock_expr(phases["act"], 1.0e-9, 0.1e-9, 5.0e-12)
+    line = phase_transient.phase_clock_source_line(
+        "pact",
+        "pact",
+        phases["act"],
+        t_stop,
+        1.0e-9,
+        0.1e-9,
+        5.0e-12,
+        "smooth-analytic",
+        True,
+        1,
+    )
+
+    assert "floor(" not in expr
+    assert "cos(" in expr
+    assert "tanh(" in expr
+    assert "5.6e-09" in expr
+    assert line.startswith("Bpact pact 0 V = (")
+
+
 def test_phase_transient_analytic_phase_clock_complexity_removes_clock_pwl_points() -> None:
     x = np.zeros((2, 2), dtype=float)
     y = np.array([0, 1])
@@ -806,6 +830,30 @@ def test_phase_transient_analytic_phase_clock_complexity_removes_clock_pwl_point
         0.1e-9,
         True,
         phase_clock_mode="analytic",
+    )
+
+    assert complexity["phase_clock_source_count"] == 5
+    assert complexity["phase_clock_source_pwl_count"] == 0
+    assert complexity["phase_clock_source_pwl_points"] == 0
+    assert complexity["total_source_count"] == 7
+    assert complexity["total_source_pwl_points"] == complexity["sample_source_pwl_points"]
+
+
+def test_phase_transient_smooth_analytic_phase_clock_complexity_removes_clock_pwl_points() -> None:
+    x = np.zeros((2, 2), dtype=float)
+    y = np.array([0, 1])
+    phases, sample_starts, t_stop = phase_transient.make_phase_schedule(1, 2, 1.0e-9, 0.1e-9, True)
+    targets = phase_transient.target_matrix(y, 2, softmax_output=True)
+
+    complexity = phase_transient.phase_source_complexity(
+        x,
+        targets,
+        phases,
+        sample_starts,
+        t_stop,
+        0.1e-9,
+        True,
+        phase_clock_mode="smooth-analytic",
     )
 
     assert complexity["phase_clock_source_count"] == 5

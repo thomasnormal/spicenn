@@ -20,6 +20,7 @@ from run_spice_mnist_local_feature_phase_transient import (
     make_phase_schedule,
     phase_output_vector_count,
     phase_source_complexity,
+    score_calculation_source_count,
     target_matrix,
 )
 from run_spice_mnist_local_feature_phase_variant_sweep import activation_clip_pairs, parse_csv, parse_float_csv, variant_tag
@@ -29,6 +30,7 @@ from run_spice_sweep import ROOT
 DEFAULT_PROMOTION_PHASE_CLOCK_MODE = "pwl"
 DEFAULT_PROMOTION_SAMPLE_EDGE = 0.0
 DEFAULT_PROMOTION_HIDDEN_PREACTIVATION_MODE = "inline"
+DEFAULT_PROMOTION_SCORE_CALCULATION_MODE = "inline"
 
 TrainState = tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]
 PROBE_ACCURACY_RE = re.compile(r"^probe_eval_accuracy_u(\d+)$")
@@ -643,6 +645,8 @@ def strict_phase_promotion_command(args: argparse.Namespace, variant: dict[str, 
         args.readout_class_centering,
         "--hidden-preactivation-mode",
         getattr(args, "promotion_hidden_preactivation_mode", DEFAULT_PROMOTION_HIDDEN_PREACTIVATION_MODE),
+        "--score-calculation-mode",
+        getattr(args, "promotion_score_calculation_mode", DEFAULT_PROMOTION_SCORE_CALCULATION_MODE),
         "--tag",
         promotion_tag,
     ]
@@ -705,6 +709,11 @@ def strict_phase_cost_fields_for_updates(
         "promotion_hidden_preactivation_mode",
         DEFAULT_PROMOTION_HIDDEN_PREACTIVATION_MODE,
     )
+    score_calculation_mode = getattr(
+        args,
+        "promotion_score_calculation_mode",
+        DEFAULT_PROMOTION_SCORE_CALCULATION_MODE,
+    )
     phases, sample_starts, t_stop = make_phase_schedule(1, updates, phase, gap, True)
     lr_values = None
     lr_schedule = variant.get("lr_schedule", "constant")
@@ -756,6 +765,8 @@ def strict_phase_cost_fields_for_updates(
             len(blocks),
             channels,
         ),
+        f"{prefix}_score_calculation_mode": score_calculation_mode,
+        f"{prefix}_score_calculation_source_count": score_calculation_source_count(score_calculation_mode, 10),
         f"{prefix}_target_source_mode": getattr(args, "promotion_target_source_mode", "label"),
         f"{prefix}_output_bias_state_frozen": output_bias_state_frozen,
         f"{prefix}_phase_output_includes_y": bool(getattr(args, "promotion_phase_output_include_y", False)),
@@ -974,6 +985,11 @@ def main() -> None:
         "--promotion-hidden-preactivation-mode",
         choices=["node", "inline"],
         default=DEFAULT_PROMOTION_HIDDEN_PREACTIVATION_MODE,
+    )
+    ap.add_argument(
+        "--promotion-score-calculation-mode",
+        choices=["node", "inline"],
+        default=DEFAULT_PROMOTION_SCORE_CALCULATION_MODE,
     )
     ap.add_argument("--promotion-phase-output-include-y", action="store_true")
     ap.add_argument("--promotion-probe-updates", default="")

@@ -173,6 +173,14 @@ def hidden_preactivation_source_count(mode: str, blocks: int, channels: int) -> 
     raise ValueError("hidden_preactivation_mode must be 'node' or 'inline'")
 
 
+def score_calculation_source_count(mode: str, classes: int) -> int:
+    if mode == "node":
+        return int(classes)
+    if mode == "inline":
+        return 0
+    raise ValueError("score_calculation_mode must be 'node' or 'inline'")
+
+
 def validate_transient_point_budget(estimated_points: int, max_points: int) -> None:
     if max_points < 0:
         raise ValueError("--max-transient-points must be non-negative")
@@ -292,6 +300,8 @@ def phase_deck_mode_fields(
     sample_edge: float,
     hidden_preactivation_mode: str,
     hidden_preactivation_source_count: int,
+    score_calculation_mode: str,
+    score_calculation_source_count: int,
 ) -> dict[str, object]:
     return {
         "phase_clock_mode": phase_clock_mode,
@@ -299,6 +309,8 @@ def phase_deck_mode_fields(
         "sample_edge_s": sample_edge,
         "hidden_preactivation_mode": hidden_preactivation_mode,
         "hidden_preactivation_source_count": hidden_preactivation_source_count,
+        "score_calculation_mode": score_calculation_mode,
+        "score_calculation_source_count": score_calculation_source_count,
     }
 
 
@@ -375,6 +387,8 @@ def phase_preflight_summary(
     target_source_mode: str,
     hidden_preactivation_mode: str,
     hidden_preactivation_source_count: int,
+    score_calculation_mode: str,
+    score_calculation_source_count: int,
     output_bias_state_frozen: bool,
     phase_output_vector_count: int,
     phase_output_includes_y: bool,
@@ -436,6 +450,8 @@ def phase_preflight_summary(
             sample_edge=sample_edge,
             hidden_preactivation_mode=hidden_preactivation_mode,
             hidden_preactivation_source_count=hidden_preactivation_source_count,
+            score_calculation_mode=score_calculation_mode,
+            score_calculation_source_count=score_calculation_source_count,
         ),
         "output_bias_state_frozen": output_bias_state_frozen,
         "phase_output_vector_count": phase_output_vector_count,
@@ -1002,6 +1018,7 @@ def make_phase_transient_netlist(
     include_output_y_vectors: bool = True,
     sample_edge: float | None = None,
     hidden_preactivation_mode: str = "node",
+    score_calculation_mode: str = "node",
 ) -> tuple[str, int, float]:
     total_samples = x_batch.shape[0]
     if total_samples != update_batch_size * updates:
@@ -1042,6 +1059,8 @@ def make_phase_transient_netlist(
         raise ValueError("target_source_mode must be 'rails' or 'label'")
     if hidden_preactivation_mode not in {"node", "inline"}:
         raise ValueError("hidden_preactivation_mode must be 'node' or 'inline'")
+    if score_calculation_mode not in {"node", "inline"}:
+        raise ValueError("score_calculation_mode must be 'node' or 'inline'")
     sample_transition_edge = edge if sample_edge is None else sample_edge
     if sample_transition_edge < 0.0:
         raise ValueError("sample_edge must be non-negative")
@@ -1192,8 +1211,13 @@ def make_phase_transient_netlist(
             for c in range(channels)
         ]
         score_terms.append(f"{output_bias[k]:.12g}" if output_bias_state_frozen else f"V(ob{k})")
-        lines.append(f"Bscore{k} scorecalc{k} 0 V = " + " + ".join(score_terms))
-        lines.append(f"Bstore_score{k} score{k} 0 I = V(pscore)*{{CSTATE}}/{{TAU}}*(V(score{k})-V(scorecalc{k}))")
+        score_expr = " + ".join(score_terms)
+        if score_calculation_mode == "node":
+            lines.append(f"Bscore{k} scorecalc{k} 0 V = {score_expr}")
+            store_score_expr = f"V(scorecalc{k})"
+        else:
+            store_score_expr = f"({score_expr})"
+        lines.append(f"Bstore_score{k} score{k} 0 I = V(pscore)*{{CSTATE}}/{{TAU}}*(V(score{k})-({store_score_expr}))")
     if softmax_output:
         denom = " + ".join(softmax_exp_expr(f"V(score{k})") for k in range(n_classes))
         for k in range(n_classes):
@@ -2010,6 +2034,15 @@ def main() -> None:
         ),
     )
     ap.add_argument(
+        "--score-calculation-mode",
+        choices=["node", "inline"],
+        default="node",
+        help=(
+            "Use separate per-class score calculation behavioral nodes, or inline each score expression "
+            "into the score storage current source for fused readout/summing experiments."
+        ),
+    )
+    ap.add_argument(
         "--target-source-mode",
         choices=["rails", "label"],
         default="rails",
@@ -2222,6 +2255,7 @@ def main() -> None:
         len(blocks),
         args.channels,
     )
+    preflight_score_calculation_source_count = score_calculation_source_count(args.score_calculation_mode, 10)
     preflight_phase_output_vector_count = int(
         np.prod(expected_w_shape)
         + np.prod(expected_hb_shape)
@@ -2296,6 +2330,8 @@ def main() -> None:
                     target_source_mode=args.target_source_mode,
                     hidden_preactivation_mode=args.hidden_preactivation_mode,
                     hidden_preactivation_source_count=preflight_hidden_preactivation_source_count,
+                    score_calculation_mode=args.score_calculation_mode,
+                    score_calculation_source_count=preflight_score_calculation_source_count,
                     output_bias_state_frozen=output_bias_state_frozen,
                     phase_output_vector_count=preflight_phase_output_vector_count,
                     phase_output_includes_y=args.phase_output_include_y,
@@ -2406,6 +2442,7 @@ def main() -> None:
         include_y_vectors,
         sample_edge,
         args.hidden_preactivation_mode,
+        args.score_calculation_mode,
     )
     phase_netlist.write_text(prepare_phase_netlist(netlist, spice_bin))
 
@@ -2864,6 +2901,8 @@ def main() -> None:
             sample_edge=sample_edge,
             hidden_preactivation_mode=args.hidden_preactivation_mode,
             hidden_preactivation_source_count=preflight_hidden_preactivation_source_count,
+            score_calculation_mode=args.score_calculation_mode,
+            score_calculation_source_count=preflight_score_calculation_source_count,
         ),
         "output_bias_state_frozen": output_bias_state_frozen,
         "phase_output_includes_y": include_y_vectors,

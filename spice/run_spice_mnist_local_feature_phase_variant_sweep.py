@@ -16,6 +16,7 @@ from run_spice_sweep import ROOT
 CLIPPED_ACTIVATIONS = {"clipped-relu", "clipped_relu", "diff-clipped-relu", "differential-clipped-relu", "diff_clipped_relu"}
 DEFAULT_SAMPLE_EDGE = 0.0
 DEFAULT_HIDDEN_PREACTIVATION_MODE = "inline"
+DEFAULT_SCORE_CALCULATION_MODE = "inline"
 
 
 def parse_csv(text: str) -> list[str]:
@@ -178,6 +179,8 @@ def build_variant_command(
         args.readout_class_centering,
         "--hidden-preactivation-mode",
         args.hidden_preactivation_mode,
+        "--score-calculation-mode",
+        args.score_calculation_mode,
         "--tag",
         variant_tag(
             args.tag,
@@ -275,6 +278,8 @@ def row_from_summary(
         "sample_edge_s",
         "hidden_preactivation_mode",
         "hidden_preactivation_source_count",
+        "score_calculation_mode",
+        "score_calculation_source_count",
         "target_source_mode",
     ]
     row = {
@@ -348,6 +353,7 @@ def main() -> None:
     ap.add_argument("--synapse-clips", default="")
     ap.add_argument("--readout-class-centering", choices=["none", "mean"], default="none")
     ap.add_argument("--hidden-preactivation-mode", choices=["node", "inline"], default=DEFAULT_HIDDEN_PREACTIVATION_MODE)
+    ap.add_argument("--score-calculation-mode", choices=["node", "inline"], default=DEFAULT_SCORE_CALCULATION_MODE)
     ap.add_argument("--softmax-output", action=argparse.BooleanOptionalAction, default=True)
     ap.add_argument("--linear-output", action="store_true")
     ap.add_argument("--final-measures", action="store_true")

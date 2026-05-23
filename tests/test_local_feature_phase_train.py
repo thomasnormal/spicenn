@@ -74,6 +74,7 @@ def test_phase_transient_cli_exposes_agreement_gates() -> None:
     assert "--sample-edge" in proc.stdout
     assert "--hidden-preactivation-mode" in proc.stdout
     assert "--score-calculation-mode" in proc.stdout
+    assert "--output-rail-mode" in proc.stdout
 
 
 def test_phase_transient_x_yce_print_reader_extracts_final_transient_row(tmp_path: Path) -> None:
@@ -182,6 +183,14 @@ def test_phase_transient_score_calculation_source_count_tracks_fusion_mode() -> 
         phase_transient.score_calculation_source_count("bad", 10)
 
 
+def test_phase_transient_output_rail_source_count_tracks_fusion_mode() -> None:
+    assert phase_transient.output_rail_source_count("node", 10) == 10
+    assert phase_transient.output_rail_source_count("inline", 10) == 0
+
+    with pytest.raises(ValueError, match="output_rail_mode"):
+        phase_transient.output_rail_source_count("bad", 10)
+
+
 def test_phase_transient_deck_mode_fields_are_shared_by_preflight_and_runtime_summaries() -> None:
     fields = phase_transient.phase_deck_mode_fields(
         phase_clock_mode="pwl",
@@ -191,6 +200,8 @@ def test_phase_transient_deck_mode_fields_are_shared_by_preflight_and_runtime_su
         hidden_preactivation_source_count=0,
         score_calculation_mode="inline",
         score_calculation_source_count=0,
+        output_rail_mode="inline",
+        output_rail_source_count=0,
     )
 
     assert fields == {
@@ -201,6 +212,8 @@ def test_phase_transient_deck_mode_fields_are_shared_by_preflight_and_runtime_su
         "hidden_preactivation_source_count": 0,
         "score_calculation_mode": "inline",
         "score_calculation_source_count": 0,
+        "output_rail_mode": "inline",
+        "output_rail_source_count": 0,
     }
 
 
@@ -1103,6 +1116,7 @@ def test_phase_variant_sweep_generated_defaults_use_efficient_deck_shape() -> No
     assert phase_variant_sweep.DEFAULT_SAMPLE_EDGE == pytest.approx(0.0)
     assert phase_variant_sweep.DEFAULT_HIDDEN_PREACTIVATION_MODE == "inline"
     assert phase_variant_sweep.DEFAULT_SCORE_CALCULATION_MODE == "inline"
+    assert phase_variant_sweep.DEFAULT_OUTPUT_RAIL_MODE == "inline"
 
 
 def test_phase_variant_sweep_dry_command_preserves_online_contract() -> None:
@@ -1135,6 +1149,7 @@ def test_phase_variant_sweep_dry_command_preserves_online_contract() -> None:
         target_source_mode="label",
         hidden_preactivation_mode="inline",
         score_calculation_mode="inline",
+        output_rail_mode="inline",
         eval_backend="numpy",
         probe_updates="1,2,4,8",
         tag="sweep",
@@ -1217,6 +1232,8 @@ def test_phase_variant_sweep_dry_command_preserves_online_contract() -> None:
     assert command[command.index("--hidden-preactivation-mode") + 1] == "inline"
     assert "--score-calculation-mode" in command
     assert command[command.index("--score-calculation-mode") + 1] == "inline"
+    assert "--output-rail-mode" in command
+    assert command[command.index("--output-rail-mode") + 1] == "inline"
     assert "--sample-edge" in command
     assert command[command.index("--sample-edge") + 1] == "0.0"
     assert "--eval-backend" in command
@@ -1283,6 +1300,8 @@ def test_phase_variant_sweep_row_preserves_phase_cost_fields() -> None:
         "hidden_preactivation_source_count": 0,
         "score_calculation_mode": "inline",
         "score_calculation_source_count": 0,
+        "output_rail_mode": "inline",
+        "output_rail_source_count": 0,
     }
 
     row = phase_variant_sweep.row_from_summary(
@@ -1324,6 +1343,8 @@ def test_phase_variant_sweep_row_preserves_phase_cost_fields() -> None:
     assert row["hidden_preactivation_source_count"] == 0
     assert row["score_calculation_mode"] == "inline"
     assert row["score_calculation_source_count"] == 0
+    assert row["output_rail_mode"] == "inline"
+    assert row["output_rail_source_count"] == 0
 
 
 def test_phase_transient_softmax_deck_is_one_continuous_online_run(tmp_path: Path) -> None:
@@ -1466,6 +1487,85 @@ def test_phase_transient_inline_score_calculation_removes_scorecalc_source(tmp_p
     assert "V(scorecalc1)" not in netlist
     assert "Bstore_score0 score0 0 I = V(pscore)*{CSTATE}/{TAU}*(V(score0)-(" in netlist
     assert "V(v0_0_0)*V(h0_0)" in netlist
+
+
+def test_phase_transient_inline_output_rails_remove_y_sources(tmp_path: Path) -> None:
+    x = np.array([[0.0, 0.2, 0.4, 0.6]], dtype=float)
+    y = np.array([0])
+    w = np.ones((1, 1, 4))
+    hb = np.zeros((1, 1))
+    readout = np.ones((2, 1, 1))
+    output_bias = np.zeros(2)
+
+    netlist, _n_vec, _t_stop = phase_transient.make_phase_transient_netlist(
+        x,
+        y,
+        w,
+        hb,
+        readout,
+        output_bias,
+        [[0, 1, 2, 3]],
+        0.8,
+        tmp_path / "out.dat",
+        False,
+        1,
+        1,
+        1e-9,
+        0.1e-9,
+        5e-12,
+        40.0,
+        20e-12,
+        1e-12,
+        1e-12,
+        1e-12,
+        1e18,
+        True,
+        include_output_y_vectors=False,
+        output_rail_mode="inline",
+    )
+
+    assert "By0 y0 0 V =" not in netlist
+    assert "By1 y1 0 V =" not in netlist
+    assert "V(y0)" not in netlist
+    assert "V(y1)" not in netlist
+    assert "Bstore_d0 d0 0 I = V(perr)*{CSTATE}/{TAU}*(V(d0)-((V(target0))*(1-(exp((V(score0))" in netlist
+
+
+def test_phase_transient_inline_output_rails_cannot_print_y_vectors(tmp_path: Path) -> None:
+    x = np.array([[0.0, 0.2, 0.4, 0.6]], dtype=float)
+    y = np.array([0])
+    w = np.ones((1, 1, 4))
+    hb = np.zeros((1, 1))
+    readout = np.ones((2, 1, 1))
+    output_bias = np.zeros(2)
+
+    with pytest.raises(ValueError, match="output_rail_mode=inline"):
+        phase_transient.make_phase_transient_netlist(
+            x,
+            y,
+            w,
+            hb,
+            readout,
+            output_bias,
+            [[0, 1, 2, 3]],
+            0.8,
+            tmp_path / "out.dat",
+            False,
+            1,
+            1,
+            1e-9,
+            0.1e-9,
+            5e-12,
+            40.0,
+            20e-12,
+            1e-12,
+            1e-12,
+            1e-12,
+            1e18,
+            True,
+            include_output_y_vectors=True,
+            output_rail_mode="inline",
+        )
 
 
 def test_phase_transient_softmax_negative_scale_controls_non_target_error(tmp_path: Path) -> None:
@@ -2352,6 +2452,8 @@ def test_phase_transient_preflight_summary_has_no_artifact_paths() -> None:
         hidden_preactivation_source_count=0,
         score_calculation_mode="inline",
         score_calculation_source_count=0,
+        output_rail_mode="inline",
+        output_rail_source_count=0,
         output_bias_state_frozen=True,
         phase_output_vector_count=70,
         phase_output_includes_y=False,
@@ -2383,6 +2485,8 @@ def test_phase_transient_preflight_summary_has_no_artifact_paths() -> None:
     assert summary["hidden_preactivation_source_count"] == 0
     assert summary["score_calculation_mode"] == "inline"
     assert summary["score_calculation_source_count"] == 0
+    assert summary["output_rail_mode"] == "inline"
+    assert summary["output_rail_source_count"] == 0
     assert summary["target_source_mode"] == "rails"
     assert summary["output_bias_state_frozen"] is True
     assert summary["phase_output_vector_count"] == 70

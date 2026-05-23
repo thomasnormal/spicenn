@@ -299,6 +299,8 @@ def strict_phase_promotion_command(args: argparse.Namespace, variant: dict[str, 
         "direct",
         "--phase-clock-mode",
         getattr(args, "promotion_phase_clock_mode", "pwl"),
+        "--target-source-mode",
+        getattr(args, "promotion_target_source_mode", "rails"),
         "--eval-backend",
         "numpy",
         "--local-activation",
@@ -395,12 +397,15 @@ def strict_phase_promotion_cost_fields(
         True,
         phase_clock_mode,
         lr_values,
+        labels=y_train[:updates],
+        target_source_mode=getattr(args, "promotion_target_source_mode", "rails"),
     )
     estimated_points = estimate_transient_points(t_stop, transient_step)
     max_transient_points = int(getattr(args, "promotion_max_transient_points", 0))
     max_source_pwl_points = int(getattr(args, "promotion_max_source_pwl_points", 0))
     return {
         "strict_phase_promotion_phase_clock_mode": phase_clock_mode,
+        "strict_phase_promotion_target_source_mode": getattr(args, "promotion_target_source_mode", "rails"),
         "strict_phase_promotion_estimated_transient_points": estimated_points,
         "strict_phase_promotion_transient_budget_met": bool(not max_transient_points or estimated_points <= max_transient_points),
         "strict_phase_promotion_sample_source_pwl_points": source_complexity["sample_source_pwl_points"],
@@ -536,6 +541,7 @@ def main() -> None:
     ap.add_argument("--promotion-max-transient-points", type=int, default=2000)
     ap.add_argument("--promotion-max-source-pwl-points", type=int, default=0)
     ap.add_argument("--promotion-phase-clock-mode", choices=["pwl", "analytic"], default="pwl")
+    ap.add_argument("--promotion-target-source-mode", choices=["rails", "label"], default="label")
     ap.add_argument("--promotion-probe-updates", default="")
     ap.add_argument("--promotion-tag-prefix", default="promote")
     ap.add_argument("--seed", type=int, default=0)

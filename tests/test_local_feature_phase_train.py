@@ -246,6 +246,43 @@ def test_phase_transient_source_complexity_counts_sample_and_clock_sources() -> 
     assert complexity["total_source_pwl_points"] == complexity["sample_source_pwl_points"] + complexity["phase_clock_source_pwl_points"]
 
 
+def test_phase_transient_label_target_source_mode_decodes_one_label_waveform() -> None:
+    labels = np.array([0, 1, 1, 0])
+    phases, sample_starts, t_stop = phase_transient.make_phase_schedule(1, 4, 1.0e-9, 0.1e-9, True)
+    targets = phase_transient.target_matrix(labels, 2, softmax_output=True)
+
+    lines = phase_transient.target_source_lines(
+        labels,
+        targets,
+        sample_starts,
+        t_stop,
+        0.1e-9,
+        target_source_mode="label",
+        softmax_output=True,
+    )
+    complexity = phase_transient.phase_source_complexity(
+        np.zeros((4, 1), dtype=float),
+        targets,
+        phases,
+        sample_starts,
+        t_stop,
+        0.1e-9,
+        True,
+        labels=labels,
+        target_source_mode="label",
+    )
+
+    assert lines[0].startswith("Vlabel label 0 PWL(")
+    assert lines[1] == "Btarget0 target0 0 V = (0.5*(1+tanh((0.5-abs(V(label)-0))/{TARGET_LABEL_SMOOTH})))"
+    assert lines[2] == "Btarget1 target1 0 V = (0.5*(1+tanh((0.5-abs(V(label)-1))/{TARGET_LABEL_SMOOTH})))"
+    assert complexity["target_source_count"] == 1
+    assert complexity["target_behavioral_source_count"] == 2
+    assert complexity["target_source_pwl_points"] < sum(
+        phase_transient.pwl_point_count(phase_transient.sample_source_pwl(targets[:, k], sample_starts, t_stop, 0.1e-9))
+        for k in range(targets.shape[1])
+    )
+
+
 def test_phase_transient_analytic_phase_clock_expr_is_bounded_direct_clock() -> None:
     phases, _sample_starts, t_stop = phase_transient.make_phase_schedule(1, 2, 1.0e-9, 0.1e-9, True)
 
@@ -1750,6 +1787,8 @@ def test_phase_transient_preflight_summary_has_no_artifact_paths() -> None:
         "target_source_dc_count": 8,
         "target_source_pwl_count": 2,
         "target_source_pwl_points": 8,
+        "target_behavioral_source_count": 0,
+        "target_source_mode_label": 0,
         "phase_clock_source_count": 5,
         "phase_clock_source_pwl_count": 5,
         "phase_clock_source_pwl_points": 50,
@@ -1776,6 +1815,7 @@ def test_phase_transient_preflight_summary_has_no_artifact_paths() -> None:
         lr_final_scale=0.25,
         update_mode="direct",
         phase_clock_mode="analytic",
+        target_source_mode="rails",
         reference_mode="none",
         init_weights="",
         strict_fully_on_device=True,
@@ -1795,6 +1835,7 @@ def test_phase_transient_preflight_summary_has_no_artifact_paths() -> None:
     assert summary["lr_schedule"] == "linear-decay"
     assert summary["lr_final_scale"] == 0.25
     assert summary["phase_clock_mode"] == "analytic"
+    assert summary["target_source_mode"] == "rails"
     assert summary["phase_netlist"] is None
     assert summary["final_weights"] is None
     assert summary["sample_source_pwl_points"] == 60

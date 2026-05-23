@@ -269,6 +269,7 @@ def phase_preflight_summary(
     lr_final_scale: float,
     update_mode: str,
     phase_clock_mode: str,
+    target_source_mode: str,
     reference_mode: str,
     init_weights: str,
     strict_fully_on_device: bool,
@@ -307,6 +308,7 @@ def phase_preflight_summary(
         "lr_final_scale": lr_final_scale,
         "update_mode": update_mode,
         "phase_clock_mode": phase_clock_mode,
+        "target_source_mode": target_source_mode,
         "reference_mode": reference_mode,
         "init_weights": init_weights,
         "phase_netlist": None,
@@ -420,9 +422,19 @@ def phase_source_complexity(
     direct_update: bool,
     phase_clock_mode: str = "pwl",
     lr_values: np.ndarray | None = None,
+    labels: np.ndarray | None = None,
+    target_source_mode: str = "rails",
 ) -> dict[str, int]:
+    if target_source_mode not in {"rails", "label"}:
+        raise ValueError("target_source_mode must be 'rails' or 'label'")
     pixel_sources = [sample_source_pwl(x_batch[:, i], sample_starts, t_stop, edge) for i in range(x_batch.shape[1])]
-    target_sources = [sample_source_pwl(targets[:, k], sample_starts, t_stop, edge) for k in range(targets.shape[1])]
+    target_behavioral_source_count = 0
+    if target_source_mode == "rails":
+        target_sources = [sample_source_pwl(targets[:, k], sample_starts, t_stop, edge) for k in range(targets.shape[1])]
+    else:
+        label_values = np.asarray(labels if labels is not None else np.argmax(targets, axis=1), dtype=float)
+        target_sources = [sample_source_pwl(label_values, sample_starts, t_stop, edge)]
+        target_behavioral_source_count = int(targets.shape[1])
     phase_names = ["act", "score", "err", "bwd", "acc"] if direct_update else ["act", "score", "err", "bwd", "acc", "apply", "clear"]
     if phase_clock_mode == "pwl":
         phase_sources = [phase_pwl(phases[name], t_stop, edge) for name in phase_names]
@@ -457,6 +469,8 @@ def phase_source_complexity(
         "target_source_dc_count": count_dc(target_sources),
         "target_source_pwl_count": count_pwl(target_sources),
         "target_source_pwl_points": count_points(target_sources),
+        "target_behavioral_source_count": target_behavioral_source_count,
+        "target_source_mode_label": int(target_source_mode == "label"),
         "phase_clock_source_count": len(phase_sources),
         "phase_clock_source_pwl_count": count_pwl(phase_sources),
         "phase_clock_source_pwl_points": count_points(phase_sources),
@@ -512,6 +526,32 @@ def target_matrix(labels: np.ndarray, n_classes: int, softmax_output: bool = Fal
     for s, label in enumerate(labels):
         targets[s, int(label)] = 1.0
     return targets
+
+
+def target_from_label_expr(class_index: int, softmax_output: bool) -> str:
+    active = f"(0.5*(1+tanh((0.5-abs(V(label)-{class_index}))/{{TARGET_LABEL_SMOOTH}})))"
+    return active if softmax_output else f"(2*({active})-1)"
+
+
+def target_source_lines(
+    labels: np.ndarray,
+    targets: np.ndarray,
+    sample_starts: list[float],
+    t_stop: float,
+    edge: float,
+    *,
+    target_source_mode: str,
+    softmax_output: bool,
+) -> list[str]:
+    if target_source_mode == "rails":
+        return [f"Vtarget{k} target{k} 0 {sample_source_pwl(targets[:, k], sample_starts, t_stop, edge)}" for k in range(targets.shape[1])]
+    if target_source_mode == "label":
+        lines = [f"Vlabel label 0 {sample_source_pwl(np.asarray(labels, dtype=float), sample_starts, t_stop, edge)}"]
+        lines.extend(
+            f"Btarget{k} target{k} 0 V = {target_from_label_expr(k, softmax_output)}" for k in range(targets.shape[1])
+        )
+        return lines
+    raise ValueError("target_source_mode must be 'rails' or 'label'")
 
 
 def apply_readout_class_centering_np(readout: np.ndarray, mode: str) -> np.ndarray:
@@ -730,6 +770,7 @@ def make_phase_transient_netlist(
     phase_clock_mode: str = "pwl",
     lr_schedule: str = "constant",
     lr_final_scale: float = 1.0,
+    target_source_mode: str = "rails",
 ) -> tuple[str, int, float]:
     total_samples = x_batch.shape[0]
     if total_samples != update_batch_size * updates:
@@ -766,6 +807,8 @@ def make_phase_transient_netlist(
         raise ValueError("phase_clock_mode must be 'pwl' or 'analytic'")
     if lr_schedule not in {"constant", "linear-decay"}:
         raise ValueError("lr_schedule must be 'constant' or 'linear-decay'")
+    if target_source_mode not in {"rails", "label"}:
+        raise ValueError("target_source_mode must be 'rails' or 'label'")
     lr_values = lr_schedule_values(lr, updates, lr_schedule, lr_final_scale)
     direct_update = update_mode == "direct"
     if direct_update and update_batch_size != 1:
@@ -806,6 +849,7 @@ def make_phase_transient_netlist(
         f".param SOFTMAX_TEMPERATURE={softmax_temperature:.12g}",
         f".param SOFTMAX_COMPETITOR_POWER={softmax_competitor_power}",
         f".param SOFTMAX_MARGIN={softmax_margin:.12g}",
+        ".param TARGET_LABEL_SMOOTH=0.02",
         "",
         phase_clock_source_line("pact", "pact", phases["act"], t_stop, phase, gap, edge, phase_clock_mode, direct_update, update_batch_size),
         phase_clock_source_line("pscore", "pscore", phases["score"], t_stop, phase, gap, edge, phase_clock_mode, direct_update, update_batch_size),
@@ -824,8 +868,17 @@ def make_phase_transient_netlist(
         ]
     for i in range(x_batch.shape[1]):
         lines.append(f"Vpix{i} pix{i} 0 {sample_source_pwl(x_batch[:, i], sample_starts, t_stop, edge)}")
-    for k in range(n_classes):
-        lines.append(f"Vtarget{k} target{k} 0 {sample_source_pwl(targets[:, k], sample_starts, t_stop, edge)}")
+    lines.extend(
+        target_source_lines(
+            y_batch,
+            targets,
+            sample_starts,
+            t_stop,
+            edge,
+            target_source_mode=target_source_mode,
+            softmax_output=softmax_output,
+        )
+    )
     lines.append("")
     for b in range(n_blocks):
         for c in range(channels):
@@ -1676,6 +1729,12 @@ def main() -> None:
     ap.add_argument("--readout-synapse-mode", choices=synapse_modes, default="linear")
     ap.add_argument("--synapse-clip", type=float, default=1.0)
     ap.add_argument("--readout-class-centering", choices=["none", "mean"], default="none")
+    ap.add_argument(
+        "--target-source-mode",
+        choices=["rails", "label"],
+        default="rails",
+        help="Drive target rails directly as per-class PWL sources, or decode them from one label PWL source.",
+    )
     ap.add_argument("--seed", type=int, default=0)
     ap.add_argument("--timeout", type=float, default=300.0)
     ap.add_argument("--simulator", default=None)
@@ -1865,6 +1924,8 @@ def main() -> None:
         args.update_mode == "direct",
         args.phase_clock_mode,
         source_lr_values,
+        labels=y_batch,
+        target_source_mode=args.target_source_mode,
     )
     validate_source_point_budget(source_complexity, args.max_source_pwl_points)
     if args.preflight_only:
@@ -1890,6 +1951,7 @@ def main() -> None:
                     lr_final_scale=args.lr_final_scale,
                     update_mode=args.update_mode,
                     phase_clock_mode=args.phase_clock_mode,
+                    target_source_mode=args.target_source_mode,
                     reference_mode=args.reference_mode,
                     init_weights=args.init_weights,
                     strict_fully_on_device=args.strict_fully_on_device,
@@ -1987,6 +2049,7 @@ def main() -> None:
         args.phase_clock_mode,
         args.lr_schedule,
         args.lr_final_scale,
+        args.target_source_mode,
     )
     phase_netlist.write_text(prepare_phase_netlist(netlist, spice_bin))
 
@@ -2419,6 +2482,7 @@ def main() -> None:
         "phase_output_mode_requested": args.phase_output_mode,
         "update_mode": args.update_mode,
         "phase_clock_mode": args.phase_clock_mode,
+        "target_source_mode": args.target_source_mode,
         "simulator_extra_args": args.simulator_extra_args or os.environ.get(SPICE_SIMULATOR_ARGS_ENV, ""),
         "init_weights": args.init_weights,
         "phase_netlist": str(phase_netlist),

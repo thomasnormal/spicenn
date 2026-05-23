@@ -16,6 +16,7 @@ from run_spice_mnist_local_feature_phase_transient import (
     estimate_transient_points,
     lr_schedule_values,
     make_phase_schedule,
+    phase_output_vector_count,
     phase_source_complexity,
     target_matrix,
 )
@@ -229,6 +230,7 @@ def best_promotion_variant(rows: list[dict[str, Any]]) -> dict[str, Any] | None:
         for row in candidates
         if row.get("strict_phase_promotion_transient_budget_met") is True
         and row.get("strict_phase_promotion_source_pwl_budget_met") is True
+        and row.get("strict_phase_promotion_output_vector_budget_met", True) is True
     ]
     if feasible:
         candidates = feasible
@@ -300,7 +302,7 @@ def strict_phase_promotion_command(args: argparse.Namespace, variant: dict[str, 
         "--phase-clock-mode",
         getattr(args, "promotion_phase_clock_mode", "pwl"),
         "--target-source-mode",
-        getattr(args, "promotion_target_source_mode", "rails"),
+        getattr(args, "promotion_target_source_mode", "label"),
         "--eval-backend",
         "numpy",
         "--local-activation",
@@ -361,6 +363,8 @@ def strict_phase_promotion_command(args: argparse.Namespace, variant: dict[str, 
     probe_updates = getattr(args, "promotion_probe_updates", "")
     if probe_updates:
         command.extend(["--probe-updates", probe_updates])
+    if getattr(args, "promotion_phase_output_include_y", False):
+        command.append("--phase-output-include-y")
     command.append("--strict-fully-on-device")
     return command
 
@@ -398,14 +402,34 @@ def strict_phase_promotion_cost_fields(
         phase_clock_mode,
         lr_values,
         labels=y_train[:updates],
-        target_source_mode=getattr(args, "promotion_target_source_mode", "rails"),
+        target_source_mode=getattr(args, "promotion_target_source_mode", "label"),
     )
     estimated_points = estimate_transient_points(t_stop, transient_step)
     max_transient_points = int(getattr(args, "promotion_max_transient_points", 0))
     max_source_pwl_points = int(getattr(args, "promotion_max_source_pwl_points", 0))
+    max_output_vectors = int(getattr(args, "promotion_max_output_vectors", 0))
+    inferred_image_size = int(round(float(x_train.shape[1]) ** 0.5))
+    image_size = int(getattr(args, "image_size", inferred_image_size))
+    block_size = int(getattr(args, "block_size", image_size))
+    stride = int(getattr(args, "stride", block_size))
+    channels = int(getattr(args, "channels", 1))
+    blocks = block_indices(image_size, block_size, stride)
+    output_bias_state_frozen = float(variant.get("output_bias_update_scale", 1.0)) == 0.0 and float(variant.get("state_decay", 0.0)) == 0.0
+    output_vector_count = phase_output_vector_count(
+        np.empty((len(blocks), channels, block_size * block_size)),
+        np.empty((len(blocks), channels)),
+        np.empty((10, len(blocks), channels)),
+        np.empty((10,)),
+        include_output_bias_vectors=not output_bias_state_frozen,
+        include_y_vectors=bool(getattr(args, "promotion_phase_output_include_y", False)),
+    )
     return {
         "strict_phase_promotion_phase_clock_mode": phase_clock_mode,
-        "strict_phase_promotion_target_source_mode": getattr(args, "promotion_target_source_mode", "rails"),
+        "strict_phase_promotion_target_source_mode": getattr(args, "promotion_target_source_mode", "label"),
+        "strict_phase_promotion_output_bias_state_frozen": output_bias_state_frozen,
+        "strict_phase_promotion_phase_output_includes_y": bool(getattr(args, "promotion_phase_output_include_y", False)),
+        "strict_phase_promotion_output_vector_count": output_vector_count,
+        "strict_phase_promotion_output_vector_budget_met": bool(not max_output_vectors or output_vector_count <= max_output_vectors),
         "strict_phase_promotion_estimated_transient_points": estimated_points,
         "strict_phase_promotion_transient_budget_met": bool(not max_transient_points or estimated_points <= max_transient_points),
         "strict_phase_promotion_sample_source_pwl_points": source_complexity["sample_source_pwl_points"],
@@ -464,6 +488,7 @@ def run_variant(
         "strict_phase_promotion_timeout_s": promotion_timeout_seconds(args, promotion_updates),
         "strict_phase_promotion_max_transient_points": int(getattr(args, "promotion_max_transient_points", 2000)),
         "strict_phase_promotion_max_source_pwl_points": int(getattr(args, "promotion_max_source_pwl_points", 0)),
+        "strict_phase_promotion_max_output_vectors": int(getattr(args, "promotion_max_output_vectors", 0)),
         **promotion_costs,
         "strict_phase_promotion_command": command_text(phase_command),
         **probe_columns,
@@ -540,8 +565,10 @@ def main() -> None:
     )
     ap.add_argument("--promotion-max-transient-points", type=int, default=2000)
     ap.add_argument("--promotion-max-source-pwl-points", type=int, default=0)
+    ap.add_argument("--promotion-max-output-vectors", type=int, default=0)
     ap.add_argument("--promotion-phase-clock-mode", choices=["pwl", "analytic"], default="pwl")
     ap.add_argument("--promotion-target-source-mode", choices=["rails", "label"], default="label")
+    ap.add_argument("--promotion-phase-output-include-y", action="store_true")
     ap.add_argument("--promotion-probe-updates", default="")
     ap.add_argument("--promotion-tag-prefix", default="promote")
     ap.add_argument("--seed", type=int, default=0)
@@ -578,6 +605,8 @@ def main() -> None:
         raise ValueError("--promotion-max-transient-points must be non-negative")
     if args.promotion_max_source_pwl_points < 0:
         raise ValueError("--promotion-max-source-pwl-points must be non-negative")
+    if args.promotion_max_output_vectors < 0:
+        raise ValueError("--promotion-max-output-vectors must be non-negative")
 
     stride = args.block_size if args.stride is None else args.stride
     blocks = block_indices(args.image_size, args.block_size, stride)

@@ -353,6 +353,8 @@ def test_fast_online_variant_sweep_row_reports_best_probe_and_improvement() -> N
     assert command[command.index("--phase-output-mode") + 1] == "print"
     assert command[command.index("--update-mode") + 1] == "direct"
     assert command[command.index("--phase-clock-mode") + 1] == "analytic"
+    assert command[command.index("--target-source-mode") + 1] == "label"
+    assert "--phase-output-include-y" not in command
     assert command[command.index("--eval-backend") + 1] == "numpy"
     assert command[command.index("--updates") + 1] == "2"
     assert command[command.index("--lr") + 1] == "0.8"
@@ -364,7 +366,13 @@ def test_fast_online_variant_sweep_row_reports_best_probe_and_improvement() -> N
     assert row["strict_phase_promotion_timeout_s"] == 240.0
     assert row["strict_phase_promotion_max_transient_points"] == 2000
     assert row["strict_phase_promotion_max_source_pwl_points"] == 5000
+    assert row["strict_phase_promotion_max_output_vectors"] == 0
     assert row["strict_phase_promotion_phase_clock_mode"] == "analytic"
+    assert row["strict_phase_promotion_target_source_mode"] == "label"
+    assert row["strict_phase_promotion_output_bias_state_frozen"] is True
+    assert row["strict_phase_promotion_phase_output_includes_y"] is False
+    assert row["strict_phase_promotion_output_vector_count"] == 15
+    assert row["strict_phase_promotion_output_vector_budget_met"] is True
     assert row["strict_phase_promotion_estimated_transient_points"] == 34
     assert row["strict_phase_promotion_transient_budget_met"] is True
     assert row["strict_phase_promotion_phase_clock_source_pwl_points"] == 0
@@ -434,6 +442,7 @@ def test_fast_online_strict_promotion_defaults_to_pwl_phase_clock() -> None:
     command = fast_sweep.strict_phase_promotion_command(args, variant)
 
     assert command[command.index("--phase-clock-mode") + 1] == "pwl"
+    assert command[command.index("--target-source-mode") + 1] == "label"
 
 
 def test_fast_online_strict_promotion_timeout_auto_scales_with_updates() -> None:
@@ -518,6 +527,9 @@ def test_fast_online_strict_promotion_cost_fields_respect_pwl_clock_override() -
     fields = fast_sweep.strict_phase_promotion_cost_fields(args, variant, x_train, y_train)
 
     assert fields["strict_phase_promotion_phase_clock_mode"] == "pwl"
+    assert fields["strict_phase_promotion_target_source_mode"] == "label"
+    assert fields["strict_phase_promotion_output_vector_count"] > 0
+    assert fields["strict_phase_promotion_output_vector_budget_met"] is True
     assert fields["strict_phase_promotion_estimated_transient_points"] == 34
     assert fields["strict_phase_promotion_phase_clock_source_pwl_points"] == 50
     assert fields["strict_phase_promotion_total_source_pwl_points"] > fields["strict_phase_promotion_sample_source_pwl_points"]
@@ -542,6 +554,16 @@ def test_fast_online_variant_sweep_prefers_budget_feasible_promotion_variant() -
             "eval_improvement": 0.8,
             "strict_phase_promotion_transient_budget_met": True,
             "strict_phase_promotion_source_pwl_budget_met": False,
+            "strict_phase_promotion_output_vector_budget_met": True,
+        },
+        {
+            "tag": "too_many_vectors",
+            "final_eval_accuracy": 0.85,
+            "promotion_probe_eval_accuracy": 0.7,
+            "eval_improvement": 0.7,
+            "strict_phase_promotion_transient_budget_met": True,
+            "strict_phase_promotion_source_pwl_budget_met": True,
+            "strict_phase_promotion_output_vector_budget_met": False,
         },
         {
             "tag": "feasible",
@@ -550,6 +572,7 @@ def test_fast_online_variant_sweep_prefers_budget_feasible_promotion_variant() -
             "eval_improvement": 0.6,
             "strict_phase_promotion_transient_budget_met": True,
             "strict_phase_promotion_source_pwl_budget_met": True,
+            "strict_phase_promotion_output_vector_budget_met": True,
         },
     ]
 

@@ -308,6 +308,8 @@ def test_fast_online_variant_sweep_row_reports_best_probe_and_improvement() -> N
         promotion_phase_clock_mode="analytic",
         promotion_probe_updates="",
         promotion_tag_prefix="promote",
+        full_objective_eval_samples=2,
+        full_objective_accuracy=0.5,
     )
     variant = {
         "local_activation": "tanh",
@@ -391,6 +393,11 @@ def test_fast_online_variant_sweep_row_reports_best_probe_and_improvement() -> N
     assert row["initial_eval_accuracy"] >= 0.0
     assert row["final_eval_accuracy"] >= 0.0
     assert row["eval_improvement"] == pytest.approx(row["final_eval_accuracy"] - row["initial_eval_accuracy"])
+    assert row["fast_reference_full_eval_sample_count_met"] is True
+    assert row["fast_reference_full_objective_accuracy_gap"] is not None
+    assert row["fast_reference_full_objective_candidate"] == (
+        row["fast_reference_full_objective_accuracy_met"] is True
+    )
     assert row["best_probe_update"] in {1, 2}
     assert row["probe_eval_accuracy_u1"] >= 0.0
     assert row["probe_eval_accuracy_u2"] >= 0.0
@@ -707,6 +714,49 @@ def test_fast_online_variant_sweep_rejects_invalid_learning_thresholds() -> None
     assert fast_sweep.parse_accuracy_thresholds("0.2,0.9") == [0.2, 0.9]
     with pytest.raises(ValueError, match="learning-thresholds"):
         fast_sweep.parse_accuracy_thresholds("1.1")
+
+
+def test_fast_online_variant_sweep_marks_full_objective_candidates_as_fast_reference_only() -> None:
+    miss_eval = fast_sweep.fast_reference_objective_fields(
+        final_eval_accuracy=0.95,
+        eval_samples=300,
+        full_objective_eval_samples=10000,
+        full_objective_accuracy=0.9,
+    )
+    miss_accuracy = fast_sweep.fast_reference_objective_fields(
+        final_eval_accuracy=0.89,
+        eval_samples=10000,
+        full_objective_eval_samples=10000,
+        full_objective_accuracy=0.9,
+    )
+    hit = fast_sweep.fast_reference_objective_fields(
+        final_eval_accuracy=0.91,
+        eval_samples=10000,
+        full_objective_eval_samples=10000,
+        full_objective_accuracy=0.9,
+    )
+
+    assert miss_eval == {
+        "fast_reference_full_eval_sample_count_met": False,
+        "fast_reference_full_objective_accuracy_met": True,
+        "fast_reference_full_objective_accuracy_gap": 0.0,
+        "fast_reference_full_objective_candidate": False,
+    }
+    assert miss_accuracy == {
+        "fast_reference_full_eval_sample_count_met": True,
+        "fast_reference_full_objective_accuracy_met": False,
+        "fast_reference_full_objective_accuracy_gap": 0.010000000000000009,
+        "fast_reference_full_objective_candidate": False,
+    }
+    assert hit["fast_reference_full_objective_candidate"] is True
+
+    rows = [
+        {"tag": "low", "final_eval_accuracy": 0.91, "eval_improvement": 0.7, **hit},
+        {"tag": "high", "final_eval_accuracy": 0.92, "eval_improvement": 0.6, **hit},
+        {"tag": "small_eval", "final_eval_accuracy": 0.99, "eval_improvement": 0.8, **miss_eval},
+    ]
+
+    assert fast_sweep.best_fast_reference_full_objective_variant(rows)["tag"] == "high"
 
 
 def test_fast_online_promotion_efficiency_fields_normalize_gain_by_cost() -> None:

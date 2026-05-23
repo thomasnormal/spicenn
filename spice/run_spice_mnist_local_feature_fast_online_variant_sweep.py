@@ -325,6 +325,42 @@ def learning_threshold_hits(
     return hits
 
 
+def fast_reference_objective_fields(
+    *,
+    final_eval_accuracy: float | None,
+    eval_samples: int,
+    full_objective_eval_samples: int,
+    full_objective_accuracy: float,
+) -> dict[str, Any]:
+    if full_objective_eval_samples <= 0:
+        raise ValueError("full_objective_eval_samples must be positive")
+    if full_objective_accuracy < 0.0 or full_objective_accuracy > 1.0:
+        raise ValueError("full_objective_accuracy must be in [0, 1]")
+    accuracy = None if final_eval_accuracy is None else float(final_eval_accuracy)
+    accuracy_gap = None if accuracy is None else max(0.0, full_objective_accuracy - accuracy)
+    full_eval_met = int(eval_samples) >= int(full_objective_eval_samples)
+    accuracy_met = accuracy is not None and accuracy >= full_objective_accuracy
+    return {
+        "fast_reference_full_eval_sample_count_met": full_eval_met,
+        "fast_reference_full_objective_accuracy_met": accuracy_met,
+        "fast_reference_full_objective_accuracy_gap": accuracy_gap,
+        "fast_reference_full_objective_candidate": full_eval_met and accuracy_met,
+    }
+
+
+def best_fast_reference_full_objective_variant(rows: list[dict[str, Any]]) -> dict[str, Any] | None:
+    candidates = [row for row in rows if row.get("fast_reference_full_objective_candidate") is True]
+    if not candidates:
+        return None
+    return max(
+        candidates,
+        key=lambda row: (
+            row.get("final_eval_accuracy") if row.get("final_eval_accuracy") is not None else -1.0,
+            row.get("eval_improvement") if row.get("eval_improvement") is not None else -999.0,
+        ),
+    )
+
+
 def best_promotion_variant(rows: list[dict[str, Any]]) -> dict[str, Any] | None:
     candidates = [row for row in rows if row.get("promotion_probe_eval_accuracy") is not None]
     if not candidates:
@@ -627,6 +663,12 @@ def run_variant(
     initial_eval = fast_ref.accuracy_np(x_eval, y_eval, state0, blocks, args.eval_batch_size, **fwd)
     final_state, probe_states = fast_ref.run_online(x_train, y_train, state0, blocks, probe_updates, **upd)
     final_eval = fast_ref.accuracy_np(x_eval, y_eval, final_state, blocks, args.eval_batch_size, **fwd)
+    objective_fields = fast_reference_objective_fields(
+        final_eval_accuracy=final_eval,
+        eval_samples=int(args.eval_samples),
+        full_objective_eval_samples=int(args.full_objective_eval_samples),
+        full_objective_accuracy=float(args.full_objective_accuracy),
+    )
     probe_rows = [
         {
             "update": update,
@@ -655,6 +697,7 @@ def run_variant(
         "initial_eval_accuracy": initial_eval,
         "final_eval_accuracy": final_eval,
         "eval_improvement": final_eval - initial_eval,
+        **objective_fields,
         "best_probe_eval_accuracy": best_probe["eval_accuracy"] if best_probe is not None else None,
         "best_probe_update": best_probe["update"] if best_probe is not None else None,
         "promotion_probe_eval_accuracy": promotion_probe_eval_accuracy,
@@ -759,6 +802,18 @@ def main() -> None:
         default="0.2,0.5,0.75,0.9",
         help="Comma-separated accuracy thresholds summarized by earliest configured probe horizon.",
     )
+    ap.add_argument(
+        "--full-objective-eval-samples",
+        type=int,
+        default=10000,
+        help="Eval sample count required before a fast-reference row can be called a full-objective candidate.",
+    )
+    ap.add_argument(
+        "--full-objective-accuracy",
+        type=float,
+        default=0.9,
+        help="Accuracy threshold for fast-reference full-objective candidate metadata.",
+    )
     ap.add_argument("--seed", type=int, default=0)
     ap.add_argument("--tag", default="fast_online_variant_sweep")
     args = ap.parse_args()
@@ -795,6 +850,10 @@ def main() -> None:
         raise ValueError("--promotion-max-source-pwl-points must be non-negative")
     if args.promotion_max_output_vectors < 0:
         raise ValueError("--promotion-max-output-vectors must be non-negative")
+    if args.full_objective_eval_samples <= 0:
+        raise ValueError("--full-objective-eval-samples must be positive")
+    if args.full_objective_accuracy < 0.0 or args.full_objective_accuracy > 1.0:
+        raise ValueError("--full-objective-accuracy must be in [0, 1]")
     learning_thresholds = parse_accuracy_thresholds(args.learning_thresholds)
 
     stride = args.block_size if args.stride is None else args.stride
@@ -842,9 +901,13 @@ def main() -> None:
         "best_variant": rows[0] if rows else None,
         "best_promotion_variant": best_promotion_variant(rows),
         "best_promotion_efficiency_variant": best_promotion_efficiency_variant(rows),
+        "best_fast_reference_full_objective_variant": best_fast_reference_full_objective_variant(rows),
         "best_probe_variants_by_update": probe_best,
         "learning_thresholds": learning_thresholds,
         "learning_threshold_hits": learning_threshold_hits(probe_best, learning_thresholds),
+        "full_objective_eval_samples": args.full_objective_eval_samples,
+        "full_objective_accuracy": args.full_objective_accuracy,
+        "fast_reference_full_eval_sample_count_met": args.eval_samples >= args.full_objective_eval_samples,
         "csv": str(csv_path),
         "table_csv": str(table_csv_path),
     }

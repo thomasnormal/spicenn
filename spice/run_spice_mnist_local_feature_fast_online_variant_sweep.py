@@ -27,6 +27,8 @@ from run_spice_mnist_train import load_mnist_sequence
 from run_spice_sweep import ROOT
 
 DEFAULT_PROMOTION_PHASE_CLOCK_MODE = "pwl"
+DEFAULT_PROMOTION_SAMPLE_EDGE = 0.0
+DEFAULT_PROMOTION_HIDDEN_PREACTIVATION_MODE = "inline"
 
 TrainState = tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]
 PROBE_ACCURACY_RE = re.compile(r"^probe_eval_accuracy_u(\d+)$")
@@ -640,7 +642,7 @@ def strict_phase_promotion_command(args: argparse.Namespace, variant: dict[str, 
         "--readout-class-centering",
         args.readout_class_centering,
         "--hidden-preactivation-mode",
-        getattr(args, "promotion_hidden_preactivation_mode", "node"),
+        getattr(args, "promotion_hidden_preactivation_mode", DEFAULT_PROMOTION_HIDDEN_PREACTIVATION_MODE),
         "--tag",
         promotion_tag,
     ]
@@ -648,7 +650,7 @@ def strict_phase_promotion_command(args: argparse.Namespace, variant: dict[str, 
         command.append("--softmax-output")
     if args.linear_output:
         command.append("--linear-output")
-    promotion_sample_edge = getattr(args, "promotion_sample_edge", None)
+    promotion_sample_edge = getattr(args, "promotion_sample_edge", DEFAULT_PROMOTION_SAMPLE_EDGE)
     if promotion_sample_edge is not None:
         command.extend(["--sample-edge", str(promotion_sample_edge)])
     probe_updates = getattr(args, "promotion_probe_updates", "")
@@ -693,12 +695,16 @@ def strict_phase_cost_fields_for_updates(
     phase = float(getattr(args, "promotion_phase", 0.5e-9))
     gap = float(getattr(args, "promotion_gap", 0.05e-9))
     edge = float(getattr(args, "promotion_edge", 5e-12))
-    sample_edge = getattr(args, "promotion_sample_edge", None)
+    sample_edge = getattr(args, "promotion_sample_edge", DEFAULT_PROMOTION_SAMPLE_EDGE)
     if sample_edge is not None:
         sample_edge = float(sample_edge)
     transient_step = float(getattr(args, "promotion_transient_step", 200e-12))
     phase_clock_mode = getattr(args, "promotion_phase_clock_mode", DEFAULT_PROMOTION_PHASE_CLOCK_MODE)
-    hidden_preactivation_mode = getattr(args, "promotion_hidden_preactivation_mode", "node")
+    hidden_preactivation_mode = getattr(
+        args,
+        "promotion_hidden_preactivation_mode",
+        DEFAULT_PROMOTION_HIDDEN_PREACTIVATION_MODE,
+    )
     phases, sample_starts, t_stop = make_phase_schedule(1, updates, phase, gap, True)
     lr_values = None
     lr_schedule = variant.get("lr_schedule", "constant")
@@ -935,10 +941,10 @@ def main() -> None:
     ap.add_argument(
         "--promotion-sample-edge",
         type=float,
-        default=None,
+        default=DEFAULT_PROMOTION_SAMPLE_EDGE,
         help=(
-            "Optional --sample-edge for generated strict promotion commands and cost projections. "
-            "Unset preserves --promotion-edge; 0 projects sharp sample/label/LR PWL steps."
+            "Sample/label/LR-control PWL transition edge for generated strict promotion commands and "
+            "cost projections. The default 0 emits sharp sample steps while phase clocks keep finite edges."
         ),
     )
     ap.add_argument("--promotion-settle-ratio", type=float, default=20.0)
@@ -964,7 +970,11 @@ def main() -> None:
         ),
     )
     ap.add_argument("--promotion-target-source-mode", choices=["rails", "label"], default="label")
-    ap.add_argument("--promotion-hidden-preactivation-mode", choices=["node", "inline"], default="node")
+    ap.add_argument(
+        "--promotion-hidden-preactivation-mode",
+        choices=["node", "inline"],
+        default=DEFAULT_PROMOTION_HIDDEN_PREACTIVATION_MODE,
+    )
     ap.add_argument("--promotion-phase-output-include-y", action="store_true")
     ap.add_argument("--promotion-probe-updates", default="")
     ap.add_argument("--promotion-tag-prefix", default="promote")

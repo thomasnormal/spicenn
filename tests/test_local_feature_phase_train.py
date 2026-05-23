@@ -815,6 +815,31 @@ def test_phase_transient_smooth_analytic_phase_clock_expr_avoids_floor_discontin
     assert line.startswith("Bpact pact 0 V = (")
 
 
+def test_phase_transient_pulse_gated_phase_clock_uses_native_pulse_with_window() -> None:
+    phases, _sample_starts, t_stop = phase_transient.make_phase_schedule(1, 2, 1.0e-9, 0.1e-9, True)
+
+    lines = phase_transient.pulse_gated_phase_clock_lines("pact", "pact", phases["act"], 1.0e-9, 0.1e-9, 5.0e-12)
+    rendered = phase_transient.phase_clock_source_line(
+        "pact",
+        "pact",
+        phases["act"],
+        t_stop,
+        1.0e-9,
+        0.1e-9,
+        5.0e-12,
+        "pulse-gated",
+        True,
+        1,
+    )
+
+    assert len(lines) == 2
+    assert lines[0].startswith("Vpact_raw pact_raw 0 PULSE(0 1")
+    assert "5.6e-09" in lines[0]
+    assert lines[1].startswith("Bpact pact 0 V = if(")
+    assert "V(pact_raw)" in lines[1]
+    assert rendered == "\n".join(lines)
+
+
 def test_phase_transient_analytic_phase_clock_complexity_removes_clock_pwl_points() -> None:
     x = np.zeros((2, 2), dtype=float)
     y = np.array([0, 1])
@@ -860,6 +885,30 @@ def test_phase_transient_smooth_analytic_phase_clock_complexity_removes_clock_pw
     assert complexity["phase_clock_source_pwl_count"] == 0
     assert complexity["phase_clock_source_pwl_points"] == 0
     assert complexity["total_source_count"] == 7
+    assert complexity["total_source_pwl_points"] == complexity["sample_source_pwl_points"]
+
+
+def test_phase_transient_pulse_gated_phase_clock_complexity_removes_clock_pwl_points_but_counts_raw_sources() -> None:
+    x = np.zeros((2, 2), dtype=float)
+    y = np.array([0, 1])
+    phases, sample_starts, t_stop = phase_transient.make_phase_schedule(1, 2, 1.0e-9, 0.1e-9, True)
+    targets = phase_transient.target_matrix(y, 2, softmax_output=True)
+
+    complexity = phase_transient.phase_source_complexity(
+        x,
+        targets,
+        phases,
+        sample_starts,
+        t_stop,
+        0.1e-9,
+        True,
+        phase_clock_mode="pulse-gated",
+    )
+
+    assert complexity["phase_clock_source_count"] == 10
+    assert complexity["phase_clock_source_pwl_count"] == 0
+    assert complexity["phase_clock_source_pwl_points"] == 0
+    assert complexity["total_source_count"] == 12
     assert complexity["total_source_pwl_points"] == complexity["sample_source_pwl_points"]
 
 

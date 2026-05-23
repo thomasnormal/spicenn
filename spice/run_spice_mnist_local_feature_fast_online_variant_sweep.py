@@ -1078,7 +1078,7 @@ def main() -> None:
     ap.add_argument("--promotion-max-auxiliary-algebraic-sources", type=int, default=0)
     ap.add_argument(
         "--promotion-phase-clock-mode",
-        choices=["pwl", "analytic", "smooth-analytic"],
+        choices=["pwl", "analytic", "smooth-analytic", "pulse-gated"],
         default=DEFAULT_PROMOTION_PHASE_CLOCK_MODE,
         help=(
             "Clock source style for generated strict Xyce promotion commands. PWL is the robust default; "

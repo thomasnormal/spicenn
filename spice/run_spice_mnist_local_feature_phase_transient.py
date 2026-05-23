@@ -693,6 +693,7 @@ def phase_preflight_summary(
     lr: float,
     lr_schedule: str,
     lr_final_scale: float,
+    lr_control_mode: str,
     update_mode: str,
     phase_clock_mode: str,
     input_source_mode: str,
@@ -775,6 +776,7 @@ def phase_preflight_summary(
         "lr": lr,
         "lr_schedule": lr_schedule,
         "lr_final_scale": lr_final_scale,
+        "lr_control_mode": lr_control_mode,
         "update_mode": update_mode,
         **phase_deck_mode_fields(
             phase_clock_mode=phase_clock_mode,
@@ -1051,6 +1053,32 @@ def lr_schedule_values(base_lr: float, updates: int, schedule: str = "constant",
     raise ValueError("lr_schedule must be 'constant' or 'linear-decay'")
 
 
+def analytic_lr_control_expr(
+    base_lr: float,
+    updates: int,
+    schedule: str,
+    final_scale: float,
+    sample_starts: list[float],
+    phase: float,
+    gap: float,
+) -> str:
+    if schedule == "constant" or updates == 1:
+        return "{LR}"
+    if schedule != "linear-decay":
+        raise ValueError("analytic LR control only supports constant or linear-decay schedules")
+    if not sample_starts:
+        raise ValueError("analytic LR control requires sample starts")
+    if final_scale < 0.0:
+        raise ValueError("lr_final_scale must be non-negative")
+    period = direct_phase_clock_period(phase, gap)
+    first = sample_starts[0]
+    last_index = updates - 1
+    idx_expr = f"floor((time-({first:.12g}))/({period:.12g}))"
+    clipped_idx = f"if(time < {first:.12g}, 0, if({idx_expr} > {last_index}, {last_index}, {idx_expr}))"
+    slope = 1.0 - final_scale
+    return f"({{LR}}*(1-({slope:.12g})*({clipped_idx})/({last_index})))"
+
+
 def pwl_point_count(source: str) -> int:
     if not source.startswith("PWL(") or not source.endswith(")"):
         return 0
@@ -1074,11 +1102,14 @@ def phase_source_complexity(
     target_source_mode: str = "rails",
     sample_edge: float | None = None,
     input_source_mode: str = "pwl",
+    lr_control_mode: str = "pwl",
 ) -> dict[str, int]:
     if target_source_mode not in {"rails", "label"}:
         raise ValueError("target_source_mode must be 'rails' or 'label'")
     if input_source_mode not in {"pwl", "rom"}:
         raise ValueError("input_source_mode must be 'pwl' or 'rom'")
+    if lr_control_mode not in {"pwl", "analytic"}:
+        raise ValueError("lr_control_mode must be 'pwl' or 'analytic'")
     sample_transition_edge = edge if sample_edge is None else sample_edge
     pixel_drives, _pixel_source_lines = pixel_sample_drives(
         x_batch,
@@ -1113,7 +1144,10 @@ def phase_source_complexity(
         raise ValueError("phase_clock_mode must be 'pwl', 'analytic', 'smooth-analytic', or 'pulse-gated'")
     control_sources = []
     if lr_values is not None:
-        control_sources.append(sample_source_pwl(np.asarray(lr_values, dtype=float), sample_starts, t_stop, sample_transition_edge))
+        if lr_control_mode == "pwl":
+            control_sources.append(sample_source_pwl(np.asarray(lr_values, dtype=float), sample_starts, t_stop, sample_transition_edge))
+        else:
+            control_sources.append("ANALYTIC")
 
     def count_dc(sources: list[str]) -> int:
         return sum(not source.startswith("PWL(") for source in sources)
@@ -1461,6 +1495,7 @@ def make_phase_transient_netlist(
     phase_clock_mode: str = "pwl",
     lr_schedule: str = "constant",
     lr_final_scale: float = 1.0,
+    lr_control_mode: str = "pwl",
     target_source_mode: str = "rails",
     input_source_mode: str = "pwl",
     include_output_y_vectors: bool = True,
@@ -1508,6 +1543,8 @@ def make_phase_transient_netlist(
         raise ValueError("phase_clock_mode must be 'pwl', 'analytic', 'smooth-analytic', or 'pulse-gated'")
     if lr_schedule not in {"constant", "linear-decay"}:
         raise ValueError("lr_schedule must be 'constant' or 'linear-decay'")
+    if lr_control_mode not in {"pwl", "analytic"}:
+        raise ValueError("lr_control_mode must be 'pwl' or 'analytic'")
     if target_source_mode not in {"rails", "label"}:
         raise ValueError("target_source_mode must be 'rails' or 'label'")
     if input_source_mode not in {"pwl", "rom"}:
@@ -1542,7 +1579,14 @@ def make_phase_transient_netlist(
     n_classes = readout.shape[0]
     phases, sample_starts, t_stop = make_phase_schedule(update_batch_size, updates, phase, gap, direct_update)
     lr_sample_values = np.repeat(lr_values, update_batch_size)
-    lr_control = "{LR}" if lr_schedule == "constant" else "V(lrctrl)"
+    if lr_schedule == "constant":
+        lr_control = "{LR}"
+    elif lr_control_mode == "pwl":
+        lr_control = "V(lrctrl)"
+    else:
+        if not direct_update or update_batch_size != 1:
+            raise ValueError("lr_control_mode=analytic requires direct update mode with batch_size=1")
+        lr_control = "V(lrctrl)"
     local_updates_enabled = local_update_scale != 0.0
     readout_updates_enabled = readout_update_scale != 0.0
     output_bias_updates_enabled = output_bias_update_scale != 0.0
@@ -1596,8 +1640,14 @@ def make_phase_transient_netlist(
         phase_clock_source_line("pacc", "pacc", phases["acc"], t_stop, phase, gap, edge, phase_clock_mode, direct_update, update_batch_size),
         "",
     ]
-    if lr_control == "V(lrctrl)":
+    if lr_control == "V(lrctrl)" and lr_control_mode == "pwl":
         lines.append(f"Vlrctrl lrctrl 0 {sample_source_pwl(lr_sample_values, sample_starts, t_stop, sample_transition_edge)}")
+        lines.append("")
+    elif lr_control == "V(lrctrl)":
+        lines.append(
+            "Blrctrl lrctrl 0 V = "
+            + analytic_lr_control_expr(lr, updates, lr_schedule, lr_final_scale, sample_starts, phase, gap)
+        )
         lines.append("")
     if not direct_update:
         lines[-1:-1] = [
@@ -2465,6 +2515,16 @@ def main() -> None:
     ap.add_argument("--lr", type=float, default=0.005)
     ap.add_argument("--lr-schedule", choices=["constant", "linear-decay"], default="constant")
     ap.add_argument("--lr-final-scale", type=float, default=1.0)
+    ap.add_argument(
+        "--lr-control-mode",
+        choices=["pwl", "analytic"],
+        default="pwl",
+        help=(
+            "For non-constant learning-rate schedules, either drive LR with an explicit PWL source "
+            "or generate it from an analytic in-deck control expression. Analytic mode currently "
+            "requires direct batch_size=1 updates."
+        ),
+    )
     ap.add_argument("--linear-output", action="store_true")
     ap.add_argument("--softmax-output", action="store_true")
     ap.add_argument(
@@ -2747,6 +2807,8 @@ def main() -> None:
         raise ValueError("--lr-final-scale must be non-negative")
     if args.lr_schedule != "constant" and args.reference_mode != "none":
         raise ValueError("--lr-schedule non-constant requires --reference-mode none")
+    if args.lr_control_mode == "analytic" and args.lr_schedule != "constant" and (args.update_mode != "direct" or args.batch_size != 1):
+        raise ValueError("--lr-control-mode analytic requires --update-mode direct and --batch-size 1")
     if args.linear_output and args.softmax_output:
         raise ValueError("--linear-output and --softmax-output are mutually exclusive")
     if args.channels <= 0:
@@ -2937,6 +2999,7 @@ def main() -> None:
         target_source_mode=args.target_source_mode,
         sample_edge=sample_edge,
         input_source_mode=args.input_source_mode,
+        lr_control_mode=args.lr_control_mode,
     )
     validate_source_point_budget(source_complexity, args.max_source_pwl_points)
     validate_sample_source_budget(source_complexity, args.max_sample_sources)
@@ -2963,6 +3026,7 @@ def main() -> None:
                     lr=args.lr,
                     lr_schedule=args.lr_schedule,
                     lr_final_scale=args.lr_final_scale,
+                    lr_control_mode=args.lr_control_mode,
                     update_mode=args.update_mode,
                     phase_clock_mode=args.phase_clock_mode,
                     input_source_mode=args.input_source_mode,
@@ -3090,6 +3154,7 @@ def main() -> None:
         args.phase_clock_mode,
         args.lr_schedule,
         args.lr_final_scale,
+        args.lr_control_mode,
         args.target_source_mode,
         args.input_source_mode,
         include_y_vectors,
@@ -3537,6 +3602,7 @@ def main() -> None:
         "lr": args.lr,
         "lr_schedule": args.lr_schedule,
         "lr_final_scale": args.lr_final_scale,
+        "lr_control_mode": args.lr_control_mode,
         "linear_output": bool(args.linear_output),
         "softmax_output": bool(args.softmax_output),
         "local_activation": args.local_activation,

@@ -1080,6 +1080,49 @@ def test_phase_transient_source_complexity_counts_lr_control_waveform() -> None:
     )
 
 
+def test_phase_transient_source_complexity_can_use_analytic_lr_control() -> None:
+    x = np.zeros((2, 2), dtype=float)
+    y = np.array([0, 1])
+    phases, sample_starts, t_stop = phase_transient.make_phase_schedule(1, 2, 1.0e-9, 0.1e-9, True)
+    targets = phase_transient.target_matrix(y, 2, softmax_output=True)
+
+    complexity = phase_transient.phase_source_complexity(
+        x,
+        targets,
+        phases,
+        sample_starts,
+        t_stop,
+        0.1e-9,
+        True,
+        phase_clock_mode="analytic",
+        lr_values=np.array([0.8, 0.2]),
+        lr_control_mode="analytic",
+    )
+
+    assert complexity["control_source_count"] == 1
+    assert complexity["control_source_pwl_count"] == 0
+    assert complexity["control_source_pwl_points"] == 0
+    assert complexity["total_source_pwl_points"] == complexity["sample_source_pwl_points"]
+
+
+def test_phase_transient_analytic_lr_control_expr_is_sample_indexed() -> None:
+    phases, sample_starts, _t_stop = phase_transient.make_phase_schedule(1, 3, 1.0e-9, 0.1e-9, True)
+    expr = phase_transient.analytic_lr_control_expr(
+        0.8,
+        3,
+        "linear-decay",
+        0.25,
+        sample_starts,
+        1.0e-9,
+        0.1e-9,
+    )
+
+    assert "floor((time-" in expr
+    assert "/(2)" in expr
+    assert "{LR}" in expr
+    assert phases["acc"]
+
+
 def test_phase_transient_activation_exprs_cover_relu_families() -> None:
     assert phase_transient.local_activation_expr("x", "relu", 1.0) == "0.5*((x)+abs(x))"
     assert "0.5*(((x)-0.25)+abs((x)-0.25))" in phase_transient.local_activation_expr("x", "clipped-relu", 0.25)
@@ -3099,6 +3142,7 @@ def test_phase_transient_preflight_summary_has_no_artifact_paths() -> None:
         lr=0.8,
         lr_schedule="linear-decay",
         lr_final_scale=0.25,
+        lr_control_mode="pwl",
         update_mode="direct",
         phase_clock_mode="analytic",
         input_source_mode="pwl",

@@ -591,6 +591,8 @@ def strict_phase_promotion_command(args: argparse.Namespace, variant: dict[str, 
         variant.get("lr_schedule", "constant"),
         "--lr-final-scale",
         str(variant.get("lr_final_scale", 1.0)),
+        "--lr-control-mode",
+        getattr(args, "promotion_lr_control_mode", "pwl"),
         "--phase",
         str(getattr(args, "promotion_phase", 0.5e-9)),
         "--gap",
@@ -786,6 +788,7 @@ def strict_phase_cost_fields_for_updates(
     lr_final_scale = float(variant.get("lr_final_scale", 1.0))
     if lr_schedule != "constant":
         lr_values = lr_schedule_values(float(variant["lr"]), updates, lr_schedule, lr_final_scale)
+    lr_control_mode = getattr(args, "promotion_lr_control_mode", "pwl")
     source_complexity = phase_source_complexity(
         x_train[:updates],
         target_matrix(y_train[:updates], 10, bool(args.softmax_output)),
@@ -800,6 +803,7 @@ def strict_phase_cost_fields_for_updates(
         target_source_mode=getattr(args, "promotion_target_source_mode", "label"),
         sample_edge=sample_edge,
         input_source_mode=input_source_mode,
+        lr_control_mode=lr_control_mode,
     )
     estimated_points = estimate_transient_points(t_stop, transient_step)
     max_transient_points = int(getattr(args, "promotion_max_transient_points", 0))
@@ -855,6 +859,7 @@ def strict_phase_cost_fields_for_updates(
         f"{prefix}_updates": updates,
         f"{prefix}_phase_clock_mode": phase_clock_mode,
         f"{prefix}_input_source_mode": input_source_mode,
+        f"{prefix}_lr_control_mode": lr_control_mode,
         f"{prefix}_input_quantization_levels": int(getattr(args, "input_quantization_levels", 0)),
         f"{prefix}_sample_edge_s": edge if sample_edge is None else sample_edge,
         f"{prefix}_hidden_preactivation_mode": hidden_preactivation_mode,
@@ -1079,6 +1084,15 @@ def main() -> None:
         help=(
             "Sample/label/LR-control PWL transition edge for generated strict promotion commands and "
             "cost projections. The default uses the phase-clock edge for robust finite sample transitions."
+        ),
+    )
+    ap.add_argument(
+        "--promotion-lr-control-mode",
+        choices=["pwl", "analytic"],
+        default="pwl",
+        help=(
+            "For non-constant strict-promotion LR schedules, use either an explicit LR PWL source or "
+            "an analytic in-deck LR control expression."
         ),
     )
     ap.add_argument("--promotion-settle-ratio", type=float, default=20.0)

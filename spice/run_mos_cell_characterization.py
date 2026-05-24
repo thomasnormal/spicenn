@@ -243,62 +243,57 @@ def characterize_writer() -> Path:
     deck = f"""
 * Four-quadrant writer coincidence sanity check
 {COMMON_MODELS}
-.param WWRITE=2u CWRITE=100p
-VPACC pacc 0 PULSE(0 1.8 0.5u 20n 20n 3.0u 6.0u)
+.param WWRITE=4u CWRITE=100p
+VDD vdd 0 1.8
+VPACC_N paccn 0 PULSE(1.8 0 0.5u 20n 20n 3.0u 6.0u)
+VHI hi 0 1.8
+VLO lo 0 0
 
-* Same-sign copy: x+ and dh+ discharge W+.
-VXP_S xp_s 0 1.8
-VXM_S xm_s 0 0.0
-VDHP_S dhp_s 0 1.8
-VDHM_S dhm_s 0 0.0
-CWP_S wp_s 0 {{CWRITE}} IC=1.8
-CWM_S wm_s 0 {{CWRITE}} IC=1.8
-MSSP1 wp_s pacc n1s 0 NMOS L={{LCH}} W={{WWRITE}}
-MSSP2 n1s xp_s n2s 0 NMOS L={{LCH}} W={{WWRITE}}
-MSSP3 n2s dhp_s 0 0 NMOS L={{LCH}} W={{WWRITE}}
-MSSM1 wm_s pacc n3s 0 NMOS L={{LCH}} W={{WWRITE}}
-MSSM2 n3s xp_s n4s 0 NMOS L={{LCH}} W={{WWRITE}}
-MSSM3 n4s dhm_s 0 0 NMOS L={{LCH}} W={{WWRITE}}
+* Same-sign copy: active-low pacc/x+/dh+ gates charge W+.
+CWP_S wp_s 0 {{CWRITE}} IC=0.2
+CWM_S wm_s 0 {{CWRITE}} IC=0.2
+MSSP1 vdd paccn n1s vdd PMOS L={{LCH}} W={{WWRITE}}
+MSSP2 n1s lo n2s vdd PMOS L={{LCH}} W={{WWRITE}}
+MSSP3 n2s lo wp_s vdd PMOS L={{LCH}} W={{WWRITE}}
+MSSM1 vdd paccn n3s vdd PMOS L={{LCH}} W={{WWRITE}}
+MSSM2 n3s lo n4s vdd PMOS L={{LCH}} W={{WWRITE}}
+MSSM3 n4s hi wm_s vdd PMOS L={{LCH}} W={{WWRITE}}
 
-* Opposite-sign copy: x+ and dh- discharge W-.
-VXP_O xp_o 0 1.8
-VXM_O xm_o 0 0.0
-VDHP_O dhp_o 0 0.0
-VDHM_O dhm_o 0 1.8
-CWP_O wp_o 0 {{CWRITE}} IC=1.8
-CWM_O wm_o 0 {{CWRITE}} IC=1.8
-MOSP1 wp_o pacc n1o 0 NMOS L={{LCH}} W={{WWRITE}}
-MOSP2 n1o xp_o n2o 0 NMOS L={{LCH}} W={{WWRITE}}
-MOSP3 n2o dhp_o 0 0 NMOS L={{LCH}} W={{WWRITE}}
-MOSM1 wm_o pacc n3o 0 NMOS L={{LCH}} W={{WWRITE}}
-MOSM2 n3o xp_o n4o 0 NMOS L={{LCH}} W={{WWRITE}}
-MOSM3 n4o dhm_o 0 0 NMOS L={{LCH}} W={{WWRITE}}
+* Opposite-sign copy: active-low pacc/x+/dh- gates charge W-.
+CWP_O wp_o 0 {{CWRITE}} IC=0.2
+CWM_O wm_o 0 {{CWRITE}} IC=0.2
+MOSP1 vdd paccn n1o vdd PMOS L={{LCH}} W={{WWRITE}}
+MOSP2 n1o lo n2o vdd PMOS L={{LCH}} W={{WWRITE}}
+MOSP3 n2o hi wp_o vdd PMOS L={{LCH}} W={{WWRITE}}
+MOSM1 vdd paccn n3o vdd PMOS L={{LCH}} W={{WWRITE}}
+MOSM2 n3o lo n4o vdd PMOS L={{LCH}} W={{WWRITE}}
+MOSM3 n4o lo wm_o vdd PMOS L={{LCH}} W={{WWRITE}}
 
 .control
 set noaskquit
 tran 10n 4u uic
-wrdata mos_writer.dat v(wp_s) v(wm_s) v(wp_o) v(wm_o) v(pacc)
+wrdata mos_writer.dat v(wp_s) v(wm_s) v(wp_o) v(wm_o) v(paccn)
 quit
 .endc
 .end
 """
     data = run_ngspice(deck, "mos_writer")
     t, cols = load_wrdata(data, 5)
-    require(cols[0][-1] < 0.2 and cols[1][-1] > 1.7, "same-sign writer should select only W+")
-    require(cols[3][-1] < 0.2 and cols[2][-1] > 1.7, "opposite-sign writer should select only W-")
+    require(cols[0][-1] > 1.6 and cols[1][-1] < 0.25, "same-sign writer should charge only W+")
+    require(cols[3][-1] > 1.6 and cols[2][-1] < 0.25, "opposite-sign writer should charge only W-")
     fig, axes = plt.subplots(2, 1, figsize=(7.2, 5.2), sharex=True)
     axes[0].plot(1e6 * t, cols[0], label="$W^+$, same sign")
     axes[0].plot(1e6 * t, cols[1], label="$W^-$, same sign")
     axes[0].set_ylabel("cap voltage (V)")
-    axes[0].set_title("Same-sign coincidence selects W+ branch")
+    axes[0].set_title("Same-sign coincidence charges W+ branch")
     axes[0].grid(True, alpha=0.25)
     axes[0].legend()
     axes[1].plot(1e6 * t, cols[2], label="$W^+$, opposite sign")
     axes[1].plot(1e6 * t, cols[3], label="$W^-$, opposite sign")
-    axes[1].plot(1e6 * t, cols[4], color="0.5", alpha=0.45, label="$pacc$")
+    axes[1].plot(1e6 * t, cols[4], color="0.5", alpha=0.45, label="$\\overline{pacc}$")
     axes[1].set_xlabel("time (us)")
     axes[1].set_ylabel("cap voltage (V)")
-    axes[1].set_title("Opposite-sign coincidence selects W- branch")
+    axes[1].set_title("Opposite-sign coincidence charges W- branch")
     axes[1].grid(True, alpha=0.25)
     axes[1].legend()
     fig.tight_layout()

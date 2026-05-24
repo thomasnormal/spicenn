@@ -471,55 +471,51 @@ direction.
     ]
     \node[font=\bfseries\Large] at (4.8,3.7) {D. four-quadrant MOS writer};
     \draw[semithick] (0.4,3.05) -- (9.2,3.05) node[lab,right] {$V_{\mathrm{write}}$};
-    \moscap{2.1}{2.25}{$C_{W^+}$}{wwp}
-    \moscap{7.0}{2.25}{$C_{W^-}$}{wwm}
-    \draw[semithick] (2.1,3.05) -- (2.1,2.25);
-    \draw[semithick] (7.0,3.05) -- (7.0,2.25);
+    \moscap{2.1}{-1.95}{$C_{W^+}$}{wwp}
+    \moscap{7.0}{-1.95}{$C_{W^-}$}{wwm}
 
-    \drawnmos{0.9}{1.1}{}{$pacc$}{wpaccA}
-    \drawnmos{0.9}{0.1}{}{$x^+$}{wxA}
-    \drawnmos{0.9}{-0.9}{}{$\delta h^+$}{wdhA}
-    \draw[semithick] (wwp) |- (0.9,1.75) -- (wpaccAD);
-    \draw[semithick] (wpaccAS) -- (wxAD);
-    \draw[semithick] (wxAS) -- (wdhAD);
-    \draw[semithick] (wdhAS) -- (0.9,-1.65);
-    \mosgnd{0.9}{-1.65}
+    \drawpmos{0.9}{2.25}{}{$\overline{pacc}$}{wpaccA}
+    \drawpmos{0.9}{1.25}{}{$\overline{x^+}$}{wxA}
+    \drawpmos{0.9}{0.25}{}{$\overline{\delta h^+}$}{wdhA}
+    \draw[semithick] (0.9,3.05) -- (wpaccAS);
+    \draw[semithick] (wpaccAD) -- (wxAS);
+    \draw[semithick] (wxAD) -- (wdhAS);
+    \draw[semithick] (wdhAD) |- (wwp);
 
-    \drawnmos{2.9}{1.1}{}{$pacc$}{wpaccB}
-    \drawnmos{2.9}{0.1}{}{$x^-$}{wxB}
-    \drawnmos{2.9}{-0.9}{}{$\delta h^-$}{wdhB}
-    \draw[semithick] (wwp) |- (2.9,1.75) -- (wpaccBD);
-    \draw[semithick] (wpaccBS) -- (wxBD);
-    \draw[semithick] (wxBS) -- (wdhBD);
-    \draw[semithick] (wdhBS) -- (2.9,-1.65);
-    \mosgnd{2.9}{-1.65}
+    \drawpmos{2.9}{2.25}{}{$\overline{pacc}$}{wpaccB}
+    \drawpmos{2.9}{1.25}{}{$\overline{x^-}$}{wxB}
+    \drawpmos{2.9}{0.25}{}{$\overline{\delta h^-}$}{wdhB}
+    \draw[semithick] (2.9,3.05) -- (wpaccBS);
+    \draw[semithick] (wpaccBD) -- (wxBS);
+    \draw[semithick] (wxBD) -- (wdhBS);
+    \draw[semithick] (wdhBD) |- (wwp);
 
-    \drawnmos{6.0}{1.1}{}{$pacc$}{wpaccC}
-    \drawnmos{6.0}{0.1}{}{$x^+$}{wxC}
-    \drawnmos{6.0}{-0.9}{}{$\delta h^-$}{wdhC}
-    \draw[semithick] (wwm) |- (6.0,1.75) -- (wpaccCD);
-    \draw[semithick] (wpaccCS) -- (wxCD);
-    \draw[semithick] (wxCS) -- (wdhCD);
-    \draw[semithick] (wdhCS) -- (6.0,-1.65);
-    \mosgnd{6.0}{-1.65}
+    \drawpmos{6.0}{2.25}{}{$\overline{pacc}$}{wpaccC}
+    \drawpmos{6.0}{1.25}{}{$\overline{x^+}$}{wxC}
+    \drawpmos{6.0}{0.25}{}{$\overline{\delta h^-}$}{wdhC}
+    \draw[semithick] (6.0,3.05) -- (wpaccCS);
+    \draw[semithick] (wpaccCD) -- (wxCS);
+    \draw[semithick] (wxCD) -- (wdhCS);
+    \draw[semithick] (wdhCD) |- (wwm);
 
-    \drawnmos{8.0}{1.1}{}{$pacc$}{wpaccD}
-    \drawnmos{8.0}{0.1}{}{$x^-$}{wxD}
-    \drawnmos{8.0}{-0.9}{}{$\delta h^+$}{wdhD}
-    \draw[semithick] (wwm) |- (8.0,1.75) -- (wpaccDD);
-    \draw[semithick] (wpaccDS) -- (wxDD);
-    \draw[semithick] (wxDS) -- (wdhDD);
-    \draw[semithick] (wdhDS) -- (8.0,-1.65);
-    \mosgnd{8.0}{-1.65}
-    \node[lab, align=center] at (1.9,-2.25)
-      {\(W^+\) branches\\\(x^+\delta h^+\), \(x^-\delta h^-\)};
-    \node[lab, align=center] at (7.0,-2.25)
-      {\(W^-\) branches\\\(x^+\delta h^-\), \(x^-\delta h^+\)};
-    \node[group, fit=(wwp) (wwm) (wpaccAD) (wdhDS)] {};
+    \drawpmos{8.0}{2.25}{}{$\overline{pacc}$}{wpaccD}
+    \drawpmos{8.0}{1.25}{}{$\overline{x^-}$}{wxD}
+    \drawpmos{8.0}{0.25}{}{$\overline{\delta h^+}$}{wdhD}
+    \draw[semithick] (8.0,3.05) -- (wpaccDS);
+    \draw[semithick] (wpaccDD) -- (wxDS);
+    \draw[semithick] (wxDD) -- (wdhDS);
+    \draw[semithick] (wdhDD) |- (wwm);
+
+    \node[lab, align=center] at (1.9,-3.2)
+      {\(W^+\) charge branches\\\(x^+\delta h^+\), \(x^-\delta h^-\)};
+    \node[lab, align=center] at (7.0,-3.2)
+      {\(W^-\) charge branches\\\(x^+\delta h^-\), \(x^-\delta h^+\)};
+    \node[group, fit=(wwp) (wwm) (wpaccAS) (wdhDD)] {};
   \end{tikzpicture}}
   \caption{Zoomed MOS four-quadrant writer.  Each update path is a stack of
-  phase, input, and hidden-error MOS devices.  Same-sign coincidences update
-  \(C_{W^+}\); opposite-sign coincidences update \(C_{W^-}\).}
+  active-low phase, input, and hidden-error PMOS devices from \(V_{\mathrm{write}}\)
+  to a weight storage capacitor.  Same-sign coincidences charge \(C_{W^+}\);
+  opposite-sign coincidences charge \(C_{W^-}\).}
   \label{fig:mos-writer-cell}
 \end{figure}
 
@@ -536,8 +532,10 @@ subthreshold tanh, but the required signs are the same:
     \frac{\partial (V_{h^-}-V_{h^+})}{\partial V_{z^+}},
 \]
 \[
-  I_{W^+}\propto pacc\,(x^+dh^+ + x^-dh^-),\qquad
-  I_{W^-}\propto pacc\,(x^+dh^- + x^-dh^+).
+  I_{W^+}\propto \overline{pacc}\,(\overline{x^+}\,\overline{dh^+}
+    + \overline{x^-}\,\overline{dh^-}),\qquad
+  I_{W^-}\propto \overline{pacc}\,(\overline{x^+}\,\overline{dh^-}
+    + \overline{x^-}\,\overline{dh^+}).
 \]
 This is the circuit family that should replace the non-device prototype before
 any future headline MNIST claim.
@@ -595,10 +593,9 @@ must satisfy before it can replace the current behavioral prototype.
   \centering
   \includegraphics[width=0.88\linewidth]{figures/mos_writer_ngspice.png}
   \caption{Ngspice transient characterization of the four-quadrant MOS writer.
-  Same-sign input/error coincidence discharges only the \(W^+\) storage
-  capacitor in this polarity convention; opposite-sign coincidence discharges
-  only \(W^-\).  This validates update-branch selectivity, not yet calibrated
-  analog write linearity.}
+  Same-sign input/error coincidence charges only the \(W^+\) storage capacitor;
+  opposite-sign coincidence charges only \(W^-\).  This validates update-branch
+  selectivity and write polarity, not yet calibrated analog write linearity.}
   \label{fig:mos-writer-ngspice}
 \end{figure}
 

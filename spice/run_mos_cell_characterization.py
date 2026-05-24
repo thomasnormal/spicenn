@@ -5462,6 +5462,155 @@ quit
     hyq_fig.tight_layout()
     save_plot(hyq_fig, "mos_hidden_writer_restored_gate_hybrid_product_ngspice")
 
+    hybrid_bias_deck = f"""
+* Hybrid restored writer local-bias update characterization.
+* The local-feature cell also needs db <- e, without an activation operand.
+* This deck stores matched e+ and e- hidden-error rails, restores the selected
+* branch gates, and writes persistent B+/B- bias capacitors through MOS-only
+* phase/restored-select/analog-error stacks.
+{COMMON_MODELS}
+.param CERR=10p CBIAS=500p WSW=24u WWRITE=24u WRESTN=18u WRESTP=300u
+VDD vdd 0 1.8
+VTAIL vbias 0 0.95
+VPBWD pbwd 0 PULSE(0 1.8 0.45u 20n 20n 0.80u 5.0u)
+VRP rp 0 PULSE(0 1.8 0.45u 20n 20n 0.80u 5.0u)
+VRM rm 0 PULSE(0 1.8 0.45u 20n 20n 0.80u 5.0u)
+VPACC_HYB paccn_hyb 0 PULSE(1.8 0 1.70u 20n 20n 0.32u 5.0u)
+
+VZPP_HYB zpp_hyb 0 {0.9 + hybrid_mismatch_eps / 2.0:.5f}
+VZMM_HYB zmm_hyb 0 {0.9 - hybrid_mismatch_eps / 2.0:.5f}
+VZPM_HYB zpm_hyb 0 {0.9 - hybrid_mismatch_eps / 2.0:.5f}
+VZMP_HYB zmp_hyb 0 {0.9 + hybrid_mismatch_eps / 2.0:.5f}
+
+MPPP_HYB hpp_hyb hpp_hyb vdd vdd PMOS L={{LCH}} W={{WP}}
+MPPM_HYB hpm_hyb hpm_hyb vdd vdd PMOS L={{LCH}} W={{WP}}
+MNPP_HYB hpp_hyb zpp_hyb tailp_hyb 0 NMOS L={{LCH}} W={{WN}}
+MNPM_HYB hpm_hyb zmm_hyb tailp_hyb 0 NMOS L={{LCH}} W={{WN}}
+MNTP_HYB tailp_hyb vbias 0 0 NMOS L={{LCH}} W={{WN}}
+
+MPMP_HYB hmp_hyb hmp_hyb vdd vdd PMOS L={{LCH}} W={{WP}}
+MPMM_HYB hmm_hyb hmm_hyb vdd vdd PMOS L={{LCH}} W={{WP}}
+MNMP_HYB hmp_hyb zpm_hyb tailm_hyb 0 NMOS L={{LCH}} W={{WN}}
+MNMM_HYB hmm_hyb zmp_hyb tailm_hyb 0 NMOS L={{LCH}} W={{WN}}
+MNTM_HYB tailm_hyb vbias 0 0 NMOS L={{LCH}} W={{WN}}
+
+CDP_RP_HYB cdp_rp_hyb 0 {{CERR}} IC=1.04
+CDM_RP_HYB cdm_rp_hyb 0 {{CERR}} IC=1.04
+CDP_RM_HYB cdp_rm_hyb 0 {{CERR}} IC=1.04
+CDM_RM_HYB cdm_rm_hyb 0 {{CERR}} IC=1.04
+RDP_RP_HYB cdp_rp_hyb 0 50G
+RDM_RP_HYB cdm_rp_hyb 0 50G
+RDP_RM_HYB cdp_rm_hyb 0 50G
+RDM_RM_HYB cdm_rm_hyb 0 50G
+{sign_store_path("hpm_hyb", "rp", "cdp_rp_hyb", "hybrp1")}
+{sign_store_path("hmp_hyb", "rp", "cdp_rp_hyb", "hybrp2")}
+{sign_store_path("hpp_hyb", "rp", "cdm_rp_hyb", "hybrp3")}
+{sign_store_path("hmm_hyb", "rp", "cdm_rp_hyb", "hybrp4")}
+{sign_store_path("hpp_hyb", "rm", "cdp_rm_hyb", "hybrm1")}
+{sign_store_path("hmm_hyb", "rm", "cdp_rm_hyb", "hybrm2")}
+{sign_store_path("hpm_hyb", "rm", "cdm_rm_hyb", "hybrm3")}
+{sign_store_path("hmp_hyb", "rm", "cdm_rm_hyb", "hybrm4")}
+
+MPRP_CDP_HYB rgp_rp_hyb cdp_rp_hyb vdd vdd PMOS L={{LCH}} W={{WRESTP}}
+MNRP_CDP_HYB rgp_rp_hyb cdp_rp_hyb 0 0 NMOS L={{LCH}} W={{WRESTN}}
+MPRP_CDM_HYB rgm_rp_hyb cdm_rp_hyb vdd vdd PMOS L={{LCH}} W={{WRESTP}}
+MNRP_CDM_HYB rgm_rp_hyb cdm_rp_hyb 0 0 NMOS L={{LCH}} W={{WRESTN}}
+MPRM_CDP_HYB rgp_rm_hyb cdp_rm_hyb vdd vdd PMOS L={{LCH}} W={{WRESTP}}
+MNRM_CDP_HYB rgp_rm_hyb cdp_rm_hyb 0 0 NMOS L={{LCH}} W={{WRESTN}}
+MPRM_CDM_HYB rgm_rm_hyb cdm_rm_hyb vdd vdd PMOS L={{LCH}} W={{WRESTP}}
+MNRM_CDM_HYB rgm_rm_hyb cdm_rm_hyb 0 0 NMOS L={{LCH}} W={{WRESTN}}
+
+CBP_RP_HYB bp_rp_hyb 0 {{CBIAS}} IC=0.85
+CBM_RP_HYB bm_rp_hyb 0 {{CBIAS}} IC=0.85
+MBP_RP_HYBA vdd paccn_hyb n_bp_rp_hyb_a vdd PMOS L={{LCH}} W={{WWRITE}}
+MBP_RP_HYBB n_bp_rp_hyb_a rgp_rp_hyb n_bp_rp_hyb_b vdd PMOS L={{LCH}} W={{WWRITE}}
+MBP_RP_HYBC n_bp_rp_hyb_b cdm_rp_hyb bp_rp_hyb vdd PMOS L={{LCH}} W={{WWRITE}}
+MBM_RP_HYBA vdd paccn_hyb n_bm_rp_hyb_a vdd PMOS L={{LCH}} W={{WWRITE}}
+MBM_RP_HYBB n_bm_rp_hyb_a rgm_rp_hyb n_bm_rp_hyb_b vdd PMOS L={{LCH}} W={{WWRITE}}
+MBM_RP_HYBC n_bm_rp_hyb_b cdp_rp_hyb bm_rp_hyb vdd PMOS L={{LCH}} W={{WWRITE}}
+
+CBP_RM_HYB bp_rm_hyb 0 {{CBIAS}} IC=0.85
+CBM_RM_HYB bm_rm_hyb 0 {{CBIAS}} IC=0.85
+MBP_RM_HYBA vdd paccn_hyb n_bp_rm_hyb_a vdd PMOS L={{LCH}} W={{WWRITE}}
+MBP_RM_HYBB n_bp_rm_hyb_a rgp_rm_hyb n_bp_rm_hyb_b vdd PMOS L={{LCH}} W={{WWRITE}}
+MBP_RM_HYBC n_bp_rm_hyb_b cdm_rm_hyb bp_rm_hyb vdd PMOS L={{LCH}} W={{WWRITE}}
+MBM_RM_HYBA vdd paccn_hyb n_bm_rm_hyb_a vdd PMOS L={{LCH}} W={{WWRITE}}
+MBM_RM_HYBB n_bm_rm_hyb_a rgm_rm_hyb n_bm_rm_hyb_b vdd PMOS L={{LCH}} W={{WWRITE}}
+MBM_RM_HYBC n_bm_rm_hyb_b cdp_rm_hyb bm_rm_hyb vdd PMOS L={{LCH}} W={{WWRITE}}
+
+.control
+set noaskquit
+tran 5n 3.0u uic
+wrdata mos_hidden_writer_restored_gate_hybrid_bias.dat v(cdp_rp_hyb) v(cdm_rp_hyb) v(cdp_rm_hyb) v(cdm_rm_hyb) v(rgp_rp_hyb) v(rgm_rp_hyb) v(rgp_rm_hyb) v(rgm_rm_hyb) v(bp_rp_hyb) v(bm_rp_hyb) v(bp_rm_hyb) v(bm_rm_hyb) v(paccn_hyb)
+quit
+.endc
+.end
+"""
+    hybrid_bias_data = run_ngspice(
+        hybrid_bias_deck,
+        "mos_hidden_writer_restored_gate_hybrid_bias",
+    )
+    hybt, hyb_cols = load_wrdata(hybrid_bias_data, 13)
+
+    def hybat(time_s: float, values: np.ndarray) -> float:
+        return float(values[np.argmin(np.abs(hybt - time_s))])
+
+    hyb_hidden_pos = hyb_cols[0] - hyb_cols[1]
+    hyb_hidden_neg = hyb_cols[2] - hyb_cols[3]
+    hyb_rp_selected_gate = hyb_cols[4]
+    hyb_rp_complement_gate = hyb_cols[5]
+    hyb_rm_complement_gate = hyb_cols[6]
+    hyb_rm_selected_gate = hyb_cols[7]
+    hyb_bp_rp = hyb_cols[8]
+    hyb_bm_rp = hyb_cols[9]
+    hyb_bp_rm = hyb_cols[10]
+    hyb_bm_rm = hyb_cols[11]
+    hyb_pos_signed = hyb_bp_rp - hyb_bm_rp
+    hyb_neg_signed = hyb_bp_rm - hyb_bm_rm
+    hyb_pos_bp_step = hybat(2.55e-6, hyb_bp_rp) - hybat(1.60e-6, hyb_bp_rp)
+    hyb_pos_bm_step = hybat(2.55e-6, hyb_bm_rp) - hybat(1.60e-6, hyb_bm_rp)
+    hyb_neg_bp_step = hybat(2.55e-6, hyb_bp_rm) - hybat(1.60e-6, hyb_bp_rm)
+    hyb_neg_bm_step = hybat(2.55e-6, hyb_bm_rm) - hybat(1.60e-6, hyb_bm_rm)
+    hyb_pos_final = hybat(2.55e-6, hyb_pos_signed)
+    hyb_neg_final = hybat(2.55e-6, hyb_neg_signed)
+    require(hybat(1.35e-6, hyb_hidden_pos) > 0.07, "hybrid bias e+ store should be positive")
+    require(hybat(1.35e-6, hyb_hidden_neg) < -0.07, "hybrid bias e- store should be negative")
+    require(abs(hybat(1.35e-6, hyb_hidden_pos + hyb_hidden_neg)) < 0.003, "hybrid bias hidden stores should be symmetric")
+    require(hybat(1.45e-6, hyb_rp_selected_gate) < 0.30, "hybrid bias e+ selected gate should be low")
+    require(hybat(1.45e-6, hyb_rp_complement_gate) > 1.60, "hybrid bias e+ complement gate should be high")
+    require(hybat(1.45e-6, hyb_rm_selected_gate) < 0.30, "hybrid bias e- selected gate should be low")
+    require(hybat(1.45e-6, hyb_rm_complement_gate) > 1.60, "hybrid bias e- complement gate should be high")
+    require(hyb_pos_final > 0.020, "hybrid bias e+ should write positive bias differential")
+    require(hyb_neg_final < -0.020, "hybrid bias e- should write negative bias differential")
+    require(abs(hyb_pos_final + hyb_neg_final) < 0.003, "hybrid bias signs should write symmetric magnitudes")
+    require(hyb_pos_bp_step > 0.020 and hyb_neg_bm_step > 0.020, "hybrid bias selected rails should move")
+    require(max(hyb_pos_bm_step, hyb_neg_bp_step) < 5e-4, "hybrid bias inactive rails should stay suppressed")
+    require(abs(hybat(2.90e-6, hyb_pos_signed) - hyb_pos_final) < 5e-4, "hybrid bias positive write should hold")
+    require(abs(hybat(2.90e-6, hyb_neg_signed) - hyb_neg_final) < 5e-4, "hybrid bias negative write should hold")
+
+    hyb_fig, hyb_axes = plt.subplots(2, 1, figsize=(7.2, 5.8))
+    hyb_axes[0].plot(1e6 * hybt, hyb_hidden_pos, label="stored $e^+$")
+    hyb_axes[0].plot(1e6 * hybt, hyb_hidden_neg, label="stored $e^-$")
+    hyb_axes[0].plot(1e6 * hybt, hyb_rp_selected_gate, label="$e^+$ selected gate")
+    hyb_axes[0].plot(1e6 * hybt, hyb_rm_selected_gate, label="$e^-$ selected gate")
+    hyb_axes[0].plot(1e6 * hybt, hyb_cols[12] / 20.0, color="0.4", alpha=0.35, label="$pacc_n/20$")
+    hyb_axes[0].set_ylabel("voltage (V)")
+    hyb_axes[0].set_title("Hybrid bias writer stores both error signs")
+    hyb_axes[0].grid(True, alpha=0.25)
+    hyb_axes[0].legend(loc="center right", ncol=2, fontsize="small")
+    hyb_axes[1].plot(1e6 * hybt, 1e3 * hyb_pos_signed, label="$B^+ - B^-$ from $e^+$")
+    hyb_axes[1].plot(1e6 * hybt, 1e3 * hyb_neg_signed, label="$B^+ - B^-$ from $e^-$")
+    hyb_axes[1].plot(1e6 * hybt, 1e3 * (hyb_bm_rp - hybat(1.60e-6, hyb_bm_rp)), "--", label="inactive $B^-$ during $e^+$")
+    hyb_axes[1].plot(1e6 * hybt, 1e3 * (hyb_bp_rm - hybat(1.60e-6, hyb_bp_rm)), "--", label="inactive $B^+$ during $e^-$")
+    hyb_axes[1].axhline(0, color="0.4", linewidth=0.8)
+    hyb_axes[1].set_xlabel("time (us)")
+    hyb_axes[1].set_ylabel("bias step (mV)")
+    hyb_axes[1].set_title("local bias update follows $\\Delta b \\propto e$")
+    hyb_axes[1].grid(True, alpha=0.25)
+    hyb_axes[1].legend(loc="upper left", ncol=2, fontsize="small")
+    hyb_fig.tight_layout()
+    save_plot(hyb_fig, "mos_hidden_writer_restored_gate_hybrid_bias_ngspice")
+
     hybrid_repeated_deck = f"""
 * Hybrid restored-enable/analog-error writer repeated-pulse accumulation check.
 * One stored r+ hidden-error rail and one activation gate drive the same

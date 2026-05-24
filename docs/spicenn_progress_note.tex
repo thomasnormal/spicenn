@@ -1206,6 +1206,25 @@ must satisfy before it can replace the current behavioral prototype.
 
 \begin{figure}[H]
   \centering
+  \includegraphics[width=0.88\linewidth]{figures/mos_hidden_writer_restored_gate_hybrid_bias_ngspice.png}
+  \caption{Ngspice local-bias update characterization for the hybrid restored
+  writer.  The local-feature cell needs a bias update
+  \(\Delta b\propto e\) in addition to the activation-gated weight update.
+  This deck stores matched \(e^+\) and \(e^-\) hidden-error rails of
+  \(\pm98.5\) mV, restores each selected sign to the same active-low writer
+  gate near \(0.196\) V, and writes persistent \(B^+/B^-\) capacitors through
+  phase/restored-select/analog-error PMOS stacks without an activation operand.
+  The \(e^+\) branch moves \(B^+\) by \(34.54\) mV while \(B^-\) moves only
+  about \(3\) nV; the \(e^-\) branch symmetrically moves \(B^-\) by
+  \(34.54\) mV while \(B^+\) stays quiet.  Both signed bias states hold after
+  \(pacc\) closes.  This closes the local-bias gap in the device ladder: the
+  same stored/restored error rail family can update weights using
+  activation-error products and update biases using the error rail alone.}
+  \label{fig:mos-hidden-writer-restored-gate-hybrid-bias-ngspice}
+\end{figure}
+
+\begin{figure}[H]
+  \centering
   \includegraphics[width=0.88\linewidth]{figures/mos_hidden_writer_restored_gate_hybrid_repeated_ngspice.png}
   \caption{Ngspice repeated-pulse accumulation characterization of the hybrid
   restored writer.  One stored \(r^+\) hidden-error rail drives one persistent

@@ -1035,6 +1035,60 @@ quit
 .endc
 .end
 """
+    alternating_deck = f"""
+* Alternating same-weight writer/readback sanity check.
+{COMMON_MODELS}
+.param WWRITE=2u CWRITE=500p
+VDD vdd 0 1.8
+VCM cm 0 0.9
+VDIFF xp xm 0.5
+RXP xp cm 1G
+RXM xm cm 1G
+VHI hi 0 1.8
+VLO lo 0 0
+VPWP_N pwpn 0 PWL(0 1.8 0.50u 1.8 0.51u 0 0.61u 0 0.62u 1.8 0.90u 1.8 0.91u 0 1.01u 0 1.02u 1.8 1.30u 1.8 1.31u 0 1.41u 0 1.42u 1.8 4.0u 1.8)
+VPWM_N pwmn 0 PWL(0 1.8 1.90u 1.8 1.91u 0 2.01u 0 2.02u 1.8 2.30u 1.8 2.31u 0 2.41u 0 2.42u 1.8 2.70u 1.8 2.71u 0 2.81u 0 2.82u 1.8 3.10u 1.8 3.11u 0 3.21u 0 3.22u 1.8 4.0u 1.8)
+
+CWP_ALT wp 0 {{CWRITE}} IC=0.85
+CWM_ALT wm 0 {{CWRITE}} IC=0.85
+
+* Same-sign pulses charge W+ on this weight pair.
+MWPPA vdd pwpn n1p vdd PMOS L={{LCH}} W={{WWRITE}}
+MWPPB n1p lo n2p vdd PMOS L={{LCH}} W={{WWRITE}}
+MWPPC n2p lo wp vdd PMOS L={{LCH}} W={{WWRITE}}
+MWPMIA vdd pwpn n3p vdd PMOS L={{LCH}} W={{WWRITE}}
+MWPMIB n3p lo n4p vdd PMOS L={{LCH}} W={{WWRITE}}
+MWPMIC n4p hi wm vdd PMOS L={{LCH}} W={{WWRITE}}
+
+* Opposite-sign pulses later charge W- on the same weight pair.
+MWNPIA vdd pwmn n1n vdd PMOS L={{LCH}} W={{WWRITE}}
+MWNPIB n1n lo n2n vdd PMOS L={{LCH}} W={{WWRITE}}
+MWNPIC n2n hi wp vdd PMOS L={{LCH}} W={{WWRITE}}
+MWNMA vdd pwmn n3n vdd PMOS L={{LCH}} W={{WWRITE}}
+MWNMB n3n lo n4n vdd PMOS L={{LCH}} W={{WWRITE}}
+MWNMC n4n lo wm vdd PMOS L={{LCH}} W={{WWRITE}}
+
+* Continuous read copies use the same stored W+ and W- rails.
+VZPP zpp 0 1.8
+VZMP zmp 0 1.8
+MPP zpp xp tailp 0 NMOS L={{LCH}} W={{WN}}
+MPM zmp xm tailp 0 NMOS L={{LCH}} W={{WN}}
+MTP tailp wp 0 0 NMOS L={{LCH}} W=12u
+
+VZPN zpn 0 1.8
+VZMN zmn 0 1.8
+MNP zpn xm tailn 0 NMOS L={{LCH}} W={{WN}}
+MNM zmn xp tailn 0 NMOS L={{LCH}} W={{WN}}
+MTN tailn wm 0 0 NMOS L={{LCH}} W=12u
+
+.control
+set noaskquit
+tran 5n 3.8u uic
+wrdata mos_writer_alternating.dat v(wp) v(wm) i(VZPP) i(VZMP) i(VZPN) i(VZMN) v(pwpn) v(pwmn)
+quit
+.endc
+.end
+"""
     data = run_ngspice(deck, "mos_writer")
     t, cols = load_wrdata(data, 9)
     wp_pp_delta = cols[0][-1] - cols[0][0]
@@ -1124,6 +1178,27 @@ quit
     require(wp_p_samples[-1] < 1.05, "repeated W+ pulses should remain in the incremental write range")
     require(wm_n_samples[-1] < 1.05, "repeated W- pulses should remain in the incremental write range")
 
+    alternating_data = run_ngspice(alternating_deck, "mos_writer_alternating")
+    atime, alternating_cols = load_wrdata(alternating_data, 8)
+    alt_pos_contrib = alternating_cols[3] - alternating_cols[2]
+    alt_neg_contrib = alternating_cols[5] - alternating_cols[4]
+    alt_net_contrib = alt_pos_contrib + alt_neg_contrib
+
+    def alt_at(time_s: float, values: np.ndarray) -> float:
+        return float(values[np.argmin(np.abs(atime - time_s))])
+
+    baseline_net = alt_at(0.40e-6, alt_net_contrib)
+    positive_net = alt_at(1.65e-6, alt_net_contrib)
+    partial_net = alt_at(2.55e-6, alt_net_contrib)
+    negative_net = alt_at(3.55e-6, alt_net_contrib)
+    require(abs(baseline_net) < 1e-6, "equal initial W+ and W- rails should read near zero net contribution")
+    require(positive_net > baseline_net + 15e-6, "W+ pulses should move same-weight readback positive")
+    require(partial_net < positive_net - 8e-6, "later W- pulses should reduce the positive readback")
+    require(partial_net > 0.0, "partial W- compensation should not overcorrect too early")
+    require(negative_net < -5e-6, "enough W- pulses should push same-weight readback negative")
+    require(alt_at(3.55e-6, alternating_cols[0]) > alt_at(0.40e-6, alternating_cols[0]) + 0.02, "alternating deck should have written W+")
+    require(alt_at(3.55e-6, alternating_cols[1]) > alt_at(0.40e-6, alternating_cols[1]) + 0.03, "alternating deck should have written W-")
+
     fig, axes = plt.subplots(4, 1, figsize=(7.2, 9.4))
     axes[0].plot(1e6 * t, cols[0], label="$x^+\\delta^+ \\to W^+$")
     axes[0].plot(1e6 * t, cols[2], label="$x^-\\delta^- \\to W^+$")
@@ -1194,6 +1269,28 @@ quit
     repeated_axes[1].legend(loc="upper left", ncol=2)
     repeated_fig.tight_layout()
     save_plot(repeated_fig, "mos_writer_repeated_ngspice")
+
+    alternating_fig, alternating_axes = plt.subplots(2, 1, figsize=(7.2, 5.8))
+    alternating_axes[0].plot(1e6 * atime, 1e6 * alt_net_contrib, label="net signed read contribution")
+    alternating_axes[0].plot(1e6 * atime, 1e6 * alt_pos_contrib, "--", label="$W^+$ read component")
+    alternating_axes[0].plot(1e6 * atime, 1e6 * alt_neg_contrib, ":", label="$W^-$ read component")
+    alternating_axes[0].plot(1e6 * atime, alternating_cols[6] / 100.0, color="0.5", alpha=0.35, label="$\\overline{pacc}_{W+}/100$")
+    alternating_axes[0].plot(1e6 * atime, -alternating_cols[7] / 100.0, color="0.25", alpha=0.25, label="$-\\overline{pacc}_{W-}/100$")
+    alternating_axes[0].axhline(0, color="0.4", linewidth=0.8)
+    alternating_axes[0].set_ylabel("read current (uA)")
+    alternating_axes[0].set_title("Alternating W+ then W- writes reverse same-weight readback")
+    alternating_axes[0].grid(True, alpha=0.25)
+    alternating_axes[0].legend(loc="upper right", ncol=2)
+    alternating_axes[1].plot(1e6 * atime, alternating_cols[0] - alternating_cols[0][0], label="$\\Delta W^+$")
+    alternating_axes[1].plot(1e6 * atime, alternating_cols[1] - alternating_cols[1][0], label="$\\Delta W^-$")
+    alternating_axes[1].axhline(0, color="0.4", linewidth=0.8)
+    alternating_axes[1].set_xlabel("time (us)")
+    alternating_axes[1].set_ylabel("stored weight step (V)")
+    alternating_axes[1].set_title("Both rails retain their writes; sign comes from differential readout")
+    alternating_axes[1].grid(True, alpha=0.25)
+    alternating_axes[1].legend()
+    alternating_fig.tight_layout()
+    save_plot(alternating_fig, "mos_writer_alternating_ngspice")
     return writer_plot
 
 

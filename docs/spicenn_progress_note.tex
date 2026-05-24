@@ -584,7 +584,7 @@ The command
 emits small Level-1 MOS decks under
 \(\code{results/mos\_cell\_characterization/}\), runs them with ngspice, and
 writes the plots in
-Figs.~\ref{fig:mos-synapse-ngspice}--\ref{fig:mos-writer-repeated-ngspice}.
+Figs.~\ref{fig:mos-synapse-ngspice}--\ref{fig:mos-writer-alternating-ngspice}.
 These decks use only MOS devices, capacitors, resistors, and independent
 testbench sources; there are no behavioral current sources in these cell
 checks.  They are not process-calibrated device claims and they are not
@@ -715,6 +715,20 @@ must satisfy before it can replace the current behavioral prototype.
   check, but it is closer to the update pattern required by continuous
   on-device training than a one-pulse selectivity test.}
   \label{fig:mos-writer-repeated-ngspice}
+\end{figure}
+
+\begin{figure}[H]
+  \centering
+  \includegraphics[width=0.88\linewidth]{figures/mos_writer_alternating_ngspice.png}
+  \caption{Ngspice alternating-update characterization of the same MOS writer
+  and synapse read path.  Starting from equal \(W^+\) and \(W^-\) rails, the
+  net read contribution is near zero.  A train of same-sign writer pulses
+  charges \(W^+\) and moves the same stored weight pair positive; a later train
+  of opposite-sign pulses charges \(W^-\) and pulls the net read contribution
+  back through cancellation to a negative value.  The stored rails are not
+  erased between phases; the signed effect comes from differential
+  \(W^+ - W^-\) readout.}
+  \label{fig:mos-writer-alternating-ngspice}
 \end{figure}
 
 \section{Trainable Cell Catalog}

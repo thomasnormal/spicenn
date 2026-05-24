@@ -509,8 +509,8 @@ VHI hi 0 1.8
 VLO lo 0 0
 
 * Same-sign copy: active-low pacc/x+/dh+ gates charge W+.
-CWP_S wp_s 0 {{CWRITE}} IC=0.2
-CWM_S wm_s 0 {{CWRITE}} IC=0.2
+CWP_S wp_s 0 {{CWRITE}} IC=0.85
+CWM_S wm_s 0 {{CWRITE}} IC=0.85
 MSSP1 vdd paccn n1s vdd PMOS L={{LCH}} W={{WWRITE}}
 MSSP2 n1s lo n2s vdd PMOS L={{LCH}} W={{WWRITE}}
 MSSP3 n2s lo wp_s vdd PMOS L={{LCH}} W={{WWRITE}}
@@ -519,8 +519,8 @@ MSSM2 n3s lo n4s vdd PMOS L={{LCH}} W={{WWRITE}}
 MSSM3 n4s hi wm_s vdd PMOS L={{LCH}} W={{WWRITE}}
 
 * Opposite-sign copy: active-low pacc/x+/dh- gates charge W-.
-CWP_O wp_o 0 {{CWRITE}} IC=0.2
-CWM_O wm_o 0 {{CWRITE}} IC=0.2
+CWP_O wp_o 0 {{CWRITE}} IC=0.85
+CWM_O wm_o 0 {{CWRITE}} IC=0.85
 MOSP1 vdd paccn n1o vdd PMOS L={{LCH}} W={{WWRITE}}
 MOSP2 n1o lo n2o vdd PMOS L={{LCH}} W={{WWRITE}}
 MOSP3 n2o hi wp_o vdd PMOS L={{LCH}} W={{WWRITE}}
@@ -543,8 +543,8 @@ quit
         sweep_devices.append(
             f"""
 VPACC{idx} paccn{idx} 0 PULSE(1.8 0 0.5u 20n 20n {width}u 5.0u)
-CWP{idx} wp{idx} 0 {{CWRITE}} IC=0.2
-CWM{idx} wm{idx} 0 {{CWRITE}} IC=0.2
+CWP{idx} wp{idx} 0 {{CWRITE}} IC=0.85
+CWM{idx} wm{idx} 0 {{CWRITE}} IC=0.85
 MWP{idx}A vdd paccn{idx} n1_{idx} vdd PMOS L={{LCH}} W={{WWRITE}}
 MWP{idx}B n1_{idx} lo n2_{idx} vdd PMOS L={{LCH}} W={{WWRITE}}
 MWP{idx}C n2_{idx} lo wp{idx} vdd PMOS L={{LCH}} W={{WWRITE}}
@@ -566,6 +566,44 @@ VLO lo 0 0
 set noaskquit
 tran 5n 2.2u uic
 wrdata mos_writer_width.dat {' '.join(sweep_prints)}
+quit
+.endc
+.end
+"""
+    readback_deck = f"""
+* Writer-to-synapse readback sanity check.
+{COMMON_MODELS}
+.param WWRITE=2u CWRITE=500p
+VDD vdd 0 1.8
+VCM cm 0 0.9
+VDIFF xp xm 0.5
+RXP xp cm 1G
+RXM xm cm 1G
+VPACC_N paccn 0 PULSE(1.8 0 0.5u 20n 20n 0.8u 5.0u)
+VHI hi 0 1.8
+VLO lo 0 0
+
+* Same-sign writer charges W+ in the same voltage range used by the synapse
+* tail-gate read path below.
+CWP wp 0 {{CWRITE}} IC=0.85
+CWM wm 0 {{CWRITE}} IC=0.85
+MWP1 vdd paccn n1 vdd PMOS L={{LCH}} W={{WWRITE}}
+MWP2 n1 lo n2 vdd PMOS L={{LCH}} W={{WWRITE}}
+MWP3 n2 lo wp vdd PMOS L={{LCH}} W={{WWRITE}}
+MWM1 vdd paccn n3 vdd PMOS L={{LCH}} W={{WWRITE}}
+MWM2 n3 lo n4 vdd PMOS L={{LCH}} W={{WWRITE}}
+MWM3 n4 hi wm vdd PMOS L={{LCH}} W={{WWRITE}}
+
+VZP zpp 0 1.8
+VZM zmp 0 1.8
+MPP zpp xp tail 0 NMOS L={{LCH}} W={{WN}}
+MPM zmp xm tail 0 NMOS L={{LCH}} W={{WN}}
+MTP tail wp 0 0 NMOS L={{LCH}} W=12u
+
+.control
+set noaskquit
+tran 5n 2.0u uic
+wrdata mos_writer_readback.dat v(wp) v(wm) i(VZP) i(VZM) v(paccn)
 quit
 .endc
 .end
@@ -597,7 +635,16 @@ quit
     ss_tot = float(np.sum((selected_delta - np.mean(selected_delta)) ** 2))
     require(1.0 - ss_res / ss_tot > 0.98, "writer pulse-width response should be near-linear")
 
-    fig, axes = plt.subplots(3, 1, figsize=(7.2, 7.4))
+    readback_data = run_ngspice(readback_deck, "mos_writer_readback")
+    rt, read_cols = load_wrdata(readback_data, 5)
+    read_contrib = read_cols[3] - read_cols[2]
+    baseline_contrib = float(read_contrib[np.argmin(np.abs(rt - 0.4e-6))])
+    final_contrib = float(read_contrib[np.argmin(np.abs(rt - 1.8e-6))])
+    require(read_cols[0][-1] > 0.90, "writer readback should leave W+ in active synapse range")
+    require(abs(read_cols[1][-1] - 0.85) < 1e-3, "writer readback should leave inactive W- unchanged")
+    require(final_contrib > baseline_contrib + 30e-6, "written W+ should increase synapse contribution")
+
+    fig, axes = plt.subplots(4, 1, figsize=(7.2, 9.4))
     axes[0].plot(1e6 * t, cols[0], label="$W^+$, same sign")
     axes[0].plot(1e6 * t, cols[1], label="$W^-$, same sign")
     axes[0].set_ylabel("cap voltage (V)")
@@ -620,6 +667,14 @@ quit
     axes[2].set_title("Incremental write magnitude follows pulse width")
     axes[2].grid(True, alpha=0.25)
     axes[2].legend()
+    axes[3].plot(1e6 * rt, 1e6 * read_contrib, label="read contribution")
+    axes[3].plot(1e6 * rt, 100.0 * (read_cols[0] - read_cols[0][0]), label="$100\\Delta W^+$")
+    axes[3].plot(1e6 * rt, read_cols[4] / 6.0, color="0.5", alpha=0.45, label="$\\overline{pacc}/6$")
+    axes[3].set_xlabel("time (us)")
+    axes[3].set_ylabel("current (uA) / scaled V")
+    axes[3].set_title("Written W+ voltage increases synapse read current")
+    axes[3].grid(True, alpha=0.25)
+    axes[3].legend()
     fig.tight_layout()
     return save_plot(fig, "mos_writer_ngspice")
 

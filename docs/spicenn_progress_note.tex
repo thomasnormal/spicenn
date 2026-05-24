@@ -645,10 +645,13 @@ must satisfy before it can replace the current behavioral prototype.
   \centering
   \includegraphics[width=0.88\linewidth]{figures/mos_writer_ngspice.png}
   \caption{Ngspice transient characterization of the four-quadrant MOS writer.
-  Same-sign input/error coincidence makes a bounded step only on the \(W^+\)
-  storage capacitor; opposite-sign coincidence steps only \(W^-\).  The
-  pulse-width sweep verifies that selected write magnitude is near-linear over
-  the small update range while the inactive branch stays quiet.}
+  The weight capacitors are biased in the same above-threshold voltage range
+  used by the synapse tail-gate read path.  Same-sign input/error coincidence
+  makes a bounded step only on the \(W^+\) storage capacitor; opposite-sign
+  coincidence steps only \(W^-\).  The pulse-width sweep verifies near-linear
+  selected write magnitude while the inactive branch stays quiet.  The readback
+  panel then uses the written \(W^+\) voltage as a synapse tail gate and shows
+  the contribution current increasing.}
   \label{fig:mos-writer-ngspice}
 \end{figure}
 

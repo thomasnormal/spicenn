@@ -627,17 +627,25 @@ quit
         sweep_devices.append(
             f"""
 VPACC{idx} paccn{idx} 0 PULSE(1.8 0 0.5u 20n 20n {width}u 5.0u)
-CWP{idx} wp{idx} 0 {{CWRITE}} IC=0.85
-CWM{idx} wm{idx} 0 {{CWRITE}} IC=0.85
-MWP{idx}A vdd paccn{idx} n1_{idx} vdd PMOS L={{LCH}} W={{WWRITE}}
-MWP{idx}B n1_{idx} lo n2_{idx} vdd PMOS L={{LCH}} W={{WWRITE}}
-MWP{idx}C n2_{idx} lo wp{idx} vdd PMOS L={{LCH}} W={{WWRITE}}
-MWM{idx}A vdd paccn{idx} n3_{idx} vdd PMOS L={{LCH}} W={{WWRITE}}
-MWM{idx}B n3_{idx} lo n4_{idx} vdd PMOS L={{LCH}} W={{WWRITE}}
-MWM{idx}C n4_{idx} hi wm{idx} vdd PMOS L={{LCH}} W={{WWRITE}}
+CWP_P{idx} wp_p{idx} 0 {{CWRITE}} IC=0.85
+CWM_P{idx} wm_p{idx} 0 {{CWRITE}} IC=0.85
+MWPP{idx}A vdd paccn{idx} n1p_{idx} vdd PMOS L={{LCH}} W={{WWRITE}}
+MWPP{idx}B n1p_{idx} lo n2p_{idx} vdd PMOS L={{LCH}} W={{WWRITE}}
+MWPP{idx}C n2p_{idx} lo wp_p{idx} vdd PMOS L={{LCH}} W={{WWRITE}}
+MWPM{idx}A vdd paccn{idx} n3p_{idx} vdd PMOS L={{LCH}} W={{WWRITE}}
+MWPM{idx}B n3p_{idx} lo n4p_{idx} vdd PMOS L={{LCH}} W={{WWRITE}}
+MWPM{idx}C n4p_{idx} hi wm_p{idx} vdd PMOS L={{LCH}} W={{WWRITE}}
+CWP_N{idx} wp_n{idx} 0 {{CWRITE}} IC=0.85
+CWM_N{idx} wm_n{idx} 0 {{CWRITE}} IC=0.85
+MWNP{idx}A vdd paccn{idx} n1n_{idx} vdd PMOS L={{LCH}} W={{WWRITE}}
+MWNP{idx}B n1n_{idx} lo n2n_{idx} vdd PMOS L={{LCH}} W={{WWRITE}}
+MWNP{idx}C n2n_{idx} hi wp_n{idx} vdd PMOS L={{LCH}} W={{WWRITE}}
+MWNM{idx}A vdd paccn{idx} n3n_{idx} vdd PMOS L={{LCH}} W={{WWRITE}}
+MWNM{idx}B n3n_{idx} lo n4n_{idx} vdd PMOS L={{LCH}} W={{WWRITE}}
+MWNM{idx}C n4n_{idx} lo wm_n{idx} vdd PMOS L={{LCH}} W={{WWRITE}}
 """
         )
-        sweep_prints.extend([f"v(wp{idx})", f"v(wm{idx})"])
+        sweep_prints.extend([f"v(wp_p{idx})", f"v(wm_p{idx})", f"v(wp_n{idx})", f"v(wm_n{idx})"])
     sweep_deck = f"""
 * Four-quadrant writer pulse-width sweep.
 {COMMON_MODELS}
@@ -729,20 +737,31 @@ quit
     require(np.max(np.abs(opp_inactive)) < 1e-3, "opposite-sign branches should leave W+ quiet")
 
     sweep_data = run_ngspice(sweep_deck, "mos_writer_width")
-    _, sweep_cols = load_wrdata(sweep_data, 2 * len(widths_us))
-    selected_delta = np.array([sweep_cols[2 * idx][-1] - sweep_cols[2 * idx][0] for idx in range(len(widths_us))])
-    inactive_delta = np.array([sweep_cols[2 * idx + 1][-1] - sweep_cols[2 * idx + 1][0] for idx in range(len(widths_us))])
-    require(np.all(np.diff(selected_delta) > 0.0), "writer charge should increase with active pulse width")
-    require(np.max(np.abs(inactive_delta)) < 1e-3, "inactive writer branch should stay quiet in width sweep")
+    _, sweep_cols = load_wrdata(sweep_data, 4 * len(widths_us))
+    selected_wp_delta = np.array([sweep_cols[4 * idx][-1] - sweep_cols[4 * idx][0] for idx in range(len(widths_us))])
+    inactive_wm_delta = np.array([sweep_cols[4 * idx + 1][-1] - sweep_cols[4 * idx + 1][0] for idx in range(len(widths_us))])
+    inactive_wp_delta = np.array([sweep_cols[4 * idx + 2][-1] - sweep_cols[4 * idx + 2][0] for idx in range(len(widths_us))])
+    selected_wm_delta = np.array([sweep_cols[4 * idx + 3][-1] - sweep_cols[4 * idx + 3][0] for idx in range(len(widths_us))])
+    require(np.all(np.diff(selected_wp_delta) > 0.0), "W+ writer charge should increase with active pulse width")
+    require(np.all(np.diff(selected_wm_delta) > 0.0), "W- writer charge should increase with active pulse width")
+    require(np.max(np.abs(inactive_wm_delta)) < 1e-3, "inactive W- branch should stay quiet in W+ width sweep")
+    require(np.max(np.abs(inactive_wp_delta)) < 1e-3, "inactive W+ branch should stay quiet in W- width sweep")
     # This is an incremental writer, not a rail-to-rail latch.  Over this small
     # voltage excursion the selected charge should be close to proportional to
     # coincidence time.
-    fit = np.polyfit(np.array(widths_us), selected_delta, 1)
-    predicted = np.polyval(fit, widths_us)
-    residual = selected_delta - predicted
-    ss_res = float(np.sum(residual**2))
-    ss_tot = float(np.sum((selected_delta - np.mean(selected_delta)) ** 2))
-    require(1.0 - ss_res / ss_tot > 0.98, "writer pulse-width response should be near-linear")
+    fit_wp = np.polyfit(np.array(widths_us), selected_wp_delta, 1)
+    predicted_wp = np.polyval(fit_wp, widths_us)
+    fit_wm = np.polyfit(np.array(widths_us), selected_wm_delta, 1)
+    predicted_wm = np.polyval(fit_wm, widths_us)
+
+    def r_squared(measured: np.ndarray, predicted: np.ndarray) -> float:
+        residual = measured - predicted
+        ss_res = float(np.sum(residual**2))
+        ss_tot = float(np.sum((measured - np.mean(measured)) ** 2))
+        return 1.0 - ss_res / ss_tot
+
+    require(r_squared(selected_wp_delta, predicted_wp) > 0.98, "W+ writer pulse-width response should be near-linear")
+    require(r_squared(selected_wm_delta, predicted_wm) > 0.98, "W- writer pulse-width response should be near-linear")
 
     readback_data = run_ngspice(readback_deck, "mos_writer_readback")
     rt, read_cols = load_wrdata(readback_data, 9)
@@ -779,9 +798,12 @@ quit
     axes[1].set_title("Both opposite-sign coincidence branches make bounded W- steps")
     axes[1].grid(True, alpha=0.25)
     axes[1].legend()
-    axes[2].plot(widths_us, selected_delta, "o-", label="selected $W^+$ step")
-    axes[2].plot(widths_us, inactive_delta, "o-", label="inactive $W^-$ step")
-    axes[2].plot(widths_us, predicted, "--", color="0.35", label="linear fit")
+    axes[2].plot(widths_us, selected_wp_delta, "o-", label="selected $W^+$ step")
+    axes[2].plot(widths_us, selected_wm_delta, "o-", label="selected $W^-$ step")
+    axes[2].plot(widths_us, inactive_wm_delta, "o-", label="inactive $W^-$ step")
+    axes[2].plot(widths_us, inactive_wp_delta, "o-", label="inactive $W^+$ step")
+    axes[2].plot(widths_us, predicted_wp, "--", color="0.35", label="$W^+$ linear fit")
+    axes[2].plot(widths_us, predicted_wm, ":", color="0.35", label="$W^-$ linear fit")
     axes[2].axhline(0, color="0.4", linewidth=0.8)
     axes[2].set_xlabel("active coincidence time (us)")
     axes[2].set_ylabel("$\\Delta V_W$ (V)")

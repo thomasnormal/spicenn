@@ -421,6 +421,83 @@ quit
     return save_plot(fig, "mos_hidden_error_ngspice")
 
 
+def characterize_reset_precharge() -> Path:
+    deck = f"""
+* MOS reset/precharge sanity check for reusable state capacitors.
+{COMMON_MODELS}
+.param CSUM=500p WTAIL=2u WRESETN=24u WRESETP=60u
+VDD vdd 0 1.8
+VCM vcm 0 0.9
+VXP xp 0 1.15
+VXM xm 0 0.65
+VRST rst 0 PWL(0 0 0.10u 0 0.12u 1.8 0.55u 1.8 0.57u 0 1.80u 0 1.82u 1.8 2.25u 1.8 2.27u 0 3u 0)
+VRSTN rstn 0 PWL(0 1.8 0.10u 1.8 0.12u 0 0.55u 0 0.57u 1.8 1.80u 1.8 1.82u 0 2.25u 0 2.27u 1.8 3u 1.8)
+VWP wpulse 0 PWL(0 0 0.75u 0 0.77u 1.15 1.45u 1.15 1.47u 0 3u 0)
+
+* Deliberately mismatched initial state.
+CZP zp 0 {{CSUM}} IC=1.3
+CZM zm 0 {{CSUM}} IC=0.5
+RZP zp 0 100G
+RZM zm 0 100G
+
+* Transmission-gate reset to common mode.  A single NMOS pass device leaves a
+* visible threshold error here, so the reusable primitive uses complementary
+* MOS devices.
+MRPN zp rst vcm 0 NMOS L={{LCH}} W={{WRESETN}}
+MRMN zm rst vcm 0 NMOS L={{LCH}} W={{WRESETN}}
+MRPP zp rstn vcm vdd PMOS L={{LCH}} W={{WRESETP}}
+MRMP zm rstn vcm vdd PMOS L={{LCH}} W={{WRESETP}}
+
+* Reuse the positive signed synapse slice between reset phases.
+MPP zp xp tail 0 NMOS L={{LCH}} W={{WN}}
+MPM zm xm tail 0 NMOS L={{LCH}} W={{WN}}
+MTP tail wpulse 0 0 NMOS L={{LCH}} W={{WTAIL}}
+
+.control
+set noaskquit
+tran 5n 3u uic
+wrdata mos_reset_precharge.dat v(zp) v(zm) v(rst) v(wpulse)
+quit
+.endc
+.end
+"""
+    data = run_ngspice(deck, "mos_reset_precharge")
+    t, cols = load_wrdata(data, 4)
+    zp, zm, rst, wpulse = cols
+    signed = zm - zp
+    common = 0.5 * (zp + zm)
+
+    def at(time_s: float, values: np.ndarray) -> float:
+        return float(values[np.argmin(np.abs(t - time_s))])
+
+    require(at(0.0, signed) < -0.7, "reset test should start from deliberately mismatched caps")
+    require(abs(at(0.55e-6, signed)) < 0.06, "first reset should remove most differential state")
+    require(abs(at(0.55e-6, common) - 0.9) < 0.05, "first reset should restore common mode")
+    require(at(1.65e-6, signed) > 0.05, "synapse write should create a reusable signed state")
+    require(abs(at(2.25e-6, signed)) < 0.015, "second reset should clear written differential state")
+    require(abs(at(2.25e-6, common) - 0.9) < 0.02, "second reset should restore common mode")
+
+    fig, axes = plt.subplots(2, 1, figsize=(7.2, 5.8))
+    axes[0].plot(1e6 * t, zp, label="$z^+$ cap")
+    axes[0].plot(1e6 * t, zm, label="$z^-$ cap")
+    axes[0].plot(1e6 * t, rst / 2.0, color="0.5", alpha=0.45, label="$reset/2$")
+    axes[0].set_ylabel("cap voltage (V)")
+    axes[0].set_title("Transmission-gate reset restores preactivation common mode")
+    axes[0].grid(True, alpha=0.25)
+    axes[0].legend()
+    axes[1].plot(1e6 * t, signed, label="stored $z^- - z^+$")
+    axes[1].plot(1e6 * t, wpulse / 8.0, color="0.5", alpha=0.45, label="$w_{gate}/8$")
+    axes[1].plot(1e6 * t, rst / 10.0, color="0.25", alpha=0.35, label="$reset/10$")
+    axes[1].axhline(0, color="0.4", linewidth=0.8)
+    axes[1].set_xlabel("time (us)")
+    axes[1].set_ylabel("differential voltage (V)")
+    axes[1].set_title("Reset, write, and reset again without Python capacitor forcing")
+    axes[1].grid(True, alpha=0.25)
+    axes[1].legend()
+    fig.tight_layout()
+    return save_plot(fig, "mos_reset_precharge_ngspice")
+
+
 def characterize_writer() -> Path:
     deck = f"""
 * Four-quadrant writer coincidence sanity check.
@@ -551,7 +628,7 @@ def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument(
         "--only",
-        choices=["synapse", "forward", "hidden", "writer"],
+        choices=["synapse", "forward", "hidden", "reset", "writer"],
         help="Run only one characterization.",
     )
     args = parser.parse_args()
@@ -559,6 +636,7 @@ def main() -> None:
         "synapse": characterize_synapse,
         "forward": characterize_forward_pair,
         "hidden": characterize_hidden_error,
+        "reset": characterize_reset_precharge,
         "writer": characterize_writer,
     }
     selected = [args.only] if args.only else list(jobs)

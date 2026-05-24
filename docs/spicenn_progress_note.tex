@@ -583,7 +583,8 @@ The command
 \]
 emits small Level-1 MOS decks under
 \(\code{results/mos\_cell\_characterization/}\), runs them with ngspice, and
-writes the plots in Figs.~\ref{fig:mos-synapse-ngspice}--\ref{fig:mos-writer-ngspice}.
+writes the plots in
+Figs.~\ref{fig:mos-synapse-ngspice}--\ref{fig:mos-writer-ngspice}.
 These decks use only MOS devices, capacitors, resistors, and independent
 testbench sources; there are no behavioral current sources in these cell
 checks.  They are not process-calibrated device claims and they are not
@@ -627,6 +628,17 @@ must satisfy before it can replace the current behavioral prototype.
   \(r^-\) store opposite differential hidden-error polarities on capacitors and
   hold them after the backward phase closes.}
   \label{fig:mos-hidden-error-ngspice}
+\end{figure}
+
+\begin{figure}[H]
+  \centering
+  \includegraphics[width=0.88\linewidth]{figures/mos_reset_precharge_ngspice.png}
+  \caption{Ngspice transient characterization of MOS reset/precharge for
+  reusable state capacitors.  A complementary MOS transmission-gate reset first
+  clears a deliberately mismatched \(z^+/z^-\) capacitor pair to common mode.
+  The synapse slice then writes a new signed preactivation, and a second reset
+  clears that written state without Python forcing the capacitor nodes.}
+  \label{fig:mos-reset-ngspice}
 \end{figure}
 
 \begin{figure}[H]

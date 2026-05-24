@@ -825,6 +825,21 @@ must satisfy before it can replace the current behavioral prototype.
 
 \begin{figure}[H]
   \centering
+  \includegraphics[width=0.88\linewidth]{figures/mos_hidden_error_mismatch_ngspice.png}
+  \caption{Ngspice threshold-mismatch characterization of the hidden-error
+  finite-difference replicas.  The \(z^+\) input devices in both nudged copies
+  use \(V_{TO}=0.53\), \(0.55\), and \(0.57\) V while the complementary input
+  devices stay nominal.  The derivative proxy remains nonnegative and near
+  unity across the active region; mismatch shifts both \(0.5\)-gain window
+  edges by roughly \(20\)--\(30\) mV without collapsing the window width.  This
+  is the hidden-error counterpart to the forward/synapse mismatch plots:
+  offsets move the local derivative window, so a full transistorized cell needs
+  margin or calibration, but the tested offsets do not flip the backward sign.}
+  \label{fig:mos-hidden-error-mismatch-ngspice}
+\end{figure}
+
+\begin{figure}[H]
+  \centering
   \includegraphics[width=0.88\linewidth]{figures/mos_hidden_writer_chain_ngspice.png}
   \caption{Ngspice hidden-error-store to writer/readback integration
   characterization.  The cross-connected MOS replica network first stores

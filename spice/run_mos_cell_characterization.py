@@ -1609,6 +1609,66 @@ quit
 .endc
 .end
 """
+    mismatch_cases = [
+        ("left_low", "NMOSHE53", "left $V_{TO}=0.53$ V"),
+        ("nominal", "NMOSHE55", "left $V_{TO}=0.55$ V"),
+        ("left_high", "NMOSHE57", "left $V_{TO}=0.57$ V"),
+    ]
+    mismatch_models = """
+.model NMOSHE53 NMOS (LEVEL=1 VTO=0.53 KP=220u LAMBDA=0.03)
+.model NMOSHE55 NMOS (LEVEL=1 VTO=0.55 KP=220u LAMBDA=0.03)
+.model NMOSHE57 NMOS (LEVEL=1 VTO=0.57 KP=220u LAMBDA=0.03)
+"""
+    mismatch_devices = []
+    mismatch_prints = []
+    for name, left_model, _label in mismatch_cases:
+        mismatch_devices.append(
+            f"""
+* Hidden-error finite-difference replica pair with {left_model} on z+ input devices.
+VZPPH_{name} zpph_{name} zp {{EPS/2}}
+VZMMH_{name} zm zmmh_{name} {{EPS/2}}
+VZPMH_{name} zp zpmh_{name} {{EPS/2}}
+VZMPH_{name} zmph_{name} zm {{EPS/2}}
+
+MPPPH_{name} hpph_{name} hpph_{name} vdd vdd PMOS L={{LCH}} W={{WP}}
+MPPMH_{name} hpmh_{name} hpmh_{name} vdd vdd PMOS L={{LCH}} W={{WP}}
+MNPPH_{name} hpph_{name} zpph_{name} tailph_{name} 0 {left_model} L={{LCH}} W={{WN}}
+MNPMH_{name} hpmh_{name} zmmh_{name} tailph_{name} 0 NMOS L={{LCH}} W={{WN}}
+MNTPH_{name} tailph_{name} vbias 0 0 NMOS L={{LCH}} W={{WN}}
+
+MPMPH_{name} hmph_{name} hmph_{name} vdd vdd PMOS L={{LCH}} W={{WP}}
+MPMMH_{name} hmmh_{name} hmmh_{name} vdd vdd PMOS L={{LCH}} W={{WP}}
+MNMPH_{name} hmph_{name} zpmh_{name} tailmh_{name} 0 {left_model} L={{LCH}} W={{WN}}
+MNMMH_{name} hmmh_{name} zmph_{name} tailmh_{name} 0 NMOS L={{LCH}} W={{WN}}
+MNTMH_{name} tailmh_{name} vbias 0 0 NMOS L={{LCH}} W={{WN}}
+"""
+        )
+        mismatch_prints.extend(
+            [f"v(hpph_{name})", f"v(hpmh_{name})", f"v(hmph_{name})", f"v(hmmh_{name})"]
+        )
+    mismatch_deck = f"""
+* Hidden-error derivative-window threshold-mismatch sanity check.
+* The z+ input devices in both +eps and -eps replicas are swept across simple
+* threshold offsets.  Mismatch should shift/scale the finite-difference window,
+* not create negative derivative gain.
+{COMMON_MODELS}
+{mismatch_models}
+.param EPS={eps}
+VDD vdd 0 1.8
+VCM cm 0 0.9
+VDIFF zp zm -0.45
+RZP zp cm 1G
+RZM zm cm 1G
+VTAIL vbias 0 0.95
+{''.join(mismatch_devices)}
+.control
+set noaskquit
+dc VDIFF -0.45 0.45 0.01
+wrdata mos_hidden_error_mismatch.dat {' '.join(mismatch_prints)}
+quit
+.endc
+.end
+"""
     data = run_ngspice(deck, "mos_hidden_error")
     x, cols = load_wrdata(data, 4)
     xdiff = x
@@ -1692,6 +1752,42 @@ quit
     )
     require(np.max(np.abs(nudge_pos_hold - nudge_pos_final)) < 0.01, "r+ nudge-magnitude store should hold")
     require(np.max(np.abs(nudge_neg_hold - nudge_neg_final)) < 0.01, "r- nudge-magnitude store should hold")
+
+    mismatch_data = run_ngspice(mismatch_deck, "mos_hidden_error_mismatch")
+    mt, mismatch_cols = load_wrdata(mismatch_data, 4 * len(mismatch_cases))
+    mismatch_gains = []
+    mismatch_left_edges = []
+    mismatch_right_edges = []
+    for idx, (_name, _model, _label) in enumerate(mismatch_cases):
+        plus_signed = mismatch_cols[4 * idx + 1] - mismatch_cols[4 * idx]
+        minus_signed = mismatch_cols[4 * idx + 3] - mismatch_cols[4 * idx + 2]
+        gain_series = (plus_signed - minus_signed) / (2.0 * eps)
+        mismatch_gains.append(gain_series)
+        require(np.all(gain_series > -1e-4), "hidden-error mismatch gain should stay nonnegative")
+        require(np.max(gain_series) > 0.65, "hidden-error mismatch gain should preserve an active derivative window")
+        require(
+            np.mean(gain_series[np.abs(mt) > 0.35]) < 0.55 * np.max(gain_series),
+            "hidden-error mismatch gain should still attenuate away from the active window",
+        )
+        active = gain_series > 0.5
+        left_idx = int(np.argmax(active))
+        right_idx = len(active) - 1 - int(np.argmax(active[::-1]))
+        mismatch_left_edges.append(float(mt[left_idx]))
+        mismatch_right_edges.append(float(mt[right_idx]))
+        require(active.any(), "hidden-error mismatch gain should cross the active-window threshold")
+        require(mt[right_idx] - mt[left_idx] > 0.55, "hidden-error active window should remain wide under mismatch")
+    mismatch_left_edges = np.array(mismatch_left_edges)
+    mismatch_right_edges = np.array(mismatch_right_edges)
+    require(
+        np.all(np.diff(mismatch_left_edges) > 0.005),
+        "hidden-error derivative-window left edge should shift monotonically with z+ device threshold",
+    )
+    require(
+        np.all(np.diff(mismatch_right_edges) > 0.005),
+        "hidden-error derivative-window right edge should shift monotonically with z+ device threshold",
+    )
+    nominal_center_gain = mismatch_gains[1][int(np.argmin(np.abs(mt)))]
+    require(nominal_center_gain > 0.7, "nominal hidden-error mismatch deck should retain high center gain")
 
     fig, axes = plt.subplots(2, 1, figsize=(7.2, 6.2))
     axes[0].plot(xdiff, gain, label="finite-difference gain")
@@ -1800,6 +1896,30 @@ quit
     nudge_axes[1].legend(loc="upper right", ncol=2)
     nudge_fig.tight_layout()
     save_plot(nudge_fig, "mos_hidden_error_nudge_sweep_ngspice")
+
+    mismatch_fig, mismatch_axes = plt.subplots(2, 1, figsize=(7.2, 5.8))
+    for (_name, _model, label), gain_series in zip(mismatch_cases, mismatch_gains):
+        mismatch_axes[0].plot(mt, gain_series, label=label)
+    mismatch_axes[0].axhline(0, color="0.4", linewidth=0.8)
+    mismatch_axes[0].axvline(0, color="0.4", linewidth=0.8)
+    mismatch_axes[0].set_xlabel("$z^+ - z^-$ (V)")
+    mismatch_axes[0].set_ylabel("finite-diff gain (V/V)")
+    mismatch_axes[0].set_title("Hidden-error derivative window shifts under input-pair mismatch")
+    mismatch_axes[0].grid(True, alpha=0.25)
+    mismatch_axes[0].legend(loc="upper right")
+    vt_offsets = np.array([0.53, 0.55, 0.57])
+    window_widths = mismatch_right_edges - mismatch_left_edges
+    mismatch_axes[1].plot(vt_offsets, mismatch_left_edges, "o-", label="left 0.5-gain edge")
+    mismatch_axes[1].plot(vt_offsets, mismatch_right_edges, "s--", label="right 0.5-gain edge")
+    mismatch_axes[1].plot(vt_offsets, window_widths, "^-.", label="active-window width")
+    mismatch_axes[1].axhline(0, color="0.4", linewidth=0.8)
+    mismatch_axes[1].set_xlabel("z+ input device $V_{TO}$ (V)")
+    mismatch_axes[1].set_ylabel("window edge / width (V)")
+    mismatch_axes[1].set_title("Mismatch shifts both active-window edges while preserving width")
+    mismatch_axes[1].grid(True, alpha=0.25)
+    mismatch_axes[1].legend(loc="lower right")
+    mismatch_fig.tight_layout()
+    save_plot(mismatch_fig, "mos_hidden_error_mismatch_ngspice")
     return hidden_plot
 
 

@@ -327,9 +327,11 @@ synapse slice steers input charge into the positive or negative preactivation
 rail according to differential weight capacitors.  A source-degenerated MOS
 differential pair gives the tanh-like forward nonlinearity.  A replica
 transconductor forms the local derivative/error current.  The writer is a
-four-quadrant MOS coincidence cell: two same-sign branches charge the positive
-weight capacitor and two opposite-sign branches charge the negative weight
-capacitor.
+four-quadrant MOS coincidence cell: two same-sign branches select the positive
+weight capacitor and two opposite-sign branches select the negative weight
+capacitor.  Whether the selected branch charges or discharges depends on the
+chosen memory polarity; the local requirement is branch selectivity and signed
+update direction.
 
 \begin{figure}[H]
   \centering
@@ -521,6 +523,64 @@ equation-only source definitions:
 \]
 This is the circuit family that should replace the non-device prototype before
 any future headline MNIST claim.
+
+\subsection{Ngspice Single-Cell Characterization}
+
+Each MOS panel above now has a matching ngspice testbench and plotted output.
+The command
+\[
+  \code{python3 spice/run\_mos\_cell\_characterization.py}
+\]
+emits four small Level-1 MOS decks under
+\(\code{results/mos\_cell\_characterization/}\), runs them with ngspice, and
+writes the plots in Figs.~\ref{fig:mos-synapse-ngspice}--\ref{fig:mos-writer-ngspice}.
+These decks use only MOS devices, capacitors, resistors, and independent
+testbench sources; there are no behavioral current sources in these cell
+checks.  They are not process-calibrated device claims and they are not
+MNIST-scale training evidence.  They are circuit-level sanity checks for the
+sign, monotonicity, and selectivity relationships that a transistor replacement
+must satisfy before it can replace the current behavioral prototype.
+
+\begin{figure}[H]
+  \centering
+  \includegraphics[width=0.88\linewidth]{figures/mos_synapse_slice_ngspice.png}
+  \caption{Ngspice DC characterization of the signed synapse slice.  The
+  plotted current uses the mathematical contribution convention: a high
+  \(w^+\) rail gives a positive contribution for \(x^+>x^-\), while a high
+  \(w^-\) rail reverses the sign.}
+  \label{fig:mos-synapse-ngspice}
+\end{figure}
+
+\begin{figure}[H]
+  \centering
+  \includegraphics[width=0.88\linewidth]{figures/mos_forward_pair_ngspice.png}
+  \caption{Ngspice DC characterization of the MOS forward differential pair.
+  The diode-connected load is voltage-inverting, so the useful signed load
+  voltage is plotted as \(h^- - h^+\).  It is monotone and bounded over the
+  operating sweep, matching the required tanh-like activation shape.}
+  \label{fig:mos-forward-ngspice}
+\end{figure}
+
+\begin{figure}[H]
+  \centering
+  \includegraphics[width=0.88\linewidth]{figures/mos_hidden_error_ngspice.png}
+  \caption{Ngspice DC characterization of the hidden-error replica pair.  The
+  \(r^+\) and \(r^-\) feedback rails produce opposite signs on
+  \(\delta h^+ - \delta h^-\), so the cell can transport signed hidden error
+  without a behavioral error source.}
+  \label{fig:mos-hidden-error-ngspice}
+\end{figure}
+
+\begin{figure}[H]
+  \centering
+  \includegraphics[width=0.88\linewidth]{figures/mos_writer_ngspice.png}
+  \caption{Ngspice transient characterization of the four-quadrant MOS writer.
+  Same-sign input/error coincidence discharges only the \(W^+\) storage
+  capacitor in this polarity convention; opposite-sign coincidence discharges
+  only \(W^-\).  This validates update-branch selectivity, not yet calibrated
+  analog write linearity.}
+  \label{fig:mos-writer-ngspice}
+\end{figure}
 
 \section{Trainable Cell Catalog}
 

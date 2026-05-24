@@ -667,6 +667,19 @@ must satisfy before it can replace the current behavioral prototype.
 
 \begin{figure}[H]
   \centering
+  \includegraphics[width=0.88\linewidth]{figures/mos_forward_store_sweep_ngspice.png}
+  \caption{Ngspice magnitude sweep for the MOS forward-store path.  Five
+  static diode-loaded forward-pair copies drive real activation capacitors
+  through the same \(pact\) pass switches while \(z^+-z^-\) is varied.  The
+  stored differential activation is centered at zero, monotone in preactivation,
+  approximately odd-symmetric, and overlays both the immediate load output and
+  the post-\(pact\) held value.  This checks that the activation storage path
+  carries graded analog magnitude, not only positive/negative sign.}
+  \label{fig:mos-forward-store-sweep-ngspice}
+\end{figure}
+
+\begin{figure}[H]
+  \centering
   \includegraphics[width=0.88\linewidth]{figures/mos_forward_common_mode_ngspice.png}
   \caption{Ngspice common-mode margin characterization of the same MOS forward
   pair.  Three transistor-level copies sweep \(z^+-z^-\) while their input

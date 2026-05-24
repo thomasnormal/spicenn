@@ -546,6 +546,51 @@ quit
 .endc
 .end
 """
+    store_sweep_cases = [-0.45, -0.25, 0.00, 0.25, 0.45]
+    store_sweep_devices = []
+    store_sweep_prints = []
+    for idx, diff in enumerate(store_sweep_cases):
+        name = f"d{idx}"
+        zp = 0.9 + diff / 2.0
+        zm = 0.9 - diff / 2.0
+        store_sweep_devices.append(
+            f"""
+* Forward-store magnitude copy for z+ - z- = {diff:.2f} V.
+VZP_{name} zp_{name} 0 {zp:.5f}
+VZM_{name} zm_{name} 0 {zm:.5f}
+MP1_{name} hp_{name} hp_{name} vdd vdd PMOS L={{LCH}} W={{WP}}
+MP2_{name} hm_{name} hm_{name} vdd vdd PMOS L={{LCH}} W={{WP}}
+MN1_{name} hp_{name} zp_{name} tail_{name} 0 NMOS L={{LCH}} W={{WN}}
+MN2_{name} hm_{name} zm_{name} tail_{name} 0 NMOS L={{LCH}} W={{WN}}
+MNT_{name} tail_{name} vbias 0 0 NMOS L={{LCH}} W={{WN}}
+MSP_{name} hp_{name} pact hcp_{name} 0 NMOS L={{LCH}} W={{WSW}}
+MSM_{name} hm_{name} pact hcm_{name} 0 NMOS L={{LCH}} W={{WSW}}
+CHP_{name} hcp_{name} 0 {{CSTORE}} IC=1.04
+CHM_{name} hcm_{name} 0 {{CSTORE}} IC=1.04
+RLEAKP_{name} hcp_{name} 0 50G
+RLEAKM_{name} hcm_{name} 0 50G
+"""
+        )
+        store_sweep_prints.extend([f"v(hp_{name})", f"v(hm_{name})", f"v(hcp_{name})", f"v(hcm_{name})"])
+    store_sweep_deck = f"""
+* MOS forward-store magnitude sweep.
+* Static diode-loaded forward-pair copies drive real activation capacitors
+* through the same pact pass switches, checking that stored activation is
+* graded and retained rather than only sign-selective.
+{COMMON_MODELS}
+.param CSTORE=10p WSW=24u
+VDD vdd 0 1.8
+VTAIL vbias 0 0.95
+VPACT pact 0 PULSE(0 1.8 0.5u 20n 20n 0.8u 4.0u)
+{''.join(store_sweep_devices)}
+.control
+set noaskquit
+tran 5n 2.5u uic
+wrdata mos_forward_store_sweep.dat {' '.join(store_sweep_prints)} v(pact)
+quit
+.endc
+.end
+"""
     data = run_ngspice(transfer_deck, "mos_forward_pair")
     x, cols = load_wrdata(data, 2)
     xdiff = x
@@ -588,6 +633,36 @@ quit
         require(cm_curve_peak > 0.12, f"{name} common-mode forward transfer should retain usable swing")
         require(local_fit[0] > 0.25, f"{name} common-mode forward transfer should retain center gain")
         cm_curves.append((name, cm, cm_xdiff, cm_signed))
+
+    store_sweep_data = run_ngspice(store_sweep_deck, "mos_forward_store_sweep")
+    st, store_sweep_cols = load_wrdata(store_sweep_data, 4 * len(store_sweep_cases) + 1)
+    sweep_load = []
+    sweep_cap = []
+    for idx in range(len(store_sweep_cases)):
+        sweep_load.append(store_sweep_cols[4 * idx + 1] - store_sweep_cols[4 * idx])
+        sweep_cap.append(store_sweep_cols[4 * idx + 3] - store_sweep_cols[4 * idx + 2])
+
+    def sat(time_s: float, values: np.ndarray) -> float:
+        return float(values[np.argmin(np.abs(st - time_s))])
+
+    sweep_load_final = np.array([sat(1.2e-6, series) for series in sweep_load])
+    sweep_cap_final = np.array([sat(1.2e-6, series) for series in sweep_cap])
+    sweep_cap_hold = np.array([sat(2.2e-6, series) for series in sweep_cap])
+    require(np.all(np.diff(sweep_cap_final) > 0.05), "stored forward activation should increase with preactivation")
+    require(abs(sweep_cap_final[len(store_sweep_cases) // 2]) < 0.01, "stored forward activation should be centered")
+    require(sweep_cap_final[0] < -0.20 and sweep_cap_final[-1] > 0.20, "stored forward activation should have useful swing")
+    require(
+        np.max(np.abs(sweep_cap_final + sweep_cap_final[::-1])) < 0.04 * np.max(np.abs(sweep_cap_final)),
+        "stored forward activation should remain approximately odd-symmetric",
+    )
+    require(
+        np.max(np.abs(sweep_cap_final - sweep_cap_hold)) < 0.01,
+        "stored forward activation sweep should hold after pact closes",
+    )
+    require(
+        np.max(np.abs(sweep_cap_final - sweep_load_final)) < 0.015,
+        "stored forward activation should track the diode-loaded pair output",
+    )
 
     fig, axes = plt.subplots(2, 1, figsize=(7.2, 6.4))
     # The diode-connected PMOS load is voltage-inverting: the rail that sinks
@@ -635,6 +710,29 @@ quit
     cm_axes[1].legend(title="$V_{CM}$")
     cm_fig.tight_layout()
     save_plot(cm_fig, "mos_forward_common_mode_ngspice")
+
+    sweep_fig, sweep_axes = plt.subplots(2, 1, figsize=(7.2, 5.8))
+    for diff, series in zip(store_sweep_cases, sweep_cap):
+        if diff in (-0.45, 0.0, 0.45):
+            sweep_axes[0].plot(1e6 * st, series, label=f"$z^+-z^-$={diff:.2f} V")
+    sweep_axes[0].plot(1e6 * st, store_sweep_cols[-1] / 5.0, color="0.5", alpha=0.35, label="$pact/5$")
+    sweep_axes[0].axhline(0, color="0.4", linewidth=0.8)
+    sweep_axes[0].set_ylabel("stored activation (V)")
+    sweep_axes[0].set_title("Forward-store capacitor samples graded activations")
+    sweep_axes[0].grid(True, alpha=0.25)
+    sweep_axes[0].legend(loc="upper right")
+    sweep_axes[1].plot(store_sweep_cases, sweep_load_final, "o-", label="load output")
+    sweep_axes[1].plot(store_sweep_cases, sweep_cap_final, "s--", label="after pact sample")
+    sweep_axes[1].plot(store_sweep_cases, sweep_cap_hold, "d:", color="0.45", label="after hold")
+    sweep_axes[1].axhline(0, color="0.4", linewidth=0.8)
+    sweep_axes[1].axvline(0, color="0.4", linewidth=0.8)
+    sweep_axes[1].set_xlabel("$z^+ - z^-$ (V)")
+    sweep_axes[1].set_ylabel("$h^- - h^+$ stored/load (V)")
+    sweep_axes[1].set_title("Stored activation is monotone, centered, and retained")
+    sweep_axes[1].grid(True, alpha=0.25)
+    sweep_axes[1].legend(loc="upper left")
+    sweep_fig.tight_layout()
+    save_plot(sweep_fig, "mos_forward_store_sweep_ngspice")
     return forward_plot
 
 

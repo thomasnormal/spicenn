@@ -520,30 +520,50 @@ VPACC_N paccn 0 PULSE(1.8 0 0.5u 20n 20n 0.8u 5.0u)
 VHI hi 0 1.8
 VLO lo 0 0
 
-* Same-sign copy: active-low pacc/x+/dh+ gates charge W+.
-CWP_S wp_s 0 {{CWRITE}} IC=0.85
-CWM_S wm_s 0 {{CWRITE}} IC=0.85
-MSSP1 vdd paccn n1s vdd PMOS L={{LCH}} W={{WWRITE}}
-MSSP2 n1s lo n2s vdd PMOS L={{LCH}} W={{WWRITE}}
-MSSP3 n2s lo wp_s vdd PMOS L={{LCH}} W={{WWRITE}}
-MSSM1 vdd paccn n3s vdd PMOS L={{LCH}} W={{WWRITE}}
-MSSM2 n3s lo n4s vdd PMOS L={{LCH}} W={{WWRITE}}
-MSSM3 n4s hi wm_s vdd PMOS L={{LCH}} W={{WWRITE}}
+* Same-sign x+/dh+ copy: selected branch charges W+.
+CWP_PP wp_pp 0 {{CWRITE}} IC=0.85
+CWM_PP wm_pp 0 {{CWRITE}} IC=0.85
+MPPPA vdd paccn n1pp vdd PMOS L={{LCH}} W={{WWRITE}}
+MPPPB n1pp lo n2pp vdd PMOS L={{LCH}} W={{WWRITE}}
+MPPPC n2pp lo wp_pp vdd PMOS L={{LCH}} W={{WWRITE}}
+MPPMIA vdd paccn n3pp vdd PMOS L={{LCH}} W={{WWRITE}}
+MPPMIB n3pp lo n4pp vdd PMOS L={{LCH}} W={{WWRITE}}
+MPPMIC n4pp hi wm_pp vdd PMOS L={{LCH}} W={{WWRITE}}
 
-* Opposite-sign copy: active-low pacc/x+/dh- gates charge W-.
-CWP_O wp_o 0 {{CWRITE}} IC=0.85
-CWM_O wm_o 0 {{CWRITE}} IC=0.85
-MOSP1 vdd paccn n1o vdd PMOS L={{LCH}} W={{WWRITE}}
-MOSP2 n1o lo n2o vdd PMOS L={{LCH}} W={{WWRITE}}
-MOSP3 n2o hi wp_o vdd PMOS L={{LCH}} W={{WWRITE}}
-MOSM1 vdd paccn n3o vdd PMOS L={{LCH}} W={{WWRITE}}
-MOSM2 n3o lo n4o vdd PMOS L={{LCH}} W={{WWRITE}}
-MOSM3 n4o lo wm_o vdd PMOS L={{LCH}} W={{WWRITE}}
+* Same-sign x-/dh- copy: the other same-sign branch also charges W+.
+CWP_MM wp_mm 0 {{CWRITE}} IC=0.85
+CWM_MM wm_mm 0 {{CWRITE}} IC=0.85
+MMMPA vdd paccn n1mm vdd PMOS L={{LCH}} W={{WWRITE}}
+MMMPB n1mm lo n2mm vdd PMOS L={{LCH}} W={{WWRITE}}
+MMMPC n2mm lo wp_mm vdd PMOS L={{LCH}} W={{WWRITE}}
+MMMMIA vdd paccn n3mm vdd PMOS L={{LCH}} W={{WWRITE}}
+MMMMIB n3mm lo n4mm vdd PMOS L={{LCH}} W={{WWRITE}}
+MMMMIC n4mm hi wm_mm vdd PMOS L={{LCH}} W={{WWRITE}}
+
+* Opposite-sign x+/dh- copy: selected branch charges W-.
+CWP_PM wp_pm 0 {{CWRITE}} IC=0.85
+CWM_PM wm_pm 0 {{CWRITE}} IC=0.85
+MPMPIA vdd paccn n1pm vdd PMOS L={{LCH}} W={{WWRITE}}
+MPMPIB n1pm lo n2pm vdd PMOS L={{LCH}} W={{WWRITE}}
+MPMPIC n2pm hi wp_pm vdd PMOS L={{LCH}} W={{WWRITE}}
+MPMMA vdd paccn n3pm vdd PMOS L={{LCH}} W={{WWRITE}}
+MPMMB n3pm lo n4pm vdd PMOS L={{LCH}} W={{WWRITE}}
+MPMMC n4pm lo wm_pm vdd PMOS L={{LCH}} W={{WWRITE}}
+
+* Opposite-sign x-/dh+ copy: the other opposite-sign branch also charges W-.
+CWP_MP wp_mp 0 {{CWRITE}} IC=0.85
+CWM_MP wm_mp 0 {{CWRITE}} IC=0.85
+MMPPIA vdd paccn n1mp vdd PMOS L={{LCH}} W={{WWRITE}}
+MMPPIB n1mp lo n2mp vdd PMOS L={{LCH}} W={{WWRITE}}
+MMPPIC n2mp hi wp_mp vdd PMOS L={{LCH}} W={{WWRITE}}
+MMPMA vdd paccn n3mp vdd PMOS L={{LCH}} W={{WWRITE}}
+MMPMB n3mp lo n4mp vdd PMOS L={{LCH}} W={{WWRITE}}
+MMPMC n4mp lo wm_mp vdd PMOS L={{LCH}} W={{WWRITE}}
 
 .control
 set noaskquit
 tran 10n 4u uic
-wrdata mos_writer.dat v(wp_s) v(wm_s) v(wp_o) v(wm_o) v(paccn)
+wrdata mos_writer.dat v(wp_pp) v(wm_pp) v(wp_mm) v(wm_mm) v(wp_pm) v(wm_pm) v(wp_mp) v(wm_mp) v(paccn)
 quit
 .endc
 .end
@@ -638,15 +658,23 @@ quit
 .end
 """
     data = run_ngspice(deck, "mos_writer")
-    t, cols = load_wrdata(data, 5)
-    same_wp_delta = cols[0][-1] - cols[0][0]
-    same_wm_delta = cols[1][-1] - cols[1][0]
-    opp_wp_delta = cols[2][-1] - cols[2][0]
-    opp_wm_delta = cols[3][-1] - cols[3][0]
-    require(same_wp_delta > 0.05 and same_wp_delta < 0.25, "same-sign writer should make a bounded W+ step")
-    require(abs(same_wm_delta) < 1e-3, "same-sign writer should leave W- quiet")
-    require(opp_wm_delta > 0.05 and opp_wm_delta < 0.25, "opposite-sign writer should make a bounded W- step")
-    require(abs(opp_wp_delta) < 1e-3, "opposite-sign writer should leave W+ quiet")
+    t, cols = load_wrdata(data, 9)
+    wp_pp_delta = cols[0][-1] - cols[0][0]
+    wm_pp_delta = cols[1][-1] - cols[1][0]
+    wp_mm_delta = cols[2][-1] - cols[2][0]
+    wm_mm_delta = cols[3][-1] - cols[3][0]
+    wp_pm_delta = cols[4][-1] - cols[4][0]
+    wm_pm_delta = cols[5][-1] - cols[5][0]
+    wp_mp_delta = cols[6][-1] - cols[6][0]
+    wm_mp_delta = cols[7][-1] - cols[7][0]
+    same_selected = np.array([wp_pp_delta, wp_mm_delta])
+    same_inactive = np.array([wm_pp_delta, wm_mm_delta])
+    opp_selected = np.array([wm_pm_delta, wm_mp_delta])
+    opp_inactive = np.array([wp_pm_delta, wp_mp_delta])
+    require(np.all((same_selected > 0.05) & (same_selected < 0.25)), "both same-sign branches should make bounded W+ steps")
+    require(np.max(np.abs(same_inactive)) < 1e-3, "same-sign branches should leave W- quiet")
+    require(np.all((opp_selected > 0.05) & (opp_selected < 0.25)), "both opposite-sign branches should make bounded W- steps")
+    require(np.max(np.abs(opp_inactive)) < 1e-3, "opposite-sign branches should leave W+ quiet")
 
     sweep_data = run_ngspice(sweep_deck, "mos_writer_width")
     _, sweep_cols = load_wrdata(sweep_data, 2 * len(widths_us))
@@ -682,17 +710,21 @@ quit
     require(final_neg < baseline_neg - 30e-6, "written W- should increase negative synapse contribution magnitude")
 
     fig, axes = plt.subplots(4, 1, figsize=(7.2, 9.4))
-    axes[0].plot(1e6 * t, cols[0], label="$W^+$, same sign")
-    axes[0].plot(1e6 * t, cols[1], label="$W^-$, same sign")
+    axes[0].plot(1e6 * t, cols[0], label="$x^+\\delta^+ \\to W^+$")
+    axes[0].plot(1e6 * t, cols[2], label="$x^-\\delta^- \\to W^+$")
+    axes[0].plot(1e6 * t, cols[1], "--", color="0.5", alpha=0.75, label="inactive $W^-$ branches")
+    axes[0].plot(1e6 * t, cols[3], ":", color="0.5", alpha=0.75)
     axes[0].set_ylabel("cap voltage (V)")
-    axes[0].set_title("Same-sign coincidence makes a bounded W+ step")
+    axes[0].set_title("Both same-sign coincidence branches make bounded W+ steps")
     axes[0].grid(True, alpha=0.25)
     axes[0].legend()
-    axes[1].plot(1e6 * t, cols[2], label="$W^+$, opposite sign")
-    axes[1].plot(1e6 * t, cols[3], label="$W^-$, opposite sign")
-    axes[1].plot(1e6 * t, cols[4] / 6.0, color="0.5", alpha=0.45, label="$\\overline{pacc}/6$")
+    axes[1].plot(1e6 * t, cols[5], label="$x^+\\delta^- \\to W^-$")
+    axes[1].plot(1e6 * t, cols[7], label="$x^-\\delta^+ \\to W^-$")
+    axes[1].plot(1e6 * t, cols[4], "--", color="0.5", alpha=0.75, label="inactive $W^+$ branches")
+    axes[1].plot(1e6 * t, cols[6], ":", color="0.5", alpha=0.75)
+    axes[1].plot(1e6 * t, cols[8] / 6.0, color="0.5", alpha=0.45, label="$\\overline{pacc}/6$")
     axes[1].set_ylabel("cap voltage (V)")
-    axes[1].set_title("Opposite-sign coincidence makes a bounded W- step")
+    axes[1].set_title("Both opposite-sign coincidence branches make bounded W- steps")
     axes[1].grid(True, alpha=0.25)
     axes[1].legend()
     axes[2].plot(widths_us, selected_delta, "o-", label="selected $W^+$ step")

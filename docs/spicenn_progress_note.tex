@@ -1165,6 +1165,27 @@ must satisfy before it can replace the current behavioral prototype.
 
 \begin{figure}[H]
   \centering
+  \includegraphics[width=0.88\linewidth]{figures/mos_hidden_writer_restored_gate_hybrid_width_ngspice.png}
+  \caption{Ngspice \(pacc\)-pulse-width characterization for the hybrid
+  restored writer.  The deck keeps one shared MOS hidden-error store, one
+  shared restored branch selector, and one shared activation capacitor sampled
+  through the MOS pass gate from
+  Fig.~\ref{fig:mos-hidden-writer-restored-gate-hybrid-activation-store-ngspice};
+  matched writer copies differ only in the active-low \(pacc\) pulse width.
+  The sampled activation holds from \(0.9199997\) V to \(0.9199979\) V through
+  the write fanout.  The signed \(W^+ - W^-\) step scales almost exactly
+  linearly over the tested window: \(2.91\), \(5.59\), \(10.94\), \(21.65\),
+  and \(43.06\) mV for \(40\), \(80\), \(160\), \(320\), and \(640\) ns,
+  respectively, with a linear-fit \(R^2\) indistinguishable from one at the
+  plotted precision.  The complement \(W^-\) rail stays at the nV scale.  This
+  gives the current hybrid writer a transistor-level learning-rate knob:
+  update magnitude can be set by \(pacc\) pulse width without reintroducing
+  complement-branch leakage in this operating range.}
+  \label{fig:mos-hidden-writer-restored-gate-hybrid-width-ngspice}
+\end{figure}
+
+\begin{figure}[H]
+  \centering
   \includegraphics[width=0.88\linewidth]{figures/mos_hidden_writer_restored_gate_hybrid_repeated_ngspice.png}
   \caption{Ngspice repeated-pulse accumulation characterization of the hybrid
   restored writer.  One stored \(r^+\) hidden-error rail drives one persistent

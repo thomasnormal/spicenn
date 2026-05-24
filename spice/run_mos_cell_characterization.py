@@ -5075,6 +5075,171 @@ quit
     hygg_fig.tight_layout()
     save_plot(hygg_fig, "mos_hidden_writer_restored_gate_hybrid_activation_timing_ngspice")
 
+    hybrid_width_cases = [
+        ("w040", "40 ns", 2.10, 2.14),
+        ("w080", "80 ns", 2.10, 2.18),
+        ("w160", "160 ns", 2.10, 2.26),
+        ("w320", "320 ns", 2.10, 2.42),
+        ("w640", "640 ns", 2.10, 2.74),
+    ]
+    hybrid_width_devices = []
+    hybrid_width_prints = [
+        "v(cdp_rp_hyw)",
+        "v(cdm_rp_hyw)",
+        "v(rgp_rp_hyw)",
+        "v(rgm_rp_hyw)",
+        "v(hm_store_hyw)",
+    ]
+    for name, _label, start_us, end_us in hybrid_width_cases:
+        hybrid_width_devices.append(
+            f"""
+VPACC_HYW_{name} paccn_hyw_{name} 0 PWL(0 1.8 {start_us:.2f}u 1.8 {start_us + 0.02:.2f}u 0 {end_us:.2f}u 0 {end_us + 0.02:.2f}u 1.8 3.2u 1.8)
+CWP_HYW_{name} wp_hyw_{name} 0 {{CWRITE}} IC=0.85
+CWM_HYW_{name} wm_hyw_{name} 0 {{CWRITE}} IC=0.85
+MWP_HYW_{name}A vdd paccn_hyw_{name} n_wp_hyw_{name}_a vdd PMOS L={{LCH}} W={{WWRITE}}
+MWP_HYW_{name}B n_wp_hyw_{name}_a hm_store_hyw n_wp_hyw_{name}_b vdd PMOS L={{LCH}} W={{WWRITE}}
+MWP_HYW_{name}C n_wp_hyw_{name}_b rgp_rp_hyw n_wp_hyw_{name}_c vdd PMOS L={{LCH}} W={{WWRITE}}
+MWP_HYW_{name}D n_wp_hyw_{name}_c cdm_rp_hyw wp_hyw_{name} vdd PMOS L={{LCH}} W={{WWRITE}}
+MWM_HYW_{name}A vdd paccn_hyw_{name} n_wm_hyw_{name}_a vdd PMOS L={{LCH}} W={{WWRITE}}
+MWM_HYW_{name}B n_wm_hyw_{name}_a hm_store_hyw n_wm_hyw_{name}_b vdd PMOS L={{LCH}} W={{WWRITE}}
+MWM_HYW_{name}C n_wm_hyw_{name}_b rgm_rp_hyw n_wm_hyw_{name}_c vdd PMOS L={{LCH}} W={{WWRITE}}
+MWM_HYW_{name}D n_wm_hyw_{name}_c cdp_rp_hyw wm_hyw_{name} vdd PMOS L={{LCH}} W={{WWRITE}}
+"""
+        )
+        hybrid_width_prints.extend([f"v(wp_hyw_{name})", f"v(wm_hyw_{name})", f"v(paccn_hyw_{name})"])
+
+    hybrid_width_deck = f"""
+* Hybrid restored-enable/analog-error writer pacc pulse-width characterization.
+* Matched writer copies share one stored r+ hidden-error rail and one sampled
+* activation capacitor.  Only the active-low pacc pulse width changes, giving
+* a transistor-level learning-rate control check for the current hybrid writer.
+{COMMON_MODELS}
+.param CERR=10p CWRITE=500p CSTORE=10p WSW=24u WWRITE=24u WRESTN=18u WRESTP=300u
+VDD vdd 0 1.8
+VTAIL vbias 0 0.95
+VPBWD pbwd 0 PULSE(0 1.8 0.45u 20n 20n 0.80u 5.0u)
+VRP rp 0 PULSE(0 1.8 0.45u 20n 20n 0.80u 5.0u)
+VACT_SRC_HYW hsrc_hyw 0 PWL(0 1.45 1.45u 1.45 1.47u 0.92 1.90u 0.92 1.92u 1.45 3.2u 1.45)
+VPSAMP_HYW psamp_hyw 0 PWL(0 0 1.55u 0 1.57u 1.8 1.85u 1.8 1.87u 0 3.2u 0)
+VPSAMPN_HYW psampn_hyw 0 PWL(0 1.8 1.55u 1.8 1.57u 0 1.85u 0 1.87u 1.8 3.2u 1.8)
+
+VZPP_HYW zpp_hyw 0 {0.9 + hybrid_mismatch_eps / 2.0:.5f}
+VZMM_HYW zmm_hyw 0 {0.9 - hybrid_mismatch_eps / 2.0:.5f}
+VZPM_HYW zpm_hyw 0 {0.9 - hybrid_mismatch_eps / 2.0:.5f}
+VZMP_HYW zmp_hyw 0 {0.9 + hybrid_mismatch_eps / 2.0:.5f}
+
+MPPP_HYW hpp_hyw hpp_hyw vdd vdd PMOS L={{LCH}} W={{WP}}
+MPPM_HYW hpm_hyw hpm_hyw vdd vdd PMOS L={{LCH}} W={{WP}}
+MNPP_HYW hpp_hyw zpp_hyw tailp_hyw 0 NMOS L={{LCH}} W={{WN}}
+MNPM_HYW hpm_hyw zmm_hyw tailp_hyw 0 NMOS L={{LCH}} W={{WN}}
+MNTP_HYW tailp_hyw vbias 0 0 NMOS L={{LCH}} W={{WN}}
+
+MPMP_HYW hmp_hyw hmp_hyw vdd vdd PMOS L={{LCH}} W={{WP}}
+MPMM_HYW hmm_hyw hmm_hyw vdd vdd PMOS L={{LCH}} W={{WP}}
+MNMP_HYW hmp_hyw zpm_hyw tailm_hyw 0 NMOS L={{LCH}} W={{WN}}
+MNMM_HYW hmm_hyw zmp_hyw tailm_hyw 0 NMOS L={{LCH}} W={{WN}}
+MNTM_HYW tailm_hyw vbias 0 0 NMOS L={{LCH}} W={{WN}}
+
+CDP_RP_HYW cdp_rp_hyw 0 {{CERR}} IC=1.04
+CDM_RP_HYW cdm_rp_hyw 0 {{CERR}} IC=1.04
+RDP_RP_HYW cdp_rp_hyw 0 50G
+RDM_RP_HYW cdm_rp_hyw 0 50G
+{sign_store_path("hpm_hyw", "rp", "cdp_rp_hyw", "hywrp1")}
+{sign_store_path("hmp_hyw", "rp", "cdp_rp_hyw", "hywrp2")}
+{sign_store_path("hpp_hyw", "rp", "cdm_rp_hyw", "hywrp3")}
+{sign_store_path("hmm_hyw", "rp", "cdm_rp_hyw", "hywrp4")}
+
+MPRP_CDP_HYW rgp_rp_hyw cdp_rp_hyw vdd vdd PMOS L={{LCH}} W={{WRESTP}}
+MNRP_CDP_HYW rgp_rp_hyw cdp_rp_hyw 0 0 NMOS L={{LCH}} W={{WRESTN}}
+MPRP_CDM_HYW rgm_rp_hyw cdm_rp_hyw vdd vdd PMOS L={{LCH}} W={{WRESTP}}
+MNRP_CDM_HYW rgm_rp_hyw cdm_rp_hyw 0 0 NMOS L={{LCH}} W={{WRESTN}}
+
+CHM_HYW hm_store_hyw 0 {{CSTORE}} IC=1.45
+RHM_HYW hm_store_hyw 0 50G
+MSACTN_HYW hsrc_hyw psamp_hyw hm_store_hyw 0 NMOS L={{LCH}} W={{WSW}}
+MSACTP_HYW hsrc_hyw psampn_hyw hm_store_hyw vdd PMOS L={{LCH}} W={{WSW}}
+
+{''.join(hybrid_width_devices)}
+
+.control
+set noaskquit
+tran 5n 3.15u uic
+wrdata mos_hidden_writer_restored_gate_hybrid_width.dat {' '.join(hybrid_width_prints)} v(hsrc_hyw) v(psamp_hyw)
+quit
+.endc
+.end
+"""
+    hybrid_width_data = run_ngspice(
+        hybrid_width_deck,
+        "mos_hidden_writer_restored_gate_hybrid_width",
+    )
+    hywt, hyw_cols = load_wrdata(hybrid_width_data, len(hybrid_width_prints) + 2)
+
+    def hywat(time_s: float, values: np.ndarray) -> float:
+        return float(values[np.argmin(np.abs(hywt - time_s))])
+
+    hyw_hidden = hyw_cols[0] - hyw_cols[1]
+    hyw_selected_gate = hyw_cols[2]
+    hyw_complement_gate = hyw_cols[3]
+    hyw_hcap = hyw_cols[4]
+    hyw_width_ns = np.array([(end_us - start_us) * 1e3 for _name, _label, start_us, end_us in hybrid_width_cases])
+    hyw_final = []
+    hyw_wp_step = []
+    hyw_wm_step = []
+    for idx, (_name, _label, _start_us, end_us) in enumerate(hybrid_width_cases):
+        base = 5 + 3 * idx
+        wp = hyw_cols[base]
+        wm = hyw_cols[base + 1]
+        end_s = end_us * 1e-6
+        hyw_final.append(hywat(end_s + 0.18e-6, wp - wm))
+        hyw_wp_step.append(hywat(end_s + 0.18e-6, wp) - hywat(2.00e-6, wp))
+        hyw_wm_step.append(hywat(end_s + 0.18e-6, wm) - hywat(2.00e-6, wm))
+    hyw_final = np.array(hyw_final)
+    hyw_wp_step = np.array(hyw_wp_step)
+    hyw_wm_step = np.array(hyw_wm_step)
+    hyw_fit = np.polyval(np.polyfit(hyw_width_ns, hyw_final, 1), hyw_width_ns)
+    hyw_r2 = 1.0 - float(np.sum((hyw_final - hyw_fit) ** 2) / np.sum((hyw_final - np.mean(hyw_final)) ** 2))
+    require(hywat(1.35e-6, hyw_hidden) > 0.07, "hybrid width deck should store positive hidden error")
+    require(hywat(1.45e-6, hyw_selected_gate) < 0.30, "hybrid width selected restored gate should be low")
+    require(hywat(1.45e-6, hyw_complement_gate) > 1.60, "hybrid width complement restored gate should be high")
+    require(abs(hywat(2.00e-6, hyw_hcap) - 0.92) < 0.010, "hybrid width sampled activation should settle before pacc")
+    require(abs(hywat(3.00e-6, hyw_hcap) - hywat(2.00e-6, hyw_hcap)) < 0.002, "hybrid width activation cap should hold through pacc fanout")
+    require(np.all(np.diff(hyw_final) > 0.002), "hybrid pacc width sweep should monotonically increase signed write")
+    require(hyw_final[0] > 0.001, "short hybrid pacc pulse should create a measurable update")
+    require(hyw_final[-1] < 0.12, "long hybrid pacc pulse should remain in incremental range")
+    require(hyw_r2 > 0.995, "hybrid pacc width response should be near-linear over the tested width range")
+    require(np.max(hyw_wm_step) < 5e-4, "hybrid pacc width sweep should keep complement rail suppressed")
+    require(np.max(np.abs(hyw_final - hyw_wp_step)) < 6e-4, "hybrid pacc width signed write should be selected-rail dominated")
+
+    hyw_fig, hyw_axes = plt.subplots(3, 1, figsize=(7.2, 7.2), gridspec_kw={"height_ratios": [1.15, 1.0, 1.0]})
+    hyw_axes[0].plot(1e6 * hywt, hyw_hidden, label="stored $r^+$")
+    hyw_axes[0].plot(1e6 * hywt, hyw_selected_gate, label="selected restored gate")
+    hyw_axes[0].plot(1e6 * hywt, hyw_complement_gate, label="complement restored gate")
+    hyw_axes[0].plot(1e6 * hywt, hyw_hcap, color="tab:purple", label="sampled $h^-$")
+    hyw_axes[0].set_xlim(0.35, 3.05)
+    hyw_axes[0].set_ylabel("voltage (V)")
+    hyw_axes[0].set_title("Hybrid width sweep shares hidden-error and sampled activation state")
+    hyw_axes[0].grid(True, alpha=0.25)
+    hyw_axes[0].legend(loc="center right", ncol=2, fontsize="small")
+    for idx, (_name, label, _start_us, _end_us) in enumerate(hybrid_width_cases):
+        base = 5 + 3 * idx
+        hyw_axes[1].plot(1e6 * hywt, 1e3 * (hyw_cols[base] - hyw_cols[base + 1]), label=label)
+    hyw_axes[1].axhline(0, color="0.4", linewidth=0.8)
+    hyw_axes[1].set_ylabel("$W^+ - W^-$ (mV)")
+    hyw_axes[1].set_title("active-low pacc pulse width controls signed update magnitude")
+    hyw_axes[1].grid(True, alpha=0.25)
+    hyw_axes[1].legend(loc="upper left", ncol=3, fontsize="small")
+    hyw_axes[2].plot(hyw_width_ns, 1e3 * hyw_final, "o-", label="$W^+ - W^-$")
+    hyw_axes[2].plot(hyw_width_ns, 1e3 * hyw_wm_step, "s--", label="complement $W^-$ step")
+    hyw_axes[2].plot(hyw_width_ns, 1e3 * hyw_fit, ":", color="0.3", label=f"linear fit, $R^2={hyw_r2:.3f}$")
+    hyw_axes[2].set_xlabel("pacc active-low width (ns)")
+    hyw_axes[2].set_ylabel("final step (mV)")
+    hyw_axes[2].set_title("learning-rate pulse width is monotone and linear in this window")
+    hyw_axes[2].grid(True, alpha=0.25)
+    hyw_axes[2].legend(loc="upper left", fontsize="small")
+    hyw_fig.tight_layout()
+    save_plot(hyw_fig, "mos_hidden_writer_restored_gate_hybrid_width_ngspice")
+
     hybrid_repeated_deck = f"""
 * Hybrid restored-enable/analog-error writer repeated-pulse accumulation check.
 * One stored r+ hidden-error rail and one activation gate drive the same

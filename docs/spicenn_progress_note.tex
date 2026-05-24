@@ -755,6 +755,22 @@ must satisfy before it can replace the current behavioral prototype.
 
 \begin{figure}[H]
   \centering
+  \includegraphics[width=0.88\linewidth]{figures/mos_hidden_writer_quadrants_ngspice.png}
+  \caption{Ngspice four-quadrant hidden-error-driven writer characterization.
+  The same cross-connected hidden-error store feeds writer copies under both
+  positive and negative activation rail polarities.  With the PMOS coincidence
+  writer, the complementary low rail is the active analog gate: \(x^+\) uses
+  \(h^-\), \(x^-\) uses \(h^+\), \(r^+\) uses \(\delta^-\), and \(r^-\) uses
+  \(\delta^+\).  Same-sign products \(x^+r^+\) and \(x^-r^-\) move
+  \(W^+-W^-\) positive, while opposite-sign products \(x^+r^-\) and
+  \(x^-r^+\) move it negative.  This completes the sign-family check for the
+  hidden-error-to-writer boundary using only MOS switches, capacitors, and
+  independent phase/input sources.}
+  \label{fig:mos-hidden-writer-quadrants-ngspice}
+\end{figure}
+
+\begin{figure}[H]
+  \centering
   \includegraphics[width=0.88\linewidth]{figures/mos_reset_precharge_ngspice.png}
   \caption{Ngspice transient characterization of MOS reset/precharge for
   reusable state capacitors.  A complementary MOS transmission-gate reset first

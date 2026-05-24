@@ -1344,7 +1344,140 @@ quit
     axes[2].grid(True, alpha=0.25)
     axes[2].legend(loc="upper right")
     fig.tight_layout()
-    return save_plot(fig, "mos_hidden_writer_chain_ngspice")
+    hidden_writer_plot = save_plot(fig, "mos_hidden_writer_chain_ngspice")
+
+    def writer_stack(prefix: str, cap: str, xgate: str, dgate: str) -> str:
+        return f"""
+M{prefix}A vdd paccn n_{prefix}_a vdd PMOS L={{LCH}} W={{WWRITE}}
+M{prefix}B n_{prefix}_a {xgate} n_{prefix}_b vdd PMOS L={{LCH}} W={{WWRITE}}
+M{prefix}C n_{prefix}_b {dgate} {cap} vdd PMOS L={{LCH}} W={{WWRITE}}
+"""
+
+    quadrant_cases = [
+        ("xp_rp", "$x^+ r^+$", "hm_pos", "cdm_rp", "hm_pos", "cdp_rp", 1.0),
+        ("xp_rm", "$x^+ r^-$", "hm_pos", "cdm_rm", "hm_pos", "cdp_rm", -1.0),
+        ("xm_rp", "$x^- r^+$", "hp_neg", "cdp_rp", "hp_neg", "cdm_rp", -1.0),
+        ("xm_rm", "$x^- r^-$", "hp_neg", "cdp_rm", "hp_neg", "cdm_rm", 1.0),
+    ]
+    quadrant_devices = []
+    quadrant_prints = ["v(cdp_rp)", "v(cdm_rp)", "v(cdp_rm)", "v(cdm_rm)"]
+    for name, _label, wp_xgate, wp_dgate, wm_xgate, wm_dgate, _expected in quadrant_cases:
+        quadrant_devices.append(
+            f"""
+CWP_{name} wp_{name} 0 {{CWRITE}} IC=0.85
+CWM_{name} wm_{name} 0 {{CWRITE}} IC=0.85
+"""
+            + writer_stack(f"WP_{name}", f"wp_{name}", wp_xgate, wp_dgate)
+            + writer_stack(f"WM_{name}", f"wm_{name}", wm_xgate, wm_dgate)
+        )
+        quadrant_prints.extend([f"v(wp_{name})", f"v(wm_{name})"])
+
+    quadrant_deck = f"""
+* Hidden-error-driven four-quadrant writer sanity check.
+* The same stored r+ and r- hidden-error capacitor rails steer PMOS writers
+* under both positive and negative activation rail polarities.
+{COMMON_MODELS}
+.param CERR=10p CWRITE=500p WSW=24u WWRITE=10u
+VDD vdd 0 1.8
+VTAIL vbias 0 0.95
+VPBWD pbwd 0 PULSE(0 1.8 0.45u 20n 20n 0.80u 5.0u)
+VRP rp 0 PULSE(0 1.8 0.45u 20n 20n 0.80u 5.0u)
+VRM rm 0 PULSE(0 1.8 0.45u 20n 20n 0.80u 5.0u)
+VPACC_N paccn 0 PULSE(1.8 0 1.55u 20n 20n 0.80u 5.0u)
+
+VZPP zpp 0 {0.9 + eps / 2.0:.5f}
+VZMM zmm 0 {0.9 - eps / 2.0:.5f}
+VZPM zpm 0 {0.9 - eps / 2.0:.5f}
+VZMP zmp 0 {0.9 + eps / 2.0:.5f}
+
+MPPP hpp hpp vdd vdd PMOS L={{LCH}} W={{WP}}
+MPPM hpm hpm vdd vdd PMOS L={{LCH}} W={{WP}}
+MNPP hpp zpp tailp 0 NMOS L={{LCH}} W={{WN}}
+MNPM hpm zmm tailp 0 NMOS L={{LCH}} W={{WN}}
+MNTP tailp vbias 0 0 NMOS L={{LCH}} W={{WN}}
+
+MPMP hmp hmp vdd vdd PMOS L={{LCH}} W={{WP}}
+MPMM hmm hmm vdd vdd PMOS L={{LCH}} W={{WP}}
+MNMP hmp zpm tailm 0 NMOS L={{LCH}} W={{WN}}
+MNMM hmm zmp tailm 0 NMOS L={{LCH}} W={{WN}}
+MNTM tailm vbias 0 0 NMOS L={{LCH}} W={{WN}}
+
+CDP_RP cdp_rp 0 {{CERR}} IC=1.04
+CDM_RP cdm_rp 0 {{CERR}} IC=1.04
+CDP_RM cdp_rm 0 {{CERR}} IC=1.04
+CDM_RM cdm_rm 0 {{CERR}} IC=1.04
+RDP_RP cdp_rp 0 50G
+RDM_RP cdm_rp 0 50G
+RDP_RM cdp_rm 0 50G
+RDM_RM cdm_rm 0 50G
+{sign_store_path("hpm", "rp", "cdp_rp", "qrp1")}
+{sign_store_path("hmp", "rp", "cdp_rp", "qrp2")}
+{sign_store_path("hpp", "rp", "cdm_rp", "qrp3")}
+{sign_store_path("hmm", "rp", "cdm_rp", "qrp4")}
+{sign_store_path("hpp", "rm", "cdp_rm", "qrm1")}
+{sign_store_path("hmm", "rm", "cdp_rm", "qrm2")}
+{sign_store_path("hpm", "rm", "cdm_rm", "qrm3")}
+{sign_store_path("hmp", "rm", "cdm_rm", "qrm4")}
+
+* Positive activation: h- is low.  Negative activation: h+ is low.
+VHP_POS hp_pos 0 1.12
+VHM_POS hm_pos 0 0.92
+VHP_NEG hp_neg 0 0.92
+VHM_NEG hm_neg 0 1.12
+
+{''.join(quadrant_devices)}
+
+.control
+set noaskquit
+tran 5n 3.4u uic
+wrdata mos_hidden_writer_quadrants.dat {' '.join(quadrant_prints)} v(pbwd) v(paccn)
+quit
+.endc
+.end
+"""
+    quadrant_data = run_ngspice(quadrant_deck, "mos_hidden_writer_quadrants")
+    qt, qcols = load_wrdata(quadrant_data, len(quadrant_prints) + 2)
+
+    def qat(time_s: float, values: np.ndarray) -> float:
+        return float(values[np.argmin(np.abs(qt - time_s))])
+
+    q_pos_hidden = qcols[0] - qcols[1]
+    q_neg_hidden = qcols[2] - qcols[3]
+    require(qat(1.35e-6, q_pos_hidden) > 0.07, "quadrant r+ hidden-error store should be positive")
+    require(qat(1.35e-6, q_neg_hidden) < -0.07, "quadrant r- hidden-error store should be negative")
+    qdiffs = []
+    for idx, (_name, _label, _wp_xgate, _wp_dgate, _wm_xgate, _wm_dgate, expected) in enumerate(quadrant_cases):
+        diff = qcols[4 + 2 * idx] - qcols[5 + 2 * idx]
+        qdiffs.append(diff)
+        final = qat(2.75e-6, diff)
+        hold = qat(3.25e-6, diff)
+        require(expected * final > 0.006, f"{_name} should write the expected signed weight differential")
+        require(abs(hold - final) < 5e-4, f"{_name} weight differential should hold after writer phase")
+    qfinal = np.array([qat(2.75e-6, diff) for diff in qdiffs])
+    require(qfinal[0] > 0 and qfinal[1] < 0 and qfinal[2] < 0 and qfinal[3] > 0, "all four update quadrants should have the expected signs")
+
+    quadrant_fig, quadrant_axes = plt.subplots(2, 1, figsize=(7.2, 5.8))
+    quadrant_axes[0].plot(1e6 * qt, q_pos_hidden, label="$r^+$ stored $\\delta^+ - \\delta^-$")
+    quadrant_axes[0].plot(1e6 * qt, q_neg_hidden, label="$r^-$ stored $\\delta^+ - \\delta^-$")
+    quadrant_axes[0].plot(1e6 * qt, qcols[-2] / 20.0, color="0.5", alpha=0.35, label="$pbwd/20$")
+    quadrant_axes[0].axhline(0, color="0.4", linewidth=0.8)
+    quadrant_axes[0].set_ylabel("hidden error (V)")
+    quadrant_axes[0].set_title("One hidden-error store feeds all writer quadrants")
+    quadrant_axes[0].grid(True, alpha=0.25)
+    quadrant_axes[0].legend(loc="upper right")
+    for (_name, label, _wp_xgate, _wp_dgate, _wm_xgate, _wm_dgate, _expected), diff in zip(quadrant_cases, qdiffs):
+        quadrant_axes[1].plot(1e6 * qt, diff, label=label)
+    quadrant_axes[1].plot(1e6 * qt, qcols[-1] / 25.0, color="0.5", alpha=0.35, label="$\\overline{pacc}/25$")
+    quadrant_axes[1].axhline(0, color="0.4", linewidth=0.8)
+    quadrant_axes[1].set_xlabel("time (us)")
+    quadrant_axes[1].set_ylabel("$W^+ - W^-$ (V)")
+    quadrant_axes[1].set_title("Activation/error sign products select W+ or W-")
+    quadrant_axes[1].grid(True, alpha=0.25)
+    quadrant_axes[1].legend(loc="upper right", ncol=2)
+    quadrant_fig.tight_layout()
+    save_plot(quadrant_fig, "mos_hidden_writer_quadrants_ngspice")
+
+    return hidden_writer_plot
 
 
 def characterize_reset_precharge() -> Path:

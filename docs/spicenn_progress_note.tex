@@ -1029,6 +1029,24 @@ must satisfy before it can replace the current behavioral prototype.
 
 \begin{figure}[H]
   \centering
+  \includegraphics[width=0.88\linewidth]{figures/mos_hidden_writer_restored_gate_hybrid_ngspice.png}
+  \caption{Ngspice hybrid restored-enable plus analog-error writer.  The
+  restored hidden-error rail gates a branch-select PMOS, while the original
+  stored analog hidden-error capacitor remains in series as a second PMOS gate.
+  With \(W_N=18\,\mu\mathrm{m}\), zero hidden error leaves both differential
+  weight rails balanced.  For nonzero stored error, the complement restored
+  gate stays above \(1.70\) V and the complement rail step remains at the nV
+  scale, while the selected signed update grows with hidden-error magnitude:
+  about \(27.7\), \(49.2\), \(55.1\), and \(60.5\) mV for
+  \(\epsilon=30,60,100,140\) mV.  This is the first restored writer variant
+  here that combines sign-clean complement suppression with a graded local
+  write, although the transfer is compressed by the series PMOS stack and still
+  needs mismatch/noise characterization.}
+  \label{fig:mos-hidden-writer-restored-gate-hybrid-ngspice}
+\end{figure}
+
+\begin{figure}[H]
+  \centering
   \includegraphics[width=0.88\linewidth]{figures/mos_reset_precharge_ngspice.png}
   \caption{Ngspice transient characterization of MOS reset/precharge for
   reusable state capacitors.  A complementary MOS transmission-gate reset first

@@ -3846,6 +3846,221 @@ quit
     swing_fig.tight_layout()
     save_plot(swing_fig, "mos_hidden_writer_restored_gate_swing_ngspice")
 
+    hybrid_eps_values = [0.00, 0.03, 0.06, 0.10, 0.14]
+    hybrid_devices = []
+    hybrid_prints = []
+    for idx, eps_hybrid in enumerate(hybrid_eps_values):
+        hybrid_devices.append(
+            f"""
+* Hybrid restored-enable/analog-error writer copy, finite-difference epsilon={eps_hybrid:.2f} V.
+VZPP_HY{idx} zpp_hy{idx} 0 {0.9 + eps_hybrid / 2.0:.5f}
+VZMM_HY{idx} zmm_hy{idx} 0 {0.9 - eps_hybrid / 2.0:.5f}
+VZPM_HY{idx} zpm_hy{idx} 0 {0.9 - eps_hybrid / 2.0:.5f}
+VZMP_HY{idx} zmp_hy{idx} 0 {0.9 + eps_hybrid / 2.0:.5f}
+
+MPPP_HY{idx} hpp_hy{idx} hpp_hy{idx} vdd vdd PMOS L={{LCH}} W={{WP}}
+MPPM_HY{idx} hpm_hy{idx} hpm_hy{idx} vdd vdd PMOS L={{LCH}} W={{WP}}
+MNPP_HY{idx} hpp_hy{idx} zpp_hy{idx} tailp_hy{idx} 0 NMOS L={{LCH}} W={{WN}}
+MNPM_HY{idx} hpm_hy{idx} zmm_hy{idx} tailp_hy{idx} 0 NMOS L={{LCH}} W={{WN}}
+MNTP_HY{idx} tailp_hy{idx} vbias 0 0 NMOS L={{LCH}} W={{WN}}
+
+MPMP_HY{idx} hmp_hy{idx} hmp_hy{idx} vdd vdd PMOS L={{LCH}} W={{WP}}
+MPMM_HY{idx} hmm_hy{idx} hmm_hy{idx} vdd vdd PMOS L={{LCH}} W={{WP}}
+MNMP_HY{idx} hmp_hy{idx} zpm_hy{idx} tailm_hy{idx} 0 NMOS L={{LCH}} W={{WN}}
+MNMM_HY{idx} hmm_hy{idx} zmp_hy{idx} tailm_hy{idx} 0 NMOS L={{LCH}} W={{WN}}
+MNTM_HY{idx} tailm_hy{idx} vbias 0 0 NMOS L={{LCH}} W={{WN}}
+
+CDP_RP_HY{idx} cdp_rp_hy{idx} 0 {{CERR}} IC=1.04
+CDM_RP_HY{idx} cdm_rp_hy{idx} 0 {{CERR}} IC=1.04
+CDP_RM_HY{idx} cdp_rm_hy{idx} 0 {{CERR}} IC=1.04
+CDM_RM_HY{idx} cdm_rm_hy{idx} 0 {{CERR}} IC=1.04
+RDP_RP_HY{idx} cdp_rp_hy{idx} 0 50G
+RDM_RP_HY{idx} cdm_rp_hy{idx} 0 50G
+RDP_RM_HY{idx} cdp_rm_hy{idx} 0 50G
+RDM_RM_HY{idx} cdm_rm_hy{idx} 0 50G
+{sign_store_path(f"hpm_hy{idx}", "rp", f"cdp_rp_hy{idx}", f"hyrp1_{idx}")}
+{sign_store_path(f"hmp_hy{idx}", "rp", f"cdp_rp_hy{idx}", f"hyrp2_{idx}")}
+{sign_store_path(f"hpp_hy{idx}", "rp", f"cdm_rp_hy{idx}", f"hyrp3_{idx}")}
+{sign_store_path(f"hmm_hy{idx}", "rp", f"cdm_rp_hy{idx}", f"hyrp4_{idx}")}
+{sign_store_path(f"hpp_hy{idx}", "rm", f"cdp_rm_hy{idx}", f"hyrm1_{idx}")}
+{sign_store_path(f"hmm_hy{idx}", "rm", f"cdp_rm_hy{idx}", f"hyrm2_{idx}")}
+{sign_store_path(f"hpm_hy{idx}", "rm", f"cdm_rm_hy{idx}", f"hyrm3_{idx}")}
+{sign_store_path(f"hmp_hy{idx}", "rm", f"cdm_rm_hy{idx}", f"hyrm4_{idx}")}
+
+MPRP_CDP_HY{idx} rgp_rp_hy{idx} cdp_rp_hy{idx} vdd vdd PMOS L={{LCH}} W={{WRESTP}}
+MNRP_CDP_HY{idx} rgp_rp_hy{idx} cdp_rp_hy{idx} 0 0 NMOS L={{LCH}} W={{WRESTN}}
+MPRP_CDM_HY{idx} rgm_rp_hy{idx} cdm_rp_hy{idx} vdd vdd PMOS L={{LCH}} W={{WRESTP}}
+MNRP_CDM_HY{idx} rgm_rp_hy{idx} cdm_rp_hy{idx} 0 0 NMOS L={{LCH}} W={{WRESTN}}
+
+MPRM_CDP_HY{idx} rgp_rm_hy{idx} cdp_rm_hy{idx} vdd vdd PMOS L={{LCH}} W={{WRESTP}}
+MNRM_CDP_HY{idx} rgp_rm_hy{idx} cdp_rm_hy{idx} 0 0 NMOS L={{LCH}} W={{WRESTN}}
+MPRM_CDM_HY{idx} rgm_rm_hy{idx} cdm_rm_hy{idx} vdd vdd PMOS L={{LCH}} W={{WRESTP}}
+MNRM_CDM_HY{idx} rgm_rm_hy{idx} cdm_rm_hy{idx} 0 0 NMOS L={{LCH}} W={{WRESTN}}
+
+CWP_RP_HY{idx} wp_rp_hy{idx} 0 {{CWRITE}} IC=0.85
+CWM_RP_HY{idx} wm_rp_hy{idx} 0 {{CWRITE}} IC=0.85
+MWP_RP_HY{idx}A vdd paccn n_wp_rp_hy{idx}_a vdd PMOS L={{LCH}} W={{WWRITE}}
+MWP_RP_HY{idx}B n_wp_rp_hy{idx}_a hm_pos n_wp_rp_hy{idx}_b vdd PMOS L={{LCH}} W={{WWRITE}}
+MWP_RP_HY{idx}C n_wp_rp_hy{idx}_b rgp_rp_hy{idx} n_wp_rp_hy{idx}_c vdd PMOS L={{LCH}} W={{WWRITE}}
+MWP_RP_HY{idx}D n_wp_rp_hy{idx}_c cdm_rp_hy{idx} wp_rp_hy{idx} vdd PMOS L={{LCH}} W={{WWRITE}}
+MWM_RP_HY{idx}A vdd paccn n_wm_rp_hy{idx}_a vdd PMOS L={{LCH}} W={{WWRITE}}
+MWM_RP_HY{idx}B n_wm_rp_hy{idx}_a hm_pos n_wm_rp_hy{idx}_b vdd PMOS L={{LCH}} W={{WWRITE}}
+MWM_RP_HY{idx}C n_wm_rp_hy{idx}_b rgm_rp_hy{idx} n_wm_rp_hy{idx}_c vdd PMOS L={{LCH}} W={{WWRITE}}
+MWM_RP_HY{idx}D n_wm_rp_hy{idx}_c cdp_rp_hy{idx} wm_rp_hy{idx} vdd PMOS L={{LCH}} W={{WWRITE}}
+
+CWP_RM_HY{idx} wp_rm_hy{idx} 0 {{CWRITE}} IC=0.85
+CWM_RM_HY{idx} wm_rm_hy{idx} 0 {{CWRITE}} IC=0.85
+MWP_RM_HY{idx}A vdd paccn n_wp_rm_hy{idx}_a vdd PMOS L={{LCH}} W={{WWRITE}}
+MWP_RM_HY{idx}B n_wp_rm_hy{idx}_a hm_pos n_wp_rm_hy{idx}_b vdd PMOS L={{LCH}} W={{WWRITE}}
+MWP_RM_HY{idx}C n_wp_rm_hy{idx}_b rgp_rm_hy{idx} n_wp_rm_hy{idx}_c vdd PMOS L={{LCH}} W={{WWRITE}}
+MWP_RM_HY{idx}D n_wp_rm_hy{idx}_c cdm_rm_hy{idx} wp_rm_hy{idx} vdd PMOS L={{LCH}} W={{WWRITE}}
+MWM_RM_HY{idx}A vdd paccn n_wm_rm_hy{idx}_a vdd PMOS L={{LCH}} W={{WWRITE}}
+MWM_RM_HY{idx}B n_wm_rm_hy{idx}_a hm_pos n_wm_rm_hy{idx}_b vdd PMOS L={{LCH}} W={{WWRITE}}
+MWM_RM_HY{idx}C n_wm_rm_hy{idx}_b rgm_rm_hy{idx} n_wm_rm_hy{idx}_c vdd PMOS L={{LCH}} W={{WWRITE}}
+MWM_RM_HY{idx}D n_wm_rm_hy{idx}_c cdp_rm_hy{idx} wm_rm_hy{idx} vdd PMOS L={{LCH}} W={{WWRITE}}
+"""
+        )
+        hybrid_prints.extend(
+            [
+                f"v(cdp_rp_hy{idx})",
+                f"v(cdm_rp_hy{idx})",
+                f"v(cdp_rm_hy{idx})",
+                f"v(cdm_rm_hy{idx})",
+                f"v(rgp_rp_hy{idx})",
+                f"v(rgm_rp_hy{idx})",
+                f"v(rgp_rm_hy{idx})",
+                f"v(rgm_rm_hy{idx})",
+                f"v(wp_rp_hy{idx})",
+                f"v(wm_rp_hy{idx})",
+                f"v(wp_rm_hy{idx})",
+                f"v(wm_rm_hy{idx})",
+            ]
+        )
+
+    hybrid_deck = f"""
+* Hybrid restored-enable plus analog-error local writer.
+* The restored hidden-error gate is used only as a branch select/inhibit
+* device.  The original stored analog error capacitor remains in series as a
+* second PMOS gate so the selected branch can retain update magnitude while
+* the complementary branch is held off by a rail-high restored gate.
+{COMMON_MODELS}
+.param CERR=10p CWRITE=500p WSW=24u WWRITE=24u WRESTN=18u WRESTP=300u
+VDD vdd 0 1.8
+VTAIL vbias 0 0.95
+VPBWD pbwd 0 PULSE(0 1.8 0.45u 20n 20n 0.80u 5.0u)
+VRP rp 0 PULSE(0 1.8 0.45u 20n 20n 0.80u 5.0u)
+VRM rm 0 PULSE(0 1.8 0.45u 20n 20n 0.80u 5.0u)
+VPACC_N paccn 0 PULSE(1.8 0 1.55u 20n 20n 0.80u 5.0u)
+VHM_POS hm_pos 0 0.92
+{''.join(hybrid_devices)}
+
+.control
+set noaskquit
+tran 5n 3.4u uic
+wrdata mos_hidden_writer_restored_gate_hybrid.dat {' '.join(hybrid_prints)} v(pbwd) v(paccn)
+quit
+.endc
+.end
+"""
+    hybrid_data = run_ngspice(hybrid_deck, "mos_hidden_writer_restored_gate_hybrid")
+    hyt, hy_cols = load_wrdata(hybrid_data, len(hybrid_prints) + 2)
+
+    def hyat(time_s: float, values: np.ndarray) -> float:
+        return float(values[np.argmin(np.abs(hyt - time_s))])
+
+    hybrid_hidden = []
+    hybrid_selected_gate = []
+    hybrid_complement_gate = []
+    hybrid_selected_step = []
+    hybrid_complement_step = []
+    hybrid_pos_net = []
+    hybrid_neg_net = []
+    for idx, eps_hybrid in enumerate(hybrid_eps_values):
+        base = 12 * idx
+        cdp_rp = hy_cols[base]
+        cdm_rp = hy_cols[base + 1]
+        cdp_rm = hy_cols[base + 2]
+        cdm_rm = hy_cols[base + 3]
+        rgp_rp = hy_cols[base + 4]
+        rgm_rp = hy_cols[base + 5]
+        rgp_rm = hy_cols[base + 6]
+        rgm_rm = hy_cols[base + 7]
+        wp_rp = hy_cols[base + 8]
+        wm_rp = hy_cols[base + 9]
+        wp_rm = hy_cols[base + 10]
+        wm_rm = hy_cols[base + 11]
+        hidden = hyat(1.35e-6, cdp_rp - cdm_rp)
+        hidden_neg = hyat(1.35e-6, cdp_rm - cdm_rm)
+        selected_gate = 0.5 * (hyat(1.45e-6, rgp_rp) + hyat(1.45e-6, rgm_rm))
+        complement_gate = 0.5 * (hyat(1.45e-6, rgm_rp) + hyat(1.45e-6, rgp_rm))
+        selected_step = 0.5 * (
+            hyat(2.75e-6, wp_rp) - hyat(1.45e-6, wp_rp)
+            + hyat(2.75e-6, wm_rm) - hyat(1.45e-6, wm_rm)
+        )
+        complement_step = 0.5 * (
+            hyat(2.75e-6, wm_rp) - hyat(1.45e-6, wm_rp)
+            + hyat(2.75e-6, wp_rm) - hyat(1.45e-6, wp_rm)
+        )
+        pos_net = hyat(2.75e-6, wp_rp - wm_rp)
+        neg_net = hyat(2.75e-6, wp_rm - wm_rm)
+        hybrid_hidden.append(hidden)
+        hybrid_selected_gate.append(selected_gate)
+        hybrid_complement_gate.append(complement_gate)
+        hybrid_selected_step.append(selected_step)
+        hybrid_complement_step.append(complement_step)
+        hybrid_pos_net.append(pos_net)
+        hybrid_neg_net.append(neg_net)
+        require(abs(hidden + hidden_neg) < 0.003, f"hybrid eps={eps_hybrid:.2f} hidden-error stores should stay symmetric")
+        require(abs(pos_net + neg_net) < 0.003, f"hybrid eps={eps_hybrid:.2f} writes should stay symmetric")
+        require(
+            abs(hyat(3.25e-6, wp_rp - wm_rp) - pos_net) < 5e-4,
+            f"hybrid eps={eps_hybrid:.2f} r+ write should hold",
+        )
+        require(
+            abs(hyat(3.25e-6, wp_rm - wm_rm) - neg_net) < 5e-4,
+            f"hybrid eps={eps_hybrid:.2f} r- write should hold",
+        )
+
+    hybrid_hidden = np.array(hybrid_hidden)
+    hybrid_selected_gate = np.array(hybrid_selected_gate)
+    hybrid_complement_gate = np.array(hybrid_complement_gate)
+    hybrid_selected_step = np.array(hybrid_selected_step)
+    hybrid_complement_step = np.array(hybrid_complement_step)
+    hybrid_pos_net = np.array(hybrid_pos_net)
+    hybrid_neg_net = np.array(hybrid_neg_net)
+    require(abs(hybrid_hidden[0]) < 0.005, "hybrid zero-nudge hidden error should stay near zero")
+    require(abs(hybrid_pos_net[0]) < 0.001, "hybrid zero hidden error should not create a signed write")
+    require(np.all(np.diff(hybrid_hidden) > 0.015), "hybrid stored hidden-error magnitude should grow with epsilon")
+    require(np.all(hybrid_complement_gate[1:] > 1.45), "hybrid complement restored gates should stay high")
+    require(np.all(hybrid_complement_step < 5e-4), "hybrid complement rails should stay suppressed")
+    hybrid_active = hybrid_pos_net > 0.002
+    require(hybrid_active[1:].any(), "hybrid writer should become active for some nonzero hidden-error swings")
+    require(np.all(np.diff(hybrid_pos_net[hybrid_active]) >= -5e-4), "hybrid active signed write should not lose magnitude ordering")
+    require(hybrid_pos_net[-1] > 0.004, "hybrid largest signed write should be useful")
+    require(hybrid_pos_net[-1] < 0.080, "hybrid largest signed write should remain incremental")
+
+    hybrid_fig, hybrid_axes = plt.subplots(2, 1, figsize=(7.2, 5.8))
+    hybrid_axes[0].plot(hybrid_eps_values, hybrid_hidden, "o-", label="stored $r^+$ hidden error")
+    hybrid_axes[0].plot(hybrid_eps_values, hybrid_selected_gate, "s-", label="selected restored gate")
+    hybrid_axes[0].plot(hybrid_eps_values, hybrid_complement_gate, "d--", label="complement restored gate")
+    hybrid_axes[0].axhline(0.9, color="0.4", linewidth=0.8, alpha=0.5)
+    hybrid_axes[0].set_ylabel("voltage (V)")
+    hybrid_axes[0].set_title("Hybrid writer uses restoration for selectivity and analog rail for magnitude")
+    hybrid_axes[0].grid(True, alpha=0.25)
+    hybrid_axes[0].legend(loc="center right", fontsize="small")
+    hybrid_axes[1].plot(hybrid_eps_values, hybrid_selected_step, "o-", label="selected rail step")
+    hybrid_axes[1].plot(hybrid_eps_values, hybrid_complement_step, "s--", label="complement rail step")
+    hybrid_axes[1].plot(hybrid_eps_values, hybrid_pos_net, "^-", label="$r^+$ net")
+    hybrid_axes[1].plot(hybrid_eps_values, -hybrid_neg_net, "v:", label="$r^-$ net magnitude")
+    hybrid_axes[1].axhline(0, color="0.4", linewidth=0.8)
+    hybrid_axes[1].set_xlabel("finite-difference epsilon (V)")
+    hybrid_axes[1].set_ylabel("writer step (V)")
+    hybrid_axes[1].set_title("Series analog error gate restores graded writes while complement remains off")
+    hybrid_axes[1].grid(True, alpha=0.25)
+    hybrid_axes[1].legend(loc="upper left", ncol=2, fontsize="small")
+    hybrid_fig.tight_layout()
+    save_plot(hybrid_fig, "mos_hidden_writer_restored_gate_hybrid_ngspice")
+
     return hidden_writer_plot
 
 

@@ -1125,6 +1125,27 @@ must satisfy before it can replace the current behavioral prototype.
 
 \begin{figure}[H]
   \centering
+  \includegraphics[width=0.88\linewidth]{figures/mos_hidden_writer_restored_gate_hybrid_activation_store_ngspice.png}
+  \caption{Ngspice stored-activation-gate characterization for the hybrid
+  restored writer.  The activation operand is no longer an ideal DC sweep:
+  \(h^-\) is a capacitor sampled through a complementary MOS pass gate.  The
+  first sample stores an active-low \(0.9200\) V gate and holds it until
+  \(pacc\), producing a \(25.7\) mV \(W^+ - W^-\) update from the same
+  \(98.5\) mV \(r^+\) hidden-error rail.  The second sample overwrites the
+  activation capacitor with an inactive-high \(1.4500\) V gate before a second
+  \(pacc\) pulse on the same weight pair.  That inactive reuse pulse changes
+  the signed weight by only about \(0.004\,\mu\mathrm{V}\), while the
+  complement weight rail moves about \(0.01\,\mu\mathrm{V}\).  This closes the
+  activation-operand lifecycle gap left by
+  Fig.~\ref{fig:mos-hidden-writer-restored-gate-hybrid-activation-ngspice}:
+  the hybrid writer can be gated by a sampled activation capacitor, and a later
+  inactive sample suppresses the update without Python clearing or replacing
+  the weight state.}
+  \label{fig:mos-hidden-writer-restored-gate-hybrid-activation-store-ngspice}
+\end{figure}
+
+\begin{figure}[H]
+  \centering
   \includegraphics[width=0.88\linewidth]{figures/mos_hidden_writer_restored_gate_hybrid_repeated_ngspice.png}
   \caption{Ngspice repeated-pulse accumulation characterization of the hybrid
   restored writer.  One stored \(r^+\) hidden-error rail drives one persistent

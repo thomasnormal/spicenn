@@ -4772,6 +4772,149 @@ quit
     hya_fig.tight_layout()
     save_plot(hya_fig, "mos_hidden_writer_restored_gate_hybrid_activation_ngspice")
 
+    hybrid_activation_store_deck = f"""
+* Hybrid restored-enable/analog-error writer with stored activation gate.
+* A real activation capacitor is sampled through a complementary MOS pass gate:
+* first to an active-low h- writer gate, then to an inactive-high value.  The
+* same stored r+ hidden-error rail and same weight pair are used for both pacc
+* pulses, checking that stale activation state is not required for selectivity.
+{COMMON_MODELS}
+.param CERR=10p CWRITE=500p CSTORE=10p WSW=24u WWRITE=24u WRESTN=18u WRESTP=300u
+VDD vdd 0 1.8
+VTAIL vbias 0 0.95
+VPBWD pbwd 0 PULSE(0 1.8 0.45u 20n 20n 0.80u 5.0u)
+VRP rp 0 PULSE(0 1.8 0.45u 20n 20n 0.80u 5.0u)
+VACT_SRC_HYF hsrc_hyf 0 PWL(0 1.45 0.25u 1.45 0.27u 0.92 0.82u 0.92 0.84u 1.45 1.95u 1.45 2.10u 1.45 2.50u 1.45 4.1u 1.45)
+VPSAMP_HYF psamp_hyf 0 PWL(0 0 0.30u 0 0.32u 1.8 0.72u 1.8 0.74u 0 2.10u 0 2.12u 1.8 2.52u 1.8 2.54u 0 4.1u 0)
+VPSAMPN_HYF psampn_hyf 0 PWL(0 1.8 0.30u 1.8 0.32u 0 0.72u 0 0.74u 1.8 2.10u 1.8 2.12u 0 2.52u 0 2.54u 1.8 4.1u 1.8)
+VPACC1_HYF paccn1_hyf 0 PWL(0 1.8 1.55u 1.8 1.57u 0 1.93u 0 1.95u 1.8 4.1u 1.8)
+VPACC2_HYF paccn2_hyf 0 PWL(0 1.8 2.85u 1.8 2.87u 0 3.23u 0 3.25u 1.8 4.1u 1.8)
+
+VZPP_HYF zpp_hyf 0 {0.9 + hybrid_mismatch_eps / 2.0:.5f}
+VZMM_HYF zmm_hyf 0 {0.9 - hybrid_mismatch_eps / 2.0:.5f}
+VZPM_HYF zpm_hyf 0 {0.9 - hybrid_mismatch_eps / 2.0:.5f}
+VZMP_HYF zmp_hyf 0 {0.9 + hybrid_mismatch_eps / 2.0:.5f}
+
+MPPP_HYF hpp_hyf hpp_hyf vdd vdd PMOS L={{LCH}} W={{WP}}
+MPPM_HYF hpm_hyf hpm_hyf vdd vdd PMOS L={{LCH}} W={{WP}}
+MNPP_HYF hpp_hyf zpp_hyf tailp_hyf 0 NMOS L={{LCH}} W={{WN}}
+MNPM_HYF hpm_hyf zmm_hyf tailp_hyf 0 NMOS L={{LCH}} W={{WN}}
+MNTP_HYF tailp_hyf vbias 0 0 NMOS L={{LCH}} W={{WN}}
+
+MPMP_HYF hmp_hyf hmp_hyf vdd vdd PMOS L={{LCH}} W={{WP}}
+MPMM_HYF hmm_hyf hmm_hyf vdd vdd PMOS L={{LCH}} W={{WP}}
+MNMP_HYF hmp_hyf zpm_hyf tailm_hyf 0 NMOS L={{LCH}} W={{WN}}
+MNMM_HYF hmm_hyf zmp_hyf tailm_hyf 0 NMOS L={{LCH}} W={{WN}}
+MNTM_HYF tailm_hyf vbias 0 0 NMOS L={{LCH}} W={{WN}}
+
+CDP_RP_HYF cdp_rp_hyf 0 {{CERR}} IC=1.04
+CDM_RP_HYF cdm_rp_hyf 0 {{CERR}} IC=1.04
+RDP_RP_HYF cdp_rp_hyf 0 50G
+RDM_RP_HYF cdm_rp_hyf 0 50G
+{sign_store_path("hpm_hyf", "rp", "cdp_rp_hyf", "hyfrp1")}
+{sign_store_path("hmp_hyf", "rp", "cdp_rp_hyf", "hyfrp2")}
+{sign_store_path("hpp_hyf", "rp", "cdm_rp_hyf", "hyfrp3")}
+{sign_store_path("hmm_hyf", "rp", "cdm_rp_hyf", "hyfrp4")}
+
+MPRP_CDP_HYF rgp_rp_hyf cdp_rp_hyf vdd vdd PMOS L={{LCH}} W={{WRESTP}}
+MNRP_CDP_HYF rgp_rp_hyf cdp_rp_hyf 0 0 NMOS L={{LCH}} W={{WRESTN}}
+MPRP_CDM_HYF rgm_rp_hyf cdm_rp_hyf vdd vdd PMOS L={{LCH}} W={{WRESTP}}
+MNRP_CDM_HYF rgm_rp_hyf cdm_rp_hyf 0 0 NMOS L={{LCH}} W={{WRESTN}}
+
+CHM_HYF hm_store_hyf 0 {{CSTORE}} IC=1.45
+RHM_HYF hm_store_hyf 0 50G
+MSACTN_HYF hsrc_hyf psamp_hyf hm_store_hyf 0 NMOS L={{LCH}} W={{WSW}}
+MSACTP_HYF hsrc_hyf psampn_hyf hm_store_hyf vdd PMOS L={{LCH}} W={{WSW}}
+
+CWP_HYF wp_hyf 0 {{CWRITE}} IC=0.85
+CWM_HYF wm_hyf 0 {{CWRITE}} IC=0.85
+MWP1_HYF_A vdd paccn1_hyf n_wp1_hyf_a vdd PMOS L={{LCH}} W={{WWRITE}}
+MWP1_HYF_B n_wp1_hyf_a hm_store_hyf n_wp1_hyf_b vdd PMOS L={{LCH}} W={{WWRITE}}
+MWP1_HYF_C n_wp1_hyf_b rgp_rp_hyf n_wp1_hyf_c vdd PMOS L={{LCH}} W={{WWRITE}}
+MWP1_HYF_D n_wp1_hyf_c cdm_rp_hyf wp_hyf vdd PMOS L={{LCH}} W={{WWRITE}}
+MWM1_HYF_A vdd paccn1_hyf n_wm1_hyf_a vdd PMOS L={{LCH}} W={{WWRITE}}
+MWM1_HYF_B n_wm1_hyf_a hm_store_hyf n_wm1_hyf_b vdd PMOS L={{LCH}} W={{WWRITE}}
+MWM1_HYF_C n_wm1_hyf_b rgm_rp_hyf n_wm1_hyf_c vdd PMOS L={{LCH}} W={{WWRITE}}
+MWM1_HYF_D n_wm1_hyf_c cdp_rp_hyf wm_hyf vdd PMOS L={{LCH}} W={{WWRITE}}
+MWP2_HYF_A vdd paccn2_hyf n_wp2_hyf_a vdd PMOS L={{LCH}} W={{WWRITE}}
+MWP2_HYF_B n_wp2_hyf_a hm_store_hyf n_wp2_hyf_b vdd PMOS L={{LCH}} W={{WWRITE}}
+MWP2_HYF_C n_wp2_hyf_b rgp_rp_hyf n_wp2_hyf_c vdd PMOS L={{LCH}} W={{WWRITE}}
+MWP2_HYF_D n_wp2_hyf_c cdm_rp_hyf wp_hyf vdd PMOS L={{LCH}} W={{WWRITE}}
+MWM2_HYF_A vdd paccn2_hyf n_wm2_hyf_a vdd PMOS L={{LCH}} W={{WWRITE}}
+MWM2_HYF_B n_wm2_hyf_a hm_store_hyf n_wm2_hyf_b vdd PMOS L={{LCH}} W={{WWRITE}}
+MWM2_HYF_C n_wm2_hyf_b rgm_rp_hyf n_wm2_hyf_c vdd PMOS L={{LCH}} W={{WWRITE}}
+MWM2_HYF_D n_wm2_hyf_c cdp_rp_hyf wm_hyf vdd PMOS L={{LCH}} W={{WWRITE}}
+
+.control
+set noaskquit
+tran 5n 4.0u uic
+wrdata mos_hidden_writer_restored_gate_hybrid_activation_store.dat v(cdp_rp_hyf) v(cdm_rp_hyf) v(rgp_rp_hyf) v(rgm_rp_hyf) v(hsrc_hyf) v(hm_store_hyf) v(wp_hyf) v(wm_hyf) v(psamp_hyf) v(paccn1_hyf) v(paccn2_hyf)
+quit
+.endc
+.end
+"""
+    hybrid_activation_store_data = run_ngspice(
+        hybrid_activation_store_deck,
+        "mos_hidden_writer_restored_gate_hybrid_activation_store",
+    )
+    hyft, hyf_cols = load_wrdata(hybrid_activation_store_data, 11)
+
+    def hyfat(time_s: float, values: np.ndarray) -> float:
+        return float(values[np.argmin(np.abs(hyft - time_s))])
+
+    hyf_hidden = hyf_cols[0] - hyf_cols[1]
+    hyf_selected_gate = hyf_cols[2]
+    hyf_complement_gate = hyf_cols[3]
+    hyf_hsrc = hyf_cols[4]
+    hyf_hcap = hyf_cols[5]
+    hyf_wp = hyf_cols[6]
+    hyf_wm = hyf_cols[7]
+    hyf_weight = hyf_wp - hyf_wm
+    hyf_first_weight = hyfat(2.05e-6, hyf_weight)
+    hyf_second_weight = hyfat(3.35e-6, hyf_weight)
+    hyf_second_increment = hyf_second_weight - hyf_first_weight
+    require(hyfat(1.35e-6, hyf_hidden) > 0.07, "hybrid activation-store deck should store positive hidden error")
+    require(hyfat(1.45e-6, hyf_selected_gate) < 0.30, "hybrid activation-store selected restored gate should be low")
+    require(hyfat(1.45e-6, hyf_complement_gate) > 1.60, "hybrid activation-store complement restored gate should be high")
+    require(hyfat(0.90e-6, hyf_hcap) < 0.95, "hybrid activation-store should sample active-low activation")
+    require(abs(hyfat(1.40e-6, hyf_hcap) - hyfat(0.90e-6, hyf_hcap)) < 0.003, "active activation cap should hold before first pacc")
+    require(hyf_first_weight > 0.020, "active stored activation should produce a useful W+ write")
+    require(hyfat(2.65e-6, hyf_hcap) > 1.35, "hybrid activation-store should overwrite with inactive-high activation")
+    require(abs(hyf_second_increment) < 0.002, "inactive stored activation should suppress the second pacc write")
+    require(hyfat(3.85e-6, hyf_weight) - hyf_first_weight < 0.002, "hybrid activation-store final weight should not drift after inactive pulse")
+    require(hyfat(3.35e-6, hyf_wm) - hyfat(1.45e-6, hyf_wm) < 5e-4, "stored activation gate should keep complement rail suppressed")
+
+    hyf_fig, hyf_axes = plt.subplots(3, 1, figsize=(7.2, 7.4))
+    hyf_axes[0].plot(1e6 * hyft, hyf_hidden, label="stored $r^+$")
+    hyf_axes[0].plot(1e6 * hyft, hyf_selected_gate, label="selected restored gate")
+    hyf_axes[0].plot(1e6 * hyft, hyf_complement_gate, label="complement restored gate")
+    hyf_axes[0].set_ylabel("voltage (V)")
+    hyf_axes[0].set_title("Hybrid stored-activation deck reuses one hidden-error rail")
+    hyf_axes[0].grid(True, alpha=0.25)
+    hyf_axes[0].legend(loc="center right", fontsize="small")
+    hyf_axes[1].plot(1e6 * hyft, hyf_hsrc, label="activation source")
+    hyf_axes[1].plot(1e6 * hyft, hyf_hcap, label="stored activation gate $h^-$")
+    hyf_axes[1].plot(1e6 * hyft, hyf_cols[8] / 2.0, color="0.5", alpha=0.35, label="$psamp/2$")
+    hyf_axes[1].axhline(0.92, color="0.4", linewidth=0.8, alpha=0.5)
+    hyf_axes[1].axhline(1.45, color="0.4", linewidth=0.8, alpha=0.35)
+    hyf_axes[1].set_ylabel("activation gate (V)")
+    hyf_axes[1].set_title("MOS pass gate samples active, then inactive activation")
+    hyf_axes[1].grid(True, alpha=0.25)
+    hyf_axes[1].legend(loc="center right", fontsize="small")
+    hyf_axes[2].plot(1e6 * hyft, hyf_wp - hyfat(1.45e-6, hyf_wp), label="$W^+$ step")
+    hyf_axes[2].plot(1e6 * hyft, hyf_wm - hyfat(1.45e-6, hyf_wm), label="$W^-$ step")
+    hyf_axes[2].plot(1e6 * hyft, hyf_weight, label="$W^+ - W^-$")
+    hyf_axes[2].plot(1e6 * hyft, hyf_cols[9] / 20.0, color="0.45", alpha=0.3, label="$pacc^1_n/20$")
+    hyf_axes[2].plot(1e6 * hyft, hyf_cols[10] / 20.0, color="0.15", alpha=0.25, label="$pacc^2_n/20$")
+    hyf_axes[2].axhline(0, color="0.4", linewidth=0.8)
+    hyf_axes[2].set_xlabel("time (us)")
+    hyf_axes[2].set_ylabel("weight step (V)")
+    hyf_axes[2].set_title("Stored active gate writes; stored inactive gate suppresses reuse pulse")
+    hyf_axes[2].grid(True, alpha=0.25)
+    hyf_axes[2].legend(loc="upper left", ncol=2, fontsize="small")
+    hyf_fig.tight_layout()
+    save_plot(hyf_fig, "mos_hidden_writer_restored_gate_hybrid_activation_store_ngspice")
+
     hybrid_repeated_deck = f"""
 * Hybrid restored-enable/analog-error writer repeated-pulse accumulation check.
 * One stored r+ hidden-error rail and one activation gate drive the same

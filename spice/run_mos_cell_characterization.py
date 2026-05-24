@@ -1169,6 +1169,184 @@ quit
     return hidden_plot
 
 
+def characterize_hidden_writer_chain() -> Path:
+    eps = 0.10
+
+    def sign_store_path(src: str, gate: str, dst: str, suffix: str) -> str:
+        return f"""
+MSA_{suffix} {src} pbwd n_{suffix} 0 NMOS L={{LCH}} W={{WSW}}
+MSB_{suffix} n_{suffix} {gate} {dst} 0 NMOS L={{LCH}} W={{WSW}}
+"""
+
+    deck = f"""
+* Hidden-error store to writer/readback integration sanity check.
+* The stored differential hidden-error rails are used directly as analog PMOS
+* writer gates; there are no ideal comparators or behavioral update sources.
+{COMMON_MODELS}
+.param CERR=10p CWRITE=500p WSW=24u WWRITE=10u
+VDD vdd 0 1.8
+VTAIL vbias 0 0.95
+VPBWD pbwd 0 PULSE(0 1.8 0.45u 20n 20n 0.80u 5.0u)
+VRP rp 0 PULSE(0 1.8 0.45u 20n 20n 0.80u 5.0u)
+VRM rm 0 PULSE(0 1.8 0.45u 20n 20n 0.80u 5.0u)
+VPACC_N paccn 0 PULSE(1.8 0 1.55u 20n 20n 0.80u 5.0u)
+
+* Centered forward-replica pair at z+ - z- +/- epsilon.
+VZPP zpp 0 {0.9 + eps / 2.0:.5f}
+VZMM zmm 0 {0.9 - eps / 2.0:.5f}
+VZPM zpm 0 {0.9 - eps / 2.0:.5f}
+VZMP zmp 0 {0.9 + eps / 2.0:.5f}
+
+MPPP hpp hpp vdd vdd PMOS L={{LCH}} W={{WP}}
+MPPM hpm hpm vdd vdd PMOS L={{LCH}} W={{WP}}
+MNPP hpp zpp tailp 0 NMOS L={{LCH}} W={{WN}}
+MNPM hpm zmm tailp 0 NMOS L={{LCH}} W={{WN}}
+MNTP tailp vbias 0 0 NMOS L={{LCH}} W={{WN}}
+
+MPMP hmp hmp vdd vdd PMOS L={{LCH}} W={{WP}}
+MPMM hmm hmm vdd vdd PMOS L={{LCH}} W={{WP}}
+MNMP hmp zpm tailm 0 NMOS L={{LCH}} W={{WN}}
+MNMM hmm zmp tailm 0 NMOS L={{LCH}} W={{WN}}
+MNTM tailm vbias 0 0 NMOS L={{LCH}} W={{WN}}
+
+* Cross-connected positive-error and negative-error stores.
+CDP_RP cdp_rp 0 {{CERR}} IC=1.04
+CDM_RP cdm_rp 0 {{CERR}} IC=1.04
+CDP_RM cdp_rm 0 {{CERR}} IC=1.04
+CDM_RM cdm_rm 0 {{CERR}} IC=1.04
+RDP_RP cdp_rp 0 50G
+RDM_RP cdm_rp 0 50G
+RDP_RM cdp_rm 0 50G
+RDM_RM cdm_rm 0 50G
+{sign_store_path("hpm", "rp", "cdp_rp", "rp1")}
+{sign_store_path("hmp", "rp", "cdp_rp", "rp2")}
+{sign_store_path("hpp", "rp", "cdm_rp", "rp3")}
+{sign_store_path("hmm", "rp", "cdm_rp", "rp4")}
+{sign_store_path("hpp", "rm", "cdp_rm", "rm1")}
+{sign_store_path("hmm", "rm", "cdp_rm", "rm2")}
+{sign_store_path("hpm", "rm", "cdm_rm", "rm3")}
+{sign_store_path("hmp", "rm", "cdm_rm", "rm4")}
+
+* Positive activation rails.  The writer is a PMOS coincidence path, so the
+* lower complementary rail h- is the active analog gate for x+.
+VHP hp 0 1.12
+VHM hm 0 0.92
+
+* r+ hidden error: x+ * delta+ should charge W+ more than W-.
+CWP_RP wp_rp 0 {{CWRITE}} IC=0.85
+CWM_RP wm_rp 0 {{CWRITE}} IC=0.85
+MWP_RP_A vdd paccn n_wp_rp_a vdd PMOS L={{LCH}} W={{WWRITE}}
+MWP_RP_B n_wp_rp_a hm n_wp_rp_b vdd PMOS L={{LCH}} W={{WWRITE}}
+MWP_RP_C n_wp_rp_b cdm_rp wp_rp vdd PMOS L={{LCH}} W={{WWRITE}}
+MWM_RP_A vdd paccn n_wm_rp_a vdd PMOS L={{LCH}} W={{WWRITE}}
+MWM_RP_B n_wm_rp_a hm n_wm_rp_b vdd PMOS L={{LCH}} W={{WWRITE}}
+MWM_RP_C n_wm_rp_b cdp_rp wm_rp vdd PMOS L={{LCH}} W={{WWRITE}}
+
+* r- hidden error: x+ * delta- should charge W- more than W+.
+CWP_RM wp_rm 0 {{CWRITE}} IC=0.85
+CWM_RM wm_rm 0 {{CWRITE}} IC=0.85
+MWP_RM_A vdd paccn n_wp_rm_a vdd PMOS L={{LCH}} W={{WWRITE}}
+MWP_RM_B n_wp_rm_a hm n_wp_rm_b vdd PMOS L={{LCH}} W={{WWRITE}}
+MWP_RM_C n_wp_rm_b cdm_rm wp_rm vdd PMOS L={{LCH}} W={{WWRITE}}
+MWM_RM_A vdd paccn n_wm_rm_a vdd PMOS L={{LCH}} W={{WWRITE}}
+MWM_RM_B n_wm_rm_a hm n_wm_rm_b vdd PMOS L={{LCH}} W={{WWRITE}}
+MWM_RM_C n_wm_rm_b cdp_rm wm_rm vdd PMOS L={{LCH}} W={{WWRITE}}
+
+* Continuous signed synapse readback from the two writer outputs.
+VXP xp 0 1.15
+VXM xm 0 0.65
+
+VZPP_RP zpp_rp 0 1.8
+VZMP_RP zmp_rp 0 1.8
+VZPN_RP zpn_rp 0 1.8
+VZMN_RP zmn_rp 0 1.8
+MPP_RP zpp_rp xp tailpp_rp 0 NMOS L={{LCH}} W={{WN}}
+MPM_RP zmp_rp xm tailpp_rp 0 NMOS L={{LCH}} W={{WN}}
+MTP_RP tailpp_rp wp_rp 0 0 NMOS L={{LCH}} W=12u
+MNP_RP zpn_rp xm tailnn_rp 0 NMOS L={{LCH}} W={{WN}}
+MNM_RP zmn_rp xp tailnn_rp 0 NMOS L={{LCH}} W={{WN}}
+MTN_RP tailnn_rp wm_rp 0 0 NMOS L={{LCH}} W=12u
+
+VZPP_RM zpp_rm 0 1.8
+VZMP_RM zmp_rm 0 1.8
+VZPN_RM zpn_rm 0 1.8
+VZMN_RM zmn_rm 0 1.8
+MPP_RM zpp_rm xp tailpp_rm 0 NMOS L={{LCH}} W={{WN}}
+MPM_RM zmp_rm xm tailpp_rm 0 NMOS L={{LCH}} W={{WN}}
+MTP_RM tailpp_rm wp_rm 0 0 NMOS L={{LCH}} W=12u
+MNP_RM zpn_rm xm tailnn_rm 0 NMOS L={{LCH}} W={{WN}}
+MNM_RM zmn_rm xp tailnn_rm 0 NMOS L={{LCH}} W={{WN}}
+MTN_RM tailnn_rm wm_rm 0 0 NMOS L={{LCH}} W=12u
+
+.control
+set noaskquit
+tran 5n 3.4u uic
+wrdata mos_hidden_writer_chain.dat v(cdp_rp) v(cdm_rp) v(cdp_rm) v(cdm_rm) v(wp_rp) v(wm_rp) v(wp_rm) v(wm_rm) i(VZPP_RP) i(VZMP_RP) i(VZPN_RP) i(VZMN_RP) i(VZPP_RM) i(VZMP_RM) i(VZPN_RM) i(VZMN_RM) v(pbwd) v(paccn)
+quit
+.endc
+.end
+"""
+    data = run_ngspice(deck, "mos_hidden_writer_chain")
+    t, cols = load_wrdata(data, 18)
+
+    def at(time_s: float, values: np.ndarray) -> float:
+        return float(values[np.argmin(np.abs(t - time_s))])
+
+    pos_hidden = cols[0] - cols[1]
+    neg_hidden = cols[2] - cols[3]
+    pos_weight = cols[4] - cols[5]
+    neg_weight = cols[6] - cols[7]
+    pos_read = (cols[9] - cols[8]) + (cols[11] - cols[10])
+    neg_read = (cols[13] - cols[12]) + (cols[15] - cols[14])
+
+    require(at(1.35e-6, pos_hidden) > 0.07, "r+ hidden-error store should be positive before writer phase")
+    require(at(1.35e-6, neg_hidden) < -0.07, "r- hidden-error store should be negative before writer phase")
+    require(abs(at(1.45e-6, pos_weight)) < 1e-4, "positive-error weight pair should start balanced")
+    require(abs(at(1.45e-6, neg_weight)) < 1e-4, "negative-error weight pair should start balanced")
+    require(at(2.75e-6, pos_weight) > 0.006, "stored r+ error should steer writer toward W+")
+    require(at(2.75e-6, neg_weight) < -0.006, "stored r- error should steer writer toward W-")
+    require(at(2.75e-6, pos_read) > at(1.45e-6, pos_read) + 2.0e-6, "r+ writer output should read back as a positive synapse contribution")
+    require(at(2.75e-6, neg_read) < at(1.45e-6, neg_read) - 2.0e-6, "r- writer output should read back as a negative synapse contribution")
+    require(
+        abs(at(3.25e-6, pos_weight) - at(2.75e-6, pos_weight)) < 5e-4,
+        "r+ written differential weight should hold after writer phase",
+    )
+    require(
+        abs(at(3.25e-6, neg_weight) - at(2.75e-6, neg_weight)) < 5e-4,
+        "r- written differential weight should hold after writer phase",
+    )
+
+    fig, axes = plt.subplots(3, 1, figsize=(7.2, 7.4))
+    axes[0].plot(1e6 * t, pos_hidden, label="$r^+$ stored $\\delta^+ - \\delta^-$")
+    axes[0].plot(1e6 * t, neg_hidden, label="$r^-$ stored $\\delta^+ - \\delta^-$")
+    axes[0].plot(1e6 * t, cols[16] / 20.0, color="0.5", alpha=0.35, label="$pbwd/20$")
+    axes[0].axhline(0, color="0.4", linewidth=0.8)
+    axes[0].set_ylabel("hidden error (V)")
+    axes[0].set_title("MOS hidden-error stores provide signed analog writer gates")
+    axes[0].grid(True, alpha=0.25)
+    axes[0].legend(loc="upper right")
+
+    axes[1].plot(1e6 * t, pos_weight, label="$r^+$ result: $W^+ - W^-$")
+    axes[1].plot(1e6 * t, neg_weight, label="$r^-$ result: $W^+ - W^-$")
+    axes[1].plot(1e6 * t, cols[17] / 25.0, color="0.5", alpha=0.35, label="$\\overline{pacc}/25$")
+    axes[1].axhline(0, color="0.4", linewidth=0.8)
+    axes[1].set_ylabel("weight differential (V)")
+    axes[1].set_title("Stored error sign steers the four-quadrant writer")
+    axes[1].grid(True, alpha=0.25)
+    axes[1].legend(loc="upper right")
+
+    axes[2].plot(1e6 * t, 1e6 * pos_read, label="$r^+$ signed readback")
+    axes[2].plot(1e6 * t, 1e6 * neg_read, label="$r^-$ signed readback")
+    axes[2].axhline(0, color="0.4", linewidth=0.8)
+    axes[2].set_xlabel("time (us)")
+    axes[2].set_ylabel("read current (uA)")
+    axes[2].set_title("Written rails read back with the corresponding synapse sign")
+    axes[2].grid(True, alpha=0.25)
+    axes[2].legend(loc="upper right")
+    fig.tight_layout()
+    return save_plot(fig, "mos_hidden_writer_chain_ngspice")
+
+
 def characterize_reset_precharge() -> Path:
     deck = f"""
 * MOS reset/precharge sanity check for reusable state capacitors.
@@ -1928,7 +2106,7 @@ def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument(
         "--only",
-        choices=["synapse", "forward", "chain", "hidden", "reset", "writer"],
+        choices=["synapse", "forward", "chain", "hidden", "update", "reset", "writer"],
         help="Run only one characterization.",
     )
     args = parser.parse_args()
@@ -1937,6 +2115,7 @@ def main() -> None:
         "forward": characterize_forward_pair,
         "chain": characterize_synapse_forward_chain,
         "hidden": characterize_hidden_error,
+        "update": characterize_hidden_writer_chain,
         "reset": characterize_reset_precharge,
         "writer": characterize_writer,
     }

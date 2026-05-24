@@ -584,7 +584,7 @@ The command
 emits small Level-1 MOS decks under
 \(\code{results/mos\_cell\_characterization/}\), runs them with ngspice, and
 writes the plots in
-Figs.~\ref{fig:mos-synapse-ngspice}--\ref{fig:mos-writer-alternating-ngspice}.
+Figs.~\ref{fig:mos-synapse-ngspice}--\ref{fig:mos-writer-retention-ngspice}.
 These decks use only MOS devices, capacitors, resistors, and independent
 testbench sources; there are no behavioral current sources in these cell
 checks.  They are not process-calibrated device claims and they are not
@@ -735,6 +735,22 @@ must satisfy before it can replace the current behavioral prototype.
   point stores a large signed hidden error, both saturated operating points are
   attenuated, and the stored sign holds after \(pbwd\) closes.}
   \label{fig:mos-hidden-error-sign-store-ngspice}
+\end{figure}
+
+\begin{figure}[H]
+  \centering
+  \includegraphics[width=0.88\linewidth]{figures/mos_hidden_writer_chain_ngspice.png}
+  \caption{Ngspice hidden-error-store to writer/readback integration
+  characterization.  The cross-connected MOS replica network first stores
+  positive and negative hidden-error signs on capacitors.  Those stored analog
+  rails then drive the PMOS writer gates directly, together with a positive
+  activation rail and the \(pacc\) phase.  The \(r^+\) copy steers the update
+  toward \(W^+>W^-\); the \(r^-\) copy steers it toward \(W^- > W^+\).  The
+  same written rails are continuously read through positive and gate-swapped
+  negative synapse slices, where they produce opposite signed currents.  This
+  closes the backward/update boundary at the single-cell level without an ideal
+  comparator or Python-side update source.}
+  \label{fig:mos-hidden-writer-chain-ngspice}
 \end{figure}
 
 \begin{figure}[H]

@@ -857,6 +857,21 @@ must satisfy before it can replace the current behavioral prototype.
 
 \begin{figure}[H]
   \centering
+  \includegraphics[width=0.88\linewidth]{figures/mos_hidden_writer_magnitude_ngspice.png}
+  \caption{Ngspice hidden-error magnitude to writer-magnitude characterization.
+  Several matched MOS replica/store copies create different \(r^+\) hidden-error
+  magnitudes, then use the stored capacitor rails directly as PMOS writer gates
+  under the same positive activation and \(pacc\) phase.  Zero stored error
+  leaves the differential weight unchanged.  Larger stored errors produce
+  larger \(W^+-W^-\) steps, and the written values hold after the write phase.
+  This closes the graded backward/update path: the transistor-level check is no
+  longer only ``error sign selects a branch,'' but also ``stored error magnitude
+  scales the local write.''}
+  \label{fig:mos-hidden-writer-magnitude-ngspice}
+\end{figure}
+
+\begin{figure}[H]
+  \centering
   \includegraphics[width=0.88\linewidth]{figures/mos_hidden_writer_phase_timing_ngspice.png}
   \caption{Ngspice hidden-error-to-writer phase-timing characterization.  Several
   writer copies share the same stored \(r^+\) hidden-error capacitor rails while

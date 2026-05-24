@@ -2111,6 +2111,121 @@ quit
     quadrant_fig.tight_layout()
     save_plot(quadrant_fig, "mos_hidden_writer_quadrants_ngspice")
 
+    magnitude_eps = [0.00, 0.03, 0.06, 0.10, 0.14]
+    magnitude_devices = []
+    magnitude_prints = []
+    for idx, eps_mag in enumerate(magnitude_eps):
+        name = f"e{idx}"
+        magnitude_devices.append(
+            f"""
+* Stored-error magnitude to writer copy, epsilon={eps_mag:.2f} V.
+VZPP_{name} zpp_{name} 0 {0.9 + eps_mag / 2.0:.5f}
+VZMM_{name} zmm_{name} 0 {0.9 - eps_mag / 2.0:.5f}
+VZPM_{name} zpm_{name} 0 {0.9 - eps_mag / 2.0:.5f}
+VZMP_{name} zmp_{name} 0 {0.9 + eps_mag / 2.0:.5f}
+
+MPPP_{name} hpp_{name} hpp_{name} vdd vdd PMOS L={{LCH}} W={{WP}}
+MPPM_{name} hpm_{name} hpm_{name} vdd vdd PMOS L={{LCH}} W={{WP}}
+MNPP_{name} hpp_{name} zpp_{name} tailp_{name} 0 NMOS L={{LCH}} W={{WN}}
+MNPM_{name} hpm_{name} zmm_{name} tailp_{name} 0 NMOS L={{LCH}} W={{WN}}
+MNTP_{name} tailp_{name} vbias 0 0 NMOS L={{LCH}} W={{WN}}
+
+MPMP_{name} hmp_{name} hmp_{name} vdd vdd PMOS L={{LCH}} W={{WP}}
+MPMM_{name} hmm_{name} hmm_{name} vdd vdd PMOS L={{LCH}} W={{WP}}
+MNMP_{name} hmp_{name} zpm_{name} tailm_{name} 0 NMOS L={{LCH}} W={{WN}}
+MNMM_{name} hmm_{name} zmp_{name} tailm_{name} 0 NMOS L={{LCH}} W={{WN}}
+MNTM_{name} tailm_{name} vbias 0 0 NMOS L={{LCH}} W={{WN}}
+
+CDP_{name} cdp_{name} 0 {{CERR}} IC=1.04
+CDM_{name} cdm_{name} 0 {{CERR}} IC=1.04
+RDP_{name} cdp_{name} 0 50G
+RDM_{name} cdm_{name} 0 50G
+{sign_store_path(f"hpm_{name}", "rp", f"cdp_{name}", f"mag1_{name}")}
+{sign_store_path(f"hmp_{name}", "rp", f"cdp_{name}", f"mag2_{name}")}
+{sign_store_path(f"hpp_{name}", "rp", f"cdm_{name}", f"mag3_{name}")}
+{sign_store_path(f"hmm_{name}", "rp", f"cdm_{name}", f"mag4_{name}")}
+
+CWP_{name} wp_{name} 0 {{CWRITE}} IC=0.85
+CWM_{name} wm_{name} 0 {{CWRITE}} IC=0.85
+MWP_{name}A vdd paccn n_wp_{name}_a vdd PMOS L={{LCH}} W={{WWRITE}}
+MWP_{name}B n_wp_{name}_a hm_pos n_wp_{name}_b vdd PMOS L={{LCH}} W={{WWRITE}}
+MWP_{name}C n_wp_{name}_b cdm_{name} wp_{name} vdd PMOS L={{LCH}} W={{WWRITE}}
+MWM_{name}A vdd paccn n_wm_{name}_a vdd PMOS L={{LCH}} W={{WWRITE}}
+MWM_{name}B n_wm_{name}_a hm_pos n_wm_{name}_b vdd PMOS L={{LCH}} W={{WWRITE}}
+MWM_{name}C n_wm_{name}_b cdp_{name} wm_{name} vdd PMOS L={{LCH}} W={{WWRITE}}
+"""
+        )
+        magnitude_prints.extend([f"v(cdp_{name})", f"v(cdm_{name})", f"v(wp_{name})", f"v(wm_{name})"])
+
+    magnitude_deck = f"""
+* Stored hidden-error magnitude to MOS writer magnitude sanity check.
+* Each copy stores a different finite-difference hidden-error magnitude, then
+* uses those capacitor rails directly as PMOS writer gates under the same
+* positive activation and pacc phases.
+{COMMON_MODELS}
+.param CERR=10p CWRITE=500p WSW=24u WWRITE=10u
+VDD vdd 0 1.8
+VTAIL vbias 0 0.95
+VPBWD pbwd 0 PULSE(0 1.8 0.45u 20n 20n 0.80u 5.0u)
+VRP rp 0 PULSE(0 1.8 0.45u 20n 20n 0.80u 5.0u)
+VPACC_N paccn 0 PULSE(1.8 0 1.55u 20n 20n 0.80u 5.0u)
+VHP_POS hp_pos 0 1.12
+VHM_POS hm_pos 0 0.92
+{''.join(magnitude_devices)}
+.control
+set noaskquit
+tran 5n 3.4u uic
+wrdata mos_hidden_writer_magnitude.dat {' '.join(magnitude_prints)} v(pbwd) v(paccn)
+quit
+.endc
+.end
+"""
+
+    magnitude_data = run_ngspice(magnitude_deck, "mos_hidden_writer_magnitude")
+    mt, mag_cols = load_wrdata(magnitude_data, 4 * len(magnitude_eps) + 2)
+
+    def mat(time_s: float, values: np.ndarray) -> float:
+        return float(values[np.argmin(np.abs(mt - time_s))])
+
+    mag_hidden = []
+    mag_weight = []
+    for idx in range(len(magnitude_eps)):
+        mag_hidden.append(mag_cols[4 * idx] - mag_cols[4 * idx + 1])
+        mag_weight.append(mag_cols[4 * idx + 2] - mag_cols[4 * idx + 3])
+    mag_hidden_final = np.array([mat(1.35e-6, series) for series in mag_hidden])
+    mag_weight_final = np.array([mat(2.75e-6, series) for series in mag_weight])
+    mag_weight_hold = np.array([mat(3.25e-6, series) for series in mag_weight])
+    require(abs(mag_hidden_final[0]) < 0.005, "zero hidden-error nudge should store near-zero hidden error")
+    require(abs(mag_weight_final[0]) < 0.001, "zero stored hidden error should not create a differential write")
+    require(np.all(np.diff(mag_hidden_final) > 0.015), "stored hidden-error magnitude should grow with replica nudge")
+    require(np.all(np.diff(mag_weight_final) > 0.0015), "writer weight step should grow with stored hidden-error magnitude")
+    require(mag_weight_final[-1] < 0.03, "largest hidden-error writer step should remain incremental")
+    require(
+        np.max(np.abs(mag_weight_hold - mag_weight_final)) < 5e-4,
+        "hidden-error magnitude writer steps should hold after pacc closes",
+    )
+
+    magnitude_fig, magnitude_axes = plt.subplots(2, 1, figsize=(7.2, 5.8))
+    for eps_mag, hseries, wseries in zip(magnitude_eps, mag_hidden, mag_weight):
+        if eps_mag in (0.00, 0.06, 0.14):
+            magnitude_axes[0].plot(1e6 * mt, hseries, label=f"stored eps={eps_mag:.2f} V")
+            magnitude_axes[1].plot(1e6 * mt, wseries, label=f"write eps={eps_mag:.2f} V")
+    magnitude_axes[0].plot(1e6 * mt, mag_cols[-2] / 20.0, color="0.5", alpha=0.35, label="$pbwd/20$")
+    magnitude_axes[0].axhline(0, color="0.4", linewidth=0.8)
+    magnitude_axes[0].set_ylabel("hidden error (V)")
+    magnitude_axes[0].set_title("Stored hidden-error magnitude is available before pacc")
+    magnitude_axes[0].grid(True, alpha=0.25)
+    magnitude_axes[0].legend(loc="upper right", ncol=2, fontsize="small")
+    magnitude_axes[1].plot(1e6 * mt, mag_cols[-1] / 30.0, color="0.5", alpha=0.35, label="$\\overline{pacc}/30$")
+    magnitude_axes[1].axhline(0, color="0.4", linewidth=0.8)
+    magnitude_axes[1].set_xlabel("time (us)")
+    magnitude_axes[1].set_ylabel("$W^+ - W^-$ (V)")
+    magnitude_axes[1].set_title("MOS writer step grows with stored hidden-error magnitude")
+    magnitude_axes[1].grid(True, alpha=0.25)
+    magnitude_axes[1].legend(loc="upper right", ncol=2, fontsize="small")
+    magnitude_fig.tight_layout()
+    save_plot(magnitude_fig, "mos_hidden_writer_magnitude_ngspice")
+
     timing_cases = [
         ("pre", "pre-store", 0.10),
         ("edge", "store edge", 0.46),

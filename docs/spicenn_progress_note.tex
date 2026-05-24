@@ -1107,6 +1107,24 @@ must satisfy before it can replace the current behavioral prototype.
 
 \begin{figure}[H]
   \centering
+  \includegraphics[width=0.88\linewidth]{figures/mos_hidden_writer_restored_gate_hybrid_activation_ngspice.png}
+  \caption{Ngspice activation-side magnitude characterization of the hybrid
+  restored writer.  A single stored hidden-error rail is reused while matched
+  writer copies sweep the active-low positive-activation PMOS gate \(h^-\).
+  The stored \(r^+\) differential remains \(98.5\) mV, the restored select
+  gates stay near \(0.196\) V selected and \(1.731\) V complementary, and the
+  complement weight rail remains at the nV scale for every activation gate.
+  Raising \(h^-\) weakens the selected PMOS stack monotonically: the signed
+  write falls from about \(59.3\) mV at \(h^-=0.84\) V to \(33.4\) mV at
+  \(h^-=1.10\) V.  This closes the product-path family check for the hybrid
+  writer: after restoration supplies branch selectivity, the original analog
+  hidden-error rail and the activation-side gate both still modulate write
+  magnitude.}
+  \label{fig:mos-hidden-writer-restored-gate-hybrid-activation-ngspice}
+\end{figure}
+
+\begin{figure}[H]
+  \centering
   \includegraphics[width=0.88\linewidth]{figures/mos_reset_precharge_ngspice.png}
   \caption{Ngspice transient characterization of MOS reset/precharge for
   reusable state capacitors.  A complementary MOS transmission-gate reset first

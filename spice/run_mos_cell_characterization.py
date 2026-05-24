@@ -4634,6 +4634,144 @@ quit
     hyn_fig.tight_layout()
     save_plot(hyn_fig, "mos_hidden_writer_restored_gate_hybrid_noise_ngspice")
 
+    hybrid_activation_cases = [
+        ("h084", "$h^-=0.84$ V", 0.84),
+        ("h088", "$h^-=0.88$ V", 0.88),
+        ("h092", "$h^-=0.92$ V", 0.92),
+        ("h098", "$h^-=0.98$ V", 0.98),
+        ("h104", "$h^-=1.04$ V", 1.04),
+        ("h110", "$h^-=1.10$ V", 1.10),
+    ]
+    hybrid_activation_devices = []
+    hybrid_activation_prints = ["v(cdp_rp_hya)", "v(cdm_rp_hya)", "v(rgp_rp_hya)", "v(rgm_rp_hya)"]
+    for name, _label, hgate in hybrid_activation_cases:
+        hybrid_activation_devices.append(
+            f"""
+VHM_HYA_{name} hm_pos_hya_{name} 0 {hgate:.3f}
+CWP_HYA_{name} wp_hya_{name} 0 {{CWRITE}} IC=0.85
+CWM_HYA_{name} wm_hya_{name} 0 {{CWRITE}} IC=0.85
+MWP_HYA_{name}A vdd paccn_hya n_wp_hya_{name}_a vdd PMOS L={{LCH}} W={{WWRITE}}
+MWP_HYA_{name}B n_wp_hya_{name}_a hm_pos_hya_{name} n_wp_hya_{name}_b vdd PMOS L={{LCH}} W={{WWRITE}}
+MWP_HYA_{name}C n_wp_hya_{name}_b rgp_rp_hya n_wp_hya_{name}_c vdd PMOS L={{LCH}} W={{WWRITE}}
+MWP_HYA_{name}D n_wp_hya_{name}_c cdm_rp_hya wp_hya_{name} vdd PMOS L={{LCH}} W={{WWRITE}}
+MWM_HYA_{name}A vdd paccn_hya n_wm_hya_{name}_a vdd PMOS L={{LCH}} W={{WWRITE}}
+MWM_HYA_{name}B n_wm_hya_{name}_a hm_pos_hya_{name} n_wm_hya_{name}_b vdd PMOS L={{LCH}} W={{WWRITE}}
+MWM_HYA_{name}C n_wm_hya_{name}_b rgm_rp_hya n_wm_hya_{name}_c vdd PMOS L={{LCH}} W={{WWRITE}}
+MWM_HYA_{name}D n_wm_hya_{name}_c cdp_rp_hya wm_hya_{name} vdd PMOS L={{LCH}} W={{WWRITE}}
+"""
+        )
+        hybrid_activation_prints.extend([f"v(wp_hya_{name})", f"v(wm_hya_{name})"])
+
+    hybrid_activation_deck = f"""
+* Hybrid restored-enable/analog-error writer activation-gate characterization.
+* The same stored r+ hidden error drives all copies.  Each writer copy sees a
+* different active-low positive-activation complementary gate, testing whether
+* the hybrid product path still scales with the activation-side operand.
+{COMMON_MODELS}
+.param CERR=10p CWRITE=500p WSW=24u WWRITE=24u WRESTN=18u WRESTP=300u
+VDD vdd 0 1.8
+VTAIL vbias 0 0.95
+VPBWD pbwd 0 PULSE(0 1.8 0.45u 20n 20n 0.80u 5.0u)
+VRP rp 0 PULSE(0 1.8 0.45u 20n 20n 0.80u 5.0u)
+VPACC_HYA paccn_hya 0 PULSE(1.8 0 1.55u 20n 20n 0.80u 5.0u)
+
+VZPP_HYA zpp_hya 0 {0.9 + hybrid_mismatch_eps / 2.0:.5f}
+VZMM_HYA zmm_hya 0 {0.9 - hybrid_mismatch_eps / 2.0:.5f}
+VZPM_HYA zpm_hya 0 {0.9 - hybrid_mismatch_eps / 2.0:.5f}
+VZMP_HYA zmp_hya 0 {0.9 + hybrid_mismatch_eps / 2.0:.5f}
+
+MPPP_HYA hpp_hya hpp_hya vdd vdd PMOS L={{LCH}} W={{WP}}
+MPPM_HYA hpm_hya hpm_hya vdd vdd PMOS L={{LCH}} W={{WP}}
+MNPP_HYA hpp_hya zpp_hya tailp_hya 0 NMOS L={{LCH}} W={{WN}}
+MNPM_HYA hpm_hya zmm_hya tailp_hya 0 NMOS L={{LCH}} W={{WN}}
+MNTP_HYA tailp_hya vbias 0 0 NMOS L={{LCH}} W={{WN}}
+
+MPMP_HYA hmp_hya hmp_hya vdd vdd PMOS L={{LCH}} W={{WP}}
+MPMM_HYA hmm_hya hmm_hya vdd vdd PMOS L={{LCH}} W={{WP}}
+MNMP_HYA hmp_hya zpm_hya tailm_hya 0 NMOS L={{LCH}} W={{WN}}
+MNMM_HYA hmm_hya zmp_hya tailm_hya 0 NMOS L={{LCH}} W={{WN}}
+MNTM_HYA tailm_hya vbias 0 0 NMOS L={{LCH}} W={{WN}}
+
+CDP_RP_HYA cdp_rp_hya 0 {{CERR}} IC=1.04
+CDM_RP_HYA cdm_rp_hya 0 {{CERR}} IC=1.04
+RDP_RP_HYA cdp_rp_hya 0 50G
+RDM_RP_HYA cdm_rp_hya 0 50G
+{sign_store_path("hpm_hya", "rp", "cdp_rp_hya", "hyarp1")}
+{sign_store_path("hmp_hya", "rp", "cdp_rp_hya", "hyarp2")}
+{sign_store_path("hpp_hya", "rp", "cdm_rp_hya", "hyarp3")}
+{sign_store_path("hmm_hya", "rp", "cdm_rp_hya", "hyarp4")}
+
+MPRP_CDP_HYA rgp_rp_hya cdp_rp_hya vdd vdd PMOS L={{LCH}} W={{WRESTP}}
+MNRP_CDP_HYA rgp_rp_hya cdp_rp_hya 0 0 NMOS L={{LCH}} W={{WRESTN}}
+MPRP_CDM_HYA rgm_rp_hya cdm_rp_hya vdd vdd PMOS L={{LCH}} W={{WRESTP}}
+MNRP_CDM_HYA rgm_rp_hya cdm_rp_hya 0 0 NMOS L={{LCH}} W={{WRESTN}}
+
+{''.join(hybrid_activation_devices)}
+
+.control
+set noaskquit
+tran 5n 3.4u uic
+wrdata mos_hidden_writer_restored_gate_hybrid_activation.dat {' '.join(hybrid_activation_prints)} v(pbwd) v(paccn_hya)
+quit
+.endc
+.end
+"""
+    hybrid_activation_data = run_ngspice(
+        hybrid_activation_deck,
+        "mos_hidden_writer_restored_gate_hybrid_activation",
+    )
+    hyatime, hya_cols = load_wrdata(hybrid_activation_data, len(hybrid_activation_prints) + 2)
+
+    def hyaat(time_s: float, values: np.ndarray) -> float:
+        return float(values[np.argmin(np.abs(hyatime - time_s))])
+
+    hya_hidden = hya_cols[0] - hya_cols[1]
+    hya_selected_gate = hya_cols[2]
+    hya_complement_gate = hya_cols[3]
+    hya_selected_step = []
+    hya_complement_step = []
+    hya_net = []
+    for idx, (_name, _label, _hgate) in enumerate(hybrid_activation_cases):
+        wp = hya_cols[4 + 2 * idx]
+        wm = hya_cols[5 + 2 * idx]
+        hya_selected_step.append(hyaat(2.85e-6, wp) - hyaat(1.45e-6, wp))
+        hya_complement_step.append(hyaat(2.85e-6, wm) - hyaat(1.45e-6, wm))
+        hya_net.append(hyaat(2.85e-6, wp - wm))
+    hya_selected_step = np.array(hya_selected_step)
+    hya_complement_step = np.array(hya_complement_step)
+    hya_net = np.array(hya_net)
+    require(hyaat(1.35e-6, hya_hidden) > 0.07, "hybrid activation deck should store a positive hidden error")
+    require(hyaat(1.45e-6, hya_selected_gate) < 0.30, "hybrid activation selected restored gate should be low")
+    require(hyaat(1.45e-6, hya_complement_gate) > 1.60, "hybrid activation complement restored gate should be high")
+    require(np.all(hya_net > 0.004), "hybrid activation sweep should preserve positive signed writes")
+    require(np.all(hya_net < 0.090), "hybrid activation sweep should keep writes incremental")
+    require(np.all(hya_complement_step < 5e-4), "hybrid activation sweep should keep complement rail suppressed")
+    require(np.all(np.diff(hya_net) < -0.001), "hybrid activation write should weaken as active-low activation gate rises")
+    require(hya_net[0] > 1.6 * hya_net[-1], "hybrid activation gate should provide useful gain range")
+
+    hya_fig, hya_axes = plt.subplots(2, 1, figsize=(7.2, 5.8))
+    hya_gates = np.array([hgate for _name, _label, hgate in hybrid_activation_cases])
+    hya_axes[0].plot(1e6 * hyatime, hya_hidden, label="stored $r^+$ hidden error")
+    hya_axes[0].plot(1e6 * hyatime, hya_selected_gate, label="selected restored gate")
+    hya_axes[0].plot(1e6 * hyatime, hya_complement_gate, label="complement restored gate")
+    hya_axes[0].plot(1e6 * hyatime, hya_cols[-1] / 20.0, color="0.5", alpha=0.35, label="$pbwd/20$")
+    hya_axes[0].axhline(0.9, color="0.4", linewidth=0.8, alpha=0.5)
+    hya_axes[0].set_ylabel("voltage (V)")
+    hya_axes[0].set_title("Hybrid activation sweep reuses one stored hidden-error rail")
+    hya_axes[0].grid(True, alpha=0.25)
+    hya_axes[0].legend(loc="center right", fontsize="small")
+    hya_axes[1].plot(hya_gates, hya_selected_step, "o-", label="selected rail step")
+    hya_axes[1].plot(hya_gates, hya_complement_step, "s--", label="complement rail step")
+    hya_axes[1].plot(hya_gates, hya_net, "^-", label="$W^+ - W^-$")
+    hya_axes[1].axhline(0, color="0.4", linewidth=0.8)
+    hya_axes[1].set_xlabel("active-low activation PMOS gate $h^-$ (V)")
+    hya_axes[1].set_ylabel("writer step (V)")
+    hya_axes[1].set_title("Hybrid write gain follows the activation-side analog gate")
+    hya_axes[1].grid(True, alpha=0.25)
+    hya_axes[1].legend(loc="upper right")
+    hya_fig.tight_layout()
+    save_plot(hya_fig, "mos_hidden_writer_restored_gate_hybrid_activation_ngspice")
+
     return hidden_writer_plot
 
 

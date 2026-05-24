@@ -4061,6 +4061,245 @@ quit
     hybrid_fig.tight_layout()
     save_plot(hybrid_fig, "mos_hidden_writer_restored_gate_hybrid_ngspice")
 
+    hybrid_mismatch_eps = 0.10
+    hybrid_mismatch_cases = [
+        ("nominal", 0.55, -0.55, 0.55, -0.55, -0.55),
+        ("selected weak", 0.60, -0.55, 0.55, -0.55, -0.55),
+        ("comp strong", 0.55, -0.55, 0.50, -0.55, -0.55),
+        ("writer weak", 0.55, -0.55, 0.55, -0.55, -0.60),
+        ("writer strong", 0.55, -0.55, 0.55, -0.55, -0.50),
+        ("combined", 0.60, -0.55, 0.50, -0.55, -0.60),
+    ]
+    hybrid_mismatch_models = []
+    hybrid_mismatch_devices = []
+    hybrid_mismatch_prints = []
+    for idx, (_label, nsel, psel, ncomp, pcomp, pwrite) in enumerate(hybrid_mismatch_cases):
+        hybrid_mismatch_models.append(
+            f"""
+.model NRSEL_HYM{idx} NMOS (LEVEL=1 VTO={nsel:.2f} KP=220u LAMBDA=0.03)
+.model PRSEL_HYM{idx} PMOS (LEVEL=1 VTO={psel:.2f} KP=90u LAMBDA=0.03)
+.model NRCOMP_HYM{idx} NMOS (LEVEL=1 VTO={ncomp:.2f} KP=220u LAMBDA=0.03)
+.model PRCOMP_HYM{idx} PMOS (LEVEL=1 VTO={pcomp:.2f} KP=90u LAMBDA=0.03)
+.model PWRITE_HYM{idx} PMOS (LEVEL=1 VTO={pwrite:.2f} KP=90u LAMBDA=0.03)
+"""
+        )
+        hybrid_mismatch_devices.append(
+            f"""
+* Hybrid mismatch copy: {_label}.
+VZPP_HYM{idx} zpp_hym{idx} 0 {0.9 + hybrid_mismatch_eps / 2.0:.5f}
+VZMM_HYM{idx} zmm_hym{idx} 0 {0.9 - hybrid_mismatch_eps / 2.0:.5f}
+VZPM_HYM{idx} zpm_hym{idx} 0 {0.9 - hybrid_mismatch_eps / 2.0:.5f}
+VZMP_HYM{idx} zmp_hym{idx} 0 {0.9 + hybrid_mismatch_eps / 2.0:.5f}
+
+MPPP_HYM{idx} hpp_hym{idx} hpp_hym{idx} vdd vdd PMOS L={{LCH}} W={{WP}}
+MPPM_HYM{idx} hpm_hym{idx} hpm_hym{idx} vdd vdd PMOS L={{LCH}} W={{WP}}
+MNPP_HYM{idx} hpp_hym{idx} zpp_hym{idx} tailp_hym{idx} 0 NMOS L={{LCH}} W={{WN}}
+MNPM_HYM{idx} hpm_hym{idx} zmm_hym{idx} tailp_hym{idx} 0 NMOS L={{LCH}} W={{WN}}
+MNTP_HYM{idx} tailp_hym{idx} vbias 0 0 NMOS L={{LCH}} W={{WN}}
+
+MPMP_HYM{idx} hmp_hym{idx} hmp_hym{idx} vdd vdd PMOS L={{LCH}} W={{WP}}
+MPMM_HYM{idx} hmm_hym{idx} hmm_hym{idx} vdd vdd PMOS L={{LCH}} W={{WP}}
+MNMP_HYM{idx} hmp_hym{idx} zpm_hym{idx} tailm_hym{idx} 0 NMOS L={{LCH}} W={{WN}}
+MNMM_HYM{idx} hmm_hym{idx} zmp_hym{idx} tailm_hym{idx} 0 NMOS L={{LCH}} W={{WN}}
+MNTM_HYM{idx} tailm_hym{idx} vbias 0 0 NMOS L={{LCH}} W={{WN}}
+
+CDP_RP_HYM{idx} cdp_rp_hym{idx} 0 {{CERR}} IC=1.04
+CDM_RP_HYM{idx} cdm_rp_hym{idx} 0 {{CERR}} IC=1.04
+CDP_RM_HYM{idx} cdp_rm_hym{idx} 0 {{CERR}} IC=1.04
+CDM_RM_HYM{idx} cdm_rm_hym{idx} 0 {{CERR}} IC=1.04
+RDP_RP_HYM{idx} cdp_rp_hym{idx} 0 50G
+RDM_RP_HYM{idx} cdm_rp_hym{idx} 0 50G
+RDP_RM_HYM{idx} cdp_rm_hym{idx} 0 50G
+RDM_RM_HYM{idx} cdm_rm_hym{idx} 0 50G
+{sign_store_path(f"hpm_hym{idx}", "rp", f"cdp_rp_hym{idx}", f"hymrp1_{idx}")}
+{sign_store_path(f"hmp_hym{idx}", "rp", f"cdp_rp_hym{idx}", f"hymrp2_{idx}")}
+{sign_store_path(f"hpp_hym{idx}", "rp", f"cdm_rp_hym{idx}", f"hymrp3_{idx}")}
+{sign_store_path(f"hmm_hym{idx}", "rp", f"cdm_rp_hym{idx}", f"hymrp4_{idx}")}
+{sign_store_path(f"hpp_hym{idx}", "rm", f"cdp_rm_hym{idx}", f"hymrm1_{idx}")}
+{sign_store_path(f"hmm_hym{idx}", "rm", f"cdp_rm_hym{idx}", f"hymrm2_{idx}")}
+{sign_store_path(f"hpm_hym{idx}", "rm", f"cdm_rm_hym{idx}", f"hymrm3_{idx}")}
+{sign_store_path(f"hmp_hym{idx}", "rm", f"cdm_rm_hym{idx}", f"hymrm4_{idx}")}
+
+MPRP_CDP_HYM{idx} rgp_rp_hym{idx} cdp_rp_hym{idx} vdd vdd PRSEL_HYM{idx} L={{LCH}} W={{WRESTP}}
+MNRP_CDP_HYM{idx} rgp_rp_hym{idx} cdp_rp_hym{idx} 0 0 NRSEL_HYM{idx} L={{LCH}} W={{WRESTN}}
+MPRP_CDM_HYM{idx} rgm_rp_hym{idx} cdm_rp_hym{idx} vdd vdd PRCOMP_HYM{idx} L={{LCH}} W={{WRESTP}}
+MNRP_CDM_HYM{idx} rgm_rp_hym{idx} cdm_rp_hym{idx} 0 0 NRCOMP_HYM{idx} L={{LCH}} W={{WRESTN}}
+
+MPRM_CDP_HYM{idx} rgp_rm_hym{idx} cdp_rm_hym{idx} vdd vdd PRCOMP_HYM{idx} L={{LCH}} W={{WRESTP}}
+MNRM_CDP_HYM{idx} rgp_rm_hym{idx} cdp_rm_hym{idx} 0 0 NRCOMP_HYM{idx} L={{LCH}} W={{WRESTN}}
+MPRM_CDM_HYM{idx} rgm_rm_hym{idx} cdm_rm_hym{idx} vdd vdd PRSEL_HYM{idx} L={{LCH}} W={{WRESTP}}
+MNRM_CDM_HYM{idx} rgm_rm_hym{idx} cdm_rm_hym{idx} 0 0 NRSEL_HYM{idx} L={{LCH}} W={{WRESTN}}
+
+CWP_RP_HYM{idx} wp_rp_hym{idx} 0 {{CWRITE}} IC=0.85
+CWM_RP_HYM{idx} wm_rp_hym{idx} 0 {{CWRITE}} IC=0.85
+MWP_RP_HYM{idx}A vdd paccn n_wp_rp_hym{idx}_a vdd PWRITE_HYM{idx} L={{LCH}} W={{WWRITE}}
+MWP_RP_HYM{idx}B n_wp_rp_hym{idx}_a hm_pos n_wp_rp_hym{idx}_b vdd PWRITE_HYM{idx} L={{LCH}} W={{WWRITE}}
+MWP_RP_HYM{idx}C n_wp_rp_hym{idx}_b rgp_rp_hym{idx} n_wp_rp_hym{idx}_c vdd PWRITE_HYM{idx} L={{LCH}} W={{WWRITE}}
+MWP_RP_HYM{idx}D n_wp_rp_hym{idx}_c cdm_rp_hym{idx} wp_rp_hym{idx} vdd PWRITE_HYM{idx} L={{LCH}} W={{WWRITE}}
+MWM_RP_HYM{idx}A vdd paccn n_wm_rp_hym{idx}_a vdd PWRITE_HYM{idx} L={{LCH}} W={{WWRITE}}
+MWM_RP_HYM{idx}B n_wm_rp_hym{idx}_a hm_pos n_wm_rp_hym{idx}_b vdd PWRITE_HYM{idx} L={{LCH}} W={{WWRITE}}
+MWM_RP_HYM{idx}C n_wm_rp_hym{idx}_b rgm_rp_hym{idx} n_wm_rp_hym{idx}_c vdd PWRITE_HYM{idx} L={{LCH}} W={{WWRITE}}
+MWM_RP_HYM{idx}D n_wm_rp_hym{idx}_c cdp_rp_hym{idx} wm_rp_hym{idx} vdd PWRITE_HYM{idx} L={{LCH}} W={{WWRITE}}
+
+CWP_RM_HYM{idx} wp_rm_hym{idx} 0 {{CWRITE}} IC=0.85
+CWM_RM_HYM{idx} wm_rm_hym{idx} 0 {{CWRITE}} IC=0.85
+MWP_RM_HYM{idx}A vdd paccn n_wp_rm_hym{idx}_a vdd PWRITE_HYM{idx} L={{LCH}} W={{WWRITE}}
+MWP_RM_HYM{idx}B n_wp_rm_hym{idx}_a hm_pos n_wp_rm_hym{idx}_b vdd PWRITE_HYM{idx} L={{LCH}} W={{WWRITE}}
+MWP_RM_HYM{idx}C n_wp_rm_hym{idx}_b rgp_rm_hym{idx} n_wp_rm_hym{idx}_c vdd PWRITE_HYM{idx} L={{LCH}} W={{WWRITE}}
+MWP_RM_HYM{idx}D n_wp_rm_hym{idx}_c cdm_rm_hym{idx} wp_rm_hym{idx} vdd PWRITE_HYM{idx} L={{LCH}} W={{WWRITE}}
+MWM_RM_HYM{idx}A vdd paccn n_wm_rm_hym{idx}_a vdd PWRITE_HYM{idx} L={{LCH}} W={{WWRITE}}
+MWM_RM_HYM{idx}B n_wm_rm_hym{idx}_a hm_pos n_wm_rm_hym{idx}_b vdd PWRITE_HYM{idx} L={{LCH}} W={{WWRITE}}
+MWM_RM_HYM{idx}C n_wm_rm_hym{idx}_b rgm_rm_hym{idx} n_wm_rm_hym{idx}_c vdd PWRITE_HYM{idx} L={{LCH}} W={{WWRITE}}
+MWM_RM_HYM{idx}D n_wm_rm_hym{idx}_c cdp_rm_hym{idx} wm_rm_hym{idx} vdd PWRITE_HYM{idx} L={{LCH}} W={{WWRITE}}
+"""
+        )
+        hybrid_mismatch_prints.extend(
+            [
+                f"v(cdp_rp_hym{idx})",
+                f"v(cdm_rp_hym{idx})",
+                f"v(cdp_rm_hym{idx})",
+                f"v(cdm_rm_hym{idx})",
+                f"v(rgp_rp_hym{idx})",
+                f"v(rgm_rp_hym{idx})",
+                f"v(rgp_rm_hym{idx})",
+                f"v(rgm_rm_hym{idx})",
+                f"v(wp_rp_hym{idx})",
+                f"v(wm_rp_hym{idx})",
+                f"v(wp_rm_hym{idx})",
+                f"v(wm_rm_hym{idx})",
+            ]
+        )
+
+    hybrid_mismatch_deck = f"""
+* Hybrid restored-enable/analog-error threshold-corner characterization.
+* The hidden-error swing is fixed at a useful value.  The deck perturbs
+* restorer trip points and writer PMOS thresholds to test whether the hybrid
+* writer keeps sign, symmetry, and complement suppression.
+{COMMON_MODELS}
+{''.join(hybrid_mismatch_models)}
+.param CERR=10p CWRITE=500p WSW=24u WWRITE=24u WRESTN=18u WRESTP=300u
+VDD vdd 0 1.8
+VTAIL vbias 0 0.95
+VPBWD pbwd 0 PULSE(0 1.8 0.45u 20n 20n 0.80u 5.0u)
+VRP rp 0 PULSE(0 1.8 0.45u 20n 20n 0.80u 5.0u)
+VRM rm 0 PULSE(0 1.8 0.45u 20n 20n 0.80u 5.0u)
+VPACC_N paccn 0 PULSE(1.8 0 1.55u 20n 20n 0.80u 5.0u)
+VHM_POS hm_pos 0 0.92
+{''.join(hybrid_mismatch_devices)}
+
+.control
+set noaskquit
+tran 5n 3.4u uic
+wrdata mos_hidden_writer_restored_gate_hybrid_mismatch.dat {' '.join(hybrid_mismatch_prints)} v(pbwd) v(paccn)
+quit
+.endc
+.end
+"""
+    hybrid_mismatch_data = run_ngspice(
+        hybrid_mismatch_deck,
+        "mos_hidden_writer_restored_gate_hybrid_mismatch",
+    )
+    hymt, hym_cols = load_wrdata(hybrid_mismatch_data, len(hybrid_mismatch_prints) + 2)
+
+    def hymat(time_s: float, values: np.ndarray) -> float:
+        return float(values[np.argmin(np.abs(hymt - time_s))])
+
+    hym_hidden = []
+    hym_selected_gate = []
+    hym_complement_gate = []
+    hym_selected_step = []
+    hym_complement_step = []
+    hym_pos_net = []
+    hym_neg_net = []
+    for idx, (label, *_rest) in enumerate(hybrid_mismatch_cases):
+        base = 12 * idx
+        cdp_rp = hym_cols[base]
+        cdm_rp = hym_cols[base + 1]
+        cdp_rm = hym_cols[base + 2]
+        cdm_rm = hym_cols[base + 3]
+        rgp_rp = hym_cols[base + 4]
+        rgm_rp = hym_cols[base + 5]
+        rgp_rm = hym_cols[base + 6]
+        rgm_rm = hym_cols[base + 7]
+        wp_rp = hym_cols[base + 8]
+        wm_rp = hym_cols[base + 9]
+        wp_rm = hym_cols[base + 10]
+        wm_rm = hym_cols[base + 11]
+        hidden = hymat(1.35e-6, cdp_rp - cdm_rp)
+        hidden_neg = hymat(1.35e-6, cdp_rm - cdm_rm)
+        selected_gate = 0.5 * (hymat(1.45e-6, rgp_rp) + hymat(1.45e-6, rgm_rm))
+        complement_gate = 0.5 * (hymat(1.45e-6, rgm_rp) + hymat(1.45e-6, rgp_rm))
+        selected_step = 0.5 * (
+            hymat(2.75e-6, wp_rp) - hymat(1.45e-6, wp_rp)
+            + hymat(2.75e-6, wm_rm) - hymat(1.45e-6, wm_rm)
+        )
+        complement_step = 0.5 * (
+            hymat(2.75e-6, wm_rp) - hymat(1.45e-6, wm_rp)
+            + hymat(2.75e-6, wp_rm) - hymat(1.45e-6, wp_rm)
+        )
+        pos_net = hymat(2.75e-6, wp_rp - wm_rp)
+        neg_net = hymat(2.75e-6, wp_rm - wm_rm)
+        hym_hidden.append(hidden)
+        hym_selected_gate.append(selected_gate)
+        hym_complement_gate.append(complement_gate)
+        hym_selected_step.append(selected_step)
+        hym_complement_step.append(complement_step)
+        hym_pos_net.append(pos_net)
+        hym_neg_net.append(neg_net)
+        require(hidden > 0.07, f"{label} hybrid mismatch hidden-error store should be positive")
+        require(hidden_neg < -0.07, f"{label} hybrid mismatch hidden-error store should be negative")
+        require(abs(hidden + hidden_neg) < 0.003, f"{label} hybrid mismatch hidden-error stores should stay symmetric")
+        require(abs(pos_net + neg_net) < 0.003, f"{label} hybrid mismatch writes should stay symmetric")
+        require(
+            abs(hymat(3.25e-6, wp_rp - wm_rp) - pos_net) < 5e-4,
+            f"{label} hybrid mismatch r+ write should hold",
+        )
+        require(
+            abs(hymat(3.25e-6, wp_rm - wm_rm) - neg_net) < 5e-4,
+            f"{label} hybrid mismatch r- write should hold",
+        )
+
+    hym_hidden = np.array(hym_hidden)
+    hym_selected_gate = np.array(hym_selected_gate)
+    hym_complement_gate = np.array(hym_complement_gate)
+    hym_selected_step = np.array(hym_selected_step)
+    hym_complement_step = np.array(hym_complement_step)
+    hym_pos_net = np.array(hym_pos_net)
+    hym_neg_net = np.array(hym_neg_net)
+    require(np.all(hym_complement_gate > 1.45), "hybrid mismatch complement restored gates should stay high")
+    require(np.all(hym_complement_step < 5e-4), "hybrid mismatch complement rails should stay suppressed")
+    require(np.all(hym_pos_net > 0.020), "hybrid mismatch r+ net writes should remain useful")
+    require(np.all(hym_neg_net < -0.020), "hybrid mismatch r- net writes should remain useful")
+    require(np.all(hym_pos_net < 0.090), "hybrid mismatch writes should stay incremental")
+    require(hym_pos_net[3] < hym_pos_net[0], "weak writer PMOS should reduce update gain")
+    require(hym_pos_net[4] > hym_pos_net[0], "strong writer PMOS should increase update gain")
+
+    hym_fig, hym_axes = plt.subplots(2, 1, figsize=(7.2, 5.8))
+    hym_x = np.arange(len(hybrid_mismatch_cases))
+    hym_labels = [label for label, *_rest in hybrid_mismatch_cases]
+    hym_axes[0].plot(hym_x, hym_selected_gate, "o-", label="selected restored gate")
+    hym_axes[0].plot(hym_x, hym_complement_gate, "s--", label="complement restored gate")
+    hym_axes[0].axhline(0.9, color="0.4", linewidth=0.8, alpha=0.5)
+    hym_axes[0].set_xticks(hym_x)
+    hym_axes[0].set_xticklabels(hym_labels, rotation=15, ha="right")
+    hym_axes[0].set_ylabel("gate voltage (V)")
+    hym_axes[0].set_title("Hybrid restored gates keep selectivity across threshold corners")
+    hym_axes[0].grid(True, alpha=0.25)
+    hym_axes[0].legend(loc="center right")
+    hym_axes[1].plot(hym_x, hym_selected_step, "o-", label="selected rail step")
+    hym_axes[1].plot(hym_x, hym_complement_step, "s--", label="complement rail step")
+    hym_axes[1].plot(hym_x, hym_pos_net, "^-", label="$r^+$ net")
+    hym_axes[1].plot(hym_x, -hym_neg_net, "v:", label="$r^-$ net magnitude")
+    hym_axes[1].axhline(0, color="0.4", linewidth=0.8)
+    hym_axes[1].set_xticks(hym_x)
+    hym_axes[1].set_xticklabels(hym_labels, rotation=15, ha="right")
+    hym_axes[1].set_ylabel("writer step (V)")
+    hym_axes[1].set_title("Hybrid mismatch changes gain but preserves sign and complement suppression")
+    hym_axes[1].grid(True, alpha=0.25)
+    hym_axes[1].legend(loc="upper right", ncol=2)
+    hym_fig.tight_layout()
+    save_plot(hym_fig, "mos_hidden_writer_restored_gate_hybrid_mismatch_ngspice")
+
     return hidden_writer_plot
 
 

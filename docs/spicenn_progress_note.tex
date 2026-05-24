@@ -1047,6 +1047,24 @@ must satisfy before it can replace the current behavioral prototype.
 
 \begin{figure}[H]
   \centering
+  \includegraphics[width=0.88\linewidth]{figures/mos_hidden_writer_restored_gate_hybrid_mismatch_ngspice.png}
+  \caption{Ngspice threshold-corner characterization of the hybrid restored
+  writer at a fixed \(\epsilon=100\) mV hidden-error nudge.  Selected-restorer
+  and complement-restorer threshold shifts leave the selected gate near
+  \(0.20\)--\(0.23\) V and the complement gate above \(1.71\) V, so the
+  complement rail remains suppressed at the nV scale.  Writer PMOS threshold
+  corners mainly change update gain: the signed step is about \(37.4\) mV in
+  the weak-writer corner, \(55.1\) mV nominally, and \(75.7\) mV in the
+  strong-writer corner.  The combined selected-weak, complement-strong,
+  writer-weak corner still writes the correct sign at about \(37.3\) mV.  This
+  supports the hybrid topology as the current best MOS writer candidate; the
+  next robustness gap is dynamic noise and phase-overlap sensitivity rather
+  than static threshold sign failure.}
+  \label{fig:mos-hidden-writer-restored-gate-hybrid-mismatch-ngspice}
+\end{figure}
+
+\begin{figure}[H]
+  \centering
   \includegraphics[width=0.88\linewidth]{figures/mos_reset_precharge_ngspice.png}
   \caption{Ngspice transient characterization of MOS reset/precharge for
   reusable state capacitors.  A complementary MOS transmission-gate reset first

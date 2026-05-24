@@ -622,6 +622,69 @@ quit
 .endc
 .end
 """
+    cycle_deck = f"""
+* Two-cycle synapse-to-forward-store reuse sanity check.
+* Reset clears the same preactivation and activation capacitors between two
+* chained samples.  The first sample writes a positive synapse contribution;
+* the second sample writes a negative contribution through the gate-swapped
+* synapse copy.
+{COMMON_MODELS}
+.param CSUM=500p CSTORE=10p WTAIL=2u WSW=24u WRESETN=24u WRESETP=60u
+VDD vdd 0 1.8
+VZCM zcm 0 0.9
+VHCM hcm_ref 0 1.04
+VXP xp 0 1.15
+VXM xm 0 0.65
+VTAIL vbias 0 0.95
+VRST rst 0 PWL(0 0 0.10u 0 0.12u 1.8 0.45u 1.8 0.47u 0 2.20u 0 2.22u 1.8 2.55u 1.8 2.57u 0 5u 0)
+VRSTN rstn 0 PWL(0 1.8 0.10u 1.8 0.12u 0 0.45u 0 0.47u 1.8 2.20u 1.8 2.22u 0 2.55u 0 2.57u 1.8 5u 1.8)
+VWP wpulse 0 PWL(0 0 0.60u 0 0.62u 1.15 1.20u 1.15 1.22u 0 5u 0)
+VWN wnpulse 0 PWL(0 0 2.80u 0 2.82u 1.15 3.40u 1.15 3.42u 0 5u 0)
+VPACT pact 0 PWL(0 0 1.35u 0 1.37u 1.8 1.95u 1.8 1.97u 0 3.55u 0 3.57u 1.8 4.15u 1.8 4.17u 0 5u 0)
+
+CZP zp 0 {{CSUM}} IC=0.9
+CZM zm 0 {{CSUM}} IC=0.9
+RZP zp 0 100G
+RZM zm 0 100G
+MRZPN zp rst zcm 0 NMOS L={{LCH}} W={{WRESETN}}
+MRZMN zm rst zcm 0 NMOS L={{LCH}} W={{WRESETN}}
+MRZPP zp rstn zcm vdd PMOS L={{LCH}} W={{WRESETP}}
+MRZMP zm rstn zcm vdd PMOS L={{LCH}} W={{WRESETP}}
+
+* Positive and negative signed synapse slices reuse the same summing caps.
+MPP zp xp tailp 0 NMOS L={{LCH}} W={{WN}}
+MPM zm xm tailp 0 NMOS L={{LCH}} W={{WN}}
+MTP tailp wpulse 0 0 NMOS L={{LCH}} W={{WTAIL}}
+MNP zp xm tailn 0 NMOS L={{LCH}} W={{WN}}
+MNM zm xp tailn 0 NMOS L={{LCH}} W={{WN}}
+MTN tailn wnpulse 0 0 NMOS L={{LCH}} W={{WTAIL}}
+
+* Crossed forward pair reads voltage-coded z- - z+ contribution.
+MPFP hp hp vdd vdd PMOS L={{LCH}} W={{WP}}
+MPFM hm hm vdd vdd PMOS L={{LCH}} W={{WP}}
+MNFP hp zm ftail 0 NMOS L={{LCH}} W={{WN}}
+MNFM hm zp ftail 0 NMOS L={{LCH}} W={{WN}}
+MNFT ftail vbias 0 0 NMOS L={{LCH}} W={{WN}}
+
+CHP hcp 0 {{CSTORE}} IC=1.04
+CHM hcm 0 {{CSTORE}} IC=1.04
+RHP hcp 0 50G
+RHM hcm 0 50G
+MRHPN hcp rst hcm_ref 0 NMOS L={{LCH}} W={{WRESETN}}
+MRHMN hcm rst hcm_ref 0 NMOS L={{LCH}} W={{WRESETN}}
+MRHPP hcp rstn hcm_ref vdd PMOS L={{LCH}} W={{WRESETP}}
+MRHMP hcm rstn hcm_ref vdd PMOS L={{LCH}} W={{WRESETP}}
+MSP hp pact hcp 0 NMOS L={{LCH}} W={{WSW}}
+MSM hm pact hcm 0 NMOS L={{LCH}} W={{WSW}}
+
+.control
+set noaskquit
+tran 5n 4.8u uic
+wrdata mos_synapse_forward_cycle.dat v(zp) v(zm) v(hp) v(hm) v(hcp) v(hcm) v(rst) v(wpulse) v(wnpulse) v(pact)
+quit
+.endc
+.end
+"""
     data = run_ngspice(deck, "mos_synapse_forward_chain")
     t, cols = load_wrdata(data, 14)
     pos_preact = cols[1] - cols[0]
@@ -642,6 +705,23 @@ quit
     require(at(1.95e-6, neg_store) < -0.05, "pact should store negative chained activation")
     require(at(2.80e-6, pos_store) > 0.05, "positive chained activation should hold after pact")
     require(at(2.80e-6, neg_store) < -0.05, "negative chained activation should hold after pact")
+
+    cycle_data = run_ngspice(cycle_deck, "mos_synapse_forward_cycle")
+    ct, cycle_cols = load_wrdata(cycle_data, 10)
+    cycle_preact = cycle_cols[1] - cycle_cols[0]
+    cycle_load = cycle_cols[3] - cycle_cols[2]
+    cycle_store = cycle_cols[5] - cycle_cols[4]
+
+    def cycle_at(time_s: float, values: np.ndarray) -> float:
+        return float(values[np.argmin(np.abs(ct - time_s))])
+
+    require(cycle_at(1.25e-6, cycle_preact) > 0.08, "first cycle should write positive preactivation")
+    require(cycle_at(1.90e-6, cycle_store) > 0.05, "first cycle should store positive activation")
+    require(abs(cycle_at(2.55e-6, cycle_preact)) < 0.02, "mid-cycle reset should clear preactivation")
+    require(abs(cycle_at(2.55e-6, cycle_store)) < 0.02, "mid-cycle reset should clear stored activation")
+    require(cycle_at(3.45e-6, cycle_preact) < -0.075, "second cycle should write negative preactivation")
+    require(cycle_at(4.10e-6, cycle_store) < -0.05, "second cycle should store negative activation")
+    require(cycle_at(4.60e-6, cycle_store) < -0.05, "second-cycle stored activation should hold")
 
     fig, axes = plt.subplots(3, 1, figsize=(7.2, 7.2), sharex=True)
     axes[0].plot(1e6 * t, pos_preact, label="$w^+$ stored $z^- - z^+$")
@@ -669,7 +749,36 @@ quit
     axes[2].grid(True, alpha=0.25)
     axes[2].legend(loc="upper right")
     fig.tight_layout()
-    return save_plot(fig, "mos_synapse_forward_chain_ngspice")
+    chain_plot = save_plot(fig, "mos_synapse_forward_chain_ngspice")
+
+    cycle_fig, cycle_axes = plt.subplots(3, 1, figsize=(7.2, 7.2), sharex=True)
+    cycle_axes[0].plot(1e6 * ct, cycle_preact, label="stored $z^- - z^+$")
+    cycle_axes[0].plot(1e6 * ct, cycle_cols[6] / 12.0, color="0.4", alpha=0.35, label="$reset/12$")
+    cycle_axes[0].plot(1e6 * ct, cycle_cols[7] / 10.0, color="0.5", alpha=0.35, label="$w^+/10$")
+    cycle_axes[0].plot(1e6 * ct, -cycle_cols[8] / 10.0, color="0.25", alpha=0.25, label="$-w^-/10$")
+    cycle_axes[0].axhline(0, color="0.4", linewidth=0.8)
+    cycle_axes[0].set_ylabel("preactivation (V)")
+    cycle_axes[0].set_title("Reset lets the same summing caps accept opposite-signed samples")
+    cycle_axes[0].grid(True, alpha=0.25)
+    cycle_axes[0].legend(loc="upper right", ncol=2)
+    cycle_axes[1].plot(1e6 * ct, cycle_load, label="forward load $h^- - h^+$")
+    cycle_axes[1].axhline(0, color="0.4", linewidth=0.8)
+    cycle_axes[1].set_ylabel("load output (V)")
+    cycle_axes[1].set_title("Forward pair follows the reset-and-rewritten preactivation")
+    cycle_axes[1].grid(True, alpha=0.25)
+    cycle_axes[1].legend(loc="upper right")
+    cycle_axes[2].plot(1e6 * ct, cycle_store, label="stored activation")
+    cycle_axes[2].plot(1e6 * ct, cycle_cols[9] / 8.0, color="0.5", alpha=0.35, label="$pact/8$")
+    cycle_axes[2].plot(1e6 * ct, cycle_cols[6] / 12.0, color="0.4", alpha=0.25, label="$reset/12$")
+    cycle_axes[2].axhline(0, color="0.4", linewidth=0.8)
+    cycle_axes[2].set_xlabel("time (us)")
+    cycle_axes[2].set_ylabel("stored activation (V)")
+    cycle_axes[2].set_title("Activation cap is reset before storing the opposite sign")
+    cycle_axes[2].grid(True, alpha=0.25)
+    cycle_axes[2].legend(loc="upper right", ncol=2)
+    cycle_fig.tight_layout()
+    save_plot(cycle_fig, "mos_synapse_forward_cycle_ngspice")
+    return chain_plot
 
 
 def characterize_hidden_error() -> Path:

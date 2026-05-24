@@ -682,6 +682,20 @@ must satisfy before it can replace the current behavioral prototype.
 
 \begin{figure}[H]
   \centering
+  \includegraphics[width=0.88\linewidth]{figures/mos_synapse_forward_cycle_ngspice.png}
+  \caption{Ngspice two-cycle reuse characterization for the same synapse and
+  forward-store path.  A first sample writes a positive preactivation and
+  stores a positive activation.  A complementary reset then clears both the
+  summing capacitors and the activation capacitors without Python forcing those
+  nodes.  The same physical capacitors are then reused for a gate-swapped
+  negative-weight sample, and \(pact\) stores the opposite activation sign.
+  This checks the per-sample reset/write/store boundary that the isolated reset
+  and one-shot chain plots do not cover by themselves.}
+  \label{fig:mos-synapse-forward-cycle-ngspice}
+\end{figure}
+
+\begin{figure}[H]
+  \centering
   \includegraphics[width=0.88\linewidth]{figures/mos_hidden_error_ngspice.png}
   \caption{Ngspice characterization of the hidden-error path.  The top panel
   uses two matched diode-loaded MOS forward replicas nudged by \(+10\) mV and

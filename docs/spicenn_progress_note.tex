@@ -1065,6 +1065,25 @@ must satisfy before it can replace the current behavioral prototype.
 
 \begin{figure}[H]
   \centering
+  \includegraphics[width=0.88\linewidth]{figures/mos_hidden_writer_restored_gate_hybrid_timing_ngspice.png}
+  \caption{Ngspice phase-overlap characterization of the hybrid restored-enable
+  plus analog-error writer.  A single MOS hidden-error store creates about
+  \(98.5\) mV of \(r^+\) differential error, the restored select gates settle
+  to about \(0.196\) V selected and \(1.731\) V complementary, and six matched
+  writer copies sweep the active-low \(pacc\) window.  A true pre-store write
+  pulse is quiet, with only a \(6\) nV signed residue.  A pulse that overlaps
+  the start of backward storage by about \(50\) ns creates a small stray
+  \(2.3\) mV write, roughly \(8.6\%\) of the full update.  Pulses beginning at
+  the storage edge or later converge to the full \(26.4\)--\(27.0\) mV signed
+  write while the complement rail stays at the nV scale.  The sequencing rule
+  for this Level-1 writer is therefore concrete: keep \(pacc\) out of the
+  pre-store interval, but it can begin at or after the hidden-error storage edge
+  once the restored gates have settled.}
+  \label{fig:mos-hidden-writer-restored-gate-hybrid-timing-ngspice}
+\end{figure}
+
+\begin{figure}[H]
+  \centering
   \includegraphics[width=0.88\linewidth]{figures/mos_reset_precharge_ngspice.png}
   \caption{Ngspice transient characterization of MOS reset/precharge for
   reusable state capacitors.  A complementary MOS transmission-gate reset first

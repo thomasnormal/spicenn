@@ -4300,6 +4300,143 @@ quit
     hym_fig.tight_layout()
     save_plot(hym_fig, "mos_hidden_writer_restored_gate_hybrid_mismatch_ngspice")
 
+    hybrid_timing_cases = [
+        ("pre", "pre-quiet", 0.10, 0.40),
+        ("early", "early overlap", 0.10, 0.50),
+        ("edge", "store edge", 0.46, 0.86),
+        ("overlap", "overlap", 0.80, 1.20),
+        ("late", "late overlap", 1.10, 1.50),
+        ("gap", "settled gap", 1.55, 1.95),
+    ]
+    hybrid_timing_devices = []
+    hybrid_timing_prints = ["v(cdp_rp_hyt)", "v(cdm_rp_hyt)", "v(rgp_rp_hyt)", "v(rgm_rp_hyt)"]
+    for name, _label, start_us, end_us in hybrid_timing_cases:
+        hybrid_timing_devices.append(
+            f"""
+VPACC_HYT_{name} paccn_hyt_{name} 0 PWL(0 1.8 {start_us:.2f}u 1.8 {start_us + 0.02:.2f}u 0 {end_us:.2f}u 0 {end_us + 0.02:.2f}u 1.8 3.2u 1.8)
+CWP_HYT_{name} wp_hyt_{name} 0 {{CWRITE}} IC=0.85
+CWM_HYT_{name} wm_hyt_{name} 0 {{CWRITE}} IC=0.85
+MWP_HYT_{name}A vdd paccn_hyt_{name} n_wp_hyt_{name}_a vdd PMOS L={{LCH}} W={{WWRITE}}
+MWP_HYT_{name}B n_wp_hyt_{name}_a hm_pos n_wp_hyt_{name}_b vdd PMOS L={{LCH}} W={{WWRITE}}
+MWP_HYT_{name}C n_wp_hyt_{name}_b rgp_rp_hyt n_wp_hyt_{name}_c vdd PMOS L={{LCH}} W={{WWRITE}}
+MWP_HYT_{name}D n_wp_hyt_{name}_c cdm_rp_hyt wp_hyt_{name} vdd PMOS L={{LCH}} W={{WWRITE}}
+MWM_HYT_{name}A vdd paccn_hyt_{name} n_wm_hyt_{name}_a vdd PMOS L={{LCH}} W={{WWRITE}}
+MWM_HYT_{name}B n_wm_hyt_{name}_a hm_pos n_wm_hyt_{name}_b vdd PMOS L={{LCH}} W={{WWRITE}}
+MWM_HYT_{name}C n_wm_hyt_{name}_b rgm_rp_hyt n_wm_hyt_{name}_c vdd PMOS L={{LCH}} W={{WWRITE}}
+MWM_HYT_{name}D n_wm_hyt_{name}_c cdp_rp_hyt wm_hyt_{name} vdd PMOS L={{LCH}} W={{WWRITE}}
+"""
+        )
+        hybrid_timing_prints.extend([f"v(wp_hyt_{name})", f"v(wm_hyt_{name})", f"v(paccn_hyt_{name})"])
+
+    hybrid_timing_deck = f"""
+* Hybrid restored-enable/analog-error writer phase-overlap characterization.
+* A single r+ hidden-error store drives restored select gates and analog
+* magnitude gates.  Independent writer copies sweep pacc timing from before
+* storage through a separated settled-write phase.
+{COMMON_MODELS}
+.param CERR=10p CWRITE=500p WSW=24u WWRITE=24u WRESTN=18u WRESTP=300u
+VDD vdd 0 1.8
+VTAIL vbias 0 0.95
+VPBWD pbwd 0 PULSE(0 1.8 0.45u 20n 20n 0.80u 5.0u)
+VRP rp 0 PULSE(0 1.8 0.45u 20n 20n 0.80u 5.0u)
+
+VZPP_HYT zpp_hyt 0 {0.9 + hybrid_mismatch_eps / 2.0:.5f}
+VZMM_HYT zmm_hyt 0 {0.9 - hybrid_mismatch_eps / 2.0:.5f}
+VZPM_HYT zpm_hyt 0 {0.9 - hybrid_mismatch_eps / 2.0:.5f}
+VZMP_HYT zmp_hyt 0 {0.9 + hybrid_mismatch_eps / 2.0:.5f}
+
+MPPP_HYT hpp_hyt hpp_hyt vdd vdd PMOS L={{LCH}} W={{WP}}
+MPPM_HYT hpm_hyt hpm_hyt vdd vdd PMOS L={{LCH}} W={{WP}}
+MNPP_HYT hpp_hyt zpp_hyt tailp_hyt 0 NMOS L={{LCH}} W={{WN}}
+MNPM_HYT hpm_hyt zmm_hyt tailp_hyt 0 NMOS L={{LCH}} W={{WN}}
+MNTP_HYT tailp_hyt vbias 0 0 NMOS L={{LCH}} W={{WN}}
+
+MPMP_HYT hmp_hyt hmp_hyt vdd vdd PMOS L={{LCH}} W={{WP}}
+MPMM_HYT hmm_hyt hmm_hyt vdd vdd PMOS L={{LCH}} W={{WP}}
+MNMP_HYT hmp_hyt zpm_hyt tailm_hyt 0 NMOS L={{LCH}} W={{WN}}
+MNMM_HYT hmm_hyt zmp_hyt tailm_hyt 0 NMOS L={{LCH}} W={{WN}}
+MNTM_HYT tailm_hyt vbias 0 0 NMOS L={{LCH}} W={{WN}}
+
+CDP_RP_HYT cdp_rp_hyt 0 {{CERR}} IC=1.04
+CDM_RP_HYT cdm_rp_hyt 0 {{CERR}} IC=1.04
+RDP_RP_HYT cdp_rp_hyt 0 50G
+RDM_RP_HYT cdm_rp_hyt 0 50G
+{sign_store_path("hpm_hyt", "rp", "cdp_rp_hyt", "hytrp1")}
+{sign_store_path("hmp_hyt", "rp", "cdp_rp_hyt", "hytrp2")}
+{sign_store_path("hpp_hyt", "rp", "cdm_rp_hyt", "hytrp3")}
+{sign_store_path("hmm_hyt", "rp", "cdm_rp_hyt", "hytrp4")}
+
+MPRP_CDP_HYT rgp_rp_hyt cdp_rp_hyt vdd vdd PMOS L={{LCH}} W={{WRESTP}}
+MNRP_CDP_HYT rgp_rp_hyt cdp_rp_hyt 0 0 NMOS L={{LCH}} W={{WRESTN}}
+MPRP_CDM_HYT rgm_rp_hyt cdm_rp_hyt vdd vdd PMOS L={{LCH}} W={{WRESTP}}
+MNRP_CDM_HYT rgm_rp_hyt cdm_rp_hyt 0 0 NMOS L={{LCH}} W={{WRESTN}}
+
+VHM_POS hm_pos 0 0.92
+{''.join(hybrid_timing_devices)}
+
+.control
+set noaskquit
+tran 5n 3.2u uic
+wrdata mos_hidden_writer_restored_gate_hybrid_timing.dat {' '.join(hybrid_timing_prints)} v(pbwd)
+quit
+.endc
+.end
+"""
+    hybrid_timing_data = run_ngspice(
+        hybrid_timing_deck,
+        "mos_hidden_writer_restored_gate_hybrid_timing",
+    )
+    hytt, hyt_cols = load_wrdata(hybrid_timing_data, len(hybrid_timing_prints) + 1)
+
+    def hytat(time_s: float, values: np.ndarray) -> float:
+        return float(values[np.argmin(np.abs(hytt - time_s))])
+
+    hyt_hidden = hyt_cols[0] - hyt_cols[1]
+    hyt_selected_gate = hyt_cols[2]
+    hyt_complement_gate = hyt_cols[3]
+    hyt_diffs = []
+    hyt_final = []
+    hyt_complement_steps = []
+    for idx, (_name, _label, _start_us, _end_us) in enumerate(hybrid_timing_cases):
+        wp = hyt_cols[4 + 3 * idx]
+        wm = hyt_cols[5 + 3 * idx]
+        diff = wp - wm
+        hyt_diffs.append(diff)
+        hyt_final.append(hytat(2.85e-6, diff))
+        hyt_complement_steps.append(hytat(2.85e-6, wm) - hytat(0.05e-6, wm))
+    hyt_final = np.array(hyt_final)
+    hyt_complement_steps = np.array(hyt_complement_steps)
+    require(hytat(1.35e-6, hyt_hidden) > 0.07, "hybrid timing deck should store a positive hidden error")
+    require(hytat(1.45e-6, hyt_selected_gate) < 0.30, "hybrid timing selected restored gate should be low after store")
+    require(hytat(1.45e-6, hyt_complement_gate) > 1.60, "hybrid timing complement restored gate should be high after store")
+    require(abs(hyt_final[0]) < 0.001, "hybrid writer pulse before hidden-error storage should not create signed update")
+    require(hyt_final[1] > hyt_final[0] + 0.001, "hybrid writer pulse overlapping pbwd edge should expose a small stray write")
+    require(hyt_final[1] < 0.20 * hyt_final[-1], "hybrid early-overlap stray write should stay well below a full update")
+    require(np.min(hyt_final[2:]) > 0.95 * hyt_final[-1], "hybrid writer pulses after storage starts should reach full update")
+    require(np.max(hyt_final[2:]) - np.min(hyt_final[2:]) < 0.003, "hybrid full writer timings should agree")
+    require(np.max(hyt_complement_steps[2:]) < 5e-4, "hybrid full timings should keep complement rail suppressed")
+
+    hyt_fig, hyt_axes = plt.subplots(2, 1, figsize=(7.2, 5.8))
+    hyt_axes[0].plot(1e6 * hytt, hyt_hidden, label="stored $r^+$ hidden error")
+    hyt_axes[0].plot(1e6 * hytt, hyt_selected_gate, label="selected restored gate")
+    hyt_axes[0].plot(1e6 * hytt, hyt_complement_gate, label="complement restored gate")
+    hyt_axes[0].plot(1e6 * hytt, hyt_cols[-1] / 20.0, color="0.5", alpha=0.35, label="$pbwd/20$")
+    hyt_axes[0].axhline(0.9, color="0.4", linewidth=0.8, alpha=0.5)
+    hyt_axes[0].set_ylabel("voltage (V)")
+    hyt_axes[0].set_title("Hybrid writer select gates settle during the backward-store phase")
+    hyt_axes[0].grid(True, alpha=0.25)
+    hyt_axes[0].legend(loc="center right", fontsize="small")
+    for (_name, label, _start_us, _end_us), diff in zip(hybrid_timing_cases, hyt_diffs):
+        hyt_axes[1].plot(1e6 * hytt, diff, label=label)
+    hyt_axes[1].axhline(0, color="0.4", linewidth=0.8)
+    hyt_axes[1].set_xlabel("time (us)")
+    hyt_axes[1].set_ylabel("$W^+ - W^-$ (V)")
+    hyt_axes[1].set_title("Hybrid pacc timing needs storage-edge separation for full write")
+    hyt_axes[1].grid(True, alpha=0.25)
+    hyt_axes[1].legend(loc="upper left", ncol=2, fontsize="small")
+    hyt_fig.tight_layout()
+    save_plot(hyt_fig, "mos_hidden_writer_restored_gate_hybrid_timing_ngspice")
+
     return hidden_writer_plot
 
 

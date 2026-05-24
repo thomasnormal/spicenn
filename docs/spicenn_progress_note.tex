@@ -624,6 +624,21 @@ must satisfy before it can replace the current behavioral prototype.
 
 \begin{figure}[H]
   \centering
+  \includegraphics[width=0.88\linewidth]{figures/mos_synapse_weight_gate_ngspice.png}
+  \caption{Ngspice analog tail-gate characterization of the signed MOS synapse.
+  A fixed \(x^+>x^-\) input drives matched positive- and negative-weight
+  transconductance copies while the NMOS tail-gate voltage is swept from off to
+  strongly enabled.  Below threshold both copies are effectively quiet.  Above
+  threshold the \(W^+\) contribution grows monotonically positive, and the
+  gate-swapped \(W^-\) copy mirrors the same magnitude with the opposite sign.
+  This is the direct transistor-level check that a stored analog weight voltage
+  can scale a synapse contribution continuously, not just select an on/off
+  branch.}
+  \label{fig:mos-synapse-weight-gate-ngspice}
+\end{figure}
+
+\begin{figure}[H]
+  \centering
   \includegraphics[width=0.88\linewidth]{figures/mos_synapse_common_mode_ngspice.png}
   \caption{Ngspice input common-mode margin characterization of the signed MOS
   synapse slice.  Three matched positive- and negative-weight copies sweep

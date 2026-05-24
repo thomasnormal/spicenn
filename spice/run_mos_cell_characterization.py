@@ -239,6 +239,37 @@ quit
 .endc
 .end
 """
+    magnitude_deck = f"""
+* Signed MOS synapse analog weight-gate magnitude sanity check.
+{COMMON_MODELS}
+VXP xp 0 1.15
+VXM xm 0 0.65
+VWG wg 0 0.0
+
+* Positive-weight copy: higher tail-gate voltage increases the positive
+* signed contribution for x+ > x-.
+VZPP zpp 0 1.8
+VZMP zmp 0 1.8
+MPP zpp xp tailp 0 NMOS L={{LCH}} W={{WN}}
+MPM zmp xm tailp 0 NMOS L={{LCH}} W={{WN}}
+MTP tailp wg 0 0 NMOS L={{LCH}} W=12u
+
+* Negative-weight copy swaps the differential gates.  The same analog tail
+* voltage should increase magnitude with the opposite signed convention.
+VZPN zpn 0 1.8
+VZMN zmn 0 1.8
+MNP zpn xm tailn 0 NMOS L={{LCH}} W={{WN}}
+MNM zmn xp tailn 0 NMOS L={{LCH}} W={{WN}}
+MTN tailn wg 0 0 NMOS L={{LCH}} W=12u
+
+.control
+set noaskquit
+dc VWG 0.0 1.25 0.01
+wrdata mos_synapse_weight_gate.dat v(wg) i(VZPP) i(VZMP) i(VZPN) i(VZMN)
+quit
+.endc
+.end
+"""
     data = run_ngspice(deck, "mos_synapse_slice")
     xdiff, cols = load_wrdata(data, 6)
     # ngspice reports current through a voltage source using the source's
@@ -306,6 +337,38 @@ quit
     require(np.all(np.diff(weighted_final) < -0.01), "weighted synapse net should decrease as W- dominates")
     require(np.max(np.abs(weighted_hold - weighted_final)) < 0.005, "weighted synapse states should hold after pulse")
 
+    magnitude_data = run_ngspice(magnitude_deck, "mos_synapse_weight_gate")
+    _mg_sweep, magnitude_cols = load_wrdata(magnitude_data, 5)
+    weight_gate = magnitude_cols[0]
+    mag_pos_signed = magnitude_cols[2] - magnitude_cols[1]
+    mag_neg_signed = magnitude_cols[4] - magnitude_cols[3]
+    active = weight_gate >= 0.65
+    inactive = weight_gate <= 0.45
+    require(np.max(np.abs(mag_pos_signed[inactive])) < 1e-9, "inactive W+ tail gate should be near off")
+    require(np.max(np.abs(mag_neg_signed[inactive])) < 1e-9, "inactive W- tail gate should be near off")
+    require(np.all(mag_pos_signed[active] > 0.0), "active W+ tail gate should keep positive contribution sign")
+    require(np.all(mag_neg_signed[active] < 0.0), "active W- tail gate should keep negative contribution sign")
+    require(
+        np.all(np.diff(mag_pos_signed[active]) > -2e-9),
+        "W+ contribution magnitude should not fall as analog tail gate increases",
+    )
+    require(
+        np.all(np.diff(-mag_neg_signed[active]) > -2e-9),
+        "W- contribution magnitude should not fall as analog tail gate increases",
+    )
+    require(
+        mag_pos_signed[-1] > mag_pos_signed[active][0] + 5e-6,
+        "W+ analog tail-gate sweep should have useful dynamic range",
+    )
+    require(
+        -mag_neg_signed[-1] > -mag_neg_signed[active][0] + 5e-6,
+        "W- analog tail-gate sweep should have useful dynamic range",
+    )
+    require(
+        np.max(np.abs(mag_pos_signed + mag_neg_signed)) < 0.02 * np.max(np.abs(mag_pos_signed)),
+        "W- analog tail-gate copy should mirror W+ magnitude with reversed sign",
+    )
+
     fig, axes = plt.subplots(2, 1, figsize=(7.2, 6.2))
     axes[0].plot(xdiff, 1e6 * pos_signed, label="$w^+$ high")
     axes[0].plot(xdiff, 1e6 * neg_signed, label="$w^-$ high")
@@ -358,6 +421,27 @@ quit
     weighted_axes[1].legend()
     weighted_fig.tight_layout()
     save_plot(weighted_fig, "mos_synapse_weighted_ngspice")
+
+    magnitude_fig, magnitude_axes = plt.subplots(2, 1, figsize=(7.2, 5.8), sharex=True)
+    magnitude_axes[0].plot(weight_gate, 1e6 * mag_pos_signed, label="$W^+$ tail")
+    magnitude_axes[0].plot(weight_gate, -1e6 * mag_neg_signed, "s--", markevery=8, label="$W^-$ tail magnitude")
+    magnitude_axes[0].axhline(0, color="0.4", linewidth=0.8)
+    magnitude_axes[0].axvline(0.55, color="0.5", linewidth=0.8, linestyle=":", label="$V_{TO}$")
+    magnitude_axes[0].set_ylabel("signed magnitude (uA)")
+    magnitude_axes[0].set_title("Synapse current grows with analog weight-tail voltage")
+    magnitude_axes[0].grid(True, alpha=0.25)
+    magnitude_axes[0].legend(loc="upper left")
+    magnitude_axes[1].plot(weight_gate, 1e6 * mag_pos_signed, label="$W^+$ contribution")
+    magnitude_axes[1].plot(weight_gate, 1e6 * mag_neg_signed, label="$W^-$ contribution")
+    magnitude_axes[1].axhline(0, color="0.4", linewidth=0.8)
+    magnitude_axes[1].axvline(0.55, color="0.5", linewidth=0.8, linestyle=":")
+    magnitude_axes[1].set_xlabel("analog weight-tail gate (V)")
+    magnitude_axes[1].set_ylabel("contribution current (uA)")
+    magnitude_axes[1].set_title("Gate-swapped copy preserves opposite sign over the sweep")
+    magnitude_axes[1].grid(True, alpha=0.25)
+    magnitude_axes[1].legend(loc="upper left")
+    magnitude_fig.tight_layout()
+    save_plot(magnitude_fig, "mos_synapse_weight_gate_ngspice")
 
     cm_fig, cm_axes = plt.subplots(2, 1, figsize=(7.2, 5.8), sharex=True)
     for name, cm, cm_xdiff, cm_pos_signed, cm_neg_signed in cm_curves:

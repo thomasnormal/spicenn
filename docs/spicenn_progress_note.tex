@@ -594,10 +594,13 @@ must satisfy before it can replace the current behavioral prototype.
 \begin{figure}[H]
   \centering
   \includegraphics[width=0.88\linewidth]{figures/mos_synapse_slice_ngspice.png}
-  \caption{Ngspice DC characterization of the signed synapse slice.  The
-  plotted current uses the mathematical contribution convention: a high
-  \(w^+\) rail gives a positive contribution for \(x^+>x^-\), while a high
-  \(w^-\) rail reverses the sign.}
+  \caption{Ngspice characterization of the signed synapse slice.  The top panel
+  is the DC transconductance check using the mathematical contribution
+  convention: a high \(w^+\) rail gives a positive contribution for
+  \(x^+>x^-\), while a high \(w^-\) rail reverses the sign.  The bottom panel
+  repeats the same gate-swapped MOS slice with real preactivation capacitors;
+  during the weight-enabled pulse, \(w^+\) raises stored \(z^- - z^+\), while
+  \(w^-\) lowers it, and both capacitor states hold after the pulse closes.}
   \label{fig:mos-synapse-ngspice}
 \end{figure}
 

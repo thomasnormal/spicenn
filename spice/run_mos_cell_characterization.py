@@ -103,6 +103,40 @@ quit
 .endc
 .end
 """
+    store_deck = f"""
+* Signed MOS synapse capacitive summing sanity check
+{COMMON_MODELS}
+.param CSUM=500p WTAIL=2u
+VXP xp 0 1.15
+VXM xm 0 0.65
+VWP wpulse 0 PULSE(0 1.15 0.5u 20n 20n 0.7u 4.0u)
+
+* Positive-weight copy: x+ discharges z+ more than z-, so z- - z+ rises.
+CZPP zpp 0 {{CSUM}} IC=1.2
+CZMP zmp 0 {{CSUM}} IC=1.2
+RZPP zpp 0 100G
+RZMP zmp 0 100G
+MPP zpp xp tailp 0 NMOS L={{LCH}} W={{WN}}
+MPM zmp xm tailp 0 NMOS L={{LCH}} W={{WN}}
+MTP tailp wpulse 0 0 NMOS L={{LCH}} W={{WTAIL}}
+
+* Negative-weight copy swaps gates, so z- - z+ falls for the same input.
+CZPN zpn 0 {{CSUM}} IC=1.2
+CZMN zmn 0 {{CSUM}} IC=1.2
+RZPN zpn 0 100G
+RZMN zmn 0 100G
+MNP zpn xm tailn 0 NMOS L={{LCH}} W={{WN}}
+MNM zmn xp tailn 0 NMOS L={{LCH}} W={{WN}}
+MTN tailn wpulse 0 0 NMOS L={{LCH}} W={{WTAIL}}
+
+.control
+set noaskquit
+tran 5n 2.5u uic
+wrdata mos_synapse_store.dat v(zpp) v(zmp) v(zpn) v(zmn) v(wpulse)
+quit
+.endc
+.end
+"""
     data = run_ngspice(deck, "mos_synapse_slice")
     xdiff, cols = load_wrdata(data, 6)
     # ngspice reports current through a voltage source using the source's
@@ -117,16 +151,40 @@ quit
     peak = max(float(np.max(np.abs(pos_signed))), 1e-30)
     require(np.max(np.abs(pos_signed + neg_signed)) < 1e-6 * peak, "negative-weight copy should reverse sign")
     require(np.max(np.abs(pos_signed + pos_signed[::-1])) < 2e-3 * peak, "synapse transfer should be odd-symmetric")
-    fig, ax = plt.subplots(figsize=(7.2, 4.2))
-    ax.plot(xdiff, 1e6 * pos_signed, label="$w^+$ high")
-    ax.plot(xdiff, 1e6 * neg_signed, label="$w^-$ high")
-    ax.axhline(0, color="0.4", linewidth=0.8)
-    ax.axvline(0, color="0.4", linewidth=0.8)
-    ax.set_xlabel("$x^+ - x^-$ (V)")
-    ax.set_ylabel("contribution current (uA)")
-    ax.set_title("Signed synapse slice reverses contribution sign")
-    ax.grid(True, alpha=0.25)
-    ax.legend()
+
+    store_data = run_ngspice(store_deck, "mos_synapse_store")
+    t, store_cols = load_wrdata(store_data, 5)
+    pos_cap_signed = store_cols[1] - store_cols[0]
+    neg_cap_signed = store_cols[3] - store_cols[2]
+
+    def at(time_s: float, values: np.ndarray) -> float:
+        return float(values[np.argmin(np.abs(t - time_s))])
+
+    require(at(1.25e-6, pos_cap_signed) > 0.06, "w+ synapse should raise signed z storage for x+ > x-")
+    require(at(1.25e-6, neg_cap_signed) < -0.06, "w- synapse should lower signed z storage for x+ > x-")
+    require(at(2.1e-6, pos_cap_signed) > 0.06, "w+ signed z storage should hold after pulse")
+    require(at(2.1e-6, neg_cap_signed) < -0.06, "w- signed z storage should hold after pulse")
+
+    fig, axes = plt.subplots(2, 1, figsize=(7.2, 6.2))
+    axes[0].plot(xdiff, 1e6 * pos_signed, label="$w^+$ high")
+    axes[0].plot(xdiff, 1e6 * neg_signed, label="$w^-$ high")
+    axes[0].axhline(0, color="0.4", linewidth=0.8)
+    axes[0].axvline(0, color="0.4", linewidth=0.8)
+    axes[0].set_xlabel("$x^+ - x^-$ (V)")
+    axes[0].set_ylabel("contribution current (uA)")
+    axes[0].set_title("Signed synapse slice reverses contribution sign")
+    axes[0].grid(True, alpha=0.25)
+    axes[0].legend()
+    axes[1].plot(1e6 * t, pos_cap_signed, label="$w^+$: stored $z^- - z^+$")
+    axes[1].plot(1e6 * t, neg_cap_signed, label="$w^-$: stored $z^- - z^+$")
+    axes[1].plot(1e6 * t, store_cols[4] / 8.0, color="0.5", alpha=0.45, label="$w_{gate}/8$")
+    axes[1].axhline(0, color="0.4", linewidth=0.8)
+    axes[1].set_xlabel("time (us)")
+    axes[1].set_ylabel("stored preactivation step (V)")
+    axes[1].set_title("Same slice moves and holds summing capacitors")
+    axes[1].grid(True, alpha=0.25)
+    axes[1].legend()
+    fig.tight_layout()
     return save_plot(fig, "mos_synapse_slice_ngspice")
 
 

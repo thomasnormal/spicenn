@@ -717,6 +717,43 @@ quit
 .endc
 .end
 """
+    repeated_deck = f"""
+* Repeated single-sample writer pulse sanity check.
+{COMMON_MODELS}
+.param WWRITE=2u CWRITE=500p
+VDD vdd 0 1.8
+VPACC_N paccn 0 PULSE(1.8 0 0.3u 10n 10n 0.10u 0.40u)
+VHI hi 0 1.8
+VLO lo 0 0
+
+* Same-sign path: repeated coincidences should accumulate on W+ only.
+CWP_P wp_p 0 {{CWRITE}} IC=0.85
+CWM_P wm_p 0 {{CWRITE}} IC=0.85
+MWPP1 vdd paccn n1p vdd PMOS L={{LCH}} W={{WWRITE}}
+MWPP2 n1p lo n2p vdd PMOS L={{LCH}} W={{WWRITE}}
+MWPP3 n2p lo wp_p vdd PMOS L={{LCH}} W={{WWRITE}}
+MWPM1 vdd paccn n3p vdd PMOS L={{LCH}} W={{WWRITE}}
+MWPM2 n3p lo n4p vdd PMOS L={{LCH}} W={{WWRITE}}
+MWPM3 n4p hi wm_p vdd PMOS L={{LCH}} W={{WWRITE}}
+
+* Opposite-sign path: repeated coincidences should accumulate on W- only.
+CWP_N wp_n 0 {{CWRITE}} IC=0.85
+CWM_N wm_n 0 {{CWRITE}} IC=0.85
+MWNP1 vdd paccn n1n vdd PMOS L={{LCH}} W={{WWRITE}}
+MWNP2 n1n lo n2n vdd PMOS L={{LCH}} W={{WWRITE}}
+MWNP3 n2n hi wp_n vdd PMOS L={{LCH}} W={{WWRITE}}
+MWNM1 vdd paccn n3n vdd PMOS L={{LCH}} W={{WWRITE}}
+MWNM2 n3n lo n4n vdd PMOS L={{LCH}} W={{WWRITE}}
+MWNM3 n4n lo wm_n vdd PMOS L={{LCH}} W={{WWRITE}}
+
+.control
+set noaskquit
+tran 5n 4.4u uic
+wrdata mos_writer_repeated.dat v(wp_p) v(wm_p) v(wp_n) v(wm_n) v(paccn)
+quit
+.endc
+.end
+"""
     data = run_ngspice(deck, "mos_writer")
     t, cols = load_wrdata(data, 9)
     wp_pp_delta = cols[0][-1] - cols[0][0]
@@ -780,6 +817,32 @@ quit
     require(final_pos > baseline_pos + 30e-6, "written W+ should increase positive synapse contribution")
     require(final_neg < baseline_neg - 30e-6, "written W- should increase negative synapse contribution magnitude")
 
+    repeated_data = run_ngspice(repeated_deck, "mos_writer_repeated")
+    rpt, repeated_cols = load_wrdata(repeated_data, 5)
+    sample_times = 0.43e-6 + 0.40e-6 * np.arange(10)
+    sample_indices = [int(np.argmin(np.abs(rpt - ts))) for ts in sample_times]
+    wp_p_samples = repeated_cols[0][sample_indices]
+    wm_p_samples = repeated_cols[1][sample_indices]
+    wp_n_samples = repeated_cols[2][sample_indices]
+    wm_n_samples = repeated_cols[3][sample_indices]
+    wp_p_steps = wp_p_samples - repeated_cols[0][0]
+    wm_n_steps = wm_n_samples - repeated_cols[3][0]
+    wm_p_steps = wm_p_samples - repeated_cols[1][0]
+    wp_n_steps = wp_n_samples - repeated_cols[2][0]
+    pulse_numbers = np.arange(1, len(sample_times) + 1)
+    wp_p_fit = np.polyfit(pulse_numbers, wp_p_steps, 1)
+    wm_n_fit = np.polyfit(pulse_numbers, wm_n_steps, 1)
+    wp_p_pred = np.polyval(wp_p_fit, pulse_numbers)
+    wm_n_pred = np.polyval(wm_n_fit, pulse_numbers)
+    require(np.all(np.diff(wp_p_steps) > 0.004), "repeated W+ writer pulses should accumulate monotonically")
+    require(np.all(np.diff(wm_n_steps) > 0.004), "repeated W- writer pulses should accumulate monotonically")
+    require(np.max(np.abs(wm_p_steps)) < 1e-3, "inactive W- rail should stay quiet over repeated W+ pulses")
+    require(np.max(np.abs(wp_n_steps)) < 1e-3, "inactive W+ rail should stay quiet over repeated W- pulses")
+    require(r_squared(wp_p_steps, wp_p_pred) > 0.995, "repeated W+ steps should be near-linear with pulse count")
+    require(r_squared(wm_n_steps, wm_n_pred) > 0.995, "repeated W- steps should be near-linear with pulse count")
+    require(wp_p_samples[-1] < 1.05, "repeated W+ pulses should remain in the incremental write range")
+    require(wm_n_samples[-1] < 1.05, "repeated W- pulses should remain in the incremental write range")
+
     fig, axes = plt.subplots(4, 1, figsize=(7.2, 9.4))
     axes[0].plot(1e6 * t, cols[0], label="$x^+\\delta^+ \\to W^+$")
     axes[0].plot(1e6 * t, cols[2], label="$x^-\\delta^- \\to W^+$")
@@ -821,7 +884,36 @@ quit
     axes[3].grid(True, alpha=0.25)
     axes[3].legend()
     fig.tight_layout()
-    return save_plot(fig, "mos_writer_ngspice")
+    writer_plot = save_plot(fig, "mos_writer_ngspice")
+
+    repeated_fig, repeated_axes = plt.subplots(2, 1, figsize=(7.2, 5.6))
+    repeated_axes[0].plot(1e6 * rpt, repeated_cols[0] - repeated_cols[0][0], label="selected repeated $W^+$")
+    repeated_axes[0].plot(
+        1e6 * rpt,
+        repeated_cols[3] - repeated_cols[3][0],
+        "--",
+        label="selected repeated $W^-$",
+    )
+    repeated_axes[0].plot(1e6 * rpt, repeated_cols[1] - repeated_cols[1][0], color="0.5", alpha=0.7, label="inactive $W^-$")
+    repeated_axes[0].plot(1e6 * rpt, repeated_cols[2] - repeated_cols[2][0], ":", color="0.5", alpha=0.85, label="inactive $W^+$")
+    repeated_axes[0].plot(1e6 * rpt, repeated_cols[4] / 18.0, color="0.35", alpha=0.35, label="$\\overline{pacc}/18$")
+    repeated_axes[0].set_ylabel("$\\Delta V_W$ (V)")
+    repeated_axes[0].set_title("Repeated single-sample writer pulses accumulate")
+    repeated_axes[0].grid(True, alpha=0.25)
+    repeated_axes[0].legend(loc="upper left", ncol=2)
+    repeated_axes[1].plot(pulse_numbers, wp_p_steps, "o-", label="$W^+$ after each pulse")
+    repeated_axes[1].plot(pulse_numbers, wm_n_steps, "s--", label="$W^-$ after each pulse")
+    repeated_axes[1].plot(pulse_numbers, wp_p_pred, color="0.35", alpha=0.8, label="$W^+$ linear fit")
+    repeated_axes[1].plot(pulse_numbers, wm_n_pred, ":", color="0.35", alpha=0.8, label="$W^-$ linear fit")
+    repeated_axes[1].axhline(0, color="0.4", linewidth=0.8)
+    repeated_axes[1].set_xlabel("pulse count")
+    repeated_axes[1].set_ylabel("$\\Delta V_W$ (V)")
+    repeated_axes[1].set_title("Stored update is near-linear over ten online writes")
+    repeated_axes[1].grid(True, alpha=0.25)
+    repeated_axes[1].legend(loc="upper left", ncol=2)
+    repeated_fig.tight_layout()
+    save_plot(repeated_fig, "mos_writer_repeated_ngspice")
+    return writer_plot
 
 
 def main() -> None:

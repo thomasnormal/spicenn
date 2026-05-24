@@ -295,6 +295,19 @@ quit
 
 
 def characterize_forward_pair() -> Path:
+    def forward_pair_devices(suffix: str, cm: float) -> str:
+        return f"""
+VCM_{suffix} cm_{suffix} 0 {cm:.2f}
+VDIFF_{suffix} zp_{suffix} zm_{suffix} PWL(0 -0.7 10u 0.7)
+RZP_{suffix} zp_{suffix} cm_{suffix} 1G
+RZM_{suffix} zm_{suffix} cm_{suffix} 1G
+MP1_{suffix} hp_{suffix} hp_{suffix} vdd vdd PMOS L={{LCH}} W={{WP}}
+MP2_{suffix} hm_{suffix} hm_{suffix} vdd vdd PMOS L={{LCH}} W={{WP}}
+MN1_{suffix} hp_{suffix} zp_{suffix} tail_{suffix} 0 NMOS L={{LCH}} W={{WN}}
+MN2_{suffix} hm_{suffix} zm_{suffix} tail_{suffix} 0 NMOS L={{LCH}} W={{WN}}
+MNT_{suffix} tail_{suffix} vbias 0 0 NMOS L={{LCH}} W={{WN}}
+"""
+
     transfer_deck = f"""
 * MOS forward differential-pair sanity check
 {COMMON_MODELS}
@@ -347,6 +360,24 @@ quit
 .endc
 .end
 """
+    cm_cases = [("low", 0.75), ("nominal", 0.90), ("high", 1.05)]
+    cm_prints = []
+    for name, _cm in cm_cases:
+        cm_prints.extend([f"v(zp_{name})", f"v(zm_{name})", f"v(hp_{name})", f"v(hm_{name})"])
+    cm_deck = f"""
+* MOS forward differential-pair common-mode margin check
+{COMMON_MODELS}
+VDD vdd 0 1.8
+VTAIL vbias 0 0.95
+{''.join(forward_pair_devices(name, cm) for name, cm in cm_cases)}
+.control
+set noaskquit
+tran 20n 10u
+wrdata mos_forward_common_mode.dat {' '.join(cm_prints)}
+quit
+.endc
+.end
+"""
     data = run_ngspice(transfer_deck, "mos_forward_pair")
     x, cols = load_wrdata(data, 2)
     xdiff = x
@@ -367,6 +398,28 @@ quit
     require(at(1.8e-6, cap_signed) > 0.25, "activation cap should hold after first pact")
     require(at(3.2e-6, cap_signed) < -0.18, "activation cap should store negative phase")
     require(at(3.8e-6, cap_signed) < -0.18, "activation cap should hold after second pact")
+
+    cm_data = run_ngspice(cm_deck, "mos_forward_common_mode")
+    _cmt, cm_cols = load_wrdata(cm_data, 4 * len(cm_cases))
+    cm_curves: list[tuple[str, float, np.ndarray, np.ndarray]] = []
+    for idx, (name, cm) in enumerate(cm_cases):
+        zp = cm_cols[4 * idx]
+        zm = cm_cols[4 * idx + 1]
+        hp = cm_cols[4 * idx + 2]
+        hm = cm_cols[4 * idx + 3]
+        cm_xdiff = zp - zm
+        cm_signed = hm - hp
+        cm_curve_peak = max(float(np.max(np.abs(cm_signed))), 1e-30)
+        cm_zero = float(cm_signed[np.argmin(np.abs(cm_xdiff))])
+        mid = int(np.argmin(np.abs(cm_xdiff)))
+        local_lo = max(0, mid - 5)
+        local_hi = min(len(cm_xdiff), mid + 6)
+        local_fit = np.polyfit(cm_xdiff[local_lo:local_hi], cm_signed[local_lo:local_hi], 1)
+        require(np.all(np.diff(cm_signed) >= -2e-3), f"{name} common-mode forward transfer should be monotone")
+        require(abs(cm_zero) < 0.015, f"{name} common-mode forward transfer should stay centered")
+        require(cm_curve_peak > 0.12, f"{name} common-mode forward transfer should retain usable swing")
+        require(local_fit[0] > 0.25, f"{name} common-mode forward transfer should retain center gain")
+        cm_curves.append((name, cm, cm_xdiff, cm_signed))
 
     fig, axes = plt.subplots(2, 1, figsize=(7.2, 6.4))
     # The diode-connected PMOS load is voltage-inverting: the rail that sinks
@@ -390,7 +443,31 @@ quit
     axes[1].grid(True, alpha=0.25)
     axes[1].legend()
     fig.tight_layout()
-    return save_plot(fig, "mos_forward_pair_ngspice")
+    forward_plot = save_plot(fig, "mos_forward_pair_ngspice")
+
+    cm_fig, cm_axes = plt.subplots(2, 1, figsize=(7.2, 5.8))
+    for name, cm, cm_xdiff, cm_signed in cm_curves:
+        cm_axes[0].plot(cm_xdiff, cm_signed, label=f"{name} VCM={cm:.2f} V")
+        center = np.abs(cm_xdiff) <= 0.18
+        cm_axes[1].plot(cm_xdiff[center], cm_signed[center], label=f"{cm:.2f} V")
+    cm_axes[0].axhline(0, color="0.4", linewidth=0.8)
+    cm_axes[0].axvline(0, color="0.4", linewidth=0.8)
+    cm_axes[0].set_ylabel("$h^- - h^+$ (V)")
+    cm_axes[0].set_title("Forward pair remains centered across input common-mode")
+    cm_axes[0].grid(True, alpha=0.25)
+    cm_axes[0].legend()
+    cm_axes[1].axhline(0, color="0.4", linewidth=0.8)
+    cm_axes[1].axvline(0, color="0.4", linewidth=0.8)
+    cm_axes[1].set_xlabel("$z^+ - z^-$ (V)")
+    cm_axes[1].set_ylabel("$h^- - h^+$ (V)")
+    cm_axes[1].set_title("Center-region zero crossing and gain overlay")
+    cm_axes[1].set_xlim(-0.20, 0.20)
+    cm_axes[1].set_ylim(-0.20, 0.20)
+    cm_axes[1].grid(True, alpha=0.25)
+    cm_axes[1].legend(title="$V_{CM}$")
+    cm_fig.tight_layout()
+    save_plot(cm_fig, "mos_forward_common_mode_ngspice")
+    return forward_plot
 
 
 def characterize_hidden_error() -> Path:

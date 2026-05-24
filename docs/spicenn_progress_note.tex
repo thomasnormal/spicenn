@@ -637,6 +637,20 @@ must satisfy before it can replace the current behavioral prototype.
 
 \begin{figure}[H]
   \centering
+  \includegraphics[width=0.88\linewidth]{figures/mos_forward_common_mode_ngspice.png}
+  \caption{Ngspice common-mode margin characterization of the same MOS forward
+  pair.  Three transistor-level copies sweep \(z^+-z^-\) while their input
+  common-mode rails are held at \(0.75\), \(0.90\), and \(1.05\) V.  The signed
+  load transfer remains centered to within about \(1\) mV, keeps monotone
+  bounded swing, and preserves roughly unit small-signal gain near
+  \(z^+\approx z^-\).  This validates the local bias window used by the
+  forward-store and hidden-derivative replica tests; it is not a process-wide
+  PVT claim.}
+  \label{fig:mos-forward-common-mode-ngspice}
+\end{figure}
+
+\begin{figure}[H]
+  \centering
   \includegraphics[width=0.88\linewidth]{figures/mos_hidden_error_ngspice.png}
   \caption{Ngspice characterization of the hidden-error path.  The top panel
   uses two matched diode-loaded MOS forward replicas nudged by \(+10\) mV and

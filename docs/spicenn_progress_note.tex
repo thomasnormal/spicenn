@@ -65,6 +65,51 @@ replay.  The final 10,000-image evaluation is a NumPy diagnostic of the
 SPICE-trained final state.  The training trajectory itself is not computed by
 NumPy or by a Python optimizer.
 
+\section{Basic Building Blocks}
+
+The working deck is still built from a small set of circuit-level ideas.  Some
+are literal passive/state elements; others are behavioral current sources that
+stand in for transistor subcircuits while the architecture is being validated.
+
+\begin{center}
+  \begin{tabular}{>{\raggedright\arraybackslash}p{0.27\linewidth}>{\raggedright\arraybackslash}p{0.62\linewidth}}
+    \toprule
+    Block & Role in the current deck \\
+    \midrule
+    Capacitor state &
+    A voltage on a capacitor is the persistent neural state.  Local feature
+    weights \(W_{bcp}\), local biases \(b_{bc}\), hidden activations \(h_{bc}\),
+    hidden deltas \(\delta h_{bc}\), and readout weights \(V_{kbc}\) are all
+    represented as node voltages. \\
+    \addlinespace
+    PWL input/target rails &
+    Python drives external pixel and label waveforms.  These are inputs to the
+    experiment, not computed neural state. \\
+    \addlinespace
+    Phase rails &
+    Global rails such as activation-store, score-store, error/backward, and
+    accumulation/write open local current paths at known times.  The final run
+    uses pulse-gated clocks to avoid long explicit PWL clock tables. \\
+    \addlinespace
+    Behavioral transconductor &
+    A SPICE \(B\)-source current term relaxes a storage capacitor toward a
+    local expression, e.g. \(h\leftarrow\tanh(z)\), only while the matching
+    phase rail is high.  This is the validated architectural stand-in for the
+    eventual transistor neuron/write cell. \\
+    \addlinespace
+    Signed rail pair &
+    Signed quantities require differential or equivalent positive/negative
+    storage.  Even if an activation is nonnegative, preactivations, synapse
+    contributions, errors, hidden deltas, and writes are signed. \\
+    \bottomrule
+  \end{tabular}
+\end{center}
+
+The important distinction is that the final result is not a software
+checkpoint loop.  The behavioral current sources are inside one SPICE transient
+and act on capacitor voltages continuously over time.  Python only prepares the
+external waveforms and reads the final state for diagnostics.
+
 \section{Working Architecture}
 
 The successful network is a local-feature classifier rather than a dense CNN.
@@ -207,6 +252,84 @@ clocks.  They are not computed by Python during the transient.  The behavioral
 terms are the current stand-in for the transistor writer blocks; the important
 architectural property of this result is continuous persistent state and local
 phase-gated writes, not Python-side gradient application.
+
+\section{Neuron Circuit Used In The Final Run}
+
+The hidden neuron used in the strict \(90.15\%\) run is the stored tanh
+local-feature cell shown in Fig.~\ref{fig:stored-tanh-neuron}.  It is precise
+to the generated SPICE topology: the preactivation is an inline weighted sum,
+the activation is stored on a capacitor during the activation phase, the hidden
+delta is stored on a second capacitor during the backward phase, and the update
+current sources read those stored node voltages during the write phase.
+
+\begin{figure}[H]
+  \centering
+  \begin{tikzpicture}[
+      font=\small,
+      block/.style={draw, rounded corners=2pt, minimum height=0.9cm,
+        minimum width=2.3cm, align=center, fill=lightgray, inner sep=3pt},
+      statecap/.style={draw, cylinder, shape border rotate=90, aspect=0.28,
+        minimum height=0.8cm, minimum width=0.62cm, align=center, fill=green!10},
+      src/.style={draw, diamond, aspect=1.7, align=center, fill=yellow!12,
+        inner sep=1.5pt},
+      arr/.style={-{Latex[length=2mm]}, semithick},
+      fwd/.style={arr, forwardblue},
+      bwd/.style={arr, backred},
+      wr/.style={arr, writeorange},
+      lbl/.style={font=\footnotesize, fill=white, inner sep=1.2pt}
+    ]
+    \node[block] (sum) {inline sum\\\(z=b+\sum_p S(W_p)x_p\)};
+    \node[src, right=1.2cm of sum] (tanhsrc) {\(I_h\)\\tanh\\store};
+    \node[statecap, right=1.15cm of tanhsrc] (ch) {\(C_h\)\\\(h\)};
+    \node[block, right=1.25cm of ch] (score) {readout\\scores};
+    \node[block, below=1.35cm of score] (err) {output\\error \(d_k\)};
+    \node[src, left=1.25cm of err] (dsrc) {\(I_{\delta h}\)\\backward\\store};
+    \node[statecap, left=1.15cm of dsrc] (cdh) {\(C_{\delta h}\)\\\(\delta h\)};
+    \node[src, below=1.25cm of cdh] (wsrc) {\(I_W,I_b\)\\write};
+    \node[statecap, left=1.15cm of wsrc] (cw) {\(C_W,C_b\)};
+
+    \draw[fwd] (sum) -- node[lbl, above] {\(z\)} (tanhsrc);
+    \draw[fwd] (tanhsrc) -- node[lbl, above] {\(\mathrm{pact}\)} (ch);
+    \draw[fwd] (ch) -- node[lbl, above] {\(h\)} (score);
+    \draw[bwd] (score) -- (err);
+    \draw[bwd] (err) -- node[lbl, above] {\(\sum_k d_kV_k\)} (dsrc);
+    \draw[bwd] (sum.south) |- node[lbl, left, pos=0.25] {\(1-\tanh^2 z\)} (dsrc.west);
+    \draw[bwd] (dsrc) -- node[lbl, above] {\(\mathrm{pbwd}\)} (cdh);
+    \draw[wr] (cdh) -- node[lbl, left] {\(\delta h\)} (wsrc);
+    \draw[wr] (sum.west) |- node[lbl, left, pos=0.2] {\(x_p\)} (wsrc.west);
+    \draw[wr] (wsrc) -- node[lbl, above] {\(\mathrm{pacc}\)} (cw);
+  \end{tikzpicture}
+  \caption{Stored tanh neuron used by the final local-feature SPICE run.
+  The activation storage source implements
+  \(I_h = V(\mathrm{pact})\,C_{\mathrm{STATE}}/\tau\,[V(h)-\tanh(z)]\), so
+  the capacitor dynamics are
+  \(\dot V(h)=V(\mathrm{pact})[\tanh(z)-V(h)]/\tau\).  The hidden-delta
+  storage source similarly relaxes \(C_{\delta h}\) toward
+  \((\sum_k d_kV_k)(1-\tanh^2 z)\) during the backward phase.  The write
+  sources then update \(C_W\) and \(C_b\) from the local product
+  \(\delta h\,x_p\).}
+  \label{fig:stored-tanh-neuron}
+\end{figure}
+
+In generated-deck form, the key hidden activation line is equivalent to
+\[
+  I_h =
+  V(\mathrm{pact})\,\frac{C_{\mathrm{STATE}}}{\tau}
+  \left[V(h_{bc})-\tanh(z_{bc})\right],
+\]
+which gives
+\[
+  \frac{dV(h_{bc})}{dt}
+  =
+  V(\mathrm{pact})\,\frac{\tanh(z_{bc})-V(h_{bc})}{\tau}.
+\]
+The hidden delta storage uses the same first-order form with target
+\[
+  \left(\sum_k d_kV_{kbc}\right)(1-\tanh^2(z_{bc})).
+\]
+This is the circuit actually used by the final result.  Earlier MOS ReLU and
+differential source-follower cells remain important transistor-level building
+blocks, but they are not the high-accuracy final neuron yet.
 
 \section{Phase Schedule}
 
@@ -362,6 +485,16 @@ but the useful conclusions are short:
     objective by reaching \(90.15\%\).
 \end{enumerate}
 
+The most important enablers were not any single magic neuron.  They were the
+combination of (1) enough local feature capacity in the \(10\times10\),
+block-4, stride-2, 2-channel topology; (2) a stable signed update rule with
+stored hidden activations and hidden deltas; (3) tanh/tanh-clipped nonlinearities
+that avoided the dead/one-sided behavior seen in several ReLU-like screens;
+(4) frozen output bias, readout scale \(0.5\), and softmax temperature \(2.0\),
+which kept the output error and readout writes in a useful range; and (5) source
+compression that made the long strict transient runnable without changing the
+training contract.
+
 \section{What The Result Does And Does Not Claim}
 
 This result establishes that the high-performing SPICE training path can be
@@ -378,19 +511,56 @@ transistor-level version should preserve the same contract while replacing the
 behavioral kernels with characterized MOS differential synapses, error rails,
 and signed write branches.
 
-\section{Next Engineering Targets}
+\section{Training Faster And Scaling Further}
 
 The main open problem is no longer whether the fully-on-device contract can
-learn on MNIST; it can for this architecture.  The next targets are:
+learn on MNIST; it can for this architecture.  The next problem is cost.  The
+final run spent most of its source complexity on pixel waveforms:
+465,518 of 475,007 PWL points came from pixel sources.  That makes the first
+speed target input delivery, not the number of printed state vectors.
+
+\paragraph{Near-term simulation speedups.}
+The most plausible speedups are:
 \begin{enumerate}
-  \item Replace behavioral update kernels with transistor-level signed write
-    blocks without losing update-direction alignment.
-  \item Reduce pixel-source cost, since q16 local-PCA still leaves 465,518
-    pixel PWL points in the 6000-update run.
-  \item Add robustness sweeps for state noise, mismatch, source quantization,
-    and simulator settings around the final branch.
-  \item Re-evaluate compact shared-kernel or partial-sharing variants only if
-    they preserve the same fully-on-device contract and full-test margin.
+  \item replace per-pixel PWL rails with a simulator-friendly encoded input
+    source or sample-and-hold front end;
+  \item preserve local-PCA ordering but search better bounded window schedules
+    that reduce switching without making the online order too artificial;
+  \item avoid printing or measuring any state not needed for final diagnostics;
+  \item use strict small-horizon equivalence runs to validate knobs before
+    spending multi-thousand-update Xyce runs;
+  \item keep analytic controls and pulse-gated clocks, since explicit PWL
+    control rails add cost without adding learning value.
 \end{enumerate}
+
+\paragraph{Architecture scale-up.}
+The state count for the private local-feature family scales as
+\[
+  N_{\mathrm{state}}
+  \approx
+  B C(P+1) + KBC,
+\]
+where \(B\) is the number of block positions, \(C\) channels, \(P\) pixels per
+block, and \(K\) classes.  Increasing image size, reducing stride, or adding
+channels therefore grows both local feature state and readout state.  Scaling
+should be done by a Pareto ladder: increase one axis at a time, require a cheap
+reference endpoint above target, then promote only bounded strict SPICE runs.
+
+\paragraph{Circuit scale-up.}
+The behavioral neuron/write kernels should be replaced by transistor-level
+blocks only after the replacement passes three local tests:
+\begin{enumerate}
+  \item forward transfer matches the stored tanh or chosen replacement over
+    the operating voltage range;
+  \item backward delta transport has positive alignment with the reference
+    hidden delta;
+  \item signed write currents move \(C_W\) and \(C_b\) in the same direction as
+    \(\delta h\,x\) without excessive read disturb or rail pinning.
+\end{enumerate}
+
+Only after those local tests pass should the transistor cell replace the
+behavioral current kernel in a full MNIST strict transient.  Otherwise the
+system will be debugging device nonidealities and architecture scaling at the
+same time.
 
 \end{document}

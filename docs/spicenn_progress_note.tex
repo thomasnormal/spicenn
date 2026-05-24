@@ -80,9 +80,11 @@ validated transistor subcircuits.
 
 \section{Basic Building Blocks}
 
-The working deck is still built from a small set of circuit-level ideas.  Some
-are literal passive/state elements; others are behavioral current sources that
-stand in for transistor subcircuits while the architecture is being validated.
+The working deck is still built from a small set of circuit-level ideas, but
+only the passive/state elements are hardware claims.  The non-device current
+equations used in the high-accuracy prototype are now treated as scaffolding:
+they identify the local relationships that the transistor cells must reproduce,
+not components that should appear in a final circuit.
 
 \begin{center}
   \begin{tabular}{>{\raggedright\arraybackslash}p{0.27\linewidth}>{\raggedright\arraybackslash}p{0.62\linewidth}}
@@ -105,11 +107,10 @@ stand in for transistor subcircuits while the architecture is being validated.
     high-accuracy behavioral run uses pulse-gated clocks to avoid long explicit
     PWL clock tables. \\
     \addlinespace
-    Behavioral transconductor &
-    A SPICE \(B\)-source current term relaxes a storage capacitor toward a
-    local expression, e.g. \(h\leftarrow\tanh(z)\), only while the matching
-    phase rail is high.  This is the validated architectural stand-in for the
-    eventual transistor neuron/write cell. \\
+    MOS transconductor target &
+    A source-degenerated differential pair, current mirror, switch stack, or
+    pulse-coincidence writer must drive each state capacitor.  Any equation-only
+    source is a prototype aid and is disqualified as hardware evidence. \\
     \addlinespace
     Signed rail pair &
     Signed quantities require differential or equivalent positive/negative
@@ -120,9 +121,10 @@ stand in for transistor subcircuits while the architecture is being validated.
 \end{center}
 
 The important distinction is that the current evidence is not a software
-checkpoint loop.  The behavioral current sources are inside one SPICE transient
-and act on capacitor voltages continuously over time.  Python only prepares the
-external waveforms and reads the final state for diagnostics.
+checkpoint loop, but it is also not yet a transistor demonstration.  Python only
+prepares the external waveforms and reads the final state for diagnostics; the
+remaining circuit task is to replace every equation-only neuron and writer path
+with MOS devices that preserve the same update direction.
 
 \section{Working Architecture}
 
@@ -261,320 +263,241 @@ capacitor voltages:
 \[
   \Delta V_{kbc} = \eta\,\alpha_V\,d_k\,h_{bc},
 \]
-with \(\alpha_V=0.5\) for the high-accuracy behavioral run.  These equations are rendered as
-SPICE behavioral current terms into the state capacitors, gated by phase
-clocks.  They are not computed by Python during the transient.  The behavioral
-terms are the current stand-in for the transistor writer blocks; the important
-architectural property of this result is continuous persistent state and local
-phase-gated writes, not Python-side gradient application.
+with \(\alpha_V=0.5\) for the high-accuracy prototype.  In that prototype these
+relationships were emitted as equation-only SPICE current terms.  That is useful
+for proving the continuous-state schedule, but it is not hardware.  The required
+next step is a MOS implementation whose measured currents have the same sign and
+usable gain over the operating range.
 
-\section{Neuron Circuit Used In The Final Run}
 
-The hidden neuron used in the \(90.15\%\) behavioral/local-PCA run is the stored
-tanh local-feature cell shown as one circuit in
-Fig.~\ref{fig:single-cell-circuit}, with the lower-level branch sketch in
-Fig.~\ref{fig:stored-tanh-neuron}.  It is precise to the generated SPICE
-topology: the preactivation is an inline weighted sum, the activation is stored
-on a capacitor during the activation phase, the hidden delta is stored on a
-second capacitor during the backward phase, and the update current sources read
-those stored node voltages during the write phase.
+\section{Transistor-Level Local-Feature Cell Target}
+
+The previous behavioral diagrams are removed from this note.  They were useful
+for debugging the algorithm, but they are not hardware.  The circuit target is
+now the transistor-level local-feature cell in
+Fig.~\ref{fig:mos-local-feature-cell}.  It is a replacement target for the
+non-device equations used in the disqualified high-accuracy run, not a result
+already validated at full MNIST scale.
+
+The cell is differential throughout the signed path.  A one-pixel signed
+synapse slice steers input charge into the positive or negative preactivation
+rail according to differential weight capacitors.  A source-degenerated MOS
+differential pair gives the tanh-like forward nonlinearity.  A replica
+transconductor forms the local derivative/error current.  The writer is a
+four-quadrant MOS coincidence cell: two same-sign branches charge the positive
+weight capacitor and two opposite-sign branches charge the negative weight
+capacitor.
 
 \begin{figure}[H]
   \centering
   \resizebox{\linewidth}{!}{%
   \begin{tikzpicture}[
-      font=\small,
+      font=\scriptsize,
       wire/.style={semithick},
-      sig/.style={-{Latex[length=1.7mm]}, semithick, gray!75},
-      ctrl/.style={-{Latex[length=1.7mm]}, semithick, violet!80},
-      bsrc/.style={diamond, draw, aspect=1.15, minimum size=0.78cm,
-        inner sep=0pt, fill=yellow!12},
-      src/.style={circle, draw, minimum size=0.72cm, inner sep=0pt,
-        fill=blue!6},
-      note/.style={draw, rounded corners=2pt, fill=lightgray, align=left,
-        font=\footnotesize, inner sep=3pt},
-      label/.style={font=\footnotesize, fill=white, inner sep=1pt}
+      gate/.style={semithick, gray!80},
+      rail/.style={semithick, blue!55!black},
+      ctrl/.style={semithick, violet!80!black},
+      lab/.style={font=\scriptsize, fill=white, inner sep=1.2pt},
+      group/.style={draw, dashed, rounded corners=2pt, inner sep=7pt},
+      title/.style={font=\bfseries\scriptsize}
     ]
-    \newcommand{\groundat}[2]{%
-      \draw[wire] (#1,#2) -- ++(0,-0.18);
-      \draw[wire] (#1-0.18,#2-0.18) -- (#1+0.18,#2-0.18);
-      \draw[wire] (#1-0.12,#2-0.28) -- (#1+0.12,#2-0.28);
-      \draw[wire] (#1-0.06,#2-0.38) -- (#1+0.06,#2-0.38);
+    \newcommand{\gnd}[2]{%
+      \draw[wire] (#1,#2) -- ++(0,-0.16);
+      \draw[wire] (#1-0.16,#2-0.16) -- (#1+0.16,#2-0.16);
+      \draw[wire] (#1-0.10,#2-0.25) -- (#1+0.10,#2-0.25);
+      \draw[wire] (#1-0.05,#2-0.34) -- (#1+0.05,#2-0.34);
     }
-    \newcommand{\captozero}[4]{%
-      \node[circle, fill=black, inner sep=1.2pt, label=above:{#3}] (#4) at (#1,#2) {};
-      \draw[wire] (#1,#2) -- ++(0,-0.35);
-      \draw[wire] (#1-0.22,#2-0.35) -- (#1+0.22,#2-0.35);
-      \draw[wire] (#1-0.22,#2-0.52) -- (#1+0.22,#2-0.52);
-      \draw[wire] (#1,#2-0.52) -- ++(0,-0.33);
-      \groundat{#1}{#2-0.85}
+    \newcommand{\capg}[4]{%
+      \node[circle, fill=black, inner sep=1.0pt, label=above:{#3}] (#4) at (#1,#2) {};
+      \draw[wire] (#1,#2) -- ++(0,-0.22);
+      \draw[wire] (#1-0.17,#2-0.22) -- (#1+0.17,#2-0.22);
+      \draw[wire] (#1-0.17,#2-0.37) -- (#1+0.17,#2-0.37);
+      \draw[wire] (#1,#2-0.37) -- ++(0,-0.22);
+      \gnd{#1}{#2-0.59}
     }
-    \newcommand{\bsourcebranch}[4]{%
-      \draw[wire] (#1,#2) -- ++(0,-0.32);
-      \node[bsrc] (#4) at (#1,#2-0.78) {\(\mathrm{B}\)};
-      \draw[-{Latex[length=1.45mm]}, semithick] (#1,#2-0.50) -- (#1,#2-1.04);
-      \draw[wire] (#1,#2-1.24) -- ++(0,-0.25);
-      \groundat{#1}{#2-1.49}
-      \node[label] at (#1+0.78,#2-0.78) {#3};
+    \newcommand{\nmos}[5]{%
+      \coordinate (#5) at (#1,#2);
+      \coordinate (#5D) at (#1,#2+0.35);
+      \coordinate (#5S) at (#1,#2-0.35);
+      \coordinate (#5G) at (#1-0.52,#2);
+      \draw[wire] (#1,#2+0.35) -- (#1,#2-0.35);
+      \draw[wire] (#1,#2+0.35) -- ++(0,0.22);
+      \draw[wire] (#1,#2-0.35) -- ++(0,-0.22);
+      \draw[wire] (#1-0.18,#2+0.28) -- (#1-0.18,#2-0.28);
+      \draw[wire] (#1-0.52,#2) -- (#1-0.18,#2);
+      \node[lab, anchor=west] at (#1+0.23,#2) {#3};
+      \node[lab, anchor=east] at (#1-0.54,#2) {#4};
     }
-    \newcommand{\vsource}[4]{%
-      \node[src] (#4) at (#1,#2) {};
-      \draw[wire] (#1,#2-0.36) -- ++(0,-0.35);
-      \groundat{#1}{#2-0.71}
-      \node[label] at (#1,#2+0.58) {#3};
+    \newcommand{\pmos}[5]{%
+      \coordinate (#5) at (#1,#2);
+      \coordinate (#5D) at (#1,#2-0.35);
+      \coordinate (#5S) at (#1,#2+0.35);
+      \coordinate (#5G) at (#1-0.58,#2);
+      \draw[wire] (#1,#2+0.35) -- (#1,#2-0.35);
+      \draw[wire] (#1,#2+0.35) -- ++(0,0.22);
+      \draw[wire] (#1,#2-0.35) -- ++(0,-0.22);
+      \draw[wire] (#1-0.20,#2+0.28) -- (#1-0.20,#2-0.28);
+      \draw[wire] (#1-0.58,#2) -- (#1-0.30,#2);
+      \draw[wire] (#1-0.30,#2) circle [radius=0.08];
+      \node[lab, anchor=west] at (#1+0.23,#2) {#3};
+      \node[lab, anchor=east] at (#1-0.60,#2) {#4};
     }
 
-    % External rails and algebraic preactivation.
-    \vsource{-1.0}{1.55}{\(V(x_{bp})\)}{xsrc}
-    \vsource{-1.0}{0.15}{\(V(d_k)\)}{dsrc}
-    \vsource{-1.0}{-1.25}{\(V(\eta)\)}{etasrc}
-    \node[note, text width=3.2cm] (zexpr) at (2.2,1.35)
-      {\(z_{bc}=V(hb_{bc})+\sum_p S(V(w_{bcp}))V(x_{bp})\)};
-    \node[note, text width=3.2cm] (rexpr) at (2.2,-0.25)
-      {\(r_{bc}=\sum_k V(d_k)V(v_{kbc})\)};
-    \node[note, text width=3.3cm] (dhexpr) at (2.2,-1.95)
-      {\(\delta h^\star_{bc}=r_{bc}\,[1-\tanh^2(z_{bc})]\)};
+    % A. Signed synapse slice.
+    \node[title] at (2.2,3.0) {A. signed synapse slice};
+    \draw[rail] (-0.45,2.35) node[lab,left] {$z^+$} -- (4.85,2.35);
+    \draw[rail] (-0.45,1.15) node[lab,left] {$z^-$} -- (4.85,1.15);
+    \draw[wire] (-0.45,0.25) node[lab,left] {$x^+$} -- (4.85,0.25);
+    \draw[wire] (-0.45,-0.65) node[lab,left] {$x^-$} -- (4.85,-0.65);
+    \nmos{0.75}{1.35}{$M_1$}{}{sxpp}
+    \nmos{1.85}{1.35}{$M_2$}{}{sxmm}
+    \nmos{3.05}{0.15}{$M_3$}{}{sxpm}
+    \nmos{4.15}{0.15}{$M_4$}{}{sxmp}
+    \draw[wire] (sxppD) |- (0.75,2.35);  \draw[wire] (sxppS) |- (0.75,0.25);
+    \draw[wire] (sxmmD) |- (1.85,2.35);  \draw[wire] (sxmmS) |- (1.85,-0.65);
+    \draw[wire] (sxpmD) |- (3.05,1.15);  \draw[wire] (sxpmS) |- (3.05,0.25);
+    \draw[wire] (sxmpD) |- (4.15,1.15);  \draw[wire] (sxmpS) |- (4.15,-0.65);
+    \capg{0.25}{-1.55}{$C_{W^+}$}{cwp}
+    \capg{2.05}{-1.55}{$C_{W^-}$}{cwm}
+    \draw[gate] (cwp) -| (sxppG);
+    \draw[gate] (cwp) -| (sxmpG);
+    \draw[gate] (cwm) -| (sxmmG);
+    \draw[gate] (cwm) -| (sxpmG);
+    \node[group, fit=(sxpp) (sxmp) (cwp) (cwm)] {};
 
-    \draw[sig] (xsrc) -- (zexpr);
-    \draw[sig] (dsrc) -- (rexpr);
-    \draw[sig] (rexpr) -- (dhexpr);
-    \draw[sig] (zexpr) -- (dhexpr);
+    % B. Forward MOS tanh cell.
+    \begin{scope}[xshift=7.2cm]
+      \node[title] at (2.2,3.0) {B. forward differential pair};
+      \draw[wire] (-0.25,2.65) node[lab,left] {VDD} -- (4.8,2.65);
+      \pmos{1.25}{2.05}{$P_L^+$}{$V_{bp}$}{plp}
+      \pmos{3.35}{2.05}{$P_L^-$}{$V_{bp}$}{plm}
+      \draw[wire] (plpS) -- (1.25,2.65); \draw[wire] (plmS) -- (3.35,2.65);
+      \node[circle, fill=black, inner sep=1.0pt, label=above:{$h^+$}] (hp) at (1.25,1.35) {};
+      \node[circle, fill=black, inner sep=1.0pt, label=above:{$h^-$}] (hm) at (3.35,1.35) {};
+      \draw[wire] (plpD) -- (hp); \draw[wire] (plmD) -- (hm);
+      \nmos{1.25}{0.45}{$N_z^+$}{$z^+$}{nzp}
+      \nmos{3.35}{0.45}{$N_z^-$}{$z^-$}{nzm}
+      \draw[wire] (hp) -- (nzpD); \draw[wire] (hm) -- (nzmD);
+      \draw[wire] (nzpS) -- (2.3,-0.25) -- (nzmS);
+      \nmos{2.3}{-1.05}{$N_t$}{$V_{tail}$}{nt}
+      \draw[wire] (2.3,-0.25) -- (ntD); \draw[wire] (ntS) -- (2.3,-1.78);
+      \gnd{2.3}{-1.78}
+      \nmos{0.35}{0.65}{$S_{h+}$}{$pact$}{shp}
+      \nmos{4.25}{0.65}{$S_{h-}$}{$pact$}{shm}
+      \capg{0.35}{-0.35}{$C_{h^+}$}{chp}
+      \capg{4.25}{-0.35}{$C_{h^-}$}{chm}
+      \draw[wire] (hp) -| (shpD); \draw[wire] (hm) -| (shmD);
+      \draw[wire] (shpS) -- (chp); \draw[wire] (shmS) -- (chm);
+      \draw[ctrl] (0.35,1.65) node[lab,above] {$pact$} -- (shpG);
+      \draw[ctrl] (4.25,1.65) node[lab,above] {$pact$} -- (shmG);
+      \node[group, fit=(plp) (plm) (nzp) (nzm) (nt) (chp) (chm)] {};
+    \end{scope}
 
-    % Stored h and dh state.
-    \captozero{6.0}{1.35}{\(h_{bc}\)}{hnode}
-    \bsourcebranch{7.25}{1.35}{\(\mathrm{B_h}\)}{Bstoreh}
-    \draw[wire] (hnode) -- (7.25,1.35);
-    \draw[sig] (zexpr) -- (Bstoreh);
-    \draw[sig] (hnode) -- ++(1.95,0) node[label, right] {\(h_{bc}\) to readout};
+    % C. Hidden-error / derivative replica.
+    \begin{scope}[yshift=-5.25cm]
+      \node[title] at (2.2,3.0) {C. hidden-error replica};
+      \draw[wire] (-0.25,2.65) node[lab,left] {VDD} -- (4.8,2.65);
+      \pmos{1.15}{2.05}{$P_r^+$}{$r^+$}{prp}
+      \pmos{3.45}{2.05}{$P_r^-$}{$r^-$}{prm}
+      \draw[wire] (prpS) -- (1.15,2.65); \draw[wire] (prmS) -- (3.45,2.65);
+      \node[circle, fill=black, inner sep=1.0pt, label=above:{$\delta h^+$}] (dhp) at (1.15,1.35) {};
+      \node[circle, fill=black, inner sep=1.0pt, label=above:{$\delta h^-$}] (dhm) at (3.45,1.35) {};
+      \draw[wire] (prpD) -- (dhp); \draw[wire] (prmD) -- (dhm);
+      \nmos{1.15}{0.45}{$N_d^+$}{$z^+$}{ndp}
+      \nmos{3.45}{0.45}{$N_d^-$}{$z^-$}{ndm}
+      \draw[wire] (dhp) -- (ndpD); \draw[wire] (dhm) -- (ndmD);
+      \draw[wire] (ndpS) -- (2.3,-0.25) -- (ndmS);
+      \nmos{2.3}{-1.05}{$N_{tb}$}{$pbwd$}{ntb}
+      \draw[wire] (2.3,-0.25) -- (ntbD); \draw[wire] (ntbS) -- (2.3,-1.78);
+      \gnd{2.3}{-1.78}
+      \capg{0.35}{0.35}{$C_{\delta h^+}$}{cdhp}
+      \capg{4.35}{0.35}{$C_{\delta h^-}$}{cdhm}
+      \draw[wire] (dhp) -| (cdhp); \draw[wire] (dhm) -| (cdhm);
+      \node[group, fit=(prp) (prm) (ndp) (ndm) (ntb) (cdhp) (cdhm)] {};
+    \end{scope}
 
-    \captozero{6.0}{-1.95}{\(dh_{bc}\)}{dhnode}
-    \bsourcebranch{7.25}{-1.95}{\(\mathrm{B_{\delta h}}\)}{Bstoredh}
-    \draw[wire] (dhnode) -- (7.25,-1.95);
-    \draw[sig] (dhexpr) -- (Bstoredh);
+    % D. Four-quadrant MOS writer.
+    \begin{scope}[xshift=7.2cm,yshift=-5.25cm]
+      \node[title] at (2.2,3.25) {D. four-quadrant writer};
+      \capg{1.15}{2.15}{$C_{W^+}$}{wwp}
+      \capg{3.45}{2.15}{$C_{W^-}$}{wwm}
+      \draw[wire] (0.45,2.78) -- (4.15,2.78) node[lab,right] {$V_{\mathrm{write}}$};
+      \draw[wire] (1.15,2.78) -- (1.15,2.15);
+      \draw[wire] (3.45,2.78) -- (3.45,2.15);
 
-    % Trainable state caps and write currents.
-    \captozero{0.1}{-4.8}{\(w_{bcp}\)}{wnode}
-    \captozero{3.2}{-4.8}{\(hb_{bc}\)}{hbnode}
-    \captozero{6.3}{-4.8}{\(v_{kbc}\)}{vnode}
-    \bsourcebranch{1.1}{-4.8}{\(\mathrm{B_W}\)}{Bupdw}
-    \bsourcebranch{4.2}{-4.8}{\(\mathrm{B_b}\)}{Bupdb}
-    \bsourcebranch{7.3}{-4.8}{\(\mathrm{B_V}\)}{Bupdv}
-    \draw[wire] (wnode) -- (1.1,-4.8);
-    \draw[wire] (hbnode) -- (4.2,-4.8);
-    \draw[wire] (vnode) -- (7.3,-4.8);
-    \draw[sig] (dhnode) |- (Bupdw);
-    \draw[sig] (dhnode) |- (Bupdb);
-    \draw[sig] (hnode) |- (Bupdv);
-    \draw[sig] (dsrc) |- (Bupdv);
-    \draw[sig] (xsrc) |- (Bupdw);
-    \draw[sig] (wnode) |- (zexpr);
-    \draw[sig] (hbnode) |- (zexpr);
-    \draw[sig] (vnode) |- (rexpr);
+      \nmos{0.45}{1.20}{}{}{mppp}
+      \nmos{0.45}{0.35}{}{}{mppx}
+      \nmos{0.45}{-0.50}{}{}{mppd}
+      \draw[wire] (wwp) |- (0.45,1.75) -- (mpppD);
+      \draw[wire] (mpppS) -- (mppxD); \draw[wire] (mppxS) -- (mppdD);
+      \draw[wire] (mppdS) -- (0.45,-1.10); \gnd{0.45}{-1.10}
 
-    % Phase controls.
-    \node[note, fill=yellow!15] (pact) at (10.2,1.2) {\(pact\)};
-    \node[note, fill=yellow!15] (pbwd) at (10.2,-1.7) {\(pbwd\)};
-    \node[note, fill=yellow!15] (pacc) at (10.2,-4.7) {\(pacc\)};
-    \draw[ctrl] (pact) -- (Bstoreh);
-    \draw[ctrl] (pbwd) -- (Bstoredh);
-    \draw[ctrl] (pacc) -- (Bupdw);
-    \draw[ctrl] (pacc) -- (Bupdb);
-    \draw[ctrl] (pacc) -- (Bupdv);
+      \nmos{1.45}{1.20}{}{}{mmmp}
+      \nmos{1.45}{0.35}{}{}{mmmx}
+      \nmos{1.45}{-0.50}{}{}{mmmd}
+      \draw[wire] (wwp) |- (1.45,1.75) -- (mmmpD);
+      \draw[wire] (mmmpS) -- (mmmxD); \draw[wire] (mmmxS) -- (mmmdD);
+      \draw[wire] (mmmdS) -- (1.45,-1.10); \gnd{1.45}{-1.10}
+
+      \nmos{3.05}{1.20}{}{}{mpmp}
+      \nmos{3.05}{0.35}{}{}{mpmx}
+      \nmos{3.05}{-0.50}{}{}{mpmd}
+      \draw[wire] (wwm) |- (3.05,1.75) -- (mpmpD);
+      \draw[wire] (mpmpS) -- (mpmxD); \draw[wire] (mpmxS) -- (mpmdD);
+      \draw[wire] (mpmdS) -- (3.05,-1.10); \gnd{3.05}{-1.10}
+
+      \nmos{4.05}{1.20}{}{}{mmpp}
+      \nmos{4.05}{0.35}{}{}{mmpx}
+      \nmos{4.05}{-0.50}{}{}{mmpd}
+      \draw[wire] (wwm) |- (4.05,1.75) -- (mmppD);
+      \draw[wire] (mmppS) -- (mmpxD); \draw[wire] (mmpxS) -- (mmpdD);
+      \draw[wire] (mmpdS) -- (4.05,-1.10); \gnd{4.05}{-1.10}
+
+      \node[lab, align=center] at (0.45,-1.42) {$pacc$\\$x^+$\\$\delta h^+$};
+      \node[lab, align=center] at (1.45,-1.42) {$pacc$\\$x^-$\\$\delta h^-$};
+      \node[lab, align=center] at (3.05,-1.42) {$pacc$\\$x^+$\\$\delta h^-$};
+      \node[lab, align=center] at (4.05,-1.42) {$pacc$\\$x^-$\\$\delta h^+$};
+      \node[group, fit=(wwp) (wwm) (mppp) (mmpd)] {};
+    \end{scope}
   \end{tikzpicture}}
-  \caption{Single-circuit schematic of one stored-tanh local-feature cell as
-  used in the present SPICE deck.  The diamond devices are behavioral current
-  sources, not off-chip Python updates.  Their terminal currents charge or
-  discharge the same state capacitors that hold the forward activation
-  \(h_{bc}\), hidden delta \(dh_{bc}\), local weight \(w_{bcp}\), local bias
-  \(hb_{bc}\), and readout weight \(v_{kbc}\).  Phase rails only gate local
-  current paths; they do not carry hidden activations or gradients computed by
-  Python.}
-  \label{fig:single-cell-circuit}
+  \caption{Transistor-level target for one local-feature cell.  The drawing
+  contains only MOSFET switches/transconductors, capacitors, supply rails,
+  ground, and bias/phase/input rails.  Panel A is one repeated signed synapse
+  slice.  Panel B stores a tanh-like forward activation from a MOS differential
+  pair.  Panel C stores signed hidden error with a replica pair gated by the
+  backward phase.  Panel D updates the differential weight capacitors with four
+  series-MOS coincidence branches.  This is the replacement target for the
+  equation-only prototype; it has not yet been validated on full MNIST.}
+  \label{fig:mos-local-feature-cell}
 \end{figure}
 
-The behavioral current sources in Fig.~\ref{fig:single-cell-circuit} are the
-following SPICE branch currents:
+The expected small-signal relationships are transistor relationships, not
+equation-only source definitions:
 \[
-\begin{aligned}
-I_{B_h}
-  &= V(pact)\frac{C_h}{\tau_h}\left[V(h_{bc})-\tanh(z_{bc})\right],\\
-I_{B_{\delta h}}
-  &= V(pbwd)\frac{C_{\delta h}}{\tau_{\delta h}}
-     \left[V(dh_{bc})-\delta h^\star_{bc}\right],\\
-I_{B_W}
-  &= -V(pacc)\frac{C_W\eta}{T_w}\,V(dh_{bc})V(x_{bp}),\\
-I_{B_b}
-  &= -V(pacc)\frac{C_b\eta}{T_w}\,V(dh_{bc}),\\
-I_{B_V}
-  &= -V(pacc)\frac{C_V\eta\alpha_V}{T_w}\,V(d_k)V(h_{bc}).
-\end{aligned}
+  I_{h^+}-I_{h^-}
+  \approx I_b\tanh\!\left(\frac{\kappa(V_{z^+}-V_{z^-})}{2V_T}\right),
 \]
-
-\begin{figure}[H]
-  \centering
-  \begin{tikzpicture}[
-      font=\small,
-      expr/.style={draw, rounded corners=2pt, align=center, fill=lightgray,
-        minimum width=3.5cm, minimum height=0.75cm, inner sep=3pt},
-      rail/.style={font=\footnotesize, fill=white, inner sep=1pt},
-      dot/.style={circle, fill=black, inner sep=1.4pt},
-      bsrc/.style={circle, draw, minimum size=0.72cm, inner sep=0pt,
-        fill=yellow!12},
-      arr/.style={-{Latex[length=1.8mm]}, semithick},
-      sig/.style={arr, gray!75},
-      fwd/.style={arr, forwardblue},
-      bwd/.style={arr, backred},
-      wr/.style={arr, writeorange}
-    ]
-    \newcommand{\capgnd}[4]{%
-      \draw (#1,#2) -- ++(0,-0.42);
-      \draw (#1-0.22,#2-0.42) -- (#1+0.22,#2-0.42);
-      \draw (#1-0.22,#2-0.58) -- (#1+0.22,#2-0.58);
-      \draw (#1,#2-0.58) -- ++(0,-0.42);
-      \draw (#1-0.22,#2-1.00) -- (#1+0.22,#2-1.00);
-      \draw (#1-0.15,#2-1.10) -- (#1+0.15,#2-1.10);
-      \draw (#1-0.08,#2-1.20) -- (#1+0.08,#2-1.20);
-      \node[rail] at (#1+0.46,#2-0.50) {#3};
-      \node[rail] at (#1+0.48,#2-0.96) {#4};
-    }
-    \newcommand{\isrcgnd}[5]{%
-      \draw (#1,#2) -- ++(0,-0.34);
-      \node[bsrc] (#5) at (#1,#2-0.72) {};
-      \draw[-{Latex[length=1.6mm]}] (#1,#2-0.45) -- (#1,#2-0.98);
-      \draw (#1,#2-1.08) -- ++(0,-0.34);
-      \draw (#1-0.22,#2-1.42) -- (#1+0.22,#2-1.42);
-      \draw (#1-0.15,#2-1.52) -- (#1+0.15,#2-1.52);
-      \draw (#1-0.08,#2-1.62) -- (#1+0.08,#2-1.62);
-      \node[rail, align=center, text width=1.55cm] at (#1+0.98,#2-0.72)
-        {#3\\#4};
-    }
-
-    \node[expr] (zexpr) at (0,0.25)
-      {\(z_{bc}=hb_{bc}+\sum_p S(w_{bcp})\,x_{bp}\)};
-    \node[dot, label=above:\(h_{bc}\)] (hnode) at (4.0,0.25) {};
-    \draw[fwd] (zexpr.east) -- (2.25,0.25);
-    \draw (2.25,0.25) -- (hnode);
-    \capgnd{4.0}{0.25}{\(C_h\)}{\(0\)}
-    \isrcgnd{5.35}{0.25}{\(\mathrm{Bstore\_h}\)}
-      {\(I_h\)}{Ih}
-    \draw (hnode) -- (5.35,0.25);
-    \draw[sig] (6.85,0.25) -- ++(0.8,0)
-      node[rail, right] {to readout scores};
-    \node[rail, text=forwardblue] at (2.75,0.85) {activation phase};
-
-    \node[expr] (rexpr) at (0,-2.35)
-      {\(r_{bc}=\sum_k d_k\,v_{kbc}\)};
-    \node[expr] (dexpr) at (0,-3.35)
-      {\(\delta h^\star_{bc}=r_{bc}\,[1-\tanh^2(z_{bc})]\)};
-    \node[dot, label=above:\(dh_{bc}\)] (dhnode) at (4.0,-2.85) {};
-    \draw[bwd] (dexpr.east) -- node[rail, above] {\(\delta h^\star\)}
-      (dhnode);
-    \capgnd{4.0}{-2.85}{\(C_{\delta h}\)}{\(0\)}
-    \isrcgnd{5.35}{-2.85}{\(\mathrm{Bstore\_dh}\)}
-      {\(I_{\delta h}\)}{Idh}
-    \draw (dhnode) -- (5.35,-2.85);
-    \node[rail, text=backred] at (2.82,-2.25) {backward phase};
-
-    \node[dot, label=above:\(w_{bcp}\)] (wnode) at (0,-5.65) {};
-    \node[dot, label=above:\(hb_{bc}\)] (hbnode) at (3.0,-5.65) {};
-    \node[dot, label=above:\(v_{kbc}\)] (vnode) at (6.0,-5.65) {};
-    \capgnd{0}{-5.65}{\(C_W\)}{\(0\)}
-    \capgnd{3.0}{-5.65}{\(C_b\)}{\(0\)}
-    \capgnd{6.0}{-5.65}{\(C_V\)}{\(0\)}
-    \isrcgnd{1.05}{-5.65}{\(\mathrm{Bupd\_w}\)}
-      {\(I_W\)}{Iw}
-    \isrcgnd{4.05}{-5.65}{\(\mathrm{Bupd\_hb}\)}
-      {\(I_b\)}{Ihb}
-    \isrcgnd{7.05}{-5.65}{\(\mathrm{Bupd\_v}\)}
-      {\(I_V\)}{Iv}
-    \draw (wnode) -- (1.05,-5.65);
-    \draw (hbnode) -- (4.05,-5.65);
-    \draw (vnode) -- (7.05,-5.65);
-    \node[rail, text=writeorange] at (3.55,-5.20) {write phase, \(pacc=1\)};
-  \end{tikzpicture}
-  \caption{Element-level schematic of one stored tanh hidden neuron and its
-  attached write devices in the final SPICE deck.  The arrows inside the
-  current-source symbols point from the named state node to ground, matching
-  SPICE's \(\code{Bxxx node 0 I=...}\) branch-current convention.  Positive
-  storage current therefore discharges the state capacitor; a negative write
-  current injects charge and raises the stored weight voltage.}
-  \label{fig:stored-tanh-neuron}
-\end{figure}
-
-The same circuit can be drawn in LTspice from the following deck stencil.  The
-\(\sum_p\) in the comments is not a special SPICE primitive; for a concrete
-cell it is expanded into one term per pixel in the block.  The signed weight
-map \(S(\cdot)\) is the clipping/sign function used by the generated deck.
 \[
-\begin{array}{lll}
-  h_{bc} &:& \text{stored activation node} \\
-  dh_{bc} &:& \text{stored hidden-delta node} \\
-  w_{bcp}, hb_{bc}, v_{kbc} &:&
-    \text{local weight, local bias, and readout weight nodes} \\
-  pact,pbwd,pacc &:&
-    \text{nonoverlapping activation, backward, and write phase rails.}
-\end{array}
+  I_{W^+}\propto pacc\,(x^+dh^+ + x^-dh^-),\qquad
+  I_{W^-}\propto pacc\,(x^+dh^- + x^-dh^+).
 \]
-
-\begin{verbatim}
-* One hidden local-feature neuron: block b, channel c.
-* Expand zbc by writing one signed/clipped weight term per pixel p:
-* zbc = V(hb_bc)
-*     + S(V(w_bc0))*V(x_b0)
-*     + S(V(w_bc1))*V(x_b1) + ...
-
-Ch_bc        h_bc    0  {CSTATE} IC=0
-Bstore_h_bc  h_bc    0  I = V(pact)*{CSTATE}/{TAU}*(V(h_bc)-tanh(zbc))
-
-Cdh_bc       dh_bc   0  {CSTATE} IC=0
-* rbc = sum_k V(d_k)*V(v_kbc)
-* dh_target = rbc*(1-tanh(zbc)*tanh(zbc))
-Bstore_dh_bc dh_bc   0  I = V(pbwd)*{CSTATE}/{TAU}*(V(dh_bc)-dh_target)
-
-Cw_bcp       w_bcp   0  {CW} IC=<random_init>
-Bupd_w_bcp   w_bcp   0  I = -V(pacc)*{CW}*eta*{LOCAL_UPDATE_SCALE}
-+                         /({BS}*{TAREA})*V(dh_bc)*V(x_bp)
-
-Chb_bc       hb_bc   0  {CW} IC=<random_init>
-Bupd_hb_bc   hb_bc   0  I = -V(pacc)*{CW}*eta*{LOCAL_UPDATE_SCALE}
-+                         /({BS}*{TAREA})*V(dh_bc)
-
-Cv_kbc       v_kbc   0  {CW} IC=<random_init>
-Bupd_v_kbc   v_kbc   0  I = -V(pacc)*{CW}*eta*{READOUT_UPDATE_SCALE}
-+                         /({BS}*{TAREA})*V(d_k)*V(h_bc)
-\end{verbatim}
-
-In generated-deck form, the key hidden activation source is equivalent to
-\[
-  I_h =
-  V(\mathrm{pact})\,\frac{C_{\mathrm{STATE}}}{\tau}
-  \left[V(h_{bc})-\tanh(z_{bc})\right],
-\]
-which gives
-\[
-  \frac{dV(h_{bc})}{dt}
-  =
-  V(\mathrm{pact})\,\frac{\tanh(z_{bc})-V(h_{bc})}{\tau}.
-\]
-The hidden delta storage uses the same first-order form with target
-\[
-  \left(\sum_k d_kV_{kbc}\right)(1-\tanh^2(z_{bc})).
-\]
-This is the circuit actually used by the high-accuracy behavioral/local-PCA
-run.  Earlier MOS ReLU and differential source-follower cells remain important
-transistor-level building blocks, but they have not yet replaced this
-behavioral neuron/write kernel in a high-accuracy run.
+This is the circuit family that should replace the non-device prototype before
+any future headline MNIST claim.
 
 \section{Trainable Cell Catalog}
+
 
 The repository now treats a hidden block/channel as a
 \(\code{TrainableDynamicalCell}\): a circuit-emittable learning object with
 public input/output/learning ports, declared internal state, a learning
 protocol, and characterization expectations.  The first ten concrete cells are
-behavioral local-feature candidates.  They all share the same state and phase
-contract shown in Fig.~\ref{fig:cell-template}; they differ in the forward
-nonlinearity \(\phi\), the hidden synapse transfer \(S_W\), the derivative
-gate, and the hidden-error feedback path.
+algorithmic reference candidates, not circuit diagrams.  They all share the
+same state and phase contract shown in Fig.~\ref{fig:cell-template}; they differ
+in the forward nonlinearity \(\phi\), the hidden synapse transfer \(S_W\), the
+derivative gate, and the hidden-error feedback path.  These diagrams are kept to
+define equations and ports only; transistor-level promotion starts from
+Fig.~\ref{fig:mos-local-feature-cell} and from single-cell SPICE
+characterization.
 
 \begin{figure}[H]
   \centering
@@ -635,11 +558,12 @@ gate, and the hidden-error feedback path.
     \draw[wr] (pacc) -- (6.9,-4.55) |- (v);
     \draw[wr] (pacc) -- (3.6,-4.55) |- (dh);
   \end{tikzpicture}}
-  \caption{Common local-feature cell template used by the ten behavioral
-  candidates.  Forward state \(h\), backward state \(\delta h\), local weights
-  and biases, and readout weights are capacitor states.  Candidate cells
-  replace the activation, synapse transfer, derivative gate, and feedback
-  block while preserving the same public-port and phase contract.}
+  \caption{Algorithmic contract template used by the ten reference candidates;
+  this is not a circuit schematic.  Forward state \(h\), backward state
+  \(\delta h\), local weights and biases, and readout weights correspond to
+  capacitor state in the MOS target.  Candidate equations replace the
+  activation, synapse transfer, derivative gate, and feedback rule while
+  preserving the same public-port and phase contract.}
   \label{fig:cell-template}
 \end{figure}
 
@@ -683,10 +607,9 @@ gate, and the hidden-error feedback path.
   \label{fig:cell-feedback}
 \end{figure}
 
-Figure~\ref{fig:cell-transfer-families} shows the circuit meaning of the main
-candidate families.  These are still behavioral cells: each transfer is emitted
-as a mathematical SPICE expression today, then promoted to a transistor
-candidate only if the replacement passes update-alignment and disturb tests.
+Figure~\ref{fig:cell-transfer-families} groups the main reference-equation
+families.  These are not hardware blocks.  A family becomes a circuit candidate
+only after a MOS replacement passes update-alignment and disturb tests.
 
 \begin{figure}[H]
   \centering
@@ -858,12 +781,12 @@ perfect sign alignment with the reference rule
   \operatorname{sign}(\Delta W)=\operatorname{sign}(\delta h\,x).
 \]
 The MNIST benchmark then experimentally exercises the same equations in a
-small online classifier.  It is a real-data behavioral smoke, not a SPICE or
+small online classifier.  It is a real-data algorithm smoke, not a SPICE or
 transistor validation.
 
 \begin{table}[H]
   \centering
-  \caption{Ten behavioral local-feature cells and their real-MNIST smoke
+  \caption{Ten reference local-feature equations and their real-MNIST smoke
   result.  The benchmark used \(10\times10\), block 4, stride 2, 2 channels,
   q16 inputs, 512 online updates, 1000 evaluation images, seeded random order,
   and no local-PCA.}

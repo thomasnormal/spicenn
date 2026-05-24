@@ -771,6 +771,21 @@ must satisfy before it can replace the current behavioral prototype.
 
 \begin{figure}[H]
   \centering
+  \includegraphics[width=0.88\linewidth]{figures/mos_hidden_writer_phase_timing_ngspice.png}
+  \caption{Ngspice hidden-error-to-writer phase-timing characterization.  Several
+  writer copies share the same stored \(r^+\) hidden-error capacitor rails while
+  their active-low \(pacc\) pulses are shifted before, during, and after the
+  \(pbwd\) storage phase.  A pulse before hidden-error storage creates only a
+  tiny signed residue, the storage-edge pulse is slightly smaller than the
+  fully settled update, and later overlap/gap timings converge to the same
+  weight differential.  This does not claim arbitrary clock overlap is safe; it
+  identifies the local sequencing margin for this Level-1 MOS writer and
+  hidden-error store.}
+  \label{fig:mos-hidden-writer-phase-timing-ngspice}
+\end{figure}
+
+\begin{figure}[H]
+  \centering
   \includegraphics[width=0.88\linewidth]{figures/mos_reset_precharge_ngspice.png}
   \caption{Ngspice transient characterization of MOS reset/precharge for
   reusable state capacitors.  A complementary MOS transmission-gate reset first

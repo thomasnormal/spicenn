@@ -1477,6 +1477,123 @@ quit
     quadrant_fig.tight_layout()
     save_plot(quadrant_fig, "mos_hidden_writer_quadrants_ngspice")
 
+    timing_cases = [
+        ("pre", "pre-store", 0.10),
+        ("edge", "store edge", 0.46),
+        ("overlap", "overlap", 0.80),
+        ("late", "late overlap", 1.10),
+        ("gap", "settled gap", 1.55),
+    ]
+    timing_devices = []
+    timing_prints = ["v(cdp_rp)", "v(cdm_rp)"]
+    for name, _label, start_us in timing_cases:
+        end_us = start_us + 0.40
+        timing_devices.append(
+            f"""
+VPACC_{name} paccn_{name} 0 PWL(0 1.8 {start_us:.2f}u 1.8 {start_us + 0.02:.2f}u 0 {end_us:.2f}u 0 {end_us + 0.02:.2f}u 1.8 3.2u 1.8)
+CWP_{name} wp_{name} 0 {{CWRITE}} IC=0.85
+CWM_{name} wm_{name} 0 {{CWRITE}} IC=0.85
+MWP_{name}A vdd paccn_{name} n_wp_{name}_a vdd PMOS L={{LCH}} W={{WWRITE}}
+MWP_{name}B n_wp_{name}_a hm_pos n_wp_{name}_b vdd PMOS L={{LCH}} W={{WWRITE}}
+MWP_{name}C n_wp_{name}_b cdm_rp wp_{name} vdd PMOS L={{LCH}} W={{WWRITE}}
+MWM_{name}A vdd paccn_{name} n_wm_{name}_a vdd PMOS L={{LCH}} W={{WWRITE}}
+MWM_{name}B n_wm_{name}_a hm_pos n_wm_{name}_b vdd PMOS L={{LCH}} W={{WWRITE}}
+MWM_{name}C n_wm_{name}_b cdp_rp wm_{name} vdd PMOS L={{LCH}} W={{WWRITE}}
+"""
+        )
+        timing_prints.extend([f"v(wp_{name})", f"v(wm_{name})", f"v(paccn_{name})"])
+
+    timing_deck = f"""
+* Hidden-error to writer phase-timing margin check.
+* Multiple writer copies see the same stored r+ hidden-error rails.  Their
+* pacc pulses start before, during, and after the pbwd storage phase to expose
+* the sequencing margin without behavioral update helpers.
+{COMMON_MODELS}
+.param CERR=10p CWRITE=500p WSW=24u WWRITE=10u
+VDD vdd 0 1.8
+VTAIL vbias 0 0.95
+VPBWD pbwd 0 PULSE(0 1.8 0.45u 20n 20n 0.80u 5.0u)
+VRP rp 0 PULSE(0 1.8 0.45u 20n 20n 0.80u 5.0u)
+
+VZPP zpp 0 {0.9 + eps / 2.0:.5f}
+VZMM zmm 0 {0.9 - eps / 2.0:.5f}
+VZPM zpm 0 {0.9 - eps / 2.0:.5f}
+VZMP zmp 0 {0.9 + eps / 2.0:.5f}
+
+MPPP hpp hpp vdd vdd PMOS L={{LCH}} W={{WP}}
+MPPM hpm hpm vdd vdd PMOS L={{LCH}} W={{WP}}
+MNPP hpp zpp tailp 0 NMOS L={{LCH}} W={{WN}}
+MNPM hpm zmm tailp 0 NMOS L={{LCH}} W={{WN}}
+MNTP tailp vbias 0 0 NMOS L={{LCH}} W={{WN}}
+
+MPMP hmp hmp vdd vdd PMOS L={{LCH}} W={{WP}}
+MPMM hmm hmm vdd vdd PMOS L={{LCH}} W={{WP}}
+MNMP hmp zpm tailm 0 NMOS L={{LCH}} W={{WN}}
+MNMM hmm zmp tailm 0 NMOS L={{LCH}} W={{WN}}
+MNTM tailm vbias 0 0 NMOS L={{LCH}} W={{WN}}
+
+CDP_RP cdp_rp 0 {{CERR}} IC=1.04
+CDM_RP cdm_rp 0 {{CERR}} IC=1.04
+RDP_RP cdp_rp 0 50G
+RDM_RP cdm_rp 0 50G
+{sign_store_path("hpm", "rp", "cdp_rp", "trp1")}
+{sign_store_path("hmp", "rp", "cdp_rp", "trp2")}
+{sign_store_path("hpp", "rp", "cdm_rp", "trp3")}
+{sign_store_path("hmm", "rp", "cdm_rp", "trp4")}
+
+VHP_POS hp_pos 0 1.12
+VHM_POS hm_pos 0 0.92
+
+{''.join(timing_devices)}
+
+.control
+set noaskquit
+tran 5n 3.2u uic
+wrdata mos_hidden_writer_phase_timing.dat {' '.join(timing_prints)} v(pbwd)
+quit
+.endc
+.end
+"""
+    timing_data = run_ngspice(timing_deck, "mos_hidden_writer_phase_timing")
+    tt, timing_cols = load_wrdata(timing_data, len(timing_prints) + 1)
+
+    def tat(time_s: float, values: np.ndarray) -> float:
+        return float(values[np.argmin(np.abs(tt - time_s))])
+
+    timing_hidden = timing_cols[0] - timing_cols[1]
+    timing_diffs = []
+    timing_final = []
+    for idx, (_name, _label, _start_us) in enumerate(timing_cases):
+        diff = timing_cols[2 + 3 * idx] - timing_cols[3 + 3 * idx]
+        timing_diffs.append(diff)
+        timing_final.append(tat(2.85e-6, diff))
+    timing_final = np.array(timing_final)
+    require(tat(1.35e-6, timing_hidden) > 0.07, "timing deck should store a positive hidden error")
+    require(abs(timing_final[0]) < 0.001, "writer pulse before hidden-error storage should not create signed update")
+    require(timing_final[1] > timing_final[0] + 0.002, "writer pulse at storage edge should create a partial signed update")
+    require(timing_final[1] < 0.99 * timing_final[-1], "storage-edge writer should be measurably below the settled update")
+    require(np.min(timing_final[2:]) > 0.95 * timing_final[-1], "writer pulses after hidden-error settling should reach the full update")
+    require(np.max(timing_final[2:]) - np.min(timing_final[2:]) < 2e-4, "settled writer timings should agree")
+
+    timing_fig, timing_axes = plt.subplots(2, 1, figsize=(7.2, 5.8))
+    timing_axes[0].plot(1e6 * tt, timing_hidden, label="stored $r^+$ hidden error")
+    timing_axes[0].plot(1e6 * tt, timing_cols[-1] / 20.0, color="0.5", alpha=0.35, label="$pbwd/20$")
+    timing_axes[0].axhline(0, color="0.4", linewidth=0.8)
+    timing_axes[0].set_ylabel("hidden error (V)")
+    timing_axes[0].set_title("Hidden-error storage settles quickly after pbwd starts")
+    timing_axes[0].grid(True, alpha=0.25)
+    timing_axes[0].legend(loc="upper right")
+    for (_name, label, _start_us), diff in zip(timing_cases, timing_diffs):
+        timing_axes[1].plot(1e6 * tt, diff, label=label)
+    timing_axes[1].axhline(0, color="0.4", linewidth=0.8)
+    timing_axes[1].set_xlabel("time (us)")
+    timing_axes[1].set_ylabel("$W^+ - W^-$ (V)")
+    timing_axes[1].set_title("pacc timing sweep exposes the storage/write margin")
+    timing_axes[1].grid(True, alpha=0.25)
+    timing_axes[1].legend(loc="upper left", ncol=2)
+    timing_fig.tight_layout()
+    save_plot(timing_fig, "mos_hidden_writer_phase_timing_ngspice")
+
     return hidden_writer_plot
 
 

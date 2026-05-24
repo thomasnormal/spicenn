@@ -321,30 +321,103 @@ quit
 .endc
 .end
 """
+    store_deck = f"""
+* Hidden-error sign-selection storage sanity check.
+* This is not the finite-difference subtractor; it checks that MOS switches can
+* store the positive or negative use of a forward-replica error voltage on
+* differential hidden-error capacitors.
+{COMMON_MODELS}
+.param CERR=10p WSW=24u
+VDD vdd 0 1.8
+VZP zp 0 1.08
+VZM zm 0 0.9
+VTAIL vbias 0 0.95
+VPBWD pbwd 0 PULSE(0 1.8 0.5u 20n 20n 0.8u 4.0u)
+VRP rp 0 PULSE(0 1.8 0.5u 20n 20n 0.8u 4.0u)
+VRM rm 0 PULSE(0 1.8 0.5u 20n 20n 0.8u 4.0u)
+
+* Positive-error copy: store h- on delta+ and h+ on delta-.
+MPP1 hp_p hp_p vdd vdd PMOS L={{LCH}} W={{WP}}
+MPP2 hm_p hm_p vdd vdd PMOS L={{LCH}} W={{WP}}
+MNP1 hp_p zp tail_p 0 NMOS L={{LCH}} W={{WN}}
+MNP2 hm_p zm tail_p 0 NMOS L={{LCH}} W={{WN}}
+MNTP tail_p vbias 0 0 NMOS L={{LCH}} W={{WN}}
+CDPP cdp_p 0 {{CERR}} IC=1.04
+CDPM cdm_p 0 {{CERR}} IC=1.04
+RDP cdp_p 0 50G
+RDM cdm_p 0 50G
+MSP1 hm_p pbwd nsp1 0 NMOS L={{LCH}} W={{WSW}}
+MSP2 nsp1 rp cdp_p 0 NMOS L={{LCH}} W={{WSW}}
+MSP3 hp_p pbwd nsp2 0 NMOS L={{LCH}} W={{WSW}}
+MSP4 nsp2 rp cdm_p 0 NMOS L={{LCH}} W={{WSW}}
+
+* Negative-error copy swaps the storage rails.
+MPN1 hp_n hp_n vdd vdd PMOS L={{LCH}} W={{WP}}
+MPN2 hm_n hm_n vdd vdd PMOS L={{LCH}} W={{WP}}
+MNN1 hp_n zp tail_n 0 NMOS L={{LCH}} W={{WN}}
+MNN2 hm_n zm tail_n 0 NMOS L={{LCH}} W={{WN}}
+MNTN tail_n vbias 0 0 NMOS L={{LCH}} W={{WN}}
+CDNP cdp_n 0 {{CERR}} IC=1.04
+CDNM cdm_n 0 {{CERR}} IC=1.04
+RNP cdp_n 0 50G
+RNM cdm_n 0 50G
+MSN1 hm_n pbwd nsn1 0 NMOS L={{LCH}} W={{WSW}}
+MSN2 nsn1 rm cdm_n 0 NMOS L={{LCH}} W={{WSW}}
+MSN3 hp_n pbwd nsn2 0 NMOS L={{LCH}} W={{WSW}}
+MSN4 nsn2 rm cdp_n 0 NMOS L={{LCH}} W={{WSW}}
+
+.control
+set noaskquit
+tran 5n 2.5u uic
+wrdata mos_hidden_error_store.dat v(hp_p) v(hm_p) v(cdp_p) v(cdm_p) v(cdp_n) v(cdm_n) v(pbwd)
+quit
+.endc
+.end
+"""
     data = run_ngspice(deck, "mos_hidden_error")
     x, cols = load_wrdata(data, 4)
     xdiff = x - 0.9
     signed_plus_nudge = cols[1] - cols[0]
     signed_minus_nudge = cols[3] - cols[2]
     gain = (signed_plus_nudge - signed_minus_nudge) / (2.0 * eps)
-    pos_fb = gain
-    neg_fb = -gain
     center_gain = gain[np.argmin(np.abs(xdiff))]
     edge_gain = max(float(np.mean(gain[xdiff < -0.45])), float(np.mean(gain[xdiff > 0.45])))
     require(center_gain > 0.5, "hidden-error derivative gain should be positive near z balance")
     require(edge_gain < 0.65 * center_gain, "hidden-error derivative gain should fall at saturated z")
-    require(np.all(pos_fb > -1e-4), "positive feedback gain should stay nonnegative")
-    require(np.all(neg_fb < 1e-4), "negative feedback gain should stay nonpositive")
-    fig, ax = plt.subplots(figsize=(7.2, 4.2))
-    ax.plot(x - 0.9, pos_fb, label="$r^+$ active")
-    ax.plot(x - 0.9, neg_fb, label="$r^-$ active")
-    ax.axhline(0, color="0.4", linewidth=0.8)
-    ax.axvline(0, color="0.4", linewidth=0.8)
-    ax.set_xlabel("$z^+ - z^-$ (V)")
-    ax.set_ylabel("small-signal error gain (V/V)")
-    ax.set_title("Hidden-error replicas produce derivative-shaped signed gain")
-    ax.grid(True, alpha=0.25)
-    ax.legend()
+    require(np.all(gain > -1e-4), "finite-difference gain should stay nonnegative")
+
+    store_data = run_ngspice(store_deck, "mos_hidden_error_store")
+    t, store_cols = load_wrdata(store_data, 7)
+    pos_stored = store_cols[2] - store_cols[3]
+    neg_stored = store_cols[4] - store_cols[5]
+
+    def at(time_s: float, values: np.ndarray) -> float:
+        return float(values[np.argmin(np.abs(t - time_s))])
+
+    require(at(1.2e-6, pos_stored) > 0.12, "r+ storage should make positive delta rail differential")
+    require(at(1.2e-6, neg_stored) < -0.12, "r- storage should make negative delta rail differential")
+    require(at(2.2e-6, pos_stored) > 0.12, "r+ hidden-error storage should hold after phase")
+    require(at(2.2e-6, neg_stored) < -0.12, "r- hidden-error storage should hold after phase")
+
+    fig, axes = plt.subplots(2, 1, figsize=(7.2, 6.2))
+    axes[0].plot(x - 0.9, gain, label="finite-difference gain")
+    axes[0].axhline(0, color="0.4", linewidth=0.8)
+    axes[0].axvline(0, color="0.4", linewidth=0.8)
+    axes[0].set_xlabel("$z^+ - z^-$ (V)")
+    axes[0].set_ylabel("small-signal gain (V/V)")
+    axes[0].set_title("Hidden-error replicas produce derivative window")
+    axes[0].grid(True, alpha=0.25)
+    axes[0].legend()
+    axes[1].plot(1e6 * t, pos_stored, label="$r^+$: stored $\\delta^+ - \\delta^-$")
+    axes[1].plot(1e6 * t, neg_stored, label="$r^-$: stored $\\delta^+ - \\delta^-$")
+    axes[1].plot(1e6 * t, store_cols[6] / 10.0, color="0.5", alpha=0.45, label="$pbwd/10$")
+    axes[1].axhline(0, color="0.4", linewidth=0.8)
+    axes[1].set_xlabel("time (us)")
+    axes[1].set_ylabel("stored hidden-error step (V)")
+    axes[1].set_title("MOS pass switches store selected error sign")
+    axes[1].grid(True, alpha=0.25)
+    axes[1].legend()
+    fig.tight_layout()
     return save_plot(fig, "mos_hidden_error_ngspice")
 
 

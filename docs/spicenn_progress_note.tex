@@ -619,13 +619,13 @@ must satisfy before it can replace the current behavioral prototype.
 \begin{figure}[H]
   \centering
   \includegraphics[width=0.88\linewidth]{figures/mos_hidden_error_ngspice.png}
-  \caption{Ngspice DC characterization of the hidden-error replica pair.  Two
-  matched diode-loaded MOS forward replicas are nudged by \(+10\) mV and
-  \(-10\) mV on the swept preactivation rail, and the finite difference gives the local
-  small-signal gain.  The two plotted traces show the positive and negative
-  uses of that measured gain for hidden-error transport; this deck validates
-  the transistor derivative window rather than inserting a behavioral error
-  source.}
+  \caption{Ngspice characterization of the hidden-error path.  The top panel
+  uses two matched diode-loaded MOS forward replicas nudged by \(+10\) mV and
+  \(-10\) mV on the swept preactivation rail; their finite difference gives the
+  local small-signal derivative window.  The bottom panel is a separate
+  transient sign-selection check: MOS pass switches controlled by \(r^+\) or
+  \(r^-\) store opposite differential hidden-error polarities on capacitors and
+  hold them after the backward phase closes.}
   \label{fig:mos-hidden-error-ngspice}
 \end{figure}
 

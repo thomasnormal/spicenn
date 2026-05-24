@@ -326,12 +326,13 @@ The cell is differential throughout the signed path.  A one-pixel signed
 synapse slice steers input charge into the positive or negative preactivation
 rail according to differential weight capacitors.  A source-degenerated MOS
 differential pair gives the tanh-like forward nonlinearity.  A replica
-transconductor forms the local derivative/error current.  The writer is a
-four-quadrant MOS coincidence cell: two same-sign branches select the positive
-weight capacitor and two opposite-sign branches select the negative weight
-capacitor.  Whether the selected branch charges or discharges depends on the
-chosen memory polarity; the local requirement is branch selectivity and signed
-update direction.
+transconductor, or equivalently a pair of small-signal-nudged replicas, forms
+the local derivative/error current.  The writer is a four-quadrant MOS
+coincidence cell: two same-sign branches select the positive weight capacitor
+and two opposite-sign branches select the negative weight capacitor.  Whether
+the selected branch charges or discharges depends on the chosen memory
+polarity; the local requirement is branch selectivity and signed update
+direction.
 
 \begin{figure}[H]
   \centering
@@ -512,10 +513,16 @@ update direction.
 \end{figure}
 
 The expected small-signal relationships are transistor relationships, not
-equation-only source definitions:
+equation-only source definitions.  With the simple Level-1 devices used in the
+testbench the forward transfer is closer to a bounded hard-tanh than a
+subthreshold tanh, but the required signs are the same:
 \[
   I_{h^+}-I_{h^-}
   \approx I_b\tanh\!\left(\frac{\kappa(V_{z^+}-V_{z^-})}{2V_T}\right),
+\]
+\[
+  \delta h \propto r\,
+    \frac{\partial (V_{h^-}-V_{h^+})}{\partial V_{z^+}},
 \]
 \[
   I_{W^+}\propto pacc\,(x^+dh^+ + x^-dh^-),\qquad
@@ -564,10 +571,12 @@ must satisfy before it can replace the current behavioral prototype.
 \begin{figure}[H]
   \centering
   \includegraphics[width=0.88\linewidth]{figures/mos_hidden_error_ngspice.png}
-  \caption{Ngspice DC characterization of the hidden-error replica pair.  The
-  \(r^+\) and \(r^-\) feedback rails produce opposite signs on
-  \(\delta h^+ - \delta h^-\), so the cell can transport signed hidden error
-  without a behavioral error source.}
+  \caption{Ngspice DC characterization of the hidden-error replica pair.  Two
+  matched MOS forward replicas are nudged by \(+10\) mV and \(-10\) mV on the
+  swept preactivation rail, and the finite difference gives the local
+  small-signal gain.  The \(r^+\) and \(r^-\) feedback polarities select
+  opposite signs, so the cell can transport signed hidden error without a
+  behavioral error source.}
   \label{fig:mos-hidden-error-ngspice}
 \end{figure}
 

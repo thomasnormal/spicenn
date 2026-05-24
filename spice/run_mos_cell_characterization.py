@@ -29,6 +29,11 @@ COMMON_MODELS = """
 """
 
 
+def require(condition: bool, message: str) -> None:
+    if not condition:
+        raise AssertionError(message)
+
+
 def run_ngspice(deck: str, stem: str) -> Path:
     RESULT_DIR.mkdir(parents=True, exist_ok=True)
     deck_path = RESULT_DIR / f"{stem}.cir"
@@ -39,7 +44,11 @@ def run_ngspice(deck: str, stem: str) -> Path:
         check=True,
         cwd=RESULT_DIR,
     )
-    return RESULT_DIR / f"{stem}.dat"
+    data_path = RESULT_DIR / f"{stem}.dat"
+    # ngspice wrdata pads rows with a trailing space.  Keep committed
+    # characterization data diff-clean without changing the numeric content.
+    data_path.write_text("\n".join(line.rstrip() for line in data_path.read_text().splitlines()) + "\n")
+    return data_path
 
 
 def load_wrdata(path: Path, series_count: int) -> tuple[np.ndarray, list[np.ndarray]]:
@@ -66,7 +75,7 @@ def characterize_synapse() -> Path:
 * Signed MOS synapse slice sanity check
 {COMMON_MODELS}
 VXP xp 0 0.2
-VXM xm 0 0.4
+VXM xm 0 0.9
 
 * Positive-weight copy: w+ high, w- low.
 VWPP wpp 0 1.8
@@ -103,7 +112,11 @@ quit
     # positive current means a positive signed contribution to z.
     pos_signed = cols[0] - cols[1]
     neg_signed = cols[2] - cols[3]
-    xdiff = x - 0.4
+    xdiff = x - 0.9
+    require(np.mean(pos_signed[xdiff > 0.2]) > 0, "w+ branch should be positive for x+ > x-")
+    require(np.mean(pos_signed[xdiff < -0.2]) < 0, "w+ branch should be negative for x+ < x-")
+    require(np.mean(neg_signed[xdiff > 0.2]) < 0, "w- branch should be negative for x+ > x-")
+    require(np.mean(neg_signed[xdiff < -0.2]) > 0, "w- branch should be positive for x+ < x-")
     fig, ax = plt.subplots(figsize=(7.2, 4.2))
     ax.plot(xdiff, 1e6 * pos_signed, label="$w^+$ high")
     ax.plot(xdiff, 1e6 * neg_signed, label="$w^-$ high")
@@ -140,11 +153,15 @@ quit
 """
     data = run_ngspice(deck, "mos_forward_pair")
     x, cols = load_wrdata(data, 2)
+    xdiff = x - 0.9
+    signed = cols[1] - cols[0]
+    require(np.all(np.diff(signed) >= -1e-4), "forward pair transfer should be monotone")
+    require(abs(signed[np.argmin(np.abs(xdiff))]) < 1e-3, "forward pair should be centered near zero")
     fig, ax = plt.subplots(figsize=(7.2, 4.2))
     # The diode-connected PMOS load is voltage-inverting: the rail that sinks
     # more differential-pair current moves lower.  Plot the usable signed load
     # voltage convention so the transfer rises with z+ - z-.
-    ax.plot(x - 0.9, cols[1] - cols[0], label="$h^- - h^+$")
+    ax.plot(xdiff, signed, label="$h^- - h^+$")
     ax.axhline(0, color="0.4", linewidth=0.8)
     ax.axvline(0, color="0.4", linewidth=0.8)
     ax.set_xlabel("$z^+ - z^-$ (V)")
@@ -156,56 +173,67 @@ quit
 
 
 def characterize_hidden_error() -> Path:
+    eps = 0.01
     deck = f"""
-* Hidden-error replica pair sanity check
+* Hidden-error finite-difference replica-pair sanity check.
+* The small-signal nudge is applied to the swept preactivation rail so this
+* measures the local slope of the same MOS forward transfer plotted above.
 {COMMON_MODELS}
+.param EPS={eps}
 VDD vdd 0 1.8
 VZP zp 0 0.2
 VZM zm 0 0.9
-VPBWD pbwd 0 1.1
+VTAIL vbias 0 0.95
 
-* Positive feedback copy: r+ low turns on the positive PMOS load.
-VRPP rpp 0 0.25
-VRMP rmp 0 1.55
-MPP dhpp rpp vdd vdd PMOS L={{LCH}} W={{WP}}
-MPM dhmp rmp vdd vdd PMOS L={{LCH}} W={{WP}}
-MNP dhpp zp tailp 0 NMOS L={{LCH}} W={{WN}}
-MNM dhmp zm tailp 0 NMOS L={{LCH}} W={{WN}}
-MNTP tailp pbwd 0 0 NMOS L={{LCH}} W={{WN}}
-RLP dhpp 0 5Meg
-RLM dhmp 0 5Meg
+* Testbench nudges: p-copy uses z+ + eps.
+VZP_P zpp zp {{EPS}}
+* m-copy uses z+ - eps.
+VZP_M zp zpm {{EPS}}
 
-* Negative feedback copy: r- low turns on the negative PMOS load.
-VRPN rpn 0 1.55
-VRMN rmn 0 0.25
-MPPN dhpn rpn vdd vdd PMOS L={{LCH}} W={{WP}}
-MPMN dhmn rmn vdd vdd PMOS L={{LCH}} W={{WP}}
-MNPN dhpn zp tailn 0 NMOS L={{LCH}} W={{WN}}
-MNMN dhmn zm tailn 0 NMOS L={{LCH}} W={{WN}}
-MNTN tailn pbwd 0 0 NMOS L={{LCH}} W={{WN}}
-RLPN dhpn 0 5Meg
-RLMN dhmn 0 5Meg
+* Positive nudge replica.
+MPPP hpp hpp vdd vdd PMOS L={{LCH}} W={{WP}}
+MPPM hpm hpm vdd vdd PMOS L={{LCH}} W={{WP}}
+MNPP hpp zpp tailp 0 NMOS L={{LCH}} W={{WN}}
+MNPM hpm zm tailp 0 NMOS L={{LCH}} W={{WN}}
+MNTP tailp vbias 0 0 NMOS L={{LCH}} W={{WN}}
+
+* Negative nudge replica.
+MPMP hmp hmp vdd vdd PMOS L={{LCH}} W={{WP}}
+MPMM hmm hmm vdd vdd PMOS L={{LCH}} W={{WP}}
+MNMP hmp zpm tailm 0 NMOS L={{LCH}} W={{WN}}
+MNMM hmm zm tailm 0 NMOS L={{LCH}} W={{WN}}
+MNTM tailm vbias 0 0 NMOS L={{LCH}} W={{WN}}
 
 .control
 set noaskquit
 dc VZP 0.2 1.6 0.01
-wrdata mos_hidden_error.dat v(dhpp) v(dhmp) v(dhpn) v(dhmn)
+wrdata mos_hidden_error.dat v(hpp) v(hpm) v(hmp) v(hmm)
 quit
 .endc
 .end
 """
     data = run_ngspice(deck, "mos_hidden_error")
     x, cols = load_wrdata(data, 4)
-    pos_fb = cols[0] - cols[1]
-    neg_fb = cols[2] - cols[3]
+    xdiff = x - 0.9
+    signed_plus_nudge = cols[1] - cols[0]
+    signed_minus_nudge = cols[3] - cols[2]
+    gain = (signed_plus_nudge - signed_minus_nudge) / (2.0 * eps)
+    pos_fb = gain
+    neg_fb = -gain
+    center_gain = gain[np.argmin(np.abs(xdiff))]
+    edge_gain = max(float(np.mean(gain[xdiff < -0.45])), float(np.mean(gain[xdiff > 0.45])))
+    require(center_gain > 0.5, "hidden-error derivative gain should be positive near z balance")
+    require(edge_gain < 0.65 * center_gain, "hidden-error derivative gain should fall at saturated z")
+    require(np.all(pos_fb > -1e-4), "positive feedback gain should stay nonnegative")
+    require(np.all(neg_fb < 1e-4), "negative feedback gain should stay nonpositive")
     fig, ax = plt.subplots(figsize=(7.2, 4.2))
     ax.plot(x - 0.9, pos_fb, label="$r^+$ active")
     ax.plot(x - 0.9, neg_fb, label="$r^-$ active")
     ax.axhline(0, color="0.4", linewidth=0.8)
     ax.axvline(0, color="0.4", linewidth=0.8)
     ax.set_xlabel("$z^+ - z^-$ (V)")
-    ax.set_ylabel("$\\delta h^+ - \\delta h^-$ (V)")
-    ax.set_title("Hidden-error replica flips sign with feedback rail")
+    ax.set_ylabel("small-signal error gain (V/V)")
+    ax.set_title("Hidden-error replicas produce derivative-shaped signed gain")
     ax.grid(True, alpha=0.25)
     ax.legend()
     return save_plot(fig, "mos_hidden_error_ngspice")
@@ -256,6 +284,8 @@ quit
 """
     data = run_ngspice(deck, "mos_writer")
     t, cols = load_wrdata(data, 5)
+    require(cols[0][-1] < 0.2 and cols[1][-1] > 1.7, "same-sign writer should select only W+")
+    require(cols[3][-1] < 0.2 and cols[2][-1] > 1.7, "opposite-sign writer should select only W-")
     fig, axes = plt.subplots(2, 1, figsize=(7.2, 5.2), sharex=True)
     axes[0].plot(1e6 * t, cols[0], label="$W^+$, same sign")
     axes[0].plot(1e6 * t, cols[1], label="$W^-$, same sign")

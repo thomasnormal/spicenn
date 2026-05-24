@@ -62,6 +62,19 @@
   \node[font=\small, fill=white, inner sep=1pt, anchor=west] at (#1+0.25,#2) {#3};
   \node[font=\small, fill=white, inner sep=1pt, anchor=east] at (#1-0.72,#2) {#4};
 }
+\newcommand{\drawdiodepmos}[4]{%
+  \coordinate (#4) at (#1,#2);
+  \coordinate (#4D) at (#1,#2-0.42);
+  \coordinate (#4S) at (#1,#2+0.42);
+  \coordinate (#4G) at (#1-0.24,#2);
+  \draw[semithick] (#1,#2+0.42) -- (#1,#2-0.42);
+  \draw[semithick] (#1,#2+0.42) -- ++(0,0.25);
+  \draw[semithick] (#1,#2-0.42) -- ++(0,-0.25);
+  \draw[semithick] (#1-0.24,#2+0.34) -- (#1-0.24,#2-0.34);
+  \draw[semithick] (#1-0.24,#2-0.25) -- (#1,#2-0.25);
+  \draw[semithick] (#1-0.36,#2) circle [radius=0.09];
+  \node[font=\small, fill=white, inner sep=1pt, anchor=west] at (#1+0.25,#2) {#3};
+}
 
 \title{Toward Fully On-Device SPICE Training of a Local-Feature MNIST Network}
 \author{SPICENN architecture note}
@@ -398,8 +411,8 @@ direction.
     ]
     \node[font=\bfseries\Large] at (4.7,3.8) {B. forward differential pair and activation storage};
     \draw[semithick] (-0.1,3.15) node[lab,left] {VDD} -- (9.4,3.15);
-    \drawpmos{2.1}{2.35}{$P_L^+$}{$V_{bp}$}{fp1}
-    \drawpmos{6.6}{2.35}{$P_L^-$}{$V_{bp}$}{fp2}
+    \drawdiodepmos{2.1}{2.35}{$P_L^+$}{fp1}
+    \drawdiodepmos{6.6}{2.35}{$P_L^-$}{fp2}
     \draw[semithick] (fp1S) -- (2.1,3.15); \draw[semithick] (fp2S) -- (6.6,3.15);
     \node[circle, fill=black, inner sep=1.3pt, label=above:{$h^+$}] (fhp) at (2.1,1.45) {};
     \node[circle, fill=black, inner sep=1.3pt, label=above:{$h^-$}] (fhm) at (6.6,1.45) {};
@@ -421,9 +434,10 @@ direction.
     \draw[ctrl] (8.15,1.75) node[lab,above] {$pact$} -- (fshmG);
     \node[group, fit=(fp1) (fp2) (fn1) (fn2) (fnt) (fchp) (fchm)] {};
   \end{tikzpicture}}
-  \caption{Zoomed MOS forward cell.  The source-degenerated differential pair
-  gives a tanh-like current split, and phase-gated MOS switches store the
-  differential activation on \(C_{h^+}\) and \(C_{h^-}\).}
+  \caption{Zoomed MOS forward cell matching the ngspice testbench.  The
+  source-coupled NMOS pair and diode-connected PMOS loads give a bounded
+  differential transfer, and phase-gated MOS switches store the differential
+  activation on \(C_{h^+}\) and \(C_{h^-}\).}
   \label{fig:mos-forward-cell}
 \end{figure}
 
@@ -435,29 +449,49 @@ direction.
       lab/.style={font=\large, fill=white, inner sep=1.5pt},
       group/.style={draw, dashed, rounded corners=2pt, inner sep=9pt}
     ]
-    \node[font=\bfseries\Large] at (4.7,3.8) {C. hidden-error replica pair};
-    \draw[semithick] (-0.1,3.15) node[lab,left] {VDD} -- (9.4,3.15);
-    \drawpmos{2.1}{2.35}{$P_r^+$}{$r^+$}{bp1}
-    \drawpmos{6.6}{2.35}{$P_r^-$}{$r^-$}{bp2}
-    \draw[semithick] (bp1S) -- (2.1,3.15); \draw[semithick] (bp2S) -- (6.6,3.15);
-    \node[circle, fill=black, inner sep=1.3pt, label=above:{$\delta h^+$}] (bdhp) at (2.1,1.45) {};
-    \node[circle, fill=black, inner sep=1.3pt, label=above:{$\delta h^-$}] (bdhm) at (6.6,1.45) {};
-    \draw[semithick] (bp1D) -- (bdhp); \draw[semithick] (bp2D) -- (bdhm);
-    \drawnmos{2.1}{0.25}{$N_d^+$}{$z^+$}{bn1}
-    \drawnmos{6.6}{0.25}{$N_d^-$}{$z^-$}{bn2}
-    \draw[semithick] (bdhp) -- (bn1D); \draw[semithick] (bdhm) -- (bn2D);
-    \draw[semithick] (bn1S) -- (4.35,-0.65) -- (bn2S);
-    \drawnmos{4.35}{-1.6}{$N_{tb}$}{$pbwd$}{bnt}
-    \draw[semithick] (4.35,-0.65) -- (bntD); \draw[semithick] (bntS) -- (4.35,-2.45);
-    \mosgnd{4.35}{-2.45}
-    \moscap{0.55}{0.15}{$C_{\delta h^+}$}{bcdhp}
-    \moscap{8.15}{0.15}{$C_{\delta h^-}$}{bcdhm}
-    \draw[semithick] (bdhp) -| (bcdhp); \draw[semithick] (bdhm) -| (bcdhm);
-    \node[group, fit=(bp1) (bp2) (bn1) (bn2) (bnt) (bcdhp) (bcdhm)] {};
+    \draw[semithick] (-0.2,3.2) node[lab,left] {VDD} -- (9.8,3.2);
+
+    \node[lab] at (2.3,3.55) {\(+\epsilon\) replica};
+    \drawdiodepmos{1.3}{2.4}{$P_L^+$}{hep1}
+    \drawdiodepmos{3.3}{2.4}{$P_L^-$}{hem1}
+    \draw[semithick] (hep1S) -- (1.3,3.2); \draw[semithick] (hem1S) -- (3.3,3.2);
+    \node[circle, fill=black, inner sep=1.2pt, label=above:{$h^+_{\epsilon+}$}] (hepp) at (1.3,1.5) {};
+    \node[circle, fill=black, inner sep=1.2pt, label=above:{$h^-_{\epsilon+}$}] (hepm) at (3.3,1.5) {};
+    \draw[semithick] (hep1D) -- (hepp); \draw[semithick] (hem1D) -- (hepm);
+    \drawnmos{1.3}{0.25}{$N_{\epsilon+}$}{$z^+\!+\epsilon$}{henp}
+    \drawnmos{3.3}{0.25}{$N_{\epsilon-}$}{$z^-$}{henm}
+    \draw[semithick] (hepp) -- (henpD); \draw[semithick] (hepm) -- (henmD);
+    \draw[semithick] (henpS) -- (2.3,-0.6) -- (henmS);
+    \drawnmos{2.3}{-1.55}{$N_{t+}$}{$V_{tail}$}{hent}
+    \draw[semithick] (2.3,-0.6) -- (hentD); \draw[semithick] (hentS) -- (2.3,-2.35);
+    \mosgnd{2.3}{-2.35}
+
+    \node[lab] at (7.3,3.55) {\(-\epsilon\) replica};
+    \drawdiodepmos{6.3}{2.4}{$P_L^+$}{hmp1}
+    \drawdiodepmos{8.3}{2.4}{$P_L^-$}{hmm1}
+    \draw[semithick] (hmp1S) -- (6.3,3.2); \draw[semithick] (hmm1S) -- (8.3,3.2);
+    \node[circle, fill=black, inner sep=1.2pt, label=above:{$h^+_{\epsilon-}$}] (hmpp) at (6.3,1.5) {};
+    \node[circle, fill=black, inner sep=1.2pt, label=above:{$h^-_{\epsilon-}$}] (hmpm) at (8.3,1.5) {};
+    \draw[semithick] (hmp1D) -- (hmpp); \draw[semithick] (hmm1D) -- (hmpm);
+    \drawnmos{6.3}{0.25}{$N_{\epsilon+}$}{$z^+\!-\epsilon$}{hmnp}
+    \drawnmos{8.3}{0.25}{$N_{\epsilon-}$}{$z^-$}{hmnm}
+    \draw[semithick] (hmpp) -- (hmnpD); \draw[semithick] (hmpm) -- (hmnmD);
+    \draw[semithick] (hmnpS) -- (7.3,-0.6) -- (hmnmS);
+    \drawnmos{7.3}{-1.55}{$N_{t-}$}{$V_{tail}$}{hmnt}
+    \draw[semithick] (7.3,-0.6) -- (hmntD); \draw[semithick] (hmntS) -- (7.3,-2.35);
+    \mosgnd{7.3}{-2.35}
+
+    \node[lab, align=center] at (4.8,-2.95)
+      {\(\Delta g_h =
+      [(h^-_{\epsilon+}-h^+_{\epsilon+})-(h^-_{\epsilon-}-h^+_{\epsilon-})]/(2\epsilon)\)};
+    \node[group, fit=(hep1) (hmm1) (hent) (hmnt)] {};
   \end{tikzpicture}}
-  \caption{Zoomed MOS hidden-error cell.  The feedback rails \(r^+\) and
-  \(r^-\), the derivative-controlled \(z^+/z^-\) pair, and the \(pbwd\) tail
-  device form and store the signed hidden-error rails.}
+  \caption{Zoomed MOS hidden-error characterization cell matching the ngspice
+  deck.  Two matched diode-loaded forward replicas receive \(z^++\epsilon\)
+  and \(z^+-\epsilon\); their differential output difference gives the local
+  forward gain used to gate hidden-error transport.  This panel validates the
+  transistor derivative window; the signed write selection is characterized by
+  the writer cell in Fig.~\ref{fig:mos-writer-cell}.}
   \label{fig:mos-hidden-error-cell}
 \end{figure}
 
@@ -583,11 +617,12 @@ must satisfy before it can replace the current behavioral prototype.
   \centering
   \includegraphics[width=0.88\linewidth]{figures/mos_hidden_error_ngspice.png}
   \caption{Ngspice DC characterization of the hidden-error replica pair.  Two
-  matched MOS forward replicas are nudged by \(+10\) mV and \(-10\) mV on the
-  swept preactivation rail, and the finite difference gives the local
-  small-signal gain.  The \(r^+\) and \(r^-\) feedback polarities select
-  opposite signs, so the cell can transport signed hidden error without a
-  behavioral error source.}
+  matched diode-loaded MOS forward replicas are nudged by \(+10\) mV and
+  \(-10\) mV on the swept preactivation rail, and the finite difference gives the local
+  small-signal gain.  The two plotted traces show the positive and negative
+  uses of that measured gain for hidden-error transport; this deck validates
+  the transistor derivative window rather than inserting a behavioral error
+  source.}
   \label{fig:mos-hidden-error-ngspice}
 \end{figure}
 

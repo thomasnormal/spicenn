@@ -270,6 +270,64 @@ quit
 .endc
 .end
 """
+    mismatch_cases = [
+        ("left_low", "NMOS_LO", "-20 mV left VTO"),
+        ("balanced", "NMOS", "matched"),
+        ("left_high", "NMOS_HI", "+20 mV left VTO"),
+    ]
+    mismatch_devices = []
+    mismatch_prints = []
+    for name, left_model, _label in mismatch_cases:
+        mismatch_devices.append(
+            f"""
+VCM_MM_{name} cm_mm_{name} 0 0.90
+VDIFF_MM_{name} xp_mm_{name} xm_mm_{name} PWL(0 -0.5 10u 0.5)
+RXP_MM_{name} xp_mm_{name} cm_mm_{name} 1G
+RXM_MM_{name} xm_mm_{name} cm_mm_{name} 1G
+
+VWPP_MM_{name} wpp_mm_{name} 0 1.15
+VZPP_MM_{name} zpp_mm_{name} 0 1.8
+VZMP_MM_{name} zmp_mm_{name} 0 1.8
+MPP_MM_{name} zpp_mm_{name} xp_mm_{name} tailp_mm_{name} 0 {left_model} L={{LCH}} W={{WN}}
+MPM_MM_{name} zmp_mm_{name} xm_mm_{name} tailp_mm_{name} 0 NMOS L={{LCH}} W={{WN}}
+MTP_MM_{name} tailp_mm_{name} wpp_mm_{name} 0 0 NMOS L={{LCH}} W=12u
+
+VWMN_MM_{name} wmn_mm_{name} 0 1.15
+VZPN_MM_{name} zpn_mm_{name} 0 1.8
+VZMN_MM_{name} zmn_mm_{name} 0 1.8
+MNP_MM_{name} zpn_mm_{name} xm_mm_{name} tailn_mm_{name} 0 {left_model} L={{LCH}} W={{WN}}
+MNM_MM_{name} zmn_mm_{name} xp_mm_{name} tailn_mm_{name} 0 NMOS L={{LCH}} W={{WN}}
+MTN_MM_{name} tailn_mm_{name} wmn_mm_{name} 0 0 NMOS L={{LCH}} W=12u
+"""
+        )
+        mismatch_prints.extend(
+            [
+                f"v(xp_mm_{name})",
+                f"v(xm_mm_{name})",
+                f"i(VZPP_MM_{name})",
+                f"i(VZMP_MM_{name})",
+                f"i(VZPN_MM_{name})",
+                f"i(VZMN_MM_{name})",
+            ]
+        )
+    mismatch_deck = f"""
+* Signed MOS synapse threshold-mismatch sanity check.
+* The physical z+ branch input transistor is intentionally skewed by +/-20 mV
+* VTO in both the positive and gate-swapped negative copies.  The goal is
+* bounded offset and preserved sign outside the offset window, not perfect
+* cancellation under mismatch.
+{COMMON_MODELS}
+.model NMOS_LO NMOS (LEVEL=1 VTO=0.53 KP=220u LAMBDA=0.03)
+.model NMOS_HI NMOS (LEVEL=1 VTO=0.57 KP=220u LAMBDA=0.03)
+{''.join(mismatch_devices)}
+.control
+set noaskquit
+tran 20n 10u
+wrdata mos_synapse_mismatch.dat {' '.join(mismatch_prints)}
+quit
+.endc
+.end
+"""
     data = run_ngspice(deck, "mos_synapse_slice")
     xdiff, cols = load_wrdata(data, 6)
     # ngspice reports current through a voltage source using the source's
@@ -369,6 +427,45 @@ quit
         "W- analog tail-gate copy should mirror W+ magnitude with reversed sign",
     )
 
+    mismatch_data = run_ngspice(mismatch_deck, "mos_synapse_mismatch")
+    _mt, mismatch_cols = load_wrdata(mismatch_data, 6 * len(mismatch_cases))
+    mismatch_curves: list[tuple[str, str, np.ndarray, np.ndarray, np.ndarray]] = []
+    mismatch_offsets = []
+    mismatch_neg_offsets = []
+    for idx, (name, _left_model, label) in enumerate(mismatch_cases):
+        mxp = mismatch_cols[6 * idx]
+        mxm = mismatch_cols[6 * idx + 1]
+        mxdiff = mxp - mxm
+        mpos = mismatch_cols[6 * idx + 3] - mismatch_cols[6 * idx + 2]
+        mneg = mismatch_cols[6 * idx + 5] - mismatch_cols[6 * idx + 4]
+
+        def zero_crossing(series: np.ndarray, series_name: str) -> float:
+            changes = np.where(np.diff(np.signbit(series)))[0]
+            require(len(changes) == 1, f"{name} {series_name} mismatch transfer should have one zero crossing")
+            cross_idx = int(changes[0])
+            x0, x1 = mxdiff[cross_idx], mxdiff[cross_idx + 1]
+            y0, y1 = series[cross_idx], series[cross_idx + 1]
+            return float(x0 - y0 * (x1 - x0) / (y1 - y0))
+
+        pos_zero = zero_crossing(mpos, "W+")
+        neg_zero = zero_crossing(mneg, "W-")
+        mismatch_offsets.append(pos_zero)
+        mismatch_neg_offsets.append(neg_zero)
+        require(np.mean(mpos[mxdiff > 0.12]) > 20e-6, f"{name} W+ mismatch branch should stay positive past offset margin")
+        require(np.mean(mpos[mxdiff < -0.12]) < -20e-6, f"{name} W+ mismatch branch should stay negative past offset margin")
+        require(np.mean(mneg[mxdiff > 0.12]) < -20e-6, f"{name} W- mismatch branch should stay negative past offset margin")
+        require(np.mean(mneg[mxdiff < -0.12]) > 20e-6, f"{name} W- mismatch branch should stay positive past offset margin")
+        require(np.max(mpos) > 100e-6 and np.min(mpos) < -100e-6, f"{name} W+ mismatch branch should retain useful swing")
+        require(np.max(mneg) > 100e-6 and np.min(mneg) < -100e-6, f"{name} W- mismatch branch should retain useful swing")
+        mismatch_curves.append((name, label, mxdiff, mpos, mneg))
+
+    low_offset, balanced_offset, high_offset = mismatch_offsets
+    require(abs(balanced_offset) < 0.01, "matched synapse zero crossing should stay near zero")
+    require(low_offset < balanced_offset - 0.012, "low VTO z+ branch should move W+ zero crossing negative")
+    require(high_offset > balanced_offset + 0.012, "high VTO z+ branch should move W+ zero crossing positive")
+    require(np.max(np.abs(mismatch_offsets)) < 0.06, "20 mV synapse input mismatch should keep W+ offset bounded")
+    require(np.max(np.abs(np.array(mismatch_offsets) + np.array(mismatch_neg_offsets))) < 0.01, "gate-swapped W- mismatch offsets should mirror W+")
+
     fig, axes = plt.subplots(2, 1, figsize=(7.2, 6.2))
     axes[0].plot(xdiff, 1e6 * pos_signed, label="$w^+$ high")
     axes[0].plot(xdiff, 1e6 * neg_signed, label="$w^-$ high")
@@ -442,6 +539,29 @@ quit
     magnitude_axes[1].legend(loc="upper left")
     magnitude_fig.tight_layout()
     save_plot(magnitude_fig, "mos_synapse_weight_gate_ngspice")
+
+    mismatch_fig, mismatch_axes = plt.subplots(2, 1, figsize=(7.2, 5.8))
+    for (name, label, mxdiff, mpos, mneg), xzero in zip(mismatch_curves, mismatch_offsets):
+        mismatch_axes[0].plot(mxdiff, 1e6 * mpos, label=f"$W^+$ {label}")
+        mismatch_axes[0].axvline(xzero, linewidth=0.8, linestyle=":", alpha=0.65)
+    mismatch_axes[0].axhline(0, color="0.4", linewidth=0.8)
+    mismatch_axes[0].axvline(0, color="0.4", linewidth=0.8)
+    mismatch_axes[0].set_xlabel("$x^+ - x^-$ (V)")
+    mismatch_axes[0].set_ylabel("contribution current (uA)")
+    mismatch_axes[0].set_title("Synapse input-pair mismatch shifts contribution zero")
+    mismatch_axes[0].grid(True, alpha=0.25)
+    mismatch_axes[0].legend(loc="upper left")
+    labels_mm = [case[2] for case in mismatch_cases]
+    mismatch_axes[1].plot(labels_mm, mismatch_offsets, "o-", label="$W^+$ zero")
+    mismatch_axes[1].plot(labels_mm, mismatch_neg_offsets, "s--", label="$W^-$ zero")
+    mismatch_axes[1].axhline(0, color="0.4", linewidth=0.8)
+    mismatch_axes[1].set_xlabel("z+ branch threshold skew")
+    mismatch_axes[1].set_ylabel("zero crossing $x^+ - x^-$ (V)")
+    mismatch_axes[1].set_title("Gate-swapped copy mirrors the mismatch offset")
+    mismatch_axes[1].grid(True, axis="y", alpha=0.25)
+    mismatch_axes[1].legend(loc="upper left")
+    mismatch_fig.tight_layout()
+    save_plot(mismatch_fig, "mos_synapse_mismatch_ngspice")
 
     cm_fig, cm_axes = plt.subplots(2, 1, figsize=(7.2, 5.8), sharex=True)
     for name, cm, cm_xdiff, cm_pos_signed, cm_neg_signed in cm_curves:

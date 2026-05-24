@@ -639,6 +639,21 @@ must satisfy before it can replace the current behavioral prototype.
 
 \begin{figure}[H]
   \centering
+  \includegraphics[width=0.88\linewidth]{figures/mos_synapse_mismatch_ngspice.png}
+  \caption{Ngspice threshold-mismatch characterization of the signed MOS
+  synapse.  The \(z^+\) branch input transistor is modeled with \(V_{TO}\)
+  shifted by \(-20\), \(0\), or \(+20\) mV while the complementary branch is
+  nominal.  The \(W^+\) contribution stays monotone, keeps a single zero
+  crossing, and retains useful current swing, but the crossing shifts with
+  device threshold.
+  The gate-swapped \(W^-\) copy mirrors the offset with the opposite sign.  This
+  exposes the analog synapse offset budget that differential transport and
+  training margins must tolerate.}
+  \label{fig:mos-synapse-mismatch-ngspice}
+\end{figure}
+
+\begin{figure}[H]
+  \centering
   \includegraphics[width=0.88\linewidth]{figures/mos_synapse_common_mode_ngspice.png}
   \caption{Ngspice input common-mode margin characterization of the signed MOS
   synapse slice.  Three matched positive- and negative-weight copies sweep

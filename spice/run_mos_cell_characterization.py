@@ -1803,6 +1803,53 @@ quit
 .endc
 .end
 """
+    write_timing_cases = [
+        ("during", "during reset", 0.16, 0.34),
+        ("edge", "reset edge", 0.30, 0.60),
+        ("post", "post-reset", 0.55, 0.95),
+        ("late", "late", 0.80, 1.20),
+    ]
+    write_timing_devices = []
+    write_timing_prints = []
+    for name, _label, start_us, end_us in write_timing_cases:
+        write_timing_devices.append(
+            f"""
+VWP_{name} wp_{name} 0 PWL(0 0 {start_us:.2f}u 0 {start_us + 0.02:.2f}u 1.15 {end_us:.2f}u 1.15 {end_us + 0.02:.2f}u 0 2.0u 0)
+CZP_{name} zp_{name} 0 {{CSUM}} IC=0.9
+CZM_{name} zm_{name} 0 {{CSUM}} IC=0.9
+RZP_{name} zp_{name} 0 100G
+RZM_{name} zm_{name} 0 100G
+MRPN_{name} zp_{name} rst vcm 0 NMOS L={{LCH}} W={{WRESETN}}
+MRMN_{name} zm_{name} rst vcm 0 NMOS L={{LCH}} W={{WRESETN}}
+MRPP_{name} zp_{name} rstn vcm vdd PMOS L={{LCH}} W={{WRESETP}}
+MRMP_{name} zm_{name} rstn vcm vdd PMOS L={{LCH}} W={{WRESETP}}
+MPP_{name} zp_{name} xp tail_{name} 0 NMOS L={{LCH}} W={{WN}}
+MPM_{name} zm_{name} xm tail_{name} 0 NMOS L={{LCH}} W={{WN}}
+MTP_{name} tail_{name} wp_{name} 0 0 NMOS L={{LCH}} W={{WTAIL}}
+"""
+        )
+        write_timing_prints.extend([f"v(zp_{name})", f"v(zm_{name})", f"v(wp_{name})"])
+    write_timing_deck = f"""
+* Reset-release to synapse-write timing margin check.
+* Each copy uses the same complementary reset and a positive signed synapse
+* pulse at a different time relative to reset release.
+{COMMON_MODELS}
+.param CSUM=500p WTAIL=2u WRESETN=24u WRESETP=60u
+VDD vdd 0 1.8
+VCM vcm 0 0.9
+VXP xp 0 1.15
+VXM xm 0 0.65
+VRST rst 0 PWL(0 0 0.10u 0 0.12u 1.8 0.45u 1.8 0.47u 0 2.0u 0)
+VRSTN rstn 0 PWL(0 1.8 0.10u 1.8 0.12u 0 0.45u 0 0.47u 1.8 2.0u 1.8)
+{''.join(write_timing_devices)}
+.control
+set noaskquit
+tran 5n 2.0u uic
+wrdata mos_reset_write_timing.dat {' '.join(write_timing_prints)} v(rst)
+quit
+.endc
+.end
+"""
     data = run_ngspice(deck, "mos_reset_precharge")
     t, cols = load_wrdata(data, 8)
     zp, zm, hp, hm, dp, dm, rst, wpulse = cols
@@ -1857,6 +1904,29 @@ quit
     require(np.max(np.abs(tg_common - 0.9)) < 0.005, "transmission-gate reset should preserve reset common mode")
     require(np.max(np.abs(nmos_common - 0.9)) > 0.03, "NMOS-only reset should show common-mode error")
 
+    write_timing_data = run_ngspice(write_timing_deck, "mos_reset_write_timing")
+    wt, write_timing_cols = load_wrdata(write_timing_data, 3 * len(write_timing_cases) + 1)
+
+    def wat(time_s: float, values: np.ndarray) -> float:
+        return float(values[np.argmin(np.abs(wt - time_s))])
+
+    write_signed = []
+    write_common = []
+    write_final = []
+    for idx, (_name, _label, _start_us, _end_us) in enumerate(write_timing_cases):
+        signed_case = write_timing_cols[3 * idx + 1] - write_timing_cols[3 * idx]
+        common_case = 0.5 * (write_timing_cols[3 * idx + 1] + write_timing_cols[3 * idx])
+        write_signed.append(signed_case)
+        write_common.append(common_case)
+        write_final.append(wat(1.80e-6, signed_case))
+    write_final = np.array(write_final)
+    require(abs(write_final[0]) < 0.010, "write pulse fully inside reset should be strongly suppressed")
+    require(write_final[1] > write_final[0] + 0.02, "write pulse crossing reset release should leave a partial signed state")
+    require(write_final[1] < 0.95 * write_final[-1], "reset-edge write should remain below a clean post-reset write")
+    require(np.min(write_final[2:]) > 0.95 * write_final[-1], "post-reset writes should reach the full signed state")
+    require(np.max(write_final[2:]) - np.min(write_final[2:]) < 0.004, "post-reset write timings should agree")
+    require(np.max(np.abs([wat(0.50e-6, common_case) - 0.9 for common_case in write_common])) < 0.02, "reset/write timing copies should leave reset near common mode")
+
     fig, axes = plt.subplots(3, 1, figsize=(7.2, 7.4))
     axes[0].plot(1e6 * t, zp, label="$z^+$ cap")
     axes[0].plot(1e6 * t, zm, label="$z^-$ cap")
@@ -1901,6 +1971,24 @@ quit
     sweep_axes[1].legend()
     sweep_fig.tight_layout()
     save_plot(sweep_fig, "mos_reset_width_ngspice")
+
+    write_timing_fig, write_timing_axes = plt.subplots(2, 1, figsize=(7.2, 5.8))
+    for (_name, label, _start_us, _end_us), signed_case in zip(write_timing_cases, write_signed):
+        write_timing_axes[0].plot(1e6 * wt, signed_case, label=label)
+    write_timing_axes[0].plot(1e6 * wt, write_timing_cols[-1] / 12.0, color="0.5", alpha=0.35, label="$reset/12$")
+    write_timing_axes[0].axhline(0, color="0.4", linewidth=0.8)
+    write_timing_axes[0].set_ylabel("$z^- - z^+$ (V)")
+    write_timing_axes[0].set_title("Reset suppresses writes until release")
+    write_timing_axes[0].grid(True, alpha=0.25)
+    write_timing_axes[0].legend(loc="upper right", ncol=2)
+    labels = [label for _name, label, _start_us, _end_us in write_timing_cases]
+    write_timing_axes[1].bar(labels, write_final)
+    write_timing_axes[1].axhline(0, color="0.4", linewidth=0.8)
+    write_timing_axes[1].set_ylabel("final $z^- - z^+$ (V)")
+    write_timing_axes[1].set_title("Clean post-reset writes agree; reset-edge writes are partial")
+    write_timing_axes[1].grid(True, axis="y", alpha=0.25)
+    write_timing_fig.tight_layout()
+    save_plot(write_timing_fig, "mos_reset_write_timing_ngspice")
     return reset_plot
 
 

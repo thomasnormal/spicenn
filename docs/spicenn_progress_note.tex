@@ -825,6 +825,20 @@ must satisfy before it can replace the current behavioral prototype.
 
 \begin{figure}[H]
   \centering
+  \includegraphics[width=0.88\linewidth]{figures/mos_reset_write_timing_ngspice.png}
+  \caption{Ngspice reset-release to synapse-write timing characterization.
+  Each copy starts at the reset common mode, uses the same complementary reset,
+  and receives a positive synapse write pulse at a different offset relative to
+  reset release.  A write fully inside reset is strongly suppressed but not
+  mathematically eliminated, a reset-edge write leaves a partial preactivation,
+  and clean post-reset writes agree.  The plot therefore makes the reset/write
+  non-overlap requirement explicit: reset and write devices can contend, so the
+  training phase schedule should provide a real release-to-write margin.}
+  \label{fig:mos-reset-write-timing-ngspice}
+\end{figure}
+
+\begin{figure}[H]
+  \centering
   \includegraphics[width=0.88\linewidth]{figures/mos_writer_ngspice.png}
   \caption{Ngspice transient characterization of the four-quadrant MOS writer.
   The weight capacitors are biased in the same above-threshold voltage range

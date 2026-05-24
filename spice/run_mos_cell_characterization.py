@@ -1213,6 +1213,81 @@ quit
 .endc
 .end
 """
+    nudge_sweep_values = [0.00, 0.02, 0.04, 0.08, 0.12]
+    nudge_sweep_devices = []
+    nudge_sweep_prints = []
+    for idx, nudge in enumerate(nudge_sweep_values):
+        name = f"n{idx}"
+        plus_p = 0.9 + nudge / 2.0
+        plus_m = 0.9 - nudge / 2.0
+        minus_p = 0.9 - nudge / 2.0
+        minus_m = 0.9 + nudge / 2.0
+        nudge_sweep_devices.append(
+            f"""
+* Cross-connected finite-difference hidden-error storage, eps={nudge:.2f} V.
+VZPPN_{name} zppn_{name} 0 {plus_p:.5f}
+VZMMN_{name} zmmn_{name} 0 {plus_m:.5f}
+VZPMN_{name} zpmn_{name} 0 {minus_p:.5f}
+VZMPN_{name} zmpn_{name} 0 {minus_m:.5f}
+
+MPPNP_{name} hppn_{name} hppn_{name} vdd vdd PMOS L={{LCH}} W={{WP}}
+MPPNM_{name} hpmn_{name} hpmn_{name} vdd vdd PMOS L={{LCH}} W={{WP}}
+MNPNP_{name} hppn_{name} zppn_{name} tailpn_{name} 0 NMOS L={{LCH}} W={{WN}}
+MNPNM_{name} hpmn_{name} zmmn_{name} tailpn_{name} 0 NMOS L={{LCH}} W={{WN}}
+MNTPN_{name} tailpn_{name} vbias 0 0 NMOS L={{LCH}} W={{WN}}
+
+MPMNP_{name} hmpn_{name} hmpn_{name} vdd vdd PMOS L={{LCH}} W={{WP}}
+MPMNM_{name} hmmn_{name} hmmn_{name} vdd vdd PMOS L={{LCH}} W={{WP}}
+MNMNP_{name} hmpn_{name} zpmn_{name} tailmn_{name} 0 NMOS L={{LCH}} W={{WN}}
+MNMNM_{name} hmmn_{name} zmpn_{name} tailmn_{name} 0 NMOS L={{LCH}} W={{WN}}
+MNTMN_{name} tailmn_{name} vbias 0 0 NMOS L={{LCH}} W={{WN}}
+
+CDPPN_{name} cdp_pn_{name} 0 {{CERR}} IC=1.04
+CDPMN_{name} cdm_pn_{name} 0 {{CERR}} IC=1.04
+CDNPN_{name} cdp_nn_{name} 0 {{CERR}} IC=1.04
+CDNMN_{name} cdm_nn_{name} 0 {{CERR}} IC=1.04
+RPPN_{name} cdp_pn_{name} 0 50G
+RPMN_{name} cdm_pn_{name} 0 50G
+RNPN_{name} cdp_nn_{name} 0 50G
+RNMN_{name} cdm_nn_{name} 0 50G
+"""
+            + sign_store_path(f"hpmn_{name}", "rp", f"cdp_pn_{name}", f"np1_{name}")
+            + sign_store_path(f"hmpn_{name}", "rp", f"cdp_pn_{name}", f"np2_{name}")
+            + sign_store_path(f"hppn_{name}", "rp", f"cdm_pn_{name}", f"np3_{name}")
+            + sign_store_path(f"hmmn_{name}", "rp", f"cdm_pn_{name}", f"np4_{name}")
+            + sign_store_path(f"hppn_{name}", "rm", f"cdp_nn_{name}", f"nn1_{name}")
+            + sign_store_path(f"hmmn_{name}", "rm", f"cdp_nn_{name}", f"nn2_{name}")
+            + sign_store_path(f"hpmn_{name}", "rm", f"cdm_nn_{name}", f"nn3_{name}")
+            + sign_store_path(f"hmpn_{name}", "rm", f"cdm_nn_{name}", f"nn4_{name}")
+        )
+        nudge_sweep_prints.extend(
+            [
+                f"v(cdp_pn_{name})",
+                f"v(cdm_pn_{name})",
+                f"v(cdp_nn_{name})",
+                f"v(cdm_nn_{name})",
+            ]
+        )
+    nudge_sweep_deck = f"""
+* Hidden-error finite-difference nudge-magnitude storage sanity check.
+* Matched MOS replica pairs and cross-connected pass switches store a graded
+* derivative-weighted hidden-error rail as the replica nudge grows.
+{COMMON_MODELS}
+.param CERR=10p WSW=24u
+VDD vdd 0 1.8
+VTAIL vbias 0 0.95
+VPBWD pbwd 0 PULSE(0 1.8 0.5u 20n 20n 0.8u 4.0u)
+VRP rp 0 PULSE(0 1.8 0.5u 20n 20n 0.8u 4.0u)
+VRM rm 0 PULSE(0 1.8 0.5u 20n 20n 0.8u 4.0u)
+{''.join(nudge_sweep_devices)}
+.control
+set noaskquit
+tran 5n 2.5u uic
+wrdata mos_hidden_error_nudge_sweep.dat {' '.join(nudge_sweep_prints)} v(pbwd)
+quit
+.endc
+.end
+"""
     data = run_ngspice(deck, "mos_hidden_error")
     x, cols = load_wrdata(data, 4)
     xdiff = x
@@ -1270,6 +1345,32 @@ quit
     require(np.max(np.abs(pos_final + neg_final)) < 0.01, "r+ and r- cross-connected stores should be opposite")
     require(np.max(np.abs(pos_hold - pos_final)) < 0.01, "r+ derivative-sign store should hold")
     require(np.max(np.abs(neg_hold - neg_final)) < 0.01, "r- derivative-sign store should hold")
+
+    nudge_data = run_ngspice(nudge_sweep_deck, "mos_hidden_error_nudge_sweep")
+    nt, nudge_cols = load_wrdata(nudge_data, 4 * len(nudge_sweep_values) + 1)
+    nudge_pos_delta = []
+    nudge_neg_delta = []
+    for idx in range(len(nudge_sweep_values)):
+        nudge_pos_delta.append(nudge_cols[4 * idx] - nudge_cols[4 * idx + 1])
+        nudge_neg_delta.append(nudge_cols[4 * idx + 2] - nudge_cols[4 * idx + 3])
+
+    def nat(time_s: float, values: np.ndarray) -> float:
+        return float(values[np.argmin(np.abs(nt - time_s))])
+
+    nudge_pos_final = np.array([nat(1.2e-6, series) for series in nudge_pos_delta])
+    nudge_neg_final = np.array([nat(1.2e-6, series) for series in nudge_neg_delta])
+    nudge_pos_hold = np.array([nat(2.2e-6, series) for series in nudge_pos_delta])
+    nudge_neg_hold = np.array([nat(2.2e-6, series) for series in nudge_neg_delta])
+    require(abs(nudge_pos_final[0]) < 0.005, "zero nudge should not store a positive hidden-error differential")
+    require(abs(nudge_neg_final[0]) < 0.005, "zero nudge should not store a negative hidden-error differential")
+    require(np.all(np.diff(nudge_pos_final) > 0.006), "r+ hidden-error store should grow with nudge magnitude")
+    require(np.all(np.diff(nudge_neg_final) < -0.006), "r- hidden-error store should grow negative with nudge magnitude")
+    require(
+        np.max(np.abs(nudge_pos_final + nudge_neg_final)) < 0.01,
+        "r+ and r- nudge-magnitude stores should mirror each other",
+    )
+    require(np.max(np.abs(nudge_pos_hold - nudge_pos_final)) < 0.01, "r+ nudge-magnitude store should hold")
+    require(np.max(np.abs(nudge_neg_hold - nudge_neg_final)) < 0.01, "r- nudge-magnitude store should hold")
 
     fig, axes = plt.subplots(2, 1, figsize=(7.2, 6.2))
     axes[0].plot(xdiff, gain, label="finite-difference gain")
@@ -1354,6 +1455,30 @@ quit
     sign_axes[1].legend(loc="upper right", ncol=2)
     sign_fig.tight_layout()
     save_plot(sign_fig, "mos_hidden_error_sign_store_ngspice")
+
+    nudge_fig, nudge_axes = plt.subplots(2, 1, figsize=(7.2, 5.8))
+    for nudge, pseries, nseries in zip(nudge_sweep_values, nudge_pos_delta, nudge_neg_delta):
+        if nudge in (0.0, 0.04, 0.12):
+            nudge_axes[0].plot(1e6 * nt, pseries, label=f"$r^+$ eps={nudge:.2f} V")
+            nudge_axes[0].plot(1e6 * nt, nseries, "--", label=f"$r^-$ eps={nudge:.2f} V")
+    nudge_axes[0].plot(1e6 * nt, nudge_cols[-1] / 20.0, color="0.5", alpha=0.35, label="$pbwd/20$")
+    nudge_axes[0].axhline(0, color="0.4", linewidth=0.8)
+    nudge_axes[0].set_ylabel("stored $\\delta^+ - \\delta^-$ (V)")
+    nudge_axes[0].set_title("Hidden-error storage scales with replica nudge")
+    nudge_axes[0].grid(True, alpha=0.25)
+    nudge_axes[0].legend(loc="upper right", ncol=2, fontsize="small")
+    nudge_axes[1].plot(nudge_sweep_values, nudge_pos_final, "o-", label="$r^+$ after sample")
+    nudge_axes[1].plot(nudge_sweep_values, nudge_neg_final, "s-", label="$r^-$ after sample")
+    nudge_axes[1].plot(nudge_sweep_values, nudge_pos_hold, "o--", color="0.35", label="$r^+$ after hold")
+    nudge_axes[1].plot(nudge_sweep_values, nudge_neg_hold, "s--", color="0.55", label="$r^-$ after hold")
+    nudge_axes[1].axhline(0, color="0.4", linewidth=0.8)
+    nudge_axes[1].set_xlabel("finite-difference nudge eps (V)")
+    nudge_axes[1].set_ylabel("stored hidden-error step (V)")
+    nudge_axes[1].set_title("Stored magnitude is graded, mirrored, and retained")
+    nudge_axes[1].grid(True, alpha=0.25)
+    nudge_axes[1].legend(loc="upper right", ncol=2)
+    nudge_fig.tight_layout()
+    save_plot(nudge_fig, "mos_hidden_error_nudge_sweep_ngspice")
     return hidden_plot
 
 

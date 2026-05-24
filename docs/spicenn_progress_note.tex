@@ -768,6 +768,21 @@ must satisfy before it can replace the current behavioral prototype.
 
 \begin{figure}[H]
   \centering
+  \includegraphics[width=0.88\linewidth]{figures/mos_hidden_error_nudge_sweep_ngspice.png}
+  \caption{Ngspice nudge-magnitude characterization of the same MOS
+  hidden-error storage path.  At the center operating point, matched
+  \(+\epsilon\) and \(-\epsilon\) diode-loaded forward replicas feed the
+  cross-connected pass-switch network while \(\epsilon\) is swept.  Zero nudge
+  stores no hidden-error differential.  Larger nudges produce a graded
+  \(r^+\) step and a mirrored \(r^-\) step, and both sampled values overlay
+  their held values after \(pbwd\) closes.  This checks that the hidden-error
+  storage path carries continuous magnitude information, not only a binary
+  sign.}
+  \label{fig:mos-hidden-error-nudge-sweep-ngspice}
+\end{figure}
+
+\begin{figure}[H]
+  \centering
   \includegraphics[width=0.88\linewidth]{figures/mos_hidden_writer_chain_ngspice.png}
   \caption{Ngspice hidden-error-store to writer/readback integration
   characterization.  The cross-connected MOS replica network first stores

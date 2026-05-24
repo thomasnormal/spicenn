@@ -5042,6 +5042,178 @@ quit
     hyc_fig.tight_layout()
     save_plot(hyc_fig, "mos_hidden_writer_restored_gate_hybrid_alternating_ngspice")
 
+    hybrid_readback_deck = f"""
+* Hybrid restored-enable/analog-error writer readback and retention check.
+* The same r+/r- stores and restored-select writer stacks alternately write one
+* W+/W- capacitor pair.  The written rails are continuously connected as MOS
+* synapse tail gates during and after the write train.
+{COMMON_MODELS}
+.param CERR=10p CWRITE=500p WSW=24u WWRITE=24u WRESTN=18u WRESTP=300u
+VDD vdd 0 1.8
+VTAIL vbias 0 0.95
+VPBWD pbwd 0 PULSE(0 1.8 0.45u 20n 20n 0.80u 12.0u)
+VRP rp 0 PULSE(0 1.8 0.45u 20n 20n 0.80u 12.0u)
+VRM rm 0 PULSE(0 1.8 0.45u 20n 20n 0.80u 12.0u)
+VPACC_POS_HYD paccn_pos_hyd 0 PWL(0 1.8 1.55u 1.8 1.57u 0 1.73u 0 1.75u 1.8 2.00u 1.8 2.02u 0 2.18u 0 2.20u 1.8 2.45u 1.8 2.47u 0 2.63u 0 2.65u 1.8 10u 1.8)
+VPACC_NEG_HYD paccn_neg_hyd 0 PWL(0 1.8 2.90u 1.8 2.92u 0 3.08u 0 3.10u 1.8 3.35u 1.8 3.37u 0 3.53u 0 3.55u 1.8 3.80u 1.8 3.82u 0 3.98u 0 4.00u 1.8 4.25u 1.8 4.27u 0 4.43u 0 4.45u 1.8 10u 1.8)
+VHM_POS_HYD hm_pos_hyd 0 0.92
+
+VZPP_HYD zpp_hyd 0 {0.9 + hybrid_mismatch_eps / 2.0:.5f}
+VZMM_HYD zmm_hyd 0 {0.9 - hybrid_mismatch_eps / 2.0:.5f}
+VZPM_HYD zpm_hyd 0 {0.9 - hybrid_mismatch_eps / 2.0:.5f}
+VZMP_HYD zmp_hyd 0 {0.9 + hybrid_mismatch_eps / 2.0:.5f}
+
+MPPP_HYD hpp_hyd hpp_hyd vdd vdd PMOS L={{LCH}} W={{WP}}
+MPPM_HYD hpm_hyd hpm_hyd vdd vdd PMOS L={{LCH}} W={{WP}}
+MNPP_HYD hpp_hyd zpp_hyd tailp_hyd 0 NMOS L={{LCH}} W={{WN}}
+MNPM_HYD hpm_hyd zmm_hyd tailp_hyd 0 NMOS L={{LCH}} W={{WN}}
+MNTP_HYD tailp_hyd vbias 0 0 NMOS L={{LCH}} W={{WN}}
+
+MPMP_HYD hmp_hyd hmp_hyd vdd vdd PMOS L={{LCH}} W={{WP}}
+MPMM_HYD hmm_hyd hmm_hyd vdd vdd PMOS L={{LCH}} W={{WP}}
+MNMP_HYD hmp_hyd zpm_hyd tailm_hyd 0 NMOS L={{LCH}} W={{WN}}
+MNMM_HYD hmm_hyd zmp_hyd tailm_hyd 0 NMOS L={{LCH}} W={{WN}}
+MNTM_HYD tailm_hyd vbias 0 0 NMOS L={{LCH}} W={{WN}}
+
+CDP_RP_HYD cdp_rp_hyd 0 {{CERR}} IC=1.04
+CDM_RP_HYD cdm_rp_hyd 0 {{CERR}} IC=1.04
+CDP_RM_HYD cdp_rm_hyd 0 {{CERR}} IC=1.04
+CDM_RM_HYD cdm_rm_hyd 0 {{CERR}} IC=1.04
+RDP_RP_HYD cdp_rp_hyd 0 50G
+RDM_RP_HYD cdm_rp_hyd 0 50G
+RDP_RM_HYD cdp_rm_hyd 0 50G
+RDM_RM_HYD cdm_rm_hyd 0 50G
+{sign_store_path("hpm_hyd", "rp", "cdp_rp_hyd", "hydrp1")}
+{sign_store_path("hmp_hyd", "rp", "cdp_rp_hyd", "hydrp2")}
+{sign_store_path("hpp_hyd", "rp", "cdm_rp_hyd", "hydrp3")}
+{sign_store_path("hmm_hyd", "rp", "cdm_rp_hyd", "hydrp4")}
+{sign_store_path("hpp_hyd", "rm", "cdp_rm_hyd", "hydrm1")}
+{sign_store_path("hmm_hyd", "rm", "cdp_rm_hyd", "hydrm2")}
+{sign_store_path("hpm_hyd", "rm", "cdm_rm_hyd", "hydrm3")}
+{sign_store_path("hmp_hyd", "rm", "cdm_rm_hyd", "hydrm4")}
+
+MPRP_CDP_HYD rgp_rp_hyd cdp_rp_hyd vdd vdd PMOS L={{LCH}} W={{WRESTP}}
+MNRP_CDP_HYD rgp_rp_hyd cdp_rp_hyd 0 0 NMOS L={{LCH}} W={{WRESTN}}
+MPRP_CDM_HYD rgm_rp_hyd cdm_rp_hyd vdd vdd PMOS L={{LCH}} W={{WRESTP}}
+MNRP_CDM_HYD rgm_rp_hyd cdm_rp_hyd 0 0 NMOS L={{LCH}} W={{WRESTN}}
+MPRM_CDP_HYD rgp_rm_hyd cdp_rm_hyd vdd vdd PMOS L={{LCH}} W={{WRESTP}}
+MNRM_CDP_HYD rgp_rm_hyd cdp_rm_hyd 0 0 NMOS L={{LCH}} W={{WRESTN}}
+MPRM_CDM_HYD rgm_rm_hyd cdm_rm_hyd vdd vdd PMOS L={{LCH}} W={{WRESTP}}
+MNRM_CDM_HYD rgm_rm_hyd cdm_rm_hyd 0 0 NMOS L={{LCH}} W={{WRESTN}}
+
+CWP_HYD wp_hyd 0 {{CWRITE}} IC=0.85
+CWM_HYD wm_hyd 0 {{CWRITE}} IC=0.85
+MWP_POS_HYD_A vdd paccn_pos_hyd n_wp_pos_hyd_a vdd PMOS L={{LCH}} W={{WWRITE}}
+MWP_POS_HYD_B n_wp_pos_hyd_a hm_pos_hyd n_wp_pos_hyd_b vdd PMOS L={{LCH}} W={{WWRITE}}
+MWP_POS_HYD_C n_wp_pos_hyd_b rgp_rp_hyd n_wp_pos_hyd_c vdd PMOS L={{LCH}} W={{WWRITE}}
+MWP_POS_HYD_D n_wp_pos_hyd_c cdm_rp_hyd wp_hyd vdd PMOS L={{LCH}} W={{WWRITE}}
+MWM_POS_HYD_A vdd paccn_pos_hyd n_wm_pos_hyd_a vdd PMOS L={{LCH}} W={{WWRITE}}
+MWM_POS_HYD_B n_wm_pos_hyd_a hm_pos_hyd n_wm_pos_hyd_b vdd PMOS L={{LCH}} W={{WWRITE}}
+MWM_POS_HYD_C n_wm_pos_hyd_b rgm_rp_hyd n_wm_pos_hyd_c vdd PMOS L={{LCH}} W={{WWRITE}}
+MWM_POS_HYD_D n_wm_pos_hyd_c cdp_rp_hyd wm_hyd vdd PMOS L={{LCH}} W={{WWRITE}}
+
+MWP_NEG_HYD_A vdd paccn_neg_hyd n_wp_neg_hyd_a vdd PMOS L={{LCH}} W={{WWRITE}}
+MWP_NEG_HYD_B n_wp_neg_hyd_a hm_pos_hyd n_wp_neg_hyd_b vdd PMOS L={{LCH}} W={{WWRITE}}
+MWP_NEG_HYD_C n_wp_neg_hyd_b rgp_rm_hyd n_wp_neg_hyd_c vdd PMOS L={{LCH}} W={{WWRITE}}
+MWP_NEG_HYD_D n_wp_neg_hyd_c cdm_rm_hyd wp_hyd vdd PMOS L={{LCH}} W={{WWRITE}}
+MWM_NEG_HYD_A vdd paccn_neg_hyd n_wm_neg_hyd_a vdd PMOS L={{LCH}} W={{WWRITE}}
+MWM_NEG_HYD_B n_wm_neg_hyd_a hm_pos_hyd n_wm_neg_hyd_b vdd PMOS L={{LCH}} W={{WWRITE}}
+MWM_NEG_HYD_C n_wm_neg_hyd_b rgm_rm_hyd n_wm_neg_hyd_c vdd PMOS L={{LCH}} W={{WWRITE}}
+MWM_NEG_HYD_D n_wm_neg_hyd_c cdp_rm_hyd wm_hyd vdd PMOS L={{LCH}} W={{WWRITE}}
+
+VXP_HYD xp_hyd 0 1.15
+VXM_HYD xm_hyd 0 0.65
+VZPP_READ_HYD zpp_read_hyd 0 1.8
+VZMP_READ_HYD zmp_read_hyd 0 1.8
+MPP_READ_HYD zpp_read_hyd xp_hyd tailp_read_hyd 0 NMOS L={{LCH}} W={{WN}}
+MPM_READ_HYD zmp_read_hyd xm_hyd tailp_read_hyd 0 NMOS L={{LCH}} W={{WN}}
+MTP_READ_HYD tailp_read_hyd wp_hyd 0 0 NMOS L={{LCH}} W=12u
+VZPN_READ_HYD zpn_read_hyd 0 1.8
+VZMN_READ_HYD zmn_read_hyd 0 1.8
+MNP_READ_HYD zpn_read_hyd xm_hyd tailn_read_hyd 0 NMOS L={{LCH}} W={{WN}}
+MNM_READ_HYD zmn_read_hyd xp_hyd tailn_read_hyd 0 NMOS L={{LCH}} W={{WN}}
+MTN_READ_HYD tailn_read_hyd wm_hyd 0 0 NMOS L={{LCH}} W=12u
+
+.control
+set noaskquit
+tran 10n 9.8u uic
+wrdata mos_hidden_writer_restored_gate_hybrid_readback.dat v(cdp_rp_hyd) v(cdm_rp_hyd) v(cdp_rm_hyd) v(cdm_rm_hyd) v(rgp_rp_hyd) v(rgm_rp_hyd) v(rgp_rm_hyd) v(rgm_rm_hyd) v(wp_hyd) v(wm_hyd) i(VZPP_READ_HYD) i(VZMP_READ_HYD) i(VZPN_READ_HYD) i(VZMN_READ_HYD) v(paccn_pos_hyd) v(paccn_neg_hyd) v(pbwd)
+quit
+.endc
+.end
+"""
+    hybrid_readback_data = run_ngspice(
+        hybrid_readback_deck,
+        "mos_hidden_writer_restored_gate_hybrid_readback",
+    )
+    hydt, hyd_cols = load_wrdata(hybrid_readback_data, 17)
+
+    def hydat(time_s: float, values: np.ndarray) -> float:
+        return float(values[np.argmin(np.abs(hydt - time_s))])
+
+    hyd_hidden_pos = hyd_cols[0] - hyd_cols[1]
+    hyd_hidden_neg = hyd_cols[2] - hyd_cols[3]
+    hyd_wp = hyd_cols[8]
+    hyd_wm = hyd_cols[9]
+    hyd_weight = hyd_wp - hyd_wm
+    hyd_pos_read = hyd_cols[11] - hyd_cols[10]
+    hyd_neg_read = hyd_cols[13] - hyd_cols[12]
+    hyd_net_read = hyd_pos_read + hyd_neg_read
+    hyd_baseline_read = hydat(1.45e-6, hyd_net_read)
+    hyd_positive_read = hydat(2.75e-6, hyd_net_read)
+    hyd_near_cancel_read = hydat(4.05e-6, hyd_net_read)
+    hyd_negative_read = hydat(4.55e-6, hyd_net_read)
+    hyd_hold_start = 4.55e-6
+    hyd_hold_end = 9.5e-6
+    require(hydat(1.35e-6, hyd_hidden_pos) > 0.07, "hybrid readback r+ store should be positive")
+    require(hydat(1.35e-6, hyd_hidden_neg) < -0.07, "hybrid readback r- store should be negative")
+    require(abs(hydat(1.35e-6, hyd_hidden_pos + hyd_hidden_neg)) < 0.003, "hybrid readback hidden-error stores should be symmetric")
+    require(hydat(1.45e-6, hyd_cols[4]) < 0.30, "hybrid readback r+ selected gate should be low")
+    require(hydat(1.45e-6, hyd_cols[5]) > 1.60, "hybrid readback r+ complement gate should be high")
+    require(hydat(1.45e-6, hyd_cols[7]) < 0.30, "hybrid readback r- selected gate should be low")
+    require(hydat(1.45e-6, hyd_cols[6]) > 1.60, "hybrid readback r- complement gate should be high")
+    require(abs(hyd_baseline_read) < 1e-6, "hybrid readback should start balanced")
+    require(hyd_positive_read > hyd_baseline_read + 8e-6, "hybrid W+ pulses should read back as a positive contribution")
+    require(abs(hyd_near_cancel_read) < 2e-6, "hybrid alternating writes should read back near zero at cancellation")
+    require(hyd_negative_read < hyd_baseline_read - 4e-6, "hybrid extra W- pulse should read back as a negative contribution")
+    require(hydat(2.75e-6, hyd_weight) > 0.025, "hybrid readback W+ pulses should build positive stored weight")
+    require(hydat(hyd_hold_start, hyd_weight) < -0.006, "hybrid readback final stored weight should be negative")
+    require(abs(hydat(hyd_hold_end, hyd_wp) - hydat(hyd_hold_start, hyd_wp)) < 1e-5, "hybrid readback should not disturb W+ cap during hold")
+    require(abs(hydat(hyd_hold_end, hyd_wm) - hydat(hyd_hold_start, hyd_wm)) < 1e-5, "hybrid readback should not disturb W- cap during hold")
+    require(abs(hydat(hyd_hold_end, hyd_net_read) - hydat(hyd_hold_start, hyd_net_read)) < 0.5e-6, "hybrid read current should hold after writes")
+
+    hyd_fig, hyd_axes = plt.subplots(3, 1, figsize=(7.2, 7.4))
+    hyd_axes[0].plot(1e6 * hydt, hyd_hidden_pos, label="stored $r^+$")
+    hyd_axes[0].plot(1e6 * hydt, hyd_hidden_neg, label="stored $r^-$")
+    hyd_axes[0].plot(1e6 * hydt, hyd_cols[14] / 20.0, color="0.45", alpha=0.35, label="$pacc^+_n/20$")
+    hyd_axes[0].plot(1e6 * hydt, hyd_cols[15] / 20.0, color="0.15", alpha=0.25, label="$pacc^-_n/20$")
+    hyd_axes[0].axhline(0, color="0.4", linewidth=0.8)
+    hyd_axes[0].set_ylabel("voltage (V)")
+    hyd_axes[0].set_title("Hybrid readback deck stores both writer signs")
+    hyd_axes[0].grid(True, alpha=0.25)
+    hyd_axes[0].legend(loc="center right", ncol=2, fontsize="small")
+    hyd_axes[1].plot(1e6 * hydt, hyd_wp - hydat(1.45e-6, hyd_wp), label="$W^+$ step")
+    hyd_axes[1].plot(1e6 * hydt, hyd_wm - hydat(1.45e-6, hyd_wm), label="$W^-$ step")
+    hyd_axes[1].plot(1e6 * hydt, hyd_weight, label="$W^+ - W^-$")
+    hyd_axes[1].axvspan(4.55, 9.5, color="0.8", alpha=0.18, label="read hold")
+    hyd_axes[1].axhline(0, color="0.4", linewidth=0.8)
+    hyd_axes[1].set_ylabel("weight step (V)")
+    hyd_axes[1].set_title("Written weight caps hold while driving MOS synapse gates")
+    hyd_axes[1].grid(True, alpha=0.25)
+    hyd_axes[1].legend(loc="upper right", ncol=2, fontsize="small")
+    hyd_axes[2].plot(1e6 * hydt, 1e6 * hyd_net_read, label="net signed readback")
+    hyd_axes[2].plot(1e6 * hydt, 1e6 * hyd_pos_read, "--", label="$W^+$ read component")
+    hyd_axes[2].plot(1e6 * hydt, 1e6 * hyd_neg_read, ":", label="$W^-$ read component")
+    hyd_axes[2].axvspan(4.55, 9.5, color="0.8", alpha=0.18, label="read hold")
+    hyd_axes[2].axhline(0, color="0.4", linewidth=0.8)
+    hyd_axes[2].set_xlabel("time (us)")
+    hyd_axes[2].set_ylabel("read current (uA)")
+    hyd_axes[2].set_title("Hybrid-written rails read back, cancel, reverse, and retain sign")
+    hyd_axes[2].grid(True, alpha=0.25)
+    hyd_axes[2].legend(loc="upper right", ncol=2, fontsize="small")
+    hyd_fig.tight_layout()
+    save_plot(hyd_fig, "mos_hidden_writer_restored_gate_hybrid_readback_ngspice")
+
     return hidden_writer_plot
 
 

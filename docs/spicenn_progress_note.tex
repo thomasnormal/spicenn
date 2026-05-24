@@ -1162,6 +1162,28 @@ must satisfy before it can replace the current behavioral prototype.
 
 \begin{figure}[H]
   \centering
+  \includegraphics[width=0.88\linewidth]{figures/mos_hidden_writer_restored_gate_hybrid_readback_ngspice.png}
+  \caption{Ngspice readback and retention characterization for the hybrid
+  restored writer.  The same matched \(r^+\)/\(r^-\) hidden-error stores and
+  alternating restored writer stacks drive one \(W^+/W^-\) capacitor pair, but
+  the capacitors are also continuously connected to a signed MOS synapse read
+  slice.  Initially the positive and gate-swapped negative read components are
+  balanced at about \(\pm120.2\,\mu\mathrm{A}\).  After the three \(W^+\)
+  pulses, the stored differential is \(36.2\) mV and the net read current is
+  \(+30.7\,\mu\mathrm{A}\).  After cancellation, the weight differential is
+  \(-0.0006\) mV and the readback is \(-0.0005\,\mu\mathrm{A}\).  The extra
+  \(W^-\) pulse leaves \(-12.1\) mV stored differential and
+  \(-11.0\,\mu\mathrm{A}\) net read current.  During the \(4.55\)--\(9.5\,\mu s\)
+  hold/read window the weight-cap drift is only about \(0.037\,\mu\mathrm{V}\)
+  per rail and the net read current is unchanged at the plotted precision.
+  This closes the loop from hybrid local write to actual signed synapse
+  contribution and read-disturb hold, rather than only plotting the storage
+  capacitors.}
+  \label{fig:mos-hidden-writer-restored-gate-hybrid-readback-ngspice}
+\end{figure}
+
+\begin{figure}[H]
+  \centering
   \includegraphics[width=0.88\linewidth]{figures/mos_reset_precharge_ngspice.png}
   \caption{Ngspice transient characterization of MOS reset/precharge for
   reusable state capacitors.  A complementary MOS transmission-gate reset first

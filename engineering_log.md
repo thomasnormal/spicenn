@@ -1,5 +1,9 @@
 # Engineering Log
 
+## 2026-05-24
+
+- Replaced the paper's abstract stored-tanh neuron picture with an element-level schematic that can be redrawn in LTspice: named capacitor state nodes for `h`, `dh`, local weights, local bias, and readout weights; phase-gated behavioral current sources in parallel with those capacitors; and the exact SPICE branch-current sign convention. Added a deck stencil showing the activation store, backward hidden-delta store, local write, bias write, and readout write equations. The important circuit-detail correction is that `Bxxx node 0 I=...` current is oriented from the state node to ground, so the storage sources use `V(node)-target` to relax toward the target, while write sources use a negative current to raise a capacitor voltage for a positive local update product.
+
 ## 2026-05-23
 
 - Promoted the corrected efficient target deck to 512 updates. The finite-edge, fused/label strict fully-on-device `10x10 b4 stride2 c2` Xyce run with `lr=0.5`, readout scale `0.35`, temperature `3.0`, frozen output bias, fused preactivation/score/output rails, and stored activation/delta state completed in `331.3s` with the strict contract true. It improved the 300-image diagnostic eval from `9.0%` to `78.0%`, predicted all 10 classes, and matches the best fast-screen 512-update expectation for this knob set. Corrected finite-edge deck cost was `7,174` estimated transient points, `59,547` total source PWL points, `864` output vectors, and `0` auxiliary algebraic sources. This is the strongest corrected efficient-deck target evidence so far; it is still a 300-image diagnostic, not the full 10k / >90% objective. Compact summary/metrics were copied to `results/tables`; generated deck and weight artifacts were removed.

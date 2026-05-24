@@ -266,52 +266,137 @@ current sources read those stored node voltages during the write phase.
   \centering
   \begin{tikzpicture}[
       font=\small,
-      block/.style={draw, rounded corners=2pt, minimum height=0.9cm,
-        minimum width=2.3cm, align=center, fill=lightgray, inner sep=3pt},
-      statecap/.style={draw, cylinder, shape border rotate=90, aspect=0.28,
-        minimum height=0.8cm, minimum width=0.62cm, align=center, fill=green!10},
-      src/.style={draw, diamond, aspect=1.7, align=center, fill=yellow!12,
-        inner sep=1.5pt},
-      arr/.style={-{Latex[length=2mm]}, semithick},
+      expr/.style={draw, rounded corners=2pt, align=center, fill=lightgray,
+        minimum width=3.5cm, minimum height=0.75cm, inner sep=3pt},
+      rail/.style={font=\footnotesize, fill=white, inner sep=1pt},
+      dot/.style={circle, fill=black, inner sep=1.4pt},
+      bsrc/.style={circle, draw, minimum size=0.72cm, inner sep=0pt,
+        fill=yellow!12},
+      arr/.style={-{Latex[length=1.8mm]}, semithick},
+      sig/.style={arr, gray!75},
       fwd/.style={arr, forwardblue},
       bwd/.style={arr, backred},
-      wr/.style={arr, writeorange},
-      lbl/.style={font=\footnotesize, fill=white, inner sep=1.2pt}
+      wr/.style={arr, writeorange}
     ]
-    \node[block] (sum) {inline sum\\\(z=b+\sum_p S(W_p)x_p\)};
-    \node[src, right=1.2cm of sum] (tanhsrc) {\(I_h\)\\tanh\\store};
-    \node[statecap, right=1.15cm of tanhsrc] (ch) {\(C_h\)\\\(h\)};
-    \node[block, right=1.25cm of ch] (score) {readout\\scores};
-    \node[block, below=1.35cm of score] (err) {output\\error \(d_k\)};
-    \node[src, left=1.25cm of err] (dsrc) {\(I_{\delta h}\)\\backward\\store};
-    \node[statecap, left=1.15cm of dsrc] (cdh) {\(C_{\delta h}\)\\\(\delta h\)};
-    \node[src, below=1.25cm of cdh] (wsrc) {\(I_W,I_b\)\\write};
-    \node[statecap, left=1.15cm of wsrc] (cw) {\(C_W,C_b\)};
+    \newcommand{\capgnd}[4]{%
+      \draw (#1,#2) -- ++(0,-0.42);
+      \draw (#1-0.22,#2-0.42) -- (#1+0.22,#2-0.42);
+      \draw (#1-0.22,#2-0.58) -- (#1+0.22,#2-0.58);
+      \draw (#1,#2-0.58) -- ++(0,-0.42);
+      \draw (#1-0.22,#2-1.00) -- (#1+0.22,#2-1.00);
+      \draw (#1-0.15,#2-1.10) -- (#1+0.15,#2-1.10);
+      \draw (#1-0.08,#2-1.20) -- (#1+0.08,#2-1.20);
+      \node[rail] at (#1+0.46,#2-0.50) {#3};
+      \node[rail] at (#1+0.48,#2-0.96) {#4};
+    }
+    \newcommand{\isrcgnd}[5]{%
+      \draw (#1,#2) -- ++(0,-0.34);
+      \node[bsrc] (#5) at (#1,#2-0.72) {};
+      \draw[-{Latex[length=1.6mm]}] (#1,#2-0.45) -- (#1,#2-0.98);
+      \draw (#1,#2-1.08) -- ++(0,-0.34);
+      \draw (#1-0.22,#2-1.42) -- (#1+0.22,#2-1.42);
+      \draw (#1-0.15,#2-1.52) -- (#1+0.15,#2-1.52);
+      \draw (#1-0.08,#2-1.62) -- (#1+0.08,#2-1.62);
+      \node[rail, align=center, text width=1.55cm] at (#1+0.98,#2-0.72)
+        {#3\\#4};
+    }
 
-    \draw[fwd] (sum) -- node[lbl, above] {\(z\)} (tanhsrc);
-    \draw[fwd] (tanhsrc) -- node[lbl, above] {\(\mathrm{pact}\)} (ch);
-    \draw[fwd] (ch) -- node[lbl, above] {\(h\)} (score);
-    \draw[bwd] (score) -- (err);
-    \draw[bwd] (err) -- node[lbl, above] {\(\sum_k d_kV_k\)} (dsrc);
-    \draw[bwd] (sum.south) |- node[lbl, left, pos=0.25] {\(1-\tanh^2 z\)} (dsrc.west);
-    \draw[bwd] (dsrc) -- node[lbl, above] {\(\mathrm{pbwd}\)} (cdh);
-    \draw[wr] (cdh) -- node[lbl, left] {\(\delta h\)} (wsrc);
-    \draw[wr] (sum.west) |- node[lbl, left, pos=0.2] {\(x_p\)} (wsrc.west);
-    \draw[wr] (wsrc) -- node[lbl, above] {\(\mathrm{pacc}\)} (cw);
+    \node[expr] (zexpr) at (0,0.25)
+      {\(z_{bc}=hb_{bc}+\sum_p S(w_{bcp})\,x_{bp}\)};
+    \node[dot, label=above:\(h_{bc}\)] (hnode) at (4.0,0.25) {};
+    \draw[fwd] (zexpr.east) -- (2.25,0.25);
+    \draw (2.25,0.25) -- (hnode);
+    \capgnd{4.0}{0.25}{\(C_h\)}{\(0\)}
+    \isrcgnd{5.35}{0.25}{\(\mathrm{Bstore\_h}\)}
+      {\(I_h\)}{Ih}
+    \draw (hnode) -- (5.35,0.25);
+    \draw[sig] (6.85,0.25) -- ++(0.8,0)
+      node[rail, right] {to readout scores};
+    \node[rail, text=forwardblue] at (2.75,0.85) {activation phase};
+
+    \node[expr] (rexpr) at (0,-2.35)
+      {\(r_{bc}=\sum_k d_k\,v_{kbc}\)};
+    \node[expr] (dexpr) at (0,-3.35)
+      {\(\delta h^\star_{bc}=r_{bc}\,[1-\tanh^2(z_{bc})]\)};
+    \node[dot, label=above:\(dh_{bc}\)] (dhnode) at (4.0,-2.85) {};
+    \draw[bwd] (dexpr.east) -- node[rail, above] {\(\delta h^\star\)}
+      (dhnode);
+    \capgnd{4.0}{-2.85}{\(C_{\delta h}\)}{\(0\)}
+    \isrcgnd{5.35}{-2.85}{\(\mathrm{Bstore\_dh}\)}
+      {\(I_{\delta h}\)}{Idh}
+    \draw (dhnode) -- (5.35,-2.85);
+    \node[rail, text=backred] at (2.82,-2.25) {backward phase};
+
+    \node[dot, label=above:\(w_{bcp}\)] (wnode) at (0,-5.65) {};
+    \node[dot, label=above:\(hb_{bc}\)] (hbnode) at (3.0,-5.65) {};
+    \node[dot, label=above:\(v_{kbc}\)] (vnode) at (6.0,-5.65) {};
+    \capgnd{0}{-5.65}{\(C_W\)}{\(0\)}
+    \capgnd{3.0}{-5.65}{\(C_b\)}{\(0\)}
+    \capgnd{6.0}{-5.65}{\(C_V\)}{\(0\)}
+    \isrcgnd{1.05}{-5.65}{\(\mathrm{Bupd\_w}\)}
+      {\(I_W\)}{Iw}
+    \isrcgnd{4.05}{-5.65}{\(\mathrm{Bupd\_hb}\)}
+      {\(I_b\)}{Ihb}
+    \isrcgnd{7.05}{-5.65}{\(\mathrm{Bupd\_v}\)}
+      {\(I_V\)}{Iv}
+    \draw (wnode) -- (1.05,-5.65);
+    \draw (hbnode) -- (4.05,-5.65);
+    \draw (vnode) -- (7.05,-5.65);
+    \node[rail, text=writeorange] at (3.55,-5.20) {write phase, \(pacc=1\)};
   \end{tikzpicture}
-  \caption{Stored tanh neuron used by the final local-feature SPICE run.
-  The activation storage source implements
-  \(I_h = V(\mathrm{pact})\,C_{\mathrm{STATE}}/\tau\,[V(h)-\tanh(z)]\), so
-  the capacitor dynamics are
-  \(\dot V(h)=V(\mathrm{pact})[\tanh(z)-V(h)]/\tau\).  The hidden-delta
-  storage source similarly relaxes \(C_{\delta h}\) toward
-  \((\sum_k d_kV_k)(1-\tanh^2 z)\) during the backward phase.  The write
-  sources then update \(C_W\) and \(C_b\) from the local product
-  \(\delta h\,x_p\).}
+  \caption{Element-level schematic of one stored tanh hidden neuron and its
+  attached write devices in the final SPICE deck.  The arrows inside the
+  current-source symbols point from the named state node to ground, matching
+  SPICE's \(\code{Bxxx node 0 I=...}\) branch-current convention.  Positive
+  storage current therefore discharges the state capacitor; a negative write
+  current injects charge and raises the stored weight voltage.}
   \label{fig:stored-tanh-neuron}
 \end{figure}
 
-In generated-deck form, the key hidden activation line is equivalent to
+The same circuit can be drawn in LTspice from the following deck stencil.  The
+\(\sum_p\) in the comments is not a special SPICE primitive; for a concrete
+cell it is expanded into one term per pixel in the block.  The signed weight
+map \(S(\cdot)\) is the clipping/sign function used by the generated deck.
+\[
+\begin{array}{lll}
+  h_{bc} &:& \text{stored activation node} \\
+  dh_{bc} &:& \text{stored hidden-delta node} \\
+  w_{bcp}, hb_{bc}, v_{kbc} &:&
+    \text{local weight, local bias, and readout weight nodes} \\
+  pact,pbwd,pacc &:&
+    \text{nonoverlapping activation, backward, and write phase rails.}
+\end{array}
+\]
+
+\begin{verbatim}
+* One hidden local-feature neuron: block b, channel c.
+* Expand zbc by writing one signed/clipped weight term per pixel p:
+* zbc = V(hb_bc)
+*     + S(V(w_bc0))*V(x_b0)
+*     + S(V(w_bc1))*V(x_b1) + ...
+
+Ch_bc        h_bc    0  {CSTATE} IC=0
+Bstore_h_bc  h_bc    0  I = V(pact)*{CSTATE}/{TAU}*(V(h_bc)-tanh(zbc))
+
+Cdh_bc       dh_bc   0  {CSTATE} IC=0
+* rbc = sum_k V(d_k)*V(v_kbc)
+* dh_target = rbc*(1-tanh(zbc)*tanh(zbc))
+Bstore_dh_bc dh_bc   0  I = V(pbwd)*{CSTATE}/{TAU}*(V(dh_bc)-dh_target)
+
+Cw_bcp       w_bcp   0  {CW} IC=<random_init>
+Bupd_w_bcp   w_bcp   0  I = -V(pacc)*{CW}*eta*{LOCAL_UPDATE_SCALE}
++                         /({BS}*{TAREA})*V(dh_bc)*V(x_bp)
+
+Chb_bc       hb_bc   0  {CW} IC=<random_init>
+Bupd_hb_bc   hb_bc   0  I = -V(pacc)*{CW}*eta*{LOCAL_UPDATE_SCALE}
++                         /({BS}*{TAREA})*V(dh_bc)
+
+Cv_kbc       v_kbc   0  {CW} IC=<random_init>
+Bupd_v_kbc   v_kbc   0  I = -V(pacc)*{CW}*eta*{READOUT_UPDATE_SCALE}
++                         /({BS}*{TAREA})*V(d_k)*V(h_bc)
+\end{verbatim}
+
+In generated-deck form, the key hidden activation source is equivalent to
 \[
   I_h =
   V(\mathrm{pact})\,\frac{C_{\mathrm{STATE}}}{\tau}

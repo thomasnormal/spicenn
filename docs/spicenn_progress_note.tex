@@ -650,6 +650,20 @@ must satisfy before it can replace the current behavioral prototype.
 
 \begin{figure}[H]
   \centering
+  \includegraphics[width=0.88\linewidth]{figures/mos_hidden_error_gain_store_ngspice.png}
+  \caption{Ngspice storage characterization for the hidden-error derivative
+  proxy.  MOS pass switches sample the \(+\epsilon\) and \(-\epsilon\)
+  forward-replica outputs onto capacitors at three preactivation operating
+  points; the plotted value is the finite difference computed from those stored
+  capacitor voltages.  The sampled derivative proxy is large near
+  \(z^+\approx z^-\), much smaller in both saturated regions, and is retained
+  after the sampling phase closes.  This validates storage of the replica
+  derivative window; it is not a full hidden-error subtractor circuit.}
+  \label{fig:mos-hidden-error-gain-store-ngspice}
+\end{figure}
+
+\begin{figure}[H]
+  \centering
   \includegraphics[width=0.88\linewidth]{figures/mos_reset_precharge_ngspice.png}
   \caption{Ngspice transient characterization of MOS reset/precharge for
   reusable state capacitors.  A complementary MOS transmission-gate reset first

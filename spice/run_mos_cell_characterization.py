@@ -492,6 +492,68 @@ quit
 .endc
 .end
 """
+    gain_store_cases = [("neg_sat", -0.55), ("center", 0.0), ("pos_sat", 0.55)]
+    gain_store_devices = []
+    gain_store_prints = []
+    for name, diff in gain_store_cases:
+        plus_p = 0.9 + (diff + eps) / 2.0
+        plus_m = 0.9 - (diff + eps) / 2.0
+        minus_p = 0.9 + (diff - eps) / 2.0
+        minus_m = 0.9 - (diff - eps) / 2.0
+        gain_store_devices.append(
+            f"""
+* Stored finite-difference replica outputs for {name}, z+ - z- = {diff:.2f} V.
+VZPP_{name} zpp_{name} 0 {plus_p:.5f}
+VZMM_{name} zmm_{name} 0 {plus_m:.5f}
+VZPM_{name} zpm_{name} 0 {minus_p:.5f}
+VZMP_{name} zmp_{name} 0 {minus_m:.5f}
+
+MPPPL_{name} hpp_{name} hpp_{name} vdd vdd PMOS L={{LCH}} W={{WP}}
+MPPMM_{name} hpm_{name} hpm_{name} vdd vdd PMOS L={{LCH}} W={{WP}}
+MNPP_{name} hpp_{name} zpp_{name} tailp_{name} 0 NMOS L={{LCH}} W={{WN}}
+MNPM_{name} hpm_{name} zmm_{name} tailp_{name} 0 NMOS L={{LCH}} W={{WN}}
+MNTP_{name} tailp_{name} vbias 0 0 NMOS L={{LCH}} W={{WN}}
+
+MPMPL_{name} hmp_{name} hmp_{name} vdd vdd PMOS L={{LCH}} W={{WP}}
+MPMMM_{name} hmm_{name} hmm_{name} vdd vdd PMOS L={{LCH}} W={{WP}}
+MNMP_{name} hmp_{name} zpm_{name} tailm_{name} 0 NMOS L={{LCH}} W={{WN}}
+MNMM_{name} hmm_{name} zmp_{name} tailm_{name} 0 NMOS L={{LCH}} W={{WN}}
+MNTM_{name} tailm_{name} vbias 0 0 NMOS L={{LCH}} W={{WN}}
+
+CPP_{name} cpp_{name} 0 {{CERR}} IC=1.04
+CPM_{name} cpm_{name} 0 {{CERR}} IC=1.04
+CMP_{name} cmp_{name} 0 {{CERR}} IC=1.04
+CMM_{name} cmm_{name} 0 {{CERR}} IC=1.04
+RPP_{name} cpp_{name} 0 50G
+RPM_{name} cpm_{name} 0 50G
+RMP_{name} cmp_{name} 0 50G
+RMM_{name} cmm_{name} 0 50G
+MSPP_{name} hpp_{name} psamp cpp_{name} 0 NMOS L={{LCH}} W={{WSW}}
+MSPM_{name} hpm_{name} psamp cpm_{name} 0 NMOS L={{LCH}} W={{WSW}}
+MSMP_{name} hmp_{name} psamp cmp_{name} 0 NMOS L={{LCH}} W={{WSW}}
+MSMM_{name} hmm_{name} psamp cmm_{name} 0 NMOS L={{LCH}} W={{WSW}}
+"""
+        )
+        gain_store_prints.extend([f"v(cpp_{name})", f"v(cpm_{name})", f"v(cmp_{name})", f"v(cmm_{name})"])
+    gain_store_deck = f"""
+* Hidden-error derivative-window storage sanity check.
+* MOS pass switches sample the +eps and -eps forward-replica outputs onto
+* capacitors; the plotted finite difference is computed from those stored
+* capacitor voltages by the characterization script.
+{COMMON_MODELS}
+.param CERR=10p WSW=24u
+VDD vdd 0 1.8
+VTAIL vbias 0 0.95
+VPSAMP psamp 0 PULSE(0 1.8 0.5u 20n 20n 0.8u 4.0u)
+{''.join(gain_store_devices)}
+.control
+set noaskquit
+tran 5n 2.5u uic
+wrdata mos_hidden_error_gain_store.dat {' '.join(gain_store_prints)} v(psamp)
+quit
+.endc
+.end
+"""
     data = run_ngspice(deck, "mos_hidden_error")
     x, cols = load_wrdata(data, 4)
     xdiff = x
@@ -517,6 +579,20 @@ quit
     require(at(2.2e-6, pos_stored) > 0.12, "r+ hidden-error storage should hold after phase")
     require(at(2.2e-6, neg_stored) < -0.12, "r- hidden-error storage should hold after phase")
 
+    gain_store_data = run_ngspice(gain_store_deck, "mos_hidden_error_gain_store")
+    gt, gain_store_cols = load_wrdata(gain_store_data, 4 * len(gain_store_cases) + 1)
+    stored_gain = []
+    for idx in range(len(gain_store_cases)):
+        plus_signed = gain_store_cols[4 * idx + 1] - gain_store_cols[4 * idx]
+        minus_signed = gain_store_cols[4 * idx + 3] - gain_store_cols[4 * idx + 2]
+        stored_gain.append((plus_signed - minus_signed) / (2.0 * eps))
+    stored_gain_final = np.array([at(1.2e-6, series) for series in stored_gain])
+    stored_gain_hold = np.array([at(2.2e-6, series) for series in stored_gain])
+    require(stored_gain_final[1] > 0.65, "stored hidden-error gain should be high near z balance")
+    require(stored_gain_final[0] < 0.35 * stored_gain_final[1], "negative saturated stored gain should be much lower")
+    require(stored_gain_final[2] < 0.35 * stored_gain_final[1], "positive saturated stored gain should be much lower")
+    require(np.max(np.abs(stored_gain_hold - stored_gain_final)) < 0.04, "stored hidden-error gain samples should hold")
+
     fig, axes = plt.subplots(2, 1, figsize=(7.2, 6.2))
     axes[0].plot(xdiff, gain, label="finite-difference gain")
     axes[0].axhline(0, color="0.4", linewidth=0.8)
@@ -536,7 +612,32 @@ quit
     axes[1].grid(True, alpha=0.25)
     axes[1].legend()
     fig.tight_layout()
-    return save_plot(fig, "mos_hidden_error_ngspice")
+    hidden_plot = save_plot(fig, "mos_hidden_error_ngspice")
+
+    gain_fig, gain_axes = plt.subplots(2, 1, figsize=(7.2, 5.8))
+    labels = ["negative saturation", "center", "positive saturation"]
+    for label, series in zip(labels, stored_gain):
+        gain_axes[0].plot(1e6 * gt, series, label=label)
+    gain_axes[0].plot(1e6 * gt, gain_store_cols[-1] / 4.0, color="0.5", alpha=0.35, label="$psamp/4$")
+    gain_axes[0].axhline(0, color="0.4", linewidth=0.8)
+    gain_axes[0].set_ylabel("stored finite-diff gain (V/V)")
+    gain_axes[0].set_title("Stored replica derivative is high only in the active window")
+    gain_axes[0].grid(True, alpha=0.25)
+    gain_axes[0].legend()
+    zdiffs = np.array([diff for _, diff in gain_store_cases])
+    order = np.argsort(zdiffs)
+    gain_axes[1].plot(zdiffs[order], stored_gain_final[order], "o-", label="after sample")
+    gain_axes[1].plot(zdiffs[order], stored_gain_hold[order], "s--", label="after hold")
+    gain_axes[1].axhline(0, color="0.4", linewidth=0.8)
+    gain_axes[1].axvline(0, color="0.4", linewidth=0.8)
+    gain_axes[1].set_xlabel("$z^+ - z^-$ operating point (V)")
+    gain_axes[1].set_ylabel("stored finite-diff gain (V/V)")
+    gain_axes[1].set_title("Sampled derivative proxy is retained on capacitors")
+    gain_axes[1].grid(True, alpha=0.25)
+    gain_axes[1].legend()
+    gain_fig.tight_layout()
+    save_plot(gain_fig, "mos_hidden_error_gain_store_ngspice")
+    return hidden_plot
 
 
 def characterize_reset_precharge() -> Path:

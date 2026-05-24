@@ -2,6 +2,7 @@
 
 ## 2026-05-24
 
+- Added a hidden-error derivative-window storage characterization. The new MOS-only deck samples \(+\epsilon\) and \(-\epsilon\) forward-replica outputs onto capacitors at center and saturated preactivation points, computes the finite-difference gain from those stored caps in the plot script, and asserts the active-region sample is much larger than saturated samples and holds after the sampling phase.
 - Added a weighted-cancellation MOS synapse characterization. The new deck drives paired positive- and negative-weight gate-swapped transconductance slices into the same summing capacitors with unequal \(W^+\)/\(W^-\) tail amplitudes, then asserts the stored preactivation sign tracks the rail imbalance, the balanced case cancels, and the partial states hold after the pulse.
 - Added a repeated-pulse MOS writer characterization to close the gap between one-shot selectivity and online training use. The new deck drives the same PMOS coincidence stacks with ten active-low sample pulses, asserts monotone near-linear accumulation on the selected \(W^+\) and \(W^-\) rails, asserts inactive rails remain quiet, and adds a separate zoomed paper plot instead of overloading the existing writer figure.
 - Extended the MOS writer pulse-width sweep to cover both selected weight rails. The width deck now includes a same-sign branch that charges \(W^+\), an opposite-sign branch that charges \(W^-\), and both inactive opposite rails for every pulse width; assertions require monotone near-linear response on both selected rails and quiet inactive rails.

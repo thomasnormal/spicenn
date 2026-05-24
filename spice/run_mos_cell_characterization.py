@@ -5214,6 +5214,159 @@ quit
     hyd_fig.tight_layout()
     save_plot(hyd_fig, "mos_hidden_writer_restored_gate_hybrid_readback_ngspice")
 
+    hybrid_reuse_deck = f"""
+* Hybrid restored-enable/analog-error writer hidden-error reset/reuse check.
+* One hidden-error capacitor pair is first written as r+, reset by
+* complementary MOS transmission gates back to the neutral error common mode,
+* then rewritten as r-.  The same restored gates and analog caps steer one
+* persistent W+/W- pair in both sample phases.
+{COMMON_MODELS}
+.param CERR=10p CWRITE=500p WSW=24u WWRITE=24u WRESTN=18u WRESTP=300u WRESETN=24u WRESETP=60u
+VDD vdd 0 1.8
+VTAIL vbias 0 0.95
+VERRCM verrcm 0 1.04
+VPBWD_HYE pbwd 0 PWL(0 0 0.45u 0 0.47u 1.8 1.22u 1.8 1.24u 0 2.70u 0 2.72u 1.8 3.47u 1.8 3.49u 0 6.4u 0)
+VRST_HYE rst_hye 0 PWL(0 0 1.95u 0 1.97u 1.8 2.42u 1.8 2.44u 0 6.4u 0)
+VRSTN_HYE rstn_hye 0 PWL(0 1.8 1.95u 1.8 1.97u 0 2.42u 0 2.44u 1.8 6.4u 1.8)
+VRP_HYE rp_hye 0 PWL(0 0 0.45u 0 0.47u 1.8 1.22u 1.8 1.24u 0 6.4u 0)
+VRM_HYE rm_hye 0 PWL(0 0 2.70u 0 2.72u 1.8 3.47u 1.8 3.49u 0 6.4u 0)
+VPACC_POS_HYE paccn_pos_hye 0 PWL(0 1.8 1.45u 1.8 1.47u 0 1.83u 0 1.85u 1.8 6.4u 1.8)
+VPACC_NEG_HYE paccn_neg_hye 0 PWL(0 1.8 3.70u 1.8 3.72u 0 4.08u 0 4.10u 1.8 6.4u 1.8)
+VHM_POS_HYE hm_pos_hye 0 0.92
+
+VZPP_HYE zpp_hye 0 {0.9 + hybrid_mismatch_eps / 2.0:.5f}
+VZMM_HYE zmm_hye 0 {0.9 - hybrid_mismatch_eps / 2.0:.5f}
+VZPM_HYE zpm_hye 0 {0.9 - hybrid_mismatch_eps / 2.0:.5f}
+VZMP_HYE zmp_hye 0 {0.9 + hybrid_mismatch_eps / 2.0:.5f}
+
+MPPP_HYE hpp_hye hpp_hye vdd vdd PMOS L={{LCH}} W={{WP}}
+MPPM_HYE hpm_hye hpm_hye vdd vdd PMOS L={{LCH}} W={{WP}}
+MNPP_HYE hpp_hye zpp_hye tailp_hye 0 NMOS L={{LCH}} W={{WN}}
+MNPM_HYE hpm_hye zmm_hye tailp_hye 0 NMOS L={{LCH}} W={{WN}}
+MNTP_HYE tailp_hye vbias 0 0 NMOS L={{LCH}} W={{WN}}
+
+MPMP_HYE hmp_hye hmp_hye vdd vdd PMOS L={{LCH}} W={{WP}}
+MPMM_HYE hmm_hye hmm_hye vdd vdd PMOS L={{LCH}} W={{WP}}
+MNMP_HYE hmp_hye zpm_hye tailm_hye 0 NMOS L={{LCH}} W={{WN}}
+MNMM_HYE hmm_hye zmp_hye tailm_hye 0 NMOS L={{LCH}} W={{WN}}
+MNTM_HYE tailm_hye vbias 0 0 NMOS L={{LCH}} W={{WN}}
+
+CDP_HYE cdp_hye 0 {{CERR}} IC=1.04
+CDM_HYE cdm_hye 0 {{CERR}} IC=1.04
+RDP_HYE cdp_hye 0 50G
+RDM_HYE cdm_hye 0 50G
+MRDPN_HYE cdp_hye rst_hye verrcm 0 NMOS L={{LCH}} W={{WRESETN}}
+MRDMN_HYE cdm_hye rst_hye verrcm 0 NMOS L={{LCH}} W={{WRESETN}}
+MRDPP_HYE cdp_hye rstn_hye verrcm vdd PMOS L={{LCH}} W={{WRESETP}}
+MRDMP_HYE cdm_hye rstn_hye verrcm vdd PMOS L={{LCH}} W={{WRESETP}}
+{sign_store_path("hpm_hye", "rp_hye", "cdp_hye", "hyerp1")}
+{sign_store_path("hmp_hye", "rp_hye", "cdp_hye", "hyerp2")}
+{sign_store_path("hpp_hye", "rp_hye", "cdm_hye", "hyerp3")}
+{sign_store_path("hmm_hye", "rp_hye", "cdm_hye", "hyerp4")}
+{sign_store_path("hpp_hye", "rm_hye", "cdp_hye", "hyerm1")}
+{sign_store_path("hmm_hye", "rm_hye", "cdp_hye", "hyerm2")}
+{sign_store_path("hpm_hye", "rm_hye", "cdm_hye", "hyerm3")}
+{sign_store_path("hmp_hye", "rm_hye", "cdm_hye", "hyerm4")}
+
+MPRP_CDP_HYE rgp_hye cdp_hye vdd vdd PMOS L={{LCH}} W={{WRESTP}}
+MNRP_CDP_HYE rgp_hye cdp_hye 0 0 NMOS L={{LCH}} W={{WRESTN}}
+MPRP_CDM_HYE rgm_hye cdm_hye vdd vdd PMOS L={{LCH}} W={{WRESTP}}
+MNRP_CDM_HYE rgm_hye cdm_hye 0 0 NMOS L={{LCH}} W={{WRESTN}}
+
+CWP_HYE wp_hye 0 {{CWRITE}} IC=0.85
+CWM_HYE wm_hye 0 {{CWRITE}} IC=0.85
+MWP_POS_HYE_A vdd paccn_pos_hye n_wp_pos_hye_a vdd PMOS L={{LCH}} W={{WWRITE}}
+MWP_POS_HYE_B n_wp_pos_hye_a hm_pos_hye n_wp_pos_hye_b vdd PMOS L={{LCH}} W={{WWRITE}}
+MWP_POS_HYE_C n_wp_pos_hye_b rgp_hye n_wp_pos_hye_c vdd PMOS L={{LCH}} W={{WWRITE}}
+MWP_POS_HYE_D n_wp_pos_hye_c cdm_hye wp_hye vdd PMOS L={{LCH}} W={{WWRITE}}
+MWM_POS_HYE_A vdd paccn_pos_hye n_wm_pos_hye_a vdd PMOS L={{LCH}} W={{WWRITE}}
+MWM_POS_HYE_B n_wm_pos_hye_a hm_pos_hye n_wm_pos_hye_b vdd PMOS L={{LCH}} W={{WWRITE}}
+MWM_POS_HYE_C n_wm_pos_hye_b rgm_hye n_wm_pos_hye_c vdd PMOS L={{LCH}} W={{WWRITE}}
+MWM_POS_HYE_D n_wm_pos_hye_c cdp_hye wm_hye vdd PMOS L={{LCH}} W={{WWRITE}}
+
+MWP_NEG_HYE_A vdd paccn_neg_hye n_wp_neg_hye_a vdd PMOS L={{LCH}} W={{WWRITE}}
+MWP_NEG_HYE_B n_wp_neg_hye_a hm_pos_hye n_wp_neg_hye_b vdd PMOS L={{LCH}} W={{WWRITE}}
+MWP_NEG_HYE_C n_wp_neg_hye_b rgp_hye n_wp_neg_hye_c vdd PMOS L={{LCH}} W={{WWRITE}}
+MWP_NEG_HYE_D n_wp_neg_hye_c cdm_hye wp_hye vdd PMOS L={{LCH}} W={{WWRITE}}
+MWM_NEG_HYE_A vdd paccn_neg_hye n_wm_neg_hye_a vdd PMOS L={{LCH}} W={{WWRITE}}
+MWM_NEG_HYE_B n_wm_neg_hye_a hm_pos_hye n_wm_neg_hye_b vdd PMOS L={{LCH}} W={{WWRITE}}
+MWM_NEG_HYE_C n_wm_neg_hye_b rgm_hye n_wm_neg_hye_c vdd PMOS L={{LCH}} W={{WWRITE}}
+MWM_NEG_HYE_D n_wm_neg_hye_c cdp_hye wm_hye vdd PMOS L={{LCH}} W={{WWRITE}}
+
+.control
+set noaskquit
+tran 5n 6.2u uic
+wrdata mos_hidden_writer_restored_gate_hybrid_reuse.dat v(cdp_hye) v(cdm_hye) v(rgp_hye) v(rgm_hye) v(wp_hye) v(wm_hye) v(rp_hye) v(rm_hye) v(rst_hye) v(paccn_pos_hye) v(paccn_neg_hye)
+quit
+.endc
+.end
+"""
+    hybrid_reuse_data = run_ngspice(
+        hybrid_reuse_deck,
+        "mos_hidden_writer_restored_gate_hybrid_reuse",
+    )
+    hyet, hye_cols = load_wrdata(hybrid_reuse_data, 11)
+
+    def hyeat(time_s: float, values: np.ndarray) -> float:
+        return float(values[np.argmin(np.abs(hyet - time_s))])
+
+    hye_hidden = hye_cols[0] - hye_cols[1]
+    hye_common = 0.5 * (hye_cols[0] + hye_cols[1])
+    hye_rgp = hye_cols[2]
+    hye_rgm = hye_cols[3]
+    hye_wp = hye_cols[4]
+    hye_wm = hye_cols[5]
+    hye_weight = hye_wp - hye_wm
+    hye_pos_step = hyeat(1.90e-6, hye_weight)
+    hye_reset_hidden = hyeat(2.55e-6, hye_hidden)
+    hye_neg_hidden = hyeat(3.60e-6, hye_hidden)
+    hye_final_weight = hyeat(4.25e-6, hye_weight)
+    require(hyeat(1.35e-6, hye_hidden) > 0.07, "hybrid reuse first store should create positive hidden error")
+    require(hyeat(1.35e-6, hye_rgp) < 0.30, "hybrid reuse first selected restored gate should be low")
+    require(hyeat(1.35e-6, hye_rgm) > 1.60, "hybrid reuse first complement restored gate should be high")
+    require(hye_pos_step > 0.020, "hybrid reuse first sample should write W+")
+    require(abs(hye_reset_hidden) < 0.004, "hybrid reuse reset should clear hidden-error differential")
+    require(abs(hyeat(2.55e-6, hye_common) - 1.04) < 0.005, "hybrid reuse reset should restore hidden-error common mode")
+    require(abs(hyeat(2.55e-6, hye_weight) - hye_pos_step) < 5e-4, "hybrid reuse reset should not disturb persistent weight caps")
+    require(hye_neg_hidden < -0.07, "hybrid reuse second store should create negative hidden error")
+    require(hyeat(3.60e-6, hye_rgm) < 0.30, "hybrid reuse second selected restored gate should be low")
+    require(hyeat(3.60e-6, hye_rgp) > 1.60, "hybrid reuse second complement restored gate should be high")
+    require(hye_final_weight < hye_pos_step - 0.020, "hybrid reuse negative sample should cancel the prior W+ write")
+    require(hye_final_weight < 0.010, "hybrid reuse final signed weight should be near-zero or negative after opposite sign")
+    require(abs(hyeat(5.90e-6, hye_weight) - hye_final_weight) < 5e-4, "hybrid reuse final weight should hold")
+
+    hye_fig, hye_axes = plt.subplots(3, 1, figsize=(7.2, 7.4))
+    hye_axes[0].plot(1e6 * hyet, hye_hidden, label="$c_{d+}-c_{d-}$")
+    hye_axes[0].plot(1e6 * hyet, hye_common - 1.04, label="common-mode error")
+    hye_axes[0].plot(1e6 * hyet, hye_cols[6] / 20.0, color="0.45", alpha=0.3, label="$rp/20$")
+    hye_axes[0].plot(1e6 * hyet, hye_cols[7] / 20.0, color="0.15", alpha=0.25, label="$rm/20$")
+    hye_axes[0].plot(1e6 * hyet, hye_cols[8] / 20.0, color="0.6", alpha=0.3, label="$reset/20$")
+    hye_axes[0].axhline(0, color="0.4", linewidth=0.8)
+    hye_axes[0].set_ylabel("hidden state (V)")
+    hye_axes[0].set_title("One hidden-error capacitor pair is reset and reused")
+    hye_axes[0].grid(True, alpha=0.25)
+    hye_axes[0].legend(loc="upper right", ncol=2, fontsize="small")
+    hye_axes[1].plot(1e6 * hyet, hye_rgp, label="$c_{d+}$ restored gate")
+    hye_axes[1].plot(1e6 * hyet, hye_rgm, label="$c_{d-}$ restored gate")
+    hye_axes[1].axhline(0.9, color="0.4", linewidth=0.8, alpha=0.5)
+    hye_axes[1].set_ylabel("gate voltage (V)")
+    hye_axes[1].set_title("Restored select gate swaps after physical reset")
+    hye_axes[1].grid(True, alpha=0.25)
+    hye_axes[1].legend(loc="center right", fontsize="small")
+    hye_axes[2].plot(1e6 * hyet, hye_wp - hyeat(1.35e-6, hye_wp), label="$W^+$ step")
+    hye_axes[2].plot(1e6 * hyet, hye_wm - hyeat(1.35e-6, hye_wm), label="$W^-$ step")
+    hye_axes[2].plot(1e6 * hyet, hye_weight, label="$W^+ - W^-$")
+    hye_axes[2].plot(1e6 * hyet, hye_cols[9] / 20.0, color="0.45", alpha=0.3, label="$pacc^+_n/20$")
+    hye_axes[2].plot(1e6 * hyet, hye_cols[10] / 20.0, color="0.15", alpha=0.25, label="$pacc^-_n/20$")
+    hye_axes[2].axhline(0, color="0.4", linewidth=0.8)
+    hye_axes[2].set_xlabel("time (us)")
+    hye_axes[2].set_ylabel("weight step (V)")
+    hye_axes[2].set_title("Persistent weight caps survive reset and accept opposite update")
+    hye_axes[2].grid(True, alpha=0.25)
+    hye_axes[2].legend(loc="upper right", ncol=2, fontsize="small")
+    hye_fig.tight_layout()
+    save_plot(hye_fig, "mos_hidden_writer_restored_gate_hybrid_reuse_ngspice")
+
     return hidden_writer_plot
 
 

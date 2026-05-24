@@ -1184,6 +1184,28 @@ must satisfy before it can replace the current behavioral prototype.
 
 \begin{figure}[H]
   \centering
+  \includegraphics[width=0.88\linewidth]{figures/mos_hidden_writer_restored_gate_hybrid_reuse_ngspice.png}
+  \caption{Ngspice hidden-error reset/reuse characterization for the hybrid
+  restored writer.  Unlike the previous matched-copy plots, this deck uses one
+  physical \(C_{\delta^+}/C_{\delta^-}\) pair.  The first phase stores
+  \(r^+\), writes \(W^+\), then a complementary transmission-gate reset clears
+  only the hidden-error capacitors back to their neutral common mode.  The
+  same pair is then rewritten as \(r^-\) and drives the opposite writer branch
+  on the same persistent weight pair.  The stored hidden-error differential
+  moves \(+98.5\) mV \(\to 0\) \(\to -98.5\) mV, with reset common mode
+  returning to \(1.0399997\) V.  The restored selected gate swaps from the
+  \(c_{\delta^+}\) side to the \(c_{\delta^-}\) side, both near \(0.196\) V,
+  while the inactive restored gate stays near \(1.731\) V.  The reset phase
+  does not disturb the first \(25.7\) mV \(W^+ - W^-\) step, and the second
+  opposite-sign write cancels the persistent weight pair back to approximately
+  zero.  This closes the hidden-error lifecycle gap for the current hybrid
+  writer: sample-to-sample reuse is done by MOS reset and storage phases, not
+  by Python reinitializing the error capacitors.}
+  \label{fig:mos-hidden-writer-restored-gate-hybrid-reuse-ngspice}
+\end{figure}
+
+\begin{figure}[H]
+  \centering
   \includegraphics[width=0.88\linewidth]{figures/mos_reset_precharge_ngspice.png}
   \caption{Ngspice transient characterization of MOS reset/precharge for
   reusable state capacitors.  A complementary MOS transmission-gate reset first

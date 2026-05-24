@@ -698,6 +698,50 @@ quit
 .endc
 .end
 """
+    widths_us = [0.02, 0.05, 0.10, 0.20, 0.40]
+    sweep_devices = []
+    sweep_prints = []
+    for idx, width in enumerate(widths_us):
+        sweep_devices.append(
+            f"""
+VRST{idx} rst{idx} 0 PULSE(0 1.8 0.10u 5n 5n {width:.2f}u 2u)
+VRSTN{idx} rstn{idx} 0 PULSE(1.8 0 0.10u 5n 5n {width:.2f}u 2u)
+
+* NMOS-only reset copy.
+CZPN{idx} zpn{idx} 0 {{CSUM}} IC=1.3
+CZMN{idx} zmn{idx} 0 {{CSUM}} IC=0.5
+RZPN{idx} zpn{idx} 0 100G
+RZMN{idx} zmn{idx} 0 100G
+MRPN{idx} zpn{idx} rst{idx} vcm 0 NMOS L={{LCH}} W={{WRESETN}}
+MRMN{idx} zmn{idx} rst{idx} vcm 0 NMOS L={{LCH}} W={{WRESETN}}
+
+* Complementary transmission-gate reset copy.
+CZPT{idx} zpt{idx} 0 {{CSUM}} IC=1.3
+CZMT{idx} zmt{idx} 0 {{CSUM}} IC=0.5
+RZPT{idx} zpt{idx} 0 100G
+RZMT{idx} zmt{idx} 0 100G
+MRPTN{idx} zpt{idx} rst{idx} vcm 0 NMOS L={{LCH}} W={{WRESETN}}
+MRMTN{idx} zmt{idx} rst{idx} vcm 0 NMOS L={{LCH}} W={{WRESETN}}
+MRPTP{idx} zpt{idx} rstn{idx} vcm vdd PMOS L={{LCH}} W={{WRESETP}}
+MRMTP{idx} zmt{idx} rstn{idx} vcm vdd PMOS L={{LCH}} W={{WRESETP}}
+"""
+        )
+        sweep_prints.extend([f"v(zpn{idx})", f"v(zmn{idx})", f"v(zpt{idx})", f"v(zmt{idx})"])
+    sweep_deck = f"""
+* MOS reset pulse-width margin and topology comparison.
+{COMMON_MODELS}
+.param CSUM=500p WRESETN=24u WRESETP=60u
+VDD vdd 0 1.8
+VCM vcm 0 0.9
+{''.join(sweep_devices)}
+.control
+set noaskquit
+tran 2n 0.8u uic
+wrdata mos_reset_width.dat {' '.join(sweep_prints)}
+quit
+.endc
+.end
+"""
     data = run_ngspice(deck, "mos_reset_precharge")
     t, cols = load_wrdata(data, 8)
     zp, zm, hp, hm, dp, dm, rst, wpulse = cols
@@ -724,6 +768,34 @@ quit
     require(abs(at(2.25e-6, h_signed)) < 0.015, "second reset should keep activation state clear")
     require(abs(at(2.25e-6, d_signed)) < 0.015, "second reset should keep hidden-error state clear")
 
+    sweep_data = run_ngspice(sweep_deck, "mos_reset_width")
+    st, sweep_cols = load_wrdata(sweep_data, 4 * len(widths_us))
+    nmos_residual = []
+    tg_residual = []
+    nmos_common = []
+    tg_common = []
+    for idx, width in enumerate(widths_us):
+        sample_t = 0.10e-6 + width * 1e-6 + 0.10e-6
+        sample_idx = int(np.argmin(np.abs(st - sample_t)))
+        zpn = sweep_cols[4 * idx][sample_idx]
+        zmn = sweep_cols[4 * idx + 1][sample_idx]
+        zpt = sweep_cols[4 * idx + 2][sample_idx]
+        zmt = sweep_cols[4 * idx + 3][sample_idx]
+        nmos_residual.append(abs(zmn - zpn))
+        tg_residual.append(abs(zmt - zpt))
+        nmos_common.append(0.5 * (zpn + zmn))
+        tg_common.append(0.5 * (zpt + zmt))
+    nmos_residual = np.array(nmos_residual)
+    tg_residual = np.array(tg_residual)
+    nmos_common = np.array(nmos_common)
+    tg_common = np.array(tg_common)
+    require(np.all(np.diff(tg_residual) < 0.0), "transmission-gate reset residual should improve with pulse width")
+    require(np.all(tg_residual < nmos_residual), "transmission-gate reset should clear differential state better than NMOS-only reset")
+    require(tg_residual[-1] < 0.05, "400 ns transmission-gate reset should leave small differential residue")
+    require(nmos_residual[-1] > 0.15, "400 ns NMOS-only reset should still leave visible differential residue")
+    require(np.max(np.abs(tg_common - 0.9)) < 0.005, "transmission-gate reset should preserve reset common mode")
+    require(np.max(np.abs(nmos_common - 0.9)) > 0.03, "NMOS-only reset should show common-mode error")
+
     fig, axes = plt.subplots(3, 1, figsize=(7.2, 7.4))
     axes[0].plot(1e6 * t, zp, label="$z^+$ cap")
     axes[0].plot(1e6 * t, zm, label="$z^-$ cap")
@@ -749,7 +821,26 @@ quit
     axes[2].grid(True, alpha=0.25)
     axes[2].legend()
     fig.tight_layout()
-    return save_plot(fig, "mos_reset_precharge_ngspice")
+    reset_plot = save_plot(fig, "mos_reset_precharge_ngspice")
+
+    sweep_fig, sweep_axes = plt.subplots(2, 1, figsize=(7.2, 5.6))
+    sweep_axes[0].semilogy(widths_us, nmos_residual, "o-", label="NMOS-only reset")
+    sweep_axes[0].semilogy(widths_us, tg_residual, "s--", label="transmission-gate reset")
+    sweep_axes[0].set_ylabel("$|z^- - z^+|$ after reset (V)")
+    sweep_axes[0].set_title("Complementary reset gives usable pulse-width margin")
+    sweep_axes[0].grid(True, which="both", alpha=0.25)
+    sweep_axes[0].legend()
+    sweep_axes[1].plot(widths_us, nmos_common, "o-", label="NMOS-only common mode")
+    sweep_axes[1].plot(widths_us, tg_common, "s--", label="transmission-gate common mode")
+    sweep_axes[1].axhline(0.9, color="0.4", linewidth=0.8, label="$V_{CM}$")
+    sweep_axes[1].set_xlabel("reset high time (us)")
+    sweep_axes[1].set_ylabel("post-reset common mode (V)")
+    sweep_axes[1].set_title("Transmission gate preserves common mode while clearing both rails")
+    sweep_axes[1].grid(True, alpha=0.25)
+    sweep_axes[1].legend()
+    sweep_fig.tight_layout()
+    save_plot(sweep_fig, "mos_reset_width_ngspice")
+    return reset_plot
 
 
 def characterize_writer() -> Path:

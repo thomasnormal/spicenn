@@ -676,6 +676,19 @@ must satisfy before it can replace the current behavioral prototype.
 
 \begin{figure}[H]
   \centering
+  \includegraphics[width=0.88\linewidth]{figures/mos_reset_width_ngspice.png}
+  \caption{Ngspice reset pulse-width margin characterization.  Identical
+  mismatched capacitor pairs are reset either by NMOS-only pass devices or by
+  the complementary transmission-gate reset used in the cell target.  The
+  transmission gate clears the differential residue much faster and keeps the
+  post-reset common mode pinned near \(V_{CM}\), while the NMOS-only copy leaves
+  larger residue and shifts common mode.  This validates the reset topology
+  used for reusable preactivation, activation, and hidden-error capacitors.}
+  \label{fig:mos-reset-width-ngspice}
+\end{figure}
+
+\begin{figure}[H]
+  \centering
   \includegraphics[width=0.88\linewidth]{figures/mos_writer_ngspice.png}
   \caption{Ngspice transient characterization of the four-quadrant MOS writer.
   The weight capacitors are biased in the same above-threshold voltage range

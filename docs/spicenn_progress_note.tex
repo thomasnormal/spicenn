@@ -270,12 +270,145 @@ phase-gated writes, not Python-side gradient application.
 
 \section{Neuron Circuit Used In The Final Run}
 
-The hidden neuron used in the \(90.15\%\) behavioral/local-PCA run is the stored tanh
-local-feature cell shown in Fig.~\ref{fig:stored-tanh-neuron}.  It is precise
-to the generated SPICE topology: the preactivation is an inline weighted sum,
-the activation is stored on a capacitor during the activation phase, the hidden
-delta is stored on a second capacitor during the backward phase, and the update
-current sources read those stored node voltages during the write phase.
+The hidden neuron used in the \(90.15\%\) behavioral/local-PCA run is the stored
+tanh local-feature cell shown as one circuit in
+Fig.~\ref{fig:single-cell-circuit}, with the lower-level branch sketch in
+Fig.~\ref{fig:stored-tanh-neuron}.  It is precise to the generated SPICE
+topology: the preactivation is an inline weighted sum, the activation is stored
+on a capacitor during the activation phase, the hidden delta is stored on a
+second capacitor during the backward phase, and the update current sources read
+those stored node voltages during the write phase.
+
+\begin{figure}[H]
+  \centering
+  \resizebox{\linewidth}{!}{%
+  \begin{tikzpicture}[
+      font=\small,
+      wire/.style={semithick},
+      sig/.style={-{Latex[length=1.7mm]}, semithick, gray!75},
+      ctrl/.style={-{Latex[length=1.7mm]}, semithick, violet!80},
+      bsrc/.style={diamond, draw, aspect=1.15, minimum size=0.78cm,
+        inner sep=0pt, fill=yellow!12},
+      src/.style={circle, draw, minimum size=0.72cm, inner sep=0pt,
+        fill=blue!6},
+      note/.style={draw, rounded corners=2pt, fill=lightgray, align=left,
+        font=\footnotesize, inner sep=3pt},
+      label/.style={font=\footnotesize, fill=white, inner sep=1pt}
+    ]
+    \newcommand{\groundat}[2]{%
+      \draw[wire] (#1,#2) -- ++(0,-0.18);
+      \draw[wire] (#1-0.18,#2-0.18) -- (#1+0.18,#2-0.18);
+      \draw[wire] (#1-0.12,#2-0.28) -- (#1+0.12,#2-0.28);
+      \draw[wire] (#1-0.06,#2-0.38) -- (#1+0.06,#2-0.38);
+    }
+    \newcommand{\captozero}[4]{%
+      \node[circle, fill=black, inner sep=1.2pt, label=above:{#3}] (#4) at (#1,#2) {};
+      \draw[wire] (#1,#2) -- ++(0,-0.35);
+      \draw[wire] (#1-0.22,#2-0.35) -- (#1+0.22,#2-0.35);
+      \draw[wire] (#1-0.22,#2-0.52) -- (#1+0.22,#2-0.52);
+      \draw[wire] (#1,#2-0.52) -- ++(0,-0.33);
+      \groundat{#1}{#2-0.85}
+    }
+    \newcommand{\bsourcebranch}[4]{%
+      \draw[wire] (#1,#2) -- ++(0,-0.32);
+      \node[bsrc] (#4) at (#1,#2-0.78) {\(\mathrm{B}\)};
+      \draw[-{Latex[length=1.45mm]}, semithick] (#1,#2-0.50) -- (#1,#2-1.04);
+      \draw[wire] (#1,#2-1.24) -- ++(0,-0.25);
+      \groundat{#1}{#2-1.49}
+      \node[label] at (#1+0.78,#2-0.78) {#3};
+    }
+    \newcommand{\vsource}[4]{%
+      \node[src] (#4) at (#1,#2) {};
+      \draw[wire] (#1,#2-0.36) -- ++(0,-0.35);
+      \groundat{#1}{#2-0.71}
+      \node[label] at (#1,#2+0.58) {#3};
+    }
+
+    % External rails and algebraic preactivation.
+    \vsource{-1.0}{1.55}{\(V(x_{bp})\)}{xsrc}
+    \vsource{-1.0}{0.15}{\(V(d_k)\)}{dsrc}
+    \vsource{-1.0}{-1.25}{\(V(\eta)\)}{etasrc}
+    \node[note, text width=3.2cm] (zexpr) at (2.2,1.35)
+      {\(z_{bc}=V(hb_{bc})+\sum_p S(V(w_{bcp}))V(x_{bp})\)};
+    \node[note, text width=3.2cm] (rexpr) at (2.2,-0.25)
+      {\(r_{bc}=\sum_k V(d_k)V(v_{kbc})\)};
+    \node[note, text width=3.3cm] (dhexpr) at (2.2,-1.95)
+      {\(\delta h^\star_{bc}=r_{bc}\,[1-\tanh^2(z_{bc})]\)};
+
+    \draw[sig] (xsrc) -- (zexpr);
+    \draw[sig] (dsrc) -- (rexpr);
+    \draw[sig] (rexpr) -- (dhexpr);
+    \draw[sig] (zexpr) -- (dhexpr);
+
+    % Stored h and dh state.
+    \captozero{6.0}{1.35}{\(h_{bc}\)}{hnode}
+    \bsourcebranch{7.25}{1.35}{\(\mathrm{B_h}\)}{Bstoreh}
+    \draw[wire] (hnode) -- (7.25,1.35);
+    \draw[sig] (zexpr) -- (Bstoreh);
+    \draw[sig] (hnode) -- ++(1.95,0) node[label, right] {\(h_{bc}\) to readout};
+
+    \captozero{6.0}{-1.95}{\(dh_{bc}\)}{dhnode}
+    \bsourcebranch{7.25}{-1.95}{\(\mathrm{B_{\delta h}}\)}{Bstoredh}
+    \draw[wire] (dhnode) -- (7.25,-1.95);
+    \draw[sig] (dhexpr) -- (Bstoredh);
+
+    % Trainable state caps and write currents.
+    \captozero{0.1}{-4.8}{\(w_{bcp}\)}{wnode}
+    \captozero{3.2}{-4.8}{\(hb_{bc}\)}{hbnode}
+    \captozero{6.3}{-4.8}{\(v_{kbc}\)}{vnode}
+    \bsourcebranch{1.1}{-4.8}{\(\mathrm{B_W}\)}{Bupdw}
+    \bsourcebranch{4.2}{-4.8}{\(\mathrm{B_b}\)}{Bupdb}
+    \bsourcebranch{7.3}{-4.8}{\(\mathrm{B_V}\)}{Bupdv}
+    \draw[wire] (wnode) -- (1.1,-4.8);
+    \draw[wire] (hbnode) -- (4.2,-4.8);
+    \draw[wire] (vnode) -- (7.3,-4.8);
+    \draw[sig] (dhnode) |- (Bupdw);
+    \draw[sig] (dhnode) |- (Bupdb);
+    \draw[sig] (hnode) |- (Bupdv);
+    \draw[sig] (dsrc) |- (Bupdv);
+    \draw[sig] (xsrc) |- (Bupdw);
+    \draw[sig] (wnode) |- (zexpr);
+    \draw[sig] (hbnode) |- (zexpr);
+    \draw[sig] (vnode) |- (rexpr);
+
+    % Phase controls.
+    \node[note, fill=yellow!15] (pact) at (10.2,1.2) {\(pact\)};
+    \node[note, fill=yellow!15] (pbwd) at (10.2,-1.7) {\(pbwd\)};
+    \node[note, fill=yellow!15] (pacc) at (10.2,-4.7) {\(pacc\)};
+    \draw[ctrl] (pact) -- (Bstoreh);
+    \draw[ctrl] (pbwd) -- (Bstoredh);
+    \draw[ctrl] (pacc) -- (Bupdw);
+    \draw[ctrl] (pacc) -- (Bupdb);
+    \draw[ctrl] (pacc) -- (Bupdv);
+  \end{tikzpicture}}
+  \caption{Single-circuit schematic of one stored-tanh local-feature cell as
+  used in the present SPICE deck.  The diamond devices are behavioral current
+  sources, not off-chip Python updates.  Their terminal currents charge or
+  discharge the same state capacitors that hold the forward activation
+  \(h_{bc}\), hidden delta \(dh_{bc}\), local weight \(w_{bcp}\), local bias
+  \(hb_{bc}\), and readout weight \(v_{kbc}\).  Phase rails only gate local
+  current paths; they do not carry hidden activations or gradients computed by
+  Python.}
+  \label{fig:single-cell-circuit}
+\end{figure}
+
+The behavioral current sources in Fig.~\ref{fig:single-cell-circuit} are the
+following SPICE branch currents:
+\[
+\begin{aligned}
+I_{B_h}
+  &= V(pact)\frac{C_h}{\tau_h}\left[V(h_{bc})-\tanh(z_{bc})\right],\\
+I_{B_{\delta h}}
+  &= V(pbwd)\frac{C_{\delta h}}{\tau_{\delta h}}
+     \left[V(dh_{bc})-\delta h^\star_{bc}\right],\\
+I_{B_W}
+  &= -V(pacc)\frac{C_W\eta}{T_w}\,V(dh_{bc})V(x_{bp}),\\
+I_{B_b}
+  &= -V(pacc)\frac{C_b\eta}{T_w}\,V(dh_{bc}),\\
+I_{B_V}
+  &= -V(pacc)\frac{C_V\eta\alpha_V}{T_w}\,V(d_k)V(h_{bc}).
+\end{aligned}
+\]
 
 \begin{figure}[H]
   \centering

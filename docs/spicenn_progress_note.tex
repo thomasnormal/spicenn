@@ -609,6 +609,21 @@ must satisfy before it can replace the current behavioral prototype.
 
 \begin{figure}[H]
   \centering
+  \includegraphics[width=0.88\linewidth]{figures/mos_synapse_weighted_ngspice.png}
+  \caption{Ngspice weighted-cancellation characterization of the signed MOS
+  synapse slice.  The same \(x^+>x^-\) differential input drives paired
+  positive- and negative-weight transconductance copies into shared summing
+  capacitors while the \(W^+\) and \(W^-\) tail-gate amplitudes are varied.
+  The endpoint cases match the one-rail \(W^+\) and \(W^-\) signs, the balanced
+  case cancels, and the unequal cases leave the expected partial positive or
+  negative stored preactivation.  The held samples overlay the post-write
+  samples, so the partial-cancellation state is retained after the tail pulses
+  close.}
+  \label{fig:mos-synapse-weighted-ngspice}
+\end{figure}
+
+\begin{figure}[H]
+  \centering
   \includegraphics[width=0.88\linewidth]{figures/mos_forward_pair_ngspice.png}
   \caption{Ngspice characterization of the MOS forward differential pair and
   activation store.  The top panel is the DC transfer under fixed common-mode

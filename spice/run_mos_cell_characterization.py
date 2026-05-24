@@ -150,6 +150,48 @@ quit
 .endc
 .end
 """
+    weighted_cases = [
+        ("wponly", 1.15, 0.00),
+        ("wpstrong", 1.15, 1.08),
+        ("balanced", 1.10, 1.10),
+        ("wmstrong", 1.08, 1.15),
+        ("wmonly", 0.00, 1.15),
+    ]
+    weighted_devices = []
+    weighted_prints = []
+    for name, wp_amp, wm_amp in weighted_cases:
+        weighted_devices.append(
+            f"""
+VWP_{name} wp_{name} 0 PULSE(0 {wp_amp:.2f} 0.5u 20n 20n 0.7u 4.0u)
+VWM_{name} wm_{name} 0 PULSE(0 {wm_amp:.2f} 0.5u 20n 20n 0.7u 4.0u)
+CZP_{name} zp_{name} 0 {{CSUM}} IC=1.2
+CZM_{name} zm_{name} 0 {{CSUM}} IC=1.2
+RZP_{name} zp_{name} 0 100G
+RZM_{name} zm_{name} 0 100G
+MPP_{name} zp_{name} xp tailp_{name} 0 NMOS L={{LCH}} W={{WN}}
+MPM_{name} zm_{name} xm tailp_{name} 0 NMOS L={{LCH}} W={{WN}}
+MTP_{name} tailp_{name} wp_{name} 0 0 NMOS L={{LCH}} W={{WTAIL}}
+MNP_{name} zp_{name} xm tailn_{name} 0 NMOS L={{LCH}} W={{WN}}
+MNM_{name} zm_{name} xp tailn_{name} 0 NMOS L={{LCH}} W={{WN}}
+MTN_{name} tailn_{name} wm_{name} 0 0 NMOS L={{LCH}} W={{WTAIL}}
+"""
+        )
+        weighted_prints.extend([f"v(zp_{name})", f"v(zm_{name})"])
+    weighted_deck = f"""
+* Signed MOS synapse weighted cancellation sanity check.
+{COMMON_MODELS}
+.param CSUM=500p WTAIL=2u
+VXP xp 0 1.15
+VXM xm 0 0.65
+{''.join(weighted_devices)}
+.control
+set noaskquit
+tran 5n 2.5u uic
+wrdata mos_synapse_weighted.dat {' '.join(weighted_prints)} v(wp_wponly)
+quit
+.endc
+.end
+"""
     data = run_ngspice(deck, "mos_synapse_slice")
     xdiff, cols = load_wrdata(data, 6)
     # ngspice reports current through a voltage source using the source's
@@ -181,6 +223,22 @@ quit
     require(at(2.1e-6, neg_cap_signed) < -0.06, "w- signed z storage should hold after pulse")
     require(abs(at(2.1e-6, cancel_cap_signed)) < 0.01, "cancelled shared z storage should hold near zero")
 
+    weighted_data = run_ngspice(weighted_deck, "mos_synapse_weighted")
+    wt, weighted_cols = load_wrdata(weighted_data, 2 * len(weighted_cases) + 1)
+    weighted_signed = [
+        weighted_cols[2 * idx + 1] - weighted_cols[2 * idx]
+        for idx in range(len(weighted_cases))
+    ]
+    weighted_final = np.array([float(series[np.argmin(np.abs(wt - 1.25e-6))]) for series in weighted_signed])
+    weighted_hold = np.array([float(series[np.argmin(np.abs(wt - 2.1e-6))]) for series in weighted_signed])
+    require(weighted_final[0] > 0.06, "W+ only weighted synapse case should be positive")
+    require(weighted_final[4] < -0.06, "W- only weighted synapse case should be negative")
+    require(weighted_final[1] > 0.015, "W+ stronger than W- should leave a positive net preactivation")
+    require(weighted_final[3] < -0.015, "W- stronger than W+ should leave a negative net preactivation")
+    require(abs(weighted_final[2]) < 0.01, "balanced W+ and W- weighted synapse case should cancel")
+    require(np.all(np.diff(weighted_final) < -0.01), "weighted synapse net should decrease as W- dominates")
+    require(np.max(np.abs(weighted_hold - weighted_final)) < 0.005, "weighted synapse states should hold after pulse")
+
     fig, axes = plt.subplots(2, 1, figsize=(7.2, 6.2))
     axes[0].plot(xdiff, 1e6 * pos_signed, label="$w^+$ high")
     axes[0].plot(xdiff, 1e6 * neg_signed, label="$w^-$ high")
@@ -202,7 +260,38 @@ quit
     axes[1].grid(True, alpha=0.25)
     axes[1].legend()
     fig.tight_layout()
-    return save_plot(fig, "mos_synapse_slice_ngspice")
+    synapse_plot = save_plot(fig, "mos_synapse_slice_ngspice")
+
+    weighted_fig, weighted_axes = plt.subplots(2, 1, figsize=(7.2, 5.8))
+    labels = [
+        "$W^+$ only",
+        "$W^+ > W^-$",
+        "$W^+ = W^-$",
+        "$W^- > W^+$",
+        "$W^-$ only",
+    ]
+    for label, series in zip(labels, weighted_signed):
+        weighted_axes[0].plot(1e6 * wt, series, label=label)
+    weighted_axes[0].plot(1e6 * wt, weighted_cols[-1] / 8.0, color="0.5", alpha=0.35, label="$w^+$ pulse/8")
+    weighted_axes[0].axhline(0, color="0.4", linewidth=0.8)
+    weighted_axes[0].set_ylabel("stored $z^- - z^+$ (V)")
+    weighted_axes[0].set_title("Unequal W+ and W- tails partially cancel on shared summing caps")
+    weighted_axes[0].grid(True, alpha=0.25)
+    weighted_axes[0].legend(loc="upper right", ncol=2)
+    imbalance = np.array([wp - wm for _, wp, wm in weighted_cases])
+    order = np.argsort(imbalance)
+    weighted_axes[1].plot(imbalance[order], weighted_final[order], "o-", label="after write")
+    weighted_axes[1].plot(imbalance[order], weighted_hold[order], "s--", label="after hold")
+    weighted_axes[1].axhline(0, color="0.4", linewidth=0.8)
+    weighted_axes[1].axvline(0, color="0.4", linewidth=0.8)
+    weighted_axes[1].set_xlabel("$V_{W^+} - V_{W^-}$ during pulse (V)")
+    weighted_axes[1].set_ylabel("stored preactivation (V)")
+    weighted_axes[1].set_title("Net stored sign follows weight-rail imbalance")
+    weighted_axes[1].grid(True, alpha=0.25)
+    weighted_axes[1].legend()
+    weighted_fig.tight_layout()
+    save_plot(weighted_fig, "mos_synapse_weighted_ngspice")
+    return synapse_plot
 
 
 def characterize_forward_pair() -> Path:

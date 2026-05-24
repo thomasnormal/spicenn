@@ -2,6 +2,7 @@
 
 ## 2026-05-24
 
+- Added a weighted-cancellation MOS synapse characterization. The new deck drives paired positive- and negative-weight gate-swapped transconductance slices into the same summing capacitors with unequal \(W^+\)/\(W^-\) tail amplitudes, then asserts the stored preactivation sign tracks the rail imbalance, the balanced case cancels, and the partial states hold after the pulse.
 - Added a repeated-pulse MOS writer characterization to close the gap between one-shot selectivity and online training use. The new deck drives the same PMOS coincidence stacks with ten active-low sample pulses, asserts monotone near-linear accumulation on the selected \(W^+\) and \(W^-\) rails, asserts inactive rails remain quiet, and adds a separate zoomed paper plot instead of overloading the existing writer figure.
 - Extended the MOS writer pulse-width sweep to cover both selected weight rails. The width deck now includes a same-sign branch that charges \(W^+\), an opposite-sign branch that charges \(W^-\), and both inactive opposite rails for every pulse width; assertions require monotone near-linear response on both selected rails and quiet inactive rails.
 - Added a shared-summing cancellation check to the signed MOS synapse characterization. The transient deck now connects equal positive- and negative-weight gate-swapped copies to the same \(z^+/z^-\) capacitors and asserts that the differential stored preactivation stays near zero, while the individual \(W^+\) and \(W^-\) copies still move separate capacitors in opposite directions.

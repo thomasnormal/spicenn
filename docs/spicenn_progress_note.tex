@@ -6,6 +6,7 @@
 \usepackage{booktabs}
 \usepackage{xcolor}
 \usepackage{microtype}
+\usepackage{graphicx}
 \usepackage{tikz}
 \usepackage{float}
 \usepackage{array}
@@ -430,6 +431,338 @@ This is the circuit actually used by the high-accuracy behavioral/local-PCA
 run.  Earlier MOS ReLU and differential source-follower cells remain important
 transistor-level building blocks, but they have not yet replaced this
 behavioral neuron/write kernel in a high-accuracy run.
+
+\section{Trainable Cell Catalog}
+
+The repository now treats a hidden block/channel as a
+\(\code{TrainableDynamicalCell}\): a circuit-emittable learning object with
+public input/output/learning ports, declared internal state, a learning
+protocol, and characterization expectations.  The first ten concrete cells are
+behavioral local-feature candidates.  They all share the same state and phase
+contract shown in Fig.~\ref{fig:cell-template}; they differ in the forward
+nonlinearity \(\phi\), the hidden synapse transfer \(S_W\), the derivative
+gate, and the hidden-error feedback path.
+
+\begin{figure}[H]
+  \centering
+  \resizebox{\linewidth}{!}{%
+  \begin{tikzpicture}[
+      font=\small,
+      box/.style={draw, rounded corners=2pt, align=center, fill=lightgray,
+        minimum width=2.7cm, minimum height=0.85cm, inner sep=4pt},
+      statecap/.style={draw, cylinder, shape border rotate=90, aspect=0.28,
+        minimum width=0.7cm, minimum height=0.85cm, fill=green!10,
+        align=center},
+      phase/.style={draw, rounded corners=2pt, align=center, fill=yellow!12,
+        minimum width=1.65cm, minimum height=0.55cm, inner sep=2pt},
+      arr/.style={-{Latex[length=2mm]}, semithick},
+      fwd/.style={arr, forwardblue},
+      bwd/.style={arr, backred},
+      wr/.style={arr, writeorange},
+      lbl/.style={font=\footnotesize, fill=white, inner sep=1.5pt}
+    ]
+    \node[box] (x) at (0,0) {input rail\\\(x_{bp}\)};
+    \node[statecap] (w) at (0,-1.7) {\(C_W\)};
+    \node[statecap] (b) at (1.7,-1.7) {\(C_b\)};
+    \node[box] (sum) at (3.0,0) {weighted sum\\\(z=b+\sum S_W(W)x\)};
+    \node[box] (phi) at (6.2,0) {activation\\\(h^\star=\phi(z)\)};
+    \node[statecap] (h) at (8.7,0) {\(C_h\)};
+    \node[box] (score) at (11.2,0) {readout\\scores};
+
+    \node[box] (err) at (11.2,-2.1) {output error\\\(d=t-\hat y\)};
+    \node[box] (fb) at (8.2,-2.1) {feedback\\\(r=\sum dF\)};
+    \node[box] (gate) at (5.0,-2.1) {derivative gate\\\(\delta h^\star=r\phi'(z)\)};
+    \node[statecap] (dh) at (2.6,-2.1) {\(C_{\delta h}\)};
+    \node[statecap] (v) at (11.2,-4.0) {\(C_V\)};
+
+    \node[phase] (pact) at (5.7,1.15) {\(pact\)};
+    \node[phase] (pbwd) at (5.7,-3.1) {\(pbwd\)};
+    \node[phase] (pacc) at (5.7,-4.55) {\(pacc\)};
+
+    \draw[fwd] (x) -- (sum);
+    \draw[fwd] (w) |- (sum);
+    \draw[fwd] (b) |- (sum);
+    \draw[fwd] (sum) -- (phi);
+    \draw[fwd] (phi) -- node[lbl, above] {store} (h);
+    \draw[fwd] (h) -- (score);
+    \draw[fwd] (score) -- (err);
+
+    \draw[bwd] (err) -- (fb);
+    \draw[bwd] (fb) -- (gate);
+    \draw[bwd] (sum) |- (gate);
+    \draw[bwd] (gate) -- node[lbl, above] {store} (dh);
+
+    \draw[wr] (dh) |- (w);
+    \draw[wr] (dh) |- (b);
+    \draw[wr] (err) -- (v);
+    \draw[wr] (h) |- (v);
+
+    \draw[fwd] (pact) -- (phi);
+    \draw[bwd] (pbwd) -- (gate);
+    \draw[wr] (pacc) -- (6.9,-4.55) |- (v);
+    \draw[wr] (pacc) -- (3.6,-4.55) |- (dh);
+  \end{tikzpicture}}
+  \caption{Common local-feature cell template used by the ten behavioral
+  candidates.  Forward state \(h\), backward state \(\delta h\), local weights
+  and biases, and readout weights are capacitor states.  Candidate cells
+  replace the activation, synapse transfer, derivative gate, and feedback
+  block while preserving the same public-port and phase contract.}
+  \label{fig:cell-template}
+\end{figure}
+
+\begin{figure}[H]
+  \centering
+  \resizebox{\linewidth}{!}{%
+  \begin{tikzpicture}[
+      font=\small,
+      box/.style={draw, rounded corners=2pt, align=center, fill=lightgray,
+        minimum width=2.9cm, minimum height=0.82cm, inner sep=4pt},
+      statecap/.style={draw, cylinder, shape border rotate=90, aspect=0.28,
+        minimum width=0.68cm, minimum height=0.8cm, fill=green!10,
+        align=center},
+      arr/.style={-{Latex[length=2mm]}, semithick},
+      fwd/.style={arr, forwardblue},
+      bwd/.style={arr, backred},
+      lbl/.style={font=\footnotesize, fill=white, inner sep=1.5pt}
+    ]
+    \node[box] (err1) at (0,0) {class error\\\(d_k\)};
+    \node[statecap] (v1) at (2.5,0.9) {\(C_V\)};
+    \node[box] (fb1) at (5.0,0) {backprop feedback\\\(r_{bc}=\sum_k d_kV_{kbc}\)};
+    \node[box] (dh1) at (9.0,0) {hidden delta\\\(\delta h=r\phi'(z)\)};
+    \draw[bwd] (err1) -- (fb1);
+    \draw[bwd] (v1) -- node[lbl, above] {trainable} (fb1);
+    \draw[bwd] (fb1) -- (dh1);
+    \node[font=\bfseries\small] at (4.7,1.65) {BACKPROP\_LOCAL family};
+
+    \node[box] (err2) at (0,-2.6) {class error\\\(d_k\)};
+    \node[statecap] (b2) at (2.5,-1.7) {\(B\)};
+    \node[box] (fb2) at (5.0,-2.6) {DFA feedback\\\(r_{bc}=\sum_k d_kB_{kbc}\)};
+    \node[box] (dh2) at (9.0,-2.6) {hidden delta\\\(\delta h=r\phi'(z)\)};
+    \draw[bwd] (err2) -- (fb2);
+    \draw[bwd] (b2) -- node[lbl, above] {fixed random} (fb2);
+    \draw[bwd] (fb2) -- (dh2);
+    \node[font=\bfseries\small] at (4.7,-0.95) {DFA family};
+  \end{tikzpicture}}
+  \caption{Backward-path variants.  Most catalog cells use the trainable
+  readout weights as the feedback path, possibly clipped or sign-compressed.
+  The DFA cell keeps the same forward and write machinery but replaces
+  transposed readout feedback with a fixed random projection.}
+  \label{fig:cell-feedback}
+\end{figure}
+
+Figure~\ref{fig:cell-transfer-families} shows the circuit meaning of the main
+candidate families.  These are still behavioral cells: each transfer is emitted
+as a mathematical SPICE expression today, then promoted to a transistor
+candidate only if the replacement passes update-alignment and disturb tests.
+
+\begin{figure}[H]
+  \centering
+  \resizebox{\linewidth}{!}{%
+  \begin{tikzpicture}[
+      font=\small,
+      fam/.style={draw, rounded corners=2pt, align=left, fill=lightgray,
+        text width=4.4cm, minimum height=2.0cm, inner sep=6pt}
+    ]
+    \node[fam] (tanh) at (0,0) {
+      \textbf{Stored tanh}\\
+      \(\phi(z)=\tanh z\)\\
+      \(\phi'(z)=1-h^2\)\\
+      \(S_W(w)=w\) or \(s\tanh(w/s)\)
+    };
+    \node[fam] (diff) at (5.25,0) {
+      \textbf{Diff-pair tanh proxy}\\
+      same \(\tanh\) forward branch\\
+      soft-clipped local weights\\
+      clipped readout feedback
+    };
+    \node[fam] (hard) at (10.5,0) {
+      \textbf{Hard-tanh branches}\\
+      signed clip or leaky saturation\\
+      hard-clipped hidden synapses\\
+      floor derivative option
+    };
+    \node[fam] (relu) at (2.6,-2.9) {
+      \textbf{ReLU-like branches}\\
+      leaky ReLU, clipped ReLU\\
+      nonnegative output when clipped\\
+      signed errors and writes remain
+    };
+    \node[fam] (soft) at (7.9,-2.9) {
+      \textbf{Softplus branches}\\
+      \(\phi(z)=\beta^{-1}\log(1+e^{\beta z})\)\\
+      or centered softplus\\
+      smooth sigmoid derivative
+    };
+  \end{tikzpicture}}
+  \caption{Transfer-function families represented in the ten-cell catalog.
+  The strongest first smoke was the differential-pair-inspired tanh/soft-clip
+  branch, which is attractive because a MOS differential pair naturally gives a
+  tanh-like transfer and soft saturation.}
+  \label{fig:cell-transfer-families}
+\end{figure}
+
+All ten catalog cells use the same online local-learning skeleton:
+\[
+  z_{bc}=b_{bc}+\sum_p S_W(W_{bcp})\,x_{bp},
+  \qquad
+  h_{bc}=\phi(z_{bc}),
+\]
+\[
+  s_k=\sum_{b,c}S_V(V_{kbc})\,h_{bc}+o_k,
+  \qquad
+  d_k=t_k-\operatorname{softmax}(s/T)_k,
+\]
+\[
+  r_{bc}=\sum_k d_k F_{kbc},
+  \qquad
+  \delta h_{bc}=r_{bc}\,g(z_{bc},h_{bc}),
+\]
+\[
+  \Delta W_{bcp}=\eta\,\delta h_{bc}x_{bp},
+  \qquad
+  \Delta b_{bc}=\eta\,\delta h_{bc},
+  \qquad
+  \Delta V_{kbc}=\eta\,\alpha_V d_k h_{bc}.
+\]
+The cell-specific choices are the activation \(\phi\), derivative gate \(g\),
+hidden synapse transfer \(S_W\), readout transfer \(S_V\), and feedback matrix
+\(F\).  The common transfer primitives are:
+\[
+  S_{\mathrm{linear}}(w)=w,\qquad
+  S_{\mathrm{tanhclip}}(w;s)=s\tanh(w/s),\qquad
+  S_{\mathrm{hardclip}}(w;s)=\operatorname{clip}(w,-s,s),
+\]
+\[
+  F_{\mathrm{readout}}=S_V(V),\qquad
+  F_{\mathrm{clip}}=c\tanh(S_V(V)/c),\qquad
+  F_{\mathrm{DFA}}=B_{\mathrm{fixed}}.
+\]
+
+\begin{table}[H]
+  \centering
+  \caption{Governing equations for the ten catalog cells.  These are the
+  equations exercised by the unit characterization and by the NumPy MNIST
+  benchmark.}
+  \label{tab:cell-equations}
+  \scriptsize
+  \begin{tabular}{>{\raggedright\arraybackslash}p{0.23\linewidth}
+                  >{\raggedright\arraybackslash}p{0.27\linewidth}
+                  >{\raggedright\arraybackslash}p{0.27\linewidth}
+                  >{\raggedright\arraybackslash}p{0.14\linewidth}}
+    \toprule
+    Cell & Forward activation \(\phi(z)\) and gate \(g\) & Synapse/feedback equations & Unit validation \\
+    \midrule
+    \code{stored\_tanh\_tanhclip} &
+    \(\phi=\tanh z,\; g=1-h^2\) &
+    \(S_W=S_{\mathrm{tanhclip}}(w;1.0),\; S_V(w)=w,\; F=V,\; \alpha_V=0.5\) &
+    monotone; \(g\ge0\); update sign/cosine aligned \\
+    \addlinespace
+    \code{stored\_tanh\_linear} &
+    \(\phi=\tanh z,\; g=1-h^2\) &
+    \(S_W(w)=w,\; S_V(w)=w,\; F=V\) &
+    monotone; \(g\ge0\); update sign/cosine aligned \\
+    \addlinespace
+    \code{diffpair\_tanh\_softclip} &
+    \(\phi=\tanh z,\; g=1-h^2\) &
+    \(S_W=S_{\mathrm{tanhclip}}(w;0.75),\; S_V(w)=w,\; F=0.25\tanh(V/0.25)\) &
+    monotone; \(g\ge0\); update sign/cosine aligned \\
+    \addlinespace
+    \code{signed\_hardtanh} &
+    \(\phi=\operatorname{clip}(z,-1,1),\;
+      g=\mathbf{1}_{|z|\le1}\) &
+    \(S_W=S_{\mathrm{hardclip}}(w;1.0),\; S_V(w)=w,\; F=V\) &
+    monotone; \(g\ge0\); update sign/cosine aligned \\
+    \addlinespace
+    \code{leaky\_hardtanh} &
+    \(\phi=z\) for \(|z|\le1\), else
+    \(\operatorname{sign}(z)(1+0.05(|z|-1))\);
+    \(g=0.02+0.98\,[\mathbf{1}_{|z|\le1}\vee0.05]\) &
+    \(S_W=S_{\mathrm{hardclip}}(w;1.0),\; S_V(w)=w,\; F=V\) &
+    monotone; \(g\ge0\); update sign/cosine aligned \\
+    \addlinespace
+    \code{leaky\_relu} &
+    \(\phi=\max(z,0)+0.05\min(z,0),\;
+      g=1\) for \(z\ge0\), \(0.05\) otherwise &
+    \(S_W=S_{\mathrm{tanhclip}}(w;1.0),\; S_V(w)=w,\; F=V\) &
+    monotone; \(g\ge0\); update sign/cosine aligned \\
+    \addlinespace
+    \code{clipped\_relu} &
+    \(\phi=\operatorname{clip}(z,0,1),\;
+      g=0.02+0.98\mathbf{1}_{0\le z\le1}\) &
+    \(S_W=S_{\mathrm{tanhclip}}(w;1.0),\; S_V(w)=w,\; F=V\) &
+    monotone; \(g\ge0\); update sign/cosine aligned \\
+    \addlinespace
+    \code{softplus} &
+    \(\phi=\beta^{-1}\log(1+e^{\beta z}),\;
+      g=(1+e^{-\beta z})^{-1},\; \beta=4\) &
+    \(S_W=S_{\mathrm{tanhclip}}(w;1.0),\; S_V(w)=w,\; F=V\) &
+    monotone; \(g\ge0\); update sign/cosine aligned \\
+    \addlinespace
+    \code{centered\_softplus} &
+    \(\phi=\beta^{-1}[\log(1+e^{\beta z})-\log2],\;
+      g=(1+e^{-\beta z})^{-1},\; \beta=4\) &
+    \(S_W=S_{\mathrm{tanhclip}}(w;1.0),\; S_V(w)=w,\; F=V\) &
+    monotone; \(g\ge0\); update sign/cosine aligned \\
+    \addlinespace
+    \code{dfa\_tanh\_fixed\_feedback} &
+    \(\phi=\tanh z,\; g=1-h^2\) &
+    \(S_W=S_{\mathrm{tanhclip}}(w;1.0),\; S_V(w)=w,\; F=B_{\mathrm{fixed}}\) &
+    monotone; \(g\ge0\); update sign/cosine aligned \\
+    \bottomrule
+  \end{tabular}
+\end{table}
+
+The automated tests validate the equations at the contract and single-cell
+levels.  The contract-validity test checks that all ten cells declare valid
+ports, signedness, state roles, and protocol requirements.  The
+learning-alignment test runs the characterization equations over a
+deterministic operating grid:
+\(\phi(z)\) must be monotone on \(z\in[-2.5,2.5]\), the derivative gate must be
+nonnegative, the hidden synapse transfer must remain finite on
+\([-4,4]\), and the synthetic local update must have positive cosine and
+perfect sign alignment with the reference rule
+\[
+  \operatorname{sign}(\Delta W)=\operatorname{sign}(\delta h\,x).
+\]
+The MNIST benchmark then experimentally exercises the same equations in a
+small online classifier.  It is a real-data behavioral smoke, not a SPICE or
+transistor validation.
+
+\begin{table}[H]
+  \centering
+  \caption{Ten behavioral local-feature cells and their real-MNIST smoke
+  result.  The benchmark used \(10\times10\), block 4, stride 2, 2 channels,
+  q16 inputs, 512 online updates, 1000 evaluation images, seeded random order,
+  and no local-PCA.}
+  \label{tab:cell-catalog}
+  \scriptsize
+  \begin{tabular}{llllr}
+    \toprule
+    Cell & Activation & Hidden synapse & Feedback path & Final acc. \\
+    \midrule
+    \code{diffpair\_tanh\_softclip} & tanh & tanh-clipped, \(s=0.75\) & clipped readout & \(56.6\%\) \\
+    \code{dfa\_tanh\_fixed\_feedback} & tanh & tanh-clipped & fixed random \(B\) & \(54.2\%\) \\
+    \code{stored\_tanh\_tanhclip} & tanh & tanh-clipped & readout & \(50.4\%\) \\
+    \code{stored\_tanh\_linear} & tanh & linear & readout & \(46.1\%\) \\
+    \code{leaky\_relu} & leaky ReLU & tanh-clipped & readout & \(42.7\%\) \\
+    \code{softplus} & softplus & tanh-clipped & readout & \(41.8\%\) \\
+    \code{centered\_softplus} & centered softplus & tanh-clipped & readout & \(38.3\%\) \\
+    \code{clipped\_relu} & clipped ReLU & tanh-clipped & readout & \(37.8\%\) \\
+    \code{leaky\_hardtanh} & leaky hard-tanh & hard-clipped & readout & \(35.8\%\) \\
+    \code{signed\_hardtanh} & signed hard clip & hard-clipped & readout & \(24.6\%\) \\
+    \bottomrule
+  \end{tabular}
+\end{table}
+
+This catalog changes the promotion strategy.  Instead of replacing the working
+stored tanh neuron with an arbitrary transistor ReLU, each candidate must keep
+the same cell contract and prove four local properties before a full SPICE
+MNIST run: monotone forward transfer, nonnegative derivative gate over the
+declared operating range, signed update alignment, and acceptable state hold
+and read disturb.  The current best promotion target is
+\(\code{diffpair\_tanh\_softclip}\), because it both ranked first in the real
+MNIST behavioral smoke and maps naturally onto a differential-pair
+implementation.
 
 \section{Phase Schedule}
 

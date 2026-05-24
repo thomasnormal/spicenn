@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import re
 import shlex
@@ -14,6 +15,7 @@ import pandas as pd
 import run_spice_mnist_local_feature_fast_online_reference as fast_ref
 from run_spice_mnist_local_block_batch_op_train import block_indices
 from run_spice_mnist_local_feature_phase_transient import (
+    apply_final_measure_tail,
     auxiliary_algebraic_source_count,
     estimate_transient_points,
     hidden_activation_state_count,
@@ -31,7 +33,12 @@ from run_spice_mnist_local_feature_phase_transient import (
     temporary_state_count,
 )
 from run_spice_mnist_local_feature_phase_variant_sweep import activation_clip_pairs, parse_csv, parse_float_csv, variant_tag
-from run_spice_mnist_train import load_mnist_sequence, quantize_input_values
+from run_spice_mnist_train import (
+    apply_training_order,
+    load_mnist_sequence,
+    mnist_index_splits,
+    quantize_input_values,
+)
 from run_spice_sweep import ROOT
 
 DEFAULT_PROMOTION_PHASE_CLOCK_MODE = "pwl"
@@ -560,6 +567,8 @@ def strict_phase_promotion_command(args: argparse.Namespace, variant: dict[str, 
     updates = int(getattr(args, "promotion_updates", 0) or args.train_samples)
     if updates <= 0:
         raise ValueError("--promotion-updates must be positive when set")
+    train_order = getattr(args, "train_order", "stable")
+    command_train_samples = int(args.train_samples) if train_order != "stable" else updates
     timeout = promotion_timeout_seconds(args, updates)
     promotion_tag = fast_ref.sanitize_tag(f"{getattr(args, 'promotion_tag_prefix', 'promote')}_{variant['tag']}")
     command = [
@@ -568,7 +577,7 @@ def strict_phase_promotion_command(args: argparse.Namespace, variant: dict[str, 
         "--simulator",
         getattr(args, "promotion_simulator", "Xyce"),
         "--train-samples",
-        str(updates),
+        str(command_train_samples),
         "--eval-samples",
         str(args.eval_samples),
         "--image-size",
@@ -581,6 +590,14 @@ def strict_phase_promotion_command(args: argparse.Namespace, variant: dict[str, 
         str(args.channels),
         "--input-quantization-levels",
         str(getattr(args, "input_quantization_levels", 0)),
+        "--train-order",
+        train_order,
+        "--train-order-window",
+        str(getattr(args, "train_order_window", 128)),
+        "--train-order-pca-components",
+        str(getattr(args, "train_order_pca_components", 2)),
+        "--train-order-pca-bins-per-unit",
+        str(getattr(args, "train_order_pca_bins_per_unit", 20.0)),
         "--batch-size",
         "1",
         "--updates",
@@ -603,6 +620,8 @@ def strict_phase_promotion_command(args: argparse.Namespace, variant: dict[str, 
         str(getattr(args, "promotion_settle_ratio", 20.0)),
         "--transient-step",
         str(getattr(args, "promotion_transient_step", 200e-12)),
+        "--final-measure-tail",
+        str(getattr(args, "promotion_final_measure_tail", 0.0)),
         "--timeout",
         str(timeout),
         "--max-transient-points",
@@ -782,7 +801,9 @@ def strict_phase_cost_fields_for_updates(
         "promotion_output_delta_mode",
         DEFAULT_PROMOTION_OUTPUT_DELTA_MODE,
     )
-    phases, sample_starts, t_stop = make_phase_schedule(1, updates, phase, gap, True)
+    phases, sample_starts, scheduled_t_stop = make_phase_schedule(1, updates, phase, gap, True)
+    final_measure_tail = float(getattr(args, "promotion_final_measure_tail", 0.0))
+    t_stop = apply_final_measure_tail(scheduled_t_stop, final_measure_tail)
     lr_values = None
     lr_schedule = variant.get("lr_schedule", "constant")
     lr_final_scale = float(variant.get("lr_final_scale", 1.0))
@@ -861,6 +882,9 @@ def strict_phase_cost_fields_for_updates(
         f"{prefix}_input_source_mode": input_source_mode,
         f"{prefix}_lr_control_mode": lr_control_mode,
         f"{prefix}_input_quantization_levels": int(getattr(args, "input_quantization_levels", 0)),
+        f"{prefix}_train_order": getattr(args, "train_order", "stable"),
+        f"{prefix}_train_order_window": int(getattr(args, "train_order_window", 128)),
+        f"{prefix}_final_measure_tail_s": final_measure_tail,
         f"{prefix}_sample_edge_s": edge if sample_edge is None else sample_edge,
         f"{prefix}_hidden_preactivation_mode": hidden_preactivation_mode,
         f"{prefix}_hidden_preactivation_source_count": hidden_sources,
@@ -993,6 +1017,10 @@ def run_variant(
         "best_probe_eval_accuracy": best_probe["eval_accuracy"] if best_probe is not None else None,
         "best_probe_update": best_probe["update"] if best_probe is not None else None,
         "promotion_probe_eval_accuracy": promotion_probe_eval_accuracy,
+        "train_order": getattr(args, "train_order", "stable"),
+        "train_order_window": int(getattr(args, "train_order_window", 128)),
+        "train_order_pca_components": int(getattr(args, "train_order_pca_components", 2)),
+        "train_order_pca_bins_per_unit": float(getattr(args, "train_order_pca_bins_per_unit", 20.0)),
         "strict_phase_promotion_updates": promotion_updates,
         "strict_phase_promotion_timeout_s": promotion_timeout_seconds(args, promotion_updates),
         "strict_phase_promotion_max_transient_points": int(getattr(args, "promotion_max_transient_points", 2000)),
@@ -1026,6 +1054,18 @@ def main() -> None:
         default=0,
         help="Optionally quantize normalized MNIST input rails to this many uniform levels in [-1, 1].",
     )
+    ap.add_argument(
+        "--train-order",
+        choices=["stable", "local-label", "local-sum", "local-pca"],
+        default="stable",
+        help=(
+            "Optionally reorder the selected training prefix before fast online updates and generated "
+            "strict phase promotion commands."
+        ),
+    )
+    ap.add_argument("--train-order-window", type=int, default=128)
+    ap.add_argument("--train-order-pca-components", type=int, default=2)
+    ap.add_argument("--train-order-pca-bins-per-unit", type=float, default=20.0)
     ap.add_argument("--lr", type=float, default=0.8)
     ap.add_argument("--lrs", default="")
     ap.add_argument("--lr-schedule", choices=["constant", "linear-decay"], default="constant")
@@ -1097,6 +1137,7 @@ def main() -> None:
     )
     ap.add_argument("--promotion-settle-ratio", type=float, default=20.0)
     ap.add_argument("--promotion-transient-step", type=float, default=200e-12)
+    ap.add_argument("--promotion-final-measure-tail", type=float, default=0.0)
     ap.add_argument(
         "--promotion-timeout",
         type=float,
@@ -1200,6 +1241,12 @@ def main() -> None:
         raise ValueError("--channels must be positive")
     if args.input_quantization_levels < 0 or args.input_quantization_levels == 1:
         raise ValueError("--input-quantization-levels must be 0 or at least 2")
+    if args.train_order_window <= 0:
+        raise ValueError("--train-order-window must be positive")
+    if args.train_order_pca_components <= 0:
+        raise ValueError("--train-order-pca-components must be positive")
+    if args.train_order_pca_bins_per_unit <= 0:
+        raise ValueError("--train-order-pca-bins-per-unit must be positive")
     if args.synapse_clip <= 0:
         raise ValueError("--synapse-clip must be positive")
     if args.softmax_negative_scale < 0:
@@ -1226,6 +1273,8 @@ def main() -> None:
         raise ValueError("--promotion-timeout must be non-negative")
     if args.promotion_sample_edge is not None and args.promotion_sample_edge < 0:
         raise ValueError("--promotion-sample-edge must be non-negative")
+    if args.promotion_final_measure_tail < 0:
+        raise ValueError("--promotion-final-measure-tail must be non-negative")
     if args.promotion_max_transient_points < 0:
         raise ValueError("--promotion-max-transient-points must be non-negative")
     if args.promotion_max_source_pwl_points < 0:
@@ -1254,6 +1303,16 @@ def main() -> None:
     if args.input_quantization_levels:
         x_train = quantize_input_values(x_train, args.input_quantization_levels)
         x_eval = quantize_input_values(x_eval, args.input_quantization_levels)
+    train_indices, _eval_indices = mnist_index_splits(args.train_samples, args.eval_samples, 60000, 10000, args.seed)
+    x_train, y_train, train_indices, train_order_permutation = apply_training_order(
+        x_train,
+        y_train,
+        train_indices,
+        args.train_order,
+        args.train_order_window,
+        pca_components=args.train_order_pca_components,
+        pca_bins_per_unit=args.train_order_pca_bins_per_unit,
+    )
     rng = np.random.default_rng(args.seed)
     initial_state = fast_ref.load_or_init_weights(
         args.init_weights,
@@ -1289,6 +1348,13 @@ def main() -> None:
         "channels": args.channels,
         "batch_size": 1,
         "input_quantization_levels": args.input_quantization_levels,
+        "train_order": args.train_order,
+        "train_order_window": args.train_order_window,
+        "train_order_pca_components": args.train_order_pca_components,
+        "train_order_pca_bins_per_unit": args.train_order_pca_bins_per_unit,
+        "train_order_permutation_sha256": hashlib.sha256(
+            train_order_permutation.astype(np.int64).tobytes()
+        ).hexdigest(),
         "variants": len(rows),
         "best_variant": rows[0] if rows else None,
         "best_promotion_variant": best_promotion_variant(rows),

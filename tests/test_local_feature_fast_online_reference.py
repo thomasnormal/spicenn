@@ -394,6 +394,9 @@ def test_fast_online_variant_sweep_row_reports_best_probe_and_improvement() -> N
     assert row["softmax_temperature"] == 4.0
     command = shlex.split(row["strict_phase_promotion_command"])
     assert "--strict-fully-on-device" in command
+    assert command[command.index("--train-samples") + 1] == "2"
+    assert command[command.index("--train-order") + 1] == "stable"
+    assert command[command.index("--final-measure-tail") + 1] == "0.0"
     assert command[command.index("--reference-mode") + 1] == "none"
     assert command[command.index("--phase-output-mode") + 1] == "print"
     assert command[command.index("--update-mode") + 1] == "direct"
@@ -491,6 +494,11 @@ def test_fast_online_variant_sweep_row_reports_best_probe_and_improvement() -> N
     assert row["probe_eval_accuracy_u1"] >= 0.0
     assert row["probe_eval_accuracy_u2"] >= 0.0
     assert row["promotion_probe_eval_accuracy"] == row["probe_eval_accuracy_u2"]
+    assert row["train_order"] == "stable"
+    assert row["train_order_window"] == 128
+    assert row["strict_phase_promotion_train_order"] == "stable"
+    assert row["strict_phase_promotion_train_order_window"] == 128
+    assert row["strict_phase_promotion_final_measure_tail_s"] == pytest.approx(0.0)
 
 
 def test_fast_online_strict_promotion_defaults_to_pwl_clock_and_efficient_deck_shape() -> None:
@@ -554,6 +562,13 @@ def test_fast_online_strict_promotion_defaults_to_pwl_clock_and_efficient_deck_s
     )
 
     assert command[command.index("--phase-clock-mode") + 1] == "pwl"
+    assert command[command.index("--train-samples") + 1] == "2"
+    assert command[command.index("--updates") + 1] == "2"
+    assert command[command.index("--train-order") + 1] == "stable"
+    assert command[command.index("--train-order-window") + 1] == "128"
+    assert command[command.index("--train-order-pca-components") + 1] == "2"
+    assert command[command.index("--train-order-pca-bins-per-unit") + 1] == "20.0"
+    assert command[command.index("--final-measure-tail") + 1] == "0.0"
     assert command[command.index("--input-source-mode") + 1] == "pwl"
     assert command[command.index("--target-source-mode") + 1] == "label"
     assert command[command.index("--hidden-preactivation-mode") + 1] == "inline"
@@ -565,6 +580,9 @@ def test_fast_online_strict_promotion_defaults_to_pwl_clock_and_efficient_deck_s
     assert command[command.index("--output-delta-mode") + 1] == "node"
     assert "--sample-edge" not in command
     assert fields["strict_phase_promotion_phase_clock_mode"] == "pwl"
+    assert fields["strict_phase_promotion_train_order"] == "stable"
+    assert fields["strict_phase_promotion_train_order_window"] == 128
+    assert fields["strict_phase_promotion_final_measure_tail_s"] == pytest.approx(0.0)
     assert fields["strict_phase_promotion_input_source_mode"] == "pwl"
     assert fields["strict_phase_promotion_sample_edge_s"] == pytest.approx(5e-12)
     assert fields["strict_phase_promotion_hidden_preactivation_mode"] == "inline"
@@ -586,6 +604,115 @@ def test_fast_online_strict_promotion_defaults_to_pwl_clock_and_efficient_deck_s
     assert fields["strict_phase_promotion_auxiliary_algebraic_source_count"] == 0
     assert fields["strict_phase_promotion_phase_clock_source_pwl_points"] > 0
     assert fields["strict_phase_promotion_control_source_pwl_points"] == 0
+
+
+def test_fast_online_strict_promotion_preserves_ordering_prefix_for_local_train_order() -> None:
+    args = argparse.Namespace(
+        train_samples=10,
+        eval_samples=2,
+        image_size=2,
+        block_size=2,
+        stride=2,
+        channels=1,
+        input_quantization_levels=16,
+        train_order="local-pca",
+        train_order_window=5,
+        train_order_pca_components=3,
+        train_order_pca_bins_per_unit=7.0,
+        promotion_updates=4,
+        promotion_simulator="Xyce",
+        promotion_phase=0.5e-9,
+        promotion_gap=0.05e-9,
+        promotion_edge=5e-12,
+        promotion_sample_edge=5e-12,
+        promotion_settle_ratio=20.0,
+        promotion_transient_step=200e-12,
+        promotion_final_measure_tail=1e-9,
+        promotion_timeout=0.0,
+        promotion_max_transient_points=100,
+        promotion_max_source_pwl_points=500,
+        promotion_max_sample_sources=0,
+        promotion_max_total_sources=0,
+        promotion_max_output_vectors=0,
+        promotion_max_auxiliary_algebraic_sources=0,
+        promotion_phase_clock_mode="pwl",
+        promotion_input_source_mode="pwl",
+        promotion_target_source_mode="label",
+        promotion_probe_updates="",
+        promotion_tag_prefix="promote",
+        linear_output=False,
+        softmax_output=True,
+        relu_leak=0.01,
+        softplus_beta=10.0,
+        derivative_floor=0.0,
+        derivative_gate_threshold=1e-6,
+        readout_feedback_clip=0.05,
+        softmax_negative_scale=1.0,
+        softmax_error_centering="none",
+        softmax_competition_mode="all",
+        softmax_competitor_power=2,
+        softmax_error_gate="none",
+        softmax_margin=1.0,
+        readout_class_centering="none",
+    )
+    stable_args = argparse.Namespace(**{**vars(args), "train_order": "stable", "promotion_final_measure_tail": 0.0})
+    variant = {
+        "local_activation": "tanh",
+        "relu_clip": 1.0,
+        "activation_derivative": "exact",
+        "readout_feedback_mode": "full-readout",
+        "hidden_synapse_mode": "linear",
+        "readout_synapse_mode": "linear",
+        "synapse_clip": 1.0,
+        "lr": 0.8,
+        "lr_schedule": "constant",
+        "lr_final_scale": 1.0,
+        "output_bias_update_scale": 0.0,
+        "readout_update_scale": 0.25,
+        "local_update_scale": 1.0,
+        "state_decay": 0.0,
+        "softmax_temperature": 4.0,
+        "tag": "row",
+    }
+    x_train = np.array(
+        [
+            [0.0, 0.5],
+            [1.0, 0.25],
+            [0.0, 0.25],
+            [1.0, 0.0],
+            [0.5, 0.0],
+            [0.25, 0.25],
+            [0.75, 0.25],
+            [0.25, 0.75],
+            [0.75, 0.75],
+            [0.5, 0.5],
+        ]
+    )
+    y_train = np.array([0, 1, 0, 1, 2, 3, 4, 5, 6, 7])
+
+    command = fast_sweep.strict_phase_promotion_command(args, variant)
+    stable_command = fast_sweep.strict_phase_promotion_command(stable_args, variant)
+    fields = fast_sweep.strict_phase_promotion_cost_fields(args, variant, x_train, y_train)
+    stable_fields = fast_sweep.strict_phase_promotion_cost_fields(stable_args, variant, x_train, y_train)
+
+    assert command[command.index("--train-samples") + 1] == "10"
+    assert command[command.index("--updates") + 1] == "4"
+    assert command[command.index("--train-order") + 1] == "local-pca"
+    assert command[command.index("--train-order-window") + 1] == "5"
+    assert command[command.index("--train-order-pca-components") + 1] == "3"
+    assert command[command.index("--train-order-pca-bins-per-unit") + 1] == "7.0"
+    assert command[command.index("--final-measure-tail") + 1] == "1e-09"
+    assert stable_command[stable_command.index("--train-samples") + 1] == "4"
+    assert stable_command[stable_command.index("--updates") + 1] == "4"
+
+    assert fields["strict_phase_promotion_updates"] == 4
+    assert fields["strict_phase_promotion_train_order"] == "local-pca"
+    assert fields["strict_phase_promotion_train_order_window"] == 5
+    assert fields["strict_phase_promotion_final_measure_tail_s"] == pytest.approx(1e-9)
+    assert (
+        fields["strict_phase_promotion_estimated_transient_points"]
+        > stable_fields["strict_phase_promotion_estimated_transient_points"]
+    )
 
 
 def test_fast_online_strict_promotion_keeps_output_rails_when_printing_y() -> None:

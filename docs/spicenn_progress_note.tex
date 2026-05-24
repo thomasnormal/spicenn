@@ -1084,6 +1084,29 @@ must satisfy before it can replace the current behavioral prototype.
 
 \begin{figure}[H]
   \centering
+  \includegraphics[width=0.88\linewidth]{figures/mos_hidden_writer_restored_gate_hybrid_noise_ngspice.png}
+  \caption{Ngspice charge-kick disturbance characterization of the hybrid
+  restored-enable plus analog-error writer.  Each copy first stores the same
+  \(98.5\) mV \(r^+\) hidden-error differential, then receives deterministic
+  current-pulse kicks on the two hidden-error capacitors before \(pacc\).  The
+  \(\pm25\) mV common-mode kicks preserve the stored differential and change
+  only write gain, moving the signed update from the nominal \(55.1\) mV to
+  about \(46.2\) mV and \(63.1\) mV.  A \(+25/-25\) mV differential boost
+  raises the stored differential to \(158.5\) mV and strengthens the write to
+  \(64.9\) mV.  A \(-25/+25\) mV destructive differential kick leaves
+  \(38.5\) mV of positive stored error and still writes the correct sign at
+  \(45.1\) mV with nV-scale complement motion.  A larger \(-50/+50\) mV
+  destructive kick crosses the sign boundary, leaving \(-21.5\) mV stored
+  error and producing only a small wrong-sign residue of about \(-0.38\) mV.
+  The practical noise rule is therefore not ``the restored writer is immune to
+  disturbance,'' but a concrete margin: keep differential post-store
+  disturbance below roughly half the stored hidden-error swing, or increase the
+  stored-error/restorer margin.}
+  \label{fig:mos-hidden-writer-restored-gate-hybrid-noise-ngspice}
+\end{figure}
+
+\begin{figure}[H]
+  \centering
   \includegraphics[width=0.88\linewidth]{figures/mos_reset_precharge_ngspice.png}
   \caption{Ngspice transient characterization of MOS reset/precharge for
   reusable state capacitors.  A complementary MOS transmission-gate reset first

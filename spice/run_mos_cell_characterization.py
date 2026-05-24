@@ -4437,6 +4437,203 @@ quit
     hyt_fig.tight_layout()
     save_plot(hyt_fig, "mos_hidden_writer_restored_gate_hybrid_timing_ngspice")
 
+    hybrid_noise_cases = [
+        ("none", "no kick", 0.000, 0.000),
+        ("cmup", "common +25mV", 0.025, 0.025),
+        ("cmdn", "common -25mV", -0.025, -0.025),
+        ("boost", "diff boost", 0.025, -0.025),
+        ("weak25", "diff weaken 25mV", -0.025, 0.025),
+        ("weak50", "diff weaken 50mV", -0.050, 0.050),
+    ]
+    hybrid_noise_prints = []
+    hybrid_noise_devices = []
+
+    def kick_current(delta_v: float) -> float:
+        return -10e-12 * delta_v / 50e-9
+
+    for idx, (name, _label, d_cdp, d_cdm) in enumerate(hybrid_noise_cases):
+        i_cdp = kick_current(d_cdp)
+        i_cdm = kick_current(d_cdm)
+        hybrid_noise_devices.append(
+            f"""
+* Hybrid disturbance copy: {name}, target kicks d(cdp)={d_cdp:+.3f} V, d(cdm)={d_cdm:+.3f} V.
+VZPP_HYN{idx} zpp_hyn{idx} 0 {0.9 + hybrid_mismatch_eps / 2.0:.5f}
+VZMM_HYN{idx} zmm_hyn{idx} 0 {0.9 - hybrid_mismatch_eps / 2.0:.5f}
+VZPM_HYN{idx} zpm_hyn{idx} 0 {0.9 - hybrid_mismatch_eps / 2.0:.5f}
+VZMP_HYN{idx} zmp_hyn{idx} 0 {0.9 + hybrid_mismatch_eps / 2.0:.5f}
+
+MPPP_HYN{idx} hpp_hyn{idx} hpp_hyn{idx} vdd vdd PMOS L={{LCH}} W={{WP}}
+MPPM_HYN{idx} hpm_hyn{idx} hpm_hyn{idx} vdd vdd PMOS L={{LCH}} W={{WP}}
+MNPP_HYN{idx} hpp_hyn{idx} zpp_hyn{idx} tailp_hyn{idx} 0 NMOS L={{LCH}} W={{WN}}
+MNPM_HYN{idx} hpm_hyn{idx} zmm_hyn{idx} tailp_hyn{idx} 0 NMOS L={{LCH}} W={{WN}}
+MNTP_HYN{idx} tailp_hyn{idx} vbias 0 0 NMOS L={{LCH}} W={{WN}}
+
+MPMP_HYN{idx} hmp_hyn{idx} hmp_hyn{idx} vdd vdd PMOS L={{LCH}} W={{WP}}
+MPMM_HYN{idx} hmm_hyn{idx} hmm_hyn{idx} vdd vdd PMOS L={{LCH}} W={{WP}}
+MNMP_HYN{idx} hmp_hyn{idx} zpm_hyn{idx} tailm_hyn{idx} 0 NMOS L={{LCH}} W={{WN}}
+MNMM_HYN{idx} hmm_hyn{idx} zmp_hyn{idx} tailm_hyn{idx} 0 NMOS L={{LCH}} W={{WN}}
+MNTM_HYN{idx} tailm_hyn{idx} vbias 0 0 NMOS L={{LCH}} W={{WN}}
+
+CDP_RP_HYN{idx} cdp_rp_hyn{idx} 0 {{CERR}} IC=1.04
+CDM_RP_HYN{idx} cdm_rp_hyn{idx} 0 {{CERR}} IC=1.04
+RDP_RP_HYN{idx} cdp_rp_hyn{idx} 0 50G
+RDM_RP_HYN{idx} cdm_rp_hyn{idx} 0 50G
+{sign_store_path(f"hpm_hyn{idx}", "rp", f"cdp_rp_hyn{idx}", f"hynrp1_{idx}")}
+{sign_store_path(f"hmp_hyn{idx}", "rp", f"cdp_rp_hyn{idx}", f"hynrp2_{idx}")}
+{sign_store_path(f"hpp_hyn{idx}", "rp", f"cdm_rp_hyn{idx}", f"hynrp3_{idx}")}
+{sign_store_path(f"hmm_hyn{idx}", "rp", f"cdm_rp_hyn{idx}", f"hynrp4_{idx}")}
+
+IKDP_HYN{idx} cdp_rp_hyn{idx} 0 PWL(0 0 1.42u 0 1.43u {i_cdp:.6e} 1.48u {i_cdp:.6e} 1.49u 0 3.4u 0)
+IKDM_HYN{idx} cdm_rp_hyn{idx} 0 PWL(0 0 1.42u 0 1.43u {i_cdm:.6e} 1.48u {i_cdm:.6e} 1.49u 0 3.4u 0)
+
+MPRP_CDP_HYN{idx} rgp_rp_hyn{idx} cdp_rp_hyn{idx} vdd vdd PMOS L={{LCH}} W={{WRESTP}}
+MNRP_CDP_HYN{idx} rgp_rp_hyn{idx} cdp_rp_hyn{idx} 0 0 NMOS L={{LCH}} W={{WRESTN}}
+MPRP_CDM_HYN{idx} rgm_rp_hyn{idx} cdm_rp_hyn{idx} vdd vdd PMOS L={{LCH}} W={{WRESTP}}
+MNRP_CDM_HYN{idx} rgm_rp_hyn{idx} cdm_rp_hyn{idx} 0 0 NMOS L={{LCH}} W={{WRESTN}}
+
+CWP_HYN{idx} wp_hyn{idx} 0 {{CWRITE}} IC=0.85
+CWM_HYN{idx} wm_hyn{idx} 0 {{CWRITE}} IC=0.85
+MWP_HYN{idx}A vdd paccn_hyn n_wp_hyn{idx}_a vdd PMOS L={{LCH}} W={{WWRITE}}
+MWP_HYN{idx}B n_wp_hyn{idx}_a hm_pos n_wp_hyn{idx}_b vdd PMOS L={{LCH}} W={{WWRITE}}
+MWP_HYN{idx}C n_wp_hyn{idx}_b rgp_rp_hyn{idx} n_wp_hyn{idx}_c vdd PMOS L={{LCH}} W={{WWRITE}}
+MWP_HYN{idx}D n_wp_hyn{idx}_c cdm_rp_hyn{idx} wp_hyn{idx} vdd PMOS L={{LCH}} W={{WWRITE}}
+MWM_HYN{idx}A vdd paccn_hyn n_wm_hyn{idx}_a vdd PMOS L={{LCH}} W={{WWRITE}}
+MWM_HYN{idx}B n_wm_hyn{idx}_a hm_pos n_wm_hyn{idx}_b vdd PMOS L={{LCH}} W={{WWRITE}}
+MWM_HYN{idx}C n_wm_hyn{idx}_b rgm_rp_hyn{idx} n_wm_hyn{idx}_c vdd PMOS L={{LCH}} W={{WWRITE}}
+MWM_HYN{idx}D n_wm_hyn{idx}_c cdp_rp_hyn{idx} wm_hyn{idx} vdd PMOS L={{LCH}} W={{WWRITE}}
+"""
+        )
+        hybrid_noise_prints.extend(
+            [
+                f"v(cdp_rp_hyn{idx})",
+                f"v(cdm_rp_hyn{idx})",
+                f"v(rgp_rp_hyn{idx})",
+                f"v(rgm_rp_hyn{idx})",
+                f"v(wp_hyn{idx})",
+                f"v(wm_hyn{idx})",
+            ]
+        )
+
+    hybrid_noise_deck = f"""
+* Hybrid restored-enable/analog-error writer charge-kick disturbance characterization.
+* Each copy stores the same r+ hidden error, receives a deterministic small
+* current kick on one or both hidden-error capacitors after pbwd closes, and
+* then writes through the same hybrid restored-select/analog-magnitude stack.
+{COMMON_MODELS}
+.param CERR=10p CWRITE=500p WSW=24u WWRITE=24u WRESTN=18u WRESTP=300u
+VDD vdd 0 1.8
+VTAIL vbias 0 0.95
+VPBWD pbwd 0 PULSE(0 1.8 0.45u 20n 20n 0.80u 5.0u)
+VRP rp 0 PULSE(0 1.8 0.45u 20n 20n 0.80u 5.0u)
+VPACC_HYN paccn_hyn 0 PULSE(1.8 0 1.75u 20n 20n 0.80u 5.0u)
+VHM_POS hm_pos 0 0.92
+{''.join(hybrid_noise_devices)}
+
+.control
+set noaskquit
+tran 5n 3.4u uic
+wrdata mos_hidden_writer_restored_gate_hybrid_noise.dat {' '.join(hybrid_noise_prints)} v(pbwd) v(paccn_hyn)
+quit
+.endc
+.end
+"""
+    hybrid_noise_data = run_ngspice(
+        hybrid_noise_deck,
+        "mos_hidden_writer_restored_gate_hybrid_noise",
+    )
+    hynt, hyn_cols = load_wrdata(hybrid_noise_data, len(hybrid_noise_prints) + 2)
+
+    def hynat(time_s: float, values: np.ndarray) -> float:
+        return float(values[np.argmin(np.abs(hynt - time_s))])
+
+    hyn_pre_hidden = []
+    hyn_post_hidden = []
+    hyn_selected_gate = []
+    hyn_complement_gate = []
+    hyn_selected_step = []
+    hyn_complement_step = []
+    hyn_net = []
+    for idx, (name, _label, _d_cdp, _d_cdm) in enumerate(hybrid_noise_cases):
+        base = 6 * idx
+        cdp = hyn_cols[base]
+        cdm = hyn_cols[base + 1]
+        rgp = hyn_cols[base + 2]
+        rgm = hyn_cols[base + 3]
+        wp = hyn_cols[base + 4]
+        wm = hyn_cols[base + 5]
+        hidden = cdp - cdm
+        pre_hidden = hynat(1.35e-6, hidden)
+        post_hidden = hynat(1.62e-6, hidden)
+        selected_gate = hynat(1.70e-6, rgp)
+        complement_gate = hynat(1.70e-6, rgm)
+        selected_step = hynat(2.85e-6, wp) - hynat(1.70e-6, wp)
+        complement_step = hynat(2.85e-6, wm) - hynat(1.70e-6, wm)
+        net = hynat(2.85e-6, wp - wm)
+        hyn_pre_hidden.append(pre_hidden)
+        hyn_post_hidden.append(post_hidden)
+        hyn_selected_gate.append(selected_gate)
+        hyn_complement_gate.append(complement_gate)
+        hyn_selected_step.append(selected_step)
+        hyn_complement_step.append(complement_step)
+        hyn_net.append(net)
+        require(pre_hidden > 0.07, f"{name} disturbance copy should store a positive hidden error before kick")
+        if name == "weak50":
+            require(post_hidden < 0.0, "over-margin destructive differential kick should reverse stored hidden-error sign")
+            require(selected_gate > 1.0, "over-margin destructive kick should turn off the original selected gate")
+            require(net < 0.0, "over-margin destructive kick should expose wrong-sign write risk")
+            require(abs(net) < 0.003, "over-margin destructive kick should only create a small wrong-sign residue")
+        else:
+            require(post_hidden > 0.025, f"{name} disturbance copy should keep positive hidden-error sign after kick")
+            require(selected_gate < 0.45, f"{name} disturbance selected restored gate should stay active-low")
+            require(complement_gate > 1.55, f"{name} disturbance complement restored gate should stay inactive")
+            require(complement_step < 5e-4, f"{name} disturbance complement rail should stay suppressed")
+            require(net > 0.010, f"{name} disturbance should preserve a useful positive signed write")
+        require(
+            abs(hynat(3.25e-6, wp - wm) - net) < 5e-4,
+            f"{name} disturbance write should hold after pacc closes",
+        )
+
+    hyn_pre_hidden = np.array(hyn_pre_hidden)
+    hyn_post_hidden = np.array(hyn_post_hidden)
+    hyn_selected_gate = np.array(hyn_selected_gate)
+    hyn_complement_gate = np.array(hyn_complement_gate)
+    hyn_selected_step = np.array(hyn_selected_step)
+    hyn_complement_step = np.array(hyn_complement_step)
+    hyn_net = np.array(hyn_net)
+    require(abs(hyn_post_hidden[0] - hyn_pre_hidden[0]) < 0.005, "no-kick copy should hold hidden-error state")
+    require(hyn_net[3] > hyn_net[0], "differential boost disturbance should strengthen the write")
+    require(hyn_net[4] < hyn_net[0], "small destructive differential disturbance should weaken the write")
+    require(hyn_net[5] < hyn_net[4], "larger destructive differential disturbance should weaken the write further")
+    require(hyn_net[5] < 0.0, "over-margin destructive differential disturbance should mark the sign boundary")
+    require(np.max(np.abs(hyn_net[1:3] - hyn_net[0])) < 0.012, "common-mode disturbance should not dominate signed write gain")
+
+    hyn_fig, hyn_axes = plt.subplots(2, 1, figsize=(7.2, 5.8))
+    hyn_labels = [label for _name, label, _d_cdp, _d_cdm in hybrid_noise_cases]
+    hyn_x = np.arange(len(hybrid_noise_cases))
+    hyn_axes[0].plot(hyn_x, hyn_pre_hidden, "o-", label="before kick")
+    hyn_axes[0].plot(hyn_x, hyn_post_hidden, "s-", label="after kick")
+    hyn_axes[0].plot(hyn_x, hyn_selected_gate, "^-", label="selected restored gate")
+    hyn_axes[0].plot(hyn_x, hyn_complement_gate, "v--", label="complement restored gate")
+    hyn_axes[0].axhline(0.9, color="0.4", linewidth=0.8, alpha=0.5)
+    hyn_axes[0].set_xticks(hyn_x)
+    hyn_axes[0].set_xticklabels(hyn_labels, rotation=15, ha="right")
+    hyn_axes[0].set_ylabel("voltage (V)")
+    hyn_axes[0].set_title("Hybrid writer keeps restored selectivity after hidden-error kicks")
+    hyn_axes[0].grid(True, alpha=0.25)
+    hyn_axes[0].legend(loc="center right", fontsize="small")
+    hyn_axes[1].plot(hyn_x, hyn_selected_step, "o-", label="selected rail step")
+    hyn_axes[1].plot(hyn_x, hyn_complement_step, "s--", label="complement rail step")
+    hyn_axes[1].plot(hyn_x, hyn_net, "^-", label="$W^+ - W^-$")
+    hyn_axes[1].axhline(0, color="0.4", linewidth=0.8)
+    hyn_axes[1].set_xticks(hyn_x)
+    hyn_axes[1].set_xticklabels(hyn_labels, rotation=15, ha="right")
+    hyn_axes[1].set_ylabel("writer step (V)")
+    hyn_axes[1].set_title("Small kicks change gain; over-margin differential kick flips sign")
+    hyn_axes[1].grid(True, alpha=0.25)
+    hyn_axes[1].legend(loc="upper right", ncol=2, fontsize="small")
+    hyn_fig.tight_layout()
+    save_plot(hyn_fig, "mos_hidden_writer_restored_gate_hybrid_noise_ngspice")
+
     return hidden_writer_plot
 
 

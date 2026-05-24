@@ -609,11 +609,12 @@ must satisfy before it can replace the current behavioral prototype.
   \centering
   \includegraphics[width=0.88\linewidth]{figures/mos_forward_pair_ngspice.png}
   \caption{Ngspice characterization of the MOS forward differential pair and
-  activation store.  The top panel is the DC transfer.  The diode-connected
-  load is voltage-inverting, so the useful signed load voltage is plotted as
-  \(h^- - h^+\).  The bottom panel is a transient storage check: when \(pact\)
-  is high the switch tracks the current activation onto \(C_h\), and when
-  \(pact\) closes the stored differential activation is held.}
+  activation store.  The top panel is the DC transfer under fixed common-mode
+  differential drive.  The diode-connected load is voltage-inverting, so the
+  useful signed load voltage is plotted as \(h^- - h^+\).  The bottom panel is
+  a transient storage check using the same differential drive convention: when
+  \(pact\) is high the switch tracks the current activation onto \(C_h\), and
+  when \(pact\) closes the stored differential activation is held.}
   \label{fig:mos-forward-ngspice}
 \end{figure}
 
@@ -622,8 +623,8 @@ must satisfy before it can replace the current behavioral prototype.
   \includegraphics[width=0.88\linewidth]{figures/mos_hidden_error_ngspice.png}
   \caption{Ngspice characterization of the hidden-error path.  The top panel
   uses two matched diode-loaded MOS forward replicas nudged by \(+10\) mV and
-  \(-10\) mV on the swept preactivation rail; their finite difference gives the
-  local small-signal derivative window.  The bottom panel is a separate
+  \(-10\) mV in differential input at fixed common mode; their finite difference
+  gives the local small-signal derivative window.  The bottom panel is a separate
   transient sign-selection check: MOS pass switches controlled by \(r^+\) or
   \(r^-\) store opposite differential hidden-error polarities on capacitors and
   hold them after the backward phase closes.}

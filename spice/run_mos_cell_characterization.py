@@ -2,7 +2,7 @@
 """Run ngspice sanity checks for the MOS local-feature cell sketches.
 
 The decks generated here are intentionally small transistor-level
-characterizations of the four paper panels.  They use simple Level-1 MOS models
+characterizations of the paper panels.  They use simple Level-1 MOS models
 and independent testbench rails so the resulting plots show local sign and
 transfer behavior, not a calibrated process result.
 """
@@ -193,8 +193,10 @@ def characterize_forward_pair() -> Path:
 * MOS forward differential-pair sanity check
 {COMMON_MODELS}
 VDD vdd 0 1.8
-VZP zp 0 0.2
-VZM zm 0 0.9
+VCM cm 0 0.9
+VDIFF zp zm -0.7
+RZP zp cm 1G
+RZM zm cm 1G
 VTAIL vbias 0 0.95
 MP1 hp hp vdd vdd PMOS L={{LCH}} W={{WP}}
 MP2 hm hm vdd vdd PMOS L={{LCH}} W={{WP}}
@@ -203,7 +205,7 @@ MN2 hm zm tail 0 NMOS L={{LCH}} W={{WN}}
 MNT tail vbias 0 0 NMOS L={{LCH}} W={{WN}}
 .control
 set noaskquit
-dc VZP 0.2 1.6 0.01
+dc VDIFF -0.7 0.7 0.01
 wrdata mos_forward_pair.dat v(hp) v(hm)
 quit
 .endc
@@ -214,8 +216,10 @@ quit
 {COMMON_MODELS}
 .param CSTORE=10p WSW=24u
 VDD vdd 0 1.8
-VZP zp 0 PWL(0 0.9 0.45u 0.9 0.5u 1.25 1.7u 1.25 1.75u 0.55 3.35u 0.55 3.4u 0.9 4u 0.9)
-VZM zm 0 0.9
+VCM cm 0 0.9
+VDIFF zp zm PWL(0 0 0.45u 0 0.5u 0.35 1.7u 0.35 1.75u -0.35 3.35u -0.35 3.4u 0 4u 0)
+RZP zp cm 1G
+RZM zm cm 1G
 VTAIL vbias 0 0.95
 VPACT pact 0 PULSE(0 1.8 0.5u 20n 20n 0.75u 2.0u)
 MP1 hp hp vdd vdd PMOS L={{LCH}} W={{WP}}
@@ -239,10 +243,12 @@ quit
 """
     data = run_ngspice(transfer_deck, "mos_forward_pair")
     x, cols = load_wrdata(data, 2)
-    xdiff = x - 0.9
+    xdiff = x
     signed = cols[1] - cols[0]
     require(np.all(np.diff(signed) >= -1e-4), "forward pair transfer should be monotone")
     require(abs(signed[np.argmin(np.abs(xdiff))]) < 1e-3, "forward pair should be centered near zero")
+    peak = max(float(np.max(np.abs(signed))), 1e-30)
+    require(np.max(np.abs(signed + signed[::-1])) < 0.03 * peak, "forward pair should be approximately odd-symmetric")
     store_data = run_ngspice(store_deck, "mos_forward_store")
     t, store_cols = load_wrdata(store_data, 5)
     load_signed = store_cols[1] - store_cols[0]
@@ -285,37 +291,41 @@ def characterize_hidden_error() -> Path:
     eps = 0.01
     deck = f"""
 * Hidden-error finite-difference replica-pair sanity check.
-* The small-signal nudge is applied to the swept preactivation rail so this
-* measures the local slope of the same MOS forward transfer plotted above.
+* The small-signal nudge is applied as a differential perturbation around a
+* fixed common mode, matching the MOS forward transfer plotted above.
 {COMMON_MODELS}
 .param EPS={eps}
 VDD vdd 0 1.8
-VZP zp 0 0.2
-VZM zm 0 0.9
+VCM cm 0 0.9
+VDIFF zp zm -0.7
+RZP zp cm 1G
+RZM zm cm 1G
 VTAIL vbias 0 0.95
 
-* Testbench nudges: p-copy uses z+ + eps.
-VZP_P zpp zp {{EPS}}
-* m-copy uses z+ - eps.
-VZP_M zp zpm {{EPS}}
+* Testbench nudges around fixed common mode: p-copy uses differential input
+* d+eps, m-copy uses d-eps.
+VZPP zpp zp {{EPS/2}}
+VZMM zm zmm {{EPS/2}}
+VZPM zp zpm {{EPS/2}}
+VZMP zmp zm {{EPS/2}}
 
 * Positive nudge replica.
 MPPP hpp hpp vdd vdd PMOS L={{LCH}} W={{WP}}
 MPPM hpm hpm vdd vdd PMOS L={{LCH}} W={{WP}}
 MNPP hpp zpp tailp 0 NMOS L={{LCH}} W={{WN}}
-MNPM hpm zm tailp 0 NMOS L={{LCH}} W={{WN}}
+MNPM hpm zmm tailp 0 NMOS L={{LCH}} W={{WN}}
 MNTP tailp vbias 0 0 NMOS L={{LCH}} W={{WN}}
 
 * Negative nudge replica.
 MPMP hmp hmp vdd vdd PMOS L={{LCH}} W={{WP}}
 MPMM hmm hmm vdd vdd PMOS L={{LCH}} W={{WP}}
 MNMP hmp zpm tailm 0 NMOS L={{LCH}} W={{WN}}
-MNMM hmm zm tailm 0 NMOS L={{LCH}} W={{WN}}
+MNMM hmm zmp tailm 0 NMOS L={{LCH}} W={{WN}}
 MNTM tailm vbias 0 0 NMOS L={{LCH}} W={{WN}}
 
 .control
 set noaskquit
-dc VZP 0.2 1.6 0.01
+dc VDIFF -0.7 0.7 0.01
 wrdata mos_hidden_error.dat v(hpp) v(hpm) v(hmp) v(hmm)
 quit
 .endc
@@ -329,8 +339,10 @@ quit
 {COMMON_MODELS}
 .param CERR=10p WSW=24u
 VDD vdd 0 1.8
-VZP zp 0 1.08
-VZM zm 0 0.9
+VCM cm 0 0.9
+VDIFF zp zm 0.18
+RZP zp cm 1G
+RZM zm cm 1G
 VTAIL vbias 0 0.95
 VPBWD pbwd 0 PULSE(0 1.8 0.5u 20n 20n 0.8u 4.0u)
 VRP rp 0 PULSE(0 1.8 0.5u 20n 20n 0.8u 4.0u)
@@ -376,7 +388,7 @@ quit
 """
     data = run_ngspice(deck, "mos_hidden_error")
     x, cols = load_wrdata(data, 4)
-    xdiff = x - 0.9
+    xdiff = x
     signed_plus_nudge = cols[1] - cols[0]
     signed_minus_nudge = cols[3] - cols[2]
     gain = (signed_plus_nudge - signed_minus_nudge) / (2.0 * eps)
@@ -400,7 +412,7 @@ quit
     require(at(2.2e-6, neg_stored) < -0.12, "r- hidden-error storage should hold after phase")
 
     fig, axes = plt.subplots(2, 1, figsize=(7.2, 6.2))
-    axes[0].plot(x - 0.9, gain, label="finite-difference gain")
+    axes[0].plot(xdiff, gain, label="finite-difference gain")
     axes[0].axhline(0, color="0.4", linewidth=0.8)
     axes[0].axvline(0, color="0.4", linewidth=0.8)
     axes[0].set_xlabel("$z^+ - z^-$ (V)")

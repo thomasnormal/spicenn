@@ -2092,6 +2092,60 @@ quit
 .endc
 .end
 """
+    analog_gate_levels = [1.20, 1.10, 1.00, 0.90]
+    analog_devices = []
+    analog_prints = []
+    for idx, xgate in enumerate(analog_gate_levels):
+        analog_devices.append(
+            f"""
+VXG_X{idx} xg_x{idx} 0 {xgate:.2f}
+VDG_X{idx} dg_x{idx} 0 0.95
+CWP_X{idx} wp_x{idx} 0 {{CWRITE}} IC=0.85
+CWM_X{idx} wm_x{idx} 0 {{CWRITE}} IC=0.85
+MWP_X{idx}A vdd paccn n_wp_x{idx}_a vdd PMOS L={{LCH}} W={{WWRITE}}
+MWP_X{idx}B n_wp_x{idx}_a xg_x{idx} n_wp_x{idx}_b vdd PMOS L={{LCH}} W={{WWRITE}}
+MWP_X{idx}C n_wp_x{idx}_b dg_x{idx} wp_x{idx} vdd PMOS L={{LCH}} W={{WWRITE}}
+MWM_X{idx}A vdd paccn n_wm_x{idx}_a vdd PMOS L={{LCH}} W={{WWRITE}}
+MWM_X{idx}B n_wm_x{idx}_a xg_x{idx} n_wm_x{idx}_b vdd PMOS L={{LCH}} W={{WWRITE}}
+MWM_X{idx}C n_wm_x{idx}_b hi wm_x{idx} vdd PMOS L={{LCH}} W={{WWRITE}}
+"""
+        )
+        analog_prints.extend([f"v(wp_x{idx})", f"v(wm_x{idx})"])
+    for idx, dgate in enumerate(analog_gate_levels):
+        analog_devices.append(
+            f"""
+VXG_D{idx} xg_d{idx} 0 0.95
+VDG_D{idx} dg_d{idx} 0 {dgate:.2f}
+CWP_D{idx} wp_d{idx} 0 {{CWRITE}} IC=0.85
+CWM_D{idx} wm_d{idx} 0 {{CWRITE}} IC=0.85
+MWP_D{idx}A vdd paccn n_wp_d{idx}_a vdd PMOS L={{LCH}} W={{WWRITE}}
+MWP_D{idx}B n_wp_d{idx}_a xg_d{idx} n_wp_d{idx}_b vdd PMOS L={{LCH}} W={{WWRITE}}
+MWP_D{idx}C n_wp_d{idx}_b dg_d{idx} wp_d{idx} vdd PMOS L={{LCH}} W={{WWRITE}}
+MWM_D{idx}A vdd paccn n_wm_d{idx}_a vdd PMOS L={{LCH}} W={{WWRITE}}
+MWM_D{idx}B n_wm_d{idx}_a xg_d{idx} n_wm_d{idx}_b vdd PMOS L={{LCH}} W={{WWRITE}}
+MWM_D{idx}C n_wm_d{idx}_b hi wm_d{idx} vdd PMOS L={{LCH}} W={{WWRITE}}
+"""
+        )
+        analog_prints.extend([f"v(wp_d{idx})", f"v(wm_d{idx})"])
+    analog_gate_deck = f"""
+* Four-quadrant writer analog gate-strength sweep.
+* The selected same-sign branch uses active-low PMOS gates.  Lower activation
+* or hidden-error gate voltage should increase the W+ update magnitude while
+* the inactive W- branch stays quiet.
+{COMMON_MODELS}
+.param WWRITE=2u CWRITE=500p
+VDD vdd 0 1.8
+VPACC_N paccn 0 PULSE(1.8 0 0.5u 20n 20n 0.8u 5.0u)
+VHI hi 0 1.8
+{''.join(analog_devices)}
+.control
+set noaskquit
+tran 5n 2.0u uic
+wrdata mos_writer_analog_gate.dat {' '.join(analog_prints)} v(paccn)
+quit
+.endc
+.end
+"""
     readback_deck = f"""
 * Writer-to-synapse readback sanity check.
 {COMMON_MODELS}
@@ -2339,6 +2393,30 @@ quit
     require(r_squared(selected_wp_delta, predicted_wp) > 0.98, "W+ writer pulse-width response should be near-linear")
     require(r_squared(selected_wm_delta, predicted_wm) > 0.98, "W- writer pulse-width response should be near-linear")
 
+    analog_data = run_ngspice(analog_gate_deck, "mos_writer_analog_gate")
+    atime_gate, analog_cols = load_wrdata(analog_data, 2 * len(analog_gate_levels) * 2 + 1)
+    xgate_steps = np.array(
+        [analog_cols[2 * idx][-1] - analog_cols[2 * idx][0] for idx in range(len(analog_gate_levels))]
+    )
+    xgate_inactive = np.array(
+        [analog_cols[2 * idx + 1][-1] - analog_cols[2 * idx + 1][0] for idx in range(len(analog_gate_levels))]
+    )
+    d_offset = 2 * len(analog_gate_levels)
+    dgate_steps = np.array(
+        [analog_cols[d_offset + 2 * idx][-1] - analog_cols[d_offset + 2 * idx][0] for idx in range(len(analog_gate_levels))]
+    )
+    dgate_inactive = np.array(
+        [analog_cols[d_offset + 2 * idx + 1][-1] - analog_cols[d_offset + 2 * idx + 1][0] for idx in range(len(analog_gate_levels))]
+    )
+    require(np.all(np.diff(xgate_steps) > 5e-4), "W+ step should increase as activation gate gets more active-low")
+    require(np.all(np.diff(dgate_steps) > 5e-4), "W+ step should increase as hidden-error gate gets more active-low")
+    require(xgate_steps[-1] - xgate_steps[0] > 0.005, "activation gate sweep should have visible dynamic range")
+    require(dgate_steps[-1] - dgate_steps[0] > 0.005, "hidden-error gate sweep should have visible dynamic range")
+    require(np.max(np.abs(xgate_inactive)) < 1e-3, "analog activation sweep should leave inactive W- branch quiet")
+    require(np.max(np.abs(dgate_inactive)) < 1e-3, "analog hidden-error sweep should leave inactive W- branch quiet")
+    require(xgate_steps[0] > 0.0 and dgate_steps[0] > 0.0, "weak analog writer gates should still produce small positive steps")
+    require(xgate_steps[-1] < 0.25 and dgate_steps[-1] < 0.25, "strong analog writer gates should remain in incremental range")
+
     readback_data = run_ngspice(readback_deck, "mos_writer_readback")
     rt, read_cols = load_wrdata(readback_data, 9)
     pos_read_contrib = read_cols[3] - read_cols[2]
@@ -2496,6 +2574,29 @@ quit
     repeated_axes[1].legend(loc="upper left", ncol=2)
     repeated_fig.tight_layout()
     save_plot(repeated_fig, "mos_writer_repeated_ngspice")
+
+    analog_fig, analog_axes = plt.subplots(2, 1, figsize=(7.2, 5.8))
+    analog_strength = 1.8 - np.array(analog_gate_levels)
+    analog_axes[0].plot(analog_strength, xgate_steps, "o-", label="sweep activation gate")
+    analog_axes[0].plot(analog_strength, dgate_steps, "s--", label="sweep hidden-error gate")
+    analog_axes[0].plot(analog_strength, xgate_inactive, "o-", color="0.55", alpha=0.75, label="inactive W- during activation sweep")
+    analog_axes[0].plot(analog_strength, dgate_inactive, "s:", color="0.55", alpha=0.75, label="inactive W- during error sweep")
+    analog_axes[0].axhline(0, color="0.4", linewidth=0.8)
+    analog_axes[0].set_ylabel("$\\Delta V_W$ (V)")
+    analog_axes[0].set_title("Writer magnitude grows with analog gate strength")
+    analog_axes[0].grid(True, alpha=0.25)
+    analog_axes[0].legend(loc="upper left", ncol=2)
+    for idx, level in enumerate(analog_gate_levels):
+        analog_axes[1].plot(1e6 * atime_gate, analog_cols[2 * idx] - analog_cols[2 * idx][0], label=f"$x_g$={level:.2f} V")
+    analog_axes[1].plot(1e6 * atime_gate, (1.8 - analog_cols[-1]) / 250.0, color="0.5", alpha=0.35, label="$pacc_{active}/250$")
+    analog_axes[1].axhline(0, color="0.4", linewidth=0.8)
+    analog_axes[1].set_xlabel("time (us)")
+    analog_axes[1].set_ylabel("$\\Delta W^+$ (V)")
+    analog_axes[1].set_title("Activation-gate sweep produces graded weight steps")
+    analog_axes[1].grid(True, alpha=0.25)
+    analog_axes[1].legend(loc="upper left", ncol=2)
+    analog_fig.tight_layout()
+    save_plot(analog_fig, "mos_writer_analog_gate_ngspice")
 
     alternating_fig, alternating_axes = plt.subplots(2, 1, figsize=(7.2, 5.8))
     alternating_axes[0].plot(1e6 * atime, 1e6 * alt_net_contrib, label="net signed read contribution")

@@ -446,11 +446,21 @@ VRST rst 0 PWL(0 0 0.10u 0 0.12u 1.8 0.55u 1.8 0.57u 0 1.80u 0 1.82u 1.8 2.25u 1
 VRSTN rstn 0 PWL(0 1.8 0.10u 1.8 0.12u 0 0.55u 0 0.57u 1.8 1.80u 1.8 1.82u 0 2.25u 0 2.27u 1.8 3u 1.8)
 VWP wpulse 0 PWL(0 0 0.75u 0 0.77u 1.15 1.45u 1.15 1.47u 0 3u 0)
 
-* Deliberately mismatched initial state.
+* Deliberately mismatched preactivation state.
 CZP zp 0 {{CSUM}} IC=1.3
 CZM zm 0 {{CSUM}} IC=0.5
 RZP zp 0 100G
 RZM zm 0 100G
+
+* Additional state roles that must reuse the same reset primitive.
+CHP hp 0 {{CSUM}} IC=1.25
+CHM hm 0 {{CSUM}} IC=0.55
+RHP hp 0 100G
+RHM hm 0 100G
+CDP dp 0 {{CSUM}} IC=0.55
+CDM dm 0 {{CSUM}} IC=1.25
+RDP dp 0 100G
+RDM dm 0 100G
 
 * Transmission-gate reset to common mode.  A single NMOS pass device leaves a
 * visible threshold error here, so the reusable primitive uses complementary
@@ -459,6 +469,14 @@ MRPN zp rst vcm 0 NMOS L={{LCH}} W={{WRESETN}}
 MRMN zm rst vcm 0 NMOS L={{LCH}} W={{WRESETN}}
 MRPP zp rstn vcm vdd PMOS L={{LCH}} W={{WRESETP}}
 MRMP zm rstn vcm vdd PMOS L={{LCH}} W={{WRESETP}}
+MRHN hp rst vcm 0 NMOS L={{LCH}} W={{WRESETN}}
+MRHM hm rst vcm 0 NMOS L={{LCH}} W={{WRESETN}}
+MRHP hp rstn vcm vdd PMOS L={{LCH}} W={{WRESETP}}
+MRHMP hm rstn vcm vdd PMOS L={{LCH}} W={{WRESETP}}
+MRDN dp rst vcm 0 NMOS L={{LCH}} W={{WRESETN}}
+MRDM dm rst vcm 0 NMOS L={{LCH}} W={{WRESETN}}
+MRDP dp rstn vcm vdd PMOS L={{LCH}} W={{WRESETP}}
+MRDMP dm rstn vcm vdd PMOS L={{LCH}} W={{WRESETP}}
 
 * Reuse the positive signed synapse slice between reset phases.
 MPP zp xp tail 0 NMOS L={{LCH}} W={{WN}}
@@ -468,28 +486,38 @@ MTP tail wpulse 0 0 NMOS L={{LCH}} W={{WTAIL}}
 .control
 set noaskquit
 tran 5n 3u uic
-wrdata mos_reset_precharge.dat v(zp) v(zm) v(rst) v(wpulse)
+wrdata mos_reset_precharge.dat v(zp) v(zm) v(hp) v(hm) v(dp) v(dm) v(rst) v(wpulse)
 quit
 .endc
 .end
 """
     data = run_ngspice(deck, "mos_reset_precharge")
-    t, cols = load_wrdata(data, 4)
-    zp, zm, rst, wpulse = cols
+    t, cols = load_wrdata(data, 8)
+    zp, zm, hp, hm, dp, dm, rst, wpulse = cols
     signed = zm - zp
     common = 0.5 * (zp + zm)
+    h_signed = hm - hp
+    d_signed = dm - dp
 
     def at(time_s: float, values: np.ndarray) -> float:
         return float(values[np.argmin(np.abs(t - time_s))])
 
     require(at(0.0, signed) < -0.7, "reset test should start from deliberately mismatched caps")
+    require(at(0.0, h_signed) < -0.6, "activation reset test should start mismatched")
+    require(at(0.0, d_signed) > 0.6, "hidden-error reset test should start mismatched")
     require(abs(at(0.55e-6, signed)) < 0.06, "first reset should remove most differential state")
     require(abs(at(0.55e-6, common) - 0.9) < 0.05, "first reset should restore common mode")
+    require(abs(at(0.55e-6, h_signed)) < 0.06, "first reset should clear activation state")
+    require(abs(at(0.55e-6, d_signed)) < 0.06, "first reset should clear hidden-error state")
     require(at(1.65e-6, signed) > 0.05, "synapse write should create a reusable signed state")
+    require(abs(at(1.65e-6, h_signed)) < 0.06, "activation state should stay near reset during z write")
+    require(abs(at(1.65e-6, d_signed)) < 0.06, "hidden-error state should stay near reset during z write")
     require(abs(at(2.25e-6, signed)) < 0.015, "second reset should clear written differential state")
     require(abs(at(2.25e-6, common) - 0.9) < 0.02, "second reset should restore common mode")
+    require(abs(at(2.25e-6, h_signed)) < 0.015, "second reset should keep activation state clear")
+    require(abs(at(2.25e-6, d_signed)) < 0.015, "second reset should keep hidden-error state clear")
 
-    fig, axes = plt.subplots(2, 1, figsize=(7.2, 5.8))
+    fig, axes = plt.subplots(3, 1, figsize=(7.2, 7.4))
     axes[0].plot(1e6 * t, zp, label="$z^+$ cap")
     axes[0].plot(1e6 * t, zm, label="$z^-$ cap")
     axes[0].plot(1e6 * t, rst / 2.0, color="0.5", alpha=0.45, label="$reset/2$")
@@ -497,15 +525,22 @@ quit
     axes[0].set_title("Transmission-gate reset restores preactivation common mode")
     axes[0].grid(True, alpha=0.25)
     axes[0].legend()
-    axes[1].plot(1e6 * t, signed, label="stored $z^- - z^+$")
-    axes[1].plot(1e6 * t, wpulse / 8.0, color="0.5", alpha=0.45, label="$w_{gate}/8$")
-    axes[1].plot(1e6 * t, rst / 10.0, color="0.25", alpha=0.35, label="$reset/10$")
+    axes[1].plot(1e6 * t, h_signed, label="activation $h^- - h^+$")
+    axes[1].plot(1e6 * t, d_signed, label="hidden error $\\delta^- - \\delta^+$")
     axes[1].axhline(0, color="0.4", linewidth=0.8)
-    axes[1].set_xlabel("time (us)")
     axes[1].set_ylabel("differential voltage (V)")
-    axes[1].set_title("Reset, write, and reset again without Python capacitor forcing")
+    axes[1].set_title("Same reset phase clears activation and hidden-error state")
     axes[1].grid(True, alpha=0.25)
     axes[1].legend()
+    axes[2].plot(1e6 * t, signed, label="stored $z^- - z^+$")
+    axes[2].plot(1e6 * t, wpulse / 8.0, color="0.5", alpha=0.45, label="$w_{gate}/8$")
+    axes[2].plot(1e6 * t, rst / 10.0, color="0.25", alpha=0.35, label="$reset/10$")
+    axes[2].axhline(0, color="0.4", linewidth=0.8)
+    axes[2].set_xlabel("time (us)")
+    axes[2].set_ylabel("differential voltage (V)")
+    axes[2].set_title("Reset, write, and reset again without Python capacitor forcing")
+    axes[2].grid(True, alpha=0.25)
+    axes[2].legend()
     fig.tight_layout()
     return save_plot(fig, "mos_reset_precharge_ngspice")
 

@@ -636,9 +636,10 @@ must satisfy before it can replace the current behavioral prototype.
   \includegraphics[width=0.88\linewidth]{figures/mos_reset_precharge_ngspice.png}
   \caption{Ngspice transient characterization of MOS reset/precharge for
   reusable state capacitors.  A complementary MOS transmission-gate reset first
-  clears a deliberately mismatched \(z^+/z^-\) capacitor pair to common mode.
+  clears a deliberately mismatched \(z^+/z^-\) capacitor pair to common mode
+  and also clears representative activation and hidden-error capacitor pairs.
   The synapse slice then writes a new signed preactivation, and a second reset
-  clears that written state without Python forcing the capacitor nodes.}
+  clears that written state without Python forcing any of the capacitor nodes.}
   \label{fig:mos-reset-ngspice}
 \end{figure}
 

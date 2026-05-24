@@ -547,7 +547,7 @@ The command
 \[
   \code{python3 spice/run\_mos\_cell\_characterization.py}
 \]
-emits four small Level-1 MOS decks under
+emits small Level-1 MOS decks under
 \(\code{results/mos\_cell\_characterization/}\), runs them with ngspice, and
 writes the plots in Figs.~\ref{fig:mos-synapse-ngspice}--\ref{fig:mos-writer-ngspice}.
 These decks use only MOS devices, capacitors, resistors, and independent
@@ -570,10 +570,12 @@ must satisfy before it can replace the current behavioral prototype.
 \begin{figure}[H]
   \centering
   \includegraphics[width=0.88\linewidth]{figures/mos_forward_pair_ngspice.png}
-  \caption{Ngspice DC characterization of the MOS forward differential pair.
-  The diode-connected load is voltage-inverting, so the useful signed load
-  voltage is plotted as \(h^- - h^+\).  It is monotone and bounded over the
-  operating sweep, matching the required tanh-like activation shape.}
+  \caption{Ngspice characterization of the MOS forward differential pair and
+  activation store.  The top panel is the DC transfer.  The diode-connected
+  load is voltage-inverting, so the useful signed load voltage is plotted as
+  \(h^- - h^+\).  The bottom panel is a transient storage check: when \(pact\)
+  is high the switch tracks the current activation onto \(C_h\), and when
+  \(pact\) closes the stored differential activation is held.}
   \label{fig:mos-forward-ngspice}
 \end{figure}
 

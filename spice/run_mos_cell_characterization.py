@@ -131,7 +131,7 @@ quit
 
 
 def characterize_forward_pair() -> Path:
-    deck = f"""
+    transfer_deck = f"""
 * MOS forward differential-pair sanity check
 {COMMON_MODELS}
 VDD vdd 0 1.8
@@ -151,24 +151,75 @@ quit
 .endc
 .end
 """
-    data = run_ngspice(deck, "mos_forward_pair")
+    store_deck = f"""
+* MOS forward storage sanity check
+{COMMON_MODELS}
+.param CSTORE=10p WSW=24u
+VDD vdd 0 1.8
+VZP zp 0 PWL(0 0.9 0.45u 0.9 0.5u 1.25 1.7u 1.25 1.75u 0.55 3.35u 0.55 3.4u 0.9 4u 0.9)
+VZM zm 0 0.9
+VTAIL vbias 0 0.95
+VPACT pact 0 PULSE(0 1.8 0.5u 20n 20n 0.75u 2.0u)
+MP1 hp hp vdd vdd PMOS L={{LCH}} W={{WP}}
+MP2 hm hm vdd vdd PMOS L={{LCH}} W={{WP}}
+MN1 hp zp tail 0 NMOS L={{LCH}} W={{WN}}
+MN2 hm zm tail 0 NMOS L={{LCH}} W={{WN}}
+MNT tail vbias 0 0 NMOS L={{LCH}} W={{WN}}
+MSP hp pact hcp 0 NMOS L={{LCH}} W={{WSW}}
+MSM hm pact hcm 0 NMOS L={{LCH}} W={{WSW}}
+CHP hcp 0 {{CSTORE}} IC=1.04
+CHM hcm 0 {{CSTORE}} IC=1.04
+RLEAKP hcp 0 50G
+RLEAKM hcm 0 50G
+.control
+set noaskquit
+tran 5n 4u uic
+wrdata mos_forward_store.dat v(hp) v(hm) v(hcp) v(hcm) v(pact)
+quit
+.endc
+.end
+"""
+    data = run_ngspice(transfer_deck, "mos_forward_pair")
     x, cols = load_wrdata(data, 2)
     xdiff = x - 0.9
     signed = cols[1] - cols[0]
     require(np.all(np.diff(signed) >= -1e-4), "forward pair transfer should be monotone")
     require(abs(signed[np.argmin(np.abs(xdiff))]) < 1e-3, "forward pair should be centered near zero")
-    fig, ax = plt.subplots(figsize=(7.2, 4.2))
+    store_data = run_ngspice(store_deck, "mos_forward_store")
+    t, store_cols = load_wrdata(store_data, 5)
+    load_signed = store_cols[1] - store_cols[0]
+    cap_signed = store_cols[3] - store_cols[2]
+
+    def at(time_s: float, values: np.ndarray) -> float:
+        return float(values[np.argmin(np.abs(t - time_s))])
+
+    require(at(1.2e-6, cap_signed) > 0.25, "activation cap should store positive phase")
+    require(at(1.8e-6, cap_signed) > 0.25, "activation cap should hold after first pact")
+    require(at(3.2e-6, cap_signed) < -0.18, "activation cap should store negative phase")
+    require(at(3.8e-6, cap_signed) < -0.18, "activation cap should hold after second pact")
+
+    fig, axes = plt.subplots(2, 1, figsize=(7.2, 6.4))
     # The diode-connected PMOS load is voltage-inverting: the rail that sinks
     # more differential-pair current moves lower.  Plot the usable signed load
     # voltage convention so the transfer rises with z+ - z-.
-    ax.plot(xdiff, signed, label="$h^- - h^+$")
-    ax.axhline(0, color="0.4", linewidth=0.8)
-    ax.axvline(0, color="0.4", linewidth=0.8)
-    ax.set_xlabel("$z^+ - z^-$ (V)")
-    ax.set_ylabel("load differential voltage (V)")
-    ax.set_title("Forward MOS differential pair gives monotone transfer")
-    ax.grid(True, alpha=0.25)
-    ax.legend()
+    axes[0].plot(xdiff, signed, label="$h^- - h^+$")
+    axes[0].axhline(0, color="0.4", linewidth=0.8)
+    axes[0].axvline(0, color="0.4", linewidth=0.8)
+    axes[0].set_xlabel("$z^+ - z^-$ (V)")
+    axes[0].set_ylabel("load differential voltage (V)")
+    axes[0].set_title("Forward pair gives monotone bounded transfer")
+    axes[0].grid(True, alpha=0.25)
+    axes[0].legend()
+    axes[1].plot(1e6 * t, load_signed, label="load $h^- - h^+$", alpha=0.75)
+    axes[1].plot(1e6 * t, cap_signed, label="stored $C_{h^-}-C_{h^+}$")
+    axes[1].plot(1e6 * t, store_cols[4] / 5.0, color="0.5", alpha=0.45, label="$pact/5$")
+    axes[1].axhline(0, color="0.4", linewidth=0.8)
+    axes[1].set_xlabel("time (us)")
+    axes[1].set_ylabel("differential voltage (V)")
+    axes[1].set_title("Phase switch stores and holds activation on capacitors")
+    axes[1].grid(True, alpha=0.25)
+    axes[1].legend()
+    fig.tight_layout()
     return save_plot(fig, "mos_forward_pair_ngspice")
 
 

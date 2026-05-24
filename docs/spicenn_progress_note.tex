@@ -21,7 +21,7 @@
 \newcommand{\code}[1]{\texttt{#1}}
 \newcommand{\vstate}[1]{\ensuremath{V_{\mathrm{#1}}}}
 
-\title{Fully On-Device SPICE Training of a Local-Feature MNIST Network}
+\title{Toward Fully On-Device SPICE Training of a Local-Feature MNIST Network}
 \author{SPICENN architecture note}
 \date{\today}
 
@@ -29,19 +29,26 @@
 \maketitle
 
 \begin{abstract}
-This note documents the SPICENN circuit architecture that currently works:
-a phase-resolved local-feature/readout network trained in one uninterrupted
-SPICE transient.  Python supplies only external input rails, target rails,
-clock/control waveforms, and final diagnostics.  It does not read hidden
-state, write weights, replay reference updates, or checkpoint neural-network
-state between samples.  On MNIST, a random-initialized
-\(10\times 10\), block-4, stride-2, 2-channel network trained for 6000 online
-updates with \(\mathrm{batch\_size}=1\) reached \(90.15\%\) accuracy on the
-full 10,000-image test set, improving from a \(10.89\%\) random baseline.  The
-result is not a claim of arbitrary CNN backpropagation in transistors; it is a
-strict fully-on-device SPICE training result for a compact local-feature
-architecture whose state is held on capacitor nodes and updated by local
-phase-gated current equations.
+This note documents the SPICENN circuit architecture that currently works and
+the gap that remains.  The present deck is a phase-resolved local-feature
+readout network trained in one uninterrupted SPICE transient: Python supplies
+only external input rails, target rails, clock/control waveforms, and final
+diagnostics.  It does not read hidden state, write weights, replay reference
+updates, or checkpoint neural-network state between samples.  On MNIST, a
+random-initialized \(10\times 10\), block-4, stride-2, 2-channel network trained
+for 6000 online updates with \(\mathrm{batch\_size}=1\) reached \(90.15\%\)
+accuracy on the full 10,000-image test set, improving from a \(10.89\%\)
+random baseline.
+
+That run is not the final goal.  It used behavioral SPICE current equations for
+the neuron storage and writer cells, and it used a local-PCA sample ordering
+chosen to reduce input waveform switching.  The result is therefore best read
+as strong architectural evidence for capacitor-held state and phase-gated
+local updates, not as a completed fully device-level training demonstration.
+The remaining goal is a random-init, one-transient, \(\mathrm{batch\_size}=1\)
+SPICE training run with realistic sample order, no Python neural-state
+updates/checkpoints, device-level neuron/write circuits, and full 10,000-image
+MNIST accuracy above \(90\%\).
 \end{abstract}
 
 \section{Contract}
@@ -59,11 +66,16 @@ in the loop.''  During a training run:
     measured and evaluated for accuracy.
 \end{enumerate}
 
-The final run satisfies this contract with \(\code{reference\_mode=none}\),
-\(\code{strict\_fully\_on\_device}=true\), one Xyce transient, and no reference
-replay.  The final 10,000-image evaluation is a NumPy diagnostic of the
-SPICE-trained final state.  The training trajectory itself is not computed by
-NumPy or by a Python optimizer.
+The 6000-update local-PCA run satisfies this execution contract: it uses one
+Xyce transient, no reference replay, and no Python-side neural-state updates.
+The final 10,000-image evaluation is a NumPy diagnostic of the SPICE-trained
+final state.  The training trajectory itself is not computed by NumPy or by a
+Python optimizer.
+
+This execution contract is necessary but not sufficient for the full objective.
+A final-goal result must also remove unrealistic training-order assumptions and
+replace the behavioral neuron/write kernels with device-level circuits or
+validated transistor subcircuits.
 
 \section{Basic Building Blocks}
 
@@ -88,8 +100,9 @@ stand in for transistor subcircuits while the architecture is being validated.
     \addlinespace
     Phase rails &
     Global rails such as activation-store, score-store, error/backward, and
-    accumulation/write open local current paths at known times.  The final run
-    uses pulse-gated clocks to avoid long explicit PWL clock tables. \\
+    accumulation/write open local current paths at known times.  The
+    high-accuracy behavioral run uses pulse-gated clocks to avoid long explicit
+    PWL clock tables. \\
     \addlinespace
     Behavioral transconductor &
     A SPICE \(B\)-source current term relaxes a storage capacitor toward a
@@ -105,14 +118,14 @@ stand in for transistor subcircuits while the architecture is being validated.
   \end{tabular}
 \end{center}
 
-The important distinction is that the final result is not a software
+The important distinction is that the current evidence is not a software
 checkpoint loop.  The behavioral current sources are inside one SPICE transient
 and act on capacitor voltages continuously over time.  Python only prepares the
 external waveforms and reads the final state for diagnostics.
 
 \section{Working Architecture}
 
-The successful network is a local-feature classifier rather than a dense CNN.
+The best explored network is a local-feature classifier rather than a dense CNN.
 MNIST images are resized to \(10\times 10\) and quantized to 16 input levels.
 The trainable hidden layer uses all \(4\times4\) spatial blocks at stride 2.
 For a \(10\times10\) image this gives
@@ -185,8 +198,8 @@ capacitor state, not a shared software kernel broadcast over many positions.
   \caption{Working local-feature/readout architecture.  The hidden block
   contains 32 local feature cells.  Persistent capacitor states hold local
   weights and biases, hidden activations and hidden deltas during a cycle, and
-  class readout weights.  The final run freezes output bias state, so there is
-  no output-bias write path in the reported result.}
+  class readout weights.  The high-accuracy behavioral run freezes output bias
+  state, so there is no output-bias write path in that run.}
   \label{fig:working-architecture}
 \end{figure}
 
@@ -205,8 +218,8 @@ local weight states, 32 local bias states, and
 \[
   10\cdot16\cdot2 = 320
 \]
-readout weight states.  Output biases are frozen in the final result, leaving
-864 printed trainable state vectors.
+readout weight states.  Output biases are frozen in the high-accuracy
+behavioral run, leaving 864 printed trainable state vectors.
 
 For one sample, each local feature computes a block-local preactivation
 \[
@@ -225,7 +238,8 @@ and a linear transfer for the class readout.  The class scores are
 \[
   s_k = \sum_{b,c} V_{kbc}\,h_{bc} + o_k,
 \]
-with frozen \(o_k\) in the final run.  The output error is softmax-like:
+with frozen \(o_k\) in the high-accuracy behavioral run.  The output error is
+softmax-like:
 \[
   d_k = t_k - \operatorname{softmax}(s/T)_k,
 \]
@@ -246,7 +260,7 @@ capacitor voltages:
 \[
   \Delta V_{kbc} = \eta\,\alpha_V\,d_k\,h_{bc},
 \]
-with \(\alpha_V=0.5\) for the final run.  These equations are rendered as
+with \(\alpha_V=0.5\) for the high-accuracy behavioral run.  These equations are rendered as
 SPICE behavioral current terms into the state capacitors, gated by phase
 clocks.  They are not computed by Python during the transient.  The behavioral
 terms are the current stand-in for the transistor writer blocks; the important
@@ -255,7 +269,7 @@ phase-gated writes, not Python-side gradient application.
 
 \section{Neuron Circuit Used In The Final Run}
 
-The hidden neuron used in the strict \(90.15\%\) run is the stored tanh
+The hidden neuron used in the \(90.15\%\) behavioral/local-PCA run is the stored tanh
 local-feature cell shown in Fig.~\ref{fig:stored-tanh-neuron}.  It is precise
 to the generated SPICE topology: the preactivation is an inline weighted sum,
 the activation is stored on a capacitor during the activation phase, the hidden
@@ -412,15 +426,17 @@ The hidden delta storage uses the same first-order form with target
 \[
   \left(\sum_k d_kV_{kbc}\right)(1-\tanh^2(z_{bc})).
 \]
-This is the circuit actually used by the final result.  Earlier MOS ReLU and
-differential source-follower cells remain important transistor-level building
-blocks, but they are not the high-accuracy final neuron yet.
+This is the circuit actually used by the high-accuracy behavioral/local-PCA
+run.  Earlier MOS ReLU and differential source-follower cells remain important
+transistor-level building blocks, but they have not yet replaced this
+behavioral neuron/write kernel in a high-accuracy run.
 
 \section{Phase Schedule}
 
 The runner uses a repeated sample cycle with separate guide rails for forward
 settling, activation storage, score storage, error/backward formation, and
-direct accumulation/write.  In the final run the update is direct:
+direct accumulation/write.  In the high-accuracy behavioral run the update is
+direct:
 there are no gradient-accumulator capacitors and no apply-once batch phase.
 This is why the run uses \(\mathrm{batch\_size}=1\) and 6000 distinct online
 updates.
@@ -461,27 +477,32 @@ differential clipped-ReLU alternatives at the longer online horizons.
 
 \section{Input And Source-Cost Choices}
 
-The final run includes two source-cost optimizations that preserve the
-fully-on-device training contract.
+The current deck includes source-cost optimizations that preserve the execution
+contract, but not all of them are acceptable for the final goal.
 
 \paragraph{q16 input rails.}
 The \(10\times10\) input pixels are quantized to 16 levels before waveform
 generation.  Python is still only driving input rails; it is not computing
 network state.  Quantization reduces the number of source transitions while
-preserving enough accuracy headroom for the final branch.
+preserving enough accuracy headroom for the high-accuracy branch.
 
-\paragraph{Local-PCA sample order.}
-The training prefix contains 6000 MNIST samples.  Within fixed windows of 512
-samples, Python orders examples by a local PCA projection to reduce input PWL
-switching.  This changes the online sample order, which is allowed by the
-contract, but does not expose or update neural state outside SPICE.  More
-global sorting reduced waveform cost further but harmed learning; the 512-window
-local-PCA order was the best cost/accuracy tradeoff found for the final branch.
+\paragraph{Rejected local-PCA sample order.}
+The \(90.15\%\) run used a local-PCA ordering inside 512-sample windows to
+reduce input PWL switching.  Although this does not read or write neural state,
+it is still an unrealistic training assumption: the data stream is chosen using
+a structure-aware preprocessing pass whose purpose is simulator convenience.
+It should therefore not count toward the final goal.  Future headline runs
+should use the stable dataset order, a seeded random order, or another
+training-realistic order that is chosen independently of source-waveform
+compression.
 
-\section{Result}
+\section{Current Evidence}
 
-Table~\ref{tab:headline} gives the strict fully-on-device result.  The compact
-artifacts are:
+No final-goal result is claimed yet.  Table~\ref{tab:headline} records the
+strongest high-accuracy run because it is useful architectural evidence, but it
+is disqualified from the final objective for two reasons: the neuron/write cells
+are behavioral current equations, and the training order uses local-PCA source
+compression.  The compact artifacts are:
 \begin{center}
 \small
 \path{results/tables/spice_mnist_local_feature_phase_codex_q16_6k_localpca512_strict_u6000_eval10k_summary.json}
@@ -490,7 +511,8 @@ and its corresponding equivalence/metrics CSV.
 
 \begin{table}[H]
   \centering
-  \caption{Strict MNIST result for the working architecture.}
+  \caption{High-accuracy behavioral/local-PCA run.  This is evidence, not a
+  final-goal result.}
   \label{tab:headline}
   \begin{tabular}{ll}
     \toprule
@@ -510,21 +532,23 @@ and its corresponding equivalence/metrics CSV.
     Python weight updates between samples & false \\
     Python checkpointing between samples & false \\
     Random initialization & true \\
-    Strict contract met & true \\
+    Execution contract met & true \\
+    Final-goal status & disqualified: behavioral writers and local-PCA order \\
     \bottomrule
   \end{tabular}
 \end{table}
 
 \begin{table}[H]
   \centering
-  \caption{Key knobs and simulation cost for the final run.}
+  \caption{Key knobs and simulation cost for the disqualified high-accuracy
+  run.}
   \label{tab:cost}
   \begin{tabular}{ll}
     \toprule
     Field & Value \\
     \midrule
     Input mode & PWL, 16 quantization levels \\
-    Train order & local-PCA, window 512 \\
+    Train order & local-PCA, window 512, not final-goal acceptable \\
     Hidden activation / local synapse & tanh / tanh-clipped \\
     Readout synapse & linear \\
     Learning rate & 0.3, linear decay to \(0.2\times\) \\
@@ -561,13 +585,17 @@ but the useful conclusions are short:
     long-horizon branch among the tested neuron/synapse choices.  Differential
     clipped-ReLU was competitive early but trailed at longer horizons; softplus
     and leaky ReLU were weaker in this setup.
-  \item q16 input quantization and local-PCA ordering reduced waveform pressure
-    while preserving the learning endpoint.
+  \item q16 input quantization reduced waveform pressure while preserving
+    learning.  Local-PCA ordering reduced waveform pressure further, but it is
+    now treated as a disallowed simulator convenience rather than a valid
+    training assumption.
   \item Pulse-gated clocks and analytic LR control removed avoidable PWL
     sources.  Pixel input transitions remain the dominant source-cost term.
-  \item The 1024-update and 2048-update strict promotions already showed
-    meaningful full-test learning.  The 6000-update run closed the full
-    objective by reaching \(90.15\%\).
+  \item The 1024-update and 2048-update strict promotions showed meaningful
+    full-test learning under the execution contract.  The 6000-update run
+    showed that the architecture has enough learning headroom to reach
+    \(90.15\%\), but it does not close the final objective because of the
+    behavioral writer/neuron cells and local-PCA order.
 \end{enumerate}
 
 The most important enablers were not any single magic neuron.  They were the
@@ -577,40 +605,43 @@ stored hidden activations and hidden deltas; (3) tanh/tanh-clipped nonlinearitie
 that avoided the dead/one-sided behavior seen in several ReLU-like screens;
 (4) frozen output bias, readout scale \(0.5\), and softmax temperature \(2.0\),
 which kept the output error and readout writes in a useful range; and (5) source
-compression that made the long strict transient runnable without changing the
-training contract.
+compression that made the long strict transient runnable.  The local-PCA part
+of that compression is not acceptable for the final result.
 
 \section{What The Result Does And Does Not Claim}
 
-This result establishes that the high-performing SPICE training path can be
-moved from Python-orchestrated checkpoint/update chunks into a continuous,
-stateful, fully-on-device SPICE simulation for the local-feature architecture.
-The final run starts from random weights, performs online updates inside one
-transient, and crosses \(90\%\) on full MNIST test accuracy.
+The current evidence establishes that a high-performing SPICE training path can
+be moved from Python-orchestrated checkpoint/update chunks into a continuous,
+stateful SPICE simulation for the local-feature architecture.  The
+high-accuracy run starts from random weights, performs online updates inside
+one transient, and crosses \(90\%\) on full MNIST test accuracy.
 
-It does not yet establish a fully transistor-sized dense CNN or a general
-backpropagation primitive for arbitrary architectures.  The update cells in
-this deck are behavioral current equations standing in for the transistor
-writer blocks that earlier device-level experiments explored.  A future
-transistor-level version should preserve the same contract while replacing the
+It does not establish the final goal.  First, the update cells in this deck are
+behavioral current equations standing in for the transistor writer blocks that
+earlier device-level experiments explored.  Second, the \(90.15\%\) run used
+local-PCA sample ordering, which should be removed from the headline path
+because it is not a realistic training assumption.  A future device-level
+version should preserve the same execution contract while replacing the
 behavioral kernels with characterized MOS differential synapses, error rails,
-and signed write branches.
+and signed write branches, and while training under a realistic sample order.
 
 \section{Training Faster And Scaling Further}
 
-The main open problem is no longer whether the fully-on-device contract can
-learn on MNIST; it can for this architecture.  The next problem is cost.  The
-final run spent most of its source complexity on pixel waveforms:
-465,518 of 475,007 PWL points came from pixel sources.  That makes the first
-speed target input delivery, not the number of printed state vectors.
+The main open problem is still the full objective: device-level training,
+realistic sample order, one uninterrupted transient, \(\mathrm{batch\_size}=1\),
+and \(>90\%\) full-test MNIST accuracy.  Cost is the immediate practical
+blocker.  The disqualified 6000-update run spent most of its source complexity
+on pixel waveforms: 465,518 of 475,007 PWL points came from pixel sources.
+That makes the first speed target input delivery, not the number of printed
+state vectors.
 
 \paragraph{Near-term simulation speedups.}
 The most plausible speedups are:
 \begin{enumerate}
   \item replace per-pixel PWL rails with a simulator-friendly encoded input
     source or sample-and-hold front end;
-  \item preserve local-PCA ordering but search better bounded window schedules
-    that reduce switching without making the online order too artificial;
+  \item replace the local-PCA source-compression trick with realistic input
+    compression that is independent of the sample ordering;
   \item avoid printing or measuring any state not needed for final diagnostics;
   \item use strict small-horizon equivalence runs to validate knobs before
     spending multi-thousand-update Xyce runs;

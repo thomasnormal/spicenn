@@ -71,6 +71,28 @@ def save_plot(fig: plt.Figure, stem: str) -> Path:
 
 
 def characterize_synapse() -> Path:
+    def synapse_cm_devices(name: str, cm: float) -> str:
+        return f"""
+VCM_{name} cm_{name} 0 {cm:.2f}
+VDIFF_{name} xp_{name} xm_{name} PWL(0 -1.4 10u 1.4)
+RXP_{name} xp_{name} cm_{name} 1G
+RXM_{name} xm_{name} cm_{name} 1G
+
+VWPP_{name} wpp_{name} 0 1.15
+VZPP_{name} zpp_{name} 0 1.8
+VZMP_{name} zmp_{name} 0 1.8
+MPP_{name} zpp_{name} xp_{name} tailp_{name} 0 NMOS L={{LCH}} W={{WN}}
+MPM_{name} zmp_{name} xm_{name} tailp_{name} 0 NMOS L={{LCH}} W={{WN}}
+MTP_{name} tailp_{name} wpp_{name} 0 0 NMOS L={{LCH}} W=12u
+
+VWMN_{name} wmn_{name} 0 1.15
+VZPN_{name} zpn_{name} 0 1.8
+VZMN_{name} zmn_{name} 0 1.8
+MNP_{name} zpn_{name} xm_{name} tailn_{name} 0 NMOS L={{LCH}} W={{WN}}
+MNM_{name} zmn_{name} xp_{name} tailn_{name} 0 NMOS L={{LCH}} W={{WN}}
+MTN_{name} tailn_{name} wmn_{name} 0 0 NMOS L={{LCH}} W=12u
+"""
+
     deck = f"""
 * Signed MOS synapse transconductance sanity check
 {COMMON_MODELS}
@@ -99,6 +121,31 @@ Mtn tailn wmn 0 0 NMOS L={{LCH}} W=12u
 set noaskquit
 dc VDIFF -1.4 1.4 0.02
 wrdata mos_synapse_slice.dat i(VZPP) i(VZMP) i(VZPN) i(VZMN) v(xp) v(xm)
+quit
+.endc
+.end
+"""
+    cm_cases = [("low", 0.75), ("nominal", 0.90), ("high", 1.05)]
+    cm_prints = []
+    for name, _cm in cm_cases:
+        cm_prints.extend(
+            [
+                f"v(xp_{name})",
+                f"v(xm_{name})",
+                f"i(VZPP_{name})",
+                f"i(VZMP_{name})",
+                f"i(VZPN_{name})",
+                f"i(VZMN_{name})",
+            ]
+        )
+    cm_deck = f"""
+* Signed MOS synapse input common-mode margin check
+{COMMON_MODELS}
+{''.join(synapse_cm_devices(name, cm) for name, cm in cm_cases)}
+.control
+set noaskquit
+tran 20n 10u
+wrdata mos_synapse_common_mode.dat {' '.join(cm_prints)}
 quit
 .endc
 .end
@@ -207,6 +254,26 @@ quit
     require(np.max(np.abs(pos_signed + neg_signed)) < 1e-6 * peak, "negative-weight copy should reverse sign")
     require(np.max(np.abs(pos_signed + pos_signed[::-1])) < 2e-3 * peak, "synapse transfer should be odd-symmetric")
 
+    cm_data = run_ngspice(cm_deck, "mos_synapse_common_mode")
+    _cmt, cm_cols = load_wrdata(cm_data, 6 * len(cm_cases))
+    cm_curves: list[tuple[str, float, np.ndarray, np.ndarray, np.ndarray]] = []
+    for idx, (name, cm) in enumerate(cm_cases):
+        xp = cm_cols[6 * idx]
+        xm = cm_cols[6 * idx + 1]
+        cm_pos_signed = cm_cols[6 * idx + 3] - cm_cols[6 * idx + 2]
+        cm_neg_signed = cm_cols[6 * idx + 5] - cm_cols[6 * idx + 4]
+        cm_xdiff = xp - xm
+        cm_peak = max(float(np.max(np.abs(cm_pos_signed))), 1e-30)
+        cm_zero = float(cm_pos_signed[np.argmin(np.abs(cm_xdiff))])
+        require(np.mean(cm_pos_signed[cm_xdiff > 0.2]) > 0, f"{name} VCM w+ branch should stay positive")
+        require(np.mean(cm_pos_signed[cm_xdiff < -0.2]) < 0, f"{name} VCM w+ branch should stay negative")
+        require(np.mean(cm_neg_signed[cm_xdiff > 0.2]) < 0, f"{name} VCM w- branch should stay negative")
+        require(np.mean(cm_neg_signed[cm_xdiff < -0.2]) > 0, f"{name} VCM w- branch should stay positive")
+        require(cm_peak > 0.5e-6, f"{name} VCM synapse branch should retain useful current swing")
+        require(abs(cm_zero) < 0.05 * cm_peak, f"{name} VCM synapse transfer should stay centered")
+        require(np.max(np.abs(cm_pos_signed + cm_neg_signed)) < 0.02 * cm_peak, f"{name} VCM w- copy should reverse sign")
+        cm_curves.append((name, cm, cm_xdiff, cm_pos_signed, cm_neg_signed))
+
     store_data = run_ngspice(store_deck, "mos_synapse_store")
     t, store_cols = load_wrdata(store_data, 7)
     pos_cap_signed = store_cols[1] - store_cols[0]
@@ -291,6 +358,23 @@ quit
     weighted_axes[1].legend()
     weighted_fig.tight_layout()
     save_plot(weighted_fig, "mos_synapse_weighted_ngspice")
+
+    cm_fig, cm_axes = plt.subplots(2, 1, figsize=(7.2, 5.8), sharex=True)
+    for name, cm, cm_xdiff, cm_pos_signed, cm_neg_signed in cm_curves:
+        cm_axes[0].plot(cm_xdiff, 1e6 * cm_pos_signed, label=f"$w^+$ VCM={cm:.2f} V")
+        cm_axes[1].plot(cm_xdiff, 1e6 * cm_neg_signed, label=f"$w^-$ VCM={cm:.2f} V")
+    for ax in cm_axes:
+        ax.axhline(0, color="0.4", linewidth=0.8)
+        ax.axvline(0, color="0.4", linewidth=0.8)
+        ax.set_ylabel("contribution current (uA)")
+        ax.grid(True, alpha=0.25)
+    cm_axes[0].set_title("Positive-weight synapse sign is stable across input common-mode")
+    cm_axes[1].set_title("Gate-swapped negative-weight copy reverses sign across input common-mode")
+    cm_axes[1].set_xlabel("$x^+ - x^-$ (V)")
+    cm_axes[0].legend(loc="upper left")
+    cm_axes[1].legend(loc="lower left")
+    cm_fig.tight_layout()
+    save_plot(cm_fig, "mos_synapse_common_mode_ngspice")
     return synapse_plot
 
 

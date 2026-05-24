@@ -624,6 +624,21 @@ must satisfy before it can replace the current behavioral prototype.
 
 \begin{figure}[H]
   \centering
+  \includegraphics[width=0.88\linewidth]{figures/mos_synapse_common_mode_ngspice.png}
+  \caption{Ngspice input common-mode margin characterization of the signed MOS
+  synapse slice.  Three matched positive- and negative-weight copies sweep
+  \(x^+-x^-\) while the input common-mode is held at \(0.75\), \(0.90\), and
+  \(1.05\) V.  The \(w^+\) branch keeps the expected sign over the full
+  differential input range, and the gate-swapped \(w^-\) branch keeps the
+  opposite sign.  The zero-crossing offset remains about \(2.1\) \(\mu\)A
+  while the peak contribution swing remains above \(460\) \(\mu\)A in this
+  Level-1 testbench, so the signed synapse is not relying on one exact
+  activation common-mode point.}
+  \label{fig:mos-synapse-common-mode-ngspice}
+\end{figure}
+
+\begin{figure}[H]
+  \centering
   \includegraphics[width=0.88\linewidth]{figures/mos_forward_pair_ngspice.png}
   \caption{Ngspice characterization of the MOS forward differential pair and
   activation store.  The top panel is the DC transfer under fixed common-mode

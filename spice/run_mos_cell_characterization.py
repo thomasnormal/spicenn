@@ -2969,6 +2969,202 @@ quit
     bias_fig.tight_layout()
     save_plot(bias_fig, "mos_hidden_writer_gate_bias_ngspice")
 
+    restored_deck = f"""
+* Restored hidden-error gate to writer characterization.
+* A skewed CMOS inverter restorer converts the small stored hidden-error
+* differential into wider active-low writer gates.  This is still not an ideal
+* comparator or behavioral source: the restored gates are MOS inverter output
+* voltages, and those voltages directly drive the PMOS writer stacks.
+{COMMON_MODELS}
+.param CERR=10p CWRITE=500p WSW=24u WWRITE=10u WRESTN=12u WRESTP=300u
+VDD vdd 0 1.8
+VTAIL vbias 0 0.95
+VPBWD pbwd 0 PULSE(0 1.8 0.45u 20n 20n 0.80u 5.0u)
+VRP rp 0 PULSE(0 1.8 0.45u 20n 20n 0.80u 5.0u)
+VRM rm 0 PULSE(0 1.8 0.45u 20n 20n 0.80u 5.0u)
+VPACC_N paccn 0 PULSE(1.8 0 1.55u 20n 20n 0.80u 5.0u)
+
+VZPP zpp 0 {0.9 + eps / 2.0:.5f}
+VZMM zmm 0 {0.9 - eps / 2.0:.5f}
+VZPM zpm 0 {0.9 - eps / 2.0:.5f}
+VZMP zmp 0 {0.9 + eps / 2.0:.5f}
+
+MPPP hpp hpp vdd vdd PMOS L={{LCH}} W={{WP}}
+MPPM hpm hpm vdd vdd PMOS L={{LCH}} W={{WP}}
+MNPP hpp zpp tailp 0 NMOS L={{LCH}} W={{WN}}
+MNPM hpm zmm tailp 0 NMOS L={{LCH}} W={{WN}}
+MNTP tailp vbias 0 0 NMOS L={{LCH}} W={{WN}}
+
+MPMP hmp hmp vdd vdd PMOS L={{LCH}} W={{WP}}
+MPMM hmm hmm vdd vdd PMOS L={{LCH}} W={{WP}}
+MNMP hmp zpm tailm 0 NMOS L={{LCH}} W={{WN}}
+MNMM hmm zmp tailm 0 NMOS L={{LCH}} W={{WN}}
+MNTM tailm vbias 0 0 NMOS L={{LCH}} W={{WN}}
+
+CDP_RP cdp_rp 0 {{CERR}} IC=1.04
+CDM_RP cdm_rp 0 {{CERR}} IC=1.04
+CDP_RM cdp_rm 0 {{CERR}} IC=1.04
+CDM_RM cdm_rm 0 {{CERR}} IC=1.04
+RDP_RP cdp_rp 0 50G
+RDM_RP cdm_rp 0 50G
+RDP_RM cdp_rm 0 50G
+RDM_RM cdm_rm 0 50G
+{sign_store_path("hpm", "rp", "cdp_rp", "restrp1")}
+{sign_store_path("hmp", "rp", "cdp_rp", "restrp2")}
+{sign_store_path("hpp", "rp", "cdm_rp", "restrp3")}
+{sign_store_path("hmm", "rp", "cdm_rp", "restrp4")}
+{sign_store_path("hpp", "rm", "cdp_rm", "restrm1")}
+{sign_store_path("hmm", "rm", "cdp_rm", "restrm2")}
+{sign_store_path("hpm", "rm", "cdm_rm", "restrm3")}
+{sign_store_path("hmp", "rm", "cdm_rm", "restrm4")}
+
+* Skewed CMOS restorers: the higher hidden-error rail pulls its restored gate
+* lower, while the lower rail is restored high enough to suppress the
+* complementary PMOS writer stack.
+MPRP_CDP rgp_rp cdp_rp vdd vdd PMOS L={{LCH}} W={{WRESTP}}
+MNRP_CDP rgp_rp cdp_rp 0 0 NMOS L={{LCH}} W={{WRESTN}}
+MPRP_CDM rgm_rp cdm_rp vdd vdd PMOS L={{LCH}} W={{WRESTP}}
+MNRP_CDM rgm_rp cdm_rp 0 0 NMOS L={{LCH}} W={{WRESTN}}
+
+MPRM_CDP rgp_rm cdp_rm vdd vdd PMOS L={{LCH}} W={{WRESTP}}
+MNRM_CDP rgp_rm cdp_rm 0 0 NMOS L={{LCH}} W={{WRESTN}}
+MPRM_CDM rgm_rm cdm_rm vdd vdd PMOS L={{LCH}} W={{WRESTP}}
+MNRM_CDM rgm_rm cdm_rm 0 0 NMOS L={{LCH}} W={{WRESTN}}
+
+VHM_POS hm_pos 0 0.92
+
+* Direct analog-gate baseline.
+CWP_RP_DIR wp_rp_dir 0 {{CWRITE}} IC=0.85
+CWM_RP_DIR wm_rp_dir 0 {{CWRITE}} IC=0.85
+MWP_RP_DIR_A vdd paccn n_wp_rp_dir_a vdd PMOS L={{LCH}} W={{WWRITE}}
+MWP_RP_DIR_B n_wp_rp_dir_a hm_pos n_wp_rp_dir_b vdd PMOS L={{LCH}} W={{WWRITE}}
+MWP_RP_DIR_C n_wp_rp_dir_b cdm_rp wp_rp_dir vdd PMOS L={{LCH}} W={{WWRITE}}
+MWM_RP_DIR_A vdd paccn n_wm_rp_dir_a vdd PMOS L={{LCH}} W={{WWRITE}}
+MWM_RP_DIR_B n_wm_rp_dir_a hm_pos n_wm_rp_dir_b vdd PMOS L={{LCH}} W={{WWRITE}}
+MWM_RP_DIR_C n_wm_rp_dir_b cdp_rp wm_rp_dir vdd PMOS L={{LCH}} W={{WWRITE}}
+
+CWP_RM_DIR wp_rm_dir 0 {{CWRITE}} IC=0.85
+CWM_RM_DIR wm_rm_dir 0 {{CWRITE}} IC=0.85
+MWP_RM_DIR_A vdd paccn n_wp_rm_dir_a vdd PMOS L={{LCH}} W={{WWRITE}}
+MWP_RM_DIR_B n_wp_rm_dir_a hm_pos n_wp_rm_dir_b vdd PMOS L={{LCH}} W={{WWRITE}}
+MWP_RM_DIR_C n_wp_rm_dir_b cdm_rm wp_rm_dir vdd PMOS L={{LCH}} W={{WWRITE}}
+MWM_RM_DIR_A vdd paccn n_wm_rm_dir_a vdd PMOS L={{LCH}} W={{WWRITE}}
+MWM_RM_DIR_B n_wm_rm_dir_a hm_pos n_wm_rm_dir_b vdd PMOS L={{LCH}} W={{WWRITE}}
+MWM_RM_DIR_C n_wm_rm_dir_b cdp_rm wm_rm_dir vdd PMOS L={{LCH}} W={{WWRITE}}
+
+* Restored-gate writer.
+CWP_RP_RST wp_rp_rst 0 {{CWRITE}} IC=0.85
+CWM_RP_RST wm_rp_rst 0 {{CWRITE}} IC=0.85
+MWP_RP_RST_A vdd paccn n_wp_rp_rst_a vdd PMOS L={{LCH}} W={{WWRITE}}
+MWP_RP_RST_B n_wp_rp_rst_a hm_pos n_wp_rp_rst_b vdd PMOS L={{LCH}} W={{WWRITE}}
+MWP_RP_RST_C n_wp_rp_rst_b rgp_rp wp_rp_rst vdd PMOS L={{LCH}} W={{WWRITE}}
+MWM_RP_RST_A vdd paccn n_wm_rp_rst_a vdd PMOS L={{LCH}} W={{WWRITE}}
+MWM_RP_RST_B n_wm_rp_rst_a hm_pos n_wm_rp_rst_b vdd PMOS L={{LCH}} W={{WWRITE}}
+MWM_RP_RST_C n_wm_rp_rst_b rgm_rp wm_rp_rst vdd PMOS L={{LCH}} W={{WWRITE}}
+
+CWP_RM_RST wp_rm_rst 0 {{CWRITE}} IC=0.85
+CWM_RM_RST wm_rm_rst 0 {{CWRITE}} IC=0.85
+MWP_RM_RST_A vdd paccn n_wp_rm_rst_a vdd PMOS L={{LCH}} W={{WWRITE}}
+MWP_RM_RST_B n_wp_rm_rst_a hm_pos n_wp_rm_rst_b vdd PMOS L={{LCH}} W={{WWRITE}}
+MWP_RM_RST_C n_wp_rm_rst_b rgp_rm wp_rm_rst vdd PMOS L={{LCH}} W={{WWRITE}}
+MWM_RM_RST_A vdd paccn n_wm_rm_rst_a vdd PMOS L={{LCH}} W={{WWRITE}}
+MWM_RM_RST_B n_wm_rm_rst_a hm_pos n_wm_rm_rst_b vdd PMOS L={{LCH}} W={{WWRITE}}
+MWM_RM_RST_C n_wm_rm_rst_b rgm_rm wm_rm_rst vdd PMOS L={{LCH}} W={{WWRITE}}
+
+.control
+set noaskquit
+tran 5n 3.4u uic
+wrdata mos_hidden_writer_restored_gate.dat v(cdp_rp) v(cdm_rp) v(cdp_rm) v(cdm_rm) v(rgp_rp) v(rgm_rp) v(rgp_rm) v(rgm_rm) v(wp_rp_dir) v(wm_rp_dir) v(wp_rm_dir) v(wm_rm_dir) v(wp_rp_rst) v(wm_rp_rst) v(wp_rm_rst) v(wm_rm_rst) v(pbwd) v(paccn)
+quit
+.endc
+.end
+"""
+    restored_data = run_ngspice(restored_deck, "mos_hidden_writer_restored_gate")
+    hrt, hrest_cols = load_wrdata(restored_data, 18)
+
+    def hrat(time_s: float, values: np.ndarray) -> float:
+        return float(values[np.argmin(np.abs(hrt - time_s))])
+
+    hrest_pos_hidden = hrest_cols[0] - hrest_cols[1]
+    hrest_neg_hidden = hrest_cols[2] - hrest_cols[3]
+    rp_gate_contrast = hrest_cols[5] - hrest_cols[4]
+    rm_gate_contrast = hrest_cols[6] - hrest_cols[7]
+    require(hrat(1.35e-6, hrest_pos_hidden) > 0.07, "restored deck should store positive r+ hidden error")
+    require(hrat(1.35e-6, hrest_neg_hidden) < -0.07, "restored deck should store negative r- hidden error")
+    require(hrat(1.45e-6, rp_gate_contrast) > 0.25, "r+ restored gates should separate before pacc")
+    require(hrat(1.45e-6, rm_gate_contrast) > 0.25, "r- restored gates should separate before pacc")
+
+    direct_rp_selected = hrat(2.75e-6, hrest_cols[8]) - hrat(1.45e-6, hrest_cols[8])
+    direct_rp_comp = hrat(2.75e-6, hrest_cols[9]) - hrat(1.45e-6, hrest_cols[9])
+    direct_rm_comp = hrat(2.75e-6, hrest_cols[10]) - hrat(1.45e-6, hrest_cols[10])
+    direct_rm_selected = hrat(2.75e-6, hrest_cols[11]) - hrat(1.45e-6, hrest_cols[11])
+    rest_rp_selected = hrat(2.75e-6, hrest_cols[12]) - hrat(1.45e-6, hrest_cols[12])
+    rest_rp_comp = hrat(2.75e-6, hrest_cols[13]) - hrat(1.45e-6, hrest_cols[13])
+    rest_rm_comp = hrat(2.75e-6, hrest_cols[14]) - hrat(1.45e-6, hrest_cols[14])
+    rest_rm_selected = hrat(2.75e-6, hrest_cols[15]) - hrat(1.45e-6, hrest_cols[15])
+
+    direct_pos_net = hrat(2.75e-6, hrest_cols[8] - hrest_cols[9])
+    direct_neg_net = hrat(2.75e-6, hrest_cols[10] - hrest_cols[11])
+    rest_pos_net = hrat(2.75e-6, hrest_cols[12] - hrest_cols[13])
+    rest_neg_net = hrat(2.75e-6, hrest_cols[14] - hrest_cols[15])
+    direct_selectivity = 0.5 * (direct_rp_selected + direct_rm_selected) / (
+        0.5 * (direct_rp_comp + direct_rm_comp)
+    )
+    rest_selectivity = 0.5 * (rest_rp_selected + rest_rm_selected) / (
+        0.5 * (rest_rp_comp + rest_rm_comp)
+    )
+    require(rest_pos_net > 0.006, "restored r+ writer should keep a usable positive net update")
+    require(rest_neg_net < -0.006, "restored r- writer should keep a usable negative net update")
+    require(rest_pos_net < 0.09, "restored r+ writer should remain an incremental update")
+    require(abs(rest_neg_net) < 0.09, "restored r- writer should remain an incremental update")
+    require(abs(rest_pos_net + rest_neg_net) < 0.003, "restored r+/r- net updates should stay symmetric")
+    require(rest_selectivity > direct_selectivity + 1.0, "restored gates should improve selected/complement contrast")
+    require(rest_rp_comp < direct_rp_comp * 0.35, "restored r+ complementary rail should be strongly suppressed")
+    require(rest_rm_comp < direct_rm_comp * 0.35, "restored r- complementary rail should be strongly suppressed")
+    require(rest_rp_selected > direct_rp_selected * 0.50, "restored r+ selected update should remain useful")
+    require(rest_rm_selected > direct_rm_selected * 0.50, "restored r- selected update should remain useful")
+    require(
+        abs(hrat(3.25e-6, hrest_cols[12] - hrest_cols[13]) - rest_pos_net) < 5e-4,
+        "restored r+ written differential should hold",
+    )
+    require(
+        abs(hrat(3.25e-6, hrest_cols[14] - hrest_cols[15]) - rest_neg_net) < 5e-4,
+        "restored r- written differential should hold",
+    )
+
+    restored_fig, restored_axes = plt.subplots(3, 1, figsize=(7.2, 7.4))
+    restored_axes[0].plot(1e6 * hrt, hrest_pos_hidden, label="stored $r^+$")
+    restored_axes[0].plot(1e6 * hrt, hrest_neg_hidden, label="stored $r^-$")
+    restored_axes[0].plot(1e6 * hrt, hrest_cols[-2] / 20.0, color="0.5", alpha=0.35, label="$pbwd/20$")
+    restored_axes[0].axhline(0, color="0.4", linewidth=0.8)
+    restored_axes[0].set_ylabel("hidden error (V)")
+    restored_axes[0].set_title("Stored hidden-error rails feed MOS gate restorers")
+    restored_axes[0].grid(True, alpha=0.25)
+    restored_axes[0].legend(loc="upper right")
+
+    restored_axes[1].plot(1e6 * hrt, hrest_cols[4], label="$r^+$ selected gate")
+    restored_axes[1].plot(1e6 * hrt, hrest_cols[5], label="$r^+$ complement gate")
+    restored_axes[1].plot(1e6 * hrt, hrest_cols[7], "--", label="$r^-$ selected gate")
+    restored_axes[1].plot(1e6 * hrt, hrest_cols[6], "--", label="$r^-$ complement gate")
+    restored_axes[1].set_ylabel("gate voltage (V)")
+    restored_axes[1].set_title("Skewed CMOS restorer widens active-low writer gates")
+    restored_axes[1].grid(True, alpha=0.25)
+    restored_axes[1].legend(loc="upper right", ncol=2, fontsize="small")
+
+    restored_axes[2].plot(1e6 * hrt, hrest_cols[8] - hrest_cols[9], label="direct $r^+$ net")
+    restored_axes[2].plot(1e6 * hrt, hrest_cols[10] - hrest_cols[11], label="direct $r^-$ net")
+    restored_axes[2].plot(1e6 * hrt, hrest_cols[12] - hrest_cols[13], "--", label="restored $r^+$ net")
+    restored_axes[2].plot(1e6 * hrt, hrest_cols[14] - hrest_cols[15], "--", label="restored $r^-$ net")
+    restored_axes[2].plot(1e6 * hrt, hrest_cols[-1] / 60.0, color="0.5", alpha=0.35, label="$\\overline{pacc}/60$")
+    restored_axes[2].axhline(0, color="0.4", linewidth=0.8)
+    restored_axes[2].set_xlabel("time (us)")
+    restored_axes[2].set_ylabel("$W^+ - W^-$ (V)")
+    restored_axes[2].set_title("Restored gates suppress complement writes while preserving sign")
+    restored_axes[2].grid(True, alpha=0.25)
+    restored_axes[2].legend(loc="upper left", ncol=2, fontsize="small")
+    restored_fig.tight_layout()
+    save_plot(restored_fig, "mos_hidden_writer_restored_gate_ngspice")
+
     return hidden_writer_plot
 
 

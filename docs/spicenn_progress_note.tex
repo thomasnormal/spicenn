@@ -956,6 +956,25 @@ must satisfy before it can replace the current behavioral prototype.
 
 \begin{figure}[H]
   \centering
+  \includegraphics[width=0.88\linewidth]{figures/mos_hidden_writer_restored_gate_ngspice.png}
+  \caption{Ngspice restored hidden-error gate characterization for the integrated
+  writer boundary.  The same MOS hidden-error store first creates about
+  \(\pm98.5\) mV of differential error.  A skewed CMOS inverter restorer then
+  converts those analog capacitor rails into active-low writer gates before
+  \(pacc\).  In this Level-1 sizing, the selected restored gate is about
+  \(0.354\) V and the complementary restored gate is about \(1.756\) V, compared
+  with the direct analog gates near \(0.995\) V and \(1.093\) V.  The result is
+  a much cleaner local write: the complementary rail step falls from about
+  \(11.8\) mV in the direct writer to the nV scale, while the selected rail
+  remains incremental at about \(65.0\) mV and the \(r^+\)/\(r^-\) signed
+  updates stay symmetric.  This is the first MOS-only hidden-error writer
+  variant in the note that makes the complement path behave like a real
+  unselected branch rather than a weakly selected analog branch.}
+  \label{fig:mos-hidden-writer-restored-gate-ngspice}
+\end{figure}
+
+\begin{figure}[H]
+  \centering
   \includegraphics[width=0.88\linewidth]{figures/mos_reset_precharge_ngspice.png}
   \caption{Ngspice transient characterization of MOS reset/precharge for
   reusable state capacitors.  A complementary MOS transmission-gate reset first

@@ -776,6 +776,21 @@ must satisfy before it can replace the current behavioral prototype.
   \label{fig:mos-writer-alternating-ngspice}
 \end{figure}
 
+\begin{figure}[H]
+  \centering
+  \includegraphics[width=0.88\linewidth]{figures/mos_writer_retention_ngspice.png}
+  \caption{Ngspice writer retention and read-disturb characterization.  A
+  same-sign writer pulse charges \(W^+\), an opposite-sign writer pulse charges
+  \(W^-\), and both written capacitor rails are then continuously used as
+  synapse tail gates during a \(2.0\)--\(9.5~\mu\)s hold window.  In this
+  Level-1 MOS testbench the written rails drift by only tens of nV and the
+  signed read currents remain stable to the sub-nA level, so the plotted
+  writer/read path is not disturbed by the gate-only synapse read.  This is a
+  topology sanity check; real floating-gate, memristor, or leakage-dominated
+  storage devices still need their own retention/read-disturb characterization.}
+  \label{fig:mos-writer-retention-ngspice}
+\end{figure}
+
 \section{Trainable Cell Catalog}
 
 

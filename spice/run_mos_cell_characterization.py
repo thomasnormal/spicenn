@@ -1391,6 +1391,61 @@ quit
 .endc
 .end
 """
+    retention_deck = f"""
+* Writer retention and synapse read-disturb sanity check.
+{COMMON_MODELS}
+.param WWRITE=2u CWRITE=500p
+VDD vdd 0 1.8
+VCM cm 0 0.9
+VDIFF xp xm 0.5
+RXP xp cm 1G
+RXM xm cm 1G
+VPACC_N paccn 0 PULSE(1.8 0 0.5u 20n 20n 0.8u 20u)
+VHI hi 0 1.8
+VLO lo 0 0
+
+* Same-sign writer charges W+, then the cap is continuously used as a
+* positive synapse tail gate for the rest of the transient.
+CWP_P wp_p 0 {{CWRITE}} IC=0.85
+CWM_P wm_p 0 {{CWRITE}} IC=0.85
+MWPP1 vdd paccn n1p vdd PMOS L={{LCH}} W={{WWRITE}}
+MWPP2 n1p lo n2p vdd PMOS L={{LCH}} W={{WWRITE}}
+MWPP3 n2p lo wp_p vdd PMOS L={{LCH}} W={{WWRITE}}
+MWPM1 vdd paccn n3p vdd PMOS L={{LCH}} W={{WWRITE}}
+MWPM2 n3p lo n4p vdd PMOS L={{LCH}} W={{WWRITE}}
+MWPM3 n4p hi wm_p vdd PMOS L={{LCH}} W={{WWRITE}}
+
+VZPP zpp 0 1.8
+VZMP zmp 0 1.8
+MPP zpp xp tailp 0 NMOS L={{LCH}} W={{WN}}
+MPM zmp xm tailp 0 NMOS L={{LCH}} W={{WN}}
+MTP tailp wp_p 0 0 NMOS L={{LCH}} W=12u
+
+* Opposite-sign writer charges W-, then the cap is continuously used as a
+* negative synapse tail gate for the rest of the transient.
+CWP_N wp_n 0 {{CWRITE}} IC=0.85
+CWM_N wm_n 0 {{CWRITE}} IC=0.85
+MWNP1 vdd paccn n1n vdd PMOS L={{LCH}} W={{WWRITE}}
+MWNP2 n1n lo n2n vdd PMOS L={{LCH}} W={{WWRITE}}
+MWNP3 n2n hi wp_n vdd PMOS L={{LCH}} W={{WWRITE}}
+MWNM1 vdd paccn n3n vdd PMOS L={{LCH}} W={{WWRITE}}
+MWNM2 n3n lo n4n vdd PMOS L={{LCH}} W={{WWRITE}}
+MWNM3 n4n lo wm_n vdd PMOS L={{LCH}} W={{WWRITE}}
+
+VZPN zpn 0 1.8
+VZMN zmn 0 1.8
+MNP zpn xm tailn 0 NMOS L={{LCH}} W={{WN}}
+MNM zmn xp tailn 0 NMOS L={{LCH}} W={{WN}}
+MTN tailn wm_n 0 0 NMOS L={{LCH}} W=12u
+
+.control
+set noaskquit
+tran 10n 10u uic
+wrdata mos_writer_retention.dat v(wp_p) v(wm_p) i(VZPP) i(VZMP) v(wp_n) v(wm_n) i(VZPN) i(VZMN) v(paccn)
+quit
+.endc
+.end
+"""
     data = run_ngspice(deck, "mos_writer")
     t, cols = load_wrdata(data, 9)
     wp_pp_delta = cols[0][-1] - cols[0][0]
@@ -1501,6 +1556,29 @@ quit
     require(alt_at(3.55e-6, alternating_cols[0]) > alt_at(0.40e-6, alternating_cols[0]) + 0.02, "alternating deck should have written W+")
     require(alt_at(3.55e-6, alternating_cols[1]) > alt_at(0.40e-6, alternating_cols[1]) + 0.03, "alternating deck should have written W-")
 
+    retention_data = run_ngspice(retention_deck, "mos_writer_retention")
+    ht, retention_cols = load_wrdata(retention_data, 9)
+    hold_pos_contrib = retention_cols[3] - retention_cols[2]
+    hold_neg_contrib = retention_cols[7] - retention_cols[6]
+
+    def hold_at(time_s: float, values: np.ndarray) -> float:
+        return float(values[np.argmin(np.abs(ht - time_s))])
+
+    hold_start = 2.0e-6
+    hold_end = 9.5e-6
+    require(hold_at(hold_start, retention_cols[0]) > 0.90, "retention W+ writer should reach active read range")
+    require(hold_at(hold_start, retention_cols[5]) > 0.90, "retention W- writer should reach active read range")
+    require(abs(hold_at(hold_start, retention_cols[1]) - 0.85) < 1e-3, "retention inactive W- rail should stay quiet")
+    require(abs(hold_at(hold_start, retention_cols[4]) - 0.85) < 1e-3, "retention inactive W+ rail should stay quiet")
+    wp_hold_drift = abs(hold_at(hold_end, retention_cols[0]) - hold_at(hold_start, retention_cols[0]))
+    wm_hold_drift = abs(hold_at(hold_end, retention_cols[5]) - hold_at(hold_start, retention_cols[5]))
+    require(wp_hold_drift < 1e-5, "continuous synapse read should not disturb stored W+ gate voltage")
+    require(wm_hold_drift < 1e-5, "continuous synapse read should not disturb stored W- gate voltage")
+    pos_hold_drift = abs(hold_at(hold_end, hold_pos_contrib) - hold_at(hold_start, hold_pos_contrib))
+    neg_hold_drift = abs(hold_at(hold_end, hold_neg_contrib) - hold_at(hold_start, hold_neg_contrib))
+    require(pos_hold_drift < 0.5e-6, "positive read contribution should remain stable during hold")
+    require(neg_hold_drift < 0.5e-6, "negative read contribution should remain stable during hold")
+
     fig, axes = plt.subplots(4, 1, figsize=(7.2, 9.4))
     axes[0].plot(1e6 * t, cols[0], label="$x^+\\delta^+ \\to W^+$")
     axes[0].plot(1e6 * t, cols[2], label="$x^-\\delta^- \\to W^+$")
@@ -1593,6 +1671,29 @@ quit
     alternating_axes[1].legend()
     alternating_fig.tight_layout()
     save_plot(alternating_fig, "mos_writer_alternating_ngspice")
+
+    retention_fig, retention_axes = plt.subplots(2, 1, figsize=(7.2, 5.8))
+    retention_axes[0].plot(1e6 * ht, retention_cols[0], label="$W^+$ written/read")
+    retention_axes[0].plot(1e6 * ht, retention_cols[5], label="$W^-$ written/read")
+    retention_axes[0].plot(1e6 * ht, retention_cols[1], "--", color="0.5", alpha=0.75, label="inactive rails")
+    retention_axes[0].plot(1e6 * ht, retention_cols[4], ":", color="0.5", alpha=0.75)
+    retention_axes[0].plot(1e6 * ht, retention_cols[8] / 6.0, color="0.35", alpha=0.35, label="$\\overline{pacc}/6$")
+    retention_axes[0].axvspan(2.0, 9.5, color="0.8", alpha=0.18, label="read-disturb hold window")
+    retention_axes[0].set_ylabel("weight cap voltage (V)")
+    retention_axes[0].set_title("Written weight caps hold while used as synapse tail gates")
+    retention_axes[0].grid(True, alpha=0.25)
+    retention_axes[0].legend(loc="lower right", ncol=2)
+    retention_axes[1].plot(1e6 * ht, 1e6 * hold_pos_contrib, label="$W^+$ read contribution")
+    retention_axes[1].plot(1e6 * ht, 1e6 * hold_neg_contrib, label="$W^-$ read contribution")
+    retention_axes[1].axvspan(2.0, 9.5, color="0.8", alpha=0.18, label="hold window")
+    retention_axes[1].axhline(0, color="0.4", linewidth=0.8)
+    retention_axes[1].set_xlabel("time (us)")
+    retention_axes[1].set_ylabel("read current (uA)")
+    retention_axes[1].set_title("Continuous read current stays stable after write phase")
+    retention_axes[1].grid(True, alpha=0.25)
+    retention_axes[1].legend(loc="upper right")
+    retention_fig.tight_layout()
+    save_plot(retention_fig, "mos_writer_retention_ngspice")
     return writer_plot
 
 

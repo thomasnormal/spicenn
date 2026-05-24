@@ -9,6 +9,7 @@ from spicenn.cell import (
     ExperimentLintError,
     ExperimentSpec,
     IncompatibleCellError,
+    LOCAL_FEATURE_CELLS,
     ParamSpec,
     ProtocolFamily,
     Quantity,
@@ -20,6 +21,7 @@ from spicenn.cell import (
     StateSpec,
     TaggedElement,
     backprop_local_protocol,
+    characterize_local_feature_cell,
     eqprop_protocol,
     lint_experiment_elements,
 )
@@ -176,3 +178,25 @@ def test_experiment_linter_requires_passive_probe_flag():
             contract,
             (TaggedElement("P_hcap", ("hcap",), ElementTag.PASSIVE_PROBE),),
         )
+
+
+def test_local_feature_catalog_has_ten_contract_valid_cells():
+    assert len(LOCAL_FEATURE_CELLS) == 10
+    assert len({cell.name for cell in LOCAL_FEATURE_CELLS}) == 10
+    for cell in LOCAL_FEATURE_CELLS:
+        contract = cell.contract()
+        contract.protocol.validate_contract(contract)
+        assert contract.capabilities.role is CellRole.LOCAL_FEATURE_CELL
+        assert contract.ports.inputs["x"].signed is Signedness.SIGNED_SINGLE
+        if cell.local_activation in {"relu", "clipped-relu", "softplus"}:
+            assert contract.ports.outputs["h"].signed is Signedness.UNSIGNED
+        else:
+            assert contract.ports.outputs["h"].signed is Signedness.SIGNED_SINGLE
+
+
+def test_local_feature_catalog_characterizes_as_learning_aligned():
+    for cell in LOCAL_FEATURE_CELLS:
+        result = characterize_local_feature_cell(cell, seed=3)
+        assert result.passed, cell.name
+        assert result.update_cosine is not None and result.update_cosine > 0.0
+        assert result.update_sign_alignment == pytest.approx(1.0)

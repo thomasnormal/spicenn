@@ -14,6 +14,7 @@ __pycache__/
 
 # Local datasets and bulky simulator artifacts.
 data/MNIST/raw/
+data/mnist-idx/
 spice/generated/
 spice/results/
 spice/results/*.dat

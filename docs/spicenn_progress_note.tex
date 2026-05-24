@@ -1225,6 +1225,30 @@ must satisfy before it can replace the current behavioral prototype.
 
 \begin{figure}[H]
   \centering
+  \includegraphics[width=0.88\linewidth]{figures/mos_hidden_writer_restored_gate_hybrid_cell_update_ngspice.png}
+  \caption{Ngspice integrated one-sample local-feature update characterization
+  for the hybrid restored writer.  This deck combines the pieces that were
+  isolated in the preceding plots: MOS hidden-error sign storage/restoration,
+  MOS activation-gate sampling, an activation-gated product write into
+  \(W^+/W^-\), a bias write into \(B^+/B^-\), and continuous transistor
+  readback from both persistent capacitor pairs.  For the tested \(a^+e^+\)
+  quadrant, the circuit implements \(\Delta W^+\propto a^+e^+\),
+  \(\Delta W^-\approx0\), \(\Delta B^+\propto e^+\), and
+  \(\Delta B^-\approx0\).  The stored hidden-error differential is \(98.5\) mV; the selected and
+  complementary restored error gates are \(0.196\) V and \(1.731\) V; the
+  sampled active activation gate is \(0.920\) V.  The same \(pacc\) pulse
+  writes \(W^+-W^-=22.99\) mV and \(B^+-B^-=34.54\) mV, while the inactive
+  \(W^-\) and \(B^-\) rails move only about \(0.002\,\mu\)V.  NMOS readback
+  slices convert the written weight and bias states into \(19.06\,\mu\)A and
+  \(29.17\,\mu\)A current steps, and both capacitor differentials hold after
+  the update pulse to the plotted precision.  This is still a one-quadrant
+  component proof, but it closes the first full local-feature update/readback
+  loop without behavioral update buckets.}
+  \label{fig:mos-hidden-writer-restored-gate-hybrid-cell-update-ngspice}
+\end{figure}
+
+\begin{figure}[H]
+  \centering
   \includegraphics[width=0.88\linewidth]{figures/mos_hidden_writer_restored_gate_hybrid_repeated_ngspice.png}
   \caption{Ngspice repeated-pulse accumulation characterization of the hybrid
   restored writer.  One stored \(r^+\) hidden-error rail drives one persistent

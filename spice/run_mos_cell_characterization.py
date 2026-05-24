@@ -5611,6 +5611,187 @@ quit
     hyb_fig.tight_layout()
     save_plot(hyb_fig, "mos_hidden_writer_restored_gate_hybrid_bias_ngspice")
 
+    hybrid_cell_update_deck = f"""
+* Hybrid restored writer one-sample local-feature update/readback check.
+* This combines the sampled activation operand, stored/restored e+ error rail,
+* activation-gated W+/W- product write, non-activation-gated B+/B- bias write,
+* and transistor synapse readback of both persistent states.  There are no
+* behavioral update sources or post-sample capacitor writes in this deck.
+{COMMON_MODELS}
+.param CERR=10p CWRITE=500p CBIAS=500p CSTORE=10p WSW=24u WWRITE=24u WRESTN=18u WRESTP=300u
+VDD vdd 0 1.8
+VTAIL vbias 0 0.95
+VPBWD_HYU pbwd 0 PULSE(0 1.8 0.45u 20n 20n 0.80u 5.0u)
+VRP_HYU rp_hyu 0 PULSE(0 1.8 0.45u 20n 20n 0.80u 5.0u)
+VACT_SRC_HYU hsrc_hyu 0 PWL(0 1.45 1.35u 1.45 1.37u 0.92 1.82u 0.92 1.84u 1.45 3.8u 1.45)
+VPSAMP_HYU psamp_hyu 0 PWL(0 0 1.42u 0 1.44u 1.8 1.76u 1.8 1.78u 0 3.8u 0)
+VPSAMPN_HYU psampn_hyu 0 PWL(0 1.8 1.42u 1.8 1.44u 0 1.76u 0 1.78u 1.8 3.8u 1.8)
+VPACC_HYU paccn_hyu 0 PWL(0 1.8 2.05u 1.8 2.07u 0 2.39u 0 2.41u 1.8 3.8u 1.8)
+
+VZPP_HYU zpp_hyu 0 {0.9 + hybrid_mismatch_eps / 2.0:.5f}
+VZMM_HYU zmm_hyu 0 {0.9 - hybrid_mismatch_eps / 2.0:.5f}
+VZPM_HYU zpm_hyu 0 {0.9 - hybrid_mismatch_eps / 2.0:.5f}
+VZMP_HYU zmp_hyu 0 {0.9 + hybrid_mismatch_eps / 2.0:.5f}
+
+MPPP_HYU hpp_hyu hpp_hyu vdd vdd PMOS L={{LCH}} W={{WP}}
+MPPM_HYU hpm_hyu hpm_hyu vdd vdd PMOS L={{LCH}} W={{WP}}
+MNPP_HYU hpp_hyu zpp_hyu tailp_hyu 0 NMOS L={{LCH}} W={{WN}}
+MNPM_HYU hpm_hyu zmm_hyu tailp_hyu 0 NMOS L={{LCH}} W={{WN}}
+MNTP_HYU tailp_hyu vbias 0 0 NMOS L={{LCH}} W={{WN}}
+
+MPMP_HYU hmp_hyu hmp_hyu vdd vdd PMOS L={{LCH}} W={{WP}}
+MPMM_HYU hmm_hyu hmm_hyu vdd vdd PMOS L={{LCH}} W={{WP}}
+MNMP_HYU hmp_hyu zpm_hyu tailm_hyu 0 NMOS L={{LCH}} W={{WN}}
+MNMM_HYU hmm_hyu zmp_hyu tailm_hyu 0 NMOS L={{LCH}} W={{WN}}
+MNTM_HYU tailm_hyu vbias 0 0 NMOS L={{LCH}} W={{WN}}
+
+CDP_RP_HYU cdp_rp_hyu 0 {{CERR}} IC=1.04
+CDM_RP_HYU cdm_rp_hyu 0 {{CERR}} IC=1.04
+RDP_RP_HYU cdp_rp_hyu 0 50G
+RDM_RP_HYU cdm_rp_hyu 0 50G
+{sign_store_path("hpm_hyu", "rp_hyu", "cdp_rp_hyu", "hyurp1")}
+{sign_store_path("hmp_hyu", "rp_hyu", "cdp_rp_hyu", "hyurp2")}
+{sign_store_path("hpp_hyu", "rp_hyu", "cdm_rp_hyu", "hyurp3")}
+{sign_store_path("hmm_hyu", "rp_hyu", "cdm_rp_hyu", "hyurp4")}
+
+MPRP_CDP_HYU rgp_rp_hyu cdp_rp_hyu vdd vdd PMOS L={{LCH}} W={{WRESTP}}
+MNRP_CDP_HYU rgp_rp_hyu cdp_rp_hyu 0 0 NMOS L={{LCH}} W={{WRESTN}}
+MPRP_CDM_HYU rgm_rp_hyu cdm_rp_hyu vdd vdd PMOS L={{LCH}} W={{WRESTP}}
+MNRP_CDM_HYU rgm_rp_hyu cdm_rp_hyu 0 0 NMOS L={{LCH}} W={{WRESTN}}
+
+CHM_HYU hm_store_hyu 0 {{CSTORE}} IC=1.45
+RHM_HYU hm_store_hyu 0 50G
+MSACTN_HYU hsrc_hyu psamp_hyu hm_store_hyu 0 NMOS L={{LCH}} W={{WSW}}
+MSACTP_HYU hsrc_hyu psampn_hyu hm_store_hyu vdd PMOS L={{LCH}} W={{WSW}}
+
+CWP_HYU wp_hyu 0 {{CWRITE}} IC=0.85
+CWM_HYU wm_hyu 0 {{CWRITE}} IC=0.85
+CBP_HYU bp_hyu 0 {{CBIAS}} IC=0.85
+CBM_HYU bm_hyu 0 {{CBIAS}} IC=0.85
+
+* Weight product: W+ <- a+e+; W- complement should remain quiet.
+MWP_HYU_A vdd paccn_hyu n_wp_hyu_a vdd PMOS L={{LCH}} W={{WWRITE}}
+MWP_HYU_B n_wp_hyu_a hm_store_hyu n_wp_hyu_b vdd PMOS L={{LCH}} W={{WWRITE}}
+MWP_HYU_C n_wp_hyu_b rgp_rp_hyu n_wp_hyu_c vdd PMOS L={{LCH}} W={{WWRITE}}
+MWP_HYU_D n_wp_hyu_c cdm_rp_hyu wp_hyu vdd PMOS L={{LCH}} W={{WWRITE}}
+MWM_HYU_A vdd paccn_hyu n_wm_hyu_a vdd PMOS L={{LCH}} W={{WWRITE}}
+MWM_HYU_B n_wm_hyu_a hm_store_hyu n_wm_hyu_b vdd PMOS L={{LCH}} W={{WWRITE}}
+MWM_HYU_C n_wm_hyu_b rgm_rp_hyu n_wm_hyu_c vdd PMOS L={{LCH}} W={{WWRITE}}
+MWM_HYU_D n_wm_hyu_c cdp_rp_hyu wm_hyu vdd PMOS L={{LCH}} W={{WWRITE}}
+
+* Bias update: B+ <- e+; B- complement should remain quiet.
+MBP_HYU_A vdd paccn_hyu n_bp_hyu_a vdd PMOS L={{LCH}} W={{WWRITE}}
+MBP_HYU_B n_bp_hyu_a rgp_rp_hyu n_bp_hyu_b vdd PMOS L={{LCH}} W={{WWRITE}}
+MBP_HYU_C n_bp_hyu_b cdm_rp_hyu bp_hyu vdd PMOS L={{LCH}} W={{WWRITE}}
+MBM_HYU_A vdd paccn_hyu n_bm_hyu_a vdd PMOS L={{LCH}} W={{WWRITE}}
+MBM_HYU_B n_bm_hyu_a rgm_rp_hyu n_bm_hyu_b vdd PMOS L={{LCH}} W={{WWRITE}}
+MBM_HYU_C n_bm_hyu_b cdp_rp_hyu bm_hyu vdd PMOS L={{LCH}} W={{WWRITE}}
+
+* Continuous transistor readback from weight and bias capacitor pairs.
+VXP_HYU xp_hyu 0 1.15
+VXM_HYU xm_hyu 0 0.65
+
+VZPP_W_HYU zpp_w_hyu 0 1.8
+VZMP_W_HYU zmp_w_hyu 0 1.8
+VZPN_W_HYU zpn_w_hyu 0 1.8
+VZMN_W_HYU zmn_w_hyu 0 1.8
+MPP_W_HYU zpp_w_hyu xp_hyu tail_wp_hyu 0 NMOS L={{LCH}} W={{WN}}
+MPM_W_HYU zmp_w_hyu xm_hyu tail_wp_hyu 0 NMOS L={{LCH}} W={{WN}}
+MTP_W_HYU tail_wp_hyu wp_hyu 0 0 NMOS L={{LCH}} W=12u
+MNP_W_HYU zpn_w_hyu xm_hyu tail_wm_hyu 0 NMOS L={{LCH}} W={{WN}}
+MNM_W_HYU zmn_w_hyu xp_hyu tail_wm_hyu 0 NMOS L={{LCH}} W={{WN}}
+MTN_W_HYU tail_wm_hyu wm_hyu 0 0 NMOS L={{LCH}} W=12u
+
+VZPP_B_HYU zpp_b_hyu 0 1.8
+VZMP_B_HYU zmp_b_hyu 0 1.8
+VZPN_B_HYU zpn_b_hyu 0 1.8
+VZMN_B_HYU zmn_b_hyu 0 1.8
+MPP_B_HYU zpp_b_hyu xp_hyu tail_bp_hyu 0 NMOS L={{LCH}} W={{WN}}
+MPM_B_HYU zmp_b_hyu xm_hyu tail_bp_hyu 0 NMOS L={{LCH}} W={{WN}}
+MTP_B_HYU tail_bp_hyu bp_hyu 0 0 NMOS L={{LCH}} W=12u
+MNP_B_HYU zpn_b_hyu xm_hyu tail_bm_hyu 0 NMOS L={{LCH}} W={{WN}}
+MNM_B_HYU zmn_b_hyu xp_hyu tail_bm_hyu 0 NMOS L={{LCH}} W={{WN}}
+MTN_B_HYU tail_bm_hyu bm_hyu 0 0 NMOS L={{LCH}} W=12u
+
+.control
+set noaskquit
+tran 5n 3.75u uic
+wrdata mos_hidden_writer_restored_gate_hybrid_cell_update.dat v(cdp_rp_hyu) v(cdm_rp_hyu) v(rgp_rp_hyu) v(rgm_rp_hyu) v(hsrc_hyu) v(hm_store_hyu) v(wp_hyu) v(wm_hyu) v(bp_hyu) v(bm_hyu) i(VZPP_W_HYU) i(VZMP_W_HYU) i(VZPN_W_HYU) i(VZMN_W_HYU) i(VZPP_B_HYU) i(VZMP_B_HYU) i(VZPN_B_HYU) i(VZMN_B_HYU) v(psamp_hyu) v(paccn_hyu)
+quit
+.endc
+.end
+"""
+    hybrid_cell_update_data = run_ngspice(
+        hybrid_cell_update_deck,
+        "mos_hidden_writer_restored_gate_hybrid_cell_update",
+    )
+    hyut, hyu_cols = load_wrdata(hybrid_cell_update_data, 20)
+
+    def hyuat(time_s: float, values: np.ndarray) -> float:
+        return float(values[np.argmin(np.abs(hyut - time_s))])
+
+    hyu_hidden = hyu_cols[0] - hyu_cols[1]
+    hyu_selected_gate = hyu_cols[2]
+    hyu_complement_gate = hyu_cols[3]
+    hyu_hsrc = hyu_cols[4]
+    hyu_hcap = hyu_cols[5]
+    hyu_wp = hyu_cols[6]
+    hyu_wm = hyu_cols[7]
+    hyu_bp = hyu_cols[8]
+    hyu_bm = hyu_cols[9]
+    hyu_weight = hyu_wp - hyu_wm
+    hyu_bias = hyu_bp - hyu_bm
+    hyu_weight_read = (hyu_cols[11] - hyu_cols[10]) + (hyu_cols[13] - hyu_cols[12])
+    hyu_bias_read = (hyu_cols[15] - hyu_cols[14]) + (hyu_cols[17] - hyu_cols[16])
+    hyu_weight_final = hyuat(2.75e-6, hyu_weight)
+    hyu_bias_final = hyuat(2.75e-6, hyu_bias)
+    hyu_weight_read_step = hyuat(2.75e-6, hyu_weight_read) - hyuat(1.95e-6, hyu_weight_read)
+    hyu_bias_read_step = hyuat(2.75e-6, hyu_bias_read) - hyuat(1.95e-6, hyu_bias_read)
+    require(hyuat(1.35e-6, hyu_hidden) > 0.07, "hybrid cell update should store positive error")
+    require(hyuat(1.45e-6, hyu_selected_gate) < 0.30, "hybrid cell update selected restored gate should be low")
+    require(hyuat(1.45e-6, hyu_complement_gate) > 1.60, "hybrid cell update complement restored gate should be high")
+    require(abs(hyuat(1.85e-6, hyu_hcap) - 0.92) < 0.012, "hybrid cell update should sample active activation gate")
+    require(hyu_weight_final > 0.020, "integrated cell update should write positive weight differential")
+    require(hyu_bias_final > 0.030, "integrated cell update should write positive bias differential")
+    require(hyuat(2.75e-6, hyu_wm) - hyuat(1.95e-6, hyu_wm) < 5e-4, "integrated cell update should keep W- quiet")
+    require(hyuat(2.75e-6, hyu_bm) - hyuat(1.95e-6, hyu_bm) < 5e-4, "integrated cell update should keep B- quiet")
+    require(hyu_weight_read_step > 3e-6, "weight readback current should increase after weight write")
+    require(hyu_bias_read_step > 5e-6, "bias readback current should increase after bias write")
+    require(abs(hyuat(3.55e-6, hyu_weight) - hyu_weight_final) < 5e-4, "integrated weight state should hold after pacc")
+    require(abs(hyuat(3.55e-6, hyu_bias) - hyu_bias_final) < 5e-4, "integrated bias state should hold after pacc")
+
+    hyu_fig, hyu_axes = plt.subplots(3, 1, figsize=(7.2, 7.4), gridspec_kw={"height_ratios": [1.05, 1.0, 1.0]})
+    hyu_axes[0].plot(1e6 * hyut, hyu_hidden, label="stored $e^+$")
+    hyu_axes[0].plot(1e6 * hyut, hyu_selected_gate, label="selected error gate")
+    hyu_axes[0].plot(1e6 * hyut, hyu_complement_gate, label="complement error gate")
+    hyu_axes[0].plot(1e6 * hyut, hyu_hsrc, color="0.55", alpha=0.65, label="activation source")
+    hyu_axes[0].plot(1e6 * hyut, hyu_hcap, color="0.15", linestyle="--", label="sampled activation gate")
+    hyu_axes[0].set_ylabel("voltage (V)")
+    hyu_axes[0].set_title("One MOS sample cycle stores error and activation operands")
+    hyu_axes[0].grid(True, alpha=0.25)
+    hyu_axes[0].legend(loc="center right", ncol=2, fontsize="small")
+    hyu_axes[1].plot(1e6 * hyut, 1e3 * (hyu_wp - hyuat(1.95e-6, hyu_wp)), label="$W^+$")
+    hyu_axes[1].plot(1e6 * hyut, 1e3 * (hyu_wm - hyuat(1.95e-6, hyu_wm)), label="$W^-$")
+    hyu_axes[1].plot(1e6 * hyut, 1e3 * (hyu_bp - hyuat(1.95e-6, hyu_bp)), label="$B^+$")
+    hyu_axes[1].plot(1e6 * hyut, 1e3 * (hyu_bm - hyuat(1.95e-6, hyu_bm)), label="$B^-$")
+    hyu_axes[1].plot(1e6 * hyut, hyu_cols[19] / 20.0, color="0.4", alpha=0.25, label="$pacc_n/20$")
+    hyu_axes[1].set_ylabel("state step (mV)")
+    hyu_axes[1].set_title("Same pacc pulse writes activation-gated weight and ungated bias")
+    hyu_axes[1].grid(True, alpha=0.25)
+    hyu_axes[1].legend(loc="upper left", ncol=3, fontsize="small")
+    hyu_axes[2].plot(1e6 * hyut, 1e6 * (hyu_weight_read - hyuat(1.95e-6, hyu_weight_read)), label="weight read current step")
+    hyu_axes[2].plot(1e6 * hyut, 1e6 * (hyu_bias_read - hyuat(1.95e-6, hyu_bias_read)), label="bias read current step")
+    hyu_axes[2].plot(1e6 * hyut, 1e3 * hyu_weight, "--", label="$W^+ - W^-$")
+    hyu_axes[2].plot(1e6 * hyut, 1e3 * hyu_bias, "--", label="$B^+ - B^-$")
+    hyu_axes[2].axhline(0, color="0.4", linewidth=0.8)
+    hyu_axes[2].set_xlabel("time (us)")
+    hyu_axes[2].set_ylabel("uA / mV")
+    hyu_axes[2].set_title("Persistent states immediately read back through NMOS slices")
+    hyu_axes[2].grid(True, alpha=0.25)
+    hyu_axes[2].legend(loc="upper left", ncol=2, fontsize="small")
+    hyu_fig.tight_layout()
+    save_plot(hyu_fig, "mos_hidden_writer_restored_gate_hybrid_cell_update_ngspice")
+
     hybrid_repeated_deck = f"""
 * Hybrid restored-enable/analog-error writer repeated-pulse accumulation check.
 * One stored r+ hidden-error rail and one activation gate drive the same

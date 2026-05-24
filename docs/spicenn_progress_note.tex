@@ -1010,6 +1010,25 @@ must satisfy before it can replace the current behavioral prototype.
 
 \begin{figure}[H]
   \centering
+  \includegraphics[width=0.88\linewidth]{figures/mos_hidden_writer_restored_gate_swing_ngspice.png}
+  \caption{Ngspice stored-error swing sweep for the same selected-weak
+  restored writer, using the moderate \(W_N=24\,\mu\mathrm{m}\) restorer
+  sizing from Fig.~\ref{fig:mos-hidden-writer-restored-gate-strength-ngspice}.
+  A small finite-difference nudge stores only about \(29.5\) mV of hidden-error
+  differential, leaves the selected restored gate near \(1.25\) V, and produces
+  no signed write.  Once the stored error reaches about \(49\) mV, the selected
+  gate crosses the skewed inverter trip point, drops to about \(0.31\) V, and
+  the writer produces the full \(\pm65\) mV signed step while the complement
+  branch remains at the nV scale.  Larger stored errors continue to improve
+  gate margin but no longer increase the write amplitude in this sizing.  This
+  makes the restored writer robust as a sign-cleaning stage, but it also means
+  magnitude-preserving learning needs either a softer restorer, pulse-width or
+  current scaling after restoration, or an upstream analog-magnitude path.}
+  \label{fig:mos-hidden-writer-restored-gate-swing-ngspice}
+\end{figure}
+
+\begin{figure}[H]
+  \centering
   \includegraphics[width=0.88\linewidth]{figures/mos_reset_precharge_ngspice.png}
   \caption{Ngspice transient characterization of MOS reset/precharge for
   reusable state capacitors.  A complementary MOS transmission-gate reset first

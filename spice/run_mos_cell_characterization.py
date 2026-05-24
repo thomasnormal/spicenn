@@ -3615,6 +3615,237 @@ quit
     strength_fig.tight_layout()
     save_plot(strength_fig, "mos_hidden_writer_restored_gate_strength_ngspice")
 
+    swing_eps_values = [0.03, 0.05, 0.07, 0.10, 0.14]
+    swing_devices = []
+    swing_prints = []
+    for idx, eps_swing in enumerate(swing_eps_values):
+        swing_devices.append(
+            f"""
+* Restored-gate hidden-error swing copy, finite-difference epsilon={eps_swing:.2f} V.
+VZPP_SW{idx} zpp_sw{idx} 0 {0.9 + eps_swing / 2.0:.5f}
+VZMM_SW{idx} zmm_sw{idx} 0 {0.9 - eps_swing / 2.0:.5f}
+VZPM_SW{idx} zpm_sw{idx} 0 {0.9 - eps_swing / 2.0:.5f}
+VZMP_SW{idx} zmp_sw{idx} 0 {0.9 + eps_swing / 2.0:.5f}
+
+MPPP_SW{idx} hpp_sw{idx} hpp_sw{idx} vdd vdd PMOS L={{LCH}} W={{WP}}
+MPPM_SW{idx} hpm_sw{idx} hpm_sw{idx} vdd vdd PMOS L={{LCH}} W={{WP}}
+MNPP_SW{idx} hpp_sw{idx} zpp_sw{idx} tailp_sw{idx} 0 NMOS L={{LCH}} W={{WN}}
+MNPM_SW{idx} hpm_sw{idx} zmm_sw{idx} tailp_sw{idx} 0 NMOS L={{LCH}} W={{WN}}
+MNTP_SW{idx} tailp_sw{idx} vbias 0 0 NMOS L={{LCH}} W={{WN}}
+
+MPMP_SW{idx} hmp_sw{idx} hmp_sw{idx} vdd vdd PMOS L={{LCH}} W={{WP}}
+MPMM_SW{idx} hmm_sw{idx} hmm_sw{idx} vdd vdd PMOS L={{LCH}} W={{WP}}
+MNMP_SW{idx} hmp_sw{idx} zpm_sw{idx} tailm_sw{idx} 0 NMOS L={{LCH}} W={{WN}}
+MNMM_SW{idx} hmm_sw{idx} zmp_sw{idx} tailm_sw{idx} 0 NMOS L={{LCH}} W={{WN}}
+MNTM_SW{idx} tailm_sw{idx} vbias 0 0 NMOS L={{LCH}} W={{WN}}
+
+CDP_RP_SW{idx} cdp_rp_sw{idx} 0 {{CERR}} IC=1.04
+CDM_RP_SW{idx} cdm_rp_sw{idx} 0 {{CERR}} IC=1.04
+CDP_RM_SW{idx} cdp_rm_sw{idx} 0 {{CERR}} IC=1.04
+CDM_RM_SW{idx} cdm_rm_sw{idx} 0 {{CERR}} IC=1.04
+RDP_RP_SW{idx} cdp_rp_sw{idx} 0 50G
+RDM_RP_SW{idx} cdm_rp_sw{idx} 0 50G
+RDP_RM_SW{idx} cdp_rm_sw{idx} 0 50G
+RDM_RM_SW{idx} cdm_rm_sw{idx} 0 50G
+{sign_store_path(f"hpm_sw{idx}", "rp", f"cdp_rp_sw{idx}", f"swrp1_{idx}")}
+{sign_store_path(f"hmp_sw{idx}", "rp", f"cdp_rp_sw{idx}", f"swrp2_{idx}")}
+{sign_store_path(f"hpp_sw{idx}", "rp", f"cdm_rp_sw{idx}", f"swrp3_{idx}")}
+{sign_store_path(f"hmm_sw{idx}", "rp", f"cdm_rp_sw{idx}", f"swrp4_{idx}")}
+{sign_store_path(f"hpp_sw{idx}", "rm", f"cdp_rm_sw{idx}", f"swrm1_{idx}")}
+{sign_store_path(f"hmm_sw{idx}", "rm", f"cdp_rm_sw{idx}", f"swrm2_{idx}")}
+{sign_store_path(f"hpm_sw{idx}", "rm", f"cdm_rm_sw{idx}", f"swrm3_{idx}")}
+{sign_store_path(f"hmp_sw{idx}", "rm", f"cdm_rm_sw{idx}", f"swrm4_{idx}")}
+
+MPRP_CDP_SW{idx} rgp_rp_sw{idx} cdp_rp_sw{idx} vdd vdd PRSEL_SW L={{LCH}} W={{WRESTP}}
+MNRP_CDP_SW{idx} rgp_rp_sw{idx} cdp_rp_sw{idx} 0 0 NRSEL_SW L={{LCH}} W={{WRESTN}}
+MPRP_CDM_SW{idx} rgm_rp_sw{idx} cdm_rp_sw{idx} vdd vdd PRCOMP_SW L={{LCH}} W={{WRESTP}}
+MNRP_CDM_SW{idx} rgm_rp_sw{idx} cdm_rp_sw{idx} 0 0 NRCOMP_SW L={{LCH}} W={{WRESTN}}
+
+MPRM_CDP_SW{idx} rgp_rm_sw{idx} cdp_rm_sw{idx} vdd vdd PRCOMP_SW L={{LCH}} W={{WRESTP}}
+MNRM_CDP_SW{idx} rgp_rm_sw{idx} cdp_rm_sw{idx} 0 0 NRCOMP_SW L={{LCH}} W={{WRESTN}}
+MPRM_CDM_SW{idx} rgm_rm_sw{idx} cdm_rm_sw{idx} vdd vdd PRSEL_SW L={{LCH}} W={{WRESTP}}
+MNRM_CDM_SW{idx} rgm_rm_sw{idx} cdm_rm_sw{idx} 0 0 NRSEL_SW L={{LCH}} W={{WRESTN}}
+
+CWP_RP_SW{idx} wp_rp_sw{idx} 0 {{CWRITE}} IC=0.85
+CWM_RP_SW{idx} wm_rp_sw{idx} 0 {{CWRITE}} IC=0.85
+MWP_RP_SW{idx}A vdd paccn n_wp_rp_sw{idx}_a vdd PMOS L={{LCH}} W={{WWRITE}}
+MWP_RP_SW{idx}B n_wp_rp_sw{idx}_a hm_pos n_wp_rp_sw{idx}_b vdd PMOS L={{LCH}} W={{WWRITE}}
+MWP_RP_SW{idx}C n_wp_rp_sw{idx}_b rgp_rp_sw{idx} wp_rp_sw{idx} vdd PMOS L={{LCH}} W={{WWRITE}}
+MWM_RP_SW{idx}A vdd paccn n_wm_rp_sw{idx}_a vdd PMOS L={{LCH}} W={{WWRITE}}
+MWM_RP_SW{idx}B n_wm_rp_sw{idx}_a hm_pos n_wm_rp_sw{idx}_b vdd PMOS L={{LCH}} W={{WWRITE}}
+MWM_RP_SW{idx}C n_wm_rp_sw{idx}_b rgm_rp_sw{idx} wm_rp_sw{idx} vdd PMOS L={{LCH}} W={{WWRITE}}
+
+CWP_RM_SW{idx} wp_rm_sw{idx} 0 {{CWRITE}} IC=0.85
+CWM_RM_SW{idx} wm_rm_sw{idx} 0 {{CWRITE}} IC=0.85
+MWP_RM_SW{idx}A vdd paccn n_wp_rm_sw{idx}_a vdd PMOS L={{LCH}} W={{WWRITE}}
+MWP_RM_SW{idx}B n_wp_rm_sw{idx}_a hm_pos n_wp_rm_sw{idx}_b vdd PMOS L={{LCH}} W={{WWRITE}}
+MWP_RM_SW{idx}C n_wp_rm_sw{idx}_b rgp_rm_sw{idx} wp_rm_sw{idx} vdd PMOS L={{LCH}} W={{WWRITE}}
+MWM_RM_SW{idx}A vdd paccn n_wm_rm_sw{idx}_a vdd PMOS L={{LCH}} W={{WWRITE}}
+MWM_RM_SW{idx}B n_wm_rm_sw{idx}_a hm_pos n_wm_rm_sw{idx}_b vdd PMOS L={{LCH}} W={{WWRITE}}
+MWM_RM_SW{idx}C n_wm_rm_sw{idx}_b rgm_rm_sw{idx} wm_rm_sw{idx} vdd PMOS L={{LCH}} W={{WWRITE}}
+"""
+        )
+        swing_prints.extend(
+            [
+                f"v(cdp_rp_sw{idx})",
+                f"v(cdm_rp_sw{idx})",
+                f"v(cdp_rm_sw{idx})",
+                f"v(cdm_rm_sw{idx})",
+                f"v(rgp_rp_sw{idx})",
+                f"v(rgm_rp_sw{idx})",
+                f"v(rgp_rm_sw{idx})",
+                f"v(rgm_rm_sw{idx})",
+                f"v(wp_rp_sw{idx})",
+                f"v(wm_rp_sw{idx})",
+                f"v(wp_rm_sw{idx})",
+                f"v(wm_rm_sw{idx})",
+            ]
+        )
+
+    swing_deck = f"""
+* Restored hidden-error gate swing-margin sweep under selected weak threshold.
+* The restorer uses a moderate NMOS width from the sizing window.  This deck
+* asks how much finite-difference hidden-error swing is needed to overcome the
+* selected-side +70 mV NMOS threshold corner while keeping the complement gate
+* high.
+{COMMON_MODELS}
+.model NRSEL_SW NMOS (LEVEL=1 VTO=0.62 KP=220u LAMBDA=0.03)
+.model PRSEL_SW PMOS (LEVEL=1 VTO=-0.55 KP=90u LAMBDA=0.03)
+.model NRCOMP_SW NMOS (LEVEL=1 VTO=0.55 KP=220u LAMBDA=0.03)
+.model PRCOMP_SW PMOS (LEVEL=1 VTO=-0.55 KP=90u LAMBDA=0.03)
+.param CERR=10p CWRITE=500p WSW=24u WWRITE=10u WRESTN=24u WRESTP=300u
+VDD vdd 0 1.8
+VTAIL vbias 0 0.95
+VPBWD pbwd 0 PULSE(0 1.8 0.45u 20n 20n 0.80u 5.0u)
+VRP rp 0 PULSE(0 1.8 0.45u 20n 20n 0.80u 5.0u)
+VRM rm 0 PULSE(0 1.8 0.45u 20n 20n 0.80u 5.0u)
+VPACC_N paccn 0 PULSE(1.8 0 1.55u 20n 20n 0.80u 5.0u)
+VHM_POS hm_pos 0 0.92
+{''.join(swing_devices)}
+
+.control
+set noaskquit
+tran 5n 3.4u uic
+wrdata mos_hidden_writer_restored_gate_swing.dat {' '.join(swing_prints)} v(pbwd) v(paccn)
+quit
+.endc
+.end
+"""
+    swing_data = run_ngspice(swing_deck, "mos_hidden_writer_restored_gate_swing")
+    swt, sw_cols = load_wrdata(swing_data, len(swing_prints) + 2)
+
+    def swat(time_s: float, values: np.ndarray) -> float:
+        return float(values[np.argmin(np.abs(swt - time_s))])
+
+    swing_hidden = []
+    swing_selected_gate = []
+    swing_complement_gate = []
+    swing_selected_step = []
+    swing_complement_step = []
+    swing_pos_net = []
+    swing_neg_net = []
+    swing_neg_hidden_magnitude = []
+    for idx, eps_swing in enumerate(swing_eps_values):
+        base = 12 * idx
+        cdp_rp = sw_cols[base]
+        cdm_rp = sw_cols[base + 1]
+        cdp_rm = sw_cols[base + 2]
+        cdm_rm = sw_cols[base + 3]
+        rgp_rp = sw_cols[base + 4]
+        rgm_rp = sw_cols[base + 5]
+        rgp_rm = sw_cols[base + 6]
+        rgm_rm = sw_cols[base + 7]
+        wp_rp = sw_cols[base + 8]
+        wm_rp = sw_cols[base + 9]
+        wp_rm = sw_cols[base + 10]
+        wm_rm = sw_cols[base + 11]
+        hidden = swat(1.35e-6, cdp_rp - cdm_rp)
+        hidden_neg = swat(1.35e-6, cdp_rm - cdm_rm)
+        selected_gate = 0.5 * (swat(1.45e-6, rgp_rp) + swat(1.45e-6, rgm_rm))
+        complement_gate = 0.5 * (swat(1.45e-6, rgm_rp) + swat(1.45e-6, rgp_rm))
+        selected_step = 0.5 * (
+            swat(2.75e-6, wp_rp) - swat(1.45e-6, wp_rp)
+            + swat(2.75e-6, wm_rm) - swat(1.45e-6, wm_rm)
+        )
+        complement_step = 0.5 * (
+            swat(2.75e-6, wm_rp) - swat(1.45e-6, wm_rp)
+            + swat(2.75e-6, wp_rm) - swat(1.45e-6, wp_rm)
+        )
+        pos_net = swat(2.75e-6, wp_rp - wm_rp)
+        neg_net = swat(2.75e-6, wp_rm - wm_rm)
+        swing_hidden.append(hidden)
+        swing_selected_gate.append(selected_gate)
+        swing_complement_gate.append(complement_gate)
+        swing_selected_step.append(selected_step)
+        swing_complement_step.append(complement_step)
+        swing_pos_net.append(pos_net)
+        swing_neg_net.append(neg_net)
+        swing_neg_hidden_magnitude.append(-hidden_neg)
+        require(hidden > 0.0, f"eps={eps_swing:.2f} should store positive r+ hidden error")
+        require(hidden_neg < 0.0, f"eps={eps_swing:.2f} should store negative r- hidden error")
+        require(abs(hidden + hidden_neg) < 0.003, f"eps={eps_swing:.2f} hidden-error stores should stay symmetric")
+        require(abs(pos_net + neg_net) < 0.003, f"eps={eps_swing:.2f} restored writes should stay symmetric")
+        require(
+            abs(swat(3.25e-6, wp_rp - wm_rp) - pos_net) < 5e-4,
+            f"eps={eps_swing:.2f} restored r+ write should hold",
+        )
+        require(
+            abs(swat(3.25e-6, wp_rm - wm_rm) - neg_net) < 5e-4,
+            f"eps={eps_swing:.2f} restored r- write should hold",
+        )
+
+    swing_hidden = np.array(swing_hidden)
+    swing_selected_gate = np.array(swing_selected_gate)
+    swing_complement_gate = np.array(swing_complement_gate)
+    swing_selected_step = np.array(swing_selected_step)
+    swing_complement_step = np.array(swing_complement_step)
+    swing_pos_net = np.array(swing_pos_net)
+    swing_neg_net = np.array(swing_neg_net)
+    swing_neg_hidden_magnitude = np.array(swing_neg_hidden_magnitude)
+    swing_usable = (swing_pos_net > 0.020) & (swing_complement_step < 5e-4)
+    require(np.all(np.diff(swing_hidden) > 0.015), "stored hidden-error swing should grow with finite-difference epsilon")
+    require(np.all(np.diff(swing_selected_gate) < -0.01), "selected restored gate should fall as hidden-error swing grows")
+    require(np.all(swing_complement_gate > 1.40), "complement restored gate should remain high across tested swings")
+    require(np.all(swing_complement_step < 5e-4), "complement writer should remain suppressed across tested swings")
+    require(not swing_usable[0], "smallest hidden-error swing should remain below the selected-weak trip point")
+    require(swing_usable.any(), "some hidden-error swing should recover the selected-weak restored writer")
+    require(swing_usable[-1], "largest tested hidden-error swing should recover the selected-weak restored writer")
+    require(swing_pos_net[-1] > swing_pos_net[0] + 0.020, "larger hidden-error swing should improve the recovered write")
+    require(np.all(swing_pos_net[swing_usable] < 0.12), "swing-recovered writes should remain incremental")
+
+    swing_fig, swing_axes = plt.subplots(2, 1, figsize=(7.2, 5.8))
+    swing_eps_arr = np.array(swing_eps_values)
+    if swing_usable.any():
+        for axis in swing_axes:
+            axis.axvspan(
+                float(np.min(swing_eps_arr[swing_usable])) - 0.005,
+                float(np.max(swing_eps_arr[swing_usable])) + 0.005,
+                color="tab:green",
+                alpha=0.08,
+                label="usable swing window" if axis is swing_axes[0] else None,
+            )
+    swing_axes[0].plot(swing_eps_values, swing_hidden, "o-", label="stored $r^+$ hidden error")
+    swing_axes[0].plot(swing_eps_values, swing_neg_hidden_magnitude, ":", color="tab:blue", label="stored $r^-$ magnitude")
+    swing_axes[0].plot(swing_eps_values, swing_selected_gate, "s-", label="selected restored gate")
+    swing_axes[0].plot(swing_eps_values, swing_complement_gate, "d--", label="complement restored gate")
+    swing_axes[0].axhline(0.9, color="0.4", linewidth=0.8, alpha=0.5)
+    swing_axes[0].set_ylabel("voltage (V)")
+    swing_axes[0].set_title("Stored error swing moves the selected weak restorer through its trip point")
+    swing_axes[0].grid(True, alpha=0.25)
+    swing_axes[0].legend(loc="center right", fontsize="small")
+    swing_axes[1].plot(swing_eps_values, swing_selected_step, "o-", label="selected rail step")
+    swing_axes[1].plot(swing_eps_values, swing_complement_step, "s--", label="complement rail step")
+    swing_axes[1].plot(swing_eps_values, swing_pos_net, "^-", label="$r^+$ net")
+    swing_axes[1].plot(swing_eps_values, -swing_neg_net, "v:", label="$r^-$ net magnitude")
+    swing_axes[1].axhline(0, color="0.4", linewidth=0.8)
+    swing_axes[1].set_xlabel("finite-difference epsilon (V)")
+    swing_axes[1].set_ylabel("writer step (V)")
+    swing_axes[1].set_title("Recovered write appears only after sufficient stored-error swing")
+    swing_axes[1].grid(True, alpha=0.25)
+    swing_axes[1].legend(loc="upper left", ncol=2, fontsize="small")
+    swing_fig.tight_layout()
+    save_plot(swing_fig, "mos_hidden_writer_restored_gate_swing_ngspice")
+
     return hidden_writer_plot
 
 

@@ -3165,6 +3165,234 @@ quit
     restored_fig.tight_layout()
     save_plot(restored_fig, "mos_hidden_writer_restored_gate_ngspice")
 
+    restored_mismatch_cases = [
+        ("nominal", 0.55, -0.55, 0.55, -0.55),
+        ("selected weak", 0.62, -0.55, 0.55, -0.55),
+        ("complement weak", 0.55, -0.55, 0.55, -0.65),
+        ("opposed weak", 0.62, -0.55, 0.55, -0.65),
+    ]
+    restored_mismatch_models = []
+    restored_mismatch_devices = []
+    restored_mismatch_prints = []
+    for idx, (label, nsel_vto, psel_vto, ncomp_vto, pcomp_vto) in enumerate(restored_mismatch_cases):
+        restored_mismatch_models.append(
+            f"""
+.model NRSEL{idx} NMOS (LEVEL=1 VTO={nsel_vto:.2f} KP=220u LAMBDA=0.03)
+.model PRSEL{idx} PMOS (LEVEL=1 VTO={psel_vto:.2f} KP=90u LAMBDA=0.03)
+.model NRCOMP{idx} NMOS (LEVEL=1 VTO={ncomp_vto:.2f} KP=220u LAMBDA=0.03)
+.model PRCOMP{idx} PMOS (LEVEL=1 VTO={pcomp_vto:.2f} KP=90u LAMBDA=0.03)
+"""
+        )
+        restored_mismatch_devices.append(
+            f"""
+* Restored-gate mismatch copy: {label}.
+MPRP_CDP_MIS{idx} rgp_rp_mis{idx} cdp_rp vdd vdd PRSEL{idx} L={{LCH}} W={{WRESTP}}
+MNRP_CDP_MIS{idx} rgp_rp_mis{idx} cdp_rp 0 0 NRSEL{idx} L={{LCH}} W={{WRESTN}}
+MPRP_CDM_MIS{idx} rgm_rp_mis{idx} cdm_rp vdd vdd PRCOMP{idx} L={{LCH}} W={{WRESTP}}
+MNRP_CDM_MIS{idx} rgm_rp_mis{idx} cdm_rp 0 0 NRCOMP{idx} L={{LCH}} W={{WRESTN}}
+
+MPRM_CDP_MIS{idx} rgp_rm_mis{idx} cdp_rm vdd vdd PRCOMP{idx} L={{LCH}} W={{WRESTP}}
+MNRM_CDP_MIS{idx} rgp_rm_mis{idx} cdp_rm 0 0 NRCOMP{idx} L={{LCH}} W={{WRESTN}}
+MPRM_CDM_MIS{idx} rgm_rm_mis{idx} cdm_rm vdd vdd PRSEL{idx} L={{LCH}} W={{WRESTP}}
+MNRM_CDM_MIS{idx} rgm_rm_mis{idx} cdm_rm 0 0 NRSEL{idx} L={{LCH}} W={{WRESTN}}
+
+CWP_RP_RG_MIS{idx} wp_rp_rg_mis{idx} 0 {{CWRITE}} IC=0.85
+CWM_RP_RG_MIS{idx} wm_rp_rg_mis{idx} 0 {{CWRITE}} IC=0.85
+MWP_RP_RG_MIS{idx}A vdd paccn n_wp_rp_rg_mis{idx}_a vdd PMOS L={{LCH}} W={{WWRITE}}
+MWP_RP_RG_MIS{idx}B n_wp_rp_rg_mis{idx}_a hm_pos n_wp_rp_rg_mis{idx}_b vdd PMOS L={{LCH}} W={{WWRITE}}
+MWP_RP_RG_MIS{idx}C n_wp_rp_rg_mis{idx}_b rgp_rp_mis{idx} wp_rp_rg_mis{idx} vdd PMOS L={{LCH}} W={{WWRITE}}
+MWM_RP_RG_MIS{idx}A vdd paccn n_wm_rp_rg_mis{idx}_a vdd PMOS L={{LCH}} W={{WWRITE}}
+MWM_RP_RG_MIS{idx}B n_wm_rp_rg_mis{idx}_a hm_pos n_wm_rp_rg_mis{idx}_b vdd PMOS L={{LCH}} W={{WWRITE}}
+MWM_RP_RG_MIS{idx}C n_wm_rp_rg_mis{idx}_b rgm_rp_mis{idx} wm_rp_rg_mis{idx} vdd PMOS L={{LCH}} W={{WWRITE}}
+
+CWP_RM_RG_MIS{idx} wp_rm_rg_mis{idx} 0 {{CWRITE}} IC=0.85
+CWM_RM_RG_MIS{idx} wm_rm_rg_mis{idx} 0 {{CWRITE}} IC=0.85
+MWP_RM_RG_MIS{idx}A vdd paccn n_wp_rm_rg_mis{idx}_a vdd PMOS L={{LCH}} W={{WWRITE}}
+MWP_RM_RG_MIS{idx}B n_wp_rm_rg_mis{idx}_a hm_pos n_wp_rm_rg_mis{idx}_b vdd PMOS L={{LCH}} W={{WWRITE}}
+MWP_RM_RG_MIS{idx}C n_wp_rm_rg_mis{idx}_b rgp_rm_mis{idx} wp_rm_rg_mis{idx} vdd PMOS L={{LCH}} W={{WWRITE}}
+MWM_RM_RG_MIS{idx}A vdd paccn n_wm_rm_rg_mis{idx}_a vdd PMOS L={{LCH}} W={{WWRITE}}
+MWM_RM_RG_MIS{idx}B n_wm_rm_rg_mis{idx}_a hm_pos n_wm_rm_rg_mis{idx}_b vdd PMOS L={{LCH}} W={{WWRITE}}
+MWM_RM_RG_MIS{idx}C n_wm_rm_rg_mis{idx}_b rgm_rm_mis{idx} wm_rm_rg_mis{idx} vdd PMOS L={{LCH}} W={{WWRITE}}
+"""
+        )
+        restored_mismatch_prints.extend(
+            [
+                f"v(rgp_rp_mis{idx})",
+                f"v(rgm_rp_mis{idx})",
+                f"v(rgp_rm_mis{idx})",
+                f"v(rgm_rm_mis{idx})",
+                f"v(wp_rp_rg_mis{idx})",
+                f"v(wm_rp_rg_mis{idx})",
+                f"v(wp_rm_rg_mis{idx})",
+                f"v(wm_rm_rg_mis{idx})",
+            ]
+        )
+
+    restored_mismatch_deck = f"""
+* Restored hidden-error gate threshold-offset characterization.
+* The hidden-error store is nominal.  The CMOS restorer threshold corners are
+* skewed to weaken the selected inverter, weaken the complementary pull-up, or
+* combine both effects.  The goal is to prove that the restored writer remains
+* signed and complement-suppressed even when the restoring stage is offset.
+{COMMON_MODELS}
+{''.join(restored_mismatch_models)}
+.param CERR=10p CWRITE=500p WSW=24u WWRITE=10u WRESTN=12u WRESTP=300u
+VDD vdd 0 1.8
+VTAIL vbias 0 0.95
+VPBWD pbwd 0 PULSE(0 1.8 0.45u 20n 20n 0.80u 5.0u)
+VRP rp 0 PULSE(0 1.8 0.45u 20n 20n 0.80u 5.0u)
+VRM rm 0 PULSE(0 1.8 0.45u 20n 20n 0.80u 5.0u)
+VPACC_N paccn 0 PULSE(1.8 0 1.55u 20n 20n 0.80u 5.0u)
+
+VZPP zpp 0 {0.9 + eps / 2.0:.5f}
+VZMM zmm 0 {0.9 - eps / 2.0:.5f}
+VZPM zpm 0 {0.9 - eps / 2.0:.5f}
+VZMP zmp 0 {0.9 + eps / 2.0:.5f}
+
+MPPP hpp hpp vdd vdd PMOS L={{LCH}} W={{WP}}
+MPPM hpm hpm vdd vdd PMOS L={{LCH}} W={{WP}}
+MNPP hpp zpp tailp 0 NMOS L={{LCH}} W={{WN}}
+MNPM hpm zmm tailp 0 NMOS L={{LCH}} W={{WN}}
+MNTP tailp vbias 0 0 NMOS L={{LCH}} W={{WN}}
+
+MPMP hmp hmp vdd vdd PMOS L={{LCH}} W={{WP}}
+MPMM hmm hmm vdd vdd PMOS L={{LCH}} W={{WP}}
+MNMP hmp zpm tailm 0 NMOS L={{LCH}} W={{WN}}
+MNMM hmm zmp tailm 0 NMOS L={{LCH}} W={{WN}}
+MNTM tailm vbias 0 0 NMOS L={{LCH}} W={{WN}}
+
+CDP_RP cdp_rp 0 {{CERR}} IC=1.04
+CDM_RP cdm_rp 0 {{CERR}} IC=1.04
+CDP_RM cdp_rm 0 {{CERR}} IC=1.04
+CDM_RM cdm_rm 0 {{CERR}} IC=1.04
+RDP_RP cdp_rp 0 50G
+RDM_RP cdm_rp 0 50G
+RDP_RM cdp_rm 0 50G
+RDM_RM cdm_rm 0 50G
+{sign_store_path("hpm", "rp", "cdp_rp", "rgmisrp1")}
+{sign_store_path("hmp", "rp", "cdp_rp", "rgmisrp2")}
+{sign_store_path("hpp", "rp", "cdm_rp", "rgmisrp3")}
+{sign_store_path("hmm", "rp", "cdm_rp", "rgmisrp4")}
+{sign_store_path("hpp", "rm", "cdp_rm", "rgmisrm1")}
+{sign_store_path("hmm", "rm", "cdp_rm", "rgmisrm2")}
+{sign_store_path("hpm", "rm", "cdm_rm", "rgmisrm3")}
+{sign_store_path("hmp", "rm", "cdm_rm", "rgmisrm4")}
+
+VHM_POS hm_pos 0 0.92
+{''.join(restored_mismatch_devices)}
+
+.control
+set noaskquit
+tran 5n 3.4u uic
+wrdata mos_hidden_writer_restored_gate_mismatch.dat v(cdp_rp) v(cdm_rp) v(cdp_rm) v(cdm_rm) {' '.join(restored_mismatch_prints)} v(pbwd) v(paccn)
+quit
+.endc
+.end
+"""
+    restored_mismatch_data = run_ngspice(
+        restored_mismatch_deck,
+        "mos_hidden_writer_restored_gate_mismatch",
+    )
+    rmt, rmis_cols = load_wrdata(restored_mismatch_data, 4 + len(restored_mismatch_prints) + 2)
+
+    def rmat(time_s: float, values: np.ndarray) -> float:
+        return float(values[np.argmin(np.abs(rmt - time_s))])
+
+    rmis_pos_hidden = rmis_cols[0] - rmis_cols[1]
+    rmis_neg_hidden = rmis_cols[2] - rmis_cols[3]
+    require(rmat(1.35e-6, rmis_pos_hidden) > 0.07, "restored mismatch deck should store positive r+ error")
+    require(rmat(1.35e-6, rmis_neg_hidden) < -0.07, "restored mismatch deck should store negative r- error")
+
+    gate_selected = []
+    gate_complement = []
+    rest_selected = []
+    rest_complement = []
+    rest_pos = []
+    rest_neg = []
+    for idx, (label, _nsel, _psel, _ncomp, _pcomp) in enumerate(restored_mismatch_cases):
+        base = 4 + 8 * idx
+        rgp_rp = rmis_cols[base]
+        rgm_rp = rmis_cols[base + 1]
+        rgp_rm = rmis_cols[base + 2]
+        rgm_rm = rmis_cols[base + 3]
+        wp_rp = rmis_cols[base + 4]
+        wm_rp = rmis_cols[base + 5]
+        wp_rm = rmis_cols[base + 6]
+        wm_rm = rmis_cols[base + 7]
+        selected_gate = 0.5 * (rmat(1.45e-6, rgp_rp) + rmat(1.45e-6, rgm_rm))
+        complement_gate = 0.5 * (rmat(1.45e-6, rgm_rp) + rmat(1.45e-6, rgp_rm))
+        selected_step = 0.5 * (
+            rmat(2.75e-6, wp_rp) - rmat(1.45e-6, wp_rp)
+            + rmat(2.75e-6, wm_rm) - rmat(1.45e-6, wm_rm)
+        )
+        complement_step = 0.5 * (
+            rmat(2.75e-6, wm_rp) - rmat(1.45e-6, wm_rp)
+            + rmat(2.75e-6, wp_rm) - rmat(1.45e-6, wp_rm)
+        )
+        pos_net = rmat(2.75e-6, wp_rp - wm_rp)
+        neg_net = rmat(2.75e-6, wp_rm - wm_rm)
+        gate_selected.append(selected_gate)
+        gate_complement.append(complement_gate)
+        rest_selected.append(selected_step)
+        rest_complement.append(complement_step)
+        rest_pos.append(pos_net)
+        rest_neg.append(neg_net)
+        require(complement_step < 5e-4, f"{label} restored complement writer step should remain suppressed")
+        require(abs(pos_net + neg_net) < 0.003, f"{label} restored r+/r- writes should stay symmetric")
+        if "selected weak" in label or "opposed" in label:
+            require(selected_gate > 1.50, f"{label} selected gate should expose selected-NMOS threshold sensitivity")
+            require(abs(pos_net) < 0.001, f"{label} restored r+ net write should collapse rather than flip")
+            require(abs(neg_net) < 0.001, f"{label} restored r- net write should collapse rather than flip")
+        else:
+            require(complement_gate - selected_gate > 0.75, f"{label} restored gates should keep large separation")
+            require(selected_step > 0.020, f"{label} restored selected writer step should remain useful")
+            require(selected_step < 0.090, f"{label} restored selected writer step should stay incremental")
+            require(pos_net > 0.020, f"{label} restored r+ net write should stay positive")
+            require(neg_net < -0.020, f"{label} restored r- net write should stay negative")
+        require(
+            abs(rmat(3.25e-6, wp_rp - wm_rp) - pos_net) < 5e-4,
+            f"{label} restored r+ mismatch write should hold",
+        )
+        require(
+            abs(rmat(3.25e-6, wp_rm - wm_rm) - neg_net) < 5e-4,
+            f"{label} restored r- mismatch write should hold",
+        )
+
+    gate_selected = np.array(gate_selected)
+    gate_complement = np.array(gate_complement)
+    rest_selected = np.array(rest_selected)
+    rest_complement = np.array(rest_complement)
+    rest_pos = np.array(rest_pos)
+    rest_neg = np.array(rest_neg)
+    require(np.max(rest_complement) < 0.001, "all restored mismatch complements should stay near-off")
+    require(rest_pos[0] > 0.020 and rest_pos[2] > 0.020, "nominal and complement-weak cases should keep useful r+ writes")
+    require(abs(rest_pos[1]) < 0.001 and abs(rest_pos[3]) < 0.001, "selected-weak cases should collapse rather than flip")
+
+    rmis_fig, rmis_axes = plt.subplots(2, 1, figsize=(7.2, 5.8))
+    rmis_x = np.arange(len(restored_mismatch_cases))
+    rmis_labels = [label for label, *_ in restored_mismatch_cases]
+    rmis_axes[0].plot(rmis_x, gate_selected, "o-", label="selected restored gate")
+    rmis_axes[0].plot(rmis_x, gate_complement, "s--", label="complement restored gate")
+    rmis_axes[0].set_xticks(rmis_x)
+    rmis_axes[0].set_xticklabels(rmis_labels, rotation=15, ha="right")
+    rmis_axes[0].set_ylabel("gate voltage (V)")
+    rmis_axes[0].set_title("Restored gates retain separation under threshold offsets")
+    rmis_axes[0].grid(True, alpha=0.25)
+    rmis_axes[0].legend(loc="center right")
+    rmis_axes[1].plot(rmis_x, rest_selected, "o-", label="selected rail step")
+    rmis_axes[1].plot(rmis_x, rest_complement, "s--", label="complement rail step")
+    rmis_axes[1].plot(rmis_x, rest_pos, "^-", label="$r^+$ net")
+    rmis_axes[1].plot(rmis_x, -rest_neg, "v:", label="$r^-$ net magnitude")
+    rmis_axes[1].axhline(0, color="0.4", linewidth=0.8)
+    rmis_axes[1].set_xticks(rmis_x)
+    rmis_axes[1].set_xticklabels(rmis_labels, rotation=15, ha="right")
+    rmis_axes[1].set_ylabel("writer step (V)")
+    rmis_axes[1].set_title("Complement stays off; selected-weak corners collapse the write")
+    rmis_axes[1].grid(True, alpha=0.25)
+    rmis_axes[1].legend(loc="upper right", ncol=2)
+    rmis_fig.tight_layout()
+    save_plot(rmis_fig, "mos_hidden_writer_restored_gate_mismatch_ngspice")
+
     return hidden_writer_plot
 
 

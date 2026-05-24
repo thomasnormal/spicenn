@@ -975,6 +975,23 @@ must satisfy before it can replace the current behavioral prototype.
 
 \begin{figure}[H]
   \centering
+  \includegraphics[width=0.88\linewidth]{figures/mos_hidden_writer_restored_gate_mismatch_ngspice.png}
+  \caption{Ngspice threshold-offset characterization of the restored
+  hidden-error gate writer.  The nominal hidden-error store is reused while the
+  skewed CMOS restorer devices are perturbed.  The complement path remains
+  strongly suppressed in all tested cases, but the selected-side NMOS threshold
+  margin is the critical weakness: a \(+70\) mV selected-NMOS offset raises the
+  selected restored gate to about \(1.68\) V and collapses the write to zero.
+  Weakening only the complementary pull-up leaves the useful signed update near
+  the nominal \(65\) mV step.  This is a better failure mode than a sign flip,
+  but it means the restored writer needs selected-side threshold margin,
+  calibration, larger stored error swing, or a less abrupt restoring topology
+  before it can be treated as robust device-level training hardware.}
+  \label{fig:mos-hidden-writer-restored-gate-mismatch-ngspice}
+\end{figure}
+
+\begin{figure}[H]
+  \centering
   \includegraphics[width=0.88\linewidth]{figures/mos_reset_precharge_ngspice.png}
   \caption{Ngspice transient characterization of MOS reset/precharge for
   reusable state capacitors.  A complementary MOS transmission-gate reset first

@@ -2791,6 +2791,69 @@ quit
 .endc
 .end
 """
+    mismatch_levels = [
+        ("strong", "PMOSW50", -0.50),
+        ("nominal", "PMOSW55", -0.55),
+        ("weak", "PMOSW60", -0.60),
+    ]
+    mismatch_devices = []
+    mismatch_prints = []
+    for idx, (label, model, _vto) in enumerate(mismatch_levels):
+        mismatch_devices.append(
+            f"""
+* Writer threshold-mismatch copy: {label} selected stacks.
+CWP_MISP{idx} wp_misp{idx} 0 {{CWRITE}} IC=0.85
+CWM_MISP{idx} wm_misp{idx} 0 {{CWRITE}} IC=0.85
+MWP_MISP{idx}A vdd paccn n_wp_misp{idx}_a vdd {model} L={{LCH}} W={{WWRITE}}
+MWP_MISP{idx}B n_wp_misp{idx}_a xg n_wp_misp{idx}_b vdd {model} L={{LCH}} W={{WWRITE}}
+MWP_MISP{idx}C n_wp_misp{idx}_b dg wp_misp{idx} vdd {model} L={{LCH}} W={{WWRITE}}
+MWM_MISP{idx}A vdd paccn n_wm_misp{idx}_a vdd {model} L={{LCH}} W={{WWRITE}}
+MWM_MISP{idx}B n_wm_misp{idx}_a xg n_wm_misp{idx}_b vdd {model} L={{LCH}} W={{WWRITE}}
+MWM_MISP{idx}C n_wm_misp{idx}_b hi wm_misp{idx} vdd {model} L={{LCH}} W={{WWRITE}}
+
+CWP_MISN{idx} wp_misn{idx} 0 {{CWRITE}} IC=0.85
+CWM_MISN{idx} wm_misn{idx} 0 {{CWRITE}} IC=0.85
+MWP_MISN{idx}A vdd paccn n_wp_misn{idx}_a vdd {model} L={{LCH}} W={{WWRITE}}
+MWP_MISN{idx}B n_wp_misn{idx}_a xg n_wp_misn{idx}_b vdd {model} L={{LCH}} W={{WWRITE}}
+MWP_MISN{idx}C n_wp_misn{idx}_b hi wp_misn{idx} vdd {model} L={{LCH}} W={{WWRITE}}
+MWM_MISN{idx}A vdd paccn n_wm_misn{idx}_a vdd {model} L={{LCH}} W={{WWRITE}}
+MWM_MISN{idx}B n_wm_misn{idx}_a xg n_wm_misn{idx}_b vdd {model} L={{LCH}} W={{WWRITE}}
+MWM_MISN{idx}C n_wm_misn{idx}_b dg wm_misn{idx} vdd {model} L={{LCH}} W={{WWRITE}}
+"""
+        )
+        mismatch_prints.extend(
+            [
+                f"v(wp_misp{idx})",
+                f"v(wm_misp{idx})",
+                f"v(wp_misn{idx})",
+                f"v(wm_misn{idx})",
+            ]
+        )
+    mismatch_model_defs = "\n".join(
+        f".model {model} PMOS (LEVEL=1 VTO={vto:.2f} KP=90u LAMBDA=0.03)"
+        for _label, model, vto in mismatch_levels
+    )
+    mismatch_deck = f"""
+* Four-quadrant writer PMOS-threshold mismatch sweep.
+* The same analog activation/error gates drive both selected signs.  Threshold
+* offsets should change update gain, not branch sign or inactive-rail quietness.
+{COMMON_MODELS}
+{mismatch_model_defs}
+.param WWRITE=2u CWRITE=500p
+VDD vdd 0 1.8
+VPACC_N paccn 0 PULSE(1.8 0 0.5u 20n 20n 0.8u 5.0u)
+VXG xg 0 0.90
+VDG dg 0 0.90
+VHI hi 0 1.8
+{''.join(mismatch_devices)}
+.control
+set noaskquit
+tran 5n 2.0u uic
+wrdata mos_writer_mismatch.dat {' '.join(mismatch_prints)} v(paccn)
+quit
+.endc
+.end
+"""
     readback_deck = f"""
 * Writer-to-synapse readback sanity check.
 {COMMON_MODELS}
@@ -3062,6 +3125,39 @@ quit
     require(xgate_steps[0] > 0.0 and dgate_steps[0] > 0.0, "weak analog writer gates should still produce small positive steps")
     require(xgate_steps[-1] < 0.25 and dgate_steps[-1] < 0.25, "strong analog writer gates should remain in incremental range")
 
+    mismatch_data = run_ngspice(mismatch_deck, "mos_writer_mismatch")
+    mt, mismatch_cols = load_wrdata(mismatch_data, 4 * len(mismatch_levels) + 1)
+    mismatch_wp_selected = np.array(
+        [mismatch_cols[4 * idx][-1] - mismatch_cols[4 * idx][0] for idx in range(len(mismatch_levels))]
+    )
+    mismatch_wm_inactive = np.array(
+        [mismatch_cols[4 * idx + 1][-1] - mismatch_cols[4 * idx + 1][0] for idx in range(len(mismatch_levels))]
+    )
+    mismatch_wp_inactive = np.array(
+        [mismatch_cols[4 * idx + 2][-1] - mismatch_cols[4 * idx + 2][0] for idx in range(len(mismatch_levels))]
+    )
+    mismatch_wm_selected = np.array(
+        [mismatch_cols[4 * idx + 3][-1] - mismatch_cols[4 * idx + 3][0] for idx in range(len(mismatch_levels))]
+    )
+    require(np.all(mismatch_wp_selected > 0.0055), "W+ writer should keep a usable selected step under threshold mismatch")
+    require(np.all(mismatch_wm_selected > 0.0055), "W- writer should keep a usable selected step under threshold mismatch")
+    require(np.all(mismatch_wp_selected < 0.08), "W+ mismatch steps should remain incremental")
+    require(np.all(mismatch_wm_selected < 0.08), "W- mismatch steps should remain incremental")
+    require(
+        np.all(np.diff(mismatch_wp_selected) < -5e-4),
+        "W+ writer step should decrease as PMOS threshold magnitude increases",
+    )
+    require(
+        np.all(np.diff(mismatch_wm_selected) < -5e-4),
+        "W- writer step should decrease as PMOS threshold magnitude increases",
+    )
+    require(
+        np.max(np.abs(mismatch_wp_selected - mismatch_wm_selected)) < 0.003,
+        "matched threshold offsets should preserve W+/W- write symmetry",
+    )
+    require(np.max(np.abs(mismatch_wm_inactive)) < 1e-3, "mismatched inactive W- branches should stay quiet")
+    require(np.max(np.abs(mismatch_wp_inactive)) < 1e-3, "mismatched inactive W+ branches should stay quiet")
+
     readback_data = run_ngspice(readback_deck, "mos_writer_readback")
     rt, read_cols = load_wrdata(readback_data, 9)
     pos_read_contrib = read_cols[3] - read_cols[2]
@@ -3242,6 +3338,38 @@ quit
     analog_axes[1].legend(loc="upper left", ncol=2)
     analog_fig.tight_layout()
     save_plot(analog_fig, "mos_writer_analog_gate_ngspice")
+
+    mismatch_fig, mismatch_axes = plt.subplots(2, 1, figsize=(7.2, 5.8))
+    mismatch_labels = [f"$V_{{TO}}={vto:.2f}$ V" for _label, _model, vto in mismatch_levels]
+    mismatch_x = np.arange(len(mismatch_levels))
+    mismatch_axes[0].plot(mismatch_x, mismatch_wp_selected, "o-", label="selected $W^+$")
+    mismatch_axes[0].plot(mismatch_x, mismatch_wm_selected, "s--", label="selected $W^-$")
+    mismatch_axes[0].plot(mismatch_x, mismatch_wm_inactive, "o-", color="0.55", alpha=0.75, label="inactive $W^-$")
+    mismatch_axes[0].plot(mismatch_x, mismatch_wp_inactive, "s:", color="0.55", alpha=0.75, label="inactive $W^+$")
+    mismatch_axes[0].axhline(0, color="0.4", linewidth=0.8)
+    mismatch_axes[0].set_xticks(mismatch_x)
+    mismatch_axes[0].set_xticklabels(mismatch_labels)
+    mismatch_axes[0].set_ylabel("$\\Delta V_W$ (V)")
+    mismatch_axes[0].set_title("PMOS threshold mismatch changes writer gain, not sign")
+    mismatch_axes[0].grid(True, alpha=0.25)
+    mismatch_axes[0].legend(loc="upper right", ncol=2)
+    for idx, (label, _model, vto) in enumerate(mismatch_levels):
+        linestyle = "-" if idx != 1 else "--"
+        mismatch_axes[1].plot(
+            1e6 * mt,
+            mismatch_cols[4 * idx] - mismatch_cols[4 * idx][0],
+            linestyle,
+            label=f"$W^+$ {label} ({vto:.2f} V)",
+        )
+    mismatch_axes[1].plot(1e6 * mt, (1.8 - mismatch_cols[-1]) / 250.0, color="0.5", alpha=0.35, label="$pacc_{active}/250$")
+    mismatch_axes[1].axhline(0, color="0.4", linewidth=0.8)
+    mismatch_axes[1].set_xlabel("time (us)")
+    mismatch_axes[1].set_ylabel("$\\Delta W^+$ (V)")
+    mismatch_axes[1].set_title("Selected writer traces remain monotone and bounded")
+    mismatch_axes[1].grid(True, alpha=0.25)
+    mismatch_axes[1].legend(loc="upper left")
+    mismatch_fig.tight_layout()
+    save_plot(mismatch_fig, "mos_writer_mismatch_ngspice")
 
     alternating_fig, alternating_axes = plt.subplots(2, 1, figsize=(7.2, 5.8))
     alternating_axes[0].plot(1e6 * atime, 1e6 * alt_net_contrib, label="net signed read contribution")

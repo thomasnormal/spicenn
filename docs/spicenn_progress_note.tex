@@ -956,6 +956,21 @@ must satisfy before it can replace the current behavioral prototype.
 
 \begin{figure}[H]
   \centering
+  \includegraphics[width=0.88\linewidth]{figures/mos_writer_mismatch_ngspice.png}
+  \caption{Ngspice PMOS-threshold mismatch characterization of the MOS writer.
+  Three matched writer copies use \(V_{TO}=-0.50\), \(-0.55\), and
+  \(-0.60\) V in the selected PMOS stacks while the same analog activation and
+  hidden-error gates drive both signs.  The selected \(W^+\) and \(W^-\) steps
+  remain symmetric and positive, decreasing from about \(10.4\) mV to
+  \(6.0\) mV as threshold magnitude increases.  The inactive opposite rails
+  stay at numerical noise.  This is the writer-side counterpart to the forward
+  and synapse mismatch plots: threshold offsets change update gain, but do not
+  by themselves flip the local update sign in this operating window.}
+  \label{fig:mos-writer-mismatch-ngspice}
+\end{figure}
+
+\begin{figure}[H]
+  \centering
   \includegraphics[width=0.88\linewidth]{figures/mos_writer_repeated_ngspice.png}
   \caption{Ngspice repeated-pulse characterization of the same MOS writer.  A
   train of ten active-low \(pacc\) coincidences emulates ten online

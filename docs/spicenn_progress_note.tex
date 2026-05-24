@@ -1186,6 +1186,26 @@ must satisfy before it can replace the current behavioral prototype.
 
 \begin{figure}[H]
   \centering
+  \includegraphics[width=0.88\linewidth]{figures/mos_hidden_writer_restored_gate_hybrid_product_ngspice.png}
+  \caption{Ngspice four-quadrant product-routing characterization for the
+  hybrid restored writer.  The deck stores matched \(e^+\) and \(e^-\)
+  hidden-error rails of \(\pm98.5\) mV, restores each selected error sign to
+  an active-low writer gate near \(0.196\) V, and samples exactly one
+  activation sign per quadrant through MOS pass gates.  The writer routing is
+  the sign-split local product rule:
+  \(W^+\leftarrow a^+e^+ + a^-e^-\) and
+  \(W^-\leftarrow a^+e^- + a^-e^+\).  The measured signed updates are
+  \(+22.99\), \(-22.99\), \(-22.99\), and \(+22.99\) mV for
+  \(a^+e^+\), \(a^+e^-\), \(a^-e^+\), and \(a^-e^-\), respectively, while the
+  inactive rail in each quadrant moves only about \(3\) nV.  This closes the
+  signed-activation gap left by the single-ended activation plots: the same
+  hybrid writer topology can route all four signs of the local product using
+  sampled activation rails and stored/restored error rails.}
+  \label{fig:mos-hidden-writer-restored-gate-hybrid-product-ngspice}
+\end{figure}
+
+\begin{figure}[H]
+  \centering
   \includegraphics[width=0.88\linewidth]{figures/mos_hidden_writer_restored_gate_hybrid_repeated_ngspice.png}
   \caption{Ngspice repeated-pulse accumulation characterization of the hybrid
   restored writer.  One stored \(r^+\) hidden-error rail drives one persistent

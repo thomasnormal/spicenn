@@ -5240,6 +5240,228 @@ quit
     hyw_fig.tight_layout()
     save_plot(hyw_fig, "mos_hidden_writer_restored_gate_hybrid_width_ngspice")
 
+    hybrid_product_cases = [
+        ("pp", "$a^+ e^+$", 0.92, 1.45, "rp", 1.00),
+        ("pn", "$a^+ e^-$", 0.92, 1.45, "rm", -1.00),
+        ("mp", "$a^- e^+$", 1.45, 0.92, "rp", -1.00),
+        ("mn", "$a^- e^-$", 1.45, 0.92, "rm", 1.00),
+    ]
+    hybrid_product_devices = []
+    hybrid_product_prints = [
+        "v(cdp_rp_hyq)",
+        "v(cdm_rp_hyq)",
+        "v(cdp_rm_hyq)",
+        "v(cdm_rm_hyq)",
+        "v(rgp_rp_hyq)",
+        "v(rgm_rp_hyq)",
+        "v(rgp_rm_hyq)",
+        "v(rgm_rm_hyq)",
+    ]
+    for name, _label, hplus_src, hminus_src, err_sign, _expected_sign in hybrid_product_cases:
+        if err_sign == "rp":
+            wp_restored = "rgp_rp_hyq"
+            wp_error = "cdm_rp_hyq"
+            wm_restored = "rgp_rp_hyq"
+            wm_error = "cdm_rp_hyq"
+        else:
+            wp_restored = "rgm_rm_hyq"
+            wp_error = "cdp_rm_hyq"
+            wm_restored = "rgm_rm_hyq"
+            wm_error = "cdp_rm_hyq"
+        hybrid_product_devices.append(
+            f"""
+VHP_SRC_HYQ_{name} hp_src_hyq_{name} 0 {hplus_src:.3f}
+VHM_SRC_HYQ_{name} hm_src_hyq_{name} 0 {hminus_src:.3f}
+CHP_HYQ_{name} hp_store_hyq_{name} 0 {{CSTORE}} IC=1.45
+CHM_HYQ_{name} hm_store_hyq_{name} 0 {{CSTORE}} IC=1.45
+RHP_HYQ_{name} hp_store_hyq_{name} 0 50G
+RHM_HYQ_{name} hm_store_hyq_{name} 0 50G
+MSHPN_HYQ_{name} hp_src_hyq_{name} psamp_hyq hp_store_hyq_{name} 0 NMOS L={{LCH}} W={{WSW}}
+MSHPP_HYQ_{name} hp_src_hyq_{name} psampn_hyq hp_store_hyq_{name} vdd PMOS L={{LCH}} W={{WSW}}
+MSHMN_HYQ_{name} hm_src_hyq_{name} psamp_hyq hm_store_hyq_{name} 0 NMOS L={{LCH}} W={{WSW}}
+MSHMP_HYQ_{name} hm_src_hyq_{name} psampn_hyq hm_store_hyq_{name} vdd PMOS L={{LCH}} W={{WSW}}
+CWP_HYQ_{name} wp_hyq_{name} 0 {{CWRITE}} IC=0.85
+CWM_HYQ_{name} wm_hyq_{name} 0 {{CWRITE}} IC=0.85
+
+* Same-sign product branch for this case.
+MWP_HYQ_{name}A vdd paccn_hyq n_wp_hyq_{name}_a vdd PMOS L={{LCH}} W={{WWRITE}}
+MWP_HYQ_{name}B n_wp_hyq_{name}_a {'hp_store_hyq_' + name if err_sign == 'rp' else 'hm_store_hyq_' + name} n_wp_hyq_{name}_b vdd PMOS L={{LCH}} W={{WWRITE}}
+MWP_HYQ_{name}C n_wp_hyq_{name}_b {wp_restored} n_wp_hyq_{name}_c vdd PMOS L={{LCH}} W={{WWRITE}}
+MWP_HYQ_{name}D n_wp_hyq_{name}_c {wp_error} wp_hyq_{name} vdd PMOS L={{LCH}} W={{WWRITE}}
+
+* Opposite-sign product branch for this case.
+MWM_HYQ_{name}A vdd paccn_hyq n_wm_hyq_{name}_a vdd PMOS L={{LCH}} W={{WWRITE}}
+MWM_HYQ_{name}B n_wm_hyq_{name}_a {'hm_store_hyq_' + name if err_sign == 'rp' else 'hp_store_hyq_' + name} n_wm_hyq_{name}_b vdd PMOS L={{LCH}} W={{WWRITE}}
+MWM_HYQ_{name}C n_wm_hyq_{name}_b {wm_restored} n_wm_hyq_{name}_c vdd PMOS L={{LCH}} W={{WWRITE}}
+MWM_HYQ_{name}D n_wm_hyq_{name}_c {wm_error} wm_hyq_{name} vdd PMOS L={{LCH}} W={{WWRITE}}
+"""
+        )
+        hybrid_product_prints.extend(
+            [f"v(hp_store_hyq_{name})", f"v(hm_store_hyq_{name})", f"v(wp_hyq_{name})", f"v(wm_hyq_{name})"]
+        )
+
+    hybrid_product_deck = f"""
+* Hybrid restored writer sampled-activation four-quadrant product routing.
+* Each matched writer copy samples a+ and a- activation gates through MOS pass
+* gates, then combines one activation sign with either the stored r+ or r-
+* hidden-error sign.  The selected branch must satisfy
+*   W+ <- a+e+ + a-e-
+*   W- <- a+e- + a-e+
+* while the inactive product branch stays quiet.
+{COMMON_MODELS}
+.param CERR=10p CWRITE=500p CSTORE=10p WSW=24u WWRITE=24u WRESTN=18u WRESTP=300u
+VDD vdd 0 1.8
+VTAIL vbias 0 0.95
+VPBWD pbwd 0 PULSE(0 1.8 0.45u 20n 20n 0.80u 5.0u)
+VRP rp 0 PULSE(0 1.8 0.45u 20n 20n 0.80u 5.0u)
+VRM rm 0 PULSE(0 1.8 0.45u 20n 20n 0.80u 5.0u)
+VPSAMP_HYQ psamp_hyq 0 PWL(0 0 1.55u 0 1.57u 1.8 1.85u 1.8 1.87u 0 3.2u 0)
+VPSAMPN_HYQ psampn_hyq 0 PWL(0 1.8 1.55u 1.8 1.57u 0 1.85u 0 1.87u 1.8 3.2u 1.8)
+VPACC_HYQ paccn_hyq 0 PULSE(1.8 0 2.10u 20n 20n 0.32u 5.0u)
+
+VZPP_HYQ zpp_hyq 0 {0.9 + hybrid_mismatch_eps / 2.0:.5f}
+VZMM_HYQ zmm_hyq 0 {0.9 - hybrid_mismatch_eps / 2.0:.5f}
+VZPM_HYQ zpm_hyq 0 {0.9 - hybrid_mismatch_eps / 2.0:.5f}
+VZMP_HYQ zmp_hyq 0 {0.9 + hybrid_mismatch_eps / 2.0:.5f}
+
+MPPP_HYQ hpp_hyq hpp_hyq vdd vdd PMOS L={{LCH}} W={{WP}}
+MPPM_HYQ hpm_hyq hpm_hyq vdd vdd PMOS L={{LCH}} W={{WP}}
+MNPP_HYQ hpp_hyq zpp_hyq tailp_hyq 0 NMOS L={{LCH}} W={{WN}}
+MNPM_HYQ hpm_hyq zmm_hyq tailp_hyq 0 NMOS L={{LCH}} W={{WN}}
+MNTP_HYQ tailp_hyq vbias 0 0 NMOS L={{LCH}} W={{WN}}
+
+MPMP_HYQ hmp_hyq hmp_hyq vdd vdd PMOS L={{LCH}} W={{WP}}
+MPMM_HYQ hmm_hyq hmm_hyq vdd vdd PMOS L={{LCH}} W={{WP}}
+MNMP_HYQ hmp_hyq zpm_hyq tailm_hyq 0 NMOS L={{LCH}} W={{WN}}
+MNMM_HYQ hmm_hyq zmp_hyq tailm_hyq 0 NMOS L={{LCH}} W={{WN}}
+MNTM_HYQ tailm_hyq vbias 0 0 NMOS L={{LCH}} W={{WN}}
+
+CDP_RP_HYQ cdp_rp_hyq 0 {{CERR}} IC=1.04
+CDM_RP_HYQ cdm_rp_hyq 0 {{CERR}} IC=1.04
+CDP_RM_HYQ cdp_rm_hyq 0 {{CERR}} IC=1.04
+CDM_RM_HYQ cdm_rm_hyq 0 {{CERR}} IC=1.04
+RDP_RP_HYQ cdp_rp_hyq 0 50G
+RDM_RP_HYQ cdm_rp_hyq 0 50G
+RDP_RM_HYQ cdp_rm_hyq 0 50G
+RDM_RM_HYQ cdm_rm_hyq 0 50G
+{sign_store_path("hpm_hyq", "rp", "cdp_rp_hyq", "hyqrp1")}
+{sign_store_path("hmp_hyq", "rp", "cdp_rp_hyq", "hyqrp2")}
+{sign_store_path("hpp_hyq", "rp", "cdm_rp_hyq", "hyqrp3")}
+{sign_store_path("hmm_hyq", "rp", "cdm_rp_hyq", "hyqrp4")}
+{sign_store_path("hpp_hyq", "rm", "cdp_rm_hyq", "hyqrm1")}
+{sign_store_path("hmm_hyq", "rm", "cdp_rm_hyq", "hyqrm2")}
+{sign_store_path("hpm_hyq", "rm", "cdm_rm_hyq", "hyqrm3")}
+{sign_store_path("hmp_hyq", "rm", "cdm_rm_hyq", "hyqrm4")}
+
+MPRP_CDP_HYQ rgp_rp_hyq cdp_rp_hyq vdd vdd PMOS L={{LCH}} W={{WRESTP}}
+MNRP_CDP_HYQ rgp_rp_hyq cdp_rp_hyq 0 0 NMOS L={{LCH}} W={{WRESTN}}
+MPRP_CDM_HYQ rgm_rp_hyq cdm_rp_hyq vdd vdd PMOS L={{LCH}} W={{WRESTP}}
+MNRP_CDM_HYQ rgm_rp_hyq cdm_rp_hyq 0 0 NMOS L={{LCH}} W={{WRESTN}}
+MPRM_CDP_HYQ rgp_rm_hyq cdp_rm_hyq vdd vdd PMOS L={{LCH}} W={{WRESTP}}
+MNRM_CDP_HYQ rgp_rm_hyq cdp_rm_hyq 0 0 NMOS L={{LCH}} W={{WRESTN}}
+MPRM_CDM_HYQ rgm_rm_hyq cdm_rm_hyq vdd vdd PMOS L={{LCH}} W={{WRESTP}}
+MNRM_CDM_HYQ rgm_rm_hyq cdm_rm_hyq 0 0 NMOS L={{LCH}} W={{WRESTN}}
+
+{''.join(hybrid_product_devices)}
+
+.control
+set noaskquit
+tran 5n 3.15u uic
+wrdata mos_hidden_writer_restored_gate_hybrid_product.dat {' '.join(hybrid_product_prints)} v(psamp_hyq) v(paccn_hyq)
+quit
+.endc
+.end
+"""
+    hybrid_product_data = run_ngspice(
+        hybrid_product_deck,
+        "mos_hidden_writer_restored_gate_hybrid_product",
+    )
+    hyqt, hyq_cols = load_wrdata(hybrid_product_data, len(hybrid_product_prints) + 2)
+
+    def hyqat(time_s: float, values: np.ndarray) -> float:
+        return float(values[np.argmin(np.abs(hyqt - time_s))])
+
+    hyq_hidden_pos = hyq_cols[0] - hyq_cols[1]
+    hyq_hidden_neg = hyq_cols[2] - hyq_cols[3]
+    hyq_rp_selected_gate = hyq_cols[4]
+    hyq_rp_complement_gate = hyq_cols[5]
+    hyq_rm_complement_gate = hyq_cols[6]
+    hyq_rm_selected_gate = hyq_cols[7]
+    hyq_signed = []
+    hyq_wp_step = []
+    hyq_wm_step = []
+    hyq_hp_final = []
+    hyq_hm_final = []
+    for idx, (_name, _label, _hplus_src, _hminus_src, _err_sign, _expected_sign) in enumerate(hybrid_product_cases):
+        base = 8 + 4 * idx
+        hp = hyq_cols[base]
+        hm = hyq_cols[base + 1]
+        wp = hyq_cols[base + 2]
+        wm = hyq_cols[base + 3]
+        hyq_hp_final.append(hyqat(2.00e-6, hp))
+        hyq_hm_final.append(hyqat(2.00e-6, hm))
+        hyq_signed.append(hyqat(2.70e-6, wp - wm))
+        hyq_wp_step.append(hyqat(2.70e-6, wp) - hyqat(2.00e-6, wp))
+        hyq_wm_step.append(hyqat(2.70e-6, wm) - hyqat(2.00e-6, wm))
+    hyq_signed = np.array(hyq_signed)
+    hyq_wp_step = np.array(hyq_wp_step)
+    hyq_wm_step = np.array(hyq_wm_step)
+    hyq_hp_final = np.array(hyq_hp_final)
+    hyq_hm_final = np.array(hyq_hm_final)
+    hyq_expected_sign = np.array([expected_sign for *_rest, expected_sign in hybrid_product_cases])
+    hyq_abs = np.abs(hyq_signed)
+    require(hyqat(1.35e-6, hyq_hidden_pos) > 0.07, "hybrid product r+ store should be positive")
+    require(hyqat(1.35e-6, hyq_hidden_neg) < -0.07, "hybrid product r- store should be negative")
+    require(abs(hyqat(1.35e-6, hyq_hidden_pos + hyq_hidden_neg)) < 0.003, "hybrid product hidden stores should be symmetric")
+    require(hyqat(1.45e-6, hyq_rp_selected_gate) < 0.30, "hybrid product r+ selected gate should be low")
+    require(hyqat(1.45e-6, hyq_rp_complement_gate) > 1.60, "hybrid product r+ complement gate should be high")
+    require(hyqat(1.45e-6, hyq_rm_selected_gate) < 0.30, "hybrid product r- selected gate should be low")
+    require(hyqat(1.45e-6, hyq_rm_complement_gate) > 1.60, "hybrid product r- complement gate should be high")
+    require(np.all(np.sign(hyq_signed) == hyq_expected_sign), "hybrid product signed updates should match activation/error product signs")
+    require(np.all(hyq_abs > 0.018), "hybrid product quadrants should produce useful signed updates")
+    require(np.max(hyq_abs) - np.min(hyq_abs) < 0.004, "hybrid product quadrant magnitudes should agree")
+    require(np.max(np.abs(hyq_signed - (hyq_wp_step - hyq_wm_step))) < 5e-4, "hybrid product signed step should match selected rail motion")
+    require(np.max(np.minimum(hyq_wp_step, hyq_wm_step)) < 5e-4, "hybrid product inactive rail should stay suppressed")
+    require(np.all(np.abs(hyq_hp_final[:2] - 0.92) < 0.010), "hybrid product a+ cases should sample active a+")
+    require(np.all(hyq_hm_final[:2] > 1.35), "hybrid product a+ cases should leave a- inactive")
+    require(np.all(hyq_hp_final[2:] > 1.35), "hybrid product a- cases should leave a+ inactive")
+    require(np.all(np.abs(hyq_hm_final[2:] - 0.92) < 0.010), "hybrid product a- cases should sample active a-")
+
+    hyq_fig, hyq_axes = plt.subplots(3, 1, figsize=(7.2, 7.2), gridspec_kw={"height_ratios": [1.05, 1.0, 1.0]})
+    hyq_axes[0].plot(1e6 * hyqt, hyq_hidden_pos, label="stored $e^+$")
+    hyq_axes[0].plot(1e6 * hyqt, hyq_hidden_neg, label="stored $e^-$")
+    hyq_axes[0].plot(1e6 * hyqt, hyq_rp_selected_gate, label="$e^+$ selected gate")
+    hyq_axes[0].plot(1e6 * hyqt, hyq_rm_selected_gate, label="$e^-$ selected gate")
+    hyq_axes[0].set_xlim(0.35, 2.75)
+    hyq_axes[0].set_ylabel("voltage (V)")
+    hyq_axes[0].set_title("Hybrid product router stores both hidden-error signs")
+    hyq_axes[0].grid(True, alpha=0.25)
+    hyq_axes[0].legend(loc="center right", ncol=2, fontsize="small")
+    hyq_x = np.arange(len(hybrid_product_cases))
+    hyq_labels = [label for _name, label, *_rest in hybrid_product_cases]
+    hyq_axes[1].plot(hyq_x, hyq_hp_final, "o-", label="sampled $a^+$ gate")
+    hyq_axes[1].plot(hyq_x, hyq_hm_final, "s-", label="sampled $a^-$ gate")
+    hyq_axes[1].axhline(0.92, color="0.35", linewidth=0.8, linestyle=":", label="active-low")
+    hyq_axes[1].axhline(1.45, color="0.65", linewidth=0.8, linestyle=":", label="inactive-high")
+    hyq_axes[1].set_xticks(hyq_x)
+    hyq_axes[1].set_xticklabels(hyq_labels)
+    hyq_axes[1].set_ylabel("activation gate (V)")
+    hyq_axes[1].set_title("MOS pass gates sample exactly one activation sign per quadrant")
+    hyq_axes[1].grid(True, alpha=0.25)
+    hyq_axes[1].legend(loc="center right", ncol=2, fontsize="small")
+    hyq_axes[2].bar(hyq_x - 0.18, 1e3 * hyq_wp_step, width=0.36, label="$W^+$ step")
+    hyq_axes[2].bar(hyq_x + 0.18, -1e3 * hyq_wm_step, width=0.36, label="$-W^-$ step")
+    hyq_axes[2].plot(hyq_x, 1e3 * hyq_signed, "ko-", label="$W^+ - W^-$")
+    hyq_axes[2].axhline(0, color="0.4", linewidth=0.8)
+    hyq_axes[2].set_xticks(hyq_x)
+    hyq_axes[2].set_xticklabels(hyq_labels)
+    hyq_axes[2].set_ylabel("writer step (mV)")
+    hyq_axes[2].set_title("signed update follows the four-quadrant product rule")
+    hyq_axes[2].grid(True, axis="y", alpha=0.25)
+    hyq_axes[2].legend(loc="upper left", ncol=3, fontsize="small")
+    hyq_fig.tight_layout()
+    save_plot(hyq_fig, "mos_hidden_writer_restored_gate_hybrid_product_ngspice")
+
     hybrid_repeated_deck = f"""
 * Hybrid restored-enable/analog-error writer repeated-pulse accumulation check.
 * One stored r+ hidden-error rail and one activation gate drive the same

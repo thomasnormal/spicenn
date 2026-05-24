@@ -666,6 +666,22 @@ must satisfy before it can replace the current behavioral prototype.
 
 \begin{figure}[H]
   \centering
+  \includegraphics[width=0.88\linewidth]{figures/mos_synapse_forward_chain_ngspice.png}
+  \caption{Ngspice synapse-to-forward-store integration characterization.  A
+  signed MOS synapse writes real preactivation summing capacitors, the
+  diode-loaded MOS forward pair reads those same capacitors, and \(pact\)
+  samples the resulting activation onto \(C_h\).  Because the summing caps are
+  voltage-inverting, a positive current contribution appears as
+  \(z^- - z^+>0\); the forward pair therefore uses crossed gates so that its
+  \(z^+-z^-\) input equals the stored contribution voltage.  The positive and
+  negative synapse copies produce about \(\pm 0.10\) V of preactivation, the
+  forward load preserves the sign, and the activation storage holds the sampled
+  result after \(pact\) closes.}
+  \label{fig:mos-synapse-forward-chain-ngspice}
+\end{figure}
+
+\begin{figure}[H]
+  \centering
   \includegraphics[width=0.88\linewidth]{figures/mos_hidden_error_ngspice.png}
   \caption{Ngspice characterization of the hidden-error path.  The top panel
   uses two matched diode-loaded MOS forward replicas nudged by \(+10\) mV and

@@ -554,6 +554,124 @@ quit
     return forward_plot
 
 
+def characterize_synapse_forward_chain() -> Path:
+    deck = f"""
+* Synapse-to-forward-store integration sanity check.
+* The signed synapse capacitor convention is voltage-inverting: a positive
+* contribution raises z- - z+.  The forward pair therefore reads those summing
+* capacitors with crossed gates so its z+ - z- input is the stored
+* contribution voltage.
+{COMMON_MODELS}
+.param CSUM=500p CSTORE=10p WTAIL=2u WSW=24u
+VDD vdd 0 1.8
+VXP xp 0 1.15
+VXM xm 0 0.65
+VTAIL vbias 0 0.95
+VWP wpulse 0 PULSE(0 1.15 0.5u 20n 20n 0.70u 5u)
+VPACT pact 0 PULSE(0 1.8 1.35u 20n 20n 0.65u 5u)
+
+* Positive-weight synapse writes z- > z+ for x+ > x-.
+CZPP zpp 0 {{CSUM}} IC=0.9
+CZMP zmp 0 {{CSUM}} IC=0.9
+RZPP zpp 0 100G
+RZMP zmp 0 100G
+MPP zpp xp tailp 0 NMOS L={{LCH}} W={{WN}}
+MPM zmp xm tailp 0 NMOS L={{LCH}} W={{WN}}
+MTP tailp wpulse 0 0 NMOS L={{LCH}} W={{WTAIL}}
+
+* Crossed forward gates read the voltage-coded positive contribution.
+MPFP hpp hpp vdd vdd PMOS L={{LCH}} W={{WP}}
+MPFM hmp hmp vdd vdd PMOS L={{LCH}} W={{WP}}
+MNFP hpp zmp ftailp 0 NMOS L={{LCH}} W={{WN}}
+MNFM hmp zpp ftailp 0 NMOS L={{LCH}} W={{WN}}
+MNFT ftailp vbias 0 0 NMOS L={{LCH}} W={{WN}}
+CHPP hcp_p 0 {{CSTORE}} IC=1.04
+CHPM hcm_p 0 {{CSTORE}} IC=1.04
+RCHPP hcp_p 0 50G
+RCHPM hcm_p 0 50G
+MSPP hpp pact hcp_p 0 NMOS L={{LCH}} W={{WSW}}
+MSPM hmp pact hcm_p 0 NMOS L={{LCH}} W={{WSW}}
+
+* Negative-weight synapse writes z- < z+ for the same x+ > x- input.
+CZPN zpn 0 {{CSUM}} IC=0.9
+CZMN zmn 0 {{CSUM}} IC=0.9
+RZPN zpn 0 100G
+RZMN zmn 0 100G
+MNP zpn xm tailn 0 NMOS L={{LCH}} W={{WN}}
+MNM zmn xp tailn 0 NMOS L={{LCH}} W={{WN}}
+MTN tailn wpulse 0 0 NMOS L={{LCH}} W={{WTAIL}}
+
+* The same crossed convention preserves the negative sign.
+MPNP hpn hpn vdd vdd PMOS L={{LCH}} W={{WP}}
+MPNM hmn hmn vdd vdd PMOS L={{LCH}} W={{WP}}
+MNNP hpn zmn ftailn 0 NMOS L={{LCH}} W={{WN}}
+MNNM hmn zpn ftailn 0 NMOS L={{LCH}} W={{WN}}
+MNNT ftailn vbias 0 0 NMOS L={{LCH}} W={{WN}}
+CHNP hcp_n 0 {{CSTORE}} IC=1.04
+CHNM hcm_n 0 {{CSTORE}} IC=1.04
+RCHNP hcp_n 0 50G
+RCHNM hcm_n 0 50G
+MSNP hpn pact hcp_n 0 NMOS L={{LCH}} W={{WSW}}
+MSNM hmn pact hcm_n 0 NMOS L={{LCH}} W={{WSW}}
+
+.control
+set noaskquit
+tran 5n 3u uic
+wrdata mos_synapse_forward_chain.dat v(zpp) v(zmp) v(hpp) v(hmp) v(hcp_p) v(hcm_p) v(zpn) v(zmn) v(hpn) v(hmn) v(hcp_n) v(hcm_n) v(wpulse) v(pact)
+quit
+.endc
+.end
+"""
+    data = run_ngspice(deck, "mos_synapse_forward_chain")
+    t, cols = load_wrdata(data, 14)
+    pos_preact = cols[1] - cols[0]
+    pos_load = cols[3] - cols[2]
+    pos_store = cols[5] - cols[4]
+    neg_preact = cols[7] - cols[6]
+    neg_load = cols[9] - cols[8]
+    neg_store = cols[11] - cols[10]
+
+    def at(time_s: float, values: np.ndarray) -> float:
+        return float(values[np.argmin(np.abs(t - time_s))])
+
+    require(at(1.20e-6, pos_preact) > 0.08, "positive synapse should write positive voltage-coded preactivation")
+    require(at(1.20e-6, neg_preact) < -0.08, "negative synapse should write negative voltage-coded preactivation")
+    require(at(1.25e-6, pos_load) > 0.05, "crossed forward pair should read positive synapse state as positive activation")
+    require(at(1.25e-6, neg_load) < -0.05, "crossed forward pair should read negative synapse state as negative activation")
+    require(at(1.95e-6, pos_store) > 0.05, "pact should store positive chained activation")
+    require(at(1.95e-6, neg_store) < -0.05, "pact should store negative chained activation")
+    require(at(2.80e-6, pos_store) > 0.05, "positive chained activation should hold after pact")
+    require(at(2.80e-6, neg_store) < -0.05, "negative chained activation should hold after pact")
+
+    fig, axes = plt.subplots(3, 1, figsize=(7.2, 7.2), sharex=True)
+    axes[0].plot(1e6 * t, pos_preact, label="$w^+$ stored $z^- - z^+$")
+    axes[0].plot(1e6 * t, neg_preact, "--", label="$w^-$ stored $z^- - z^+$")
+    axes[0].plot(1e6 * t, cols[12] / 8.0, color="0.5", alpha=0.35, label="$w_{gate}/8$")
+    axes[0].axhline(0, color="0.4", linewidth=0.8)
+    axes[0].set_ylabel("preactivation (V)")
+    axes[0].set_title("Synapse writes signed preactivation onto real summing caps")
+    axes[0].grid(True, alpha=0.25)
+    axes[0].legend(loc="upper right")
+    axes[1].plot(1e6 * t, pos_load, label="positive path load $h^- - h^+$")
+    axes[1].plot(1e6 * t, neg_load, "--", label="negative path load $h^- - h^+$")
+    axes[1].axhline(0, color="0.4", linewidth=0.8)
+    axes[1].set_ylabel("load output (V)")
+    axes[1].set_title("Crossed forward gates preserve the voltage-coded sign")
+    axes[1].grid(True, alpha=0.25)
+    axes[1].legend(loc="upper right")
+    axes[2].plot(1e6 * t, pos_store, label="stored positive activation")
+    axes[2].plot(1e6 * t, neg_store, "--", label="stored negative activation")
+    axes[2].plot(1e6 * t, cols[13] / 8.0, color="0.5", alpha=0.35, label="$pact/8$")
+    axes[2].axhline(0, color="0.4", linewidth=0.8)
+    axes[2].set_xlabel("time (us)")
+    axes[2].set_ylabel("stored activation (V)")
+    axes[2].set_title("Activation storage samples and holds the chained result")
+    axes[2].grid(True, alpha=0.25)
+    axes[2].legend(loc="upper right")
+    fig.tight_layout()
+    return save_plot(fig, "mos_synapse_forward_chain_ngspice")
+
+
 def characterize_hidden_error() -> Path:
     eps = 0.01
     deck = f"""
@@ -1701,13 +1819,14 @@ def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument(
         "--only",
-        choices=["synapse", "forward", "hidden", "reset", "writer"],
+        choices=["synapse", "forward", "chain", "hidden", "reset", "writer"],
         help="Run only one characterization.",
     )
     args = parser.parse_args()
     jobs = {
         "synapse": characterize_synapse,
         "forward": characterize_forward_pair,
+        "chain": characterize_synapse_forward_chain,
         "hidden": characterize_hidden_error,
         "reset": characterize_reset_precharge,
         "writer": characterize_writer,

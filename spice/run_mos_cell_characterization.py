@@ -2794,6 +2794,181 @@ quit
     mismatch_fig.tight_layout()
     save_plot(mismatch_fig, "mos_hidden_writer_mismatch_ngspice")
 
+    bias_levels = [0.86, 0.92, 0.98, 1.04, 1.10]
+    bias_devices = []
+    bias_prints = ["v(cdp_rp)", "v(cdm_rp)", "v(cdp_rm)", "v(cdm_rm)"]
+    for idx, hgate in enumerate(bias_levels):
+        bias_devices.append(
+            f"""
+* Integrated writer input-gate bias copy: h- gate={hgate:.2f} V.
+VHM_BIAS{idx} hm_bias{idx} 0 {hgate:.2f}
+CWP_RP_BIAS{idx} wp_rp_bias{idx} 0 {{CWRITE}} IC=0.85
+CWM_RP_BIAS{idx} wm_rp_bias{idx} 0 {{CWRITE}} IC=0.85
+MWP_RP_BIAS{idx}A vdd paccn n_wp_rp_bias{idx}_a vdd PMOS L={{LCH}} W={{WWRITE}}
+MWP_RP_BIAS{idx}B n_wp_rp_bias{idx}_a hm_bias{idx} n_wp_rp_bias{idx}_b vdd PMOS L={{LCH}} W={{WWRITE}}
+MWP_RP_BIAS{idx}C n_wp_rp_bias{idx}_b cdm_rp wp_rp_bias{idx} vdd PMOS L={{LCH}} W={{WWRITE}}
+MWM_RP_BIAS{idx}A vdd paccn n_wm_rp_bias{idx}_a vdd PMOS L={{LCH}} W={{WWRITE}}
+MWM_RP_BIAS{idx}B n_wm_rp_bias{idx}_a hm_bias{idx} n_wm_rp_bias{idx}_b vdd PMOS L={{LCH}} W={{WWRITE}}
+MWM_RP_BIAS{idx}C n_wm_rp_bias{idx}_b cdp_rp wm_rp_bias{idx} vdd PMOS L={{LCH}} W={{WWRITE}}
+
+CWP_RM_BIAS{idx} wp_rm_bias{idx} 0 {{CWRITE}} IC=0.85
+CWM_RM_BIAS{idx} wm_rm_bias{idx} 0 {{CWRITE}} IC=0.85
+MWP_RM_BIAS{idx}A vdd paccn n_wp_rm_bias{idx}_a vdd PMOS L={{LCH}} W={{WWRITE}}
+MWP_RM_BIAS{idx}B n_wp_rm_bias{idx}_a hm_bias{idx} n_wp_rm_bias{idx}_b vdd PMOS L={{LCH}} W={{WWRITE}}
+MWP_RM_BIAS{idx}C n_wp_rm_bias{idx}_b cdm_rm wp_rm_bias{idx} vdd PMOS L={{LCH}} W={{WWRITE}}
+MWM_RM_BIAS{idx}A vdd paccn n_wm_rm_bias{idx}_a vdd PMOS L={{LCH}} W={{WWRITE}}
+MWM_RM_BIAS{idx}B n_wm_rm_bias{idx}_a hm_bias{idx} n_wm_rm_bias{idx}_b vdd PMOS L={{LCH}} W={{WWRITE}}
+MWM_RM_BIAS{idx}C n_wm_rm_bias{idx}_b cdp_rm wm_rm_bias{idx} vdd PMOS L={{LCH}} W={{WWRITE}}
+"""
+        )
+        bias_prints.extend(
+            [
+                f"v(wp_rp_bias{idx})",
+                f"v(wm_rp_bias{idx})",
+                f"v(wp_rm_bias{idx})",
+                f"v(wm_rm_bias{idx})",
+            ]
+        )
+
+    bias_deck = f"""
+* Integrated hidden-error-store to writer input-gate bias sweep.
+* The hidden-error rails are unchanged from the nominal integrated deck.  Each
+* writer copy sees a different positive-activation complementary gate h-.  A
+* higher h- gate weakens both PMOS branches, so this sweep exposes the
+* selected/complementary margin rather than assuming the previous bias is best.
+{COMMON_MODELS}
+.param CERR=10p CWRITE=500p WSW=24u WWRITE=10u
+VDD vdd 0 1.8
+VTAIL vbias 0 0.95
+VPBWD pbwd 0 PULSE(0 1.8 0.45u 20n 20n 0.80u 5.0u)
+VRP rp 0 PULSE(0 1.8 0.45u 20n 20n 0.80u 5.0u)
+VRM rm 0 PULSE(0 1.8 0.45u 20n 20n 0.80u 5.0u)
+VPACC_N paccn 0 PULSE(1.8 0 1.55u 20n 20n 0.80u 5.0u)
+
+VZPP zpp 0 {0.9 + eps / 2.0:.5f}
+VZMM zmm 0 {0.9 - eps / 2.0:.5f}
+VZPM zpm 0 {0.9 - eps / 2.0:.5f}
+VZMP zmp 0 {0.9 + eps / 2.0:.5f}
+
+MPPP hpp hpp vdd vdd PMOS L={{LCH}} W={{WP}}
+MPPM hpm hpm vdd vdd PMOS L={{LCH}} W={{WP}}
+MNPP hpp zpp tailp 0 NMOS L={{LCH}} W={{WN}}
+MNPM hpm zmm tailp 0 NMOS L={{LCH}} W={{WN}}
+MNTP tailp vbias 0 0 NMOS L={{LCH}} W={{WN}}
+
+MPMP hmp hmp vdd vdd PMOS L={{LCH}} W={{WP}}
+MPMM hmm hmm vdd vdd PMOS L={{LCH}} W={{WP}}
+MNMP hmp zpm tailm 0 NMOS L={{LCH}} W={{WN}}
+MNMM hmm zmp tailm 0 NMOS L={{LCH}} W={{WN}}
+MNTM tailm vbias 0 0 NMOS L={{LCH}} W={{WN}}
+
+CDP_RP cdp_rp 0 {{CERR}} IC=1.04
+CDM_RP cdm_rp 0 {{CERR}} IC=1.04
+CDP_RM cdp_rm 0 {{CERR}} IC=1.04
+CDM_RM cdm_rm 0 {{CERR}} IC=1.04
+RDP_RP cdp_rp 0 50G
+RDM_RP cdm_rp 0 50G
+RDP_RM cdp_rm 0 50G
+RDM_RM cdm_rm 0 50G
+{sign_store_path("hpm", "rp", "cdp_rp", "biasrp1")}
+{sign_store_path("hmp", "rp", "cdp_rp", "biasrp2")}
+{sign_store_path("hpp", "rp", "cdm_rp", "biasrp3")}
+{sign_store_path("hmm", "rp", "cdm_rp", "biasrp4")}
+{sign_store_path("hpp", "rm", "cdp_rm", "biasrm1")}
+{sign_store_path("hmm", "rm", "cdp_rm", "biasrm2")}
+{sign_store_path("hpm", "rm", "cdm_rm", "biasrm3")}
+{sign_store_path("hmp", "rm", "cdm_rm", "biasrm4")}
+
+{''.join(bias_devices)}
+
+.control
+set noaskquit
+tran 5n 3.4u uic
+wrdata mos_hidden_writer_gate_bias.dat {' '.join(bias_prints)} v(pbwd) v(paccn)
+quit
+.endc
+.end
+"""
+    bias_data = run_ngspice(bias_deck, "mos_hidden_writer_gate_bias")
+    hbt, hbias_cols = load_wrdata(bias_data, len(bias_prints) + 2)
+
+    def hbat(time_s: float, values: np.ndarray) -> float:
+        return float(values[np.argmin(np.abs(hbt - time_s))])
+
+    hbias_pos_hidden = hbias_cols[0] - hbias_cols[1]
+    hbias_neg_hidden = hbias_cols[2] - hbias_cols[3]
+    require(hbat(1.35e-6, hbias_pos_hidden) > 0.07, "bias deck should store positive r+ hidden error")
+    require(hbat(1.35e-6, hbias_neg_hidden) < -0.07, "bias deck should store negative r- hidden error")
+
+    bias_pos_net = []
+    bias_neg_net = []
+    bias_selected = []
+    bias_complement = []
+    for idx, _hgate in enumerate(bias_levels):
+        base = 4 + 4 * idx
+        wp_rp = hbias_cols[base]
+        wm_rp = hbias_cols[base + 1]
+        wp_rm = hbias_cols[base + 2]
+        wm_rm = hbias_cols[base + 3]
+        rp_selected = hbat(2.75e-6, wp_rp) - hbat(1.45e-6, wp_rp)
+        rp_complement = hbat(2.75e-6, wm_rp) - hbat(1.45e-6, wm_rp)
+        rm_selected = hbat(2.75e-6, wm_rm) - hbat(1.45e-6, wm_rm)
+        rm_complement = hbat(2.75e-6, wp_rm) - hbat(1.45e-6, wp_rm)
+        bias_selected.append(0.5 * (rp_selected + rm_selected))
+        bias_complement.append(0.5 * (rp_complement + rm_complement))
+        bias_pos_net.append(hbat(2.75e-6, wp_rp - wm_rp))
+        bias_neg_net.append(hbat(2.75e-6, wp_rm - wm_rm))
+        require(
+            abs(hbat(3.25e-6, wp_rp - wm_rp) - hbat(2.75e-6, wp_rp - wm_rp)) < 5e-4,
+            f"h-={_hgate:.2f} r+ bias-sweep writer step should hold",
+        )
+        require(
+            abs(hbat(3.25e-6, wp_rm - wm_rm) - hbat(2.75e-6, wp_rm - wm_rm)) < 5e-4,
+            f"h-={_hgate:.2f} r- bias-sweep writer step should hold",
+        )
+
+    bias_pos_net = np.array(bias_pos_net)
+    bias_neg_net = np.array(bias_neg_net)
+    bias_selected = np.array(bias_selected)
+    bias_complement = np.array(bias_complement)
+    bias_selectivity = bias_selected / np.maximum(bias_complement, 1e-12)
+    require(np.all(bias_pos_net > 0.002), "all tested activation-gate biases should keep positive net writes")
+    require(np.all(bias_neg_net < -0.002), "all tested activation-gate biases should keep negative net writes")
+    require(np.all(np.diff(bias_selected) < -0.001), "selected writer current should weaken as h- gate rises")
+    require(np.all(np.diff(bias_complement) < -4e-4), "complement writer leakage should weaken as h- gate rises")
+    require(
+        np.all(np.diff(bias_selectivity) < -0.03),
+        "selected/complement ratio should worsen as h- gate rises",
+    )
+    require(bias_pos_net[0] > bias_pos_net[-1] + 0.008, "higher h- gate should reduce net update magnitude")
+    require(
+        bias_complement[0] > bias_complement[-1] + 0.003,
+        "higher h- gate should reduce absolute complementary leakage",
+    )
+    require(bias_selectivity[0] > 2.0, "low h- gate should give the best selected/complement contrast in this sweep")
+
+    bias_fig, bias_axes = plt.subplots(2, 1, figsize=(7.2, 5.8))
+    bias_axes[0].plot(bias_levels, bias_selected, "o-", label="selected rail step")
+    bias_axes[0].plot(bias_levels, bias_complement, "s--", label="complement rail step")
+    bias_axes[0].plot(bias_levels, bias_pos_net, "^-", label="$r^+$ net $W^+-W^-$")
+    bias_axes[0].plot(bias_levels, -bias_neg_net, "v:", label="$r^-$ net magnitude")
+    bias_axes[0].axhline(0, color="0.4", linewidth=0.8)
+    bias_axes[0].set_ylabel("writer step (V)")
+    bias_axes[0].set_title("Activation-gate bias weakens both selected and complement writes")
+    bias_axes[0].grid(True, alpha=0.25)
+    bias_axes[0].legend(loc="upper right", ncol=2)
+
+    bias_axes[1].plot(bias_levels, bias_selectivity, "o-", label="selected/complement ratio")
+    bias_axes[1].plot(bias_levels, bias_pos_net / bias_pos_net[0], "s--", label="normalized net update")
+    bias_axes[1].axhline(1.0, color="0.4", linewidth=0.8)
+    bias_axes[1].set_xlabel("$h^-$ PMOS writer gate for $x^+$ (V)")
+    bias_axes[1].set_ylabel("ratio / normalized gain")
+    bias_axes[1].set_title("Bias alone reduces leakage but does not improve selectivity")
+    bias_axes[1].grid(True, alpha=0.25)
+    bias_axes[1].legend(loc="upper left")
+    bias_fig.tight_layout()
+    save_plot(bias_fig, "mos_hidden_writer_gate_bias_ngspice")
+
     return hidden_writer_plot
 
 

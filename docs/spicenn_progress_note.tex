@@ -936,6 +936,26 @@ must satisfy before it can replace the current behavioral prototype.
 
 \begin{figure}[H]
   \centering
+  \includegraphics[width=0.88\linewidth]{figures/mos_hidden_writer_gate_bias_ngspice.png}
+  \caption{Ngspice activation-gate bias sweep for the same integrated
+  hidden-error-store to writer boundary.  The hidden-error store is unchanged;
+  each writer copy receives a different active-low \(h^-\) gate for the
+  positive activation branch.  Raising \(h^-\) weakens the selected and
+  complementary PMOS stacks together.  Absolute complementary leakage falls,
+  but the useful net update and the selected/complement ratio also fall.  The
+  measured selected/complement ratio drops from about \(2.18\) at
+  \(h^-=0.86\) V to \(1.69\) at \(h^-=1.10\) V, while the net \(r^+\) update
+  drops from about \(14.6\) mV to \(5.8\) mV.  This rules out a simple
+  activation-gate bias shift as the clean fix for complementary writer
+  leakage.  The next transistor candidate should restore the hidden-error
+  gates, add a local inhibit/differential writer branch, or change the writer
+  topology so the unselected rail is actively suppressed rather than merely
+  weakened.}
+  \label{fig:mos-hidden-writer-gate-bias-ngspice}
+\end{figure}
+
+\begin{figure}[H]
+  \centering
   \includegraphics[width=0.88\linewidth]{figures/mos_reset_precharge_ngspice.png}
   \caption{Ngspice transient characterization of MOS reset/precharge for
   reusable state capacitors.  A complementary MOS transmission-gate reset first

@@ -21,6 +21,47 @@
 
 \newcommand{\code}[1]{\texttt{#1}}
 \newcommand{\vstate}[1]{\ensuremath{V_{\mathrm{#1}}}}
+\newcommand{\mosgnd}[2]{%
+  \draw[semithick] (#1,#2) -- ++(0,-0.18);
+  \draw[semithick] (#1-0.18,#2-0.18) -- (#1+0.18,#2-0.18);
+  \draw[semithick] (#1-0.12,#2-0.29) -- (#1+0.12,#2-0.29);
+  \draw[semithick] (#1-0.06,#2-0.40) -- (#1+0.06,#2-0.40);
+}
+\newcommand{\moscap}[4]{%
+  \node[circle, fill=black, inner sep=1.15pt, label=above:{#3}] (#4) at (#1,#2) {};
+  \draw[semithick] (#1,#2) -- ++(0,-0.28);
+  \draw[semithick] (#1-0.22,#2-0.28) -- (#1+0.22,#2-0.28);
+  \draw[semithick] (#1-0.22,#2-0.46) -- (#1+0.22,#2-0.46);
+  \draw[semithick] (#1,#2-0.46) -- ++(0,-0.28);
+  \mosgnd{#1}{#2-0.74}
+}
+\newcommand{\drawnmos}[5]{%
+  \coordinate (#5) at (#1,#2);
+  \coordinate (#5D) at (#1,#2+0.42);
+  \coordinate (#5S) at (#1,#2-0.42);
+  \coordinate (#5G) at (#1-0.62,#2);
+  \draw[semithick] (#1,#2+0.42) -- (#1,#2-0.42);
+  \draw[semithick] (#1,#2+0.42) -- ++(0,0.25);
+  \draw[semithick] (#1,#2-0.42) -- ++(0,-0.25);
+  \draw[semithick] (#1-0.22,#2+0.34) -- (#1-0.22,#2-0.34);
+  \draw[semithick] (#1-0.62,#2) -- (#1-0.22,#2);
+  \node[font=\small, fill=white, inner sep=1pt, anchor=west] at (#1+0.25,#2) {#3};
+  \node[font=\small, fill=white, inner sep=1pt, anchor=east] at (#1-0.65,#2) {#4};
+}
+\newcommand{\drawpmos}[5]{%
+  \coordinate (#5) at (#1,#2);
+  \coordinate (#5D) at (#1,#2-0.42);
+  \coordinate (#5S) at (#1,#2+0.42);
+  \coordinate (#5G) at (#1-0.68,#2);
+  \draw[semithick] (#1,#2+0.42) -- (#1,#2-0.42);
+  \draw[semithick] (#1,#2+0.42) -- ++(0,0.25);
+  \draw[semithick] (#1,#2-0.42) -- ++(0,-0.25);
+  \draw[semithick] (#1-0.24,#2+0.34) -- (#1-0.24,#2-0.34);
+  \draw[semithick] (#1-0.68,#2) -- (#1-0.36,#2);
+  \draw[semithick] (#1-0.36,#2) circle [radius=0.09];
+  \node[font=\small, fill=white, inner sep=1pt, anchor=west] at (#1+0.25,#2) {#3};
+  \node[font=\small, fill=white, inner sep=1pt, anchor=east] at (#1-0.72,#2) {#4};
+}
 
 \title{Toward Fully On-Device SPICE Training of a Local-Feature MNIST Network}
 \author{SPICENN architecture note}
@@ -160,6 +201,7 @@ capacitor state, not a shared software kernel broadcast over many positions.
 
 \begin{figure}[H]
   \centering
+  \resizebox{0.98\linewidth}{!}{%
   \begin{tikzpicture}[
       font=\small,
       block/.style={draw, rounded corners=2pt, minimum height=0.95cm,
@@ -197,7 +239,7 @@ capacitor state, not a shared software kernel broadcast over many positions.
        \textcolor{backred}{\textbf{Red}}: output and hidden error formation.\\
        \textcolor{writeorange}{\textbf{Orange}}: phase-gated writes to
        persistent weight capacitors.};
-  \end{tikzpicture}
+  \end{tikzpicture}}
   \caption{Working local-feature/readout architecture.  The hidden block
   contains 32 local feature cells.  Persistent capacitor states hold local
   weights and biases, hidden activations and hidden deltas during a cycle, and
@@ -205,6 +247,7 @@ capacitor state, not a shared software kernel broadcast over many positions.
   state, so there is no output-bias write path in that run.}
   \label{fig:working-architecture}
 \end{figure}
+
 
 \section{State And Update Equations}
 
@@ -275,7 +318,7 @@ usable gain over the operating range.
 The previous behavioral diagrams are removed from this note.  They were useful
 for debugging the algorithm, but they are not hardware.  The circuit target is
 now the transistor-level local-feature cell in
-Fig.~\ref{fig:mos-local-feature-cell}.  It is a replacement target for the
+Figs.~\ref{fig:mos-synapse-slice}--\ref{fig:mos-writer-cell}.  It is a replacement target for the
 non-device equations used in the disqualified high-accuracy run, not a result
 already validated at full MNIST scale.
 
@@ -290,185 +333,180 @@ capacitor.
 
 \begin{figure}[H]
   \centering
-  \resizebox{\linewidth}{!}{%
+  \resizebox{0.98\linewidth}{!}{%
   \begin{tikzpicture}[
-      font=\scriptsize,
-      wire/.style={semithick},
-      gate/.style={semithick, gray!80},
+      font=\large,
+      lab/.style={font=\large, fill=white, inner sep=1.5pt},
       rail/.style={semithick, blue!55!black},
-      ctrl/.style={semithick, violet!80!black},
-      lab/.style={font=\scriptsize, fill=white, inner sep=1.2pt},
-      group/.style={draw, dashed, rounded corners=2pt, inner sep=7pt},
-      title/.style={font=\bfseries\scriptsize}
+      gate/.style={semithick, gray!80},
+      group/.style={draw, dashed, rounded corners=2pt, inner sep=9pt}
     ]
-    \newcommand{\gnd}[2]{%
-      \draw[wire] (#1,#2) -- ++(0,-0.16);
-      \draw[wire] (#1-0.16,#2-0.16) -- (#1+0.16,#2-0.16);
-      \draw[wire] (#1-0.10,#2-0.25) -- (#1+0.10,#2-0.25);
-      \draw[wire] (#1-0.05,#2-0.34) -- (#1+0.05,#2-0.34);
-    }
-    \newcommand{\capg}[4]{%
-      \node[circle, fill=black, inner sep=1.0pt, label=above:{#3}] (#4) at (#1,#2) {};
-      \draw[wire] (#1,#2) -- ++(0,-0.22);
-      \draw[wire] (#1-0.17,#2-0.22) -- (#1+0.17,#2-0.22);
-      \draw[wire] (#1-0.17,#2-0.37) -- (#1+0.17,#2-0.37);
-      \draw[wire] (#1,#2-0.37) -- ++(0,-0.22);
-      \gnd{#1}{#2-0.59}
-    }
-    \newcommand{\nmos}[5]{%
-      \coordinate (#5) at (#1,#2);
-      \coordinate (#5D) at (#1,#2+0.35);
-      \coordinate (#5S) at (#1,#2-0.35);
-      \coordinate (#5G) at (#1-0.52,#2);
-      \draw[wire] (#1,#2+0.35) -- (#1,#2-0.35);
-      \draw[wire] (#1,#2+0.35) -- ++(0,0.22);
-      \draw[wire] (#1,#2-0.35) -- ++(0,-0.22);
-      \draw[wire] (#1-0.18,#2+0.28) -- (#1-0.18,#2-0.28);
-      \draw[wire] (#1-0.52,#2) -- (#1-0.18,#2);
-      \node[lab, anchor=west] at (#1+0.23,#2) {#3};
-      \node[lab, anchor=east] at (#1-0.54,#2) {#4};
-    }
-    \newcommand{\pmos}[5]{%
-      \coordinate (#5) at (#1,#2);
-      \coordinate (#5D) at (#1,#2-0.35);
-      \coordinate (#5S) at (#1,#2+0.35);
-      \coordinate (#5G) at (#1-0.58,#2);
-      \draw[wire] (#1,#2+0.35) -- (#1,#2-0.35);
-      \draw[wire] (#1,#2+0.35) -- ++(0,0.22);
-      \draw[wire] (#1,#2-0.35) -- ++(0,-0.22);
-      \draw[wire] (#1-0.20,#2+0.28) -- (#1-0.20,#2-0.28);
-      \draw[wire] (#1-0.58,#2) -- (#1-0.30,#2);
-      \draw[wire] (#1-0.30,#2) circle [radius=0.08];
-      \node[lab, anchor=west] at (#1+0.23,#2) {#3};
-      \node[lab, anchor=east] at (#1-0.60,#2) {#4};
-    }
+    \node[font=\bfseries\Large] at (4.8,3.6) {A. one signed synapse slice};
+    \draw[rail] (-0.2,2.8) node[lab,left] {$z^+$} -- (9.8,2.8);
+    \draw[rail] (-0.2,1.35) node[lab,left] {$z^-$} -- (9.8,1.35);
+    \draw[semithick] (-0.2,0.15) node[lab,left] {$x^+$} -- (9.8,0.15);
+    \draw[semithick] (-0.2,-1.05) node[lab,left] {$x^-$} -- (9.8,-1.05);
 
-    % A. Signed synapse slice.
-    \node[title] at (2.2,3.0) {A. signed synapse slice};
-    \draw[rail] (-0.45,2.35) node[lab,left] {$z^+$} -- (4.85,2.35);
-    \draw[rail] (-0.45,1.15) node[lab,left] {$z^-$} -- (4.85,1.15);
-    \draw[wire] (-0.45,0.25) node[lab,left] {$x^+$} -- (4.85,0.25);
-    \draw[wire] (-0.45,-0.65) node[lab,left] {$x^-$} -- (4.85,-0.65);
-    \nmos{0.75}{1.35}{$M_1$}{}{sxpp}
-    \nmos{1.85}{1.35}{$M_2$}{}{sxmm}
-    \nmos{3.05}{0.15}{$M_3$}{}{sxpm}
-    \nmos{4.15}{0.15}{$M_4$}{}{sxmp}
-    \draw[wire] (sxppD) |- (0.75,2.35);  \draw[wire] (sxppS) |- (0.75,0.25);
-    \draw[wire] (sxmmD) |- (1.85,2.35);  \draw[wire] (sxmmS) |- (1.85,-0.65);
-    \draw[wire] (sxpmD) |- (3.05,1.15);  \draw[wire] (sxpmS) |- (3.05,0.25);
-    \draw[wire] (sxmpD) |- (4.15,1.15);  \draw[wire] (sxmpS) |- (4.15,-0.65);
-    \capg{0.25}{-1.55}{$C_{W^+}$}{cwp}
-    \capg{2.05}{-1.55}{$C_{W^-}$}{cwm}
-    \draw[gate] (cwp) -| (sxppG);
-    \draw[gate] (cwp) -| (sxmpG);
-    \draw[gate] (cwm) -| (sxmmG);
-    \draw[gate] (cwm) -| (sxpmG);
-    \node[group, fit=(sxpp) (sxmp) (cwp) (cwm)] {};
+    \drawnmos{1.2}{1.55}{$M_1$}{$w^+$}{synm1}
+    \drawnmos{3.3}{1.55}{$M_2$}{$w^-$}{synm2}
+    \drawnmos{6.0}{0.05}{$M_3$}{$w^-$}{synm3}
+    \drawnmos{8.1}{0.05}{$M_4$}{$w^+$}{synm4}
 
-    % B. Forward MOS tanh cell.
-    \begin{scope}[xshift=7.2cm]
-      \node[title] at (2.2,3.0) {B. forward differential pair};
-      \draw[wire] (-0.25,2.65) node[lab,left] {VDD} -- (4.8,2.65);
-      \pmos{1.25}{2.05}{$P_L^+$}{$V_{bp}$}{plp}
-      \pmos{3.35}{2.05}{$P_L^-$}{$V_{bp}$}{plm}
-      \draw[wire] (plpS) -- (1.25,2.65); \draw[wire] (plmS) -- (3.35,2.65);
-      \node[circle, fill=black, inner sep=1.0pt, label=above:{$h^+$}] (hp) at (1.25,1.35) {};
-      \node[circle, fill=black, inner sep=1.0pt, label=above:{$h^-$}] (hm) at (3.35,1.35) {};
-      \draw[wire] (plpD) -- (hp); \draw[wire] (plmD) -- (hm);
-      \nmos{1.25}{0.45}{$N_z^+$}{$z^+$}{nzp}
-      \nmos{3.35}{0.45}{$N_z^-$}{$z^-$}{nzm}
-      \draw[wire] (hp) -- (nzpD); \draw[wire] (hm) -- (nzmD);
-      \draw[wire] (nzpS) -- (2.3,-0.25) -- (nzmS);
-      \nmos{2.3}{-1.05}{$N_t$}{$V_{tail}$}{nt}
-      \draw[wire] (2.3,-0.25) -- (ntD); \draw[wire] (ntS) -- (2.3,-1.78);
-      \gnd{2.3}{-1.78}
-      \nmos{0.35}{0.65}{$S_{h+}$}{$pact$}{shp}
-      \nmos{4.25}{0.65}{$S_{h-}$}{$pact$}{shm}
-      \capg{0.35}{-0.35}{$C_{h^+}$}{chp}
-      \capg{4.25}{-0.35}{$C_{h^-}$}{chm}
-      \draw[wire] (hp) -| (shpD); \draw[wire] (hm) -| (shmD);
-      \draw[wire] (shpS) -- (chp); \draw[wire] (shmS) -- (chm);
-      \draw[ctrl] (0.35,1.65) node[lab,above] {$pact$} -- (shpG);
-      \draw[ctrl] (4.25,1.65) node[lab,above] {$pact$} -- (shmG);
-      \node[group, fit=(plp) (plm) (nzp) (nzm) (nt) (chp) (chm)] {};
-    \end{scope}
+    \draw[semithick] (synm1D) |- (1.2,2.8);  \draw[semithick] (synm1S) |- (1.2,0.15);
+    \draw[semithick] (synm2D) |- (3.3,2.8);  \draw[semithick] (synm2S) |- (3.3,-1.05);
+    \draw[semithick] (synm3D) |- (6.0,1.35); \draw[semithick] (synm3S) |- (6.0,0.15);
+    \draw[semithick] (synm4D) |- (8.1,1.35); \draw[semithick] (synm4S) |- (8.1,-1.05);
 
-    % C. Hidden-error / derivative replica.
-    \begin{scope}[yshift=-5.85cm]
-      \node[title] at (2.2,3.0) {C. hidden-error replica};
-      \draw[wire] (-0.25,2.65) node[lab,left] {VDD} -- (4.8,2.65);
-      \pmos{1.15}{2.05}{$P_r^+$}{$r^+$}{prp}
-      \pmos{3.45}{2.05}{$P_r^-$}{$r^-$}{prm}
-      \draw[wire] (prpS) -- (1.15,2.65); \draw[wire] (prmS) -- (3.45,2.65);
-      \node[circle, fill=black, inner sep=1.0pt, label=above:{$\delta h^+$}] (dhp) at (1.15,1.35) {};
-      \node[circle, fill=black, inner sep=1.0pt, label=above:{$\delta h^-$}] (dhm) at (3.45,1.35) {};
-      \draw[wire] (prpD) -- (dhp); \draw[wire] (prmD) -- (dhm);
-      \nmos{1.15}{0.45}{$N_d^+$}{$z^+$}{ndp}
-      \nmos{3.45}{0.45}{$N_d^-$}{$z^-$}{ndm}
-      \draw[wire] (dhp) -- (ndpD); \draw[wire] (dhm) -- (ndmD);
-      \draw[wire] (ndpS) -- (2.3,-0.25) -- (ndmS);
-      \nmos{2.3}{-1.05}{$N_{tb}$}{$pbwd$}{ntb}
-      \draw[wire] (2.3,-0.25) -- (ntbD); \draw[wire] (ntbS) -- (2.3,-1.78);
-      \gnd{2.3}{-1.78}
-      \capg{0.35}{0.35}{$C_{\delta h^+}$}{cdhp}
-      \capg{4.35}{0.35}{$C_{\delta h^-}$}{cdhm}
-      \draw[wire] (dhp) -| (cdhp); \draw[wire] (dhm) -| (cdhm);
-      \node[group, fit=(prp) (prm) (ndp) (ndm) (ntb) (cdhp) (cdhm)] {};
-    \end{scope}
-
-    % D. Four-quadrant MOS writer.
-    \begin{scope}[xshift=7.2cm,yshift=-5.85cm]
-      \node[title] at (2.2,3.25) {D. four-quadrant writer};
-      \capg{1.15}{2.15}{$C_{W^+}$}{wwp}
-      \capg{3.45}{2.15}{$C_{W^-}$}{wwm}
-      \draw[wire] (0.45,2.78) -- (4.15,2.78) node[lab,right] {$V_{\mathrm{write}}$};
-      \draw[wire] (1.15,2.78) -- (1.15,2.15);
-      \draw[wire] (3.45,2.78) -- (3.45,2.15);
-
-      \nmos{0.45}{1.20}{}{}{mppp}
-      \nmos{0.45}{0.35}{}{}{mppx}
-      \nmos{0.45}{-0.50}{}{}{mppd}
-      \draw[wire] (wwp) |- (0.45,1.75) -- (mpppD);
-      \draw[wire] (mpppS) -- (mppxD); \draw[wire] (mppxS) -- (mppdD);
-      \draw[wire] (mppdS) -- (0.45,-1.10); \gnd{0.45}{-1.10}
-
-      \nmos{1.45}{1.20}{}{}{mmmp}
-      \nmos{1.45}{0.35}{}{}{mmmx}
-      \nmos{1.45}{-0.50}{}{}{mmmd}
-      \draw[wire] (wwp) |- (1.45,1.75) -- (mmmpD);
-      \draw[wire] (mmmpS) -- (mmmxD); \draw[wire] (mmmxS) -- (mmmdD);
-      \draw[wire] (mmmdS) -- (1.45,-1.10); \gnd{1.45}{-1.10}
-
-      \nmos{3.05}{1.20}{}{}{mpmp}
-      \nmos{3.05}{0.35}{}{}{mpmx}
-      \nmos{3.05}{-0.50}{}{}{mpmd}
-      \draw[wire] (wwm) |- (3.05,1.75) -- (mpmpD);
-      \draw[wire] (mpmpS) -- (mpmxD); \draw[wire] (mpmxS) -- (mpmdD);
-      \draw[wire] (mpmdS) -- (3.05,-1.10); \gnd{3.05}{-1.10}
-
-      \nmos{4.05}{1.20}{}{}{mmpp}
-      \nmos{4.05}{0.35}{}{}{mmpx}
-      \nmos{4.05}{-0.50}{}{}{mmpd}
-      \draw[wire] (wwm) |- (4.05,1.75) -- (mmppD);
-      \draw[wire] (mmppS) -- (mmpxD); \draw[wire] (mmpxS) -- (mmpdD);
-      \draw[wire] (mmpdS) -- (4.05,-1.10); \gnd{4.05}{-1.10}
-
-      \node[lab, align=center] at (0.45,-1.42) {$pacc$\\$x^+$\\$\delta h^+$};
-      \node[lab, align=center] at (1.45,-1.42) {$pacc$\\$x^-$\\$\delta h^-$};
-      \node[lab, align=center] at (3.05,-1.42) {$pacc$\\$x^+$\\$\delta h^-$};
-      \node[lab, align=center] at (4.05,-1.42) {$pacc$\\$x^-$\\$\delta h^+$};
-      \node[group, fit=(wwp) (wwm) (mppp) (mmpd)] {};
-    \end{scope}
+    \moscap{1.2}{-2.25}{$C_{W^+}$}{syncwp}
+    \moscap{3.3}{-2.25}{$C_{W^-}$}{syncwm}
+    \draw[gate] (syncwp) -| (synm1G);
+    \draw[gate] (syncwp) -| (synm4G);
+    \draw[gate] (syncwm) -| (synm2G);
+    \draw[gate] (syncwm) -| (synm3G);
+    \node[lab, align=center] at (2.45,-3.45)
+      {same-sign branches drive \(z^+\); opposite-sign branches drive \(z^-\)};
+    \node[group, fit=(synm1D) (synm4S) (syncwp) (syncwm)] {};
   \end{tikzpicture}}
-  \caption{Transistor-level target for one local-feature cell.  The drawing
-  contains only MOSFET switches/transconductors, capacitors, supply rails,
-  ground, and bias/phase/input rails.  Panel A is one repeated signed synapse
-  slice.  Panel B stores a tanh-like forward activation from a MOS differential
-  pair.  Panel C stores signed hidden error with a replica pair gated by the
-  backward phase.  Panel D updates the differential weight capacitors with four
-  series-MOS coincidence branches.  This is the replacement target for the
-  equation-only prototype; it has not yet been validated on full MNIST.}
-  \label{fig:mos-local-feature-cell}
+  \caption{Zoomed transistor-level signed synapse slice.  A full local-feature
+  cell repeats this MOS pass/transconductance slice for each pixel in the
+  receptive field.}
+  \label{fig:mos-synapse-slice}
+\end{figure}
+
+\begin{figure}[H]
+  \centering
+  \resizebox{0.98\linewidth}{!}{%
+  \begin{tikzpicture}[
+      font=\large,
+      lab/.style={font=\large, fill=white, inner sep=1.5pt},
+      ctrl/.style={semithick, violet!80!black},
+      group/.style={draw, dashed, rounded corners=2pt, inner sep=9pt}
+    ]
+    \node[font=\bfseries\Large] at (4.7,3.8) {B. forward differential pair and activation storage};
+    \draw[semithick] (-0.1,3.15) node[lab,left] {VDD} -- (9.4,3.15);
+    \drawpmos{2.1}{2.35}{$P_L^+$}{$V_{bp}$}{fp1}
+    \drawpmos{6.6}{2.35}{$P_L^-$}{$V_{bp}$}{fp2}
+    \draw[semithick] (fp1S) -- (2.1,3.15); \draw[semithick] (fp2S) -- (6.6,3.15);
+    \node[circle, fill=black, inner sep=1.3pt, label=above:{$h^+$}] (fhp) at (2.1,1.45) {};
+    \node[circle, fill=black, inner sep=1.3pt, label=above:{$h^-$}] (fhm) at (6.6,1.45) {};
+    \draw[semithick] (fp1D) -- (fhp); \draw[semithick] (fp2D) -- (fhm);
+    \drawnmos{2.1}{0.25}{$N_z^+$}{$z^+$}{fn1}
+    \drawnmos{6.6}{0.25}{$N_z^-$}{$z^-$}{fn2}
+    \draw[semithick] (fhp) -- (fn1D); \draw[semithick] (fhm) -- (fn2D);
+    \draw[semithick] (fn1S) -- (4.35,-0.65) -- (fn2S);
+    \drawnmos{4.35}{-1.6}{$N_t$}{$V_{tail}$}{fnt}
+    \draw[semithick] (4.35,-0.65) -- (fntD); \draw[semithick] (fntS) -- (4.35,-2.45);
+    \mosgnd{4.35}{-2.45}
+    \drawnmos{0.55}{0.55}{$S_{h+}$}{$pact$}{fshp}
+    \drawnmos{8.15}{0.55}{$S_{h-}$}{$pact$}{fshm}
+    \moscap{0.55}{-0.75}{$C_{h^+}$}{fchp}
+    \moscap{8.15}{-0.75}{$C_{h^-}$}{fchm}
+    \draw[semithick] (fhp) -| (fshpD); \draw[semithick] (fhm) -| (fshmD);
+    \draw[semithick] (fshpS) -- (fchp); \draw[semithick] (fshmS) -- (fchm);
+    \draw[ctrl] (0.55,1.75) node[lab,above] {$pact$} -- (fshpG);
+    \draw[ctrl] (8.15,1.75) node[lab,above] {$pact$} -- (fshmG);
+    \node[group, fit=(fp1) (fp2) (fn1) (fn2) (fnt) (fchp) (fchm)] {};
+  \end{tikzpicture}}
+  \caption{Zoomed MOS forward cell.  The source-degenerated differential pair
+  gives a tanh-like current split, and phase-gated MOS switches store the
+  differential activation on \(C_{h^+}\) and \(C_{h^-}\).}
+  \label{fig:mos-forward-cell}
+\end{figure}
+
+\begin{figure}[H]
+  \centering
+  \resizebox{0.98\linewidth}{!}{%
+  \begin{tikzpicture}[
+      font=\large,
+      lab/.style={font=\large, fill=white, inner sep=1.5pt},
+      group/.style={draw, dashed, rounded corners=2pt, inner sep=9pt}
+    ]
+    \node[font=\bfseries\Large] at (4.7,3.8) {C. hidden-error replica pair};
+    \draw[semithick] (-0.1,3.15) node[lab,left] {VDD} -- (9.4,3.15);
+    \drawpmos{2.1}{2.35}{$P_r^+$}{$r^+$}{bp1}
+    \drawpmos{6.6}{2.35}{$P_r^-$}{$r^-$}{bp2}
+    \draw[semithick] (bp1S) -- (2.1,3.15); \draw[semithick] (bp2S) -- (6.6,3.15);
+    \node[circle, fill=black, inner sep=1.3pt, label=above:{$\delta h^+$}] (bdhp) at (2.1,1.45) {};
+    \node[circle, fill=black, inner sep=1.3pt, label=above:{$\delta h^-$}] (bdhm) at (6.6,1.45) {};
+    \draw[semithick] (bp1D) -- (bdhp); \draw[semithick] (bp2D) -- (bdhm);
+    \drawnmos{2.1}{0.25}{$N_d^+$}{$z^+$}{bn1}
+    \drawnmos{6.6}{0.25}{$N_d^-$}{$z^-$}{bn2}
+    \draw[semithick] (bdhp) -- (bn1D); \draw[semithick] (bdhm) -- (bn2D);
+    \draw[semithick] (bn1S) -- (4.35,-0.65) -- (bn2S);
+    \drawnmos{4.35}{-1.6}{$N_{tb}$}{$pbwd$}{bnt}
+    \draw[semithick] (4.35,-0.65) -- (bntD); \draw[semithick] (bntS) -- (4.35,-2.45);
+    \mosgnd{4.35}{-2.45}
+    \moscap{0.55}{0.15}{$C_{\delta h^+}$}{bcdhp}
+    \moscap{8.15}{0.15}{$C_{\delta h^-}$}{bcdhm}
+    \draw[semithick] (bdhp) -| (bcdhp); \draw[semithick] (bdhm) -| (bcdhm);
+    \node[group, fit=(bp1) (bp2) (bn1) (bn2) (bnt) (bcdhp) (bcdhm)] {};
+  \end{tikzpicture}}
+  \caption{Zoomed MOS hidden-error cell.  The feedback rails \(r^+\) and
+  \(r^-\), the derivative-controlled \(z^+/z^-\) pair, and the \(pbwd\) tail
+  device form and store the signed hidden-error rails.}
+  \label{fig:mos-hidden-error-cell}
+\end{figure}
+
+\begin{figure}[H]
+  \centering
+  \resizebox{0.98\linewidth}{!}{%
+  \begin{tikzpicture}[
+      font=\large,
+      lab/.style={font=\large, fill=white, inner sep=1.5pt},
+      group/.style={draw, dashed, rounded corners=2pt, inner sep=9pt}
+    ]
+    \node[font=\bfseries\Large] at (4.8,3.7) {D. four-quadrant MOS writer};
+    \draw[semithick] (0.4,3.05) -- (9.2,3.05) node[lab,right] {$V_{\mathrm{write}}$};
+    \moscap{2.1}{2.25}{$C_{W^+}$}{wwp}
+    \moscap{7.0}{2.25}{$C_{W^-}$}{wwm}
+    \draw[semithick] (2.1,3.05) -- (2.1,2.25);
+    \draw[semithick] (7.0,3.05) -- (7.0,2.25);
+
+    \drawnmos{0.9}{1.1}{}{$pacc$}{wpaccA}
+    \drawnmos{0.9}{0.1}{}{$x^+$}{wxA}
+    \drawnmos{0.9}{-0.9}{}{$\delta h^+$}{wdhA}
+    \draw[semithick] (wwp) |- (0.9,1.75) -- (wpaccAD);
+    \draw[semithick] (wpaccAS) -- (wxAD);
+    \draw[semithick] (wxAS) -- (wdhAD);
+    \draw[semithick] (wdhAS) -- (0.9,-1.65);
+    \mosgnd{0.9}{-1.65}
+
+    \drawnmos{2.9}{1.1}{}{$pacc$}{wpaccB}
+    \drawnmos{2.9}{0.1}{}{$x^-$}{wxB}
+    \drawnmos{2.9}{-0.9}{}{$\delta h^-$}{wdhB}
+    \draw[semithick] (wwp) |- (2.9,1.75) -- (wpaccBD);
+    \draw[semithick] (wpaccBS) -- (wxBD);
+    \draw[semithick] (wxBS) -- (wdhBD);
+    \draw[semithick] (wdhBS) -- (2.9,-1.65);
+    \mosgnd{2.9}{-1.65}
+
+    \drawnmos{6.0}{1.1}{}{$pacc$}{wpaccC}
+    \drawnmos{6.0}{0.1}{}{$x^+$}{wxC}
+    \drawnmos{6.0}{-0.9}{}{$\delta h^-$}{wdhC}
+    \draw[semithick] (wwm) |- (6.0,1.75) -- (wpaccCD);
+    \draw[semithick] (wpaccCS) -- (wxCD);
+    \draw[semithick] (wxCS) -- (wdhCD);
+    \draw[semithick] (wdhCS) -- (6.0,-1.65);
+    \mosgnd{6.0}{-1.65}
+
+    \drawnmos{8.0}{1.1}{}{$pacc$}{wpaccD}
+    \drawnmos{8.0}{0.1}{}{$x^-$}{wxD}
+    \drawnmos{8.0}{-0.9}{}{$\delta h^+$}{wdhD}
+    \draw[semithick] (wwm) |- (8.0,1.75) -- (wpaccDD);
+    \draw[semithick] (wpaccDS) -- (wxDD);
+    \draw[semithick] (wxDS) -- (wdhDD);
+    \draw[semithick] (wdhDS) -- (8.0,-1.65);
+    \mosgnd{8.0}{-1.65}
+    \node[lab, align=center] at (1.9,-2.25)
+      {\(W^+\) branches\\\(x^+\delta h^+\), \(x^-\delta h^-\)};
+    \node[lab, align=center] at (7.0,-2.25)
+      {\(W^-\) branches\\\(x^+\delta h^-\), \(x^-\delta h^+\)};
+    \node[group, fit=(wwp) (wwm) (wpaccAD) (wdhDS)] {};
+  \end{tikzpicture}}
+  \caption{Zoomed MOS four-quadrant writer.  Each update path is a stack of
+  phase, input, and hidden-error MOS devices.  Same-sign coincidences update
+  \(C_{W^+}\); opposite-sign coincidences update \(C_{W^-}\).}
+  \label{fig:mos-writer-cell}
 \end{figure}
 
 The expected small-signal relationships are transistor relationships, not
@@ -496,7 +534,7 @@ same state and phase contract shown in Fig.~\ref{fig:cell-template}; they differ
 in the forward nonlinearity \(\phi\), the hidden synapse transfer \(S_W\), the
 derivative gate, and the hidden-error feedback path.  These diagrams are kept to
 define equations and ports only; transistor-level promotion starts from
-Fig.~\ref{fig:mos-local-feature-cell} and from single-cell SPICE
+Figs.~\ref{fig:mos-synapse-slice}--\ref{fig:mos-writer-cell} and from single-cell SPICE
 characterization.
 
 \begin{figure}[H]

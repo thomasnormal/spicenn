@@ -72,51 +72,51 @@ def save_plot(fig: plt.Figure, stem: str) -> Path:
 
 def characterize_synapse() -> Path:
     deck = f"""
-* Signed MOS synapse slice sanity check
+* Signed MOS synapse transconductance sanity check
 {COMMON_MODELS}
-VXP xp 0 0.2
-VXM xm 0 0.9
+VCM cm 0 0.9
+VDIFF xp xm -1.4
+RXP xp cm 1G
+RXM xm cm 1G
 
-* Positive-weight copy: w+ high, w- low.
-VWPP wpp 0 1.8
-VWMP wmp 0 0.0
-VZPP zpp 0 0.9
-VZMP zmp 0 0.9
-Mpp1 zpp wpp xp 0 NMOS L={{LCH}} W={{WN}}
-Mpp2 zmp wpp xm 0 NMOS L={{LCH}} W={{WN}}
-Mpm1 zmp wmp xp 0 NMOS L={{LCH}} W={{WN}}
-Mpm2 zpp wmp xm 0 NMOS L={{LCH}} W={{WN}}
+* Positive-weight copy: xp steers current to z+, xm to z-.
+VWPP wpp 0 1.15
+VZPP zpp 0 1.8
+VZMP zmp 0 1.8
+Mpp zpp xp tailp 0 NMOS L={{LCH}} W={{WN}}
+Mpm zmp xm tailp 0 NMOS L={{LCH}} W={{WN}}
+Mtp tailp wpp 0 0 NMOS L={{LCH}} W=12u
 
-* Negative-weight copy: w+ low, w- high.
-VWPN wpn 0 0.0
-VWMN wmn 0 1.8
-VZPN zpn 0 0.9
-VZMN zmn 0 0.9
-Mnp1 zpn wpn xp 0 NMOS L={{LCH}} W={{WN}}
-Mnp2 zmn wpn xm 0 NMOS L={{LCH}} W={{WN}}
-Mnm1 zmn wmn xp 0 NMOS L={{LCH}} W={{WN}}
-Mnm2 zpn wmn xm 0 NMOS L={{LCH}} W={{WN}}
+* Negative-weight copy swaps the input gates, reversing the contribution sign.
+VWMN wmn 0 1.15
+VZPN zpn 0 1.8
+VZMN zmn 0 1.8
+Mnp zpn xm tailn 0 NMOS L={{LCH}} W={{WN}}
+Mnm zmn xp tailn 0 NMOS L={{LCH}} W={{WN}}
+Mtn tailn wmn 0 0 NMOS L={{LCH}} W=12u
 
 .control
 set noaskquit
-dc VXP 0.2 1.6 0.01
-wrdata mos_synapse_slice.dat i(VZPP) i(VZMP) i(VZPN) i(VZMN)
+dc VDIFF -1.4 1.4 0.02
+wrdata mos_synapse_slice.dat i(VZPP) i(VZMP) i(VZPN) i(VZMN) v(xp) v(xm)
 quit
 .endc
 .end
 """
     data = run_ngspice(deck, "mos_synapse_slice")
-    x, cols = load_wrdata(data, 4)
+    xdiff, cols = load_wrdata(data, 6)
     # ngspice reports current through a voltage source using the source's
     # orientation.  Flip into the contribution convention used in the paper:
     # positive current means a positive signed contribution to z.
-    pos_signed = cols[0] - cols[1]
-    neg_signed = cols[2] - cols[3]
-    xdiff = x - 0.9
+    pos_signed = cols[1] - cols[0]
+    neg_signed = cols[3] - cols[2]
     require(np.mean(pos_signed[xdiff > 0.2]) > 0, "w+ branch should be positive for x+ > x-")
     require(np.mean(pos_signed[xdiff < -0.2]) < 0, "w+ branch should be negative for x+ < x-")
     require(np.mean(neg_signed[xdiff > 0.2]) < 0, "w- branch should be negative for x+ > x-")
     require(np.mean(neg_signed[xdiff < -0.2]) > 0, "w- branch should be positive for x+ < x-")
+    peak = max(float(np.max(np.abs(pos_signed))), 1e-30)
+    require(np.max(np.abs(pos_signed + neg_signed)) < 1e-6 * peak, "negative-weight copy should reverse sign")
+    require(np.max(np.abs(pos_signed + pos_signed[::-1])) < 2e-3 * peak, "synapse transfer should be odd-symmetric")
     fig, ax = plt.subplots(figsize=(7.2, 4.2))
     ax.plot(xdiff, 1e6 * pos_signed, label="$w^+$ high")
     ax.plot(xdiff, 1e6 * neg_signed, label="$w^-$ high")

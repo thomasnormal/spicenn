@@ -344,35 +344,46 @@ direction.
       gate/.style={semithick, gray!80},
       group/.style={draw, dashed, rounded corners=2pt, inner sep=9pt}
     ]
-    \node[font=\bfseries\Large] at (4.8,3.6) {A. one signed synapse slice};
+    \node[font=\bfseries\Large] at (4.8,3.6) {A. one signed synapse transconductance slice};
     \draw[rail] (-0.2,2.8) node[lab,left] {$z^+$} -- (9.8,2.8);
-    \draw[rail] (-0.2,1.35) node[lab,left] {$z^-$} -- (9.8,1.35);
-    \draw[semithick] (-0.2,0.15) node[lab,left] {$x^+$} -- (9.8,0.15);
-    \draw[semithick] (-0.2,-1.05) node[lab,left] {$x^-$} -- (9.8,-1.05);
+    \draw[rail] (-0.2,1.45) node[lab,left] {$z^-$} -- (9.8,1.45);
+    \draw[semithick] (-0.2,0.10) node[lab,left] {$x^+$} -- (9.8,0.10);
+    \draw[semithick] (-0.2,-0.95) node[lab,left] {$x^-$} -- (9.8,-0.95);
 
-    \drawnmos{1.2}{1.55}{$M_1$}{$w^+$}{synm1}
-    \drawnmos{3.3}{1.55}{$M_2$}{$w^-$}{synm2}
-    \drawnmos{6.0}{0.05}{$M_3$}{$w^-$}{synm3}
-    \drawnmos{8.1}{0.05}{$M_4$}{$w^+$}{synm4}
+    \drawnmos{1.7}{0.10}{$M_{p+}$}{$x^+$}{synpp}
+    \drawnmos{3.4}{-0.95}{$M_{p-}$}{$x^-$}{synpm}
+    \draw[semithick] (synppD) |- (1.7,2.8);
+    \draw[semithick] (synpmD) |- (3.4,1.45);
+    \draw[semithick] (synppS) -- (2.55,-1.75) -- (synpmS);
+    \drawnmos{2.55}{-2.75}{$N_{tail+}$}{$w^+$}{syntp}
+    \draw[semithick] (2.55,-1.75) -- (syntpD);
+    \draw[semithick] (syntpS) -- (2.55,-3.50);
+    \mosgnd{2.55}{-3.50}
 
-    \draw[semithick] (synm1D) |- (1.2,2.8);  \draw[semithick] (synm1S) |- (1.2,0.15);
-    \draw[semithick] (synm2D) |- (3.3,2.8);  \draw[semithick] (synm2S) |- (3.3,-1.05);
-    \draw[semithick] (synm3D) |- (6.0,1.35); \draw[semithick] (synm3S) |- (6.0,0.15);
-    \draw[semithick] (synm4D) |- (8.1,1.35); \draw[semithick] (synm4S) |- (8.1,-1.05);
+    \drawnmos{6.0}{-0.95}{$M_{n+}$}{$x^-$}{synnp}
+    \drawnmos{7.7}{0.10}{$M_{n-}$}{$x^+$}{synnm}
+    \draw[semithick] (synnpD) |- (6.0,2.8);
+    \draw[semithick] (synnmD) |- (7.7,1.45);
+    \draw[semithick] (synnpS) -- (6.85,-1.75) -- (synnmS);
+    \drawnmos{6.85}{-2.75}{$N_{tail-}$}{$w^-$}{syntn}
+    \draw[semithick] (6.85,-1.75) -- (syntnD);
+    \draw[semithick] (syntnS) -- (6.85,-3.50);
+    \mosgnd{6.85}{-3.50}
 
-    \moscap{1.2}{-2.25}{$C_{W^+}$}{syncwp}
-    \moscap{3.3}{-2.25}{$C_{W^-}$}{syncwm}
-    \draw[gate] (syncwp) -| (synm1G);
-    \draw[gate] (syncwp) -| (synm4G);
-    \draw[gate] (syncwm) -| (synm2G);
-    \draw[gate] (syncwm) -| (synm3G);
-    \node[lab, align=center] at (2.45,-3.45)
-      {same-sign branches drive \(z^+\); opposite-sign branches drive \(z^-\)};
-    \node[group, fit=(synm1D) (synm4S) (syncwp) (syncwm)] {};
+    \moscap{1.25}{-4.00}{$C_{W^+}$}{syncwp}
+    \moscap{7.95}{-4.00}{$C_{W^-}$}{syncwm}
+    \draw[gate] (syncwp) -| (syntpG);
+    \draw[gate] (syncwm) -| (syntnG);
+    \node[lab, align=center] at (2.55,-5.00)
+      {\(w^+\): \(x^+\!\to z^+\), \(x^-\!\to z^-\)};
+    \node[lab, align=center] at (6.85,-5.00)
+      {\(w^-\): \(x^-\!\to z^+\), \(x^+\!\to z^-\)};
+    \node[group, fit=(synppD) (synnmD) (syncwp) (syncwm)] {};
   \end{tikzpicture}}
   \caption{Zoomed transistor-level signed synapse slice.  A full local-feature
-  cell repeats this MOS pass/transconductance slice for each pixel in the
-  receptive field.}
+  cell repeats this source-coupled MOS transconductance slice for each pixel in
+  the receptive field.  The \(w^-\) copy swaps the input gates, so its
+  contribution is the sign reverse of the \(w^+\) copy.}
   \label{fig:mos-synapse-slice}
 \end{figure}
 

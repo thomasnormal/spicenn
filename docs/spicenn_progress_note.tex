@@ -840,6 +840,20 @@ must satisfy before it can replace the current behavioral prototype.
 
 \begin{figure}[H]
   \centering
+  \includegraphics[width=0.88\linewidth]{figures/mos_hidden_error_common_mode_ngspice.png}
+  \caption{Ngspice input common-mode characterization of the hidden-error
+  finite-difference replicas.  Matched nudged replica pairs are run at
+  \(V_{CM}=0.75\), \(0.90\), and \(1.05\) V while \(z^+-z^-\) ramps through the
+  active region.  The center derivative gain stays near unity at all three
+  biases.  The active window is bias-dependent: the \(0.5\)-gain width is about
+  \(0.48\), \(0.67\), and \(0.78\) V respectively, and the high-common-mode
+  case has more edge leakage.  This plot makes the hidden-error bias margin
+  explicit rather than assuming that the nominal common-mode point is free.}
+  \label{fig:mos-hidden-error-common-mode-ngspice}
+\end{figure}
+
+\begin{figure}[H]
+  \centering
   \includegraphics[width=0.88\linewidth]{figures/mos_hidden_writer_chain_ngspice.png}
   \caption{Ngspice hidden-error-store to writer/readback integration
   characterization.  The cross-connected MOS replica network first stores

@@ -1669,6 +1669,56 @@ quit
 .endc
 .end
 """
+    cm_cases = [("cm075", 0.75), ("cm090", 0.90), ("cm105", 1.05)]
+    cm_devices = []
+    cm_prints = []
+    for name, cm_value in cm_cases:
+        cm_devices.append(
+            f"""
+* Hidden-error finite-difference replica pair at input common-mode {cm_value:.2f} V.
+VCMH_{name} cmh_{name} 0 {cm_value:.2f}
+VDIFFH_{name} zph_{name} zmh_{name} PWL(0 -0.45 10u 0.45)
+RZPH_{name} zph_{name} cmh_{name} 1G
+RZMH_{name} zmh_{name} cmh_{name} 1G
+VZPPHC_{name} zpphc_{name} zph_{name} {{EPS/2}}
+VZMMHC_{name} zmh_{name} zmmhc_{name} {{EPS/2}}
+VZPMHC_{name} zph_{name} zpmhc_{name} {{EPS/2}}
+VZMPHC_{name} zmphc_{name} zmh_{name} {{EPS/2}}
+
+MPPPHC_{name} hpphc_{name} hpphc_{name} vdd vdd PMOS L={{LCH}} W={{WP}}
+MPPMHC_{name} hpmhc_{name} hpmhc_{name} vdd vdd PMOS L={{LCH}} W={{WP}}
+MNPPHC_{name} hpphc_{name} zpphc_{name} tailphc_{name} 0 NMOS L={{LCH}} W={{WN}}
+MNPMHC_{name} hpmhc_{name} zmmhc_{name} tailphc_{name} 0 NMOS L={{LCH}} W={{WN}}
+MNTPHC_{name} tailphc_{name} vbias 0 0 NMOS L={{LCH}} W={{WN}}
+
+MPMPHC_{name} hmphc_{name} hmphc_{name} vdd vdd PMOS L={{LCH}} W={{WP}}
+MPMMHC_{name} hmmhc_{name} hmmhc_{name} vdd vdd PMOS L={{LCH}} W={{WP}}
+MNMPHC_{name} hmphc_{name} zpmhc_{name} tailmhc_{name} 0 NMOS L={{LCH}} W={{WN}}
+MNMMHC_{name} hmmhc_{name} zmphc_{name} tailmhc_{name} 0 NMOS L={{LCH}} W={{WN}}
+MNTMHC_{name} tailmhc_{name} vbias 0 0 NMOS L={{LCH}} W={{WN}}
+"""
+        )
+        cm_prints.extend(
+            [f"v(hpphc_{name})", f"v(hpmhc_{name})", f"v(hmphc_{name})", f"v(hmmhc_{name})"]
+        )
+    cm_deck = f"""
+* Hidden-error derivative-window input-common-mode margin sanity check.
+* Matched +eps and -eps forward-replica pairs are instantiated at several
+* input common modes.  The derivative proxy should stay nonnegative and keep a
+* broad active window without relying on one exact bias point.
+{COMMON_MODELS}
+.param EPS={eps}
+VDD vdd 0 1.8
+VTAIL vbias 0 0.95
+{''.join(cm_devices)}
+.control
+set noaskquit
+tran 10n 10u
+wrdata mos_hidden_error_common_mode.dat {' '.join(cm_prints)}
+quit
+.endc
+.end
+"""
     data = run_ngspice(deck, "mos_hidden_error")
     x, cols = load_wrdata(data, 4)
     xdiff = x
@@ -1788,6 +1838,38 @@ quit
     )
     nominal_center_gain = mismatch_gains[1][int(np.argmin(np.abs(mt)))]
     require(nominal_center_gain > 0.7, "nominal hidden-error mismatch deck should retain high center gain")
+
+    cm_data = run_ngspice(cm_deck, "mos_hidden_error_common_mode")
+    cmt, cm_cols = load_wrdata(cm_data, 4 * len(cm_cases))
+    cm_xdiff = -0.45 + 0.90 * cmt / 10e-6
+    cm_gains = []
+    cm_left_edges = []
+    cm_right_edges = []
+    cm_center_gains = []
+    for idx, (_name, cm_value) in enumerate(cm_cases):
+        plus_signed = cm_cols[4 * idx + 1] - cm_cols[4 * idx]
+        minus_signed = cm_cols[4 * idx + 3] - cm_cols[4 * idx + 2]
+        gain_series = (plus_signed - minus_signed) / (2.0 * eps)
+        cm_gains.append(gain_series)
+        require(np.all(gain_series > -1e-4), f"{cm_value:.2f} V common-mode hidden-error gain should stay nonnegative")
+        require(np.max(gain_series) > 0.65, f"{cm_value:.2f} V common-mode hidden-error gain should preserve an active window")
+        center_value = float(gain_series[int(np.argmin(np.abs(cm_xdiff)))])
+        cm_center_gains.append(center_value)
+        require(center_value > 0.65, f"{cm_value:.2f} V common-mode hidden-error center gain should stay useful")
+        require(
+            np.mean(gain_series[np.abs(cm_xdiff) > 0.35]) < 0.55 * np.max(gain_series),
+            f"{cm_value:.2f} V common-mode hidden-error gain should attenuate at the edges",
+        )
+        active = gain_series > 0.5
+        left_idx = int(np.argmax(active))
+        right_idx = len(active) - 1 - int(np.argmax(active[::-1]))
+        cm_left_edges.append(float(cm_xdiff[left_idx]))
+        cm_right_edges.append(float(cm_xdiff[right_idx]))
+        require(active.any(), f"{cm_value:.2f} V common-mode hidden-error gain should cross active threshold")
+        require(cm_xdiff[right_idx] - cm_xdiff[left_idx] > 0.45, f"{cm_value:.2f} V common-mode active window should stay usable")
+    cm_left_edges = np.array(cm_left_edges)
+    cm_right_edges = np.array(cm_right_edges)
+    cm_center_gains = np.array(cm_center_gains)
 
     fig, axes = plt.subplots(2, 1, figsize=(7.2, 6.2))
     axes[0].plot(xdiff, gain, label="finite-difference gain")
@@ -1920,6 +2002,31 @@ quit
     mismatch_axes[1].legend(loc="lower right")
     mismatch_fig.tight_layout()
     save_plot(mismatch_fig, "mos_hidden_error_mismatch_ngspice")
+
+    cm_fig, cm_axes = plt.subplots(2, 1, figsize=(7.2, 5.8))
+    for (_name, cm_value), gain_series in zip(cm_cases, cm_gains):
+        cm_axes[0].plot(cm_xdiff, gain_series, label=f"$V_{{CM}}={cm_value:.2f}$ V")
+    cm_axes[0].axhline(0, color="0.4", linewidth=0.8)
+    cm_axes[0].axvline(0, color="0.4", linewidth=0.8)
+    cm_axes[0].set_xlabel("$z^+ - z^-$ (V)")
+    cm_axes[0].set_ylabel("finite-diff gain (V/V)")
+    cm_axes[0].set_title("Hidden-error derivative window survives input common-mode shifts")
+    cm_axes[0].grid(True, alpha=0.25)
+    cm_axes[0].legend(loc="upper right")
+    cm_values = np.array([cm_value for _name, cm_value in cm_cases])
+    cm_window_widths = cm_right_edges - cm_left_edges
+    cm_axes[1].plot(cm_values, cm_left_edges, "o-", label="left 0.5-gain edge")
+    cm_axes[1].plot(cm_values, cm_right_edges, "s--", label="right 0.5-gain edge")
+    cm_axes[1].plot(cm_values, cm_window_widths, "^-.", label="active-window width")
+    cm_axes[1].plot(cm_values, cm_center_gains, "d:", label="center gain")
+    cm_axes[1].axhline(0, color="0.4", linewidth=0.8)
+    cm_axes[1].set_xlabel("input common-mode voltage (V)")
+    cm_axes[1].set_ylabel("edge / width / gain")
+    cm_axes[1].set_title("Bias shifts change gain slightly but keep a broad derivative window")
+    cm_axes[1].grid(True, alpha=0.25)
+    cm_axes[1].legend(loc="upper left", ncol=2, fontsize="small")
+    cm_fig.tight_layout()
+    save_plot(cm_fig, "mos_hidden_error_common_mode_ngspice")
     return hidden_plot
 
 

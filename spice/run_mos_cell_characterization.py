@@ -129,10 +129,23 @@ MNP zpn xm tailn 0 NMOS L={{LCH}} W={{WN}}
 MNM zmn xp tailn 0 NMOS L={{LCH}} W={{WN}}
 MTN tailn wpulse 0 0 NMOS L={{LCH}} W={{WTAIL}}
 
+* Equal positive and negative copies on the same summing capacitors should
+* cancel differentially while still drawing common-mode current.
+CZPC zpc 0 {{CSUM}} IC=1.2
+CZMC zmc 0 {{CSUM}} IC=1.2
+RZPC zpc 0 100G
+RZMC zmc 0 100G
+MCPP zpc xp tailcp 0 NMOS L={{LCH}} W={{WN}}
+MCPM zmc xm tailcp 0 NMOS L={{LCH}} W={{WN}}
+MCTP tailcp wpulse 0 0 NMOS L={{LCH}} W={{WTAIL}}
+MCNP zpc xm tailcn 0 NMOS L={{LCH}} W={{WN}}
+MCNM zmc xp tailcn 0 NMOS L={{LCH}} W={{WN}}
+MCTN tailcn wpulse 0 0 NMOS L={{LCH}} W={{WTAIL}}
+
 .control
 set noaskquit
 tran 5n 2.5u uic
-wrdata mos_synapse_store.dat v(zpp) v(zmp) v(zpn) v(zmn) v(wpulse)
+wrdata mos_synapse_store.dat v(zpp) v(zmp) v(zpn) v(zmn) v(zpc) v(zmc) v(wpulse)
 quit
 .endc
 .end
@@ -153,17 +166,20 @@ quit
     require(np.max(np.abs(pos_signed + pos_signed[::-1])) < 2e-3 * peak, "synapse transfer should be odd-symmetric")
 
     store_data = run_ngspice(store_deck, "mos_synapse_store")
-    t, store_cols = load_wrdata(store_data, 5)
+    t, store_cols = load_wrdata(store_data, 7)
     pos_cap_signed = store_cols[1] - store_cols[0]
     neg_cap_signed = store_cols[3] - store_cols[2]
+    cancel_cap_signed = store_cols[5] - store_cols[4]
 
     def at(time_s: float, values: np.ndarray) -> float:
         return float(values[np.argmin(np.abs(t - time_s))])
 
     require(at(1.25e-6, pos_cap_signed) > 0.06, "w+ synapse should raise signed z storage for x+ > x-")
     require(at(1.25e-6, neg_cap_signed) < -0.06, "w- synapse should lower signed z storage for x+ > x-")
+    require(abs(at(1.25e-6, cancel_cap_signed)) < 0.01, "equal w+ and w- branches should cancel on shared z storage")
     require(at(2.1e-6, pos_cap_signed) > 0.06, "w+ signed z storage should hold after pulse")
     require(at(2.1e-6, neg_cap_signed) < -0.06, "w- signed z storage should hold after pulse")
+    require(abs(at(2.1e-6, cancel_cap_signed)) < 0.01, "cancelled shared z storage should hold near zero")
 
     fig, axes = plt.subplots(2, 1, figsize=(7.2, 6.2))
     axes[0].plot(xdiff, 1e6 * pos_signed, label="$w^+$ high")
@@ -177,11 +193,12 @@ quit
     axes[0].legend()
     axes[1].plot(1e6 * t, pos_cap_signed, label="$w^+$: stored $z^- - z^+$")
     axes[1].plot(1e6 * t, neg_cap_signed, label="$w^-$: stored $z^- - z^+$")
-    axes[1].plot(1e6 * t, store_cols[4] / 8.0, color="0.5", alpha=0.45, label="$w_{gate}/8$")
+    axes[1].plot(1e6 * t, cancel_cap_signed, label="$w^+ + w^-$ shared caps")
+    axes[1].plot(1e6 * t, store_cols[6] / 8.0, color="0.5", alpha=0.45, label="$w_{gate}/8$")
     axes[1].axhline(0, color="0.4", linewidth=0.8)
     axes[1].set_xlabel("time (us)")
     axes[1].set_ylabel("stored preactivation step (V)")
-    axes[1].set_title("Same slice moves and holds summing capacitors")
+    axes[1].set_title("Signed branches add on shared summing capacitors")
     axes[1].grid(True, alpha=0.25)
     axes[1].legend()
     fig.tight_layout()

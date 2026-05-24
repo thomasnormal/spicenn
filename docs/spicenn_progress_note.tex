@@ -601,7 +601,9 @@ must satisfy before it can replace the current behavioral prototype.
   \(x^+>x^-\), while a high \(w^-\) rail reverses the sign.  The bottom panel
   repeats the same gate-swapped MOS slice with real preactivation capacitors;
   during the weight-enabled pulse, \(w^+\) raises stored \(z^- - z^+\), while
-  \(w^-\) lowers it, and both capacitor states hold after the pulse closes.}
+  \(w^-\) lowers it.  When equal \(w^+\) and \(w^-\) copies drive the same
+  summing capacitors, the differential state stays near zero, and all capacitor
+  states hold after the pulse closes.}
   \label{fig:mos-synapse-ngspice}
 \end{figure}
 

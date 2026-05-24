@@ -4772,6 +4772,121 @@ quit
     hya_fig.tight_layout()
     save_plot(hya_fig, "mos_hidden_writer_restored_gate_hybrid_activation_ngspice")
 
+    hybrid_repeated_deck = f"""
+* Hybrid restored-enable/analog-error writer repeated-pulse accumulation check.
+* One stored r+ hidden-error rail and one activation gate drive the same
+* persistent weight capacitors through a train of pacc pulses.
+{COMMON_MODELS}
+.param CERR=10p CWRITE=500p WSW=24u WWRITE=24u WRESTN=18u WRESTP=300u
+VDD vdd 0 1.8
+VTAIL vbias 0 0.95
+VPBWD pbwd 0 PULSE(0 1.8 0.45u 20n 20n 0.80u 8.0u)
+VRP rp 0 PULSE(0 1.8 0.45u 20n 20n 0.80u 8.0u)
+VPACC_HYR paccn_hyr 0 PULSE(1.8 0 1.55u 20n 20n 0.16u 0.45u)
+VHM_POS hm_pos 0 0.92
+
+VZPP_HYR zpp_hyr 0 {0.9 + hybrid_mismatch_eps / 2.0:.5f}
+VZMM_HYR zmm_hyr 0 {0.9 - hybrid_mismatch_eps / 2.0:.5f}
+VZPM_HYR zpm_hyr 0 {0.9 - hybrid_mismatch_eps / 2.0:.5f}
+VZMP_HYR zmp_hyr 0 {0.9 + hybrid_mismatch_eps / 2.0:.5f}
+
+MPPP_HYR hpp_hyr hpp_hyr vdd vdd PMOS L={{LCH}} W={{WP}}
+MPPM_HYR hpm_hyr hpm_hyr vdd vdd PMOS L={{LCH}} W={{WP}}
+MNPP_HYR hpp_hyr zpp_hyr tailp_hyr 0 NMOS L={{LCH}} W={{WN}}
+MNPM_HYR hpm_hyr zmm_hyr tailp_hyr 0 NMOS L={{LCH}} W={{WN}}
+MNTP_HYR tailp_hyr vbias 0 0 NMOS L={{LCH}} W={{WN}}
+
+MPMP_HYR hmp_hyr hmp_hyr vdd vdd PMOS L={{LCH}} W={{WP}}
+MPMM_HYR hmm_hyr hmm_hyr vdd vdd PMOS L={{LCH}} W={{WP}}
+MNMP_HYR hmp_hyr zpm_hyr tailm_hyr 0 NMOS L={{LCH}} W={{WN}}
+MNMM_HYR hmm_hyr zmp_hyr tailm_hyr 0 NMOS L={{LCH}} W={{WN}}
+MNTM_HYR tailm_hyr vbias 0 0 NMOS L={{LCH}} W={{WN}}
+
+CDP_RP_HYR cdp_rp_hyr 0 {{CERR}} IC=1.04
+CDM_RP_HYR cdm_rp_hyr 0 {{CERR}} IC=1.04
+RDP_RP_HYR cdp_rp_hyr 0 50G
+RDM_RP_HYR cdm_rp_hyr 0 50G
+{sign_store_path("hpm_hyr", "rp", "cdp_rp_hyr", "hyrrp1")}
+{sign_store_path("hmp_hyr", "rp", "cdp_rp_hyr", "hyrrp2")}
+{sign_store_path("hpp_hyr", "rp", "cdm_rp_hyr", "hyrrp3")}
+{sign_store_path("hmm_hyr", "rp", "cdm_rp_hyr", "hyrrp4")}
+
+MPRP_CDP_HYR rgp_rp_hyr cdp_rp_hyr vdd vdd PMOS L={{LCH}} W={{WRESTP}}
+MNRP_CDP_HYR rgp_rp_hyr cdp_rp_hyr 0 0 NMOS L={{LCH}} W={{WRESTN}}
+MPRP_CDM_HYR rgm_rp_hyr cdm_rp_hyr vdd vdd PMOS L={{LCH}} W={{WRESTP}}
+MNRP_CDM_HYR rgm_rp_hyr cdm_rp_hyr 0 0 NMOS L={{LCH}} W={{WRESTN}}
+
+CWP_HYR wp_hyr 0 {{CWRITE}} IC=0.85
+CWM_HYR wm_hyr 0 {{CWRITE}} IC=0.85
+MWP_HYR_A vdd paccn_hyr n_wp_hyr_a vdd PMOS L={{LCH}} W={{WWRITE}}
+MWP_HYR_B n_wp_hyr_a hm_pos n_wp_hyr_b vdd PMOS L={{LCH}} W={{WWRITE}}
+MWP_HYR_C n_wp_hyr_b rgp_rp_hyr n_wp_hyr_c vdd PMOS L={{LCH}} W={{WWRITE}}
+MWP_HYR_D n_wp_hyr_c cdm_rp_hyr wp_hyr vdd PMOS L={{LCH}} W={{WWRITE}}
+MWM_HYR_A vdd paccn_hyr n_wm_hyr_a vdd PMOS L={{LCH}} W={{WWRITE}}
+MWM_HYR_B n_wm_hyr_a hm_pos n_wm_hyr_b vdd PMOS L={{LCH}} W={{WWRITE}}
+MWM_HYR_C n_wm_hyr_b rgm_rp_hyr n_wm_hyr_c vdd PMOS L={{LCH}} W={{WWRITE}}
+MWM_HYR_D n_wm_hyr_c cdp_rp_hyr wm_hyr vdd PMOS L={{LCH}} W={{WWRITE}}
+
+.control
+set noaskquit
+tran 5n 4.65u uic
+wrdata mos_hidden_writer_restored_gate_hybrid_repeated.dat v(cdp_rp_hyr) v(cdm_rp_hyr) v(rgp_rp_hyr) v(rgm_rp_hyr) v(wp_hyr) v(wm_hyr) v(paccn_hyr) v(pbwd)
+quit
+.endc
+.end
+"""
+    hybrid_repeated_data = run_ngspice(
+        hybrid_repeated_deck,
+        "mos_hidden_writer_restored_gate_hybrid_repeated",
+    )
+    hyrt, hyr_cols = load_wrdata(hybrid_repeated_data, 8)
+
+    def hyrat(time_s: float, values: np.ndarray) -> float:
+        return float(values[np.argmin(np.abs(hyrt - time_s))])
+
+    hyr_hidden = hyr_cols[0] - hyr_cols[1]
+    hyr_selected_gate = hyr_cols[2]
+    hyr_complement_gate = hyr_cols[3]
+    hyr_wp = hyr_cols[4]
+    hyr_wm = hyr_cols[5]
+    hyr_diff = hyr_wp - hyr_wm
+    hyr_sample_times = np.array([1.78, 2.23, 2.68, 3.13, 3.58, 4.03, 4.48]) * 1e-6
+    hyr_steps = np.array([hyrat(ts, hyr_diff) for ts in hyr_sample_times])
+    hyr_wp_steps = np.array([hyrat(ts, hyr_wp) - hyrat(1.45e-6, hyr_wp) for ts in hyr_sample_times])
+    hyr_wm_steps = np.array([hyrat(ts, hyr_wm) - hyrat(1.45e-6, hyr_wm) for ts in hyr_sample_times])
+    hyr_increments = np.diff(hyr_steps)
+    require(hyrat(1.35e-6, hyr_hidden) > 0.07, "hybrid repeated deck should store a positive hidden error")
+    require(hyrat(1.45e-6, hyr_selected_gate) < 0.30, "hybrid repeated selected restored gate should be low")
+    require(hyrat(1.45e-6, hyr_complement_gate) > 1.60, "hybrid repeated complement restored gate should be high")
+    require(np.all(np.diff(hyr_steps) > 0.010), "hybrid repeated write should accumulate monotonically")
+    require(hyr_steps[-1] > 0.080, "hybrid repeated write should build a large readable differential")
+    require(hyr_steps[-1] < 0.20, "hybrid repeated write should remain incremental across seven pulses")
+    require(np.max(hyr_wm_steps) < 5e-4, "hybrid repeated complement rail should remain suppressed")
+    require(np.min(hyr_increments) > 0.45 * np.max(hyr_increments), "hybrid repeated increments should not collapse over seven pulses")
+    require(abs(hyrat(4.60e-6, hyr_diff) - hyr_steps[-1]) < 5e-4, "hybrid repeated write should hold after pulse train")
+
+    hyr_fig, hyr_axes = plt.subplots(2, 1, figsize=(7.2, 5.8))
+    hyr_axes[0].plot(1e6 * hyrt, hyr_hidden, label="stored $r^+$ hidden error")
+    hyr_axes[0].plot(1e6 * hyrt, hyr_selected_gate, label="selected restored gate")
+    hyr_axes[0].plot(1e6 * hyrt, hyr_complement_gate, label="complement restored gate")
+    hyr_axes[0].plot(1e6 * hyrt, hyr_cols[6] / 20.0, color="0.5", alpha=0.35, label="$pacc_n/20$")
+    hyr_axes[0].set_ylabel("voltage (V)")
+    hyr_axes[0].set_title("Hybrid repeated writer reuses one stored hidden-error rail")
+    hyr_axes[0].grid(True, alpha=0.25)
+    hyr_axes[0].legend(loc="center right", fontsize="small")
+    hyr_axes[1].plot(1e6 * hyrt, hyr_wp - hyrat(1.45e-6, hyr_wp), label="selected $W^+$ step")
+    hyr_axes[1].plot(1e6 * hyrt, hyr_wm - hyrat(1.45e-6, hyr_wm), label="complement $W^-$ step")
+    hyr_axes[1].plot(1e6 * hyrt, hyr_diff, label="$W^+ - W^-$")
+    hyr_axes[1].plot(1e6 * hyr_sample_times, hyr_steps, "o", color="black", label="post-pulse samples")
+    hyr_axes[1].axhline(0, color="0.4", linewidth=0.8)
+    hyr_axes[1].set_xlabel("time (us)")
+    hyr_axes[1].set_ylabel("writer step (V)")
+    hyr_axes[1].set_title("Repeated hybrid pacc pulses accumulate while complement stays off")
+    hyr_axes[1].grid(True, alpha=0.25)
+    hyr_axes[1].legend(loc="upper left", ncol=2, fontsize="small")
+    hyr_fig.tight_layout()
+    save_plot(hyr_fig, "mos_hidden_writer_restored_gate_hybrid_repeated_ngspice")
+
     return hidden_writer_plot
 
 

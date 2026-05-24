@@ -1125,6 +1125,23 @@ must satisfy before it can replace the current behavioral prototype.
 
 \begin{figure}[H]
   \centering
+  \includegraphics[width=0.88\linewidth]{figures/mos_hidden_writer_restored_gate_hybrid_repeated_ngspice.png}
+  \caption{Ngspice repeated-pulse accumulation characterization of the hybrid
+  restored writer.  One stored \(r^+\) hidden-error rail drives one persistent
+  weight-capacitor pair through seven active-low \(pacc\) pulses.  The
+  restored gates remain near \(0.196\) V selected and \(1.731\) V
+  complementary while the selected \(W^+\) capacitor accumulates nearly equal
+  increments of about \(12.27\) mV per \(160\) ns pulse.  The post-pulse
+  differential samples are \(12.3\), \(24.6\), \(36.8\), \(49.1\), \(61.4\),
+  \(73.6\), and \(85.9\) mV; the complement \(W^-\) rail moves only about
+  \(8\) nV.  This plot checks the online-training use case that one-shot
+  writer plots do not cover: repeated local writes accumulate on the same
+  capacitor pair without re-enabling the complement branch.}
+  \label{fig:mos-hidden-writer-restored-gate-hybrid-repeated-ngspice}
+\end{figure}
+
+\begin{figure}[H]
+  \centering
   \includegraphics[width=0.88\linewidth]{figures/mos_reset_precharge_ngspice.png}
   \caption{Ngspice transient characterization of MOS reset/precharge for
   reusable state capacitors.  A complementary MOS transmission-gate reset first

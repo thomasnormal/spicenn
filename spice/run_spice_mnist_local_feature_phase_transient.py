@@ -29,7 +29,7 @@ from run_spice_mnist_local_block_batch_op_train import (
     synapse_transfer_expr,
 )
 from run_spice_mnist_local_feature_batch_op_train import run_eval, run_train_batch, wrap_xyce_behavioral_rhs, xyce_prn_path
-from run_spice_mnist_train import load_mnist_sequence, mnist_index_splits, quantize_input_values
+from run_spice_mnist_train import apply_training_order, load_mnist_sequence, mnist_index_splits, quantize_input_values
 from run_spice_sweep import ROOT, detect_spice, is_xyce, prepare_netlist_for_simulator, run_tiny_test, run_simulator_netlist
 from spice_adapter import SPICE_SIMULATOR_ARGS_ENV
 
@@ -693,6 +693,11 @@ def phase_preflight_summary(
     updates: int,
     total_samples: int,
     input_quantization_levels: int,
+    train_order: str,
+    train_order_window: int,
+    train_order_pca_components: int,
+    train_order_pca_bins_per_unit: float,
+    train_order_permutation: np.ndarray,
     train_indices: np.ndarray,
     eval_indices: np.ndarray,
     labels: np.ndarray,
@@ -770,7 +775,11 @@ def phase_preflight_summary(
         "blocks": blocks,
         "channels": channels,
         "classes": 10,
-        "mnist_index_order": "stable_permutation_prefix",
+        "mnist_index_order": (
+            "stable_permutation_prefix"
+            if train_order == "stable"
+            else f"stable_permutation_prefix_{train_order}_window_{train_order_window}"
+        ),
         "train_index_metadata": index_prefix_metadata(train_indices),
         "eval_index_metadata": index_prefix_metadata(eval_indices),
         "train_label_metadata": label_sequence_metadata(labels, 10),
@@ -780,6 +789,11 @@ def phase_preflight_summary(
         "updates": updates,
         "total_samples": total_samples,
         "input_quantization_levels": input_quantization_levels,
+        "train_order": train_order,
+        "train_order_window": train_order_window,
+        "train_order_pca_components": train_order_pca_components,
+        "train_order_pca_bins_per_unit": train_order_pca_bins_per_unit,
+        "train_order_permutation_metadata": index_prefix_metadata(train_order_permutation),
         "lr": lr,
         "lr_schedule": lr_schedule,
         "lr_final_scale": lr_final_scale,
@@ -2522,6 +2536,18 @@ def main() -> None:
             "before building sample waveforms. 0 preserves the original floating inputs."
         ),
     )
+    ap.add_argument(
+        "--train-order",
+        choices=["stable", "local-label", "local-sum", "local-pca"],
+        default="stable",
+        help=(
+            "Optionally reorder the selected training prefix before waveform generation. Local modes "
+            "sort only inside --train-order-window windows to improve input waveform locality."
+        ),
+    )
+    ap.add_argument("--train-order-window", type=int, default=128)
+    ap.add_argument("--train-order-pca-components", type=int, default=2)
+    ap.add_argument("--train-order-pca-bins-per-unit", type=float, default=20.0)
     ap.add_argument("--batch-size", type=int, default=1)
     ap.add_argument("--updates", type=int, default=1)
     ap.add_argument("--lr", type=float, default=0.005)
@@ -2836,6 +2862,12 @@ def main() -> None:
         raise ValueError("--channels must be positive")
     if args.input_quantization_levels < 0 or args.input_quantization_levels == 1:
         raise ValueError("--input-quantization-levels must be 0 or at least 2")
+    if args.train_order_window <= 0:
+        raise ValueError("--train-order-window must be positive")
+    if args.train_order_pca_components <= 0:
+        raise ValueError("--train-order-pca-components must be positive")
+    if args.train_order_pca_bins_per_unit <= 0:
+        raise ValueError("--train-order-pca-bins-per-unit must be positive")
     if args.relu_clip <= 0:
         raise ValueError("--relu-clip must be positive")
     if args.relu_leak < 0:
@@ -2980,6 +3012,15 @@ def main() -> None:
         MNIST_TEST_COUNT,
         args.seed,
     )
+    x_train, y_train, train_indices, train_order_permutation = apply_training_order(
+        x_train,
+        y_train,
+        train_indices,
+        args.train_order,
+        args.train_order_window,
+        pca_components=args.train_order_pca_components,
+        pca_bins_per_unit=args.train_order_pca_bins_per_unit,
+    )
     x_batch = x_train[:total_samples]
     y_batch = y_train[:total_samples]
     preflight_gradient_accumulator_state_count = gradient_accumulator_state_count(
@@ -3045,6 +3086,11 @@ def main() -> None:
                     updates=args.updates,
                     total_samples=total_samples,
                     input_quantization_levels=args.input_quantization_levels,
+                    train_order=args.train_order,
+                    train_order_window=args.train_order_window,
+                    train_order_pca_components=args.train_order_pca_components,
+                    train_order_pca_bins_per_unit=args.train_order_pca_bins_per_unit,
+                    train_order_permutation=train_order_permutation,
                     train_indices=train_indices,
                     eval_indices=eval_indices,
                     labels=y_batch,
@@ -3614,7 +3660,11 @@ def main() -> None:
         "blocks": len(blocks),
         "channels": args.channels,
         "classes": 10,
-        "mnist_index_order": "stable_permutation_prefix",
+        "mnist_index_order": (
+            "stable_permutation_prefix"
+            if args.train_order == "stable"
+            else f"stable_permutation_prefix_{args.train_order}_window_{args.train_order_window}"
+        ),
         "train_index_metadata": index_prefix_metadata(train_indices),
         "eval_index_metadata": index_prefix_metadata(eval_indices),
         "train_label_metadata": label_sequence_metadata(y_batch, 10),
@@ -3627,6 +3677,11 @@ def main() -> None:
         "eval_backend": args.eval_backend,
         "total_samples": total_samples,
         "input_quantization_levels": args.input_quantization_levels,
+        "train_order": args.train_order,
+        "train_order_window": args.train_order_window,
+        "train_order_pca_components": args.train_order_pca_components,
+        "train_order_pca_bins_per_unit": args.train_order_pca_bins_per_unit,
+        "train_order_permutation_metadata": index_prefix_metadata(train_order_permutation),
         "lr": args.lr,
         "lr_schedule": args.lr_schedule,
         "lr_final_scale": args.lr_final_scale,

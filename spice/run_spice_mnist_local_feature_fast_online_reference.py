@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import time
 from pathlib import Path
@@ -22,7 +23,7 @@ from run_spice_mnist_local_feature_phase_transient import (
     sanitize_tag,
     synapse_transfer_np,
 )
-from run_spice_mnist_train import load_mnist_sequence, quantize_input_values
+from run_spice_mnist_train import apply_training_order, load_mnist_sequence, mnist_index_splits, quantize_input_values
 from run_spice_sweep import ROOT
 
 
@@ -320,6 +321,15 @@ def main() -> None:
         default=0,
         help="Optionally quantize normalized MNIST input rails to this many uniform levels in [-1, 1].",
     )
+    ap.add_argument(
+        "--train-order",
+        choices=["stable", "local-label", "local-sum", "local-pca"],
+        default="stable",
+        help="Optionally reorder the selected training prefix before online updates.",
+    )
+    ap.add_argument("--train-order-window", type=int, default=128)
+    ap.add_argument("--train-order-pca-components", type=int, default=2)
+    ap.add_argument("--train-order-pca-bins-per-unit", type=float, default=20.0)
     ap.add_argument("--lr", type=float, default=0.8)
     ap.add_argument("--lr-schedule", choices=["constant", "linear-decay"], default="constant")
     ap.add_argument("--lr-final-scale", type=float, default=1.0)
@@ -364,6 +374,12 @@ def main() -> None:
         raise ValueError("sample counts must be positive")
     if args.input_quantization_levels < 0 or args.input_quantization_levels == 1:
         raise ValueError("--input-quantization-levels must be 0 or at least 2")
+    if args.train_order_window <= 0:
+        raise ValueError("--train-order-window must be positive")
+    if args.train_order_pca_components <= 0:
+        raise ValueError("--train-order-pca-components must be positive")
+    if args.train_order_pca_bins_per_unit <= 0:
+        raise ValueError("--train-order-pca-bins-per-unit must be positive")
     if args.lr < 0:
         raise ValueError("--lr must be non-negative")
     if args.lr_final_scale < 0:
@@ -393,6 +409,16 @@ def main() -> None:
     if args.input_quantization_levels:
         x_train = quantize_input_values(x_train, args.input_quantization_levels)
         x_test = quantize_input_values(x_test, args.input_quantization_levels)
+    train_indices, _eval_indices = mnist_index_splits(args.train_samples, args.eval_samples, 60000, 10000, args.seed)
+    x_train, y_train, train_indices, train_order_permutation = apply_training_order(
+        x_train,
+        y_train,
+        train_indices,
+        args.train_order,
+        args.train_order_window,
+        pca_components=args.train_order_pca_components,
+        pca_bins_per_unit=args.train_order_pca_bins_per_unit,
+    )
     rng = np.random.default_rng(args.seed)
     initial_state = load_or_init_weights(args.init_weights, rng, len(blocks), args.channels, args.block_size * args.block_size)
 
@@ -467,6 +493,11 @@ def main() -> None:
         "eval_samples": args.eval_samples,
         "batch_size": 1,
         "input_quantization_levels": args.input_quantization_levels,
+        "train_order": args.train_order,
+        "train_order_window": args.train_order_window,
+        "train_order_pca_components": args.train_order_pca_components,
+        "train_order_pca_bins_per_unit": args.train_order_pca_bins_per_unit,
+        "train_order_permutation_sha256": hashlib.sha256(train_order_permutation.astype(np.int64).tobytes()).hexdigest(),
         "lr": args.lr,
         "lr_schedule": args.lr_schedule,
         "lr_final_scale": args.lr_final_scale,

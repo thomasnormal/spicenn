@@ -1556,6 +1556,26 @@ def test_mnist_index_splits_use_stable_train_and_test_prefixes() -> None:
         mnist_train.mnist_index_splits(101, 1, 100, 100, seed=7)
 
 
+def test_training_order_local_modes_sort_only_inside_windows() -> None:
+    x = np.array(
+        [
+            [2.0, 0.0],
+            [0.0, 0.0],
+            [1.0, 0.0],
+            [4.0, 0.0],
+            [3.0, 0.0],
+        ]
+    )
+    labels = np.array([2, 0, 1, 1, 0])
+
+    assert mnist_train.training_order_indices(x, labels, "stable", 2).tolist() == [0, 1, 2, 3, 4]
+    assert mnist_train.training_order_indices(x, labels, "local-label", 2).tolist() == [1, 0, 2, 3, 4]
+    assert mnist_train.training_order_indices(x, labels, "local-sum", 3).tolist() == [1, 2, 0, 4, 3]
+
+    with pytest.raises(ValueError, match="window"):
+        mnist_train.training_order_indices(x, labels, "local-label", 0)
+
+
 def test_phase_transient_index_prefix_metadata_is_stable_and_compact() -> None:
     indices = np.array([3, 1, 4, 1, 5], dtype=np.int64)
 
@@ -3205,6 +3225,11 @@ def test_phase_transient_preflight_summary_has_no_artifact_paths() -> None:
         updates=2,
         total_samples=2,
         input_quantization_levels=8,
+        train_order="local-pca",
+        train_order_window=16,
+        train_order_pca_components=2,
+        train_order_pca_bins_per_unit=20.0,
+        train_order_permutation=np.array([1, 0]),
         train_indices=np.array([5, 7]),
         eval_indices=np.array([11]),
         labels=labels,
@@ -3259,6 +3284,10 @@ def test_phase_transient_preflight_summary_has_no_artifact_paths() -> None:
     assert summary["lr_schedule"] == "linear-decay"
     assert summary["lr_final_scale"] == 0.25
     assert summary["input_quantization_levels"] == 8
+    assert summary["train_order"] == "local-pca"
+    assert summary["train_order_window"] == 16
+    assert summary["train_order_permutation_metadata"]["prefix"] == [1, 0]
+    assert summary["mnist_index_order"] == "stable_permutation_prefix_local-pca_window_16"
     assert summary["phase_clock_mode"] == "analytic"
     assert summary["input_source_mode"] == "pwl"
     assert summary["sample_edge_s"] == pytest.approx(5e-12)

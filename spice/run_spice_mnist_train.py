@@ -70,6 +70,96 @@ def quantize_input_values(x: np.ndarray, levels: int) -> np.ndarray:
     return (np.rint(scaled) * 2.0 / (float(levels) - 1.0) - 1.0).astype(np.float64)
 
 
+def local_pca_order_keys(x: np.ndarray, components: int, bins_per_unit: float) -> tuple[np.ndarray, ...]:
+    if components <= 0:
+        raise ValueError("components must be positive")
+    if bins_per_unit <= 0.0:
+        raise ValueError("bins_per_unit must be positive")
+    samples = np.asarray(x, dtype=np.float64)
+    if samples.ndim != 2:
+        raise ValueError("x must be a 2-D sample matrix")
+    if samples.shape[0] == 0:
+        return ()
+    centered = samples - np.mean(samples, axis=0, keepdims=True)
+    cov = centered.T @ centered
+    eigvals, eigvecs = np.linalg.eigh(cov)
+    keep = min(int(components), eigvecs.shape[1])
+    basis = eigvecs[:, np.argsort(eigvals)[-keep:]]
+    for col in range(basis.shape[1]):
+        pivot = int(np.argmax(np.abs(basis[:, col])))
+        if basis[pivot, col] < 0.0:
+            basis[:, col] *= -1.0
+    projections = centered @ basis
+    quantized = np.rint(projections * float(bins_per_unit)).astype(np.int64)
+    return tuple(quantized[:, i] for i in range(quantized.shape[1] - 1, -1, -1))
+
+
+def windowed_order_from_keys(keys: tuple[np.ndarray, ...], n_samples: int, window: int) -> np.ndarray:
+    if window <= 0:
+        raise ValueError("window must be positive")
+    if any(len(key) != n_samples for key in keys):
+        raise ValueError("all sort keys must match n_samples")
+    ordered: list[np.ndarray] = []
+    for start in range(0, n_samples, window):
+        stop = min(n_samples, start + window)
+        idx = np.arange(start, stop, dtype=np.int64)
+        local_keys = (idx,) + tuple(np.asarray(key)[idx] for key in keys)
+        ordered.append(idx[np.lexsort(local_keys)])
+    if not ordered:
+        return np.zeros((0,), dtype=np.int64)
+    return np.concatenate(ordered)
+
+
+def training_order_indices(
+    x: np.ndarray,
+    labels: np.ndarray,
+    mode: str,
+    window: int,
+    *,
+    pca_components: int = 2,
+    pca_bins_per_unit: float = 20.0,
+) -> np.ndarray:
+    samples = np.asarray(x)
+    labels_arr = np.asarray(labels)
+    if samples.ndim != 2:
+        raise ValueError("x must be a 2-D sample matrix")
+    if labels_arr.shape[0] != samples.shape[0]:
+        raise ValueError("labels length must match x")
+    n_samples = samples.shape[0]
+    if mode == "stable":
+        return np.arange(n_samples, dtype=np.int64)
+    if mode == "local-label":
+        keys = (labels_arr.astype(np.int64),)
+    elif mode == "local-sum":
+        keys = (np.rint(np.sum(samples, axis=1) * 1_000_000.0).astype(np.int64),)
+    elif mode == "local-pca":
+        keys = local_pca_order_keys(samples, pca_components, pca_bins_per_unit)
+    else:
+        raise ValueError("mode must be 'stable', 'local-label', 'local-sum', or 'local-pca'")
+    return windowed_order_from_keys(keys, n_samples, window)
+
+
+def apply_training_order(
+    x: np.ndarray,
+    labels: np.ndarray,
+    indices: np.ndarray,
+    mode: str,
+    window: int,
+    *,
+    pca_components: int = 2,
+    pca_bins_per_unit: float = 20.0,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    order = training_order_indices(
+        x,
+        labels,
+        mode,
+        window,
+        pca_components=pca_components,
+        pca_bins_per_unit=pca_bins_per_unit,
+    )
+    return x[order], labels[order], np.asarray(indices)[order], order
+
+
 def load_mnist_sequence(n_train: int, n_test: int, image_size: int, seed: int) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     from torchvision import datasets, transforms
 

@@ -42,6 +42,10 @@ def test_phase_summary_row_keeps_execution_contract_and_backend_fields(tmp_path:
                     "dominant_label_fraction": 0.5,
                     "unique_labels": 3,
                 },
+                "train_order": "local-pca",
+                "train_order_window": 128,
+                "train_order_pca_components": 2,
+                "train_order_pca_bins_per_unit": 20.0,
                 "batch_size": 1,
                 "updates": 16,
                 "eval_samples": 100,
@@ -167,6 +171,10 @@ def test_phase_summary_row_keeps_execution_contract_and_backend_fields(tmp_path:
     assert row["train_dominant_label"] == 7
     assert row["train_dominant_label_fraction"] == 0.5
     assert row["train_unique_labels"] == 3
+    assert row["train_order"] == "local-pca"
+    assert row["train_order_window"] == 128
+    assert row["train_order_pca_components"] == 2
+    assert row["train_order_pca_bins_per_unit"] == 20.0
     assert row["lr"] == 0.1
     assert row["lr_schedule"] == "linear-decay"
     assert row["lr_final_scale"] == 0.25

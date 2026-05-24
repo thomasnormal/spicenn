@@ -103,6 +103,8 @@ def test_phase_summary_row_keeps_execution_contract_and_backend_fields(tmp_path:
                     "unique_predicted_classes": 5,
                 },
                 "phase_update_l2": 0.364,
+                "transient_step_s": 2e-10,
+                "final_measure_tail_s": 1e-9,
                 "estimated_transient_points": 902,
                 "estimated_transient_points_per_update": 56.375,
                 "max_transient_points": 2000,
@@ -219,6 +221,8 @@ def test_phase_summary_row_keeps_execution_contract_and_backend_fields(tmp_path:
     assert row["milestone_b_nontrivial_learning_met"] is True
     assert row["milestone_c_target_topology_met"] is True
     assert row["milestone_d_full_objective_met"] is False
+    assert row["transient_step_s"] == 2e-10
+    assert row["final_measure_tail_s"] == 1e-9
     assert row["estimated_transient_points"] == 902
     assert row["estimated_transient_points_per_update"] == 56.375
     assert row["max_transient_points"] == 2000

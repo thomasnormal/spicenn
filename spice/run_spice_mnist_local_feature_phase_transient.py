@@ -453,6 +453,12 @@ def final_state_measure_time(t_stop: float, transient_step: float, final_update_
     return measure_time
 
 
+def apply_final_measure_tail(t_stop: float, final_measure_tail: float) -> float:
+    if final_measure_tail < 0.0:
+        raise ValueError("final_measure_tail must be non-negative")
+    return t_stop + final_measure_tail
+
+
 def phase_state_descriptions(
     update_mode: str,
     output_bias_state_frozen: bool = False,
@@ -733,6 +739,7 @@ def phase_preflight_summary(
     sample_edge: float,
     settle_ratio: float,
     source_complexity: dict[str, int],
+    final_measure_tail: float = 0.0,
 ) -> dict[str, object]:
     cost_fields = phase_cost_summary_fields(
         updates=updates,
@@ -813,6 +820,7 @@ def phase_preflight_summary(
         "continuous_transient_contract_met": None,
         "t_stop_s": t_stop,
         "transient_step_s": transient_step,
+        "final_measure_tail_s": final_measure_tail,
         "estimated_transient_points": estimated_transient_points,
         "max_transient_points": max_transient_points,
         "max_source_pwl_points": max_source_pwl_points,
@@ -1507,12 +1515,15 @@ def make_phase_transient_netlist(
     score_calculation_mode: str = "node",
     output_rail_mode: str = "node",
     output_delta_mode: str = "node",
+    final_measure_tail: float = 0.0,
 ) -> tuple[str, int, float]:
     total_samples = x_batch.shape[0]
     if total_samples != update_batch_size * updates:
         raise ValueError("x_batch length must equal update_batch_size * updates")
     if rleak < 0:
         raise ValueError("rleak must be non-negative")
+    if final_measure_tail < 0.0:
+        raise ValueError("final_measure_tail must be non-negative")
     if update_mode not in {"phased", "direct"}:
         raise ValueError("update_mode must be 'phased' or 'direct'")
     if output_bias_update_scale < 0.0:
@@ -1577,7 +1588,8 @@ def make_phase_transient_netlist(
     decay_phase = "pacc" if direct_update else "papply"
     n_blocks, channels, block_len = w.shape
     n_classes = readout.shape[0]
-    phases, sample_starts, t_stop = make_phase_schedule(update_batch_size, updates, phase, gap, direct_update)
+    phases, sample_starts, scheduled_t_stop = make_phase_schedule(update_batch_size, updates, phase, gap, direct_update)
+    t_stop = apply_final_measure_tail(scheduled_t_stop, final_measure_tail)
     lr_sample_values = np.repeat(lr_values, update_batch_size)
     if lr_schedule == "constant":
         lr_control = "{LR}"
@@ -2744,6 +2756,15 @@ def main() -> None:
     )
     ap.add_argument("--settle-ratio", type=float, default=40.0)
     ap.add_argument("--transient-step", type=float, default=20e-12)
+    ap.add_argument(
+        "--final-measure-tail",
+        type=float,
+        default=0.0,
+        help=(
+            "Extra diagnostic-only time appended after the last training phase before final state measurement. "
+            "This can permit coarser print/.measure intervals without changing any training phase timing."
+        ),
+    )
     ap.add_argument("--cw", type=float, default=1e-12)
     ap.add_argument("--cstate", type=float, default=1e-12)
     ap.add_argument("--cgrad", type=float, default=1e-12)
@@ -2847,6 +2868,8 @@ def main() -> None:
         raise ValueError("--synapse-clip must be positive")
     if args.phase <= 0 or args.settle_ratio <= 0:
         raise ValueError("--phase and --settle-ratio must be positive")
+    if args.final_measure_tail < 0.0:
+        raise ValueError("--final-measure-tail must be non-negative")
     sample_edge = args.edge if args.sample_edge is None else args.sample_edge
     if sample_edge < 0.0:
         raise ValueError("--sample-edge must be non-negative")
@@ -2886,13 +2909,14 @@ def main() -> None:
     if args.strict_fully_on_device:
         validate_strict_fully_on_device_args(args.batch_size, args.reference_mode, args.init_weights)
     output_bias_state_frozen = args.output_bias_update_scale == 0.0 and args.state_decay == 0.0
-    _preflight_phases, _preflight_sample_starts, preflight_t_stop = make_phase_schedule(
+    _preflight_phases, _preflight_sample_starts, scheduled_preflight_t_stop = make_phase_schedule(
         args.batch_size,
         args.updates,
         args.phase,
         args.gap,
         args.update_mode == "direct",
     )
+    preflight_t_stop = apply_final_measure_tail(scheduled_preflight_t_stop, args.final_measure_tail)
     final_state_phase = _preflight_phases["acc" if args.update_mode == "direct" else "clear"][-1]
     final_state_measure_time(preflight_t_stop, args.transient_step, final_state_phase[1])
     estimated_transient_points = estimate_transient_points(preflight_t_stop, args.transient_step)
@@ -2975,13 +2999,14 @@ def main() -> None:
         output_delta_states=preflight_output_delta_state_count,
         gradient_accumulator_states=preflight_gradient_accumulator_state_count,
     )
-    source_phases, source_sample_starts, source_t_stop = make_phase_schedule(
+    source_phases, source_sample_starts, scheduled_source_t_stop = make_phase_schedule(
         args.batch_size,
         args.updates,
         args.phase,
         args.gap,
         args.update_mode == "direct",
     )
+    source_t_stop = apply_final_measure_tail(scheduled_source_t_stop, args.final_measure_tail)
     source_lr_values = None
     if args.lr_schedule != "constant":
         source_lr_values = np.repeat(lr_schedule_values(args.lr, args.updates, args.lr_schedule, args.lr_final_scale), args.batch_size)
@@ -3062,6 +3087,7 @@ def main() -> None:
                     max_auxiliary_algebraic_sources=args.max_auxiliary_algebraic_sources,
                     t_stop=preflight_t_stop,
                     transient_step=args.transient_step,
+                    final_measure_tail=args.final_measure_tail,
                     phase=args.phase,
                     sample_edge=sample_edge,
                     settle_ratio=args.settle_ratio,
@@ -3166,6 +3192,7 @@ def main() -> None:
         args.score_calculation_mode,
         args.output_rail_mode,
         args.output_delta_mode,
+        final_measure_tail=args.final_measure_tail,
     )
     phase_netlist.write_text(prepare_phase_netlist(netlist, spice_bin))
 
@@ -3194,7 +3221,8 @@ def main() -> None:
                 args.gap,
                 args.update_mode == "direct",
             )
-            measure_time = max(0.0, t_stop - args.transient_step)
+            final_state_phase = phases["acc" if args.update_mode == "direct" else "clear"][-1]
+            measure_time = final_state_measure_time(t_stop, args.transient_step, final_state_phase[1])
             probe_times = probe_measure_times(
                 phases["acc" if args.update_mode == "direct" else "clear"],
                 probe_updates,
@@ -3705,6 +3733,7 @@ def main() -> None:
         ),
         "t_stop_s": t_stop,
         "transient_step_s": args.transient_step,
+        "final_measure_tail_s": args.final_measure_tail,
         "estimated_transient_points": estimated_transient_points,
         "max_transient_points": args.max_transient_points,
         "phase_output_vector_count": n_vec,

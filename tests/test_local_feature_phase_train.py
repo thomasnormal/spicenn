@@ -410,6 +410,75 @@ def test_phase_transient_final_measure_time_requires_post_update_slack() -> None
         phase_transient.final_state_measure_time(10.0e-9, 3.0e-9, 7.0e-9)
 
 
+def test_phase_transient_final_measure_tail_extends_diagnostic_window(tmp_path: Path) -> None:
+    x = np.array([[0.2, 0.4, 0.0, 0.1]], dtype=float)
+    y = np.array([1])
+    w = np.zeros((1, 1, 4))
+    hb = np.zeros((1, 1))
+    readout = np.zeros((2, 1, 1))
+    output_bias = np.zeros(2)
+
+    with pytest.raises(ValueError, match="final-state measurement"):
+        phase_transient.make_phase_transient_netlist(
+            x,
+            y,
+            w,
+            hb,
+            readout,
+            output_bias,
+            [[0, 1, 2, 3]],
+            0.8,
+            tmp_path / "out.dat",
+            False,
+            1,
+            1,
+            1e-9,
+            0.1e-9,
+            5e-12,
+            40.0,
+            1.5e-9,
+            1e-12,
+            1e-12,
+            1e-12,
+            1e18,
+            True,
+            output_mode="print",
+            update_mode="direct",
+        )
+
+    netlist, _n_vec, t_stop = phase_transient.make_phase_transient_netlist(
+        x,
+        y,
+        w,
+        hb,
+        readout,
+        output_bias,
+        [[0, 1, 2, 3]],
+        0.8,
+        tmp_path / "out.dat",
+        False,
+        1,
+        1,
+        1e-9,
+        0.1e-9,
+        5e-12,
+        40.0,
+        1.5e-9,
+        1e-12,
+        1e-12,
+        1e-12,
+        1e18,
+        True,
+        output_mode="print",
+        update_mode="direct",
+        final_measure_tail=1.0e-9,
+    )
+
+    assert t_stop == pytest.approx(8.6e-9)
+    assert ".options output OUTPUTTIMEPOINTS=7.1e-09" in netlist
+    assert ".tran 1.5e-09 8.6e-09 uic" in netlist
+
+
 def test_eval_accuracy_improved_requires_finite_strict_improvement() -> None:
     assert phase_train.eval_accuracy_improved(0.9, None)
     assert phase_train.eval_accuracy_improved(0.91, 0.9)

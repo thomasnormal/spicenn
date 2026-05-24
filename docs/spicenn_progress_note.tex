@@ -678,6 +678,22 @@ must satisfy before it can replace the current behavioral prototype.
 
 \begin{figure}[H]
   \centering
+  \includegraphics[width=0.88\linewidth]{figures/mos_hidden_error_sign_store_ngspice.png}
+  \caption{Ngspice cross-connected MOS hidden-error storage characterization.
+  Two forward-replica pairs are driven at \(z^+-z^-+\epsilon\) and
+  \(z^+-z^--\epsilon\).  During \(pbwd\), pass-switch networks controlled by
+  \(r^+\) connect \(h^-_{+\epsilon}\) and \(h^+_{-\epsilon}\) to
+  \(\delta^+\), while connecting \(h^+_{+\epsilon}\) and \(h^-_{-\epsilon}\)
+  to \(\delta^-\); the \(r^-\) copy swaps those connections.  The storage
+  capacitors therefore form the finite-difference sign directly by charge
+  sharing, rather than relying on a Python subtractor.  The center operating
+  point stores a large signed hidden error, both saturated operating points are
+  attenuated, and the stored sign holds after \(pbwd\) closes.}
+  \label{fig:mos-hidden-error-sign-store-ngspice}
+\end{figure}
+
+\begin{figure}[H]
+  \centering
   \includegraphics[width=0.88\linewidth]{figures/mos_reset_precharge_ngspice.png}
   \caption{Ngspice transient characterization of MOS reset/precharge for
   reusable state capacitors.  A complementary MOS transmission-gate reset first

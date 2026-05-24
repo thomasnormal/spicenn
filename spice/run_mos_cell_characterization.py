@@ -631,6 +631,89 @@ quit
 .endc
 .end
 """
+    sign_store_eps = 0.08
+    sign_store_cases = [("neg_sat", -0.55), ("center", 0.0), ("pos_sat", 0.55)]
+    sign_store_devices = []
+    sign_store_prints = []
+
+    def sign_store_path(src: str, gate: str, dst: str, suffix: str) -> str:
+        return f"""
+MSA_{suffix} {src} pbwd n_{suffix} 0 NMOS L={{LCH}} W={{WSW}}
+MSB_{suffix} n_{suffix} {gate} {dst} 0 NMOS L={{LCH}} W={{WSW}}
+"""
+
+    for name, diff in sign_store_cases:
+        plus_p = 0.9 + (diff + sign_store_eps) / 2.0
+        plus_m = 0.9 - (diff + sign_store_eps) / 2.0
+        minus_p = 0.9 + (diff - sign_store_eps) / 2.0
+        minus_m = 0.9 - (diff - sign_store_eps) / 2.0
+        sign_store_devices.append(
+            f"""
+* Cross-connected finite-difference hidden-error storage for {name}.
+VZPPX_{name} zppx_{name} 0 {plus_p:.5f}
+VZMMX_{name} zmmx_{name} 0 {plus_m:.5f}
+VZPMX_{name} zpmx_{name} 0 {minus_p:.5f}
+VZMPX_{name} zmpx_{name} 0 {minus_m:.5f}
+
+MPPXP_{name} hppx_{name} hppx_{name} vdd vdd PMOS L={{LCH}} W={{WP}}
+MPMXP_{name} hpmx_{name} hpmx_{name} vdd vdd PMOS L={{LCH}} W={{WP}}
+MNPPX_{name} hppx_{name} zppx_{name} tailpx_{name} 0 NMOS L={{LCH}} W={{WN}}
+MNPMX_{name} hpmx_{name} zmmx_{name} tailpx_{name} 0 NMOS L={{LCH}} W={{WN}}
+MNTPX_{name} tailpx_{name} vbias 0 0 NMOS L={{LCH}} W={{WN}}
+
+MPMXP2_{name} hmpx_{name} hmpx_{name} vdd vdd PMOS L={{LCH}} W={{WP}}
+MPMXM2_{name} hmmx_{name} hmmx_{name} vdd vdd PMOS L={{LCH}} W={{WP}}
+MNMPX_{name} hmpx_{name} zpmx_{name} tailmx_{name} 0 NMOS L={{LCH}} W={{WN}}
+MNMMX_{name} hmmx_{name} zmpx_{name} tailmx_{name} 0 NMOS L={{LCH}} W={{WN}}
+MNTMX_{name} tailmx_{name} vbias 0 0 NMOS L={{LCH}} W={{WN}}
+
+CDPPX_{name} cdp_px_{name} 0 {{CERR}} IC=1.04
+CDPMX_{name} cdm_px_{name} 0 {{CERR}} IC=1.04
+CDNPX_{name} cdp_nx_{name} 0 {{CERR}} IC=1.04
+CDNMX_{name} cdm_nx_{name} 0 {{CERR}} IC=1.04
+RPPX_{name} cdp_px_{name} 0 50G
+RPMX_{name} cdm_px_{name} 0 50G
+RNPX_{name} cdp_nx_{name} 0 50G
+RNMX_{name} cdm_nx_{name} 0 50G
+"""
+            + sign_store_path(f"hpmx_{name}", "rp", f"cdp_px_{name}", f"p1_{name}")
+            + sign_store_path(f"hmpx_{name}", "rp", f"cdp_px_{name}", f"p2_{name}")
+            + sign_store_path(f"hppx_{name}", "rp", f"cdm_px_{name}", f"p3_{name}")
+            + sign_store_path(f"hmmx_{name}", "rp", f"cdm_px_{name}", f"p4_{name}")
+            + sign_store_path(f"hppx_{name}", "rm", f"cdp_nx_{name}", f"n1_{name}")
+            + sign_store_path(f"hmmx_{name}", "rm", f"cdp_nx_{name}", f"n2_{name}")
+            + sign_store_path(f"hpmx_{name}", "rm", f"cdm_nx_{name}", f"n3_{name}")
+            + sign_store_path(f"hmpx_{name}", "rm", f"cdm_nx_{name}", f"n4_{name}")
+        )
+        sign_store_prints.extend(
+            [
+                f"v(cdp_px_{name})",
+                f"v(cdm_px_{name})",
+                f"v(cdp_nx_{name})",
+                f"v(cdm_nx_{name})",
+            ]
+        )
+    sign_store_deck = f"""
+* Hidden-error finite-difference sign store sanity check.
+* Cross-connected MOS pass networks average +eps and -eps forward-replica
+* outputs directly onto hidden-error capacitors.  The positive-error copy
+* stores (s_plus - s_minus)/2; the negative-error copy stores the opposite.
+{COMMON_MODELS}
+.param CERR=10p WSW=24u
+VDD vdd 0 1.8
+VTAIL vbias 0 0.95
+VPBWD pbwd 0 PULSE(0 1.8 0.5u 20n 20n 0.8u 4.0u)
+VRP rp 0 PULSE(0 1.8 0.5u 20n 20n 0.8u 4.0u)
+VRM rm 0 PULSE(0 1.8 0.5u 20n 20n 0.8u 4.0u)
+{''.join(sign_store_devices)}
+.control
+set noaskquit
+tran 5n 2.5u uic
+wrdata mos_hidden_error_sign_store.dat {' '.join(sign_store_prints)} v(pbwd)
+quit
+.endc
+.end
+"""
     data = run_ngspice(deck, "mos_hidden_error")
     x, cols = load_wrdata(data, 4)
     xdiff = x
@@ -669,6 +752,25 @@ quit
     require(stored_gain_final[0] < 0.35 * stored_gain_final[1], "negative saturated stored gain should be much lower")
     require(stored_gain_final[2] < 0.35 * stored_gain_final[1], "positive saturated stored gain should be much lower")
     require(np.max(np.abs(stored_gain_hold - stored_gain_final)) < 0.04, "stored hidden-error gain samples should hold")
+
+    sign_store_data = run_ngspice(sign_store_deck, "mos_hidden_error_sign_store")
+    st, sign_store_cols = load_wrdata(sign_store_data, 4 * len(sign_store_cases) + 1)
+    pos_delta = []
+    neg_delta = []
+    for idx in range(len(sign_store_cases)):
+        pos_delta.append(sign_store_cols[4 * idx] - sign_store_cols[4 * idx + 1])
+        neg_delta.append(sign_store_cols[4 * idx + 2] - sign_store_cols[4 * idx + 3])
+    pos_final = np.array([at(1.2e-6, series) for series in pos_delta])
+    neg_final = np.array([at(1.2e-6, series) for series in neg_delta])
+    pos_hold = np.array([at(2.2e-6, series) for series in pos_delta])
+    neg_hold = np.array([at(2.2e-6, series) for series in neg_delta])
+    require(pos_final[1] > 0.04, "cross-connected r+ derivative store should be positive near z balance")
+    require(neg_final[1] < -0.04, "cross-connected r- derivative store should be negative near z balance")
+    require(abs(pos_final[0]) < 0.4 * pos_final[1], "negative saturated r+ derivative store should be attenuated")
+    require(abs(pos_final[2]) < 0.4 * pos_final[1], "positive saturated r+ derivative store should be attenuated")
+    require(np.max(np.abs(pos_final + neg_final)) < 0.01, "r+ and r- cross-connected stores should be opposite")
+    require(np.max(np.abs(pos_hold - pos_final)) < 0.01, "r+ derivative-sign store should hold")
+    require(np.max(np.abs(neg_hold - neg_final)) < 0.01, "r- derivative-sign store should hold")
 
     fig, axes = plt.subplots(2, 1, figsize=(7.2, 6.2))
     axes[0].plot(xdiff, gain, label="finite-difference gain")
@@ -714,6 +816,45 @@ quit
     gain_axes[1].legend()
     gain_fig.tight_layout()
     save_plot(gain_fig, "mos_hidden_error_gain_store_ngspice")
+
+    sign_fig, sign_axes = plt.subplots(2, 1, figsize=(7.2, 5.8))
+    labels = ["negative saturation", "center", "positive saturation"]
+    for label, pseries, nseries in zip(labels, pos_delta, neg_delta):
+        if label == "center":
+            p_label = "$r^+$ center"
+            n_label = "$r^-$ center"
+            alpha = 1.0
+        elif label == "negative saturation":
+            p_label = "$r^+$ saturation"
+            n_label = "$r^-$ saturation"
+            alpha = 0.75
+        else:
+            p_label = None
+            n_label = None
+            alpha = 0.75
+        sign_axes[0].plot(1e6 * st, pseries, label=p_label, alpha=alpha)
+        sign_axes[0].plot(1e6 * st, nseries, "--", label=n_label, alpha=alpha)
+    sign_axes[0].plot(1e6 * st, sign_store_cols[-1] / 20.0, color="0.5", alpha=0.35, label="$pbwd/20$")
+    sign_axes[0].axhline(0, color="0.4", linewidth=0.8)
+    sign_axes[0].set_ylabel("stored $\\delta^+ - \\delta^-$ (V)")
+    sign_axes[0].set_title("Cross-connected replica outputs store derivative-weighted error sign")
+    sign_axes[0].grid(True, alpha=0.25)
+    sign_axes[0].legend(loc="upper right", ncol=2, fontsize="small")
+    zdiffs = np.array([diff for _, diff in sign_store_cases])
+    order = np.argsort(zdiffs)
+    sign_axes[1].plot(zdiffs[order], pos_final[order], "o-", label="$r^+$ after sample")
+    sign_axes[1].plot(zdiffs[order], neg_final[order], "s-", label="$r^-$ after sample")
+    sign_axes[1].plot(zdiffs[order], pos_hold[order], "o--", color="0.35", label="$r^+$ after hold")
+    sign_axes[1].plot(zdiffs[order], neg_hold[order], "s--", color="0.55", label="$r^-$ after hold")
+    sign_axes[1].axhline(0, color="0.4", linewidth=0.8)
+    sign_axes[1].axvline(0, color="0.4", linewidth=0.8)
+    sign_axes[1].set_xlabel("$z^+ - z^-$ operating point (V)")
+    sign_axes[1].set_ylabel("stored $\\delta^+ - \\delta^-$ (V)")
+    sign_axes[1].set_title("Stored hidden error is signed and active-window limited")
+    sign_axes[1].grid(True, alpha=0.25)
+    sign_axes[1].legend(loc="upper right", ncol=2)
+    sign_fig.tight_layout()
+    save_plot(sign_fig, "mos_hidden_error_sign_store_ngspice")
     return hidden_plot
 
 

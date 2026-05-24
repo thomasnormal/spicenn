@@ -680,6 +680,20 @@ must satisfy before it can replace the current behavioral prototype.
 
 \begin{figure}[H]
   \centering
+  \includegraphics[width=0.88\linewidth]{figures/mos_forward_mismatch_ngspice.png}
+  \caption{Ngspice threshold-mismatch characterization of the MOS forward
+  differential pair.  The left input transistor is modeled with \(V_{TO}\)
+  shifted by \(-20\), \(0\), or \(+20\) mV while the right transistor remains
+  nominal.  The transfer stays monotone and retains useful swing, but the zero
+  crossing moves by the same order as the threshold skew.  This is an offset
+  budget check, not a calibrated mismatch claim: a full cell will need
+  differential margins, reset/common-mode control, or calibration if offsets
+  approach the activation window.}
+  \label{fig:mos-forward-mismatch-ngspice}
+\end{figure}
+
+\begin{figure}[H]
+  \centering
   \includegraphics[width=0.88\linewidth]{figures/mos_forward_common_mode_ngspice.png}
   \caption{Ngspice common-mode margin characterization of the same MOS forward
   pair.  Three transistor-level copies sweep \(z^+-z^-\) while their input

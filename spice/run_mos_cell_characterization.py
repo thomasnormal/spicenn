@@ -591,6 +591,47 @@ quit
 .endc
 .end
 """
+    mismatch_cases = [
+        ("left_low", "NMOS_LO", "NMOS", "-20 mV left VTO"),
+        ("balanced", "NMOS", "NMOS", "matched"),
+        ("left_high", "NMOS_HI", "NMOS", "+20 mV left VTO"),
+    ]
+    mismatch_devices = []
+    mismatch_prints = []
+    for name, left_model, right_model, _label in mismatch_cases:
+        mismatch_devices.append(
+            f"""
+VCM_MM_{name} cm_mm_{name} 0 0.90
+VDIFF_MM_{name} zp_mm_{name} zm_mm_{name} PWL(0 -0.5 10u 0.5)
+RZP_MM_{name} zp_mm_{name} cm_mm_{name} 1G
+RZM_MM_{name} zm_mm_{name} cm_mm_{name} 1G
+MP1_MM_{name} hp_mm_{name} hp_mm_{name} vdd vdd PMOS L={{LCH}} W={{WP}}
+MP2_MM_{name} hm_mm_{name} hm_mm_{name} vdd vdd PMOS L={{LCH}} W={{WP}}
+MN1_MM_{name} hp_mm_{name} zp_mm_{name} tail_mm_{name} 0 {left_model} L={{LCH}} W={{WN}}
+MN2_MM_{name} hm_mm_{name} zm_mm_{name} tail_mm_{name} 0 {right_model} L={{LCH}} W={{WN}}
+MNT_MM_{name} tail_mm_{name} vbias 0 0 NMOS L={{LCH}} W={{WN}}
+"""
+        )
+        mismatch_prints.extend([f"v(zp_mm_{name})", f"v(zm_mm_{name})", f"v(hp_mm_{name})", f"v(hm_mm_{name})"])
+    mismatch_deck = f"""
+* MOS forward differential-pair threshold-mismatch sanity check.
+* The input pair is intentionally skewed by +/-20 mV VTO on the left device.
+* The goal is not zero offset, but monotone transfer with bounded crossing
+* shift and usable center gain.
+{COMMON_MODELS}
+.model NMOS_LO NMOS (LEVEL=1 VTO=0.53 KP=220u LAMBDA=0.03)
+.model NMOS_HI NMOS (LEVEL=1 VTO=0.57 KP=220u LAMBDA=0.03)
+VDD vdd 0 1.8
+VTAIL vbias 0 0.95
+{''.join(mismatch_devices)}
+.control
+set noaskquit
+tran 20n 10u
+wrdata mos_forward_mismatch.dat {' '.join(mismatch_prints)}
+quit
+.endc
+.end
+"""
     data = run_ngspice(transfer_deck, "mos_forward_pair")
     x, cols = load_wrdata(data, 2)
     xdiff = x
@@ -664,6 +705,47 @@ quit
         "stored forward activation should track the diode-loaded pair output",
     )
 
+    mismatch_data = run_ngspice(mismatch_deck, "mos_forward_mismatch")
+    _mt, mismatch_cols = load_wrdata(mismatch_data, 4 * len(mismatch_cases))
+    mismatch_curves: list[tuple[str, str, np.ndarray, np.ndarray]] = []
+    mismatch_offsets = []
+    mismatch_gains = []
+    for idx, (name, _left_model, _right_model, label) in enumerate(mismatch_cases):
+        mzp = mismatch_cols[4 * idx]
+        mzm = mismatch_cols[4 * idx + 1]
+        mhp = mismatch_cols[4 * idx + 2]
+        mhm = mismatch_cols[4 * idx + 3]
+        mxdiff = mzp - mzm
+        msigned = mhm - mhp
+        require(np.all(np.diff(msigned) >= -2e-3), f"{name} mismatch transfer should remain monotone")
+        require(np.max(msigned) > 0.22 and np.min(msigned) < -0.22, f"{name} mismatch transfer should retain swing")
+        require(
+            float(np.mean(msigned[mxdiff > 0.25])) > 0.18,
+            f"{name} mismatch transfer should still be positive beyond offset margin",
+        )
+        require(
+            float(np.mean(msigned[mxdiff < -0.25])) < -0.18,
+            f"{name} mismatch transfer should still be negative beyond offset margin",
+        )
+        sign_changes = np.where(np.diff(np.signbit(msigned)))[0]
+        require(len(sign_changes) == 1, f"{name} mismatch transfer should have one zero crossing")
+        cross_idx = int(sign_changes[0])
+        x0, x1 = mxdiff[cross_idx], mxdiff[cross_idx + 1]
+        y0, y1 = msigned[cross_idx], msigned[cross_idx + 1]
+        xzero = float(x0 - y0 * (x1 - x0) / (y1 - y0))
+        mismatch_offsets.append(xzero)
+        mid = int(np.argmin(np.abs(mxdiff - xzero)))
+        local_lo = max(0, mid - 5)
+        local_hi = min(len(mxdiff), mid + 6)
+        mismatch_gains.append(float(np.polyfit(mxdiff[local_lo:local_hi], msigned[local_lo:local_hi], 1)[0]))
+        mismatch_curves.append((name, label, mxdiff, msigned))
+    left_low_offset, balanced_offset, left_high_offset = mismatch_offsets
+    require(abs(balanced_offset) < 0.01, "matched forward pair offset should stay near zero")
+    require(left_low_offset < balanced_offset - 0.015, "low left VTO should move zero crossing negative")
+    require(left_high_offset > balanced_offset + 0.015, "high left VTO should move zero crossing positive")
+    require(np.max(np.abs(mismatch_offsets)) < 0.06, "20 mV VTO mismatch should keep forward offset bounded")
+    require(np.min(mismatch_gains) > 0.55, "mismatched forward pair should retain useful center gain")
+
     fig, axes = plt.subplots(2, 1, figsize=(7.2, 6.4))
     # The diode-connected PMOS load is voltage-inverting: the rail that sinks
     # more differential-pair current moves lower.  Plot the usable signed load
@@ -733,6 +815,27 @@ quit
     sweep_axes[1].legend(loc="upper left")
     sweep_fig.tight_layout()
     save_plot(sweep_fig, "mos_forward_store_sweep_ngspice")
+
+    mismatch_fig, mismatch_axes = plt.subplots(2, 1, figsize=(7.2, 5.8))
+    for (name, label, mxdiff, msigned), xzero in zip(mismatch_curves, mismatch_offsets):
+        mismatch_axes[0].plot(mxdiff, msigned, label=label)
+        mismatch_axes[0].axvline(xzero, linewidth=0.8, linestyle=":", alpha=0.65)
+    mismatch_axes[0].axhline(0, color="0.4", linewidth=0.8)
+    mismatch_axes[0].axvline(0, color="0.4", linewidth=0.8)
+    mismatch_axes[0].set_xlabel("$z^+ - z^-$ (V)")
+    mismatch_axes[0].set_ylabel("$h^- - h^+$ (V)")
+    mismatch_axes[0].set_title("Forward-pair threshold mismatch shifts the zero crossing")
+    mismatch_axes[0].grid(True, alpha=0.25)
+    mismatch_axes[0].legend(loc="upper left")
+    mismatch_axes[1].plot([case[3] for case in mismatch_cases], mismatch_offsets, "o-", label="zero crossing")
+    mismatch_axes[1].axhline(0, color="0.4", linewidth=0.8)
+    mismatch_axes[1].set_xlabel("input-pair threshold skew")
+    mismatch_axes[1].set_ylabel("zero crossing $z^+ - z^-$ (V)")
+    mismatch_axes[1].set_title("Offset is visible but bounded in the Level-1 mismatch sweep")
+    mismatch_axes[1].grid(True, axis="y", alpha=0.25)
+    mismatch_axes[1].legend(loc="upper left")
+    mismatch_fig.tight_layout()
+    save_plot(mismatch_fig, "mos_forward_mismatch_ngspice")
     return forward_plot
 
 

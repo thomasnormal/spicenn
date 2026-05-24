@@ -1146,6 +1146,25 @@ must satisfy before it can replace the current behavioral prototype.
 
 \begin{figure}[H]
   \centering
+  \includegraphics[width=0.88\linewidth]{figures/mos_hidden_writer_restored_gate_hybrid_activation_timing_ngspice.png}
+  \caption{Ngspice activation-store timing characterization for the hybrid
+  restored writer.  Matched writer copies share the same \(98.5\) mV stored
+  \(r^+\) hidden-error rail, the same restored branch-select gates
+  (\(0.196\) V selected, \(1.731\) V complementary), and the same sampled
+  activation source; only the \(pacc\) window changes.  A \(pacc\) pulse before
+  activation sampling is quiet (\(\sim 2\) nV signed residue).  Starting at the
+  sample edge catches the activation capacitor before it has settled and gives
+  a partial \(16.7\) mV signed write.  Once sampling overlaps or precedes
+  \(pacc\) with margin, the signed write settles to \(24.33\) mV across the
+  overlap, post-sample, and settled-gap cases, while the complement \(W^-\)
+  rail changes only at the nV scale.  The concrete phase rule is therefore:
+  store the activation operand before asserting \(pacc\), or deliberately
+  budget the sample-edge partial-write behavior.}
+  \label{fig:mos-hidden-writer-restored-gate-hybrid-activation-timing-ngspice}
+\end{figure}
+
+\begin{figure}[H]
+  \centering
   \includegraphics[width=0.88\linewidth]{figures/mos_hidden_writer_restored_gate_hybrid_repeated_ngspice.png}
   \caption{Ngspice repeated-pulse accumulation characterization of the hybrid
   restored writer.  One stored \(r^+\) hidden-error rail drives one persistent

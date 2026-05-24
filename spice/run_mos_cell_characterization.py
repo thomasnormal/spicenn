@@ -4915,6 +4915,166 @@ quit
     hyf_fig.tight_layout()
     save_plot(hyf_fig, "mos_hidden_writer_restored_gate_hybrid_activation_store_ngspice")
 
+    hybrid_activation_timing_cases = [
+        ("pre", "pre-sample", 1.10, 1.46),
+        ("early", "sample edge", 1.45, 1.81),
+        ("overlap", "sample overlap", 1.62, 1.98),
+        ("late", "post-sample", 2.10, 2.46),
+        ("gap", "settled gap", 2.65, 3.01),
+    ]
+    hybrid_activation_timing_devices = []
+    hybrid_activation_timing_prints = ["v(cdp_rp_hyg)", "v(cdm_rp_hyg)", "v(rgp_rp_hyg)", "v(rgm_rp_hyg)"]
+    for name, _label, start_us, end_us in hybrid_activation_timing_cases:
+        hybrid_activation_timing_devices.append(
+            f"""
+VPACC_HYG_{name} paccn_hyg_{name} 0 PWL(0 1.8 {start_us:.2f}u 1.8 {start_us + 0.02:.2f}u 0 {end_us:.2f}u 0 {end_us + 0.02:.2f}u 1.8 3.4u 1.8)
+CHM_HYG_{name} hm_store_hyg_{name} 0 {{CSTORE}} IC=1.45
+RHM_HYG_{name} hm_store_hyg_{name} 0 50G
+MSACTN_HYG_{name} hsrc_hyg psamp_hyg hm_store_hyg_{name} 0 NMOS L={{LCH}} W={{WSW}}
+MSACTP_HYG_{name} hsrc_hyg psampn_hyg hm_store_hyg_{name} vdd PMOS L={{LCH}} W={{WSW}}
+CWP_HYG_{name} wp_hyg_{name} 0 {{CWRITE}} IC=0.85
+CWM_HYG_{name} wm_hyg_{name} 0 {{CWRITE}} IC=0.85
+MWP_HYG_{name}A vdd paccn_hyg_{name} n_wp_hyg_{name}_a vdd PMOS L={{LCH}} W={{WWRITE}}
+MWP_HYG_{name}B n_wp_hyg_{name}_a hm_store_hyg_{name} n_wp_hyg_{name}_b vdd PMOS L={{LCH}} W={{WWRITE}}
+MWP_HYG_{name}C n_wp_hyg_{name}_b rgp_rp_hyg n_wp_hyg_{name}_c vdd PMOS L={{LCH}} W={{WWRITE}}
+MWP_HYG_{name}D n_wp_hyg_{name}_c cdm_rp_hyg wp_hyg_{name} vdd PMOS L={{LCH}} W={{WWRITE}}
+MWM_HYG_{name}A vdd paccn_hyg_{name} n_wm_hyg_{name}_a vdd PMOS L={{LCH}} W={{WWRITE}}
+MWM_HYG_{name}B n_wm_hyg_{name}_a hm_store_hyg_{name} n_wm_hyg_{name}_b vdd PMOS L={{LCH}} W={{WWRITE}}
+MWM_HYG_{name}C n_wm_hyg_{name}_b rgm_rp_hyg n_wm_hyg_{name}_c vdd PMOS L={{LCH}} W={{WWRITE}}
+MWM_HYG_{name}D n_wm_hyg_{name}_c cdp_rp_hyg wm_hyg_{name} vdd PMOS L={{LCH}} W={{WWRITE}}
+"""
+        )
+        hybrid_activation_timing_prints.extend(
+            [f"v(hm_store_hyg_{name})", f"v(wp_hyg_{name})", f"v(wm_hyg_{name})", f"v(paccn_hyg_{name})"]
+        )
+
+    hybrid_activation_timing_deck = f"""
+* Hybrid writer activation-store to pacc timing margin check.
+* Matched writer copies share one stored r+ hidden-error rail and one activation
+* source/sampling phase.  Only pacc timing changes across copies.
+{COMMON_MODELS}
+.param CERR=10p CWRITE=500p CSTORE=10p WSW=24u WWRITE=24u WRESTN=18u WRESTP=300u
+VDD vdd 0 1.8
+VTAIL vbias 0 0.95
+VPBWD pbwd 0 PULSE(0 1.8 0.45u 20n 20n 0.80u 5.0u)
+VRP rp 0 PULSE(0 1.8 0.45u 20n 20n 0.80u 5.0u)
+VACT_SRC_HYG hsrc_hyg 0 PWL(0 1.45 1.45u 1.45 1.47u 0.92 2.20u 0.92 2.22u 1.45 3.4u 1.45)
+VPSAMP_HYG psamp_hyg 0 PWL(0 0 1.55u 0 1.57u 1.8 1.95u 1.8 1.97u 0 3.4u 0)
+VPSAMPN_HYG psampn_hyg 0 PWL(0 1.8 1.55u 1.8 1.57u 0 1.95u 0 1.97u 1.8 3.4u 1.8)
+
+VZPP_HYG zpp_hyg 0 {0.9 + hybrid_mismatch_eps / 2.0:.5f}
+VZMM_HYG zmm_hyg 0 {0.9 - hybrid_mismatch_eps / 2.0:.5f}
+VZPM_HYG zpm_hyg 0 {0.9 - hybrid_mismatch_eps / 2.0:.5f}
+VZMP_HYG zmp_hyg 0 {0.9 + hybrid_mismatch_eps / 2.0:.5f}
+
+MPPP_HYG hpp_hyg hpp_hyg vdd vdd PMOS L={{LCH}} W={{WP}}
+MPPM_HYG hpm_hyg hpm_hyg vdd vdd PMOS L={{LCH}} W={{WP}}
+MNPP_HYG hpp_hyg zpp_hyg tailp_hyg 0 NMOS L={{LCH}} W={{WN}}
+MNPM_HYG hpm_hyg zmm_hyg tailp_hyg 0 NMOS L={{LCH}} W={{WN}}
+MNTP_HYG tailp_hyg vbias 0 0 NMOS L={{LCH}} W={{WN}}
+
+MPMP_HYG hmp_hyg hmp_hyg vdd vdd PMOS L={{LCH}} W={{WP}}
+MPMM_HYG hmm_hyg hmm_hyg vdd vdd PMOS L={{LCH}} W={{WP}}
+MNMP_HYG hmp_hyg zpm_hyg tailm_hyg 0 NMOS L={{LCH}} W={{WN}}
+MNMM_HYG hmm_hyg zmp_hyg tailm_hyg 0 NMOS L={{LCH}} W={{WN}}
+MNTM_HYG tailm_hyg vbias 0 0 NMOS L={{LCH}} W={{WN}}
+
+CDP_RP_HYG cdp_rp_hyg 0 {{CERR}} IC=1.04
+CDM_RP_HYG cdm_rp_hyg 0 {{CERR}} IC=1.04
+RDP_RP_HYG cdp_rp_hyg 0 50G
+RDM_RP_HYG cdm_rp_hyg 0 50G
+{sign_store_path("hpm_hyg", "rp", "cdp_rp_hyg", "hygrp1")}
+{sign_store_path("hmp_hyg", "rp", "cdp_rp_hyg", "hygrp2")}
+{sign_store_path("hpp_hyg", "rp", "cdm_rp_hyg", "hygrp3")}
+{sign_store_path("hmm_hyg", "rp", "cdm_rp_hyg", "hygrp4")}
+
+MPRP_CDP_HYG rgp_rp_hyg cdp_rp_hyg vdd vdd PMOS L={{LCH}} W={{WRESTP}}
+MNRP_CDP_HYG rgp_rp_hyg cdp_rp_hyg 0 0 NMOS L={{LCH}} W={{WRESTN}}
+MPRP_CDM_HYG rgm_rp_hyg cdm_rp_hyg vdd vdd PMOS L={{LCH}} W={{WRESTP}}
+MNRP_CDM_HYG rgm_rp_hyg cdm_rp_hyg 0 0 NMOS L={{LCH}} W={{WRESTN}}
+
+{''.join(hybrid_activation_timing_devices)}
+
+.control
+set noaskquit
+tran 5n 3.35u uic
+wrdata mos_hidden_writer_restored_gate_hybrid_activation_timing.dat {' '.join(hybrid_activation_timing_prints)} v(hsrc_hyg) v(psamp_hyg)
+quit
+.endc
+.end
+"""
+    hybrid_activation_timing_data = run_ngspice(
+        hybrid_activation_timing_deck,
+        "mos_hidden_writer_restored_gate_hybrid_activation_timing",
+    )
+    hyggt, hygg_cols = load_wrdata(hybrid_activation_timing_data, len(hybrid_activation_timing_prints) + 2)
+
+    def hyggat(time_s: float, values: np.ndarray) -> float:
+        return float(values[np.argmin(np.abs(hyggt - time_s))])
+
+    hygg_hidden = hygg_cols[0] - hygg_cols[1]
+    hygg_selected_gate = hygg_cols[2]
+    hygg_complement_gate = hygg_cols[3]
+    hygg_final = []
+    hygg_hcap_at_start = []
+    hygg_wm_step = []
+    for idx, (_name, _label, start_us, end_us) in enumerate(hybrid_activation_timing_cases):
+        base = 4 + 4 * idx
+        hcap = hygg_cols[base]
+        wp = hygg_cols[base + 1]
+        wm = hygg_cols[base + 2]
+        start_s = start_us * 1e-6
+        end_s = end_us * 1e-6
+        hygg_hcap_at_start.append(hyggat(start_s + 0.04e-6, hcap))
+        hygg_final.append(hyggat(end_s + 0.16e-6, wp - wm))
+        hygg_wm_step.append(hyggat(end_s + 0.16e-6, wm) - hyggat(start_s, wm))
+    hygg_final = np.array(hygg_final)
+    hygg_hcap_at_start = np.array(hygg_hcap_at_start)
+    hygg_wm_step = np.array(hygg_wm_step)
+    require(hyggat(1.35e-6, hygg_hidden) > 0.07, "hybrid activation-timing deck should store positive hidden error")
+    require(hyggat(1.45e-6, hygg_selected_gate) < 0.30, "hybrid activation-timing selected restored gate should be low")
+    require(hyggat(1.45e-6, hygg_complement_gate) > 1.60, "hybrid activation-timing complement restored gate should be high")
+    require(hygg_final[0] < 0.002, "pacc before activation sampling should be quiet")
+    require(hygg_final[1] > hygg_final[0] + 0.002, "pacc at activation-sample edge should expose a partial write")
+    require(hygg_final[1] < 0.90 * hygg_final[-1], "activation-edge write should stay below settled write")
+    require(np.min(hygg_final[2:]) > 0.90 * hygg_final[-1], "pacc after activation sampling starts should reach full write")
+    require(np.max(hygg_final[2:]) - np.min(hygg_final[2:]) < 0.004, "settled activation timing writes should agree")
+    require(np.max(hygg_wm_step) < 5e-4, "activation timing sweep should keep complement rail suppressed")
+
+    hygg_fig, hygg_axes = plt.subplots(3, 1, figsize=(7.2, 7.2), gridspec_kw={"height_ratios": [1.15, 1.0, 1.0]})
+    hygg_axes[0].plot(1e6 * hyggt, hygg_hidden, label="stored $r^+$")
+    hygg_axes[0].plot(1e6 * hyggt, hygg_selected_gate, label="selected restored gate")
+    hygg_axes[0].plot(1e6 * hyggt, hygg_complement_gate, label="complement restored gate")
+    hygg_axes[0].plot(1e6 * hyggt, hygg_cols[-2], color="0.5", alpha=0.45, label="activation source")
+    hygg_axes[0].plot(1e6 * hyggt, hygg_cols[-1] / 2.0, color="0.35", alpha=0.35, label="$psamp/2$")
+    hygg_axes[0].set_ylabel("voltage (V)")
+    hygg_axes[0].set_title("Hybrid activation-timing sweep shares one hidden-error rail")
+    hygg_axes[0].set_xlim(0.35, 2.35)
+    hygg_axes[0].grid(True, alpha=0.25)
+    hygg_axes[0].legend(loc="center right", ncol=2, fontsize="small")
+    hygg_x = np.arange(len(hybrid_activation_timing_cases))
+    hygg_labels = [label for _name, label, _start, _end in hybrid_activation_timing_cases]
+    hygg_axes[1].plot(hygg_x, hygg_hcap_at_start, "^-", color="tab:green", label="$h^-$ near pacc start")
+    hygg_axes[1].axhline(0.92, color="tab:green", linewidth=0.9, linestyle=":", label="active sample")
+    hygg_axes[1].axhline(1.45, color="0.45", linewidth=0.9, linestyle=":", label="inactive sample")
+    hygg_axes[1].set_xticks(hygg_x)
+    hygg_axes[1].set_xticklabels(hygg_labels, rotation=15, ha="right")
+    hygg_axes[1].set_ylabel("activation gate (V)")
+    hygg_axes[1].set_title("sampled activation seen when pacc starts")
+    hygg_axes[1].grid(True, alpha=0.25)
+    hygg_axes[1].legend(loc="center right", ncol=3, fontsize="small")
+    hygg_axes[2].plot(hygg_x, 1e3 * hygg_final, "o-", label="$W^+ - W^-$")
+    hygg_axes[2].plot(hygg_x, 1e3 * hygg_wm_step, "s--", label="complement $W^-$ step")
+    hygg_axes[2].axhline(0, color="0.4", linewidth=0.8)
+    hygg_axes[2].set_xticks(hygg_x)
+    hygg_axes[2].set_xticklabels(hygg_labels, rotation=15, ha="right")
+    hygg_axes[2].set_ylabel("writer step (mV)")
+    hygg_axes[2].set_title("pacc must wait for activation-store sampling margin")
+    hygg_axes[2].grid(True, alpha=0.25)
+    hygg_axes[2].legend(loc="upper left", ncol=2, fontsize="small")
+    hygg_fig.tight_layout()
+    save_plot(hygg_fig, "mos_hidden_writer_restored_gate_hybrid_activation_timing_ngspice")
+
     hybrid_repeated_deck = f"""
 * Hybrid restored-enable/analog-error writer repeated-pulse accumulation check.
 * One stored r+ hidden-error rail and one activation gate drive the same

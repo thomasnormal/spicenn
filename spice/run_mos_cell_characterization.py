@@ -583,27 +583,44 @@ VPACC_N paccn 0 PULSE(1.8 0 0.5u 20n 20n 0.8u 5.0u)
 VHI hi 0 1.8
 VLO lo 0 0
 
-* Same-sign writer charges W+ in the same voltage range used by the synapse
-* tail-gate read path below.
-CWP wp 0 {{CWRITE}} IC=0.85
-CWM wm 0 {{CWRITE}} IC=0.85
-MWP1 vdd paccn n1 vdd PMOS L={{LCH}} W={{WWRITE}}
-MWP2 n1 lo n2 vdd PMOS L={{LCH}} W={{WWRITE}}
-MWP3 n2 lo wp vdd PMOS L={{LCH}} W={{WWRITE}}
-MWM1 vdd paccn n3 vdd PMOS L={{LCH}} W={{WWRITE}}
-MWM2 n3 lo n4 vdd PMOS L={{LCH}} W={{WWRITE}}
-MWM3 n4 hi wm vdd PMOS L={{LCH}} W={{WWRITE}}
+* Same-sign writer charges W+ in the same voltage range used by the positive
+* synapse tail-gate read path below.
+CWP_P wp_p 0 {{CWRITE}} IC=0.85
+CWM_P wm_p 0 {{CWRITE}} IC=0.85
+MWPP1 vdd paccn n1p vdd PMOS L={{LCH}} W={{WWRITE}}
+MWPP2 n1p lo n2p vdd PMOS L={{LCH}} W={{WWRITE}}
+MWPP3 n2p lo wp_p vdd PMOS L={{LCH}} W={{WWRITE}}
+MWPM1 vdd paccn n3p vdd PMOS L={{LCH}} W={{WWRITE}}
+MWPM2 n3p lo n4p vdd PMOS L={{LCH}} W={{WWRITE}}
+MWPM3 n4p hi wm_p vdd PMOS L={{LCH}} W={{WWRITE}}
 
-VZP zpp 0 1.8
-VZM zmp 0 1.8
-MPP zpp xp tail 0 NMOS L={{LCH}} W={{WN}}
-MPM zmp xm tail 0 NMOS L={{LCH}} W={{WN}}
-MTP tail wp 0 0 NMOS L={{LCH}} W=12u
+VZPP zpp 0 1.8
+VZMP zmp 0 1.8
+MPP zpp xp tailp 0 NMOS L={{LCH}} W={{WN}}
+MPM zmp xm tailp 0 NMOS L={{LCH}} W={{WN}}
+MTP tailp wp_p 0 0 NMOS L={{LCH}} W=12u
+
+* Opposite-sign writer charges W-.  The read copy swaps differential-pair
+* input gates, matching the negative-weight synapse convention.
+CWP_N wp_n 0 {{CWRITE}} IC=0.85
+CWM_N wm_n 0 {{CWRITE}} IC=0.85
+MWNP1 vdd paccn n1n vdd PMOS L={{LCH}} W={{WWRITE}}
+MWNP2 n1n lo n2n vdd PMOS L={{LCH}} W={{WWRITE}}
+MWNP3 n2n hi wp_n vdd PMOS L={{LCH}} W={{WWRITE}}
+MWNM1 vdd paccn n3n vdd PMOS L={{LCH}} W={{WWRITE}}
+MWNM2 n3n lo n4n vdd PMOS L={{LCH}} W={{WWRITE}}
+MWNM3 n4n lo wm_n vdd PMOS L={{LCH}} W={{WWRITE}}
+
+VZPN zpn 0 1.8
+VZMN zmn 0 1.8
+MNP zpn xm tailn 0 NMOS L={{LCH}} W={{WN}}
+MNM zmn xp tailn 0 NMOS L={{LCH}} W={{WN}}
+MTN tailn wm_n 0 0 NMOS L={{LCH}} W=12u
 
 .control
 set noaskquit
 tran 5n 2.0u uic
-wrdata mos_writer_readback.dat v(wp) v(wm) i(VZP) i(VZM) v(paccn)
+wrdata mos_writer_readback.dat v(wp_p) v(wm_p) i(VZPP) i(VZMP) v(wp_n) v(wm_n) i(VZPN) i(VZMN) v(paccn)
 quit
 .endc
 .end
@@ -636,13 +653,21 @@ quit
     require(1.0 - ss_res / ss_tot > 0.98, "writer pulse-width response should be near-linear")
 
     readback_data = run_ngspice(readback_deck, "mos_writer_readback")
-    rt, read_cols = load_wrdata(readback_data, 5)
-    read_contrib = read_cols[3] - read_cols[2]
-    baseline_contrib = float(read_contrib[np.argmin(np.abs(rt - 0.4e-6))])
-    final_contrib = float(read_contrib[np.argmin(np.abs(rt - 1.8e-6))])
-    require(read_cols[0][-1] > 0.90, "writer readback should leave W+ in active synapse range")
-    require(abs(read_cols[1][-1] - 0.85) < 1e-3, "writer readback should leave inactive W- unchanged")
-    require(final_contrib > baseline_contrib + 30e-6, "written W+ should increase synapse contribution")
+    rt, read_cols = load_wrdata(readback_data, 9)
+    pos_read_contrib = read_cols[3] - read_cols[2]
+    neg_read_contrib = read_cols[7] - read_cols[6]
+    baseline_idx = int(np.argmin(np.abs(rt - 0.4e-6)))
+    final_idx = int(np.argmin(np.abs(rt - 1.8e-6)))
+    baseline_pos = float(pos_read_contrib[baseline_idx])
+    final_pos = float(pos_read_contrib[final_idx])
+    baseline_neg = float(neg_read_contrib[baseline_idx])
+    final_neg = float(neg_read_contrib[final_idx])
+    require(read_cols[0][-1] > 0.90, "writer readback should leave W+ in active positive-synapse range")
+    require(abs(read_cols[1][-1] - 0.85) < 1e-3, "positive readback should leave inactive W- unchanged")
+    require(abs(read_cols[4][-1] - 0.85) < 1e-3, "negative readback should leave inactive W+ unchanged")
+    require(read_cols[5][-1] > 0.90, "writer readback should leave W- in active negative-synapse range")
+    require(final_pos > baseline_pos + 30e-6, "written W+ should increase positive synapse contribution")
+    require(final_neg < baseline_neg - 30e-6, "written W- should increase negative synapse contribution magnitude")
 
     fig, axes = plt.subplots(4, 1, figsize=(7.2, 9.4))
     axes[0].plot(1e6 * t, cols[0], label="$W^+$, same sign")
@@ -667,12 +692,14 @@ quit
     axes[2].set_title("Incremental write magnitude follows pulse width")
     axes[2].grid(True, alpha=0.25)
     axes[2].legend()
-    axes[3].plot(1e6 * rt, 1e6 * read_contrib, label="read contribution")
+    axes[3].plot(1e6 * rt, 1e6 * pos_read_contrib, label="$W^+$ read contribution")
+    axes[3].plot(1e6 * rt, 1e6 * neg_read_contrib, label="$W^-$ read contribution")
     axes[3].plot(1e6 * rt, 100.0 * (read_cols[0] - read_cols[0][0]), label="$100\\Delta W^+$")
-    axes[3].plot(1e6 * rt, read_cols[4] / 6.0, color="0.5", alpha=0.45, label="$\\overline{pacc}/6$")
+    axes[3].plot(1e6 * rt, -100.0 * (read_cols[5] - read_cols[5][0]), label="$-100\\Delta W^-$")
+    axes[3].plot(1e6 * rt, read_cols[8] / 6.0, color="0.5", alpha=0.45, label="$\\overline{pacc}/6$")
     axes[3].set_xlabel("time (us)")
     axes[3].set_ylabel("current (uA) / scaled V")
-    axes[3].set_title("Written W+ voltage increases synapse read current")
+    axes[3].set_title("Written W+ and W- voltages read back with opposite signs")
     axes[3].grid(True, alpha=0.25)
     axes[3].legend()
     fig.tight_layout()

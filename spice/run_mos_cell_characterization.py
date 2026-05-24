@@ -3393,6 +3393,228 @@ quit
     rmis_fig.tight_layout()
     save_plot(rmis_fig, "mos_hidden_writer_restored_gate_mismatch_ngspice")
 
+    strength_wn_values = [12, 18, 24, 36, 48, 72]
+    strength_devices = []
+    strength_prints = []
+    for idx, wn_rest in enumerate(strength_wn_values):
+        strength_devices.append(
+            f"""
+* Restorer NMOS-strength copy under selected-side weak threshold, WN={wn_rest}u.
+MPRP_CDP_STR{idx} rgp_rp_str{idx} cdp_rp vdd vdd PRSEL_STR L={{LCH}} W={{WRESTP}}
+MNRP_CDP_STR{idx} rgp_rp_str{idx} cdp_rp 0 0 NRSEL_STR L={{LCH}} W={wn_rest}u
+MPRP_CDM_STR{idx} rgm_rp_str{idx} cdm_rp vdd vdd PRCOMP_STR L={{LCH}} W={{WRESTP}}
+MNRP_CDM_STR{idx} rgm_rp_str{idx} cdm_rp 0 0 NRCOMP_STR L={{LCH}} W={wn_rest}u
+
+MPRM_CDP_STR{idx} rgp_rm_str{idx} cdp_rm vdd vdd PRCOMP_STR L={{LCH}} W={{WRESTP}}
+MNRM_CDP_STR{idx} rgp_rm_str{idx} cdp_rm 0 0 NRCOMP_STR L={{LCH}} W={wn_rest}u
+MPRM_CDM_STR{idx} rgm_rm_str{idx} cdm_rm vdd vdd PRSEL_STR L={{LCH}} W={{WRESTP}}
+MNRM_CDM_STR{idx} rgm_rm_str{idx} cdm_rm 0 0 NRSEL_STR L={{LCH}} W={wn_rest}u
+
+CWP_RP_STR{idx} wp_rp_str{idx} 0 {{CWRITE}} IC=0.85
+CWM_RP_STR{idx} wm_rp_str{idx} 0 {{CWRITE}} IC=0.85
+MWP_RP_STR{idx}A vdd paccn n_wp_rp_str{idx}_a vdd PMOS L={{LCH}} W={{WWRITE}}
+MWP_RP_STR{idx}B n_wp_rp_str{idx}_a hm_pos n_wp_rp_str{idx}_b vdd PMOS L={{LCH}} W={{WWRITE}}
+MWP_RP_STR{idx}C n_wp_rp_str{idx}_b rgp_rp_str{idx} wp_rp_str{idx} vdd PMOS L={{LCH}} W={{WWRITE}}
+MWM_RP_STR{idx}A vdd paccn n_wm_rp_str{idx}_a vdd PMOS L={{LCH}} W={{WWRITE}}
+MWM_RP_STR{idx}B n_wm_rp_str{idx}_a hm_pos n_wm_rp_str{idx}_b vdd PMOS L={{LCH}} W={{WWRITE}}
+MWM_RP_STR{idx}C n_wm_rp_str{idx}_b rgm_rp_str{idx} wm_rp_str{idx} vdd PMOS L={{LCH}} W={{WWRITE}}
+
+CWP_RM_STR{idx} wp_rm_str{idx} 0 {{CWRITE}} IC=0.85
+CWM_RM_STR{idx} wm_rm_str{idx} 0 {{CWRITE}} IC=0.85
+MWP_RM_STR{idx}A vdd paccn n_wp_rm_str{idx}_a vdd PMOS L={{LCH}} W={{WWRITE}}
+MWP_RM_STR{idx}B n_wp_rm_str{idx}_a hm_pos n_wp_rm_str{idx}_b vdd PMOS L={{LCH}} W={{WWRITE}}
+MWP_RM_STR{idx}C n_wp_rm_str{idx}_b rgp_rm_str{idx} wp_rm_str{idx} vdd PMOS L={{LCH}} W={{WWRITE}}
+MWM_RM_STR{idx}A vdd paccn n_wm_rm_str{idx}_a vdd PMOS L={{LCH}} W={{WWRITE}}
+MWM_RM_STR{idx}B n_wm_rm_str{idx}_a hm_pos n_wm_rm_str{idx}_b vdd PMOS L={{LCH}} W={{WWRITE}}
+MWM_RM_STR{idx}C n_wm_rm_str{idx}_b rgm_rm_str{idx} wm_rm_str{idx} vdd PMOS L={{LCH}} W={{WWRITE}}
+"""
+        )
+        strength_prints.extend(
+            [
+                f"v(rgp_rp_str{idx})",
+                f"v(rgm_rp_str{idx})",
+                f"v(rgp_rm_str{idx})",
+                f"v(rgm_rm_str{idx})",
+                f"v(wp_rp_str{idx})",
+                f"v(wm_rp_str{idx})",
+                f"v(wp_rm_str{idx})",
+                f"v(wm_rm_str{idx})",
+            ]
+        )
+
+    strength_deck = f"""
+* Restored hidden-error gate NMOS-strength sweep under selected weak threshold.
+* The previous restored-gate mismatch deck showed that a selected-side +70 mV
+* NMOS threshold offset collapses the write.  This sweep asks whether sizing
+* the restorer NMOS wider recovers that corner without turning on the
+* complementary writer branch.
+{COMMON_MODELS}
+.model NRSEL_STR NMOS (LEVEL=1 VTO=0.62 KP=220u LAMBDA=0.03)
+.model PRSEL_STR PMOS (LEVEL=1 VTO=-0.55 KP=90u LAMBDA=0.03)
+.model NRCOMP_STR NMOS (LEVEL=1 VTO=0.55 KP=220u LAMBDA=0.03)
+.model PRCOMP_STR PMOS (LEVEL=1 VTO=-0.55 KP=90u LAMBDA=0.03)
+.param CERR=10p CWRITE=500p WSW=24u WWRITE=10u WRESTP=300u
+VDD vdd 0 1.8
+VTAIL vbias 0 0.95
+VPBWD pbwd 0 PULSE(0 1.8 0.45u 20n 20n 0.80u 5.0u)
+VRP rp 0 PULSE(0 1.8 0.45u 20n 20n 0.80u 5.0u)
+VRM rm 0 PULSE(0 1.8 0.45u 20n 20n 0.80u 5.0u)
+VPACC_N paccn 0 PULSE(1.8 0 1.55u 20n 20n 0.80u 5.0u)
+
+VZPP zpp 0 {0.9 + eps / 2.0:.5f}
+VZMM zmm 0 {0.9 - eps / 2.0:.5f}
+VZPM zpm 0 {0.9 - eps / 2.0:.5f}
+VZMP zmp 0 {0.9 + eps / 2.0:.5f}
+
+MPPP hpp hpp vdd vdd PMOS L={{LCH}} W={{WP}}
+MPPM hpm hpm vdd vdd PMOS L={{LCH}} W={{WP}}
+MNPP hpp zpp tailp 0 NMOS L={{LCH}} W={{WN}}
+MNPM hpm zmm tailp 0 NMOS L={{LCH}} W={{WN}}
+MNTP tailp vbias 0 0 NMOS L={{LCH}} W={{WN}}
+
+MPMP hmp hmp vdd vdd PMOS L={{LCH}} W={{WP}}
+MPMM hmm hmm vdd vdd PMOS L={{LCH}} W={{WP}}
+MNMP hmp zpm tailm 0 NMOS L={{LCH}} W={{WN}}
+MNMM hmm zmp tailm 0 NMOS L={{LCH}} W={{WN}}
+MNTM tailm vbias 0 0 NMOS L={{LCH}} W={{WN}}
+
+CDP_RP cdp_rp 0 {{CERR}} IC=1.04
+CDM_RP cdm_rp 0 {{CERR}} IC=1.04
+CDP_RM cdp_rm 0 {{CERR}} IC=1.04
+CDM_RM cdm_rm 0 {{CERR}} IC=1.04
+RDP_RP cdp_rp 0 50G
+RDM_RP cdm_rp 0 50G
+RDP_RM cdp_rm 0 50G
+RDM_RM cdm_rm 0 50G
+{sign_store_path("hpm", "rp", "cdp_rp", "rgstrrp1")}
+{sign_store_path("hmp", "rp", "cdp_rp", "rgstrrp2")}
+{sign_store_path("hpp", "rp", "cdm_rp", "rgstrrp3")}
+{sign_store_path("hmm", "rp", "cdm_rp", "rgstrrp4")}
+{sign_store_path("hpp", "rm", "cdp_rm", "rgstrrm1")}
+{sign_store_path("hmm", "rm", "cdp_rm", "rgstrrm2")}
+{sign_store_path("hpm", "rm", "cdm_rm", "rgstrrm3")}
+{sign_store_path("hmp", "rm", "cdm_rm", "rgstrrm4")}
+
+VHM_POS hm_pos 0 0.92
+{''.join(strength_devices)}
+
+.control
+set noaskquit
+tran 5n 3.4u uic
+wrdata mos_hidden_writer_restored_gate_strength.dat v(cdp_rp) v(cdm_rp) v(cdp_rm) v(cdm_rm) {' '.join(strength_prints)} v(pbwd) v(paccn)
+quit
+.endc
+.end
+"""
+    strength_data = run_ngspice(strength_deck, "mos_hidden_writer_restored_gate_strength")
+    stt, str_cols = load_wrdata(strength_data, 4 + len(strength_prints) + 2)
+
+    def stat(time_s: float, values: np.ndarray) -> float:
+        return float(values[np.argmin(np.abs(stt - time_s))])
+
+    strength_pos_hidden = str_cols[0] - str_cols[1]
+    strength_neg_hidden = str_cols[2] - str_cols[3]
+    require(stat(1.35e-6, strength_pos_hidden) > 0.07, "strength deck should store positive r+ error")
+    require(stat(1.35e-6, strength_neg_hidden) < -0.07, "strength deck should store negative r- error")
+
+    strength_selected_gate = []
+    strength_complement_gate = []
+    strength_selected_step = []
+    strength_complement_step = []
+    strength_pos_net = []
+    strength_neg_net = []
+    for idx, wn_rest in enumerate(strength_wn_values):
+        base = 4 + 8 * idx
+        rgp_rp = str_cols[base]
+        rgm_rp = str_cols[base + 1]
+        rgp_rm = str_cols[base + 2]
+        rgm_rm = str_cols[base + 3]
+        wp_rp = str_cols[base + 4]
+        wm_rp = str_cols[base + 5]
+        wp_rm = str_cols[base + 6]
+        wm_rm = str_cols[base + 7]
+        selected_gate = 0.5 * (stat(1.45e-6, rgp_rp) + stat(1.45e-6, rgm_rm))
+        complement_gate = 0.5 * (stat(1.45e-6, rgm_rp) + stat(1.45e-6, rgp_rm))
+        selected_step = 0.5 * (
+            stat(2.75e-6, wp_rp) - stat(1.45e-6, wp_rp)
+            + stat(2.75e-6, wm_rm) - stat(1.45e-6, wm_rm)
+        )
+        complement_step = 0.5 * (
+            stat(2.75e-6, wm_rp) - stat(1.45e-6, wm_rp)
+            + stat(2.75e-6, wp_rm) - stat(1.45e-6, wp_rm)
+        )
+        pos_net = stat(2.75e-6, wp_rp - wm_rp)
+        neg_net = stat(2.75e-6, wp_rm - wm_rm)
+        strength_selected_gate.append(selected_gate)
+        strength_complement_gate.append(complement_gate)
+        strength_selected_step.append(selected_step)
+        strength_complement_step.append(complement_step)
+        strength_pos_net.append(pos_net)
+        strength_neg_net.append(neg_net)
+        require(abs(pos_net + neg_net) < 0.003, f"WN={wn_rest}u recovered writes should stay symmetric")
+        require(
+            abs(stat(3.25e-6, wp_rp - wm_rp) - pos_net) < 5e-4,
+            f"WN={wn_rest}u recovered r+ write should hold",
+        )
+        require(
+            abs(stat(3.25e-6, wp_rm - wm_rm) - neg_net) < 5e-4,
+            f"WN={wn_rest}u recovered r- write should hold",
+        )
+
+    strength_selected_gate = np.array(strength_selected_gate)
+    strength_complement_gate = np.array(strength_complement_gate)
+    strength_selected_step = np.array(strength_selected_step)
+    strength_complement_step = np.array(strength_complement_step)
+    strength_pos_net = np.array(strength_pos_net)
+    strength_neg_net = np.array(strength_neg_net)
+    recovered = (strength_pos_net > 0.020) & (strength_complement_step < 5e-4)
+    overdriven = (strength_complement_step > 0.020) & (np.abs(strength_pos_net) < 0.001)
+    require(abs(strength_pos_net[0]) < 0.001, "weakest restorer NMOS should reproduce the selected-weak collapse")
+    require(recovered.any(), "some stronger restorer NMOS sizing should recover the selected-weak update")
+    require(
+        np.all(strength_pos_net[recovered] < 0.12),
+        "recovered selected-weak updates should remain incremental",
+    )
+    require(
+        np.max(strength_complement_step[recovered]) < 5e-4,
+        "recovered selected-weak sizing should keep complement branch suppressed",
+    )
+    require(
+        overdriven.any(),
+        "too-strong restorer NMOS should expose complement turn-on instead of being counted as robust",
+    )
+
+    strength_fig, strength_axes = plt.subplots(2, 1, figsize=(7.2, 5.8))
+    recovered_widths = np.array(strength_wn_values)[recovered]
+    if recovered_widths.size:
+        for axis in strength_axes:
+            axis.axvspan(
+                float(np.min(recovered_widths)) - 1.0,
+                float(np.max(recovered_widths)) + 1.0,
+                color="tab:green",
+                alpha=0.08,
+                label="usable sizing window" if axis is strength_axes[0] else None,
+            )
+    strength_axes[0].plot(strength_wn_values, strength_selected_gate, "o-", label="selected restored gate")
+    strength_axes[0].plot(strength_wn_values, strength_complement_gate, "s--", label="complement restored gate")
+    strength_axes[0].axhline(0.9, color="0.4", linewidth=0.8, alpha=0.5)
+    strength_axes[0].set_ylabel("gate voltage (V)")
+    strength_axes[0].set_title("Restorer NMOS sizing has a finite selected-corner window")
+    strength_axes[0].grid(True, alpha=0.25)
+    strength_axes[0].legend(loc="center right")
+    strength_axes[1].plot(strength_wn_values, strength_selected_step, "o-", label="selected rail step")
+    strength_axes[1].plot(strength_wn_values, strength_complement_step, "s--", label="complement rail step")
+    strength_axes[1].plot(strength_wn_values, strength_pos_net, "^-", label="$r^+$ net")
+    strength_axes[1].plot(strength_wn_values, -strength_neg_net, "v:", label="$r^-$ net magnitude")
+    strength_axes[1].axhline(0, color="0.4", linewidth=0.8)
+    strength_axes[1].set_xlabel("restorer NMOS width (um)")
+    strength_axes[1].set_ylabel("writer step (V)")
+    strength_axes[1].set_title("Weak sizing collapses; over-strong sizing cancels through complement turn-on")
+    strength_axes[1].grid(True, alpha=0.25)
+    strength_axes[1].legend(loc="upper left", ncol=2)
+    strength_fig.tight_layout()
+    save_plot(strength_fig, "mos_hidden_writer_restored_gate_strength_ngspice")
+
     return hidden_writer_plot
 
 

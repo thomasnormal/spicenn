@@ -992,6 +992,24 @@ must satisfy before it can replace the current behavioral prototype.
 
 \begin{figure}[H]
   \centering
+  \includegraphics[width=0.88\linewidth]{figures/mos_hidden_writer_restored_gate_strength_ngspice.png}
+  \caption{Ngspice restorer-NMOS sizing sweep for the selected-weak threshold
+  corner in Fig.~\ref{fig:mos-hidden-writer-restored-gate-mismatch-ngspice}.
+  The weakest restored gate reproduces the failure: the selected gate remains
+  near \(1.68\) V and the signed write is essentially zero.  Moderate NMOS
+  widths create a usable window: \(18\)--\(36\,\mu\mathrm{m}\) pulls the
+  selected gate below \(0.25\) V, keeps the complement gate above \(1.61\) V,
+  and restores a signed update of about \(\pm65\) mV with nV-scale complement
+  motion.  Over-sizing is not robust; by \(48\,\mu\mathrm{m}\) the complement
+  gate also turns on, both writer rails move by about \(65\) mV, and the
+  differential update cancels.  The transistor lesson is that the restored
+  hidden-error writer needs explicit restorer sizing margin, not merely a
+  stronger pull-down device.}
+  \label{fig:mos-hidden-writer-restored-gate-strength-ngspice}
+\end{figure}
+
+\begin{figure}[H]
+  \centering
   \includegraphics[width=0.88\linewidth]{figures/mos_reset_precharge_ngspice.png}
   \caption{Ngspice transient characterization of MOS reset/precharge for
   reusable state capacitors.  A complementary MOS transmission-gate reset first

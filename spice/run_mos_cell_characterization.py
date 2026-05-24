@@ -4887,6 +4887,161 @@ quit
     hyr_fig.tight_layout()
     save_plot(hyr_fig, "mos_hidden_writer_restored_gate_hybrid_repeated_ngspice")
 
+    hybrid_alternating_deck = f"""
+* Hybrid restored-enable/analog-error writer alternating-sign cancellation check.
+* One r+ store and one r- store drive two phase-separated writer stacks into
+* the same persistent W+/W- capacitor pair.  The first three pacc pulses write
+* W+, then four opposite-sign pacc pulses write W- and must cancel/cross the
+* same physical signed weight.
+{COMMON_MODELS}
+.param CERR=10p CWRITE=500p WSW=24u WWRITE=24u WRESTN=18u WRESTP=300u
+VDD vdd 0 1.8
+VTAIL vbias 0 0.95
+VPBWD pbwd 0 PULSE(0 1.8 0.45u 20n 20n 0.80u 8.0u)
+VRP rp 0 PULSE(0 1.8 0.45u 20n 20n 0.80u 8.0u)
+VRM rm 0 PULSE(0 1.8 0.45u 20n 20n 0.80u 8.0u)
+VPACC_POS_HYC paccn_pos_hyc 0 PWL(0 1.8 1.55u 1.8 1.57u 0 1.73u 0 1.75u 1.8 2.00u 1.8 2.02u 0 2.18u 0 2.20u 1.8 2.45u 1.8 2.47u 0 2.63u 0 2.65u 1.8 5u 1.8)
+VPACC_NEG_HYC paccn_neg_hyc 0 PWL(0 1.8 2.90u 1.8 2.92u 0 3.08u 0 3.10u 1.8 3.35u 1.8 3.37u 0 3.53u 0 3.55u 1.8 3.80u 1.8 3.82u 0 3.98u 0 4.00u 1.8 4.25u 1.8 4.27u 0 4.43u 0 4.45u 1.8 5u 1.8)
+VHM_POS hm_pos_hyc 0 0.92
+
+VZPP_HYC zpp_hyc 0 {0.9 + hybrid_mismatch_eps / 2.0:.5f}
+VZMM_HYC zmm_hyc 0 {0.9 - hybrid_mismatch_eps / 2.0:.5f}
+VZPM_HYC zpm_hyc 0 {0.9 - hybrid_mismatch_eps / 2.0:.5f}
+VZMP_HYC zmp_hyc 0 {0.9 + hybrid_mismatch_eps / 2.0:.5f}
+
+MPPP_HYC hpp_hyc hpp_hyc vdd vdd PMOS L={{LCH}} W={{WP}}
+MPPM_HYC hpm_hyc hpm_hyc vdd vdd PMOS L={{LCH}} W={{WP}}
+MNPP_HYC hpp_hyc zpp_hyc tailp_hyc 0 NMOS L={{LCH}} W={{WN}}
+MNPM_HYC hpm_hyc zmm_hyc tailp_hyc 0 NMOS L={{LCH}} W={{WN}}
+MNTP_HYC tailp_hyc vbias 0 0 NMOS L={{LCH}} W={{WN}}
+
+MPMP_HYC hmp_hyc hmp_hyc vdd vdd PMOS L={{LCH}} W={{WP}}
+MPMM_HYC hmm_hyc hmm_hyc vdd vdd PMOS L={{LCH}} W={{WP}}
+MNMP_HYC hmp_hyc zpm_hyc tailm_hyc 0 NMOS L={{LCH}} W={{WN}}
+MNMM_HYC hmm_hyc zmp_hyc tailm_hyc 0 NMOS L={{LCH}} W={{WN}}
+MNTM_HYC tailm_hyc vbias 0 0 NMOS L={{LCH}} W={{WN}}
+
+CDP_RP_HYC cdp_rp_hyc 0 {{CERR}} IC=1.04
+CDM_RP_HYC cdm_rp_hyc 0 {{CERR}} IC=1.04
+CDP_RM_HYC cdp_rm_hyc 0 {{CERR}} IC=1.04
+CDM_RM_HYC cdm_rm_hyc 0 {{CERR}} IC=1.04
+RDP_RP_HYC cdp_rp_hyc 0 50G
+RDM_RP_HYC cdm_rp_hyc 0 50G
+RDP_RM_HYC cdp_rm_hyc 0 50G
+RDM_RM_HYC cdm_rm_hyc 0 50G
+{sign_store_path("hpm_hyc", "rp", "cdp_rp_hyc", "hycrp1")}
+{sign_store_path("hmp_hyc", "rp", "cdp_rp_hyc", "hycrp2")}
+{sign_store_path("hpp_hyc", "rp", "cdm_rp_hyc", "hycrp3")}
+{sign_store_path("hmm_hyc", "rp", "cdm_rp_hyc", "hycrp4")}
+{sign_store_path("hpp_hyc", "rm", "cdp_rm_hyc", "hycrm1")}
+{sign_store_path("hmm_hyc", "rm", "cdp_rm_hyc", "hycrm2")}
+{sign_store_path("hpm_hyc", "rm", "cdm_rm_hyc", "hycrm3")}
+{sign_store_path("hmp_hyc", "rm", "cdm_rm_hyc", "hycrm4")}
+
+MPRP_CDP_HYC rgp_rp_hyc cdp_rp_hyc vdd vdd PMOS L={{LCH}} W={{WRESTP}}
+MNRP_CDP_HYC rgp_rp_hyc cdp_rp_hyc 0 0 NMOS L={{LCH}} W={{WRESTN}}
+MPRP_CDM_HYC rgm_rp_hyc cdm_rp_hyc vdd vdd PMOS L={{LCH}} W={{WRESTP}}
+MNRP_CDM_HYC rgm_rp_hyc cdm_rp_hyc 0 0 NMOS L={{LCH}} W={{WRESTN}}
+MPRM_CDP_HYC rgp_rm_hyc cdp_rm_hyc vdd vdd PMOS L={{LCH}} W={{WRESTP}}
+MNRM_CDP_HYC rgp_rm_hyc cdp_rm_hyc 0 0 NMOS L={{LCH}} W={{WRESTN}}
+MPRM_CDM_HYC rgm_rm_hyc cdm_rm_hyc vdd vdd PMOS L={{LCH}} W={{WRESTP}}
+MNRM_CDM_HYC rgm_rm_hyc cdm_rm_hyc 0 0 NMOS L={{LCH}} W={{WRESTN}}
+
+CWP_HYC wp_hyc 0 {{CWRITE}} IC=0.85
+CWM_HYC wm_hyc 0 {{CWRITE}} IC=0.85
+MWP_POS_HYC_A vdd paccn_pos_hyc n_wp_pos_hyc_a vdd PMOS L={{LCH}} W={{WWRITE}}
+MWP_POS_HYC_B n_wp_pos_hyc_a hm_pos_hyc n_wp_pos_hyc_b vdd PMOS L={{LCH}} W={{WWRITE}}
+MWP_POS_HYC_C n_wp_pos_hyc_b rgp_rp_hyc n_wp_pos_hyc_c vdd PMOS L={{LCH}} W={{WWRITE}}
+MWP_POS_HYC_D n_wp_pos_hyc_c cdm_rp_hyc wp_hyc vdd PMOS L={{LCH}} W={{WWRITE}}
+MWM_POS_HYC_A vdd paccn_pos_hyc n_wm_pos_hyc_a vdd PMOS L={{LCH}} W={{WWRITE}}
+MWM_POS_HYC_B n_wm_pos_hyc_a hm_pos_hyc n_wm_pos_hyc_b vdd PMOS L={{LCH}} W={{WWRITE}}
+MWM_POS_HYC_C n_wm_pos_hyc_b rgm_rp_hyc n_wm_pos_hyc_c vdd PMOS L={{LCH}} W={{WWRITE}}
+MWM_POS_HYC_D n_wm_pos_hyc_c cdp_rp_hyc wm_hyc vdd PMOS L={{LCH}} W={{WWRITE}}
+
+MWP_NEG_HYC_A vdd paccn_neg_hyc n_wp_neg_hyc_a vdd PMOS L={{LCH}} W={{WWRITE}}
+MWP_NEG_HYC_B n_wp_neg_hyc_a hm_pos_hyc n_wp_neg_hyc_b vdd PMOS L={{LCH}} W={{WWRITE}}
+MWP_NEG_HYC_C n_wp_neg_hyc_b rgp_rm_hyc n_wp_neg_hyc_c vdd PMOS L={{LCH}} W={{WWRITE}}
+MWP_NEG_HYC_D n_wp_neg_hyc_c cdm_rm_hyc wp_hyc vdd PMOS L={{LCH}} W={{WWRITE}}
+MWM_NEG_HYC_A vdd paccn_neg_hyc n_wm_neg_hyc_a vdd PMOS L={{LCH}} W={{WWRITE}}
+MWM_NEG_HYC_B n_wm_neg_hyc_a hm_pos_hyc n_wm_neg_hyc_b vdd PMOS L={{LCH}} W={{WWRITE}}
+MWM_NEG_HYC_C n_wm_neg_hyc_b rgm_rm_hyc n_wm_neg_hyc_c vdd PMOS L={{LCH}} W={{WWRITE}}
+MWM_NEG_HYC_D n_wm_neg_hyc_c cdp_rm_hyc wm_hyc vdd PMOS L={{LCH}} W={{WWRITE}}
+
+.control
+set noaskquit
+tran 5n 4.75u uic
+wrdata mos_hidden_writer_restored_gate_hybrid_alternating.dat v(cdp_rp_hyc) v(cdm_rp_hyc) v(cdp_rm_hyc) v(cdm_rm_hyc) v(rgp_rp_hyc) v(rgm_rp_hyc) v(rgp_rm_hyc) v(rgm_rm_hyc) v(wp_hyc) v(wm_hyc) v(paccn_pos_hyc) v(paccn_neg_hyc) v(pbwd)
+quit
+.endc
+.end
+"""
+    hybrid_alternating_data = run_ngspice(
+        hybrid_alternating_deck,
+        "mos_hidden_writer_restored_gate_hybrid_alternating",
+    )
+    hyct, hyc_cols = load_wrdata(hybrid_alternating_data, 13)
+
+    def hycat(time_s: float, values: np.ndarray) -> float:
+        return float(values[np.argmin(np.abs(hyct - time_s))])
+
+    hyc_hidden_pos = hyc_cols[0] - hyc_cols[1]
+    hyc_hidden_neg = hyc_cols[2] - hyc_cols[3]
+    hyc_pos_selected_gate = hyc_cols[4]
+    hyc_pos_complement_gate = hyc_cols[5]
+    hyc_neg_complement_gate = hyc_cols[6]
+    hyc_neg_selected_gate = hyc_cols[7]
+    hyc_wp = hyc_cols[8]
+    hyc_wm = hyc_cols[9]
+    hyc_diff = hyc_wp - hyc_wm
+    hyc_initial_wp = hycat(1.45e-6, hyc_wp)
+    hyc_initial_wm = hycat(1.45e-6, hyc_wm)
+    hyc_sample_times = np.array([1.78, 2.23, 2.68, 3.13, 3.58, 4.03, 4.48]) * 1e-6
+    hyc_steps = np.array([hycat(ts, hyc_diff) for ts in hyc_sample_times])
+    hyc_wp_steps = np.array([hycat(ts, hyc_wp) - hyc_initial_wp for ts in hyc_sample_times])
+    hyc_wm_steps = np.array([hycat(ts, hyc_wm) - hyc_initial_wm for ts in hyc_sample_times])
+    hyc_pos_phase_steps = hyc_steps[:3]
+    hyc_neg_phase_steps = hyc_steps[3:]
+    require(hycat(1.35e-6, hyc_hidden_pos) > 0.07, "hybrid alternating r+ store should be positive")
+    require(hycat(1.35e-6, hyc_hidden_neg) < -0.07, "hybrid alternating r- store should be negative")
+    require(abs(hycat(1.35e-6, hyc_hidden_pos + hyc_hidden_neg)) < 0.003, "hybrid alternating hidden-error stores should be symmetric")
+    require(hycat(1.45e-6, hyc_pos_selected_gate) < 0.30, "hybrid alternating r+ selected restored gate should be low")
+    require(hycat(1.45e-6, hyc_pos_complement_gate) > 1.60, "hybrid alternating r+ complement restored gate should be high")
+    require(hycat(1.45e-6, hyc_neg_selected_gate) < 0.30, "hybrid alternating r- selected restored gate should be low")
+    require(hycat(1.45e-6, hyc_neg_complement_gate) > 1.60, "hybrid alternating r- complement restored gate should be high")
+    require(np.all(np.diff(hyc_pos_phase_steps) > 0.010), "hybrid alternating positive pulses should build positive signed weight")
+    require(np.max(hyc_wm_steps[:3]) < 5e-4, "hybrid alternating W- rail should stay quiet during positive pulses")
+    require(np.all(np.diff(hyc_neg_phase_steps) < -0.010), "hybrid alternating negative pulses should reduce signed weight")
+    require(hyc_neg_phase_steps[0] < hyc_pos_phase_steps[-1] - 0.010, "first negative pulse should partially cancel the positive state")
+    require(hyc_neg_phase_steps[-1] < -0.006, "extra negative pulse should cross the same signed weight below zero")
+    require(np.max(np.abs(hyc_wp_steps[3:] - hyc_wp_steps[2])) < 5e-4, "hybrid alternating W+ rail should hold during negative pulses")
+    require(np.min(np.diff(hyc_wm_steps[2:])) > 0.010, "hybrid alternating W- rail should accumulate during negative pulses")
+    require(abs(hycat(4.65e-6, hyc_diff) - hyc_steps[-1]) < 5e-4, "hybrid alternating signed weight should hold after final pulse")
+
+    hyc_fig, hyc_axes = plt.subplots(2, 1, figsize=(7.2, 5.8))
+    hyc_axes[0].plot(1e6 * hyct, hyc_hidden_pos, label="stored $r^+$")
+    hyc_axes[0].plot(1e6 * hyct, hyc_hidden_neg, label="stored $r^-$")
+    hyc_axes[0].plot(1e6 * hyct, hyc_pos_selected_gate, label="$r^+$ selected gate")
+    hyc_axes[0].plot(1e6 * hyct, hyc_neg_selected_gate, label="$r^-$ selected gate")
+    hyc_axes[0].plot(1e6 * hyct, hyc_cols[10] / 20.0, color="0.45", alpha=0.35, label="$pacc^+_n/20$")
+    hyc_axes[0].plot(1e6 * hyct, hyc_cols[11] / 20.0, color="0.15", alpha=0.25, label="$pacc^-_n/20$")
+    hyc_axes[0].axhline(0, color="0.4", linewidth=0.8)
+    hyc_axes[0].set_ylabel("voltage (V)")
+    hyc_axes[0].set_title("Hybrid alternating writer stores both hidden-error signs")
+    hyc_axes[0].grid(True, alpha=0.25)
+    hyc_axes[0].legend(loc="center right", ncol=2, fontsize="small")
+    hyc_axes[1].plot(1e6 * hyct, hyc_wp - hyc_initial_wp, label="$W^+$ step")
+    hyc_axes[1].plot(1e6 * hyct, hyc_wm - hyc_initial_wm, label="$W^-$ step")
+    hyc_axes[1].plot(1e6 * hyct, hyc_diff, label="$W^+ - W^-$")
+    hyc_axes[1].plot(1e6 * hyc_sample_times, hyc_steps, "o", color="black", label="post-pulse samples")
+    hyc_axes[1].axhline(0, color="0.4", linewidth=0.8)
+    hyc_axes[1].set_xlabel("time (us)")
+    hyc_axes[1].set_ylabel("writer step (V)")
+    hyc_axes[1].set_title("Same weight pair accumulates, cancels, and crosses sign")
+    hyc_axes[1].grid(True, alpha=0.25)
+    hyc_axes[1].legend(loc="upper left", ncol=2, fontsize="small")
+    hyc_fig.tight_layout()
+    save_plot(hyc_fig, "mos_hidden_writer_restored_gate_hybrid_alternating_ngspice")
+
     return hidden_writer_plot
 
 

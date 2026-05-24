@@ -1142,6 +1142,26 @@ must satisfy before it can replace the current behavioral prototype.
 
 \begin{figure}[H]
   \centering
+  \includegraphics[width=0.88\linewidth]{figures/mos_hidden_writer_restored_gate_hybrid_alternating_ngspice.png}
+  \caption{Ngspice alternating-sign cancellation characterization of the hybrid
+  restored writer on one physical weight-capacitor pair.  The deck stores
+  matched \(r^+\) and \(r^-\) hidden-error differentials of \(\pm98.5\) mV,
+  restores the selected gates to about \(0.196\) V and the complement gates to
+  about \(1.731\) V, then applies three \(W^+\) write pulses followed by four
+  \(W^-\) write pulses.  The signed weight first accumulates
+  \(12.3\), \(24.6\), and \(36.8\) mV, then the opposite-sign pulses cancel it
+  back through \(24.6\), \(12.3\), approximately \(0\), and finally
+  \(-12.3\) mV.  During the positive phase the \(W^-\) rail moves only at the
+  nV scale; during the negative phase the \(W^+\) rail holds while \(W^-\)
+  accumulates.  This is a stricter online-training check than
+  Fig.~\ref{fig:mos-hidden-writer-restored-gate-hybrid-repeated-ngspice}
+  because it proves the same capacitor pair can reverse update direction
+  instead of only accumulating one sign.}
+  \label{fig:mos-hidden-writer-restored-gate-hybrid-alternating-ngspice}
+\end{figure}
+
+\begin{figure}[H]
+  \centering
   \includegraphics[width=0.88\linewidth]{figures/mos_reset_precharge_ngspice.png}
   \caption{Ngspice transient characterization of MOS reset/precharge for
   reusable state capacitors.  A complementary MOS transmission-gate reset first

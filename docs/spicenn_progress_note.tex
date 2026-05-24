@@ -941,6 +941,21 @@ must satisfy before it can replace the current behavioral prototype.
 
 \begin{figure}[H]
   \centering
+  \includegraphics[width=0.88\linewidth]{figures/mos_reset_mismatch_ngspice.png}
+  \caption{Ngspice threshold-corner characterization of the complementary MOS
+  reset transmission gate.  Five reset copies clear the same deliberately
+  mismatched capacitor pair under strong, nominal, weak, and skewed
+  NMOS/PMOS-threshold corners.  With a \(400\) ns reset pulse, the residual
+  \(|z^- - z^+|\) ranges from about \(29\) mV in the strong corner to
+  \(53\) mV in the weak corner, while common-mode error stays below the mV
+  scale.  This completes the reset robustness picture: pulse width and
+  non-overlap still matter, but the complementary reset does not rely on one
+  exact threshold corner to clear reusable state.}
+  \label{fig:mos-reset-mismatch-ngspice}
+\end{figure}
+
+\begin{figure}[H]
+  \centering
   \includegraphics[width=0.88\linewidth]{figures/mos_reset_write_timing_ngspice.png}
   \caption{Ngspice reset-release to synapse-write timing characterization.
   Each copy starts at the reset common mode, uses the same complementary reset,

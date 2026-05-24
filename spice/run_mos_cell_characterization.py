@@ -2722,6 +2722,58 @@ quit
 .endc
 .end
 """
+    mismatch_cases = [
+        ("strong", "NMOSR53", "PMOSR50", "both strong"),
+        ("nominal", "NMOSR55", "PMOSR55", "nominal"),
+        ("weak", "NMOSR57", "PMOSR60", "both weak"),
+        ("nweak_pstrong", "NMOSR57", "PMOSR50", "N weak / P strong"),
+        ("nstrong_pweak", "NMOSR53", "PMOSR60", "N strong / P weak"),
+    ]
+    mismatch_models = """
+.model NMOSR53 NMOS (LEVEL=1 VTO=0.53 KP=220u LAMBDA=0.03)
+.model NMOSR55 NMOS (LEVEL=1 VTO=0.55 KP=220u LAMBDA=0.03)
+.model NMOSR57 NMOS (LEVEL=1 VTO=0.57 KP=220u LAMBDA=0.03)
+.model PMOSR50 PMOS (LEVEL=1 VTO=-0.50 KP=90u LAMBDA=0.03)
+.model PMOSR55 PMOS (LEVEL=1 VTO=-0.55 KP=90u LAMBDA=0.03)
+.model PMOSR60 PMOS (LEVEL=1 VTO=-0.60 KP=90u LAMBDA=0.03)
+"""
+    mismatch_devices = []
+    mismatch_prints = []
+    for idx, (name, n_model, p_model, _label) in enumerate(mismatch_cases):
+        mismatch_devices.append(
+            f"""
+* Reset mismatch copy: {name}.
+CZPM{idx} zpm{idx} 0 {{CSUM}} IC=1.3
+CZMM{idx} zmm{idx} 0 {{CSUM}} IC=0.5
+RZPM{idx} zpm{idx} 0 100G
+RZMM{idx} zmm{idx} 0 100G
+MRPNM{idx} zpm{idx} rst vcm 0 {n_model} L={{LCH}} W={{WRESETN}}
+MRMNM{idx} zmm{idx} rst vcm 0 {n_model} L={{LCH}} W={{WRESETN}}
+MRPPM{idx} zpm{idx} rstn vcm vdd {p_model} L={{LCH}} W={{WRESETP}}
+MRMPM{idx} zmm{idx} rstn vcm vdd {p_model} L={{LCH}} W={{WRESETP}}
+"""
+        )
+        mismatch_prints.extend([f"v(zpm{idx})", f"v(zmm{idx})"])
+    mismatch_deck = f"""
+* Complementary reset threshold-mismatch corner check.
+* Several reset transmission-gate copies clear the same deliberately mismatched
+* capacitor pair under matched and skewed NMOS/PMOS threshold corners.
+{COMMON_MODELS}
+{mismatch_models}
+.param CSUM=500p WRESETN=24u WRESETP=60u
+VDD vdd 0 1.8
+VCM vcm 0 0.9
+VRST rst 0 PULSE(0 1.8 0.10u 5n 5n 0.40u 2u)
+VRSTN rstn 0 PULSE(1.8 0 0.10u 5n 5n 0.40u 2u)
+{''.join(mismatch_devices)}
+.control
+set noaskquit
+tran 2n 0.8u uic
+wrdata mos_reset_mismatch.dat {' '.join(mismatch_prints)} v(rst)
+quit
+.endc
+.end
+"""
     data = run_ngspice(deck, "mos_reset_precharge")
     t, cols = load_wrdata(data, 8)
     zp, zm, hp, hm, dp, dm, rst, wpulse = cols
@@ -2799,6 +2851,24 @@ quit
     require(np.max(write_final[2:]) - np.min(write_final[2:]) < 0.004, "post-reset write timings should agree")
     require(np.max(np.abs([wat(0.50e-6, common_case) - 0.9 for common_case in write_common])) < 0.02, "reset/write timing copies should leave reset near common mode")
 
+    mismatch_data = run_ngspice(mismatch_deck, "mos_reset_mismatch")
+    mt, mismatch_cols = load_wrdata(mismatch_data, 2 * len(mismatch_cases) + 1)
+    mismatch_residual = []
+    mismatch_common = []
+    mismatch_signed_series = []
+    sample_idx = int(np.argmin(np.abs(mt - 0.62e-6)))
+    for idx, (_name, _n_model, _p_model, _label) in enumerate(mismatch_cases):
+        signed_case = mismatch_cols[2 * idx + 1] - mismatch_cols[2 * idx]
+        common_case = 0.5 * (mismatch_cols[2 * idx + 1] + mismatch_cols[2 * idx])
+        mismatch_signed_series.append(signed_case)
+        mismatch_residual.append(abs(float(signed_case[sample_idx])))
+        mismatch_common.append(float(common_case[sample_idx]))
+    mismatch_residual = np.array(mismatch_residual)
+    mismatch_common = np.array(mismatch_common)
+    require(np.all(mismatch_residual < 0.08), "mismatched transmission-gate reset should clear most differential residue")
+    require(mismatch_residual[2] > mismatch_residual[0], "weak reset threshold corner should clear less than strong corner")
+    require(np.max(np.abs(mismatch_common - 0.9)) < 0.015, "mismatched transmission-gate reset should keep common mode near target")
+
     fig, axes = plt.subplots(3, 1, figsize=(7.2, 7.4))
     axes[0].plot(1e6 * t, zp, label="$z^+$ cap")
     axes[0].plot(1e6 * t, zm, label="$z^-$ cap")
@@ -2861,6 +2931,31 @@ quit
     write_timing_axes[1].grid(True, axis="y", alpha=0.25)
     write_timing_fig.tight_layout()
     save_plot(write_timing_fig, "mos_reset_write_timing_ngspice")
+
+    mismatch_fig, mismatch_axes = plt.subplots(2, 1, figsize=(7.2, 5.8))
+    for (_name, _n_model, _p_model, label), signed_case in zip(mismatch_cases, mismatch_signed_series):
+        if label in ("both strong", "nominal", "both weak"):
+            mismatch_axes[0].plot(1e6 * mt, signed_case, label=label)
+        else:
+            mismatch_axes[0].plot(1e6 * mt, signed_case, "--", label=label)
+    mismatch_axes[0].plot(1e6 * mt, mismatch_cols[-1] / 20.0, color="0.5", alpha=0.35, label="$reset/20$")
+    mismatch_axes[0].axhline(0, color="0.4", linewidth=0.8)
+    mismatch_axes[0].set_ylabel("$z^- - z^+$ (V)")
+    mismatch_axes[0].set_title("Transmission-gate reset stays effective across threshold corners")
+    mismatch_axes[0].grid(True, alpha=0.25)
+    mismatch_axes[0].legend(loc="upper right", ncol=2, fontsize="small")
+    labels = [label for _name, _n_model, _p_model, label in mismatch_cases]
+    xpos = np.arange(len(labels))
+    mismatch_axes[1].bar(xpos - 0.18, mismatch_residual, width=0.36, label="residual $|z^- - z^+|$")
+    mismatch_axes[1].bar(xpos + 0.18, np.abs(mismatch_common - 0.9), width=0.36, label="common-mode error")
+    mismatch_axes[1].set_xticks(xpos)
+    mismatch_axes[1].set_xticklabels(labels, rotation=15, ha="right")
+    mismatch_axes[1].set_ylabel("post-reset error (V)")
+    mismatch_axes[1].set_title("Weak and skewed corners still reset within margin")
+    mismatch_axes[1].grid(True, axis="y", alpha=0.25)
+    mismatch_axes[1].legend(loc="upper left")
+    mismatch_fig.tight_layout()
+    save_plot(mismatch_fig, "mos_reset_mismatch_ngspice")
     return reset_plot
 
 

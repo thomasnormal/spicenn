@@ -685,6 +685,65 @@ quit
 .endc
 .end
 """
+    timing_cases = [
+        ("pre", "pre-write", 0.05, 0.35),
+        ("edge", "write edge", 0.48, 0.98),
+        ("overlap", "overlap", 0.80, 1.30),
+        ("late", "late overlap", 1.10, 1.60),
+        ("gap", "settled gap", 1.35, 1.85),
+    ]
+    timing_devices = []
+    timing_prints = ["v(zp)", "v(zm)"]
+    for name, _label, start_us, end_us in timing_cases:
+        timing_devices.append(
+            f"""
+VPACT_{name} pact_{name} 0 PWL(0 0 {start_us:.2f}u 0 {start_us + 0.02:.2f}u 1.8 {end_us:.2f}u 1.8 {end_us + 0.02:.2f}u 0 3.0u 0)
+MPFP_{name} hp_{name} hp_{name} vdd vdd PMOS L={{LCH}} W={{WP}}
+MPFM_{name} hm_{name} hm_{name} vdd vdd PMOS L={{LCH}} W={{WP}}
+MNFP_{name} hp_{name} zm ftail_{name} 0 NMOS L={{LCH}} W={{WN}}
+MNFM_{name} hm_{name} zp ftail_{name} 0 NMOS L={{LCH}} W={{WN}}
+MNFT_{name} ftail_{name} vbias 0 0 NMOS L={{LCH}} W={{WN}}
+CHP_{name} hcp_{name} 0 {{CSTORE}} IC=1.04
+CHM_{name} hcm_{name} 0 {{CSTORE}} IC=1.04
+RHP_{name} hcp_{name} 0 50G
+RHM_{name} hcm_{name} 0 50G
+MSP_{name} hp_{name} pact_{name} hcp_{name} 0 NMOS L={{LCH}} W={{WSW}}
+MSM_{name} hm_{name} pact_{name} hcm_{name} 0 NMOS L={{LCH}} W={{WSW}}
+"""
+        )
+        timing_prints.extend([f"v(hp_{name})", f"v(hm_{name})", f"v(hcp_{name})", f"v(hcm_{name})", f"v(pact_{name})"])
+
+    timing_deck = f"""
+* Synapse-to-forward-store pact timing margin check.
+* Several activation storage copies share the same signed synapse and crossed
+* forward pair while their pact pulses sample before, during, and after
+* preactivation settling.
+{COMMON_MODELS}
+.param CSUM=500p CSTORE=10p WTAIL=2u WSW=24u
+VDD vdd 0 1.8
+VXP xp 0 1.15
+VXM xm 0 0.65
+VTAIL vbias 0 0.95
+VWP wpulse 0 PWL(0 0 0.50u 0 0.52u 1.15 1.20u 1.15 1.22u 0 3.0u 0)
+
+CZP zp 0 {{CSUM}} IC=0.9
+CZM zm 0 {{CSUM}} IC=0.9
+RZP zp 0 100G
+RZM zm 0 100G
+MPP zp xp tailp 0 NMOS L={{LCH}} W={{WN}}
+MPM zm xm tailp 0 NMOS L={{LCH}} W={{WN}}
+MTP tailp wpulse 0 0 NMOS L={{LCH}} W={{WTAIL}}
+
+{''.join(timing_devices)}
+
+.control
+set noaskquit
+tran 5n 3.0u uic
+wrdata mos_synapse_forward_phase_timing.dat {' '.join(timing_prints)} v(wpulse)
+quit
+.endc
+.end
+"""
     data = run_ngspice(deck, "mos_synapse_forward_chain")
     t, cols = load_wrdata(data, 14)
     pos_preact = cols[1] - cols[0]
@@ -722,6 +781,31 @@ quit
     require(cycle_at(3.45e-6, cycle_preact) < -0.075, "second cycle should write negative preactivation")
     require(cycle_at(4.10e-6, cycle_store) < -0.05, "second cycle should store negative activation")
     require(cycle_at(4.60e-6, cycle_store) < -0.05, "second-cycle stored activation should hold")
+
+    timing_data = run_ngspice(timing_deck, "mos_synapse_forward_phase_timing")
+    tt, timing_cols = load_wrdata(timing_data, len(timing_prints) + 1)
+
+    def timing_at(time_s: float, values: np.ndarray) -> float:
+        return float(values[np.argmin(np.abs(tt - time_s))])
+
+    timing_preact = timing_cols[1] - timing_cols[0]
+    timing_loads = []
+    timing_stores = []
+    timing_final = []
+    for idx, (_name, _label, _start_us, _end_us) in enumerate(timing_cases):
+        load = timing_cols[2 + 5 * idx + 1] - timing_cols[2 + 5 * idx]
+        stored = timing_cols[2 + 5 * idx + 3] - timing_cols[2 + 5 * idx + 2]
+        timing_loads.append(load)
+        timing_stores.append(stored)
+        timing_final.append(timing_at(2.75e-6, stored))
+    timing_final = np.array(timing_final)
+    require(timing_at(1.25e-6, timing_preact) > 0.08, "timing deck should write positive preactivation")
+    require(timing_at(1.25e-6, timing_loads[-1]) > 0.05, "timing deck forward pair should read positive activation")
+    require(abs(timing_final[0]) < 0.002, "pact pulse before synapse write should not store a signed activation")
+    require(timing_final[1] > timing_final[0] + 0.015, "pact pulse at write edge should store a partial positive activation")
+    require(timing_final[1] < 0.95 * timing_final[-1], "write-edge pact sample should remain below the settled activation")
+    require(np.min(timing_final[2:]) > 0.95 * timing_final[-1], "pact pulses after preactivation settling should store the full activation")
+    require(np.max(timing_final[2:]) - np.min(timing_final[2:]) < 0.004, "settled pact timings should agree")
 
     fig, axes = plt.subplots(3, 1, figsize=(7.2, 7.2), sharex=True)
     axes[0].plot(1e6 * t, pos_preact, label="$w^+$ stored $z^- - z^+$")
@@ -778,6 +862,26 @@ quit
     cycle_axes[2].legend(loc="upper right", ncol=2)
     cycle_fig.tight_layout()
     save_plot(cycle_fig, "mos_synapse_forward_cycle_ngspice")
+
+    timing_fig, timing_axes = plt.subplots(2, 1, figsize=(7.2, 5.8))
+    timing_axes[0].plot(1e6 * tt, timing_preact, label="stored $z^- - z^+$")
+    timing_axes[0].plot(1e6 * tt, timing_loads[-1], label="settled-gap load $h^- - h^+$")
+    timing_axes[0].plot(1e6 * tt, timing_cols[-1] / 10.0, color="0.5", alpha=0.35, label="$w^+/10$")
+    timing_axes[0].axhline(0, color="0.4", linewidth=0.8)
+    timing_axes[0].set_ylabel("differential voltage (V)")
+    timing_axes[0].set_title("Synapse and forward load settle before pact sampling")
+    timing_axes[0].grid(True, alpha=0.25)
+    timing_axes[0].legend(loc="upper right")
+    for (_name, label, _start_us, _end_us), stored in zip(timing_cases, timing_stores):
+        timing_axes[1].plot(1e6 * tt, stored, label=label)
+    timing_axes[1].axhline(0, color="0.4", linewidth=0.8)
+    timing_axes[1].set_xlabel("time (us)")
+    timing_axes[1].set_ylabel("stored activation (V)")
+    timing_axes[1].set_title("pact timing sweep exposes the write/store margin")
+    timing_axes[1].grid(True, alpha=0.25)
+    timing_axes[1].legend(loc="lower right", ncol=2)
+    timing_fig.tight_layout()
+    save_plot(timing_fig, "mos_synapse_forward_phase_timing_ngspice")
     return chain_plot
 
 

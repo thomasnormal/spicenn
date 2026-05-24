@@ -696,6 +696,20 @@ must satisfy before it can replace the current behavioral prototype.
 
 \begin{figure}[H]
   \centering
+  \includegraphics[width=0.88\linewidth]{figures/mos_synapse_forward_phase_timing_ngspice.png}
+  \caption{Ngspice synapse-to-forward-store \(pact\)-timing characterization.
+  One signed synapse writes the preactivation capacitors while separate matched
+  forward-store copies sample before, during, and after the write.  The
+  pre-write \(pact\) pulse stores no signed activation, the write-edge pulse
+  captures a partial activation, and the overlap/late/gap samples converge once
+  the preactivation and forward load settle.  The small load transient in the
+  representative settled-gap copy is the local sampling kick from its own MOS
+  pass switches; it recovers before the stored value is held.}
+  \label{fig:mos-synapse-forward-phase-timing-ngspice}
+\end{figure}
+
+\begin{figure}[H]
+  \centering
   \includegraphics[width=0.88\linewidth]{figures/mos_hidden_error_ngspice.png}
   \caption{Ngspice characterization of the hidden-error path.  The top panel
   uses two matched diode-loaded MOS forward replicas nudged by \(+10\) mV and

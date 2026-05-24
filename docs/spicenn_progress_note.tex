@@ -630,9 +630,10 @@ must satisfy before it can replace the current behavioral prototype.
   \centering
   \includegraphics[width=0.88\linewidth]{figures/mos_writer_ngspice.png}
   \caption{Ngspice transient characterization of the four-quadrant MOS writer.
-  Same-sign input/error coincidence charges only the \(W^+\) storage capacitor;
-  opposite-sign coincidence charges only \(W^-\).  This validates update-branch
-  selectivity and write polarity, not yet calibrated analog write linearity.}
+  Same-sign input/error coincidence makes a bounded step only on the \(W^+\)
+  storage capacitor; opposite-sign coincidence steps only \(W^-\).  The
+  pulse-width sweep verifies that selected write magnitude is near-linear over
+  the small update range while the inactive branch stays quiet.}
   \label{fig:mos-writer-ngspice}
 \end{figure}
 

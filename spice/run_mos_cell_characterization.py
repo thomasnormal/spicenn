@@ -292,11 +292,11 @@ quit
 
 def characterize_writer() -> Path:
     deck = f"""
-* Four-quadrant writer coincidence sanity check
+* Four-quadrant writer coincidence sanity check.
 {COMMON_MODELS}
-.param WWRITE=4u CWRITE=100p
+.param WWRITE=2u CWRITE=500p
 VDD vdd 0 1.8
-VPACC_N paccn 0 PULSE(1.8 0 0.5u 20n 20n 3.0u 6.0u)
+VPACC_N paccn 0 PULSE(1.8 0 0.5u 20n 20n 0.8u 5.0u)
 VHI hi 0 1.8
 VLO lo 0 0
 
@@ -328,25 +328,90 @@ quit
 .endc
 .end
 """
+    widths_us = [0.10, 0.20, 0.40, 0.80, 1.20]
+    sweep_devices = []
+    sweep_prints = []
+    for idx, width in enumerate(widths_us):
+        sweep_devices.append(
+            f"""
+VPACC{idx} paccn{idx} 0 PULSE(1.8 0 0.5u 20n 20n {width}u 5.0u)
+CWP{idx} wp{idx} 0 {{CWRITE}} IC=0.2
+CWM{idx} wm{idx} 0 {{CWRITE}} IC=0.2
+MWP{idx}A vdd paccn{idx} n1_{idx} vdd PMOS L={{LCH}} W={{WWRITE}}
+MWP{idx}B n1_{idx} lo n2_{idx} vdd PMOS L={{LCH}} W={{WWRITE}}
+MWP{idx}C n2_{idx} lo wp{idx} vdd PMOS L={{LCH}} W={{WWRITE}}
+MWM{idx}A vdd paccn{idx} n3_{idx} vdd PMOS L={{LCH}} W={{WWRITE}}
+MWM{idx}B n3_{idx} lo n4_{idx} vdd PMOS L={{LCH}} W={{WWRITE}}
+MWM{idx}C n4_{idx} hi wm{idx} vdd PMOS L={{LCH}} W={{WWRITE}}
+"""
+        )
+        sweep_prints.extend([f"v(wp{idx})", f"v(wm{idx})"])
+    sweep_deck = f"""
+* Four-quadrant writer pulse-width sweep.
+{COMMON_MODELS}
+.param WWRITE=2u CWRITE=500p
+VDD vdd 0 1.8
+VHI hi 0 1.8
+VLO lo 0 0
+{''.join(sweep_devices)}
+.control
+set noaskquit
+tran 5n 2.2u uic
+wrdata mos_writer_width.dat {' '.join(sweep_prints)}
+quit
+.endc
+.end
+"""
     data = run_ngspice(deck, "mos_writer")
     t, cols = load_wrdata(data, 5)
-    require(cols[0][-1] > 1.6 and cols[1][-1] < 0.25, "same-sign writer should charge only W+")
-    require(cols[3][-1] > 1.6 and cols[2][-1] < 0.25, "opposite-sign writer should charge only W-")
-    fig, axes = plt.subplots(2, 1, figsize=(7.2, 5.2), sharex=True)
+    same_wp_delta = cols[0][-1] - cols[0][0]
+    same_wm_delta = cols[1][-1] - cols[1][0]
+    opp_wp_delta = cols[2][-1] - cols[2][0]
+    opp_wm_delta = cols[3][-1] - cols[3][0]
+    require(same_wp_delta > 0.05 and same_wp_delta < 0.25, "same-sign writer should make a bounded W+ step")
+    require(abs(same_wm_delta) < 1e-3, "same-sign writer should leave W- quiet")
+    require(opp_wm_delta > 0.05 and opp_wm_delta < 0.25, "opposite-sign writer should make a bounded W- step")
+    require(abs(opp_wp_delta) < 1e-3, "opposite-sign writer should leave W+ quiet")
+
+    sweep_data = run_ngspice(sweep_deck, "mos_writer_width")
+    _, sweep_cols = load_wrdata(sweep_data, 2 * len(widths_us))
+    selected_delta = np.array([sweep_cols[2 * idx][-1] - sweep_cols[2 * idx][0] for idx in range(len(widths_us))])
+    inactive_delta = np.array([sweep_cols[2 * idx + 1][-1] - sweep_cols[2 * idx + 1][0] for idx in range(len(widths_us))])
+    require(np.all(np.diff(selected_delta) > 0.0), "writer charge should increase with active pulse width")
+    require(np.max(np.abs(inactive_delta)) < 1e-3, "inactive writer branch should stay quiet in width sweep")
+    # This is an incremental writer, not a rail-to-rail latch.  Over this small
+    # voltage excursion the selected charge should be close to proportional to
+    # coincidence time.
+    fit = np.polyfit(np.array(widths_us), selected_delta, 1)
+    predicted = np.polyval(fit, widths_us)
+    residual = selected_delta - predicted
+    ss_res = float(np.sum(residual**2))
+    ss_tot = float(np.sum((selected_delta - np.mean(selected_delta)) ** 2))
+    require(1.0 - ss_res / ss_tot > 0.98, "writer pulse-width response should be near-linear")
+
+    fig, axes = plt.subplots(3, 1, figsize=(7.2, 7.4))
     axes[0].plot(1e6 * t, cols[0], label="$W^+$, same sign")
     axes[0].plot(1e6 * t, cols[1], label="$W^-$, same sign")
     axes[0].set_ylabel("cap voltage (V)")
-    axes[0].set_title("Same-sign coincidence charges W+ branch")
+    axes[0].set_title("Same-sign coincidence makes a bounded W+ step")
     axes[0].grid(True, alpha=0.25)
     axes[0].legend()
     axes[1].plot(1e6 * t, cols[2], label="$W^+$, opposite sign")
     axes[1].plot(1e6 * t, cols[3], label="$W^-$, opposite sign")
-    axes[1].plot(1e6 * t, cols[4], color="0.5", alpha=0.45, label="$\\overline{pacc}$")
-    axes[1].set_xlabel("time (us)")
+    axes[1].plot(1e6 * t, cols[4] / 6.0, color="0.5", alpha=0.45, label="$\\overline{pacc}/6$")
     axes[1].set_ylabel("cap voltage (V)")
-    axes[1].set_title("Opposite-sign coincidence charges W- branch")
+    axes[1].set_title("Opposite-sign coincidence makes a bounded W- step")
     axes[1].grid(True, alpha=0.25)
     axes[1].legend()
+    axes[2].plot(widths_us, selected_delta, "o-", label="selected $W^+$ step")
+    axes[2].plot(widths_us, inactive_delta, "o-", label="inactive $W^-$ step")
+    axes[2].plot(widths_us, predicted, "--", color="0.35", label="linear fit")
+    axes[2].axhline(0, color="0.4", linewidth=0.8)
+    axes[2].set_xlabel("active coincidence time (us)")
+    axes[2].set_ylabel("$\\Delta V_W$ (V)")
+    axes[2].set_title("Incremental write magnitude follows pulse width")
+    axes[2].grid(True, alpha=0.25)
+    axes[2].legend()
     fig.tight_layout()
     return save_plot(fig, "mos_writer_ngspice")
 

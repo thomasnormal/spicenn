@@ -394,7 +394,7 @@ capacitor.
     \end{scope}
 
     % C. Hidden-error / derivative replica.
-    \begin{scope}[yshift=-5.25cm]
+    \begin{scope}[yshift=-5.85cm]
       \node[title] at (2.2,3.0) {C. hidden-error replica};
       \draw[wire] (-0.25,2.65) node[lab,left] {VDD} -- (4.8,2.65);
       \pmos{1.15}{2.05}{$P_r^+$}{$r^+$}{prp}
@@ -417,7 +417,7 @@ capacitor.
     \end{scope}
 
     % D. Four-quadrant MOS writer.
-    \begin{scope}[xshift=7.2cm,yshift=-5.25cm]
+    \begin{scope}[xshift=7.2cm,yshift=-5.85cm]
       \node[title] at (2.2,3.25) {D. four-quadrant writer};
       \capg{1.15}{2.15}{$C_{W^+}$}{wwp}
       \capg{3.45}{2.15}{$C_{W^-}$}{wwm}
@@ -519,7 +519,7 @@ characterization.
     ]
     \node[box] (x) at (0,0) {input rail\\\(x_{bp}\)};
     \node[statecap] (w) at (0,-1.7) {\(C_W\)};
-    \node[statecap] (b) at (1.7,-1.7) {\(C_b\)};
+    \node[statecap] (b) at (1.45,-1.7) {\(C_b\)};
     \node[box] (sum) at (3.0,0) {weighted sum\\\(z=b+\sum S_W(W)x\)};
     \node[box] (phi) at (6.2,0) {activation\\\(h^\star=\phi(z)\)};
     \node[statecap] (h) at (8.7,0) {\(C_h\)};
@@ -527,8 +527,8 @@ characterization.
 
     \node[box] (err) at (11.2,-2.1) {output error\\\(d=t-\hat y\)};
     \node[box] (fb) at (8.2,-2.1) {feedback\\\(r=\sum dF\)};
-    \node[box] (gate) at (5.0,-2.1) {derivative gate\\\(\delta h^\star=r\phi'(z)\)};
-    \node[statecap] (dh) at (2.6,-2.1) {\(C_{\delta h}\)};
+    \node[box] (gate) at (5.45,-2.1) {derivative gate\\\(\delta h^\star=r\phi'(z)\)};
+    \node[statecap] (dh) at (3.0,-2.1) {\(C_{\delta h}\)};
     \node[statecap] (v) at (11.2,-4.0) {\(C_V\)};
 
     \node[phase] (pact) at (5.7,1.15) {\(pact\)};
@@ -546,7 +546,7 @@ characterization.
     \draw[bwd] (err) -- (fb);
     \draw[bwd] (fb) -- (gate);
     \draw[bwd] (sum) |- (gate);
-    \draw[bwd] (gate) -- node[lbl, above] {store} (dh);
+    \draw[bwd] (gate) -- (dh);
 
     \draw[wr] (dh) |- (w);
     \draw[wr] (dh) |- (b);

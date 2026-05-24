@@ -2570,6 +2570,230 @@ quit
     timing_fig.tight_layout()
     save_plot(timing_fig, "mos_hidden_writer_phase_timing_ngspice")
 
+    mismatch_levels = [
+        ("strong", "PMOSHWR50", -0.50),
+        ("nominal", "PMOSHWR55", -0.55),
+        ("weak", "PMOSHWR60", -0.60),
+    ]
+    mismatch_model_defs = "\n".join(
+        f".model {model} PMOS (LEVEL=1 VTO={vto:.2f} KP=90u LAMBDA=0.03)"
+        for _label, model, vto in mismatch_levels
+    )
+    mismatch_devices = []
+    mismatch_prints = ["v(cdp_rp)", "v(cdm_rp)", "v(cdp_rm)", "v(cdm_rm)"]
+    for idx, (label, model, _vto) in enumerate(mismatch_levels):
+        mismatch_devices.append(
+            f"""
+* Hidden-writer threshold-mismatch copy: {label} selected and inactive stacks.
+CWP_RP_MIS{idx} wp_rp_mis{idx} 0 {{CWRITE}} IC=0.85
+CWM_RP_MIS{idx} wm_rp_mis{idx} 0 {{CWRITE}} IC=0.85
+MWP_RP_MIS{idx}A vdd paccn n_wp_rp_mis{idx}_a vdd {model} L={{LCH}} W={{WWRITE}}
+MWP_RP_MIS{idx}B n_wp_rp_mis{idx}_a hm_pos n_wp_rp_mis{idx}_b vdd {model} L={{LCH}} W={{WWRITE}}
+MWP_RP_MIS{idx}C n_wp_rp_mis{idx}_b cdm_rp wp_rp_mis{idx} vdd {model} L={{LCH}} W={{WWRITE}}
+MWM_RP_MIS{idx}A vdd paccn n_wm_rp_mis{idx}_a vdd {model} L={{LCH}} W={{WWRITE}}
+MWM_RP_MIS{idx}B n_wm_rp_mis{idx}_a hm_pos n_wm_rp_mis{idx}_b vdd {model} L={{LCH}} W={{WWRITE}}
+MWM_RP_MIS{idx}C n_wm_rp_mis{idx}_b cdp_rp wm_rp_mis{idx} vdd {model} L={{LCH}} W={{WWRITE}}
+
+CWP_RM_MIS{idx} wp_rm_mis{idx} 0 {{CWRITE}} IC=0.85
+CWM_RM_MIS{idx} wm_rm_mis{idx} 0 {{CWRITE}} IC=0.85
+MWP_RM_MIS{idx}A vdd paccn n_wp_rm_mis{idx}_a vdd {model} L={{LCH}} W={{WWRITE}}
+MWP_RM_MIS{idx}B n_wp_rm_mis{idx}_a hm_pos n_wp_rm_mis{idx}_b vdd {model} L={{LCH}} W={{WWRITE}}
+MWP_RM_MIS{idx}C n_wp_rm_mis{idx}_b cdm_rm wp_rm_mis{idx} vdd {model} L={{LCH}} W={{WWRITE}}
+MWM_RM_MIS{idx}A vdd paccn n_wm_rm_mis{idx}_a vdd {model} L={{LCH}} W={{WWRITE}}
+MWM_RM_MIS{idx}B n_wm_rm_mis{idx}_a hm_pos n_wm_rm_mis{idx}_b vdd {model} L={{LCH}} W={{WWRITE}}
+MWM_RM_MIS{idx}C n_wm_rm_mis{idx}_b cdp_rm wm_rm_mis{idx} vdd {model} L={{LCH}} W={{WWRITE}}
+"""
+        )
+        mismatch_prints.extend(
+            [
+                f"v(wp_rp_mis{idx})",
+                f"v(wm_rp_mis{idx})",
+                f"v(wp_rm_mis{idx})",
+                f"v(wm_rm_mis{idx})",
+            ]
+        )
+
+    mismatch_deck = f"""
+* Integrated hidden-error-store to PMOS-writer threshold-mismatch sweep.
+* Nominal MOS finite-difference stores create r+ and r- hidden-error rails.
+* Those capacitor rails then drive writer stacks whose PMOS thresholds are
+* swept together.  This checks that writer mismatch changes update gain, not
+* the sign/selectivity of the integrated backward/update path.
+{COMMON_MODELS}
+{mismatch_model_defs}
+.param CERR=10p CWRITE=500p WSW=24u WWRITE=10u
+VDD vdd 0 1.8
+VTAIL vbias 0 0.95
+VPBWD pbwd 0 PULSE(0 1.8 0.45u 20n 20n 0.80u 5.0u)
+VRP rp 0 PULSE(0 1.8 0.45u 20n 20n 0.80u 5.0u)
+VRM rm 0 PULSE(0 1.8 0.45u 20n 20n 0.80u 5.0u)
+VPACC_N paccn 0 PULSE(1.8 0 1.55u 20n 20n 0.80u 5.0u)
+
+VZPP zpp 0 {0.9 + eps / 2.0:.5f}
+VZMM zmm 0 {0.9 - eps / 2.0:.5f}
+VZPM zpm 0 {0.9 - eps / 2.0:.5f}
+VZMP zmp 0 {0.9 + eps / 2.0:.5f}
+
+MPPP hpp hpp vdd vdd PMOS L={{LCH}} W={{WP}}
+MPPM hpm hpm vdd vdd PMOS L={{LCH}} W={{WP}}
+MNPP hpp zpp tailp 0 NMOS L={{LCH}} W={{WN}}
+MNPM hpm zmm tailp 0 NMOS L={{LCH}} W={{WN}}
+MNTP tailp vbias 0 0 NMOS L={{LCH}} W={{WN}}
+
+MPMP hmp hmp vdd vdd PMOS L={{LCH}} W={{WP}}
+MPMM hmm hmm vdd vdd PMOS L={{LCH}} W={{WP}}
+MNMP hmp zpm tailm 0 NMOS L={{LCH}} W={{WN}}
+MNMM hmm zmp tailm 0 NMOS L={{LCH}} W={{WN}}
+MNTM tailm vbias 0 0 NMOS L={{LCH}} W={{WN}}
+
+CDP_RP cdp_rp 0 {{CERR}} IC=1.04
+CDM_RP cdm_rp 0 {{CERR}} IC=1.04
+CDP_RM cdp_rm 0 {{CERR}} IC=1.04
+CDM_RM cdm_rm 0 {{CERR}} IC=1.04
+RDP_RP cdp_rp 0 50G
+RDM_RP cdm_rp 0 50G
+RDP_RM cdp_rm 0 50G
+RDM_RM cdm_rm 0 50G
+{sign_store_path("hpm", "rp", "cdp_rp", "misrp1")}
+{sign_store_path("hmp", "rp", "cdp_rp", "misrp2")}
+{sign_store_path("hpp", "rp", "cdm_rp", "misrp3")}
+{sign_store_path("hmm", "rp", "cdm_rp", "misrp4")}
+{sign_store_path("hpp", "rm", "cdp_rm", "misrm1")}
+{sign_store_path("hmm", "rm", "cdp_rm", "misrm2")}
+{sign_store_path("hpm", "rm", "cdm_rm", "misrm3")}
+{sign_store_path("hmp", "rm", "cdm_rm", "misrm4")}
+
+VHP_POS hp_pos 0 1.12
+VHM_POS hm_pos 0 0.92
+
+{''.join(mismatch_devices)}
+
+.control
+set noaskquit
+tran 5n 3.4u uic
+wrdata mos_hidden_writer_mismatch.dat {' '.join(mismatch_prints)} v(pbwd) v(paccn)
+quit
+.endc
+.end
+"""
+    mismatch_data = run_ngspice(mismatch_deck, "mos_hidden_writer_mismatch")
+    hmt, hmis_cols = load_wrdata(mismatch_data, len(mismatch_prints) + 2)
+
+    def hmat(time_s: float, values: np.ndarray) -> float:
+        return float(values[np.argmin(np.abs(hmt - time_s))])
+
+    hmis_pos_hidden = hmis_cols[0] - hmis_cols[1]
+    hmis_neg_hidden = hmis_cols[2] - hmis_cols[3]
+    require(hmat(1.35e-6, hmis_pos_hidden) > 0.07, "mismatch deck should store positive r+ hidden error")
+    require(hmat(1.35e-6, hmis_neg_hidden) < -0.07, "mismatch deck should store negative r- hidden error")
+
+    hmis_pos_steps = []
+    hmis_neg_steps = []
+    hmis_rp_selected = []
+    hmis_rm_selected = []
+    hmis_rp_complement = []
+    hmis_rm_complement = []
+    for idx, (_label, _model, _vto) in enumerate(mismatch_levels):
+        base = 4 + 4 * idx
+        wp_rp = hmis_cols[base]
+        wm_rp = hmis_cols[base + 1]
+        wp_rm = hmis_cols[base + 2]
+        wm_rm = hmis_cols[base + 3]
+        pos_diff = wp_rp - wm_rp
+        neg_diff = wp_rm - wm_rm
+        hmis_pos_steps.append(hmat(2.75e-6, pos_diff))
+        hmis_neg_steps.append(hmat(2.75e-6, neg_diff))
+        hmis_rp_selected.append(hmat(2.75e-6, wp_rp) - hmat(1.45e-6, wp_rp))
+        hmis_rm_selected.append(hmat(2.75e-6, wm_rm) - hmat(1.45e-6, wm_rm))
+        hmis_rp_complement.append(hmat(2.75e-6, wm_rp) - hmat(1.45e-6, wm_rp))
+        hmis_rm_complement.append(hmat(2.75e-6, wp_rm) - hmat(1.45e-6, wp_rm))
+        require(
+            abs(hmat(3.25e-6, pos_diff) - hmat(2.75e-6, pos_diff)) < 5e-4,
+            f"{_label} r+ integrated writer step should hold",
+        )
+        require(
+            abs(hmat(3.25e-6, neg_diff) - hmat(2.75e-6, neg_diff)) < 5e-4,
+            f"{_label} r- integrated writer step should hold",
+        )
+
+    hmis_pos_steps = np.array(hmis_pos_steps)
+    hmis_neg_steps = np.array(hmis_neg_steps)
+    hmis_rp_selected = np.array(hmis_rp_selected)
+    hmis_rm_selected = np.array(hmis_rm_selected)
+    hmis_rp_complement = np.array(hmis_rp_complement)
+    hmis_rm_complement = np.array(hmis_rm_complement)
+    require(np.all(hmis_pos_steps > 0.0045), "integrated r+ writer should keep a usable positive step under mismatch")
+    require(np.all(hmis_neg_steps < -0.0045), "integrated r- writer should keep a usable negative step under mismatch")
+    require(np.all(hmis_pos_steps < 0.04), "integrated r+ writer steps should remain incremental")
+    require(np.all(np.abs(hmis_neg_steps) < 0.04), "integrated r- writer steps should remain incremental")
+    require(
+        np.all(np.diff(hmis_pos_steps) < -5e-4),
+        "integrated r+ writer step should decrease as PMOS threshold magnitude increases",
+    )
+    require(
+        np.all(np.diff(np.abs(hmis_neg_steps)) < -5e-4),
+        "integrated r- writer magnitude should decrease as PMOS threshold magnitude increases",
+    )
+    require(
+        np.max(np.abs(hmis_pos_steps + hmis_neg_steps)) < 0.003,
+        "matched writer threshold offsets should preserve r+/r- update symmetry",
+    )
+    require(
+        np.all(hmis_rp_selected > hmis_rp_complement + 0.006),
+        "integrated r+ selected rail should exceed the complementary leakage rail",
+    )
+    require(
+        np.all(hmis_rm_selected > hmis_rm_complement + 0.006),
+        "integrated r- selected rail should exceed the complementary leakage rail",
+    )
+    require(
+        np.all(hmis_rp_complement > 0.0) and np.all(hmis_rm_complement > 0.0),
+        "complementary rails should show the expected analog PMOS leakage direction",
+    )
+
+    mismatch_fig, mismatch_axes = plt.subplots(2, 1, figsize=(7.2, 5.8))
+    hmis_x = np.arange(len(mismatch_levels))
+    hmis_labels = [f"$V_{{TO}}={vto:.2f}$ V" for _label, _model, vto in mismatch_levels]
+    mismatch_axes[0].plot(hmis_x, hmis_pos_steps, "o-", label="$r^+ \\to W^+-W^-$")
+    mismatch_axes[0].plot(hmis_x, hmis_neg_steps, "s--", label="$r^- \\to W^+-W^-$")
+    mismatch_axes[0].plot(hmis_x, hmis_rp_complement, "o-", color="0.55", alpha=0.75, label="$r^+$ complement $W^-$")
+    mismatch_axes[0].plot(hmis_x, hmis_rm_complement, "s:", color="0.55", alpha=0.75, label="$r^-$ complement $W^+$")
+    mismatch_axes[0].axhline(0, color="0.4", linewidth=0.8)
+    mismatch_axes[0].set_xticks(hmis_x)
+    mismatch_axes[0].set_xticklabels(hmis_labels)
+    mismatch_axes[0].set_ylabel("final step (V)")
+    mismatch_axes[0].set_title("Integrated writer mismatch changes gain, not update sign")
+    mismatch_axes[0].grid(True, alpha=0.25)
+    mismatch_axes[0].legend(loc="upper right", ncol=2)
+
+    for idx, (label, _model, vto) in enumerate(mismatch_levels):
+        base = 4 + 4 * idx
+        pos_diff = hmis_cols[base] - hmis_cols[base + 1]
+        neg_diff = hmis_cols[base + 2] - hmis_cols[base + 3]
+        linestyle = "-" if idx != 1 else "--"
+        mismatch_axes[1].plot(
+            1e6 * hmt,
+            pos_diff,
+            linestyle,
+            label=f"$r^+$ {label} ({vto:.2f} V)",
+        )
+        mismatch_axes[1].plot(
+            1e6 * hmt,
+            neg_diff,
+            linestyle,
+            alpha=0.65,
+            label=f"$r^-$ {label} ({vto:.2f} V)",
+        )
+    mismatch_axes[1].plot(1e6 * hmt, hmis_cols[-1] / 60.0, color="0.5", alpha=0.35, label="$\\overline{pacc}/60$")
+    mismatch_axes[1].axhline(0, color="0.4", linewidth=0.8)
+    mismatch_axes[1].set_xlabel("time (us)")
+    mismatch_axes[1].set_ylabel("$W^+ - W^-$ (V)")
+    mismatch_axes[1].set_title("Stored hidden-error rails drive bounded threshold-corner writes")
+    mismatch_axes[1].grid(True, alpha=0.25)
+    mismatch_axes[1].legend(loc="upper left", ncol=2, fontsize="small")
+    mismatch_fig.tight_layout()
+    save_plot(mismatch_fig, "mos_hidden_writer_mismatch_ngspice")
+
     return hidden_writer_plot
 
 

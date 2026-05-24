@@ -916,6 +916,26 @@ must satisfy before it can replace the current behavioral prototype.
 
 \begin{figure}[H]
   \centering
+  \includegraphics[width=0.88\linewidth]{figures/mos_hidden_writer_mismatch_ngspice.png}
+  \caption{Ngspice PMOS-threshold mismatch characterization of the integrated
+  hidden-error-store to writer boundary.  The hidden-error rails are generated
+  by the nominal MOS finite-difference/store network and then used directly as
+  analog writer gates while the writer PMOS threshold is swept through
+  \(V_{TO}=-0.50\), \(-0.55\), and \(-0.60\) V.  The signed \(r^+\) and \(r^-\)
+  weight differentials remain symmetric and keep the correct sign while their
+  gain decreases with weaker PMOS corners.  The complementary rails are not
+  perfectly quiet because the stored analog ``off'' gate is around \(1.09\) V,
+  not a rail-high logic level; the regression therefore checks selected-versus-
+  complementary contrast rather than a digital off assumption.  This is an
+  important robustness finding for the transistor path: a direct analog writer
+  can work in this window, but a later larger cell may need level restoration,
+  a higher hidden-error common mode, or a different writer bias to reduce
+  complementary leakage.}
+  \label{fig:mos-hidden-writer-mismatch-ngspice}
+\end{figure}
+
+\begin{figure}[H]
+  \centering
   \includegraphics[width=0.88\linewidth]{figures/mos_reset_precharge_ngspice.png}
   \caption{Ngspice transient characterization of MOS reset/precharge for
   reusable state capacitors.  A complementary MOS transmission-gate reset first

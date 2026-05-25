@@ -8750,6 +8750,8 @@ quit
         forward_p_model: str = "NMOS",
         forward_m_model: str = "NMOS",
         forward_tail_model: str = "NMOS",
+        reset_n_model: str = "NMOS",
+        reset_p_model: str = "PMOS",
     ) -> str:
         def fmt_gate_ic(value: float) -> str:
             if abs(value - round(value, 2)) < 1e-12:
@@ -8775,10 +8777,10 @@ quit
                 f"CZMG_HYR zmg_hyr 0 {gate_pf:g}p IC={fmt_gate_ic(gate_ic_m)}",
                 "RZPG_HYR zpg_hyr 0 100G",
                 "RZMG_HYR zmg_hyr 0 100G",
-                f"MRZGPN_HYR zpg_hyr rst_hyr {reset_ref_p_node} 0 NMOS L={{LCH}} W={{WRESETN}}",
-                f"MRZGMN_HYR zmg_hyr rst_hyr {reset_ref_m_node} 0 NMOS L={{LCH}} W={{WRESETN}}",
-                f"MRZGPP_HYR zpg_hyr rstn_hyr {reset_ref_p_node} vdd PMOS L={{LCH}} W={{WRESETP}}",
-                f"MRZGMP_HYR zmg_hyr rstn_hyr {reset_ref_m_node} vdd PMOS L={{LCH}} W={{WRESETP}}",
+                f"MRZGPN_HYR zpg_hyr rst_hyr {reset_ref_p_node} 0 {reset_n_model} L={{LCH}} W={{WRESETN}}",
+                f"MRZGMN_HYR zmg_hyr rst_hyr {reset_ref_m_node} 0 {reset_n_model} L={{LCH}} W={{WRESETN}}",
+                f"MRZGPP_HYR zpg_hyr rstn_hyr {reset_ref_p_node} vdd {reset_p_model} L={{LCH}} W={{WRESETP}}",
+                f"MRZGMP_HYR zmg_hyr rstn_hyr {reset_ref_m_node} vdd {reset_p_model} L={{LCH}} W={{WRESETP}}",
                 f"CCZP_HYR zp_hyr zpg_hyr {couple_pf:g}p",
                 f"CCZM_HYR zm_hyr zmg_hyr {couple_pf:g}p",
                 f"MNFP_HYR hp_hyr zmg_hyr ftail_hyr 0 {forward_p_model} L={{LCH}} W=96u",
@@ -10075,16 +10077,31 @@ quit
         nfm_vto: float,
         reset_trim_v: float,
         family: str = "skewlaw",
+        reset_n_vto: float | None = None,
+        reset_p_vto: float | None = None,
     ) -> tuple[np.ndarray, list[np.ndarray]]:
         model_tag = name.upper()
         stem = (
             "mos_hidden_writer_restored_gate_hybrid_update_forward_guard_"
             f"forward_pair_96u_zcm_0p75v_shift_trimmed_reuse_{family}_{name}"
         )
-        models = (
-            f".model NSHTRSLFP_{model_tag} NMOS (LEVEL=1 VTO={nfp_vto:.3f} KP=220u LAMBDA=0.03)\n"
-            f".model NSHTRSLFM_{model_tag} NMOS (LEVEL=1 VTO={nfm_vto:.3f} KP=220u LAMBDA=0.03)"
-        )
+        model_lines = [
+            f".model NSHTRSLFP_{model_tag} NMOS (LEVEL=1 VTO={nfp_vto:.3f} KP=220u LAMBDA=0.03)",
+            f".model NSHTRSLFM_{model_tag} NMOS (LEVEL=1 VTO={nfm_vto:.3f} KP=220u LAMBDA=0.03)",
+        ]
+        reset_n_model = "NMOS"
+        reset_p_model = "PMOS"
+        if reset_n_vto is not None:
+            reset_n_model = f"NSHTRSLRN_{model_tag}"
+            model_lines.append(
+                f".model {reset_n_model} NMOS (LEVEL=1 VTO={reset_n_vto:.3f} KP=220u LAMBDA=0.03)"
+            )
+        if reset_p_vto is not None:
+            reset_p_model = f"NSHTRSLRP_{model_tag}"
+            model_lines.append(
+                f".model {reset_p_model} PMOS (LEVEL=1 VTO={reset_p_vto:.3f} KP=90u LAMBDA=0.03)"
+            )
+        models = "\n".join(model_lines)
         deck = replace_required(hybrid_forward_read_reuse_deck, zcm_source_line, "VZCM zcm 0 0.75")
         deck = replace_required(deck, zcm_cap_p_line, "CZP_HYR zp_hyr 0 {CSUM} IC=0.75")
         deck = replace_required(deck, zcm_cap_m_line, "CZM_HYR zm_hyr 0 {CSUM} IC=0.75")
@@ -10098,6 +10115,8 @@ quit
                 reset_ref_m=0.90 - 0.5 * reset_trim_v,
                 forward_p_model=f"NSHTRSLFP_{model_tag}",
                 forward_m_model=f"NSHTRSLFM_{model_tag}",
+                reset_n_model=reset_n_model,
+                reset_p_model=reset_p_model,
             ),
         )
         deck = replace_required(
@@ -10524,6 +10543,104 @@ quit
             - np.min(shift_polref_h_samples[shift_polref_index["diff_jitter10_pos65"]])
         ),
         "positive calibrated common-mode jitter should remain secondary to differential trim jitter",
+    )
+
+    shift_reset_corner_specs = [
+        ("strong", "strong TG", 0.500, -0.500),
+        ("nominal", "nominal TG", 0.550, -0.550),
+        ("weak", "weak TG", 0.600, -0.600),
+        ("nweak_pstrong", "N weak / P strong", 0.600, -0.500),
+        ("nstrong_pweak", "N strong / P weak", 0.500, -0.600),
+    ]
+    shift_reset_branch_specs = [
+        ("neg_trim", "+30 mV skew, -55 mV trim", 0.580, 0.520, -0.055),
+        ("pos_trim", "-30 mV skew, +65 mV trim", 0.520, 0.580, 0.065),
+    ]
+    shift_reset_corner_trim_error = []
+    shift_reset_corner_common_error = []
+    shift_reset_corner_h_mean = []
+    shift_reset_corner_h_spread = []
+    shift_reset_corner_traces = []
+    for branch_name, branch_label, nfp_vto, nfm_vto, reset_trim_v in shift_reset_branch_specs:
+        branch_trim_error = []
+        branch_common_error = []
+        branch_h_mean = []
+        branch_h_spread = []
+        for corner_name, corner_label, reset_n_vto, reset_p_vto in shift_reset_corner_specs:
+            rt, rs_cols = run_trimmed_reuse_skew_law_case(
+                f"{branch_name}_{corner_name}",
+                nfp_vto,
+                nfm_vto,
+                reset_trim_v,
+                family="resetsw",
+                reset_n_vto=reset_n_vto,
+                reset_p_vto=reset_p_vto,
+            )
+
+            def rsat(time_s: float, values: np.ndarray) -> float:
+                return float(values[np.argmin(np.abs(rt - time_s))])
+
+            gate_diff = rs_cols[0] - rs_cols[1]
+            gate_common = 0.5 * (rs_cols[0] + rs_cols[1])
+            z = rs_cols[12] - rs_cols[11]
+            load = rs_cols[14] - rs_cols[13]
+            store = rs_cols[16] - rs_cols[15]
+            gate_samples = np.array([rsat(ts, gate_diff) for ts in shift_trimmed_reuse_reset_times])
+            common_samples = np.array([rsat(ts, gate_common) for ts in shift_trimmed_reuse_reset_times])
+            z_samples = np.array([rsat(ts, z) for ts in shift_reuse_z_times])
+            h_samples = np.array([rsat(ts, store) for ts in shift_reuse_h_times])
+            z_reset = np.array([abs(rsat(ts, z)) for ts in shift_trimmed_reuse_reset_times])
+            h_reset = np.array([abs(rsat(ts, store)) for ts in shift_trimmed_reuse_reset_times])
+            trim_error = float(np.max(np.abs(gate_samples - reset_trim_v)))
+            common_error = float(np.max(np.abs(common_samples - 0.90)))
+            h_mean = float(np.mean(h_samples))
+            h_spread = float(np.max(h_samples) - np.min(h_samples))
+            require(
+                trim_error < 0.008,
+                f"{branch_label} {corner_label} reset switch corner should preserve the calibrated split trim",
+            )
+            require(
+                common_error < 0.010,
+                f"{branch_label} {corner_label} reset switch corner should preserve shifted-gate common mode",
+            )
+            require(
+                np.max(z_reset) < 0.002 and np.max(h_reset) < 0.002,
+                f"{branch_label} {corner_label} reset switch corner should clear z/h state",
+            )
+            require(
+                np.all(z_samples > 0.035),
+                f"{branch_label} {corner_label} reset switch corner should keep useful read preactivation",
+            )
+            require(
+                np.all((h_samples > 0.020) & (h_samples < 0.085)),
+                f"{branch_label} {corner_label} reset switch corner should keep stored activation non-railed",
+            )
+            require(
+                h_spread < 0.025,
+                f"{branch_label} {corner_label} reset switch corner should remain repeatable across cycles",
+            )
+            branch_trim_error.append(trim_error)
+            branch_common_error.append(common_error)
+            branch_h_mean.append(h_mean)
+            branch_h_spread.append(h_spread)
+            if corner_name in {"nominal", "weak", "nweak_pstrong"}:
+                shift_reset_corner_traces.append((branch_label, corner_label, rt, load, store))
+        shift_reset_corner_trim_error.append(branch_trim_error)
+        shift_reset_corner_common_error.append(branch_common_error)
+        shift_reset_corner_h_mean.append(branch_h_mean)
+        shift_reset_corner_h_spread.append(branch_h_spread)
+
+    shift_reset_corner_trim_error = np.array(shift_reset_corner_trim_error)
+    shift_reset_corner_common_error = np.array(shift_reset_corner_common_error)
+    shift_reset_corner_h_mean = np.array(shift_reset_corner_h_mean)
+    shift_reset_corner_h_spread = np.array(shift_reset_corner_h_spread)
+    require(
+        np.all(np.max(shift_reset_corner_h_mean, axis=1) - np.min(shift_reset_corner_h_mean, axis=1) < 0.012),
+        "reset switch threshold corners should not materially move the calibrated activation",
+    )
+    require(
+        np.max(shift_reset_corner_common_error) < 0.5 * np.max(np.abs([case[4] for case in shift_reset_branch_specs])),
+        "reset switch threshold corner common-mode error should stay below the intentional split trim scale",
     )
 
     tail_bias_forward_tail_line = "MNFT_HYR ftail_hyr vbias 0 0 NMOS L={LCH} W=48u"
@@ -11989,6 +12106,69 @@ quit
     save_plot(
         shift_polref_fig,
         "mos_hidden_writer_restored_gate_hybrid_update_forward_guard_forward_pair_96u_shifted_gate_positive_refpert_ngspice",
+    )
+
+    shift_reset_corner_fig, shift_reset_corner_axes = plt.subplots(
+        3,
+        1,
+        figsize=(7.4, 7.4),
+        gridspec_kw={"height_ratios": [0.8, 0.9, 1.0]},
+    )
+    reset_corner_x = np.arange(len(shift_reset_corner_specs))
+    reset_corner_labels = [label for _name, label, _nvto, _pvto in shift_reset_corner_specs]
+    for branch_idx, (_branch_name, branch_label, _nfp, _nfm, _trim) in enumerate(shift_reset_branch_specs):
+        marker = "o-" if branch_idx == 0 else "s--"
+        shift_reset_corner_axes[0].plot(
+            reset_corner_x,
+            1e3 * shift_reset_corner_trim_error[branch_idx],
+            marker,
+            label=branch_label,
+        )
+    shift_reset_corner_axes[0].set_xticks(reset_corner_x)
+    shift_reset_corner_axes[0].set_xticklabels(reset_corner_labels, rotation=15, ha="right")
+    shift_reset_corner_axes[0].set_ylabel("max trim error (mV)")
+    shift_reset_corner_axes[0].set_title("Reset TG threshold corners preserve calibrated split trim")
+    shift_reset_corner_axes[0].grid(True, axis="y", alpha=0.25)
+    shift_reset_corner_axes[0].legend(loc="upper left", fontsize="x-small")
+    for branch_idx, (_branch_name, branch_label, _nfp, _nfm, _trim) in enumerate(shift_reset_branch_specs):
+        marker = "o-" if branch_idx == 0 else "s--"
+        shift_reset_corner_axes[1].plot(
+            reset_corner_x,
+            1e3 * shift_reset_corner_h_mean[branch_idx],
+            marker,
+            label=branch_label,
+        )
+    shift_reset_corner_axes[1].axhspan(35, 60, color="0.7", alpha=0.12, label="aligned window")
+    shift_reset_corner_axes[1].set_xticks(reset_corner_x)
+    shift_reset_corner_axes[1].set_xticklabels(reset_corner_labels, rotation=15, ha="right")
+    shift_reset_corner_axes[1].set_ylabel("mean stored $h$ (mV)")
+    shift_reset_corner_axes[1].set_title("Stored activation is dominated by calibration code, not reset TG corner")
+    shift_reset_corner_axes[1].grid(True, axis="y", alpha=0.25)
+    shift_reset_corner_axes[1].legend(loc="upper left", fontsize="x-small")
+    for branch_label, corner_label, rst, load, store in shift_reset_corner_traces:
+        if ("+30" in branch_label and corner_label == "nweak_pstrong") or (
+            "-30" in branch_label and corner_label == "weak TG"
+        ):
+            linestyle = "--"
+        else:
+            linestyle = "-"
+        shift_reset_corner_axes[2].plot(
+            1e6 * rst,
+            1e3 * store,
+            linestyle,
+            label=f"{branch_label.split(', ')[1]}, {corner_label} $h$",
+        )
+    shift_reset_corner_axes[2].axhline(0, color="0.4", linewidth=0.8)
+    shift_reset_corner_axes[2].set_xlim(2.35, 7.1)
+    shift_reset_corner_axes[2].set_xlabel("time (us)")
+    shift_reset_corner_axes[2].set_ylabel("stored $h$ (mV)")
+    shift_reset_corner_axes[2].set_title("Physical reset-switch corners still clear and reuse the shifted gate")
+    shift_reset_corner_axes[2].grid(True, alpha=0.25)
+    shift_reset_corner_axes[2].legend(loc="lower right", ncol=1, fontsize="xx-small")
+    shift_reset_corner_fig.tight_layout()
+    save_plot(
+        shift_reset_corner_fig,
+        "mos_hidden_writer_restored_gate_hybrid_update_forward_guard_forward_pair_96u_shifted_gate_reset_switch_corner_ngspice",
     )
 
     tail_bias_fig, tail_bias_axes = plt.subplots(2, 1, figsize=(7.4, 6.4), gridspec_kw={"height_ratios": [1.0, 0.8]})

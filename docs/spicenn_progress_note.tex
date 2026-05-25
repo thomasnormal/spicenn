@@ -2212,6 +2212,27 @@ must satisfy before it can replace the current behavioral prototype.
 
 \begin{figure}[H]
   \centering
+  \includegraphics[width=0.95\linewidth]{figures/mos_hidden_writer_restored_gate_hybrid_update_forward_guard_forward_pair_96u_shifted_gate_reset_switch_corner_ngspice.png}
+  \caption{Ngspice reset-switch threshold-corner check for the shifted-gate
+  split-reset primitive.  The same physical MOS reset transmission gates now
+  use explicit strong, nominal, weak, and skewed \(V_{TO}\) models while the
+  forward-pair corners use the two calibrated severe trim cases from
+  Fig.~\ref{fig:mos-hidden-writer-restored-gate-hybrid-update-forward-guard-forward-pair-96u-shifted-gate-polarity-calibration-ngspice}:
+  \(+30\) mV skew with \(-55\) mV trim and \(-30\) mV skew with \(+65\) mV
+  trim.  Across reset-switch corners, the sampled trim error stays below
+  \(0.004\) mV and shifted-gate common-mode error below \(0.009\) mV.  The
+  calibrated stored activations remain essentially fixed:
+  \(46.971\)--\(46.972\) mV for the negative-trim branch and
+  \(46.978\) mV for the positive-trim branch, with sub-\(0.04\) mV cycle
+  spread.  This means the current split-reset sizing is not visibly limited by
+  reset-switch threshold corners in this Level-1 fixture; the sensitive rails
+  remain forward-pair offset calibration and differential trim delivery, not
+  ordinary reset TG \(V_{TO}\) variation.}
+  \label{fig:mos-hidden-writer-restored-gate-hybrid-update-forward-guard-forward-pair-96u-shifted-gate-reset-switch-corner-ngspice}
+\end{figure}
+
+\begin{figure}[H]
+  \centering
   \includegraphics[width=0.88\linewidth]{figures/mos_hidden_writer_restored_gate_hybrid_update_forward_guard_forward_tail_bias_ngspice.png}
   \caption{Ngspice isolated forward-tail bias sweep for the same guarded MOS
   activation store.  The failed shared-bias experiment changed the read path

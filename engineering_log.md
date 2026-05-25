@@ -2,6 +2,16 @@
 
 ## 2026-05-25
 
+- Clarified the isolated forward-tail-bias plot.  The ngspice sweep already
+  asserted that this bias keeps a valid read state, leaves the stored
+  preactivation essentially unchanged, increases stored activation
+  monotonically, and acts only as a fine trim in the present sizing.  The
+  regenerated
+  `mos_hidden_writer_restored_gate_hybrid_update_forward_guard_forward_tail_bias_ngspice`
+  plot now labels those sampled margins directly: minimum preactivation
+  \(52.1\) mV, preactivation spread below the displayed \(0.01\) mV
+  resolution, stored-activation span \(2.16\) mV, and \(0.70\) V to
+  \(0.95\) V stored trim \(1.70\) mV.
 - Family-completed the shifted-gate startup-precharge margin plots.  The
   tuned-common and strength-sweep ngspice decks already asserted their
   pass/fail edges, but the rendered figures forced the reader to infer those

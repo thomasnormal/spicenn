@@ -15530,6 +15530,21 @@ quit
     tail_bias_axes[0].set_ylabel("activation differential (mV)")
     tail_bias_axes[0].set_title("Isolated forward tail bias is only a small trim in this sizing")
     tail_bias_axes[0].grid(True, alpha=0.25)
+    tail_bias_axes[0].text(
+        0.61,
+        0.18,
+        "preactivation min = "
+        f"{1e3 * np.min(tail_bias_preact_samples):.1f} mV / >48 mV\n"
+        "preactivation spread = "
+        f"{1e3 * (np.max(tail_bias_preact_samples) - np.min(tail_bias_preact_samples)):.2f} mV / <1 mV\n"
+        "stored activation span = "
+        f"{1e3 * (tail_bias_store_samples[-1] - tail_bias_store_samples[0]):.2f} mV / <3 mV\n"
+        "0.70 V -> 0.95 V store trim = "
+        f"{1e3 * (tail_bias_store_samples[nominal_tail_bias_idx] - tail_bias_store_samples[0]):.2f} mV",
+        transform=tail_bias_axes[0].transAxes,
+        fontsize="x-small",
+        bbox={"facecolor": "white", "alpha": 0.82, "edgecolor": "0.8"},
+    )
     tail_bias_axes[0].legend(loc="upper left", ncol=2, fontsize="small")
     tail_bias_x = np.arange(len(tail_bias_labels))
     tail_bias_axes[1].bar(tail_bias_x - 0.24, 1e3 * tail_bias_preact_samples, width=0.24, label="$z^- - z^+$")

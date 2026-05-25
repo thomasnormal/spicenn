@@ -8746,11 +8746,16 @@ quit
         gate_ic_p: float = 0.90,
         gate_ic_m: float = 0.90,
     ) -> str:
+        def fmt_gate_ic(value: float) -> str:
+            if abs(value - round(value, 2)) < 1e-12:
+                return f"{value:.2f}"
+            return f"{value:.5f}"
+
         return "\n".join(
             [
                 "VZGCM_HYR zgcm_hyr 0 0.90",
-                f"CZPG_HYR zpg_hyr 0 {gate_pf:g}p IC={gate_ic_p:.2f}",
-                f"CZMG_HYR zmg_hyr 0 {gate_pf:g}p IC={gate_ic_m:.2f}",
+                f"CZPG_HYR zpg_hyr 0 {gate_pf:g}p IC={fmt_gate_ic(gate_ic_p)}",
+                f"CZMG_HYR zmg_hyr 0 {gate_pf:g}p IC={fmt_gate_ic(gate_ic_m)}",
                 "RZPG_HYR zpg_hyr 0 100G",
                 "RZMG_HYR zmg_hyr 0 100G",
                 "MRZGPN_HYR zpg_hyr rst_hyr zgcm_hyr 0 NMOS L={LCH} W={WRESETN}",
@@ -9123,6 +9128,88 @@ quit
     require(
         abs(shift_reuse_bias_drift) < 1e-5,
         "shifted-gate repeated read/reset cycles should not disturb bias state",
+    )
+
+    shift_noise_cases = [
+        ("nominal", "nominal", 0.0, 0.0),
+        ("common_low_25mv", "$V_g$ common -25 mV", -0.025, 0.0),
+        ("common_high_25mv", "$V_g$ common +25 mV", 0.025, 0.0),
+        ("helpful_diff_25mv", "helpful diff -25 mV", 0.0, -0.025),
+        ("destructive_diff_25mv", "destructive diff +25 mV", 0.0, 0.025),
+        ("destructive_diff_50mv", "destructive diff +50 mV", 0.0, 0.050),
+    ]
+    shift_noise_labels = []
+    shift_noise_gate_samples = []
+    shift_noise_load_samples = []
+    shift_noise_store_samples = []
+    shift_noise_traces = []
+    for name, label, gate_common_offset_v, gate_diff_offset_v in shift_noise_cases:
+        stem = (
+            "mos_hidden_writer_restored_gate_hybrid_update_forward_guard_"
+            f"forward_pair_96u_zcm_0p75v_shift_gate_offset_{name}"
+        )
+        gate_ic_p = 0.90 + gate_common_offset_v + 0.5 * gate_diff_offset_v
+        gate_ic_m = 0.90 + gate_common_offset_v - 0.5 * gate_diff_offset_v
+        shift_noise_deck = replace_required(high_gain_hold_deck, zcm_source_line, "VZCM zcm 0 0.75")
+        shift_noise_deck = replace_required(shift_noise_deck, zcm_cap_p_line, "CZP_HYR zp_hyr 0 {CSUM} IC=0.75")
+        shift_noise_deck = replace_required(shift_noise_deck, zcm_cap_m_line, "CZM_HYR zm_hyr 0 {CSUM} IC=0.75")
+        shift_noise_deck = replace_required(
+            shift_noise_deck,
+            high_gain_forward_pair_lines,
+            shifted_forward_pair_lines(10.0, gate_ic_p=gate_ic_p, gate_ic_m=gate_ic_m),
+        )
+        shift_noise_deck = replace_required(
+            shift_noise_deck,
+            "mos_hidden_writer_restored_gate_hybrid_update_forward_guard_forward_pair_96u_hold.dat",
+            f"{stem}.dat",
+        )
+        shift_noise_deck = add_shifted_gate_probes(shift_noise_deck, stem)
+        shift_noise_data = run_ngspice(shift_noise_deck, stem)
+        snt, shift_noise_cols = load_wrdata(shift_noise_data, 25)
+
+        def snat(time_s: float, values: np.ndarray) -> float:
+            return float(values[np.argmin(np.abs(snt - time_s))])
+
+        shift_noise_gate_diff = shift_noise_cols[0] - shift_noise_cols[1]
+        shift_noise_load = shift_noise_cols[14] - shift_noise_cols[13]
+        shift_noise_store = shift_noise_cols[16] - shift_noise_cols[15]
+        shift_noise_labels.append(label)
+        shift_noise_gate_samples.append(snat(3.315e-6, shift_noise_gate_diff))
+        shift_noise_load_samples.append(snat(3.315e-6, shift_noise_load))
+        shift_noise_store_samples.append(snat(3.575e-6, shift_noise_store))
+        shift_noise_traces.append((label, snt, shift_noise_gate_diff, shift_noise_load, shift_noise_store))
+
+    shift_noise_gate_samples = np.array(shift_noise_gate_samples)
+    shift_noise_load_samples = np.array(shift_noise_load_samples)
+    shift_noise_store_samples = np.array(shift_noise_store_samples)
+    nominal_shift_noise_idx = 0
+    common_noise_idx = [1, 2]
+    helpful_noise_idx = 3
+    destructive_noise_idx = [4, 5]
+    require(
+        shift_noise_store_samples[nominal_shift_noise_idx] > 0.045,
+        "shifted-gate offset sweep nominal case should reproduce a useful low-common-mode activation",
+    )
+    require(
+        np.all(shift_noise_store_samples[common_noise_idx] > 0.040),
+        "shifted-gate common-mode offsets should keep useful stored activation",
+    )
+    require(
+        np.max(np.abs(shift_noise_store_samples[common_noise_idx] - shift_noise_store_samples[nominal_shift_noise_idx]))
+        < 0.012,
+        "shifted-gate common-mode offsets should not dominate activation capture",
+    )
+    require(
+        shift_noise_store_samples[helpful_noise_idx] > shift_noise_store_samples[nominal_shift_noise_idx],
+        "helpful shifted-gate differential residue should increase the stored activation",
+    )
+    require(
+        np.all(shift_noise_store_samples[destructive_noise_idx] > 0.020),
+        "destructive shifted-gate differential residue should reduce but not flip the activation in this window",
+    )
+    require(
+        np.all(np.diff(shift_noise_store_samples[[nominal_shift_noise_idx, *destructive_noise_idx]]) < -0.010),
+        "larger destructive shifted-gate differential residue should monotonically reduce stored activation",
     )
 
     tail_bias_forward_tail_line = "MNFT_HYR ftail_hyr vbias 0 0 NMOS L={LCH} W=48u"
@@ -9896,6 +9983,39 @@ quit
     save_plot(
         shift_reuse_fig,
         "mos_hidden_writer_restored_gate_hybrid_update_forward_guard_forward_pair_96u_shifted_gate_repeated_reset_reuse_ngspice",
+    )
+
+    shift_noise_fig, shift_noise_axes = plt.subplots(
+        2,
+        1,
+        figsize=(7.4, 6.4),
+        gridspec_kw={"height_ratios": [1.0, 0.85]},
+    )
+    for label, snt, gate_diff, _load, store in shift_noise_traces:
+        if label in {"nominal", "helpful diff -25 mV", "destructive diff +25 mV", "destructive diff +50 mV"}:
+            shift_noise_axes[0].plot(1e6 * snt, 1e3 * store, label=label)
+    shift_noise_axes[0].axhline(0, color="0.4", linewidth=0.8)
+    shift_noise_axes[0].axvline(3.33, color="0.25", linestyle="--", linewidth=0.9, alpha=0.6, label="guard off")
+    shift_noise_axes[0].set_xlim(3.05, 3.75)
+    shift_noise_axes[0].set_ylabel("stored activation (mV)")
+    shift_noise_axes[0].set_title("Shifted-gate activation under deterministic gate differential residue")
+    shift_noise_axes[0].grid(True, alpha=0.25)
+    shift_noise_axes[0].legend(loc="upper right", fontsize="small")
+    shift_noise_x = np.arange(len(shift_noise_labels))
+    shift_noise_axes[1].bar(shift_noise_x - 0.24, 1e3 * shift_noise_gate_samples, width=0.24, label="gate diff")
+    shift_noise_axes[1].bar(shift_noise_x, 1e3 * shift_noise_load_samples, width=0.24, label="forward load")
+    shift_noise_axes[1].bar(shift_noise_x + 0.24, 1e3 * shift_noise_store_samples, width=0.24, label="stored $h$")
+    shift_noise_axes[1].axhline(0, color="0.4", linewidth=0.8)
+    shift_noise_axes[1].set_xticks(shift_noise_x)
+    shift_noise_axes[1].set_xticklabels(shift_noise_labels, rotation=18, ha="right")
+    shift_noise_axes[1].set_ylabel("sampled differential (mV)")
+    shift_noise_axes[1].set_title("Common offsets are mild; destructive differential residue reduces margin")
+    shift_noise_axes[1].grid(True, axis="y", alpha=0.25)
+    shift_noise_axes[1].legend(loc="upper right", ncol=3, fontsize="small")
+    shift_noise_fig.tight_layout()
+    save_plot(
+        shift_noise_fig,
+        "mos_hidden_writer_restored_gate_hybrid_update_forward_guard_forward_pair_96u_shifted_gate_offset_noise_ngspice",
     )
 
     tail_bias_fig, tail_bias_axes = plt.subplots(2, 1, figsize=(7.4, 6.4), gridspec_kw={"height_ratios": [1.0, 0.8]})

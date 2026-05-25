@@ -1949,6 +1949,28 @@ must satisfy before it can replace the current behavioral prototype.
 
 \begin{figure}[H]
   \centering
+  \includegraphics[width=0.95\linewidth]{figures/mos_hidden_writer_restored_gate_hybrid_update_forward_guard_forward_pair_96u_shifted_gate_offset_noise_ngspice.png}
+  \caption{Ngspice deterministic shifted-gate offset/noise sweep for the
+  \(96\,\mu\mathrm{m}\) low-common-mode headroom fix.  The deck keeps the
+  same MOS-written \(W/B\) state, \(V_{ZCM}=0.75\) V summing common mode,
+  \(10\) pF coupling capacitors, and \(5\) pF shifted-gate capacitors, then
+  perturbs the shifted-gate initial conditions before the read.  The nominal
+  shifted-gate case stores \(52.154\) mV.  Common-mode offsets of
+  \(-25\) and \(+25\) mV on both shifted gates store \(50.092\) and
+  \(53.607\) mV, so common-mode gate noise is mild in this operating window.
+  A helpful \(-25\) mV gate-differential residue increases the stored
+  activation to \(66.787\) mV.  Destructive \(+25\) and \(+50\) mV
+  gate-differential residues reduce the stored activation to \(37.274\) and
+  \(22.219\) mV, respectively, without flipping the sign.  The practical rule
+  is therefore clear: the shifted-gate latch is tolerant of modest
+  common-mode residue, but differential gate residue directly consumes the
+  recovered headroom margin and should be kept well below the useful coupled
+  gate differential.}
+  \label{fig:mos-hidden-writer-restored-gate-hybrid-update-forward-guard-forward-pair-96u-shifted-gate-offset-noise-ngspice}
+\end{figure}
+
+\begin{figure}[H]
+  \centering
   \includegraphics[width=0.88\linewidth]{figures/mos_hidden_writer_restored_gate_hybrid_update_forward_guard_forward_tail_bias_ngspice.png}
   \caption{Ngspice isolated forward-tail bias sweep for the same guarded MOS
   activation store.  The failed shared-bias experiment changed the read path

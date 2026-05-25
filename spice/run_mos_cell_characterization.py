@@ -10985,6 +10985,85 @@ quit
         "250 pF local reset-reference decoupling should put first-cycle activation in the useful band",
     )
 
+    shift_refz_recharge_cases = [
+        ("c0p", "0 pF", 0.0),
+        ("c50p", "50 pF", 50.0),
+        ("c100p", "100 pF", 100.0),
+        ("c250p", "250 pF", 250.0),
+    ]
+    shift_refz_recharge_trim_error = []
+    shift_refz_recharge_h_samples = []
+    shift_refz_recharge_z_samples = []
+    shift_refz_recharge_traces = []
+    for branch_name, branch_label, nfp_vto, nfm_vto, reset_trim_v in shift_reset_branch_specs:
+        branch_trim_error = []
+        branch_h_samples = []
+        branch_z_samples = []
+        for cap_name, cap_label, cap_pf in shift_refz_recharge_cases:
+            rt, rc_cols = run_trimmed_reuse_skew_law_case(
+                f"{branch_name}_r100k_{cap_name}",
+                nfp_vto,
+                nfm_vto,
+                reset_trim_v,
+                family="refzrecharge",
+                reset_ref_series_ohm=1e5,
+                reset_ref_shunt_pf=cap_pf,
+            )
+
+            def rcat(time_s: float, values: np.ndarray) -> float:
+                return float(values[np.argmin(np.abs(rt - time_s))])
+
+            gate_diff = rc_cols[0] - rc_cols[1]
+            z = rc_cols[12] - rc_cols[11]
+            store = rc_cols[16] - rc_cols[15]
+            gate_samples = np.array([rcat(ts, gate_diff) for ts in shift_trimmed_reuse_reset_times])
+            z_samples = np.array([rcat(ts, z) for ts in shift_reuse_z_times])
+            h_samples = np.array([rcat(ts, store) for ts in shift_reuse_h_times])
+            z_reset = np.array([abs(rcat(ts, z)) for ts in shift_trimmed_reuse_reset_times])
+            h_reset = np.array([abs(rcat(ts, store)) for ts in shift_trimmed_reuse_reset_times])
+            trim_error = np.abs(gate_samples - reset_trim_v)
+            require(
+                np.max(z_reset) < 0.010 and np.max(h_reset) < 0.010,
+                f"{branch_label} {cap_label} recharge case should still clear z/h between reads",
+            )
+            require(
+                np.all(z_samples > 0.030),
+                f"{branch_label} {cap_label} recharge case should keep useful read preactivation",
+            )
+            branch_trim_error.append(trim_error)
+            branch_h_samples.append(h_samples)
+            branch_z_samples.append(z_samples)
+            if cap_name in {"c0p", "c100p", "c250p"}:
+                shift_refz_recharge_traces.append((branch_label, cap_label, rt, store))
+        shift_refz_recharge_trim_error.append(branch_trim_error)
+        shift_refz_recharge_h_samples.append(branch_h_samples)
+        shift_refz_recharge_z_samples.append(branch_z_samples)
+
+    shift_refz_recharge_trim_error = np.array(shift_refz_recharge_trim_error)
+    shift_refz_recharge_h_samples = np.array(shift_refz_recharge_h_samples)
+    shift_refz_recharge_z_samples = np.array(shift_refz_recharge_z_samples)
+    shift_refz_recharge_max_trim_error = np.max(shift_refz_recharge_trim_error, axis=2)
+    require(
+        np.all(np.diff(shift_refz_recharge_max_trim_error, axis=1) < 0.0),
+        "local decoupling recharge max trim error should improve monotonically with capacitance",
+    )
+    require(
+        np.all(shift_refz_recharge_max_trim_error[:, -1] < 0.006),
+        "250 pF local decoupling should preserve 100k trim delivery across repeated resets",
+    )
+    require(
+        np.all((shift_refz_recharge_h_samples[:, -1, :] > 0.020) & (shift_refz_recharge_h_samples[:, -1, :] < 0.090)),
+        "250 pF local decoupling should keep all repeated activations in the useful band",
+    )
+    require(
+        np.all(np.max(shift_refz_recharge_h_samples[:, -1, :], axis=1) - np.min(shift_refz_recharge_h_samples[:, -1, :], axis=1) < 0.025),
+        "250 pF local decoupling repeated activations should stay within a 25 mV cycle window",
+    )
+    require(
+        np.all(np.abs(shift_refz_recharge_h_samples[:, -1, 0] - shift_refz_recharge_h_samples[:, 0, 0]) > 0.060),
+        "250 pF local decoupling should visibly improve the first repeated-schedule activation over no decap",
+    )
+
     tail_bias_forward_tail_line = "MNFT_HYR ftail_hyr vbias 0 0 NMOS L={LCH} W=48u"
     tail_bias_cases_v = [0.70, 0.80, 0.90, 0.95, 1.05, 1.15, 1.25]
     tail_bias_labels = []
@@ -12686,6 +12765,68 @@ quit
     save_plot(
         shift_refz_decap_fig,
         "mos_hidden_writer_restored_gate_hybrid_update_forward_guard_forward_pair_96u_shifted_gate_reset_ref_decap_ngspice",
+    )
+
+    shift_refz_recharge_fig, shift_refz_recharge_axes = plt.subplots(
+        3,
+        1,
+        figsize=(7.4, 7.4),
+        gridspec_kw={"height_ratios": [0.85, 0.85, 1.0]},
+    )
+    refz_recharge_x = np.array([cap_pf for _name, _label, cap_pf in shift_refz_recharge_cases])
+    for branch_idx, (_branch_name, branch_label, _nfp, _nfm, _trim) in enumerate(shift_reset_branch_specs):
+        marker = "o-" if branch_idx == 0 else "s--"
+        shift_refz_recharge_axes[0].plot(
+            refz_recharge_x,
+            1e3 * shift_refz_recharge_max_trim_error[branch_idx],
+            marker,
+            label=branch_label,
+        )
+    shift_refz_recharge_axes[0].axhline(6, color="0.4", linestyle=":", linewidth=0.9, label="6 mV trim-error gate")
+    shift_refz_recharge_axes[0].set_ylabel("max trim error (mV)")
+    shift_refz_recharge_axes[0].set_title("Local trim-reference caps recharge through a 100k source")
+    shift_refz_recharge_axes[0].grid(True, axis="y", alpha=0.25)
+    shift_refz_recharge_axes[0].legend(loc="upper right", ncol=2, fontsize="xx-small")
+    cycle_x = np.arange(1, len(shift_reuse_h_times) + 1)
+    for branch_idx, (_branch_name, branch_label, _nfp, _nfm, _trim) in enumerate(shift_reset_branch_specs):
+        shift_refz_recharge_axes[1].plot(
+            cycle_x,
+            1e3 * shift_refz_recharge_h_samples[branch_idx, -1],
+            "o-" if branch_idx == 0 else "s--",
+            label=f"{branch_label.split(', ')[1]}, 250 pF",
+        )
+        shift_refz_recharge_axes[1].plot(
+            cycle_x,
+            1e3 * shift_refz_recharge_h_samples[branch_idx, 0],
+            ":" if branch_idx == 0 else "-.",
+            alpha=0.65,
+            label=f"{branch_label.split(', ')[1]}, 0 pF",
+        )
+    shift_refz_recharge_axes[1].axhspan(40, 55, color="0.7", alpha=0.12, label="calibrated window")
+    shift_refz_recharge_axes[1].set_xticks(cycle_x)
+    shift_refz_recharge_axes[1].set_ylabel("stored $h$ (mV)")
+    shift_refz_recharge_axes[1].set_title("The passive reservoir stays useful across repeated resets")
+    shift_refz_recharge_axes[1].grid(True, axis="y", alpha=0.25)
+    shift_refz_recharge_axes[1].legend(loc="upper right", ncol=2, fontsize="xx-small")
+    for branch_label, cap_label, rct, store in shift_refz_recharge_traces:
+        linestyle = "-" if cap_label == "0 pF" else "--" if cap_label == "100 pF" else ":"
+        shift_refz_recharge_axes[2].plot(
+            1e6 * rct,
+            1e3 * store,
+            linestyle,
+            label=f"{branch_label.split(', ')[1]}, {cap_label}",
+        )
+    shift_refz_recharge_axes[2].axhline(0, color="0.4", linewidth=0.8)
+    shift_refz_recharge_axes[2].set_xlim(2.35, 7.25)
+    shift_refz_recharge_axes[2].set_xlabel("time (us)")
+    shift_refz_recharge_axes[2].set_ylabel("stored $h$ (mV)")
+    shift_refz_recharge_axes[2].set_title("Repeated reads expose recharge and retention behavior")
+    shift_refz_recharge_axes[2].grid(True, alpha=0.25)
+    shift_refz_recharge_axes[2].legend(loc="upper left", ncol=2, fontsize="xx-small")
+    shift_refz_recharge_fig.tight_layout()
+    save_plot(
+        shift_refz_recharge_fig,
+        "mos_hidden_writer_restored_gate_hybrid_update_forward_guard_forward_pair_96u_shifted_gate_reset_ref_recharge_ngspice",
     )
 
     tail_bias_fig, tail_bias_axes = plt.subplots(2, 1, figsize=(7.4, 6.4), gridspec_kw={"height_ratios": [1.0, 0.8]})

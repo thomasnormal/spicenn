@@ -2303,6 +2303,26 @@ must satisfy before it can replace the current behavioral prototype.
 
 \begin{figure}[H]
   \centering
+  \includegraphics[width=0.95\linewidth]{figures/mos_hidden_writer_restored_gate_hybrid_update_forward_guard_forward_pair_96u_shifted_gate_reset_ref_recharge_ngspice.png}
+  \caption{Ngspice repeated-reset recharge check for the passive local
+  trim-reference reservoir in
+  Fig.~\ref{fig:mos-hidden-writer-restored-gate-hybrid-update-forward-guard-forward-pair-96u-shifted-gate-reset-ref-decap-ngspice}.
+  The source impedance remains \(100\,\mathrm{k}\Omega\), but the normal reuse
+  schedule is restored so the shifted gate is reset, read, sampled, reset, and
+  read again on the same physical nodes.  With \(250\) pF on each split
+  trim-reference rail, the worst sampled trim error over all reset cycles is
+  \(3.097/3.660\) mV for the \(-55/+65\) mV branches.  The three stored
+  activations are \(40.942/41.221/41.551\) mV and
+  \(53.933/53.555/53.165\) mV, respectively, so the passive reservoir stays in
+  the calibrated activation band rather than helping only the first cycle.
+  The practical rule is that the trim-reference reservoir must be local, but
+  the \(100\,\mathrm{k}\Omega\) source can recharge it between the
+  microsecond-spaced resets used here.}
+  \label{fig:mos-hidden-writer-restored-gate-hybrid-update-forward-guard-forward-pair-96u-shifted-gate-reset-ref-recharge-ngspice}
+\end{figure}
+
+\begin{figure}[H]
+  \centering
   \includegraphics[width=0.88\linewidth]{figures/mos_hidden_writer_restored_gate_hybrid_update_forward_guard_forward_tail_bias_ngspice.png}
   \caption{Ngspice isolated forward-tail bias sweep for the same guarded MOS
   activation store.  The failed shared-bias experiment changed the read path

@@ -7444,6 +7444,14 @@ quit
         )
         return guard_pwl, guardn_pwl
 
+    def read_phase_line(fall_start_us: float, edge_ns: float = 20.0) -> str:
+        edge_us = edge_ns / 1000.0
+        fall_end_us = fall_start_us + edge_us
+        return (
+            f"VREAD_HYR read_hyr 0 PWL(0 0 2.700u 0 2.720u 1.15 "
+            f"{fall_start_us:.3f}u 1.15 {fall_end_us:.3f}u 0 7.8u 0)"
+        )
+
     for guard_end_us in guard_end_cases_us:
         guard_off_us = guard_end_us + 0.02
         label = f"{int(round((guard_end_us - aperture_start_us) * 1000))} ns"
@@ -7628,6 +7636,58 @@ quit
     require(
         guard_edge_store_samples[-1] < guard_edge_store_samples[nominal_edge_idx] - 0.004,
         "slow guard edge should begin tracking the read-path collapse",
+    )
+
+    read_fall_cases_us = [3.26, 3.30, 3.33, 3.36, 3.40, 3.44]
+    read_fall_labels = []
+    read_fall_store_samples = []
+    read_fall_preact_samples = []
+    read_fall_traces = []
+    guard_pwl, guardn_pwl = guard_phase_lines(3.18, 3.31, 20.0)
+    for read_fall_us in read_fall_cases_us:
+        read_pwl = read_phase_line(read_fall_us, 20.0)
+        label = f"{read_fall_us:.2f} us"
+        stem = (
+            "mos_hidden_writer_restored_gate_hybrid_update_forward_read_pact_"
+            f"read_fall_{int(round(read_fall_us * 1000))}ns"
+        )
+        read_fall_deck = replace_required(hybrid_forward_read_reuse_deck, timing_read_pwl, read_pwl)
+        read_fall_deck = replace_required(
+            read_fall_deck,
+            timing_base_pact_pwl,
+            long_pact_pwl + "\n" + long_pactn_pwl + "\n" + guard_pwl + "\n" + guardn_pwl,
+        )
+        read_fall_deck = replace_required(read_fall_deck, nmos_store_line_p, guard_store_line_p)
+        read_fall_deck = replace_required(read_fall_deck, nmos_store_line_m, guard_store_line_m)
+        read_fall_deck = replace_required(
+            read_fall_deck,
+            "mos_hidden_writer_restored_gate_hybrid_update_forward_read_reuse.dat",
+            f"{stem}.dat",
+        )
+        read_fall_data = run_ngspice(read_fall_deck, stem)
+        rft, read_fall_cols = load_wrdata(read_fall_data, 23)
+
+        def rfat(time_s: float, values: np.ndarray) -> float:
+            return float(values[np.argmin(np.abs(rft - time_s))])
+
+        read_fall_preact = read_fall_cols[10] - read_fall_cols[9]
+        read_fall_store = read_fall_cols[14] - read_fall_cols[13]
+        read_fall_labels.append(label)
+        read_fall_preact_samples.append(rfat(3.575e-6, read_fall_preact))
+        read_fall_store_samples.append(rfat(3.575e-6, read_fall_store))
+        read_fall_traces.append((label, rft, read_fall_store, read_fall_cols[21]))
+
+    read_fall_store_samples = np.array(read_fall_store_samples)
+    read_fall_preact_samples = np.array(read_fall_preact_samples)
+    nominal_read_fall_idx = read_fall_cases_us.index(3.36)
+    require(read_fall_store_samples[nominal_read_fall_idx] > 0.050, "nominal read-fall timing should capture a full activation")
+    require(
+        read_fall_store_samples[0] > read_fall_store_samples[nominal_read_fall_idx] + 0.004,
+        "read-valid falling well before the guard closes should perturb the activation store",
+    )
+    require(
+        np.max(np.abs(read_fall_store_samples[2:] - read_fall_store_samples[nominal_read_fall_idx])) < 0.001,
+        "late read fall should not materially change a guard-disconnected store",
     )
 
     hold_reset_line = (
@@ -7895,6 +7955,32 @@ quit
     guard_edge_axes[1].legend(loc="lower right", ncol=2, fontsize="small")
     guard_edge_fig.tight_layout()
     save_plot(guard_edge_fig, "mos_hidden_writer_restored_gate_hybrid_update_forward_guard_edge_ngspice")
+
+    read_fall_fig, read_fall_axes = plt.subplots(2, 1, figsize=(7.4, 6.4), gridspec_kw={"height_ratios": [1.0, 0.8]})
+    for label, rft, store, read_ctl in read_fall_traces:
+        if label in {"3.26 us", "3.30 us", "3.36 us", "3.44 us"}:
+            read_fall_axes[0].plot(1e6 * rft, 1e3 * store, label=f"read fall {label}")
+    read_fall_axes[0].plot(1e6 * read_fall_traces[nominal_read_fall_idx][1], read_fall_traces[nominal_read_fall_idx][3] / 20.0, color="0.5", alpha=0.3, label="$read/20$")
+    read_fall_axes[0].axhline(0, color="0.4", linewidth=0.8)
+    read_fall_axes[0].axvline(3.31, color="0.25", linestyle="--", linewidth=0.9, alpha=0.6, label="guard fall")
+    read_fall_axes[0].set_xlim(3.15, 3.55)
+    read_fall_axes[0].set_ylabel("stored activation (mV)")
+    read_fall_axes[0].set_title("Early read fall perturbs the value while the guard is still open")
+    read_fall_axes[0].grid(True, alpha=0.25)
+    read_fall_axes[0].legend(loc="upper left", ncol=2, fontsize="small")
+    read_fall_x = np.arange(len(read_fall_labels))
+    read_fall_axes[1].bar(read_fall_x - 0.18, 1e3 * read_fall_preact_samples, width=0.36, label="$z^- - z^+$")
+    read_fall_axes[1].bar(read_fall_x + 0.18, 1e3 * read_fall_store_samples, width=0.36, label="stored $h^- - h^+$")
+    read_fall_axes[1].axhline(0, color="0.4", linewidth=0.8)
+    read_fall_axes[1].set_xticks(read_fall_x)
+    read_fall_axes[1].set_xticklabels(read_fall_labels)
+    read_fall_axes[1].set_xlabel("read fall start")
+    read_fall_axes[1].set_ylabel("sampled differential (mV)")
+    read_fall_axes[1].set_title("After the guard is off, read fall no longer changes the stored activation")
+    read_fall_axes[1].grid(True, axis="y", alpha=0.25)
+    read_fall_axes[1].legend(loc="lower right", ncol=2, fontsize="small")
+    read_fall_fig.tight_layout()
+    save_plot(read_fall_fig, "mos_hidden_writer_restored_gate_hybrid_update_forward_read_fall_ngspice")
 
     hold_fig, hold_axes = plt.subplots(2, 1, figsize=(7.4, 6.2), gridspec_kw={"height_ratios": [1.0, 0.8]})
     hold_axes[0].plot(1e6 * ht, 1e3 * hold_preact, label="$z^- - z^+$")

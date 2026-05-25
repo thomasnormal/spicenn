@@ -1534,6 +1534,21 @@ must satisfy before it can replace the current behavioral prototype.
 
 \begin{figure}[H]
   \centering
+  \includegraphics[width=0.88\linewidth]{figures/mos_hidden_writer_restored_gate_hybrid_update_forward_read_fall_ngspice.png}
+  \caption{Ngspice read-valid fall sweep for the guarded MOS activation
+  store.  The guard remains fixed at \(3.18\)--\(3.31\,\mu\mathrm{s}\), with
+  a \(20\) ns fall, while the read-control fall starts at
+  \(3.26,3.30,3.33,3.36,3.40,\) or \(3.44\,\mu\mathrm{s}\).  The stored
+  activation is \(57.604,51.926,51.355,51.355,51.355,\) and \(51.355\) mV.
+  The surprising case is the earliest read fall: instead of undercharging,
+  the activation store oversamples a read-turnoff transient while the guard is
+  still open.  Once the guard has disconnected the activation capacitor,
+  later read fall timing no longer changes the stored value.}
+  \label{fig:mos-hidden-writer-restored-gate-hybrid-update-forward-read-fall-ngspice}
+\end{figure}
+
+\begin{figure}[H]
+  \centering
   \includegraphics[width=0.88\linewidth]{figures/mos_hidden_writer_restored_gate_hybrid_update_forward_guard_hold_ngspice.png}
   \caption{Ngspice no-reset hold check for the guarded MOS activation store.
   The same nominal guard window and long \(pact\) aperture are used, but the

@@ -3501,6 +3501,14 @@ quit
         np.all(hmis_rp_complement > 0.0) and np.all(hmis_rm_complement > 0.0),
         "complementary rails should show the expected analog PMOS leakage direction",
     )
+    hmis_selected_min = min(float(np.min(hmis_pos_steps)), float(np.min(np.abs(hmis_neg_steps))))
+    hmis_selected_max = max(float(np.max(hmis_pos_steps)), float(np.max(np.abs(hmis_neg_steps))))
+    hmis_symmetry_error = float(np.max(np.abs(hmis_pos_steps + hmis_neg_steps)))
+    hmis_complement_max = max(float(np.max(hmis_rp_complement)), float(np.max(hmis_rm_complement)))
+    hmis_select_margin = min(
+        float(np.min(hmis_rp_selected - hmis_rp_complement)),
+        float(np.min(hmis_rm_selected - hmis_rm_complement)),
+    )
 
     mismatch_fig, mismatch_axes = plt.subplots(2, 1, figsize=(7.2, 5.8))
     hmis_x = np.arange(len(mismatch_levels))
@@ -3515,6 +3523,20 @@ quit
     mismatch_axes[0].set_ylabel("final step (V)")
     mismatch_axes[0].set_title("Integrated writer mismatch changes gain, not update sign")
     mismatch_axes[0].grid(True, alpha=0.25)
+    mismatch_axes[0].text(
+        0.04,
+        0.12,
+        "\n".join(
+            [
+                f"net step {1e3 * hmis_selected_min:.1f}-{1e3 * hmis_selected_max:.1f} mV",
+                f"symmetry error {1e3 * hmis_symmetry_error:.2f} mV",
+                f"select margin {1e3 * hmis_select_margin:.1f} mV",
+            ]
+        ),
+        transform=mismatch_axes[0].transAxes,
+        fontsize="x-small",
+        bbox=callout_box,
+    )
     mismatch_axes[0].legend(loc="upper right", ncol=2)
 
     for idx, (label, _model, vto) in enumerate(mismatch_levels):
@@ -3541,6 +3563,19 @@ quit
     mismatch_axes[1].set_ylabel("$W^+ - W^-$ (V)")
     mismatch_axes[1].set_title("Stored hidden-error rails drive bounded threshold-corner writes")
     mismatch_axes[1].grid(True, alpha=0.25)
+    mismatch_axes[1].text(
+        0.58,
+        0.14,
+        "\n".join(
+            [
+                f"largest complement {1e3 * hmis_complement_max:.1f} mV",
+                f"weak-corner net {1e3 * hmis_pos_steps[-1]:+.1f} mV",
+            ]
+        ),
+        transform=mismatch_axes[1].transAxes,
+        fontsize="x-small",
+        bbox=callout_box,
+    )
     mismatch_axes[1].legend(loc="upper left", ncol=2, fontsize="small")
     mismatch_fig.tight_layout()
     save_plot(mismatch_fig, "mos_hidden_writer_mismatch_ngspice")
@@ -3697,6 +3732,11 @@ quit
         "higher h- gate should reduce absolute complementary leakage",
     )
     require(bias_selectivity[0] > 2.0, "low h- gate should give the best selected/complement contrast in this sweep")
+    bias_min_net = min(float(np.min(bias_pos_net)), float(np.min(np.abs(bias_neg_net))))
+    bias_max_net = max(float(np.max(bias_pos_net)), float(np.max(np.abs(bias_neg_net))))
+    bias_selectivity_drop = float(bias_selectivity[0] - bias_selectivity[-1])
+    bias_net_drop = float(1.0 - bias_pos_net[-1] / bias_pos_net[0])
+    bias_complement_drop = float(bias_complement[0] - bias_complement[-1])
 
     bias_fig, bias_axes = plt.subplots(2, 1, figsize=(7.2, 5.8))
     bias_axes[0].plot(bias_levels, bias_selected, "o-", label="selected rail step")
@@ -3707,6 +3747,19 @@ quit
     bias_axes[0].set_ylabel("writer step (V)")
     bias_axes[0].set_title("Activation-gate bias weakens both selected and complement writes")
     bias_axes[0].grid(True, alpha=0.25)
+    bias_axes[0].text(
+        0.04,
+        0.13,
+        "\n".join(
+            [
+                f"net range {1e3 * bias_min_net:.1f}-{1e3 * bias_max_net:.1f} mV",
+                f"leakage drop {1e3 * bias_complement_drop:.1f} mV",
+            ]
+        ),
+        transform=bias_axes[0].transAxes,
+        fontsize="x-small",
+        bbox=callout_box,
+    )
     bias_axes[0].legend(loc="upper right", ncol=2)
 
     bias_axes[1].plot(bias_levels, bias_selectivity, "o-", label="selected/complement ratio")
@@ -3716,6 +3769,20 @@ quit
     bias_axes[1].set_ylabel("ratio / normalized gain")
     bias_axes[1].set_title("Bias alone reduces leakage but does not improve selectivity")
     bias_axes[1].grid(True, alpha=0.25)
+    bias_axes[1].text(
+        0.54,
+        0.68,
+        "\n".join(
+            [
+                f"selectivity {bias_selectivity[0]:.2f}->{bias_selectivity[-1]:.2f}",
+                f"net update down {100 * bias_net_drop:.0f}%",
+                f"ratio drop {bias_selectivity_drop:.2f}",
+            ]
+        ),
+        transform=bias_axes[1].transAxes,
+        fontsize="x-small",
+        bbox=callout_box,
+    )
     bias_axes[1].legend(loc="upper left")
     bias_fig.tight_layout()
     save_plot(bias_fig, "mos_hidden_writer_gate_bias_ngspice")
@@ -3882,6 +3949,22 @@ quit
         abs(hrat(3.25e-6, hrest_cols[14] - hrest_cols[15]) - rest_neg_net) < 5e-4,
         "restored r- written differential should hold",
     )
+    hrest_hidden_pos_sample = hrat(1.35e-6, hrest_pos_hidden)
+    hrest_hidden_neg_sample = hrat(1.35e-6, hrest_neg_hidden)
+    hrest_gate_low = min(
+        hrat(1.45e-6, hrest_cols[4]),
+        hrat(1.45e-6, hrest_cols[7]),
+    )
+    hrest_gate_high = min(
+        hrat(1.45e-6, hrest_cols[5]),
+        hrat(1.45e-6, hrest_cols[6]),
+    )
+    hrest_gate_separation = min(hrat(1.45e-6, rp_gate_contrast), hrat(1.45e-6, rm_gate_contrast))
+    hrest_comp_suppression = max(rest_rp_comp / direct_rp_comp, rest_rm_comp / direct_rm_comp)
+    hrest_hold_error = max(
+        abs(hrat(3.25e-6, hrest_cols[12] - hrest_cols[13]) - rest_pos_net),
+        abs(hrat(3.25e-6, hrest_cols[14] - hrest_cols[15]) - rest_neg_net),
+    )
 
     restored_fig, restored_axes = plt.subplots(3, 1, figsize=(7.2, 7.4))
     restored_axes[0].plot(1e6 * hrt, hrest_pos_hidden, label="stored $r^+$")
@@ -3891,6 +3974,19 @@ quit
     restored_axes[0].set_ylabel("hidden error (V)")
     restored_axes[0].set_title("Stored hidden-error rails feed MOS gate restorers")
     restored_axes[0].grid(True, alpha=0.25)
+    restored_axes[0].text(
+        0.05,
+        0.15,
+        "\n".join(
+            [
+                f"r+ hidden {1e3 * hrest_hidden_pos_sample:+.1f} mV",
+                f"r- hidden {1e3 * hrest_hidden_neg_sample:+.1f} mV",
+            ]
+        ),
+        transform=restored_axes[0].transAxes,
+        fontsize="x-small",
+        bbox=callout_box,
+    )
     restored_axes[0].legend(loc="upper right")
 
     restored_axes[1].plot(1e6 * hrt, hrest_cols[4], label="$r^+$ selected gate")
@@ -3900,6 +3996,20 @@ quit
     restored_axes[1].set_ylabel("gate voltage (V)")
     restored_axes[1].set_title("Skewed CMOS restorer widens active-low writer gates")
     restored_axes[1].grid(True, alpha=0.25)
+    restored_axes[1].text(
+        0.05,
+        0.15,
+        "\n".join(
+            [
+                f"selected gate {hrest_gate_low:.2f} V",
+                f"complement gate {hrest_gate_high:.2f} V",
+                f"min separation {hrest_gate_separation:.2f} V",
+            ]
+        ),
+        transform=restored_axes[1].transAxes,
+        fontsize="x-small",
+        bbox=callout_box,
+    )
     restored_axes[1].legend(loc="upper right", ncol=2, fontsize="small")
 
     restored_axes[2].plot(1e6 * hrt, hrest_cols[8] - hrest_cols[9], label="direct $r^+$ net")
@@ -3912,6 +4022,21 @@ quit
     restored_axes[2].set_ylabel("$W^+ - W^-$ (V)")
     restored_axes[2].set_title("Restored gates suppress complement writes while preserving sign")
     restored_axes[2].grid(True, alpha=0.25)
+    restored_axes[2].text(
+        0.58,
+        0.13,
+        "\n".join(
+            [
+                f"direct net {1e3 * direct_pos_net:+.1f} mV",
+                f"restored net {1e3 * rest_pos_net:+.1f} mV",
+                f"comp <= {100 * hrest_comp_suppression:.0f}% of direct",
+                f"hold error {1e3 * hrest_hold_error:.2f} mV",
+            ]
+        ),
+        transform=restored_axes[2].transAxes,
+        fontsize="x-small",
+        bbox=callout_box,
+    )
     restored_axes[2].legend(loc="upper left", ncol=2, fontsize="small")
     restored_fig.tight_layout()
     save_plot(restored_fig, "mos_hidden_writer_restored_gate_ngspice")
@@ -4118,6 +4243,10 @@ quit
     require(np.max(rest_complement) < 0.001, "all restored mismatch complements should stay near-off")
     require(rest_pos[0] > 0.020 and rest_pos[2] > 0.020, "nominal and complement-weak cases should keep useful r+ writes")
     require(abs(rest_pos[1]) < 0.001 and abs(rest_pos[3]) < 0.001, "selected-weak cases should collapse rather than flip")
+    rmis_useful_write_min = min(float(rest_pos[0]), float(rest_pos[2]), float(abs(rest_neg[0])), float(abs(rest_neg[2])))
+    rmis_collapsed_max = max(float(abs(rest_pos[1])), float(abs(rest_pos[3])), float(abs(rest_neg[1])), float(abs(rest_neg[3])))
+    rmis_complement_max = float(np.max(rest_complement))
+    rmis_min_separation = float(np.min(gate_complement - gate_selected))
 
     rmis_fig, rmis_axes = plt.subplots(2, 1, figsize=(7.2, 5.8))
     rmis_x = np.arange(len(restored_mismatch_cases))
@@ -4129,6 +4258,19 @@ quit
     rmis_axes[0].set_ylabel("gate voltage (V)")
     rmis_axes[0].set_title("Restored gates retain separation under threshold offsets")
     rmis_axes[0].grid(True, alpha=0.25)
+    rmis_axes[0].text(
+        0.04,
+        0.13,
+        "\n".join(
+            [
+                f"min separation {rmis_min_separation:.2f} V",
+                "selected-weak corners intentionally fail closed",
+            ]
+        ),
+        transform=rmis_axes[0].transAxes,
+        fontsize="x-small",
+        bbox=callout_box,
+    )
     rmis_axes[0].legend(loc="center right")
     rmis_axes[1].plot(rmis_x, rest_selected, "o-", label="selected rail step")
     rmis_axes[1].plot(rmis_x, rest_complement, "s--", label="complement rail step")
@@ -4140,6 +4282,20 @@ quit
     rmis_axes[1].set_ylabel("writer step (V)")
     rmis_axes[1].set_title("Complement stays off; selected-weak corners collapse the write")
     rmis_axes[1].grid(True, alpha=0.25)
+    rmis_axes[1].text(
+        0.04,
+        0.52,
+        "\n".join(
+            [
+                f"useful writes >= {1e3 * rmis_useful_write_min:.1f} mV",
+                f"collapsed max {1e3 * rmis_collapsed_max:.2f} mV",
+                f"complement max {1e3 * rmis_complement_max:.2f} mV",
+            ]
+        ),
+        transform=rmis_axes[1].transAxes,
+        fontsize="x-small",
+        bbox=callout_box,
+    )
     rmis_axes[1].legend(loc="upper right", ncol=2)
     rmis_fig.tight_layout()
     save_plot(rmis_fig, "mos_hidden_writer_restored_gate_mismatch_ngspice")

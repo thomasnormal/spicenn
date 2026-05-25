@@ -2,6 +2,27 @@
 
 ## 2026-05-25
 
+- Clarified the MOS hidden-writer mismatch, activation-gate bias, and
+  restored-gate plots.  The regenerated `mos_hidden_writer_mismatch_ngspice`,
+  `mos_hidden_writer_gate_bias_ngspice`,
+  `mos_hidden_writer_restored_gate_ngspice`, and
+  `mos_hidden_writer_restored_gate_mismatch_ngspice` figures now label the
+  ngspice-derived margins directly.  Plain integrated PMOS-writer threshold
+  mismatch keeps the signed update direction across the tested corners with
+  \(11.0\)--\(15.6\) mV net steps, no displayed r+/r- symmetry error,
+  \(11.0\) mV selected/complement margin, and \(19.4\) mV maximum complement
+  rail motion.  Sweeping the activation-gate bias shows why bias alone is not
+  the robustness fix: it reduces leakage by \(3.9\) mV but also drops the net
+  update by \(60\%\), with selected/complement contrast falling from \(2.18\)
+  to \(1.69\).  The skewed CMOS restorer converts the stored
+  \(\pm98.5\) mV hidden-error rails into a \(0.35\) V selected gate and a
+  \(1.76\) V complement gate, raising the nominal net write from \(+13.4\) mV
+  to \(+65.0\) mV while suppressing the complement write below displayed
+  precision and holding with no displayed error.  The restored-gate mismatch
+  corner plot is now explicit about the failure mode: nominal and
+  complement-weak corners keep at least \(65.0\) mV useful writes, while
+  selected-weak corners fail closed with no displayed flipped write or
+  complement write.
 - Clarified the direct MOS hidden-error-to-writer plots.  The ngspice decks
   already asserted that stored hidden-error rails steer the PMOS writer with
   the correct sign, all four activation/error quadrants choose the correct

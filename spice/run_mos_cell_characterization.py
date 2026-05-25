@@ -8740,12 +8740,17 @@ quit
         "96u tail-rebias sweep should preserve useful nominal-z activation above the underbiased tail corner",
     )
 
-    def shifted_forward_pair_lines(couple_pf: float, gate_pf: float = 5.0) -> str:
+    def shifted_forward_pair_lines(
+        couple_pf: float,
+        gate_pf: float = 5.0,
+        gate_ic_p: float = 0.90,
+        gate_ic_m: float = 0.90,
+    ) -> str:
         return "\n".join(
             [
                 "VZGCM_HYR zgcm_hyr 0 0.90",
-                f"CZPG_HYR zpg_hyr 0 {gate_pf:g}p IC=0.90",
-                f"CZMG_HYR zmg_hyr 0 {gate_pf:g}p IC=0.90",
+                f"CZPG_HYR zpg_hyr 0 {gate_pf:g}p IC={gate_ic_p:.2f}",
+                f"CZMG_HYR zmg_hyr 0 {gate_pf:g}p IC={gate_ic_m:.2f}",
                 "RZPG_HYR zpg_hyr 0 100G",
                 "RZMG_HYR zmg_hyr 0 100G",
                 "MRZGPN_HYR zpg_hyr rst_hyr zgcm_hyr 0 NMOS L={LCH} W={WRESETN}",
@@ -8940,6 +8945,99 @@ quit
     require(
         np.max(np.abs(shift_stress_drift)) < 0.001,
         "shifted-gate later off-state control/read toggles should not disturb the held activation by more than 1 mV",
+    )
+
+    shift_reset_probe_prefix = "v(zpg_hyr) v(zmg_hyr) v(cdp_hyr)"
+    shift_bad_gate_lines = shifted_forward_pair_lines(10.0, gate_ic_p=0.35, gate_ic_m=1.45)
+
+    def add_shifted_gate_probes(deck: str, stem: str) -> str:
+        return replace_required(deck, f"{stem}.dat v(cdp_hyr)", f"{stem}.dat {shift_reset_probe_prefix}")
+
+    shift_bad_stem = (
+        "mos_hidden_writer_restored_gate_hybrid_update_forward_guard_"
+        "forward_pair_96u_zcm_0p75v_shift_bad_gate_noreset"
+    )
+    shift_bad_deck = replace_required(high_gain_hold_deck, zcm_source_line, "VZCM zcm 0 0.75")
+    shift_bad_deck = replace_required(shift_bad_deck, zcm_cap_p_line, "CZP_HYR zp_hyr 0 {CSUM} IC=0.75")
+    shift_bad_deck = replace_required(shift_bad_deck, zcm_cap_m_line, "CZM_HYR zm_hyr 0 {CSUM} IC=0.75")
+    shift_bad_deck = replace_required(shift_bad_deck, high_gain_forward_pair_lines, shift_bad_gate_lines)
+    shift_bad_deck = replace_required(
+        shift_bad_deck,
+        "mos_hidden_writer_restored_gate_hybrid_update_forward_guard_forward_pair_96u_hold.dat",
+        f"{shift_bad_stem}.dat",
+    )
+    shift_bad_deck = add_shifted_gate_probes(shift_bad_deck, shift_bad_stem)
+    shift_bad_data = run_ngspice(shift_bad_deck, shift_bad_stem)
+    sbt, shift_bad_cols = load_wrdata(shift_bad_data, 25)
+
+    def sbat(time_s: float, values: np.ndarray) -> float:
+        return float(values[np.argmin(np.abs(sbt - time_s))])
+
+    shift_bad_gate_diff = shift_bad_cols[0] - shift_bad_cols[1]
+    shift_bad_gate_common = 0.5 * (shift_bad_cols[0] + shift_bad_cols[1])
+    shift_bad_preact = shift_bad_cols[12] - shift_bad_cols[11]
+    shift_bad_store = shift_bad_cols[16] - shift_bad_cols[15]
+
+    shift_reset_stem = (
+        "mos_hidden_writer_restored_gate_hybrid_update_forward_guard_"
+        "forward_pair_96u_zcm_0p75v_shift_reset_feedthrough"
+    )
+    shift_reset_pulse = "VRESET_HYR rst_hyr 0 PWL(0 0 2.48u 0 2.50u 1.8 2.62u 1.8 2.64u 0 7.8u 0)"
+    shift_resetn_pulse = (
+        "VRESETN_HYR rstn_hyr 0 PWL(0 1.8 2.48u 1.8 2.50u 0 2.62u 0 2.64u 1.8 7.8u 1.8)"
+    )
+    shift_reset_deck = replace_required(high_gain_hold_deck, zcm_source_line, "VZCM zcm 0 0.75")
+    shift_reset_deck = replace_required(shift_reset_deck, zcm_cap_p_line, "CZP_HYR zp_hyr 0 {CSUM} IC=0.75")
+    shift_reset_deck = replace_required(shift_reset_deck, zcm_cap_m_line, "CZM_HYR zm_hyr 0 {CSUM} IC=0.75")
+    shift_reset_deck = replace_required(shift_reset_deck, high_gain_forward_pair_lines, shift_bad_gate_lines)
+    shift_reset_deck = replace_required(shift_reset_deck, "VRESET_HYR rst_hyr 0 0", shift_reset_pulse)
+    shift_reset_deck = replace_required(shift_reset_deck, "VRESETN_HYR rstn_hyr 0 1.8", shift_resetn_pulse)
+    shift_reset_deck = replace_required(
+        shift_reset_deck,
+        "mos_hidden_writer_restored_gate_hybrid_update_forward_guard_forward_pair_96u_hold.dat",
+        f"{shift_reset_stem}.dat",
+    )
+    shift_reset_deck = add_shifted_gate_probes(shift_reset_deck, shift_reset_stem)
+    shift_reset_data = run_ngspice(shift_reset_deck, shift_reset_stem)
+    srt, shift_reset_cols = load_wrdata(shift_reset_data, 25)
+
+    def srat(time_s: float, values: np.ndarray) -> float:
+        return float(values[np.argmin(np.abs(srt - time_s))])
+
+    shift_reset_gate_diff = shift_reset_cols[0] - shift_reset_cols[1]
+    shift_reset_gate_common = 0.5 * (shift_reset_cols[0] + shift_reset_cols[1])
+    shift_reset_preact = shift_reset_cols[12] - shift_reset_cols[11]
+    shift_reset_store = shift_reset_cols[16] - shift_reset_cols[15]
+    shift_reset_gate_residue = np.max(np.abs(shift_reset_gate_diff[(srt > 2.64e-6) & (srt < 2.72e-6)]))
+    shift_reset_store_sample = srat(3.575e-6, shift_reset_store)
+    shift_bad_store_sample = sbat(3.575e-6, shift_bad_store)
+    require(
+        abs(sbat(2.70e-6, shift_bad_gate_diff)) > 0.30,
+        "bad shifted-gate fixture should start with a large unreset gate differential",
+    )
+    require(
+        shift_bad_store_sample > 0.20,
+        "unreset bad shifted-gate fixture should visibly overdrive the activation store",
+    )
+    require(
+        shift_reset_gate_residue < 0.002,
+        "physical shifted-gate reset should clear the bad gate differential before read",
+    )
+    require(
+        abs(srat(2.70e-6, shift_reset_gate_common) - 0.90) < 0.005,
+        "physical shifted-gate reset should restore the gate common mode",
+    )
+    require(
+        shift_reset_store_sample > 0.045,
+        "reset shifted-gate fixture should still capture a useful low-common-mode activation",
+    )
+    require(
+        shift_reset_store_sample < 0.080,
+        "reset shifted-gate fixture should avoid the unreset overdrive/rail case",
+    )
+    require(
+        shift_reset_store_sample < 0.25 * shift_bad_store_sample,
+        "physical shifted-gate reset should materially reduce bad-initial-state feedthrough",
     )
 
     tail_bias_forward_tail_line = "MNFT_HYR ftail_hyr vbias 0 0 NMOS L={LCH} W=48u"
@@ -9632,6 +9730,42 @@ quit
     save_plot(
         shift_stress_fig,
         "mos_hidden_writer_restored_gate_hybrid_update_forward_guard_forward_pair_96u_shifted_gate_off_isolation_ngspice",
+    )
+
+    shift_reset_fig, shift_reset_axes = plt.subplots(
+        2,
+        1,
+        figsize=(7.4, 6.4),
+        gridspec_kw={"height_ratios": [1.0, 0.8]},
+    )
+    shift_reset_axes[0].plot(1e6 * sbt, 1e3 * shift_bad_gate_diff, ":", label="unreset gate diff")
+    shift_reset_axes[0].plot(1e6 * srt, 1e3 * shift_reset_gate_diff, label="reset gate diff")
+    shift_reset_axes[0].plot(1e6 * srt, 1e3 * (shift_reset_gate_common - 0.90), "--", label="reset gate common error")
+    shift_reset_axes[0].plot(1e6 * srt, shift_reset_cols[20] / 20.0, color="0.45", alpha=0.25, label="$reset/20$")
+    shift_reset_axes[0].axhline(0, color="0.4", linewidth=0.8)
+    shift_reset_axes[0].axvspan(2.50, 2.62, color="0.75", alpha=0.18, label="reset high")
+    shift_reset_axes[0].axvline(2.72, color="0.45", linestyle="--", linewidth=0.9, alpha=0.6, label="read starts")
+    shift_reset_axes[0].set_xlim(2.35, 3.75)
+    shift_reset_axes[0].set_ylabel("shifted-gate error (mV)")
+    shift_reset_axes[0].set_title("Physical shifted-gate reset removes bad initial gate differential")
+    shift_reset_axes[0].grid(True, alpha=0.25)
+    shift_reset_axes[0].legend(loc="lower left", ncol=2, fontsize="x-small")
+    shift_reset_axes[1].plot(1e6 * sbt, 1e3 * shift_bad_store, ":", label="unreset bad init")
+    shift_reset_axes[1].plot(1e6 * srt, 1e3 * shift_reset_store, label="with physical reset")
+    shift_reset_axes[1].plot(1e6 * positive_shift_t, 1e3 * positive_shift_store, "--", label="nominal shifted")
+    shift_reset_axes[1].axhline(0, color="0.4", linewidth=0.8)
+    shift_reset_axes[1].axvline(3.33, color="0.25", linestyle="--", linewidth=0.9, alpha=0.6, label="guard off")
+    shift_reset_axes[1].set_xlim(3.05, 3.75)
+    shift_reset_axes[1].set_ylim(-10, max(390, 1e3 * shift_bad_store_sample * 1.05))
+    shift_reset_axes[1].set_xlabel("time (us)")
+    shift_reset_axes[1].set_ylabel("stored activation (mV)")
+    shift_reset_axes[1].set_title("Reset prevents the bad-initial-state overdrive path")
+    shift_reset_axes[1].grid(True, alpha=0.25)
+    shift_reset_axes[1].legend(loc="upper right", fontsize="small")
+    shift_reset_fig.tight_layout()
+    save_plot(
+        shift_reset_fig,
+        "mos_hidden_writer_restored_gate_hybrid_update_forward_guard_forward_pair_96u_shifted_gate_reset_feedthrough_ngspice",
     )
 
     tail_bias_fig, tail_bias_axes = plt.subplots(2, 1, figsize=(7.4, 6.4), gridspec_kw={"height_ratios": [1.0, 0.8]})

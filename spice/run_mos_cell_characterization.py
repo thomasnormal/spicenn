@@ -12317,13 +12317,22 @@ quit
     def run_reset_ref_precharge_strength_case(
         branch_name: str,
         reset_trim_v: float,
+        reset_common_v: float = 0.90,
+        strength_widths: list[tuple[str, str, float, float]] | None = None,
+        strength_pulses: list[tuple[str, str, float]] | None = None,
+        stem_suffix: str = "",
     ) -> tuple[np.ndarray, list[np.ndarray]]:
+        if strength_widths is None:
+            strength_widths = shift_refz_precharge_strength_widths
+        if strength_pulses is None:
+            strength_pulses = shift_refz_precharge_strength_pulses
+        common_tag = "" if abs(reset_common_v - 0.90) < 1e-12 else f"_cm{int(round(reset_common_v * 100)):03d}"
         stem = (
             "mos_hidden_writer_restored_gate_hybrid_update_forward_guard_"
-            f"forward_pair_96u_shifted_gate_reset_ref_precharge_strength_{branch_name}"
+            f"forward_pair_96u_shifted_gate_reset_ref_precharge_strength{common_tag}{stem_suffix}_{branch_name}"
         )
-        reset_ref_p = 0.90 + 0.5 * reset_trim_v
-        reset_ref_m = 0.90 - 0.5 * reset_trim_v
+        reset_ref_p = reset_common_v + 0.5 * reset_trim_v
+        reset_ref_m = reset_common_v - 0.5 * reset_trim_v
         deck_lines = [
             "* MOS startup-precharge strength margin check for the local trim reservoir.",
             "* Reservoir capacitors start cold. The startup TG width and pulse width",
@@ -12336,8 +12345,8 @@ quit
         ]
         prints = []
         case_idx = 0
-        for width_name, width_label, wpre_n_um, wpre_p_um in shift_refz_precharge_strength_widths:
-            for pulse_name, pulse_label, pulse_width_ns in shift_refz_precharge_strength_pulses:
+        for width_name, width_label, wpre_n_um, wpre_p_um in strength_widths:
+            for pulse_name, pulse_label, pulse_width_ns in strength_pulses:
                 pre_end_us = 0.420 + 0.001 * pulse_width_ns
                 pre_fall_us = pre_end_us + 0.020
                 deck_lines.extend(
@@ -12378,8 +12387,8 @@ quit
                             f"MPREMP_STR_{case_idx} zrm_str_{case_idx} pren_str_{case_idx} "
                             f"zrm_str_src_{case_idx} vdd PMOS L={{LCH}} W={wpre_p_um:g}u"
                         ),
-                        f"CZPG_STR_{case_idx} zpg_str_{case_idx} 0 {{CGATE}} IC=0.90",
-                        f"CZMG_STR_{case_idx} zmg_str_{case_idx} 0 {{CGATE}} IC=0.90",
+                        f"CZPG_STR_{case_idx} zpg_str_{case_idx} 0 {{CGATE}} IC={reset_common_v:.5f}",
+                        f"CZMG_STR_{case_idx} zmg_str_{case_idx} 0 {{CGATE}} IC={reset_common_v:.5f}",
                         (
                             f"MRZGPN_STR_{case_idx} zpg_str_{case_idx} rst zrp_str_{case_idx} "
                             f"0 NMOS L={{LCH}} W={{WRESETN}}"
@@ -12487,6 +12496,82 @@ quit
     require(
         np.all(shift_refz_precharge_strength_common[:, strength_05_idx, strength_20ns_idx] > 0.84),
         "0.5x 20 ns startup precharge should restore enough reset-reference common mode",
+    )
+
+    shift_refz_precharge_tuned_strength_widths = [
+        ("w10", "1.0x", 300.0, 900.0),
+        ("w1125", "1.125x", 337.5, 1012.5),
+        ("w125", "1.25x", 375.0, 1125.0),
+        ("w15", "1.5x", 450.0, 1350.0),
+    ]
+    shift_refz_precharge_tuned_strength_pulses = [
+        ("pre10ns", "10 ns", 10.0),
+        ("pre20ns", "20 ns", 20.0),
+    ]
+    shift_refz_precharge_tuned_strength_trim_error = []
+    shift_refz_precharge_tuned_strength_common = []
+    for branch_name, _branch_label, _nfp_vto, _nfm_vto, reset_trim_v in shift_reset_branch_specs:
+        stt, strength_cols = run_reset_ref_precharge_strength_case(
+            branch_name,
+            reset_trim_v,
+            reset_common_v=shift_refz_precharge_tuned_common_v,
+            strength_widths=shift_refz_precharge_tuned_strength_widths,
+            strength_pulses=shift_refz_precharge_tuned_strength_pulses,
+            stem_suffix="_fast10",
+        )
+
+        def tscat(time_s: float, values: np.ndarray) -> float:
+            return float(values[np.argmin(np.abs(stt - time_s))])
+
+        branch_trim_error = []
+        branch_common = []
+        case_idx = 0
+        for _width_name, _width_label, _wpre_n_um, _wpre_p_um in shift_refz_precharge_tuned_strength_widths:
+            pulse_trim_error = []
+            pulse_common = []
+            for _pulse_name, _pulse_label, _pulse_width_ns in shift_refz_precharge_tuned_strength_pulses:
+                gate_p = strength_cols[4 * case_idx + 2]
+                gate_m = strength_cols[4 * case_idx + 3]
+                gate_diff = gate_p - gate_m
+                gate_common = 0.5 * (gate_p + gate_m)
+                pulse_trim_error.append(abs(tscat(2.70e-6, gate_diff) - reset_trim_v))
+                pulse_common.append(tscat(2.70e-6, gate_common))
+                case_idx += 1
+            branch_trim_error.append(pulse_trim_error)
+            branch_common.append(pulse_common)
+        shift_refz_precharge_tuned_strength_trim_error.append(branch_trim_error)
+        shift_refz_precharge_tuned_strength_common.append(branch_common)
+
+    shift_refz_precharge_tuned_strength_trim_error = np.array(shift_refz_precharge_tuned_strength_trim_error)
+    shift_refz_precharge_tuned_strength_common = np.array(shift_refz_precharge_tuned_strength_common)
+    tuned_strength_10ns_idx = 0
+    tuned_strength_20ns_idx = 1
+    tuned_strength_10_idx = 0
+    tuned_strength_125_idx = 2
+    tuned_strength_15_idx = 3
+    require(
+        np.all(np.diff(shift_refz_precharge_tuned_strength_trim_error[:, :, tuned_strength_10ns_idx], axis=1) < 0.0),
+        "10 ns tuned-common startup-precharge trim error should improve monotonically with TG strength",
+    )
+    require(
+        np.all(shift_refz_precharge_tuned_strength_trim_error[:, tuned_strength_10_idx, tuned_strength_10ns_idx] > 0.0035),
+        "nominal 10 ns tuned-common startup precharge should show limited margin",
+    )
+    require(
+        np.all(shift_refz_precharge_tuned_strength_trim_error[:, tuned_strength_125_idx, tuned_strength_10ns_idx] < 0.0030),
+        "1.25x 10 ns tuned-common startup precharge should recover below 3 mV trim error",
+    )
+    require(
+        np.all(shift_refz_precharge_tuned_strength_trim_error[:, tuned_strength_15_idx, tuned_strength_10ns_idx] < 0.0022),
+        "1.5x 10 ns tuned-common startup precharge should approach initialized-reservoir accuracy",
+    )
+    require(
+        np.all(shift_refz_precharge_tuned_strength_trim_error[:, tuned_strength_10_idx, tuned_strength_20ns_idx] < 0.0017),
+        "nominal 20 ns tuned-common startup precharge should retain initialized-reservoir accuracy",
+    )
+    require(
+        np.all(np.abs(shift_refz_precharge_tuned_strength_common[:, tuned_strength_125_idx, tuned_strength_10ns_idx] - shift_refz_precharge_tuned_common_v) < 0.015),
+        "1.25x 10 ns tuned-common startup precharge should nearly restore the 0.80 V common mode",
     )
 
     tail_bias_forward_tail_line = "MNFT_HYR ftail_hyr vbias 0 0 NMOS L={LCH} W=48u"
@@ -14896,6 +14981,82 @@ quit
     save_plot(
         shift_refz_precharge_strength_fig,
         "mos_hidden_writer_restored_gate_hybrid_update_forward_guard_forward_pair_96u_shifted_gate_reset_ref_precharge_strength_ngspice",
+    )
+
+    shift_refz_precharge_tuned_strength_fig, shift_refz_precharge_tuned_strength_axes = plt.subplots(
+        2,
+        1,
+        figsize=(7.4, 5.9),
+        gridspec_kw={"height_ratios": [1.0, 0.85]},
+    )
+    tuned_precharge_strength_x = np.array(
+        [
+            wpre_n_um / 300.0
+            for _name, _label, wpre_n_um, _wpre_p_um in shift_refz_precharge_tuned_strength_widths
+        ]
+    )
+    for branch_idx, (_branch_name, branch_label, _nfp, _nfm, _trim) in enumerate(shift_reset_branch_specs):
+        for pulse_idx, (_pulse_name, pulse_label, _pulse_width_ns) in enumerate(
+            shift_refz_precharge_tuned_strength_pulses
+        ):
+            marker = "o-" if pulse_idx == 0 else "s--"
+            alpha = 1.0 if branch_idx == 0 else 0.72
+            shift_refz_precharge_tuned_strength_axes[0].plot(
+                tuned_precharge_strength_x,
+                1e3 * shift_refz_precharge_tuned_strength_trim_error[branch_idx, :, pulse_idx],
+                marker,
+                alpha=alpha,
+                label=f"{branch_label.split(', ')[1]}, {pulse_label}",
+            )
+    shift_refz_precharge_tuned_strength_axes[0].axhline(
+        6,
+        color="0.4",
+        linestyle=":",
+        linewidth=0.9,
+        label="6 mV trim-error gate",
+    )
+    shift_refz_precharge_tuned_strength_axes[0].axhline(
+        3,
+        color="0.55",
+        linestyle="--",
+        linewidth=0.9,
+        label="3 mV fast-start gate",
+    )
+    shift_refz_precharge_tuned_strength_axes[0].set_xticks(tuned_precharge_strength_x)
+    shift_refz_precharge_tuned_strength_axes[0].set_xticklabels(
+        [label for _name, label, _wpre_n_um, _wpre_p_um in shift_refz_precharge_tuned_strength_widths]
+    )
+    shift_refz_precharge_tuned_strength_axes[0].set_ylabel("trim error (mV)")
+    shift_refz_precharge_tuned_strength_axes[0].set_title("Tuned 0.80 V startup can trade width for a 10 ns precharge")
+    shift_refz_precharge_tuned_strength_axes[0].grid(True, axis="y", alpha=0.25)
+    shift_refz_precharge_tuned_strength_axes[0].legend(loc="upper right", ncol=2, fontsize="xx-small")
+    for branch_idx, (_branch_name, branch_label, _nfp, _nfm, _trim) in enumerate(shift_reset_branch_specs):
+        for pulse_idx, (_pulse_name, pulse_label, _pulse_width_ns) in enumerate(
+            shift_refz_precharge_tuned_strength_pulses
+        ):
+            marker = "o-" if pulse_idx == 0 else "s--"
+            alpha = 1.0 if branch_idx == 0 else 0.72
+            shift_refz_precharge_tuned_strength_axes[1].plot(
+                tuned_precharge_strength_x,
+                shift_refz_precharge_tuned_strength_common[branch_idx, :, pulse_idx],
+                marker,
+                alpha=alpha,
+                label=f"{branch_label.split(', ')[1]}, {pulse_label}",
+            )
+    shift_refz_precharge_tuned_strength_axes[1].axhline(0.80, color="0.35", linestyle="--", linewidth=0.9)
+    shift_refz_precharge_tuned_strength_axes[1].axhline(0.785, color="0.5", linestyle=":", linewidth=0.9)
+    shift_refz_precharge_tuned_strength_axes[1].set_xticks(tuned_precharge_strength_x)
+    shift_refz_precharge_tuned_strength_axes[1].set_xticklabels(
+        [label for _name, label, _wpre_n_um, _wpre_p_um in shift_refz_precharge_tuned_strength_widths]
+    )
+    shift_refz_precharge_tuned_strength_axes[1].set_xlabel("startup precharge TG width scale")
+    shift_refz_precharge_tuned_strength_axes[1].set_ylabel("gate common (V)")
+    shift_refz_precharge_tuned_strength_axes[1].set_title("Extra width restores the lower common target before a fast reset")
+    shift_refz_precharge_tuned_strength_axes[1].grid(True, axis="y", alpha=0.25)
+    shift_refz_precharge_tuned_strength_fig.tight_layout()
+    save_plot(
+        shift_refz_precharge_tuned_strength_fig,
+        "mos_hidden_writer_restored_gate_hybrid_update_forward_guard_forward_pair_96u_shifted_gate_reset_ref_precharge_strength_080_ngspice",
     )
 
     tail_bias_fig, tail_bias_axes = plt.subplots(2, 1, figsize=(7.4, 6.4), gridspec_kw={"height_ratios": [1.0, 0.8]})

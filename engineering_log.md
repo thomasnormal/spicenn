@@ -2,6 +2,20 @@
 
 ## 2026-05-25
 
+- Added the tuned-\(0.80\) V fast-start precharge strength sweep that the
+  previous startup note left as a design option.  The ngspice fixture keeps
+  the same MOS precharge/reset path and cold \(250\) pF trim reservoirs, but
+  scales the startup transmission gate from \(1.0\times\) to \(1.5\times\)
+  around the nominal \(300/900\,\mu\mathrm{m}\) NMOS/PMOS path while checking
+  10 ns and 20 ns pulses.  At 10 ns, the nominal path leaves \(4.002/4.751\)
+  mV trim error for the \(-55/+65\) mV branches.  \(1.25\times\) width lowers
+  that to \(2.436/2.892\) mV with \(0.788\) V gate common, and \(1.5\times\)
+  lowers it further to \(1.718/2.039\) mV with \(0.795\) V common.  The
+  nominal 20 ns case stays at the initialized-reservoir floor
+  \(1.339/1.587\) mV.  Thus the tuned-common startup rule is a real physical
+  width--time product: use roughly 20 ns at nominal width, or about
+  \(1.25\times\)--\(1.5\times\) startup TG width if the schedule must stay
+  near 10 ns.
 - Added a tuned-\(0.80\) V MOS startup-precharge check for the cold shifted-gate trim-reference reservoirs after the first assertion assumed the older \(0.90\) V 10 ns recovery margin. With the same \(250\) pF reservoirs, \(100\,\mathrm{k}\Omega\) trim sources, \(5\) pF shifted-gate loads, ordinary MOS reset switches, and nominal \(300/900\,\mu\mathrm{m}\) precharge TG, cold reservoirs still fail at \(49.617/58.639\) mV trim error and only \(0.0939\) V gate common. At tuned \(0.80\) V common, 5 ns remains marginal at \(10.665/12.593\) mV error, 10 ns crosses the plotted 6 mV gate at \(4.008/4.759\) mV, and 20 ns reaches the initialized-reservoir regime at \(1.344/1.590\) mV with \(0.7964\) V common. A quick off-line strength probe showed \(1.25\times\) startup TG width would make 10 ns clean below \(3\) mV, but it also makes the legacy 5 ns case no longer marginal, so the committed evidence keeps the nominal circuit and records the true lower-common timing margin.
 - Added a severe-skew split-trim common-mode family check after noticing that the updated \(0.80\) V shifted-gate reset common mode had only been tested on the \(+20/-20\) mV skew branch, while the severe \(30\) mV polarity-calibration fixtures still used the legacy \(0.90\) V common. The same physical split-reset reuse deck now compares \(+30\) mV skew with \(-55\) mV trim and \(-30\) mV skew with \(+65\) mV trim at both common modes. At \(0.80\) V, the two branches sample \(-54.998\) and \(64.997\) mV first-cycle trims and store mean activations of \(40.915/40.919\) mV. At \(0.90\) V, they sample \(-54.998\) and \(64.998\) mV and store \(46.972/46.978\) mV. Thus the tuned common mode preserves signed severe-skew alignment and cycle repeatability, but it lowers activation by about \(6.1\) mV; reset common mode is part of the calibration/gain budget, not just an irrelevant common-mode detail.
 - Added a tuned-common-mode split-reset trim check to make sure the calibrated trim/autozero result was not tied to the older \(0.90\) V shifted-gate reset common mode. With the same \(+20/-20\) mV forward-pair threshold skew and physical MOS split reset, a \(0.80\) V tuned common mode samples trims of \(-24.999/-34.999/-44.998\) mV and stores \(25.476/43.213/60.662\) mV. The legacy \(0.90\) V common samples the same trims and stores \(28.438/47.897/67.343\) mV. Thus the tuned \(0.80\) V common mode lowers activation gain slightly but preserves monotone, useful trim recovery; the calibrated \(-35\) mV point still stores \(43.213\) mV, so the split-reset calibration story survives the reset-common-mode correction.

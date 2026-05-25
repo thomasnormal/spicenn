@@ -2553,6 +2553,28 @@ must satisfy before it can replace the current behavioral prototype.
 
 \begin{figure}[H]
   \centering
+  \includegraphics[width=0.95\linewidth]{figures/mos_hidden_writer_restored_gate_hybrid_update_forward_guard_forward_pair_96u_shifted_gate_reset_ref_precharge_strength_080_ngspice.png}
+  \caption{Ngspice tuned-common-mode startup-precharge width check for the
+  same cold \(0.80\) V reset-reference path in
+  Fig.~\ref{fig:mos-hidden-writer-restored-gate-hybrid-update-forward-guard-forward-pair-96u-shifted-gate-reset-ref-precharge-080-ngspice}.
+  No behavioral helper is added: the sweep only scales the temporary
+  startup transmission gate around the nominal \(300/900\,\mu\mathrm{m}\)
+  NMOS/PMOS path while leaving the \(250\) pF reservoirs, \(100\)
+  \(\mathrm{k}\Omega\) trim sources, \(5\) pF shifted gates, and ordinary MOS
+  reset switches unchanged.  At 10 ns, the nominal path leaves
+  \(4.002/4.751\) mV trim error for the \(-55/+65\) mV branches.  Increasing
+  the startup TG to \(1.25\times\) lowers the 10 ns error to
+  \(2.436/2.892\) mV with \(0.788\) V gate common, and \(1.5\times\) lowers it
+  to \(1.718/2.039\) mV with \(0.795\) V common.  The nominal 20 ns case
+  remains at the initialized-reservoir floor, \(1.339/1.587\) mV.  The tuned
+  startup requirement is therefore a measured width--time tradeoff: use
+  about \(20\) ns at nominal width, or widen the startup TG by roughly
+  \(1.25\times\)--\(1.5\times\) when a 10 ns startup budget is required.}
+  \label{fig:mos-hidden-writer-restored-gate-hybrid-update-forward-guard-forward-pair-96u-shifted-gate-reset-ref-precharge-strength-080-ngspice}
+\end{figure}
+
+\begin{figure}[H]
+  \centering
   \includegraphics[width=0.95\linewidth]{figures/mos_hidden_writer_restored_gate_hybrid_update_forward_guard_forward_pair_96u_shifted_gate_reset_ref_precharge_strength_ngspice.png}
   \caption{Ngspice startup-precharge strength-margin check for the same cold
   local trim-reference reservoir.  The \(250\) pF reservoirs, \(100\)

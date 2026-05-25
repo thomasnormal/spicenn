@@ -1350,6 +1350,23 @@ must satisfy before it can replace the current behavioral prototype.
 
 \begin{figure}[H]
   \centering
+  \includegraphics[width=0.88\linewidth]{figures/mos_hidden_writer_restored_gate_hybrid_update_forward_reset_strength_ngspice.png}
+  \caption{Ngspice integrated reset-strength sweep for the same update-to-forward
+  reuse deck.  The sweep reruns the full two-sample circuit while changing only
+  the transient-state reset devices.  The old \(W_N/W_P=24/60\,\mu\mathrm{m}\)
+  sizing leaves \(2.46\) mV of cancelled-state preactivation residue and
+  \(1.37\) mV of stored activation residue.  Increasing the reset pair to
+  \(60/180\,\mu\mathrm{m}\) reduces those residues to \(0.013\) mV and
+  \(0.011\) mV, respectively, below the plotted \(0.02\) mV target, while the
+  first valid write/read/store response remains fixed at about \(50.76\) mV
+  preactivation and \(47.35\) mV stored activation for every reset size.  This
+  makes the reset-sizing tradeoff explicit instead of hiding it inside the
+  reuse waveform.}
+  \label{fig:mos-hidden-writer-restored-gate-hybrid-update-forward-reset-strength-ngspice}
+\end{figure}
+
+\begin{figure}[H]
+  \centering
   \includegraphics[width=0.88\linewidth]{figures/mos_hidden_writer_restored_gate_hybrid_repeated_ngspice.png}
   \caption{Ngspice repeated-pulse accumulation characterization of the hybrid
   restored writer.  One stored \(r^+\) hidden-error rail drives one persistent

@@ -6771,6 +6771,86 @@ quit
     hyr_fig.tight_layout()
     save_plot(hyr_fig, "mos_hidden_writer_restored_gate_hybrid_update_forward_reuse_ngspice")
 
+    reset_strength_cases = [
+        (24, 60, "old 24/60"),
+        (36, 108, "36/108"),
+        (48, 144, "48/144"),
+        (60, 180, "chosen 60/180"),
+        (72, 216, "72/216"),
+    ]
+    reset_strength_z = []
+    reset_strength_h = []
+    reset_strength_first_z = []
+    reset_strength_first_h = []
+    reset_strength_final_w = []
+    reset_strength_final_b = []
+    for n_width, p_width, _label in reset_strength_cases:
+        stem = f"mos_hidden_writer_restored_gate_hybrid_update_forward_reuse_reset_n{n_width}_p{p_width}"
+        strength_deck = hybrid_forward_reuse_deck.replace(
+            "WRESETN=60u WRESETP=180u",
+            f"WRESETN={n_width}u WRESETP={p_width}u",
+        ).replace(
+            "mos_hidden_writer_restored_gate_hybrid_update_forward_reuse.dat",
+            f"{stem}.dat",
+        )
+        strength_data = run_ngspice(strength_deck, stem)
+        st, strength_cols = load_wrdata(strength_data, 23)
+
+        def sat(time_s: float, values: np.ndarray) -> float:
+            return float(values[np.argmin(np.abs(st - time_s))])
+
+        strength_weight = strength_cols[5] - strength_cols[6]
+        strength_bias = strength_cols[7] - strength_cols[8]
+        strength_preact = strength_cols[10] - strength_cols[9]
+        strength_store = strength_cols[14] - strength_cols[13]
+        reset_strength_z.append(abs(sat(7.15e-6, strength_preact)))
+        reset_strength_h.append(abs(sat(7.45e-6, strength_store)))
+        reset_strength_first_z.append(sat(3.35e-6, strength_preact))
+        reset_strength_first_h.append(sat(3.45e-6, strength_store))
+        reset_strength_final_w.append(abs(sat(6.35e-6, strength_weight)))
+        reset_strength_final_b.append(abs(sat(6.35e-6, strength_bias)))
+
+    reset_strength_z = np.array(reset_strength_z)
+    reset_strength_h = np.array(reset_strength_h)
+    reset_strength_first_z = np.array(reset_strength_first_z)
+    reset_strength_first_h = np.array(reset_strength_first_h)
+    reset_strength_final_w = np.array(reset_strength_final_w)
+    reset_strength_final_b = np.array(reset_strength_final_b)
+    require(np.all(np.diff(reset_strength_z) < 0.0), "integrated reset z residue should improve with reset sizing")
+    require(np.all(np.diff(reset_strength_h) < 0.0), "integrated reset stored activation residue should improve with reset sizing")
+    require(np.max(np.abs(reset_strength_first_z - reset_strength_first_z[0])) < 1e-6, "reset sizing should not change the first valid preactivation")
+    require(np.max(np.abs(reset_strength_first_h - reset_strength_first_h[0])) < 1e-6, "reset sizing should not change the first valid stored activation")
+    require(reset_strength_z[0] > 1e-3, "old integrated reset sizing should leave visible z residue")
+    require(reset_strength_h[0] > 1e-3, "old integrated reset sizing should leave visible stored-activation residue")
+    chosen_idx = 3
+    require(reset_strength_z[chosen_idx] < 2e-5, "chosen integrated reset sizing should clear z residue below 0.02 mV")
+    require(reset_strength_h[chosen_idx] < 2e-5, "chosen integrated reset sizing should clear stored activation below 0.02 mV")
+    require(np.max(reset_strength_final_w) < 5e-6, "reset sizing sweep should preserve W cancellation")
+    require(np.max(reset_strength_final_b) < 5e-6, "reset sizing sweep should preserve B cancellation")
+
+    strength_x = np.arange(len(reset_strength_cases))
+    strength_labels = [label for _n, _p, label in reset_strength_cases]
+    strength_fig, strength_axes = plt.subplots(2, 1, figsize=(7.2, 5.8))
+    strength_axes[0].semilogy(strength_x, 1e3 * reset_strength_z, "o-", label="final $|z^- - z^+|$")
+    strength_axes[0].semilogy(strength_x, 1e3 * reset_strength_h, "s--", label="final stored $|h^- - h^+|$")
+    strength_axes[0].axhline(0.02, color="0.4", linewidth=0.8, alpha=0.7, label="0.02 mV target")
+    strength_axes[0].set_xticks(strength_x)
+    strength_axes[0].set_xticklabels(strength_labels, rotation=15, ha="right")
+    strength_axes[0].set_ylabel("cancelled-state residue (mV)")
+    strength_axes[0].set_title("Integrated reset sizing controls reuse residue")
+    strength_axes[0].grid(True, which="both", alpha=0.25)
+    strength_axes[0].legend(loc="upper right")
+    strength_axes[1].plot(strength_x, 1e3 * reset_strength_first_z, "o-", label="first valid $z^- - z^+$")
+    strength_axes[1].plot(strength_x, 1e3 * reset_strength_first_h, "s--", label="first stored $h^- - h^+$")
+    strength_axes[1].set_xticks(strength_x)
+    strength_axes[1].set_xticklabels(strength_labels, rotation=15, ha="right")
+    strength_axes[1].set_ylabel("first-sample response (mV)")
+    strength_axes[1].set_title("Sizing reset devices does not change the intended write/read/store")
+    strength_axes[1].grid(True, alpha=0.25)
+    strength_axes[1].legend(loc="center right")
+    strength_fig.tight_layout()
+    save_plot(strength_fig, "mos_hidden_writer_restored_gate_hybrid_update_forward_reset_strength_ngspice")
+
     hybrid_repeated_deck = f"""
 * Hybrid restored-enable/analog-error writer repeated-pulse accumulation check.
 * One stored r+ hidden-error rail and one activation gate drive the same

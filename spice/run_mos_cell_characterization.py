@@ -15150,6 +15150,21 @@ quit
     shift_refz_precharge_axes[0].set_ylabel("trim error (mV)")
     shift_refz_precharge_axes[0].set_title("A MOS startup-precharge path recovers cold trim reservoirs")
     shift_refz_precharge_axes[0].grid(True, axis="y", alpha=0.25)
+    shift_refz_precharge_axes[0].text(
+        0.45,
+        0.43,
+        "no precharge min err = "
+        f"{1e3 * np.min(shift_refz_precharge_trim_error[:, pre_none_idx]):.1f} mV / >40 mV\n"
+        "5 ns min err = "
+        f"{1e3 * np.min(shift_refz_precharge_trim_error[:, pre_5ns_idx]):.1f} mV / >6 mV\n"
+        "10 ns max err = "
+        f"{1e3 * np.max(shift_refz_precharge_trim_error[:, pre_10ns_idx]):.2f} mV / 4 mV\n"
+        "20 ns max err = "
+        f"{1e3 * np.max(shift_refz_precharge_trim_error[:, pre_20ns_idx]):.2f} mV / 1.5 mV",
+        transform=shift_refz_precharge_axes[0].transAxes,
+        fontsize="x-small",
+        bbox={"facecolor": "white", "alpha": 0.82, "edgecolor": "0.8"},
+    )
     shift_refz_precharge_axes[0].legend(loc="upper right", ncol=2, fontsize="xx-small")
     for branch_idx, (_branch_name, branch_label, _nfp, _nfm, _trim) in enumerate(shift_reset_branch_specs):
         marker = "o-" if branch_idx == 0 else "s--"
@@ -15164,6 +15179,17 @@ quit
     shift_refz_precharge_axes[1].set_ylabel("gate common (V)")
     shift_refz_precharge_axes[1].set_title("The startup switch restores the reservoir common mode too")
     shift_refz_precharge_axes[1].grid(True, axis="y", alpha=0.25)
+    shift_refz_precharge_axes[1].text(
+        0.04,
+        0.14,
+        "20 ns min common = "
+        f"{np.min(shift_refz_precharge_gate_common[:, pre_20ns_idx]):.3f} V / >0.890 V\n"
+        "40 ns common = "
+        f"{np.mean(shift_refz_precharge_gate_common[:, -1]):.3f} V",
+        transform=shift_refz_precharge_axes[1].transAxes,
+        fontsize="x-small",
+        bbox={"facecolor": "white", "alpha": 0.82, "edgecolor": "0.8"},
+    )
     shift_refz_precharge_axes[1].legend(loc="lower right", ncol=2, fontsize="xx-small")
     for branch_label, case_label, pct, _ref_diff, gate_diff, _gate_common in shift_refz_precharge_traces:
         if case_label == "none":

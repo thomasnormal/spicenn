@@ -2,6 +2,18 @@
 
 ## 2026-05-25
 
+- Clarified the shifted-gate reset-reference startup-precharge plot.  The
+  ngspice deck sweeps explicit precharge pulse width for cold local
+  trim-reference reservoirs and already asserted that no precharge remains
+  visibly wrong, a \(5\) ns pulse is still marginal, \(10\) ns recovers below
+  the \(4\) mV trim-error gate, and \(20\) ns restores both trim and common
+  mode.  The regenerated
+  `mos_hidden_writer_restored_gate_hybrid_update_forward_guard_forward_pair_96u_shifted_gate_reset_ref_precharge_ngspice`
+  plot now labels those measured margins: no-precharge minimum trim error
+  \(49.6\) mV, \(5\) ns minimum trim error \(8.2\) mV, \(10\) ns maximum
+  trim error \(3.31\) mV, \(20\) ns maximum trim error \(1.36\) mV,
+  \(20\) ns minimum common mode \(0.896\) V, and \(40\) ns common mode
+  \(0.900\) V.
 - Clarified the shifted-gate reset-reference startup reservoir plot.  The
   ngspice deck models cold \(250\) pF local trim-reference reservoirs behind
   \(100\)k sources and already asserted that cold reservoirs visibly

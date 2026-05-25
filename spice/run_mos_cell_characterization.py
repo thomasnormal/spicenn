@@ -5792,6 +5792,301 @@ quit
     hyu_fig.tight_layout()
     save_plot(hyu_fig, "mos_hidden_writer_restored_gate_hybrid_cell_update_ngspice")
 
+    hybrid_cell_quadrant_devices = []
+    hybrid_cell_quadrant_prints = [
+        "v(cdp_rp_hyz)",
+        "v(cdm_rp_hyz)",
+        "v(cdp_rm_hyz)",
+        "v(cdm_rm_hyz)",
+        "v(rgp_rp_hyz)",
+        "v(rgm_rp_hyz)",
+        "v(rgp_rm_hyz)",
+        "v(rgm_rm_hyz)",
+    ]
+    for name, _label, hplus_src, hminus_src, err_sign, _expected_sign in hybrid_product_cases:
+        if err_sign == "rp":
+            wp_restored = "rgp_rp_hyz"
+            wp_error = "cdm_rp_hyz"
+            wm_restored = "rgp_rp_hyz"
+            wm_error = "cdm_rp_hyz"
+            bp_restored = "rgp_rp_hyz"
+            bp_error = "cdm_rp_hyz"
+            bm_restored = "rgm_rp_hyz"
+            bm_error = "cdp_rp_hyz"
+        else:
+            wp_restored = "rgm_rm_hyz"
+            wp_error = "cdp_rm_hyz"
+            wm_restored = "rgm_rm_hyz"
+            wm_error = "cdp_rm_hyz"
+            bp_restored = "rgp_rm_hyz"
+            bp_error = "cdm_rm_hyz"
+            bm_restored = "rgm_rm_hyz"
+            bm_error = "cdp_rm_hyz"
+        hybrid_cell_quadrant_devices.append(
+            f"""
+VHP_SRC_HYZ_{name} hp_src_hyz_{name} 0 {hplus_src:.3f}
+VHM_SRC_HYZ_{name} hm_src_hyz_{name} 0 {hminus_src:.3f}
+CHP_HYZ_{name} hp_store_hyz_{name} 0 {{CSTORE}} IC=1.45
+CHM_HYZ_{name} hm_store_hyz_{name} 0 {{CSTORE}} IC=1.45
+RHP_HYZ_{name} hp_store_hyz_{name} 0 50G
+RHM_HYZ_{name} hm_store_hyz_{name} 0 50G
+MSHPN_HYZ_{name} hp_src_hyz_{name} psamp_hyz hp_store_hyz_{name} 0 NMOS L={{LCH}} W={{WSW}}
+MSHPP_HYZ_{name} hp_src_hyz_{name} psampn_hyz hp_store_hyz_{name} vdd PMOS L={{LCH}} W={{WSW}}
+MSHMN_HYZ_{name} hm_src_hyz_{name} psamp_hyz hm_store_hyz_{name} 0 NMOS L={{LCH}} W={{WSW}}
+MSHMP_HYZ_{name} hm_src_hyz_{name} psampn_hyz hm_store_hyz_{name} vdd PMOS L={{LCH}} W={{WSW}}
+
+CWP_HYZ_{name} wp_hyz_{name} 0 {{CWRITE}} IC=0.85
+CWM_HYZ_{name} wm_hyz_{name} 0 {{CWRITE}} IC=0.85
+CBP_HYZ_{name} bp_hyz_{name} 0 {{CBIAS}} IC=0.85
+CBM_HYZ_{name} bm_hyz_{name} 0 {{CBIAS}} IC=0.85
+
+MWP_HYZ_{name}A vdd paccn_hyz n_wp_hyz_{name}_a vdd PMOS L={{LCH}} W={{WWRITE}}
+MWP_HYZ_{name}B n_wp_hyz_{name}_a {'hp_store_hyz_' + name if err_sign == 'rp' else 'hm_store_hyz_' + name} n_wp_hyz_{name}_b vdd PMOS L={{LCH}} W={{WWRITE}}
+MWP_HYZ_{name}C n_wp_hyz_{name}_b {wp_restored} n_wp_hyz_{name}_c vdd PMOS L={{LCH}} W={{WWRITE}}
+MWP_HYZ_{name}D n_wp_hyz_{name}_c {wp_error} wp_hyz_{name} vdd PMOS L={{LCH}} W={{WWRITE}}
+MWM_HYZ_{name}A vdd paccn_hyz n_wm_hyz_{name}_a vdd PMOS L={{LCH}} W={{WWRITE}}
+MWM_HYZ_{name}B n_wm_hyz_{name}_a {'hm_store_hyz_' + name if err_sign == 'rp' else 'hp_store_hyz_' + name} n_wm_hyz_{name}_b vdd PMOS L={{LCH}} W={{WWRITE}}
+MWM_HYZ_{name}C n_wm_hyz_{name}_b {wm_restored} n_wm_hyz_{name}_c vdd PMOS L={{LCH}} W={{WWRITE}}
+MWM_HYZ_{name}D n_wm_hyz_{name}_c {wm_error} wm_hyz_{name} vdd PMOS L={{LCH}} W={{WWRITE}}
+
+MBP_HYZ_{name}A vdd paccn_hyz n_bp_hyz_{name}_a vdd PMOS L={{LCH}} W={{WWRITE}}
+MBP_HYZ_{name}B n_bp_hyz_{name}_a {bp_restored} n_bp_hyz_{name}_b vdd PMOS L={{LCH}} W={{WWRITE}}
+MBP_HYZ_{name}C n_bp_hyz_{name}_b {bp_error} bp_hyz_{name} vdd PMOS L={{LCH}} W={{WWRITE}}
+MBM_HYZ_{name}A vdd paccn_hyz n_bm_hyz_{name}_a vdd PMOS L={{LCH}} W={{WWRITE}}
+MBM_HYZ_{name}B n_bm_hyz_{name}_a {bm_restored} n_bm_hyz_{name}_b vdd PMOS L={{LCH}} W={{WWRITE}}
+MBM_HYZ_{name}C n_bm_hyz_{name}_b {bm_error} bm_hyz_{name} vdd PMOS L={{LCH}} W={{WWRITE}}
+
+VXP_W_HYZ_{name} xp_w_hyz_{name} 0 1.15
+VXM_W_HYZ_{name} xm_w_hyz_{name} 0 0.65
+VZPP_W_HYZ_{name} zpp_w_hyz_{name} 0 1.8
+VZMP_W_HYZ_{name} zmp_w_hyz_{name} 0 1.8
+VZPN_W_HYZ_{name} zpn_w_hyz_{name} 0 1.8
+VZMN_W_HYZ_{name} zmn_w_hyz_{name} 0 1.8
+MPP_W_HYZ_{name} zpp_w_hyz_{name} xp_w_hyz_{name} tail_wp_hyz_{name} 0 NMOS L={{LCH}} W={{WN}}
+MPM_W_HYZ_{name} zmp_w_hyz_{name} xm_w_hyz_{name} tail_wp_hyz_{name} 0 NMOS L={{LCH}} W={{WN}}
+MTP_W_HYZ_{name} tail_wp_hyz_{name} wp_hyz_{name} 0 0 NMOS L={{LCH}} W=12u
+MNP_W_HYZ_{name} zpn_w_hyz_{name} xm_w_hyz_{name} tail_wm_hyz_{name} 0 NMOS L={{LCH}} W={{WN}}
+MNM_W_HYZ_{name} zmn_w_hyz_{name} xp_w_hyz_{name} tail_wm_hyz_{name} 0 NMOS L={{LCH}} W={{WN}}
+MTN_W_HYZ_{name} tail_wm_hyz_{name} wm_hyz_{name} 0 0 NMOS L={{LCH}} W=12u
+
+VXP_B_HYZ_{name} xp_b_hyz_{name} 0 1.15
+VXM_B_HYZ_{name} xm_b_hyz_{name} 0 0.65
+VZPP_B_HYZ_{name} zpp_b_hyz_{name} 0 1.8
+VZMP_B_HYZ_{name} zmp_b_hyz_{name} 0 1.8
+VZPN_B_HYZ_{name} zpn_b_hyz_{name} 0 1.8
+VZMN_B_HYZ_{name} zmn_b_hyz_{name} 0 1.8
+MPP_B_HYZ_{name} zpp_b_hyz_{name} xp_b_hyz_{name} tail_bp_hyz_{name} 0 NMOS L={{LCH}} W={{WN}}
+MPM_B_HYZ_{name} zmp_b_hyz_{name} xm_b_hyz_{name} tail_bp_hyz_{name} 0 NMOS L={{LCH}} W={{WN}}
+MTP_B_HYZ_{name} tail_bp_hyz_{name} bp_hyz_{name} 0 0 NMOS L={{LCH}} W=12u
+MNP_B_HYZ_{name} zpn_b_hyz_{name} xm_b_hyz_{name} tail_bm_hyz_{name} 0 NMOS L={{LCH}} W={{WN}}
+MNM_B_HYZ_{name} zmn_b_hyz_{name} xp_b_hyz_{name} tail_bm_hyz_{name} 0 NMOS L={{LCH}} W={{WN}}
+MTN_B_HYZ_{name} tail_bm_hyz_{name} bm_hyz_{name} 0 0 NMOS L={{LCH}} W=12u
+"""
+        )
+        hybrid_cell_quadrant_prints.extend(
+            [
+                f"v(hp_store_hyz_{name})",
+                f"v(hm_store_hyz_{name})",
+                f"v(wp_hyz_{name})",
+                f"v(wm_hyz_{name})",
+                f"v(bp_hyz_{name})",
+                f"v(bm_hyz_{name})",
+                f"i(VZPP_W_HYZ_{name})",
+                f"i(VZMP_W_HYZ_{name})",
+                f"i(VZPN_W_HYZ_{name})",
+                f"i(VZMN_W_HYZ_{name})",
+                f"i(VZPP_B_HYZ_{name})",
+                f"i(VZMP_B_HYZ_{name})",
+                f"i(VZPN_B_HYZ_{name})",
+                f"i(VZMN_B_HYZ_{name})",
+            ]
+        )
+
+    hybrid_cell_quadrant_deck = f"""
+* Hybrid restored writer four-quadrant local-feature update/readback check.
+* Each case samples a+/a- activation gates, uses stored/restored e+/e- rails,
+* writes both W+/W- and B+/B- persistent states, and reads both states through
+* NMOS synapse slices.  This is the integrated family-completion version of
+* the one-quadrant cell-update plot.
+{COMMON_MODELS}
+.param CERR=10p CWRITE=500p CBIAS=500p CSTORE=10p WSW=24u WWRITE=24u WRESTN=18u WRESTP=300u
+VDD vdd 0 1.8
+VTAIL vbias 0 0.95
+VPBWD_HYZ pbwd 0 PULSE(0 1.8 0.45u 20n 20n 0.80u 5.0u)
+VRP_HYZ rp_hyz 0 PULSE(0 1.8 0.45u 20n 20n 0.80u 5.0u)
+VRM_HYZ rm_hyz 0 PULSE(0 1.8 0.45u 20n 20n 0.80u 5.0u)
+VPSAMP_HYZ psamp_hyz 0 PWL(0 0 1.55u 0 1.57u 1.8 1.85u 1.8 1.87u 0 3.3u 0)
+VPSAMPN_HYZ psampn_hyz 0 PWL(0 1.8 1.55u 1.8 1.57u 0 1.85u 0 1.87u 1.8 3.3u 1.8)
+VPACC_HYZ paccn_hyz 0 PULSE(1.8 0 2.10u 20n 20n 0.32u 5.0u)
+
+VZPP_HYZ zpp_hyz 0 {0.9 + hybrid_mismatch_eps / 2.0:.5f}
+VZMM_HYZ zmm_hyz 0 {0.9 - hybrid_mismatch_eps / 2.0:.5f}
+VZPM_HYZ zpm_hyz 0 {0.9 - hybrid_mismatch_eps / 2.0:.5f}
+VZMP_HYZ zmp_hyz 0 {0.9 + hybrid_mismatch_eps / 2.0:.5f}
+
+MPPP_HYZ hpp_hyz hpp_hyz vdd vdd PMOS L={{LCH}} W={{WP}}
+MPPM_HYZ hpm_hyz hpm_hyz vdd vdd PMOS L={{LCH}} W={{WP}}
+MNPP_HYZ hpp_hyz zpp_hyz tailp_hyz 0 NMOS L={{LCH}} W={{WN}}
+MNPM_HYZ hpm_hyz zmm_hyz tailp_hyz 0 NMOS L={{LCH}} W={{WN}}
+MNTP_HYZ tailp_hyz vbias 0 0 NMOS L={{LCH}} W={{WN}}
+
+MPMP_HYZ hmp_hyz hmp_hyz vdd vdd PMOS L={{LCH}} W={{WP}}
+MPMM_HYZ hmm_hyz hmm_hyz vdd vdd PMOS L={{LCH}} W={{WP}}
+MNMP_HYZ hmp_hyz zpm_hyz tailm_hyz 0 NMOS L={{LCH}} W={{WN}}
+MNMM_HYZ hmm_hyz zmp_hyz tailm_hyz 0 NMOS L={{LCH}} W={{WN}}
+MNTM_HYZ tailm_hyz vbias 0 0 NMOS L={{LCH}} W={{WN}}
+
+CDP_RP_HYZ cdp_rp_hyz 0 {{CERR}} IC=1.04
+CDM_RP_HYZ cdm_rp_hyz 0 {{CERR}} IC=1.04
+CDP_RM_HYZ cdp_rm_hyz 0 {{CERR}} IC=1.04
+CDM_RM_HYZ cdm_rm_hyz 0 {{CERR}} IC=1.04
+RDP_RP_HYZ cdp_rp_hyz 0 50G
+RDM_RP_HYZ cdm_rp_hyz 0 50G
+RDP_RM_HYZ cdp_rm_hyz 0 50G
+RDM_RM_HYZ cdm_rm_hyz 0 50G
+{sign_store_path("hpm_hyz", "rp_hyz", "cdp_rp_hyz", "hyzrp1")}
+{sign_store_path("hmp_hyz", "rp_hyz", "cdp_rp_hyz", "hyzrp2")}
+{sign_store_path("hpp_hyz", "rp_hyz", "cdm_rp_hyz", "hyzrp3")}
+{sign_store_path("hmm_hyz", "rp_hyz", "cdm_rp_hyz", "hyzrp4")}
+{sign_store_path("hpp_hyz", "rm_hyz", "cdp_rm_hyz", "hyzrm1")}
+{sign_store_path("hmm_hyz", "rm_hyz", "cdp_rm_hyz", "hyzrm2")}
+{sign_store_path("hpm_hyz", "rm_hyz", "cdm_rm_hyz", "hyzrm3")}
+{sign_store_path("hmp_hyz", "rm_hyz", "cdm_rm_hyz", "hyzrm4")}
+
+MPRP_CDP_HYZ rgp_rp_hyz cdp_rp_hyz vdd vdd PMOS L={{LCH}} W={{WRESTP}}
+MNRP_CDP_HYZ rgp_rp_hyz cdp_rp_hyz 0 0 NMOS L={{LCH}} W={{WRESTN}}
+MPRP_CDM_HYZ rgm_rp_hyz cdm_rp_hyz vdd vdd PMOS L={{LCH}} W={{WRESTP}}
+MNRP_CDM_HYZ rgm_rp_hyz cdm_rp_hyz 0 0 NMOS L={{LCH}} W={{WRESTN}}
+MPRM_CDP_HYZ rgp_rm_hyz cdp_rm_hyz vdd vdd PMOS L={{LCH}} W={{WRESTP}}
+MNRM_CDP_HYZ rgp_rm_hyz cdp_rm_hyz 0 0 NMOS L={{LCH}} W={{WRESTN}}
+MPRM_CDM_HYZ rgm_rm_hyz cdm_rm_hyz vdd vdd PMOS L={{LCH}} W={{WRESTP}}
+MNRM_CDM_HYZ rgm_rm_hyz cdm_rm_hyz 0 0 NMOS L={{LCH}} W={{WRESTN}}
+
+{''.join(hybrid_cell_quadrant_devices)}
+
+.control
+set noaskquit
+tran 5n 3.25u uic
+wrdata mos_hidden_writer_restored_gate_hybrid_cell_quadrants.dat {' '.join(hybrid_cell_quadrant_prints)} v(psamp_hyz) v(paccn_hyz)
+quit
+.endc
+.end
+"""
+    hybrid_cell_quadrant_data = run_ngspice(
+        hybrid_cell_quadrant_deck,
+        "mos_hidden_writer_restored_gate_hybrid_cell_quadrants",
+    )
+    hyzt, hyz_cols = load_wrdata(hybrid_cell_quadrant_data, len(hybrid_cell_quadrant_prints) + 2)
+
+    def hyzat(time_s: float, values: np.ndarray) -> float:
+        return float(values[np.argmin(np.abs(hyzt - time_s))])
+
+    hyz_hidden_pos = hyz_cols[0] - hyz_cols[1]
+    hyz_hidden_neg = hyz_cols[2] - hyz_cols[3]
+    hyz_rp_selected_gate = hyz_cols[4]
+    hyz_rp_complement_gate = hyz_cols[5]
+    hyz_rm_complement_gate = hyz_cols[6]
+    hyz_rm_selected_gate = hyz_cols[7]
+    hyz_weight_signed = []
+    hyz_bias_signed = []
+    hyz_weight_read_step = []
+    hyz_bias_read_step = []
+    hyz_wp_step = []
+    hyz_wm_step = []
+    hyz_bp_step = []
+    hyz_bm_step = []
+    hyz_hp_final = []
+    hyz_hm_final = []
+    for idx, (_name, _label, _hplus_src, _hminus_src, err_sign, _expected_sign) in enumerate(hybrid_product_cases):
+        base = 8 + 14 * idx
+        hp = hyz_cols[base]
+        hm = hyz_cols[base + 1]
+        wp = hyz_cols[base + 2]
+        wm = hyz_cols[base + 3]
+        bp = hyz_cols[base + 4]
+        bm = hyz_cols[base + 5]
+        wread = (hyz_cols[base + 7] - hyz_cols[base + 6]) + (hyz_cols[base + 9] - hyz_cols[base + 8])
+        bread = (hyz_cols[base + 11] - hyz_cols[base + 10]) + (hyz_cols[base + 13] - hyz_cols[base + 12])
+        hyz_hp_final.append(hyzat(2.00e-6, hp))
+        hyz_hm_final.append(hyzat(2.00e-6, hm))
+        hyz_weight_signed.append(hyzat(2.70e-6, wp - wm))
+        hyz_bias_signed.append(hyzat(2.70e-6, bp - bm))
+        hyz_weight_read_step.append(hyzat(2.70e-6, wread) - hyzat(2.00e-6, wread))
+        hyz_bias_read_step.append(hyzat(2.70e-6, bread) - hyzat(2.00e-6, bread))
+        hyz_wp_step.append(hyzat(2.70e-6, wp) - hyzat(2.00e-6, wp))
+        hyz_wm_step.append(hyzat(2.70e-6, wm) - hyzat(2.00e-6, wm))
+        hyz_bp_step.append(hyzat(2.70e-6, bp) - hyzat(2.00e-6, bp))
+        hyz_bm_step.append(hyzat(2.70e-6, bm) - hyzat(2.00e-6, bm))
+    hyz_weight_signed = np.array(hyz_weight_signed)
+    hyz_bias_signed = np.array(hyz_bias_signed)
+    hyz_weight_read_step = np.array(hyz_weight_read_step)
+    hyz_bias_read_step = np.array(hyz_bias_read_step)
+    hyz_wp_step = np.array(hyz_wp_step)
+    hyz_wm_step = np.array(hyz_wm_step)
+    hyz_bp_step = np.array(hyz_bp_step)
+    hyz_bm_step = np.array(hyz_bm_step)
+    hyz_hp_final = np.array(hyz_hp_final)
+    hyz_hm_final = np.array(hyz_hm_final)
+    hyz_weight_expected = np.array([expected_sign for *_rest, expected_sign in hybrid_product_cases])
+    hyz_bias_expected = np.array([1.0 if err_sign == "rp" else -1.0 for *_prefix, err_sign, _expected_sign in hybrid_product_cases])
+    require(hyzat(1.35e-6, hyz_hidden_pos) > 0.07, "hybrid cell quadrants e+ store should be positive")
+    require(hyzat(1.35e-6, hyz_hidden_neg) < -0.07, "hybrid cell quadrants e- store should be negative")
+    require(abs(hyzat(1.35e-6, hyz_hidden_pos + hyz_hidden_neg)) < 0.003, "hybrid cell quadrant hidden stores should be symmetric")
+    require(hyzat(1.45e-6, hyz_rp_selected_gate) < 0.30, "hybrid cell quadrants e+ selected gate should be low")
+    require(hyzat(1.45e-6, hyz_rp_complement_gate) > 1.60, "hybrid cell quadrants e+ complement gate should be high")
+    require(hyzat(1.45e-6, hyz_rm_selected_gate) < 0.30, "hybrid cell quadrants e- selected gate should be low")
+    require(hyzat(1.45e-6, hyz_rm_complement_gate) > 1.60, "hybrid cell quadrants e- complement gate should be high")
+    require(np.all(np.sign(hyz_weight_signed) == hyz_weight_expected), "integrated quadrant weight signs should follow activation-error products")
+    require(np.all(np.sign(hyz_bias_signed) == hyz_bias_expected), "integrated quadrant bias signs should follow error sign only")
+    require(np.all(np.abs(hyz_weight_signed) > 0.018), "integrated quadrant weight writes should be useful")
+    require(np.all(np.abs(hyz_bias_signed) > 0.030), "integrated quadrant bias writes should be useful")
+    require(np.max(np.minimum(hyz_wp_step, hyz_wm_step)) < 5e-4, "integrated quadrant inactive weight rails should stay suppressed")
+    require(np.max(np.minimum(hyz_bp_step, hyz_bm_step)) < 5e-4, "integrated quadrant inactive bias rails should stay suppressed")
+    require(np.all(np.sign(hyz_weight_read_step) == hyz_weight_expected), "integrated quadrant weight readback signs should match stored weights")
+    require(np.all(np.sign(hyz_bias_read_step) == hyz_bias_expected), "integrated quadrant bias readback signs should match stored biases")
+    require(np.all(np.abs(hyz_weight_read_step) > 15e-6), "integrated quadrant weight readback should be measurable")
+    require(np.all(np.abs(hyz_bias_read_step) > 25e-6), "integrated quadrant bias readback should be measurable")
+    require(np.all(np.abs(hyz_hp_final[:2] - 0.92) < 0.010), "integrated quadrant a+ cases should sample active a+")
+    require(np.all(hyz_hm_final[:2] > 1.35), "integrated quadrant a+ cases should leave a- inactive")
+    require(np.all(hyz_hp_final[2:] > 1.35), "integrated quadrant a- cases should leave a+ inactive")
+    require(np.all(np.abs(hyz_hm_final[2:] - 0.92) < 0.010), "integrated quadrant a- cases should sample active a-")
+
+    hyz_x = np.arange(len(hybrid_product_cases))
+    hyz_labels = [label for _name, label, *_rest in hybrid_product_cases]
+    hyz_fig, hyz_axes = plt.subplots(3, 1, figsize=(7.4, 7.2), gridspec_kw={"height_ratios": [1.0, 1.0, 1.0]})
+    hyz_axes[0].plot(1e6 * hyzt, hyz_hidden_pos, label="stored $e^+$")
+    hyz_axes[0].plot(1e6 * hyzt, hyz_hidden_neg, label="stored $e^-$")
+    hyz_axes[0].plot(1e6 * hyzt, hyz_rp_selected_gate, label="$e^+$ selected gate")
+    hyz_axes[0].plot(1e6 * hyzt, hyz_rm_selected_gate, label="$e^-$ selected gate")
+    hyz_axes[0].plot(1e6 * hyzt, hyz_cols[-2] / 2.0, color="0.45", alpha=0.35, label="$psamp/2$")
+    hyz_axes[0].plot(1e6 * hyzt, hyz_cols[-1] / 20.0, color="0.15", alpha=0.25, label="$pacc_n/20$")
+    hyz_axes[0].set_xlim(0.35, 2.75)
+    hyz_axes[0].set_ylabel("voltage (V)")
+    hyz_axes[0].set_title("Integrated quadrant deck stores both error signs once")
+    hyz_axes[0].grid(True, alpha=0.25)
+    hyz_axes[0].legend(loc="center right", ncol=2, fontsize="small")
+    hyz_axes[1].bar(hyz_x - 0.18, 1e3 * hyz_weight_signed, width=0.36, label="$W^+ - W^-$")
+    hyz_axes[1].bar(hyz_x + 0.18, 1e3 * hyz_bias_signed, width=0.36, label="$B^+ - B^-$")
+    hyz_axes[1].axhline(0, color="0.4", linewidth=0.8)
+    hyz_axes[1].set_xticks(hyz_x)
+    hyz_axes[1].set_xticklabels(hyz_labels)
+    hyz_axes[1].set_ylabel("state step (mV)")
+    hyz_axes[1].set_title("weight follows $ae$ while bias follows $e$")
+    hyz_axes[1].grid(True, axis="y", alpha=0.25)
+    hyz_axes[1].legend(loc="upper right", fontsize="small")
+    hyz_axes[2].bar(hyz_x - 0.18, 1e6 * hyz_weight_read_step, width=0.36, label="weight read current")
+    hyz_axes[2].bar(hyz_x + 0.18, 1e6 * hyz_bias_read_step, width=0.36, label="bias read current")
+    hyz_axes[2].axhline(0, color="0.4", linewidth=0.8)
+    hyz_axes[2].set_xticks(hyz_x)
+    hyz_axes[2].set_xticklabels(hyz_labels)
+    hyz_axes[2].set_xlabel("sampled activation/error quadrant")
+    hyz_axes[2].set_ylabel("read current step (uA)")
+    hyz_axes[2].set_title("readback signs match the stored differential states")
+    hyz_axes[2].grid(True, axis="y", alpha=0.25)
+    hyz_axes[2].legend(loc="upper right", fontsize="small")
+    hyz_fig.tight_layout()
+    save_plot(hyz_fig, "mos_hidden_writer_restored_gate_hybrid_cell_quadrants_ngspice")
+
     hybrid_repeated_deck = f"""
 * Hybrid restored-enable/analog-error writer repeated-pulse accumulation check.
 * One stored r+ hidden-error rail and one activation gate drive the same

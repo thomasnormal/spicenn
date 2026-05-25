@@ -1249,6 +1249,29 @@ must satisfy before it can replace the current behavioral prototype.
 
 \begin{figure}[H]
   \centering
+  \includegraphics[width=0.88\linewidth]{figures/mos_hidden_writer_restored_gate_hybrid_cell_quadrants_ngspice.png}
+  \caption{Ngspice four-quadrant integrated local-feature update/readback
+  characterization for the hybrid restored writer.  This is the family
+  completion of Fig.~\ref{fig:mos-hidden-writer-restored-gate-hybrid-cell-update-ngspice}:
+  every matched copy samples \(a^+\) or \(a^-\), uses the stored/restored
+  \(e^+\) or \(e^-\) rails, writes both persistent weight and bias capacitor
+  pairs, and reads both states back through NMOS synapse slices.  The measured
+  weight differentials for \(a^+e^+\), \(a^+e^-\), \(a^-e^+\), and \(a^-e^-\)
+  are \(+22.99\), \(-22.99\), \(-22.99\), and \(+22.99\) mV, matching
+  \(\Delta W\propto ae\).  The measured bias differentials are \(+34.54\),
+  \(-34.54\), \(+34.54\), and \(-34.54\) mV, matching
+  \(\Delta B\propto e\) independent of the activation sign.  Readback signs
+  match the stored differentials: weight current steps are \(+19.06\),
+  \(-19.06\), \(-19.06\), and \(+19.06\,\mu\)A, while bias current steps are
+  \(+29.17\), \(-29.17\), \(+29.17\), and \(-29.17\,\mu\)A.  This does not
+  yet make a full transistor MNIST cell, but it closes the signed local-update
+  routing contract for the weight and local-bias state roles without
+  behavioral update sources.}
+  \label{fig:mos-hidden-writer-restored-gate-hybrid-cell-quadrants-ngspice}
+\end{figure}
+
+\begin{figure}[H]
+  \centering
   \includegraphics[width=0.88\linewidth]{figures/mos_hidden_writer_restored_gate_hybrid_repeated_ngspice.png}
   \caption{Ngspice repeated-pulse accumulation characterization of the hybrid
   restored writer.  One stored \(r^+\) hidden-error rail drives one persistent

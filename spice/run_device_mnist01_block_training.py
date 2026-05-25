@@ -9,9 +9,15 @@ from typing import Any
 import numpy as np
 import pandas as pd
 
-from run_device_mnist01_quad_training import repeated_phases, sample_wave
 from run_device_mnist01_scalar_training import balanced_digit_indices, binary_accuracy, sanitize_tag
-from run_device_sequential_training import expected_positive, mos_models, output_driver_line, run_netlist
+from run_device_sequential_training import (
+    active_low_pulse_wave,
+    expected_positive,
+    mos_models,
+    output_driver_line,
+    pulse_wave,
+    run_netlist,
+)
 from run_spice_mnist_local_block_batch_op_train import block_indices
 from run_spice_sweep import ROOT, detect_spice, run_tiny_test
 from spicenn.timing import CYCLE_NS
@@ -118,6 +124,56 @@ def validate_block_samples(samples: list[dict[str, Any]], *, required_rails: lis
             raise ValueError(f"sample {idx} missing target rail")
 
 
+def block_sample_wave(samples: list[dict[str, Any]], key: str, stop_ns: float, *, cycle_ns: float) -> str:
+    points: list[tuple[float, float]] = []
+    for idx, sample in enumerate(samples):
+        start = idx * cycle_ns
+        end = start + cycle_ns
+        value = float(sample[key])
+        if idx == 0:
+            points.append((0.0, value))
+        else:
+            points.append((start, value))
+        points.append((min(stop_ns, end - 0.05), value))
+    points.append((stop_ns, float(samples[-1][key])))
+    return "PWL(" + " ".join(f"{t:.12g}n {v:.12g}" for t, v in points) + ")"
+
+
+def block_repeated_phases(sample_count: int, *, training_enabled: bool, phase_time_scale: float) -> str:
+    cycle_ns = CYCLE_NS * phase_time_scale
+    stop = sample_count * cycle_ns
+    rstf: list[tuple[float, float]] = []
+    rstg: list[tuple[float, float]] = []
+    fwd: list[tuple[float, float]] = []
+    err: list[tuple[float, float]] = []
+    bwd: list[tuple[float, float]] = []
+    acc: list[tuple[float, float]] = []
+    apply: list[tuple[float, float]] = []
+    for idx in range(sample_count):
+        base = idx * cycle_ns
+        scale = phase_time_scale
+        rstf += [(base + 0.00 * scale, base + 0.50 * scale), (base + 12.05 * scale, base + 12.55 * scale)]
+        rstg += [(base + 0.00 * scale, base + 0.50 * scale)]
+        fwd += [(base + 0.75 * scale, base + 3.00 * scale), (base + 12.80 * scale, base + 15.60 * scale)]
+        if training_enabled:
+            err.append((base + 3.25 * scale, base + 5.00 * scale))
+            bwd.append((base + 5.25 * scale, base + 7.00 * scale))
+            acc.append((base + 7.25 * scale, base + 9.00 * scale))
+            apply.append((base + 9.25 * scale, base + 11.20 * scale))
+    return "\n".join(
+        [
+            f"Vrstf rstf 0 {pulse_wave(rstf, stop)}",
+            f"Vrstg rstg 0 {pulse_wave(rstg, stop)}",
+            f"Vfwd fwd 0 {pulse_wave(fwd, stop)}",
+            f"Verr err 0 {pulse_wave(err, stop)}",
+            f"Vbwd bwd 0 {pulse_wave(bwd, stop)}",
+            f"Vacc acc 0 {pulse_wave(acc, stop)}",
+            f"Vapply apply 0 {pulse_wave(apply, stop)}",
+            f"Vapplyn applyn 0 {active_low_pulse_wave(apply, stop)}",
+        ]
+    )
+
+
 def block_netlist(
     samples: list[dict[str, Any]],
     weights: dict[str, Any],
@@ -136,6 +192,7 @@ def block_netlist(
     hidden_weight_write_width: float = 0.25,
     hidden_activation_width: float = 24.0,
     readout_forward_width: float = 64.0,
+    phase_time_scale: float = 1.0,
     input_rail_mode: str = "alternating-complement",
 ) -> str:
     if readout_apply_scale <= 0.0:
@@ -154,6 +211,8 @@ def block_netlist(
         raise ValueError("hidden_activation_width must be positive")
     if readout_forward_width <= 0.0:
         raise ValueError("readout_forward_width must be positive")
+    if phase_time_scale <= 0.0:
+        raise ValueError("phase_time_scale must be positive")
     if input_rail_mode not in INPUT_RAIL_MODES:
         raise ValueError(f"input_rail_mode must be one of {INPUT_RAIL_MODES}")
     blocks, expected_features = block_topology(image_size, block_size, stride, channels)
@@ -171,37 +230,39 @@ def block_netlist(
     readout_nmos_w = 2.0 * readout_apply_scale
     hidden_neg_width = max(0.5, hidden_forward_width * 0.75)
     readout_negative_forward_width = max(0.5, readout_forward_width * 0.75)
-    stop = len(samples) * CYCLE_NS
+    cycle_ns = CYCLE_NS * phase_time_scale
+    stop = len(samples) * cycle_ns
     measures: list[str] = []
     prints: list[str] = []
     for idx in range(len(samples)):
-        base = idx * CYCLE_NS
+        base = idx * cycle_ns
+        scale = phase_time_scale
         measures += [
-            f".meas tran score_before_{idx} FIND V(score) AT={base + 2.95:.2f}n",
-            f".meas tran out_before_{idx} FIND V(out) AT={base + 2.95:.2f}n",
-            f".meas tran score_error_{idx} FIND V(score) AT={base + 4.25:.2f}n",
-            f".meas tran dp_after_{idx} FIND V(dp) AT={base + 5.10:.2f}n",
-            f".meas tran dn_after_{idx} FIND V(dn) AT={base + 5.10:.2f}n",
-            f".meas tran out_after_{idx} FIND V(out) AT={base + 15.50:.2f}n",
+            f".meas tran score_before_{idx} FIND V(score) AT={base + 2.95 * scale:.2f}n",
+            f".meas tran out_before_{idx} FIND V(out) AT={base + 2.95 * scale:.2f}n",
+            f".meas tran score_error_{idx} FIND V(score) AT={base + 4.25 * scale:.2f}n",
+            f".meas tran dp_after_{idx} FIND V(dp) AT={base + 5.10 * scale:.2f}n",
+            f".meas tran dn_after_{idx} FIND V(dn) AT={base + 5.10 * scale:.2f}n",
+            f".meas tran out_after_{idx} FIND V(out) AT={base + 15.50 * scale:.2f}n",
             f".meas tran d_out_{idx} PARAM='out_after_{idx}-out_before_{idx}'",
             f".meas tran error_net_{idx} PARAM='dp_after_{idx}-dn_after_{idx}'",
         ]
         for feature in range(feature_count):
             measures += [
-                f".meas tran act{feature}_before_{idx} FIND V(act{feature}) AT={base + 2.95:.2f}n",
-                f".meas tran act{feature}_after_{idx} FIND V(act{feature}) AT={base + 15.50:.2f}n",
-                f".meas tran bhp{feature}_before_{idx} FIND V(bhp{feature}) AT={base + 0.60:.2f}n",
-                f".meas tran bhn{feature}_before_{idx} FIND V(bhn{feature}) AT={base + 0.60:.2f}n",
-                f".meas tran vwp{feature}_before_{idx} FIND V(vwp{feature}) AT={base + 0.60:.2f}n",
-                f".meas tran vwn{feature}_before_{idx} FIND V(vwn{feature}) AT={base + 0.60:.2f}n",
-                f".meas tran hdp{feature}_after_{idx} FIND V(hdp{feature}) AT={base + 7.10:.2f}n",
-                f".meas tran hdn{feature}_after_{idx} FIND V(hdn{feature}) AT={base + 7.10:.2f}n",
-                f".meas tran gbp{feature}_after_{idx} FIND V(gbp{feature}) AT={base + 9.10:.2f}n",
-                f".meas tran gbn{feature}_after_{idx} FIND V(gbn{feature}) AT={base + 9.10:.2f}n",
-                f".meas tran bhp{feature}_after_apply_{idx} FIND V(bhp{feature}) AT={base + 11.50:.2f}n",
-                f".meas tran bhn{feature}_after_apply_{idx} FIND V(bhn{feature}) AT={base + 11.50:.2f}n",
-                f".meas tran vwp{feature}_after_apply_{idx} FIND V(vwp{feature}) AT={base + 11.50:.2f}n",
-                f".meas tran vwn{feature}_after_apply_{idx} FIND V(vwn{feature}) AT={base + 11.50:.2f}n",
+                f".meas tran act{feature}_before_{idx} FIND V(act{feature}) AT={base + 2.95 * scale:.2f}n",
+                f".meas tran act{feature}_after_{idx} FIND V(act{feature}) AT={base + 15.50 * scale:.2f}n",
+                f".meas tran bhp{feature}_before_{idx} FIND V(bhp{feature}) AT={base + 0.60 * scale:.2f}n",
+                f".meas tran bhn{feature}_before_{idx} FIND V(bhn{feature}) AT={base + 0.60 * scale:.2f}n",
+                f".meas tran vwp{feature}_before_{idx} FIND V(vwp{feature}) AT={base + 0.60 * scale:.2f}n",
+                f".meas tran vwn{feature}_before_{idx} FIND V(vwn{feature}) AT={base + 0.60 * scale:.2f}n",
+                f".meas tran hdp{feature}_after_{idx} FIND V(hdp{feature}) AT={base + 7.10 * scale:.2f}n",
+                f".meas tran hdn{feature}_after_{idx} FIND V(hdn{feature}) AT={base + 7.10 * scale:.2f}n",
+                f".meas tran gbp{feature}_after_{idx} FIND V(gbp{feature}) AT={base + 9.10 * scale:.2f}n",
+                f".meas tran gbn{feature}_after_{idx} FIND V(gbn{feature}) AT={base + 9.10 * scale:.2f}n",
+                f".meas tran bhp{feature}_after_apply_{idx} FIND V(bhp{feature}) AT={base + 11.50 * scale:.2f}n",
+                f".meas tran bhn{feature}_after_apply_{idx} FIND V(bhn{feature}) AT={base + 11.50 * scale:.2f}n",
+                f".meas tran vwp{feature}_after_apply_{idx} FIND V(vwp{feature}) AT={base + 11.50 * scale:.2f}n",
+                f".meas tran vwn{feature}_after_apply_{idx} FIND V(vwn{feature}) AT={base + 11.50 * scale:.2f}n",
                 f".meas tran bias{feature}_signed_before_{idx} PARAM='bhp{feature}_before_{idx}-bhn{feature}_before_{idx}'",
                 f".meas tran bias{feature}_signed_after_{idx} PARAM='bhp{feature}_after_apply_{idx}-bhn{feature}_after_apply_{idx}'",
                 f".meas tran readout{feature}_signed_before_{idx} PARAM='vwp{feature}_before_{idx}-vwn{feature}_before_{idx}'",
@@ -211,8 +272,8 @@ def block_netlist(
             ]
             for pix in range(block_len):
                 measures += [
-                    f".meas tran whp{feature}_{pix}_after_apply_{idx} FIND V(whp{feature}_{pix}) AT={base + 11.50:.2f}n",
-                    f".meas tran whn{feature}_{pix}_after_apply_{idx} FIND V(whn{feature}_{pix}) AT={base + 11.50:.2f}n",
+                    f".meas tran whp{feature}_{pix}_after_apply_{idx} FIND V(whp{feature}_{pix}) AT={base + 11.50 * scale:.2f}n",
+                    f".meas tran whn{feature}_{pix}_after_apply_{idx} FIND V(whn{feature}_{pix}) AT={base + 11.50 * scale:.2f}n",
                 ]
         prints.append(f"print out_before_{idx} out_after_{idx} error_net_{idx}")
 
@@ -225,10 +286,10 @@ def block_netlist(
         "Vdd vdd 0 {VDD}",
     ]
     for rail in required_rails:
-        lines.append(f"V{rail} {rail} 0 {sample_wave(samples, rail, stop)}")
+        lines.append(f"V{rail} {rail} 0 {block_sample_wave(samples, rail, stop, cycle_ns=cycle_ns)}")
     lines += [
-        f"Vtarget target 0 {sample_wave(samples, 'target', stop)}",
-        repeated_phases(len(samples), training_enabled=training_enabled),
+        f"Vtarget target 0 {block_sample_wave(samples, 'target', stop, cycle_ns=cycle_ns)}",
+        block_repeated_phases(len(samples), training_enabled=training_enabled, phase_time_scale=phase_time_scale),
         "",
         "* Persistent signed hidden and readout weights.",
     ]
@@ -547,6 +608,7 @@ def run_device_sequence(
     hidden_weight_write_width: float,
     hidden_activation_width: float,
     readout_forward_width: float,
+    phase_time_scale: float,
     input_rail_mode: str,
 ) -> pd.DataFrame:
     netlist = block_netlist(
@@ -566,6 +628,7 @@ def run_device_sequence(
         hidden_weight_write_width=hidden_weight_write_width,
         hidden_activation_width=hidden_activation_width,
         readout_forward_width=readout_forward_width,
+        phase_time_scale=phase_time_scale,
         input_rail_mode=input_rail_mode,
     )
     if "\nB" in netlist:
@@ -600,6 +663,7 @@ def main() -> None:
     ap.add_argument("--hidden-weight-write-width", type=float, default=0.25)
     ap.add_argument("--hidden-activation-width", type=float, default=24.0)
     ap.add_argument("--readout-forward-width", type=float, default=64.0)
+    ap.add_argument("--phase-time-scale", type=float, default=1.0)
     ap.add_argument("--input-rail-mode", choices=INPUT_RAIL_MODES, default="alternating-complement")
     ap.add_argument("--complement-rail-scale", type=float, default=0.5)
     ap.add_argument("--hidden-bias-positive-init", type=float, default=0.50)
@@ -660,6 +724,7 @@ def main() -> None:
         "hidden_weight_write_width": args.hidden_weight_write_width,
         "hidden_activation_width": args.hidden_activation_width,
         "readout_forward_width": args.readout_forward_width,
+        "phase_time_scale": args.phase_time_scale,
         "input_rail_mode": args.input_rail_mode,
     }
     initial_eval_rows = run_device_sequence(
@@ -746,6 +811,7 @@ def main() -> None:
         "hidden_weight_write_width": args.hidden_weight_write_width,
         "hidden_activation_width": args.hidden_activation_width,
         "readout_forward_width": args.readout_forward_width,
+        "phase_time_scale": args.phase_time_scale,
         "hidden_bias_positive_init": args.hidden_bias_positive_init,
         "hidden_bias_negative_init": args.hidden_bias_negative_init,
         "learning_device_implementation": "transistor_passive",

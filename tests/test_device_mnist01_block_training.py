@@ -33,6 +33,7 @@ def test_device_mnist01_block_script_help_runs_from_repo_root() -> None:
     assert "--hidden-weight-write-width" in proc.stdout
     assert "--hidden-activation-width" in proc.stdout
     assert "--readout-forward-width" in proc.stdout
+    assert "--phase-time-scale" in proc.stdout
     assert "--hidden-bias-positive-init" in proc.stdout
     assert "--assert-nonbehavioral" in proc.stdout
 
@@ -72,6 +73,7 @@ def test_block_netlist_emits_per_pixel_trainable_caps_and_no_behavioral_sources(
         hidden_weight_write_width=0.4,
         hidden_activation_width=96.0,
         readout_forward_width=128.0,
+        phase_time_scale=2.0,
     )
 
     assert "\nB" not in netlist
@@ -92,6 +94,8 @@ def test_block_netlist_emits_per_pixel_trainable_caps_and_no_behavioral_sources(
     assert "Movpos3_a vdd act3 op3_0 0 NREL W=128u" in netlist
     assert "Movneg3_f score fwd on3_0 0 NREL W=96u" in netlist
     assert "Movpos3_f op3_1 fwd score 0 NREL" in netlist
+    assert ".meas tran score_before_0 FIND V(score) AT=5.90n" in netlist
+    assert ".tran 10p 32.00n uic" in netlist
     assert "Mrelu_o vdd score out 0 NSENSE" in netlist
 
 

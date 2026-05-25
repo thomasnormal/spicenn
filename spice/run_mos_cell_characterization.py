@@ -1422,6 +1422,16 @@ quit
     require(at(1.95e-6, neg_store) < -0.05, "pact should store negative chained activation")
     require(at(2.80e-6, pos_store) > 0.05, "positive chained activation should hold after pact")
     require(at(2.80e-6, neg_store) < -0.05, "negative chained activation should hold after pact")
+    chain_pos_preact = at(1.20e-6, pos_preact)
+    chain_neg_preact = at(1.20e-6, neg_preact)
+    chain_pos_load = at(1.25e-6, pos_load)
+    chain_neg_load = at(1.25e-6, neg_load)
+    chain_pos_store = at(1.95e-6, pos_store)
+    chain_neg_store = at(1.95e-6, neg_store)
+    chain_hold_error = max(
+        abs(at(2.80e-6, pos_store) - chain_pos_store),
+        abs(at(2.80e-6, neg_store) - chain_neg_store),
+    )
 
     cycle_data = run_ngspice(cycle_deck, "mos_synapse_forward_cycle")
     ct, cycle_cols = load_wrdata(cycle_data, 10)
@@ -1439,6 +1449,13 @@ quit
     require(cycle_at(3.45e-6, cycle_preact) < -0.075, "second cycle should write negative preactivation")
     require(cycle_at(4.10e-6, cycle_store) < -0.05, "second cycle should store negative activation")
     require(cycle_at(4.60e-6, cycle_store) < -0.05, "second-cycle stored activation should hold")
+    cycle_first_preact = cycle_at(1.25e-6, cycle_preact)
+    cycle_first_store = cycle_at(1.90e-6, cycle_store)
+    cycle_reset_preact = cycle_at(2.55e-6, cycle_preact)
+    cycle_reset_store = cycle_at(2.55e-6, cycle_store)
+    cycle_second_preact = cycle_at(3.45e-6, cycle_preact)
+    cycle_second_store = cycle_at(4.10e-6, cycle_store)
+    cycle_hold_error = abs(cycle_at(4.60e-6, cycle_store) - cycle_second_store)
 
     timing_data = run_ngspice(timing_deck, "mos_synapse_forward_phase_timing")
     tt, timing_cols = load_wrdata(timing_data, len(timing_prints) + 1)
@@ -1464,8 +1481,14 @@ quit
     require(timing_final[1] < 0.95 * timing_final[-1], "write-edge pact sample should remain below the settled activation")
     require(np.min(timing_final[2:]) > 0.95 * timing_final[-1], "pact pulses after preactivation settling should store the full activation")
     require(np.max(timing_final[2:]) - np.min(timing_final[2:]) < 0.004, "settled pact timings should agree")
+    timing_pre_sample = float(timing_final[0])
+    timing_edge_sample = float(timing_final[1])
+    timing_settled_sample = float(timing_final[-1])
+    timing_settled_spread = float(np.max(timing_final[2:]) - np.min(timing_final[2:]))
+    timing_edge_fraction = timing_edge_sample / max(timing_settled_sample, 1e-30)
 
     fig, axes = plt.subplots(3, 1, figsize=(7.2, 7.2), sharex=True)
+    callout_box = {"facecolor": "white", "alpha": 0.82, "edgecolor": "0.8"}
     axes[0].plot(1e6 * t, pos_preact, label="$w^+$ stored $z^- - z^+$")
     axes[0].plot(1e6 * t, neg_preact, "--", label="$w^-$ stored $z^- - z^+$")
     axes[0].plot(1e6 * t, cols[12] / 8.0, color="0.5", alpha=0.35, label="$w_{gate}/8$")
@@ -1474,6 +1497,19 @@ quit
     axes[0].set_title("Synapse writes signed preactivation onto real summing caps")
     axes[0].grid(True, alpha=0.25)
     axes[0].legend(loc="upper right")
+    axes[0].text(
+        0.06,
+        0.15,
+        "\n".join(
+            [
+                f"W+ preact {1e3 * chain_pos_preact:+.1f} mV",
+                f"W- preact {1e3 * chain_neg_preact:+.1f} mV",
+            ]
+        ),
+        transform=axes[0].transAxes,
+        fontsize="x-small",
+        bbox=callout_box,
+    )
     axes[1].plot(1e6 * t, pos_load, label="positive path load $h^- - h^+$")
     axes[1].plot(1e6 * t, neg_load, "--", label="negative path load $h^- - h^+$")
     axes[1].axhline(0, color="0.4", linewidth=0.8)
@@ -1481,6 +1517,19 @@ quit
     axes[1].set_title("Crossed forward gates preserve the voltage-coded sign")
     axes[1].grid(True, alpha=0.25)
     axes[1].legend(loc="upper right")
+    axes[1].text(
+        0.06,
+        0.15,
+        "\n".join(
+            [
+                f"W+ load {1e3 * chain_pos_load:+.1f} mV",
+                f"W- load {1e3 * chain_neg_load:+.1f} mV",
+            ]
+        ),
+        transform=axes[1].transAxes,
+        fontsize="x-small",
+        bbox=callout_box,
+    )
     axes[2].plot(1e6 * t, pos_store, label="stored positive activation")
     axes[2].plot(1e6 * t, neg_store, "--", label="stored negative activation")
     axes[2].plot(1e6 * t, cols[13] / 8.0, color="0.5", alpha=0.35, label="$pact/8$")
@@ -1490,6 +1539,20 @@ quit
     axes[2].set_title("Activation storage samples and holds the chained result")
     axes[2].grid(True, alpha=0.25)
     axes[2].legend(loc="upper right")
+    axes[2].text(
+        0.06,
+        0.15,
+        "\n".join(
+            [
+                f"W+ store {1e3 * chain_pos_store:+.1f} mV",
+                f"W- store {1e3 * chain_neg_store:+.1f} mV",
+                f"hold error {1e3 * chain_hold_error:.2f} mV",
+            ]
+        ),
+        transform=axes[2].transAxes,
+        fontsize="x-small",
+        bbox=callout_box,
+    )
     fig.tight_layout()
     chain_plot = save_plot(fig, "mos_synapse_forward_chain_ngspice")
 
@@ -1503,6 +1566,20 @@ quit
     cycle_axes[0].set_title("Reset lets the same summing caps accept opposite-signed samples")
     cycle_axes[0].grid(True, alpha=0.25)
     cycle_axes[0].legend(loc="upper right", ncol=2)
+    cycle_axes[0].text(
+        0.05,
+        0.15,
+        "\n".join(
+            [
+                f"cycle 1 preact {1e3 * cycle_first_preact:+.1f} mV",
+                f"reset residue {1e3 * abs(cycle_reset_preact):.1f} mV",
+                f"cycle 2 preact {1e3 * cycle_second_preact:+.1f} mV",
+            ]
+        ),
+        transform=cycle_axes[0].transAxes,
+        fontsize="x-small",
+        bbox=callout_box,
+    )
     cycle_axes[1].plot(1e6 * ct, cycle_load, label="forward load $h^- - h^+$")
     cycle_axes[1].axhline(0, color="0.4", linewidth=0.8)
     cycle_axes[1].set_ylabel("load output (V)")
@@ -1518,6 +1595,21 @@ quit
     cycle_axes[2].set_title("Activation cap is reset before storing the opposite sign")
     cycle_axes[2].grid(True, alpha=0.25)
     cycle_axes[2].legend(loc="upper right", ncol=2)
+    cycle_axes[2].text(
+        0.05,
+        0.15,
+        "\n".join(
+            [
+                f"cycle 1 store {1e3 * cycle_first_store:+.1f} mV",
+                f"reset residue {1e3 * abs(cycle_reset_store):.1f} mV",
+                f"cycle 2 store {1e3 * cycle_second_store:+.1f} mV",
+                f"hold error {1e3 * cycle_hold_error:.2f} mV",
+            ]
+        ),
+        transform=cycle_axes[2].transAxes,
+        fontsize="x-small",
+        bbox=callout_box,
+    )
     cycle_fig.tight_layout()
     save_plot(cycle_fig, "mos_synapse_forward_cycle_ngspice")
 
@@ -1530,6 +1622,19 @@ quit
     timing_axes[0].set_title("Synapse and forward load settle before pact sampling")
     timing_axes[0].grid(True, alpha=0.25)
     timing_axes[0].legend(loc="upper right")
+    timing_axes[0].text(
+        0.06,
+        0.15,
+        "\n".join(
+            [
+                f"preact @1.25us {1e3 * timing_at(1.25e-6, timing_preact):+.1f} mV",
+                f"settled load {1e3 * timing_at(1.25e-6, timing_loads[-1]):+.1f} mV",
+            ]
+        ),
+        transform=timing_axes[0].transAxes,
+        fontsize="x-small",
+        bbox=callout_box,
+    )
     for (_name, label, _start_us, _end_us), stored in zip(timing_cases, timing_stores):
         timing_axes[1].plot(1e6 * tt, stored, label=label)
     timing_axes[1].axhline(0, color="0.4", linewidth=0.8)
@@ -1538,6 +1643,20 @@ quit
     timing_axes[1].set_title("pact timing sweep exposes the write/store margin")
     timing_axes[1].grid(True, alpha=0.25)
     timing_axes[1].legend(loc="lower right", ncol=2)
+    timing_axes[1].text(
+        0.06,
+        0.64,
+        "\n".join(
+            [
+                f"pre-write sample {1e3 * timing_pre_sample:+.1f} mV",
+                f"edge sample {1e3 * timing_edge_sample:+.1f} mV ({100 * timing_edge_fraction:.0f}%)",
+                f"settled spread {1e3 * timing_settled_spread:.2f} mV",
+            ]
+        ),
+        transform=timing_axes[1].transAxes,
+        fontsize="x-small",
+        bbox=callout_box,
+    )
     timing_fig.tight_layout()
     save_plot(timing_fig, "mos_synapse_forward_phase_timing_ngspice")
     return chain_plot

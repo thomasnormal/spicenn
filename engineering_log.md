@@ -2,6 +2,23 @@
 
 ## 2026-05-25
 
+- Clarified the synapse-to-forward-store integration plots.  The ngspice decks
+  already asserted signed synapse storage on real summing capacitors, crossed
+  forward-pair sign preservation, activation-cap storage/hold, reset reuse
+  across opposite-signed samples, and pact timing margins.  The regenerated
+  `mos_synapse_forward_chain_ngspice`, `mos_synapse_forward_cycle_ngspice`,
+  and `mos_synapse_forward_phase_timing_ngspice` figures now label those
+  margins directly: the W+/W- chain stores \(+100.9\) mV and \(-100.9\) mV
+  preactivation, the crossed forward pair reads \(+103.4\) mV and
+  \(-103.4\) mV loads, and the activation caps store \(+103.4\) mV and
+  \(-103.4\) mV with no displayed hold error.  The reset/reuse deck stores a
+  \(+87.1\) mV first-cycle preactivation, clears the preactivation residue to
+  \(7.2\) mV, then stores a \(-80.0\) mV second-cycle preactivation; the
+  activation cap similarly stores \(+85.9\) mV, resets to no displayed
+  residue, then stores \(-78.9\) mV.  The pact timing sweep shows no
+  pre-write sample, a \(64.9\) mV write-edge partial sample at \(65\%\) of
+  the settled activation, and only \(0.11\) mV spread once sampling waits for
+  the synapse/forward load to settle.
 - Clarified the MOS forward-pair and activation-store plots.  The ngspice
   decks already asserted monotone bounded transfer, center alignment,
   approximate odd symmetry, positive/negative phase storage, common-mode

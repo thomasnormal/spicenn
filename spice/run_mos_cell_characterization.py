@@ -11064,6 +11064,135 @@ quit
         "250 pF local decoupling should visibly improve the first repeated-schedule activation over no decap",
     )
 
+    shift_refz_startup_cases = [
+        ("cold", "cold", 0.0),
+        ("tau0p5", "0.5 tau", 0.5),
+        ("tau1", "1 tau", 1.0),
+        ("tau2", "2 tau", 2.0),
+        ("tau3", "3 tau", 3.0),
+        ("ideal", "initialized", None),
+    ]
+
+    def run_reset_ref_startup_case(
+        branch_name: str,
+        reset_trim_v: float,
+    ) -> tuple[np.ndarray, list[np.ndarray]]:
+        stem = (
+            "mos_hidden_writer_restored_gate_hybrid_update_forward_guard_"
+            f"forward_pair_96u_shifted_gate_reset_ref_startup_{branch_name}"
+        )
+        reset_ref_p = 0.90 + 0.5 * reset_trim_v
+        reset_ref_m = 0.90 - 0.5 * reset_trim_v
+        deck_lines = [
+            "* Cold-start check for the local split-reset trim-reference reservoir.",
+            "* Each copy has a 100k source, 250 pF local reservoir, 5 pF shifted-gate",
+            "* load, and real complementary reset transmission gates.",
+            COMMON_MODELS,
+            ".param CREF=250p CGATE=5p WRESETN=60u WRESETP=180u",
+            "VDD vdd 0 1.8",
+            "VRST rst 0 PWL(0 0 2.48u 0 2.50u 1.8 2.62u 1.8 2.64u 0 3.0u 0)",
+            "VRSTN rstn 0 PWL(0 1.8 2.48u 1.8 2.50u 0 2.62u 0 2.64u 1.8 3.0u 1.8)",
+        ]
+        prints = []
+        for idx, (case_name, _case_label, tau_count) in enumerate(shift_refz_startup_cases):
+            if tau_count is None:
+                charged_fraction = 1.0
+            else:
+                charged_fraction = 1.0 - float(np.exp(-tau_count))
+            ref_p_ic = reset_ref_p * charged_fraction
+            ref_m_ic = reset_ref_m * charged_fraction
+            deck_lines.extend(
+                [
+                    f"* {case_name}: reservoir precharged to {charged_fraction:.6f} of target.",
+                    f"VZRP_{idx} zrp_src_{idx} 0 {reset_ref_p:.5f}",
+                    f"VZRM_{idx} zrm_src_{idx} 0 {reset_ref_m:.5f}",
+                    f"RZRP_{idx} zrp_src_{idx} zrp_{idx} 100k",
+                    f"RZRM_{idx} zrm_src_{idx} zrm_{idx} 100k",
+                    f"CZRP_{idx} zrp_{idx} 0 {{CREF}} IC={ref_p_ic:.5f}",
+                    f"CZRM_{idx} zrm_{idx} 0 {{CREF}} IC={ref_m_ic:.5f}",
+                    f"CZPG_{idx} zpg_{idx} 0 {{CGATE}} IC=0.90",
+                    f"CZMG_{idx} zmg_{idx} 0 {{CGATE}} IC=0.90",
+                    f"MRZGPN_{idx} zpg_{idx} rst zrp_{idx} 0 NMOS L={{LCH}} W={{WRESETN}}",
+                    f"MRZGMN_{idx} zmg_{idx} rst zrm_{idx} 0 NMOS L={{LCH}} W={{WRESETN}}",
+                    f"MRZGPP_{idx} zpg_{idx} rstn zrp_{idx} vdd PMOS L={{LCH}} W={{WRESETP}}",
+                    f"MRZGMP_{idx} zmg_{idx} rstn zrm_{idx} vdd PMOS L={{LCH}} W={{WRESETP}}",
+                ]
+            )
+            prints.extend([f"v(zrp_{idx})", f"v(zrm_{idx})", f"v(zpg_{idx})", f"v(zmg_{idx})"])
+        deck_lines.extend(
+            [
+                ".control",
+                "set noaskquit",
+                "tran 5n 3.0u uic",
+                f"wrdata {stem}.dat " + " ".join(prints),
+                "quit",
+                ".endc",
+                ".end",
+            ]
+        )
+        data = run_ngspice("\n".join(deck_lines), stem)
+        return load_wrdata(data, len(prints))
+
+    shift_refz_startup_trim_error = []
+    shift_refz_startup_gate_common = []
+    shift_refz_startup_gate_diff = []
+    shift_refz_startup_traces = []
+    for branch_name, branch_label, _nfp_vto, _nfm_vto, reset_trim_v in shift_reset_branch_specs:
+        stt, startup_cols = run_reset_ref_startup_case(branch_name, reset_trim_v)
+
+        def stat(time_s: float, values: np.ndarray) -> float:
+            return float(values[np.argmin(np.abs(stt - time_s))])
+
+        branch_trim_error = []
+        branch_gate_common = []
+        branch_gate_diff = []
+        for case_idx, (_case_name, case_label, _tau_count) in enumerate(shift_refz_startup_cases):
+            ref_p = startup_cols[4 * case_idx]
+            ref_m = startup_cols[4 * case_idx + 1]
+            gate_p = startup_cols[4 * case_idx + 2]
+            gate_m = startup_cols[4 * case_idx + 3]
+            gate_diff = gate_p - gate_m
+            gate_common = 0.5 * (gate_p + gate_m)
+            sampled_diff = stat(2.70e-6, gate_diff)
+            sampled_common = stat(2.70e-6, gate_common)
+            branch_trim_error.append(abs(sampled_diff - reset_trim_v))
+            branch_gate_common.append(sampled_common)
+            branch_gate_diff.append(sampled_diff)
+            if case_label in {"cold", "3 tau", "initialized"}:
+                shift_refz_startup_traces.append(
+                    (branch_label, case_label, stt, ref_p - ref_m, gate_diff, gate_common)
+                )
+        shift_refz_startup_trim_error.append(branch_trim_error)
+        shift_refz_startup_gate_common.append(branch_gate_common)
+        shift_refz_startup_gate_diff.append(branch_gate_diff)
+
+    shift_refz_startup_trim_error = np.array(shift_refz_startup_trim_error)
+    shift_refz_startup_gate_common = np.array(shift_refz_startup_gate_common)
+    shift_refz_startup_gate_diff = np.array(shift_refz_startup_gate_diff)
+    cold_idx = 0
+    tau3_idx = 4
+    initialized_idx = 5
+    require(
+        np.all(shift_refz_startup_trim_error[:, cold_idx] > 0.040),
+        "cold 250 pF trim-reference reservoirs should visibly under-deliver split trim",
+    )
+    require(
+        np.all(np.diff(shift_refz_startup_trim_error, axis=1) < 0.0),
+        "trim-reference startup error should improve monotonically with reservoir precharge",
+    )
+    require(
+        np.all(shift_refz_startup_trim_error[:, tau3_idx] < 0.005),
+        "three RC time constants of reservoir precharge should recover split-trim delivery below 5 mV",
+    )
+    require(
+        np.all(shift_refz_startup_gate_common[:, tau3_idx] > 0.84),
+        "three RC time constants should restore enough reset-reference common mode",
+    )
+    require(
+        np.all(shift_refz_startup_trim_error[:, initialized_idx] < 0.0015),
+        "initialized trim-reference reservoirs should match the earlier decoupling trim accuracy",
+    )
+
     tail_bias_forward_tail_line = "MNFT_HYR ftail_hyr vbias 0 0 NMOS L={LCH} W=48u"
     tail_bias_cases_v = [0.70, 0.80, 0.90, 0.95, 1.05, 1.15, 1.25]
     tail_bias_labels = []
@@ -12827,6 +12956,76 @@ quit
     save_plot(
         shift_refz_recharge_fig,
         "mos_hidden_writer_restored_gate_hybrid_update_forward_guard_forward_pair_96u_shifted_gate_reset_ref_recharge_ngspice",
+    )
+
+    shift_refz_startup_fig, shift_refz_startup_axes = plt.subplots(
+        3,
+        1,
+        figsize=(7.4, 7.4),
+        gridspec_kw={"height_ratios": [0.85, 0.85, 1.0]},
+    )
+    refz_startup_x = np.arange(len(shift_refz_startup_cases))
+    refz_startup_labels = [label for _name, label, _tau_count in shift_refz_startup_cases]
+    for branch_idx, (_branch_name, branch_label, _nfp, _nfm, _trim) in enumerate(shift_reset_branch_specs):
+        marker = "o-" if branch_idx == 0 else "s--"
+        shift_refz_startup_axes[0].plot(
+            refz_startup_x,
+            1e3 * shift_refz_startup_trim_error[branch_idx],
+            marker,
+            label=branch_label,
+        )
+    shift_refz_startup_axes[0].axhline(6, color="0.4", linestyle=":", linewidth=0.9, label="6 mV trim-error gate")
+    shift_refz_startup_axes[0].set_xticks(refz_startup_x)
+    shift_refz_startup_axes[0].set_xticklabels(refz_startup_labels)
+    shift_refz_startup_axes[0].set_ylabel("trim error (mV)")
+    shift_refz_startup_axes[0].set_title("Local trim reservoirs need startup precharge")
+    shift_refz_startup_axes[0].grid(True, axis="y", alpha=0.25)
+    shift_refz_startup_axes[0].legend(loc="upper right", ncol=2, fontsize="xx-small")
+    for branch_idx, (_branch_name, branch_label, _nfp, _nfm, _trim) in enumerate(shift_reset_branch_specs):
+        marker = "o-" if branch_idx == 0 else "s--"
+        shift_refz_startup_axes[1].plot(
+            refz_startup_x,
+            shift_refz_startup_gate_common[branch_idx],
+            marker,
+            label=branch_label,
+        )
+    shift_refz_startup_axes[1].axhline(0.90, color="0.35", linestyle="--", linewidth=0.9, label="target common")
+    shift_refz_startup_axes[1].axhline(0.84, color="0.5", linestyle=":", linewidth=0.9, label="startup gate")
+    shift_refz_startup_axes[1].set_xticks(refz_startup_x)
+    shift_refz_startup_axes[1].set_xticklabels(refz_startup_labels)
+    shift_refz_startup_axes[1].set_ylabel("gate common (V)")
+    shift_refz_startup_axes[1].set_title("Common-mode recovery follows the same local RC reservoir")
+    shift_refz_startup_axes[1].grid(True, axis="y", alpha=0.25)
+    shift_refz_startup_axes[1].legend(loc="lower right", ncol=2, fontsize="xx-small")
+    for branch_label, case_label, srt, ref_diff, gate_diff, gate_common in shift_refz_startup_traces:
+        if case_label == "cold":
+            linestyle = ":"
+        elif case_label == "3 tau":
+            linestyle = "--"
+        else:
+            linestyle = "-"
+        shift_refz_startup_axes[2].plot(
+            1e6 * srt,
+            1e3 * gate_diff,
+            linestyle,
+            label=f"{branch_label.split(', ')[1]}, {case_label} gate diff",
+        )
+    shift_refz_startup_axes[2].axhline(0, color="0.4", linewidth=0.8)
+    shift_refz_startup_axes[2].set_xlim(2.35, 2.85)
+    shift_refz_startup_axes[2].set_xlabel("time (us)")
+    shift_refz_startup_axes[2].set_ylabel("shifted-gate trim (mV)")
+    shift_refz_startup_axes[2].set_title("Real reset switches sample only the charge present in the local reservoir")
+    shift_refz_startup_axes[2].grid(True, alpha=0.25)
+    shift_refz_startup_axes[2].legend(
+        loc="upper center",
+        bbox_to_anchor=(0.5, -0.23),
+        ncol=2,
+        fontsize="xx-small",
+    )
+    shift_refz_startup_fig.tight_layout()
+    save_plot(
+        shift_refz_startup_fig,
+        "mos_hidden_writer_restored_gate_hybrid_update_forward_guard_forward_pair_96u_shifted_gate_reset_ref_startup_ngspice",
     )
 
     tail_bias_fig, tail_bias_axes = plt.subplots(2, 1, figsize=(7.4, 6.4), gridspec_kw={"height_ratios": [1.0, 0.8]})

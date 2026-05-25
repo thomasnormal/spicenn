@@ -1549,6 +1549,21 @@ must satisfy before it can replace the current behavioral prototype.
 
 \begin{figure}[H]
   \centering
+  \includegraphics[width=0.88\linewidth]{figures/mos_hidden_writer_restored_gate_hybrid_update_forward_read_rise_ngspice.png}
+  \caption{Ngspice read-valid rise sweep for the guarded MOS activation
+  store.  The guard remains fixed at \(3.18\)--\(3.31\,\mu\mathrm{s}\), the
+  read fall starts at \(3.36\,\mu\mathrm{s}\), and the read-control rise ends
+  at \(2.72,3.00,3.10,3.18,3.24,\) or \(3.28\,\mu\mathrm{s}\).  The stored
+  activation is \(51.355,34.123,23.346,14.559,7.923,\) and \(3.489\) mV.
+  Unlike the read-fall side, the read-rise side is monotone: delaying read
+  validity reduces the preactivation available during the guard window and
+  directly undercharges the activation store.  The guard should therefore
+  open only after the read path has had enough time to settle.}
+  \label{fig:mos-hidden-writer-restored-gate-hybrid-update-forward-read-rise-ngspice}
+\end{figure}
+
+\begin{figure}[H]
+  \centering
   \includegraphics[width=0.88\linewidth]{figures/mos_hidden_writer_restored_gate_hybrid_update_forward_guard_hold_ngspice.png}
   \caption{Ngspice no-reset hold check for the guarded MOS activation store.
   The same nominal guard window and long \(pact\) aperture are used, but the

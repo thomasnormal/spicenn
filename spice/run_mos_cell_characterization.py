@@ -7452,6 +7452,15 @@ quit
             f"{fall_start_us:.3f}u 1.15 {fall_end_us:.3f}u 0 7.8u 0)"
         )
 
+    def read_window_line(rise_end_us: float, fall_start_us: float = 3.36, edge_ns: float = 20.0) -> str:
+        edge_us = edge_ns / 1000.0
+        rise_start_us = rise_end_us - edge_us
+        fall_end_us = fall_start_us + edge_us
+        return (
+            f"VREAD_HYR read_hyr 0 PWL(0 0 {rise_start_us:.3f}u 0 "
+            f"{rise_end_us:.3f}u 1.15 {fall_start_us:.3f}u 1.15 {fall_end_us:.3f}u 0 7.8u 0)"
+        )
+
     for guard_end_us in guard_end_cases_us:
         guard_off_us = guard_end_us + 0.02
         label = f"{int(round((guard_end_us - aperture_start_us) * 1000))} ns"
@@ -7688,6 +7697,58 @@ quit
     require(
         np.max(np.abs(read_fall_store_samples[2:] - read_fall_store_samples[nominal_read_fall_idx])) < 0.001,
         "late read fall should not materially change a guard-disconnected store",
+    )
+
+    read_rise_cases_us = [2.72, 3.00, 3.10, 3.18, 3.24, 3.28]
+    read_rise_labels = []
+    read_rise_store_samples = []
+    read_rise_preact_samples = []
+    read_rise_traces = []
+    guard_pwl, guardn_pwl = guard_phase_lines(3.18, 3.31, 20.0)
+    for read_rise_us in read_rise_cases_us:
+        read_pwl = read_window_line(read_rise_us, 3.36, 20.0)
+        label = f"{read_rise_us:.2f} us"
+        stem = (
+            "mos_hidden_writer_restored_gate_hybrid_update_forward_read_pact_"
+            f"read_rise_{int(round(read_rise_us * 1000))}ns"
+        )
+        read_rise_deck = replace_required(hybrid_forward_read_reuse_deck, timing_read_pwl, read_pwl)
+        read_rise_deck = replace_required(
+            read_rise_deck,
+            timing_base_pact_pwl,
+            long_pact_pwl + "\n" + long_pactn_pwl + "\n" + guard_pwl + "\n" + guardn_pwl,
+        )
+        read_rise_deck = replace_required(read_rise_deck, nmos_store_line_p, guard_store_line_p)
+        read_rise_deck = replace_required(read_rise_deck, nmos_store_line_m, guard_store_line_m)
+        read_rise_deck = replace_required(
+            read_rise_deck,
+            "mos_hidden_writer_restored_gate_hybrid_update_forward_read_reuse.dat",
+            f"{stem}.dat",
+        )
+        read_rise_data = run_ngspice(read_rise_deck, stem)
+        rrt, read_rise_cols = load_wrdata(read_rise_data, 23)
+
+        def rrat(time_s: float, values: np.ndarray) -> float:
+            return float(values[np.argmin(np.abs(rrt - time_s))])
+
+        read_rise_preact = read_rise_cols[10] - read_rise_cols[9]
+        read_rise_store = read_rise_cols[14] - read_rise_cols[13]
+        read_rise_labels.append(label)
+        read_rise_preact_samples.append(rrat(3.575e-6, read_rise_preact))
+        read_rise_store_samples.append(rrat(3.575e-6, read_rise_store))
+        read_rise_traces.append((label, rrt, read_rise_store, read_rise_cols[21]))
+
+    read_rise_store_samples = np.array(read_rise_store_samples)
+    read_rise_preact_samples = np.array(read_rise_preact_samples)
+    nominal_read_rise_idx = read_rise_cases_us.index(2.72)
+    require(read_rise_store_samples[nominal_read_rise_idx] > 0.050, "nominal read-rise timing should capture a full activation")
+    require(
+        np.all(np.diff(read_rise_store_samples) < -0.002),
+        "later read rise should monotonically reduce the stored activation",
+    )
+    require(
+        read_rise_store_samples[-1] < 0.010,
+        "read rising near the end of the guard window should undercharge the activation store",
     )
 
     hold_reset_line = (
@@ -7981,6 +8042,33 @@ quit
     read_fall_axes[1].legend(loc="lower right", ncol=2, fontsize="small")
     read_fall_fig.tight_layout()
     save_plot(read_fall_fig, "mos_hidden_writer_restored_gate_hybrid_update_forward_read_fall_ngspice")
+
+    read_rise_fig, read_rise_axes = plt.subplots(2, 1, figsize=(7.4, 6.4), gridspec_kw={"height_ratios": [1.0, 0.8]})
+    for label, rrt, store, read_ctl in read_rise_traces:
+        if label in {"2.72 us", "3.10 us", "3.18 us", "3.28 us"}:
+            read_rise_axes[0].plot(1e6 * rrt, 1e3 * store, label=f"read rise {label}")
+    read_rise_axes[0].plot(1e6 * read_rise_traces[nominal_read_rise_idx][1], read_rise_traces[nominal_read_rise_idx][3] / 20.0, color="0.5", alpha=0.3, label="$read/20$")
+    read_rise_axes[0].axhline(0, color="0.4", linewidth=0.8)
+    read_rise_axes[0].axvline(3.18, color="0.25", linestyle="--", linewidth=0.9, alpha=0.6, label="guard rise")
+    read_rise_axes[0].axvline(3.31, color="0.45", linestyle=":", linewidth=0.9, alpha=0.6, label="guard fall")
+    read_rise_axes[0].set_xlim(3.05, 3.45)
+    read_rise_axes[0].set_ylabel("stored activation (mV)")
+    read_rise_axes[0].set_title("Late read rise tests settling before the guard closes")
+    read_rise_axes[0].grid(True, alpha=0.25)
+    read_rise_axes[0].legend(loc="upper left", ncol=2, fontsize="small")
+    read_rise_x = np.arange(len(read_rise_labels))
+    read_rise_axes[1].bar(read_rise_x - 0.18, 1e3 * read_rise_preact_samples, width=0.36, label="$z^- - z^+$")
+    read_rise_axes[1].bar(read_rise_x + 0.18, 1e3 * read_rise_store_samples, width=0.36, label="stored $h^- - h^+$")
+    read_rise_axes[1].axhline(0, color="0.4", linewidth=0.8)
+    read_rise_axes[1].set_xticks(read_rise_x)
+    read_rise_axes[1].set_xticklabels(read_rise_labels)
+    read_rise_axes[1].set_xlabel("read rise end")
+    read_rise_axes[1].set_ylabel("sampled differential (mV)")
+    read_rise_axes[1].set_title("The store only sees the read state available inside the guard window")
+    read_rise_axes[1].grid(True, axis="y", alpha=0.25)
+    read_rise_axes[1].legend(loc="lower right", ncol=2, fontsize="small")
+    read_rise_fig.tight_layout()
+    save_plot(read_rise_fig, "mos_hidden_writer_restored_gate_hybrid_update_forward_read_rise_ngspice")
 
     hold_fig, hold_axes = plt.subplots(2, 1, figsize=(7.4, 6.2), gridspec_kw={"height_ratios": [1.0, 0.8]})
     hold_axes[0].plot(1e6 * ht, 1e3 * hold_preact, label="$z^- - z^+$")

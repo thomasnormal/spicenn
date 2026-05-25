@@ -10073,6 +10073,7 @@ quit
         nfp_vto: float,
         nfm_vto: float,
         reset_trim_v: float,
+        reset_common_v: float = 0.90,
     ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
         nfp_model = f"NSHBALFP_{model_tag}"
         nfm_model = f"NSHBALFM_{model_tag}"
@@ -10091,8 +10092,8 @@ quit
                 10.0,
                 gate_ic_p=0.35,
                 gate_ic_m=1.45,
-                reset_ref_p=0.90 + 0.5 * reset_trim_v,
-                reset_ref_m=0.90 - 0.5 * reset_trim_v,
+                reset_ref_p=reset_common_v + 0.5 * reset_trim_v,
+                reset_ref_m=reset_common_v - 0.5 * reset_trim_v,
                 forward_p_model=nfp_model,
                 forward_m_model=nfm_model,
             ),
@@ -10112,6 +10113,84 @@ quit
         load = cols[14] - cols[13]
         store = cols[16] - cols[15]
         return time, gate_diff, gate_common, load, store
+
+    shift_trim_common_cases = [
+        ("cm080", "0.80 V tuned common", 0.80, [-0.025, -0.035, -0.045]),
+        ("cm090", "0.90 V legacy common", 0.90, [-0.025, -0.035, -0.045]),
+    ]
+    shift_trim_common_labels = []
+    shift_trim_common_values = []
+    shift_trim_common_gate_samples = []
+    shift_trim_common_common_samples = []
+    shift_trim_common_load_samples = []
+    shift_trim_common_store_samples = []
+    shift_trim_common_traces = []
+    for common_name, common_label, reset_common_v, trim_values in shift_trim_common_cases:
+        row_gate_samples = []
+        row_common_samples = []
+        row_load_samples = []
+        row_store_samples = []
+        for reset_trim_v in trim_values:
+            trim_mv = int(round(abs(reset_trim_v) * 1e3))
+            stem = (
+                "mos_hidden_writer_restored_gate_hybrid_update_forward_guard_"
+                f"forward_pair_96u_zcm_0p75v_shift_trim_common_{common_name}_trim{trim_mv}"
+            )
+            time, gate_diff, gate_common, load, store = run_split_reset_threshold_case(
+                stem,
+                f"{common_name.upper()}_TRIM{trim_mv}",
+                0.57,
+                0.53,
+                reset_trim_v,
+                reset_common_v=reset_common_v,
+            )
+
+            def tcat(time_s: float, values: np.ndarray) -> float:
+                return float(values[np.argmin(np.abs(time - time_s))])
+
+            row_gate_samples.append(tcat(2.70e-6, gate_diff))
+            row_common_samples.append(tcat(2.70e-6, gate_common))
+            row_load_samples.append(tcat(3.315e-6, load))
+            row_store_samples.append(tcat(3.575e-6, store))
+            if abs(reset_trim_v + 0.035) < 1e-12:
+                shift_trim_common_traces.append((common_label, time, load, store))
+        shift_trim_common_labels.append(common_label)
+        shift_trim_common_values.append(trim_values)
+        shift_trim_common_gate_samples.append(row_gate_samples)
+        shift_trim_common_common_samples.append(row_common_samples)
+        shift_trim_common_load_samples.append(row_load_samples)
+        shift_trim_common_store_samples.append(row_store_samples)
+
+    shift_trim_common_values = np.array(shift_trim_common_values)
+    shift_trim_common_gate_samples = np.array(shift_trim_common_gate_samples)
+    shift_trim_common_common_samples = np.array(shift_trim_common_common_samples)
+    shift_trim_common_load_samples = np.array(shift_trim_common_load_samples)
+    shift_trim_common_store_samples = np.array(shift_trim_common_store_samples)
+    require(
+        np.max(np.abs(shift_trim_common_gate_samples - shift_trim_common_values)) < 0.003,
+        "split reset should establish requested trim differentials at both reset common modes",
+    )
+    require(
+        np.max(np.abs(shift_trim_common_common_samples[0] - 0.80)) < 0.006
+        and np.max(np.abs(shift_trim_common_common_samples[1] - 0.90)) < 0.006,
+        "split reset should establish both tested reset common modes before read",
+    )
+    require(
+        np.all(np.diff(shift_trim_common_store_samples, axis=1) > 0.010),
+        "helpful split trim should monotonically increase stored activation at both reset common modes",
+    )
+    require(
+        np.all((shift_trim_common_store_samples > 0.020) & (shift_trim_common_store_samples < 0.085)),
+        "tested split-trim/common-mode combinations should stay positive and non-overdriven",
+    )
+    require(
+        np.all(shift_trim_common_store_samples[1] - shift_trim_common_store_samples[0] > 0.002),
+        "legacy 0.90 V reset common should store slightly higher than tuned 0.80 V for the same trim",
+    )
+    require(
+        0.035 < shift_trim_common_store_samples[0, 1] < 0.055,
+        "tuned 0.80 V reset common with the calibrated -35 mV trim should keep useful skew recovery",
+    )
 
     shift_balance_cases = [
         ("nominal", "nominal", 0.55, 0.55, 0.0),
@@ -13364,6 +13443,66 @@ quit
     save_plot(
         shift_trimmed_reset_fig,
         "mos_hidden_writer_restored_gate_hybrid_update_forward_guard_forward_pair_96u_shifted_gate_trimmed_reset_ngspice",
+    )
+
+    shift_trim_common_fig, shift_trim_common_axes = plt.subplots(
+        2,
+        1,
+        figsize=(7.4, 6.2),
+        gridspec_kw={"height_ratios": [0.9, 1.0]},
+    )
+    shift_trim_common_trim_mv = 1e3 * shift_trim_common_values[0]
+    for idx, label in enumerate(shift_trim_common_labels):
+        shift_trim_common_axes[0].plot(
+            shift_trim_common_trim_mv,
+            1e3 * shift_trim_common_gate_samples[idx],
+            marker="o",
+            label=f"{label} gate diff",
+        )
+        shift_trim_common_axes[0].plot(
+            shift_trim_common_trim_mv,
+            1e3 * (shift_trim_common_common_samples[idx] - (0.80 if idx == 0 else 0.90)),
+            "--",
+            marker="s",
+            label=f"{label} common error",
+        )
+    shift_trim_common_axes[0].plot(
+        shift_trim_common_trim_mv,
+        shift_trim_common_trim_mv,
+        ":",
+        color="0.25",
+        label="commanded trim",
+    )
+    shift_trim_common_axes[0].axhline(0, color="0.4", linewidth=0.8)
+    shift_trim_common_axes[0].set_ylabel("reset sample (mV)")
+    shift_trim_common_axes[0].set_title("Split reset tracks trim at both legacy and tuned common modes")
+    shift_trim_common_axes[0].grid(True, alpha=0.25)
+    shift_trim_common_axes[0].legend(loc="lower left", ncol=2, fontsize="x-small")
+    for idx, label in enumerate(shift_trim_common_labels):
+        shift_trim_common_axes[1].plot(
+            shift_trim_common_trim_mv,
+            1e3 * shift_trim_common_store_samples[idx],
+            marker="o",
+            label=f"{label} stored $h$",
+        )
+        shift_trim_common_axes[1].plot(
+            shift_trim_common_trim_mv,
+            1e3 * shift_trim_common_load_samples[idx],
+            "--",
+            alpha=0.65,
+            label=f"{label} load",
+        )
+    shift_trim_common_axes[1].axhspan(20, 85, color="0.7", alpha=0.12, label="accepted window")
+    shift_trim_common_axes[1].axhline(0, color="0.4", linewidth=0.8)
+    shift_trim_common_axes[1].set_xlabel("split-reset trim command (mV)")
+    shift_trim_common_axes[1].set_ylabel("sampled differential (mV)")
+    shift_trim_common_axes[1].set_title("Tuned 0.80 V common keeps the calibrated skew-trim branch useful")
+    shift_trim_common_axes[1].grid(True, alpha=0.25)
+    shift_trim_common_axes[1].legend(loc="upper left", ncol=2, fontsize="x-small")
+    shift_trim_common_fig.tight_layout()
+    save_plot(
+        shift_trim_common_fig,
+        "mos_hidden_writer_restored_gate_hybrid_update_forward_guard_forward_pair_96u_shifted_gate_trimmed_reset_common_ngspice",
     )
 
     shift_balance_fig, shift_balance_axes = plt.subplots(

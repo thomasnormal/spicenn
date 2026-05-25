@@ -2114,6 +2114,29 @@ must satisfy before it can replace the current behavioral prototype.
 
 \begin{figure}[H]
   \centering
+  \includegraphics[width=0.95\linewidth]{figures/mos_hidden_writer_restored_gate_hybrid_update_forward_guard_forward_pair_96u_shifted_gate_trimmed_reset_common_ngspice.png}
+  \caption{Ngspice split-reset trim check at both the tuned and legacy
+  shifted-gate reset common modes.  The previous trim/autozero fixtures used
+  a \(0.90\) V reset common mode, while the later reset-common-mode sweep
+  showed that the shifted-gate headroom fix should reset closer to the
+  initialized \(0.80\) V gate common.  This deck keeps the same physical MOS
+  split reset, \(V_{ZCM}=0.75\) V low-common-mode read, \(10\) pF coupling
+  capacitors, \(5\) pF shifted gates, and \(+20/-20\) mV forward-pair
+  threshold skew, then applies identical \(-25,-35,\) and \(-45\) mV trim
+  commands around \(0.80\) and \(0.90\) V common-mode references.  The reset
+  network samples the \(0.80\) V trims as
+  \(-24.999,-34.999,\) and \(-44.998\) mV with common mode \(0.799998\) V,
+  producing stored activations of \(25.476,43.213,\) and \(60.662\) mV.  The
+  \(0.90\) V legacy common samples \(-24.999,-34.999,\) and \(-44.999\) mV
+  with common mode \(0.899993\) V and stores \(28.438,47.897,\) and
+  \(67.343\) mV.  The tuned common mode therefore reduces the activation
+  slightly, but it preserves the calibrated trim law and keeps the selected
+  \(-35\) mV trim in a useful, non-overdriven window.}
+  \label{fig:mos-hidden-writer-restored-gate-hybrid-update-forward-guard-forward-pair-96u-shifted-gate-trimmed-reset-common-ngspice}
+\end{figure}
+
+\begin{figure}[H]
+  \centering
   \includegraphics[width=0.95\linewidth]{figures/mos_hidden_writer_restored_gate_hybrid_update_forward_guard_forward_pair_96u_shifted_gate_balanced_trim_ngspice.png}
   \caption{Ngspice signed split-reset calibration check across both
   threshold-skew polarities.  This uses the same physical reset-switch deck as

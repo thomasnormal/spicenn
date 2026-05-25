@@ -2257,6 +2257,32 @@ must satisfy before it can replace the current behavioral prototype.
 
 \begin{figure}[H]
   \centering
+  \includegraphics[width=0.95\linewidth]{figures/mos_hidden_writer_restored_gate_hybrid_update_forward_guard_forward_pair_96u_shifted_gate_reset_ref_width_ngspice.png}
+  \caption{Ngspice first-reset pulse-width recovery sweep for the finite
+  reset-reference source-impedance failure in
+  Fig.~\ref{fig:mos-hidden-writer-restored-gate-hybrid-update-forward-guard-forward-pair-96u-shifted-gate-reset-ref-impedance-ngspice}.
+  The same two severe calibrated branches are reused, but now the first
+  pre-read reset active time is swept from \(120\) to \(400\) ns while the
+  trim-reference source impedance is held at either \(10\,\mathrm{k}\Omega\)
+  or \(100\,\mathrm{k}\Omega\).  At \(10\,\mathrm{k}\Omega\), the sampled trim
+  error improves monotonically from \(23.218/27.437\) mV to
+  \(3.688/4.359\) mV for the \(-55/+65\) mV trim branches, crossing the
+  \(6\) mV trim-error gate at the longest pulse.  At
+  \(100\,\mathrm{k}\Omega\), the same \(400\) ns reset remains badly
+  under-driven: final trim errors are still \(41.818/49.421\) mV.  The
+  first-cycle stored activation shows the remaining schedule limit.  The
+  negative-trim \(10\,\mathrm{k}\Omega\) branch improves from \(1.964\) to
+  \(24.868\) mV but does not reach the calibrated window, while the
+  positive-trim branch falls from \(97.472\) to \(40.464\) mV.  Thus longer
+  reset pulses can recover moderate trim delivery, but the first-cycle
+  read/store schedule and high-impedance trim rails still need local
+  buffering or additional timing margin before the split-reset calibration
+  is array-ready.}
+  \label{fig:mos-hidden-writer-restored-gate-hybrid-update-forward-guard-forward-pair-96u-shifted-gate-reset-ref-width-ngspice}
+\end{figure}
+
+\begin{figure}[H]
+  \centering
   \includegraphics[width=0.88\linewidth]{figures/mos_hidden_writer_restored_gate_hybrid_update_forward_guard_forward_tail_bias_ngspice.png}
   \caption{Ngspice isolated forward-tail bias sweep for the same guarded MOS
   activation store.  The failed shared-bias experiment changed the read path

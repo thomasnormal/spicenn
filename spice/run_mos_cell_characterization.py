@@ -10090,6 +10090,7 @@ quit
         reset_n_vto: float | None = None,
         reset_p_vto: float | None = None,
         reset_ref_series_ohm: float = 0.0,
+        first_reset_active_width_us: float | None = None,
     ) -> tuple[np.ndarray, list[np.ndarray]]:
         model_tag = name.upper()
         stem = (
@@ -10131,22 +10132,64 @@ quit
                 reset_ref_series_ohm=reset_ref_series_ohm,
             ),
         )
+        if first_reset_active_width_us is None:
+            reset_pwl = (
+                "VRESET_HYR rst_hyr 0 PWL(0 0 2.48u 0 2.50u 1.8 2.62u 1.8 2.64u 0 "
+                "3.58u 0 3.60u 1.8 4.00u 1.8 4.02u 0 5.18u 0 5.20u 1.8 5.60u 1.8 "
+                "5.62u 0 7.8u 0)"
+            )
+            resetn_pwl = (
+                "VRESETN_HYR rstn_hyr 0 PWL(0 1.8 2.48u 1.8 2.50u 0 2.62u 0 2.64u 1.8 "
+                "3.58u 1.8 3.60u 0 4.00u 0 4.02u 1.8 5.18u 1.8 5.20u 0 5.60u 0 "
+                "5.62u 1.8 7.8u 1.8)"
+            )
+        else:
+            first_reset_end_us = 2.50 + first_reset_active_width_us
+            first_reset_fall_us = first_reset_end_us + 0.02
+            reset_pwl = (
+                f"VRESET_HYR rst_hyr 0 PWL(0 0 2.48u 0 2.50u 1.8 {first_reset_end_us:.3f}u 1.8 "
+                f"{first_reset_fall_us:.3f}u 0 3.58u 0 3.60u 1.8 4.00u 1.8 4.02u 0 "
+                "5.18u 0 5.20u 1.8 5.60u 1.8 5.62u 0 7.8u 0)"
+            )
+            resetn_pwl = (
+                f"VRESETN_HYR rstn_hyr 0 PWL(0 1.8 2.48u 1.8 2.50u 0 {first_reset_end_us:.3f}u 0 "
+                f"{first_reset_fall_us:.3f}u 1.8 3.58u 1.8 3.60u 0 4.00u 0 4.02u 1.8 "
+                "5.18u 1.8 5.20u 0 5.60u 0 5.62u 1.8 7.8u 1.8)"
+            )
         deck = replace_required(
             deck,
             "VRESET_HYR rst_hyr 0 PWL(0 0 3.58u 0 3.60u 1.8 4.00u 1.8 4.02u 0 "
             "5.18u 0 5.20u 1.8 5.60u 1.8 5.62u 0 7.8u 0)",
-            "VRESET_HYR rst_hyr 0 PWL(0 0 2.48u 0 2.50u 1.8 2.62u 1.8 2.64u 0 "
-            "3.58u 0 3.60u 1.8 4.00u 1.8 4.02u 0 5.18u 0 5.20u 1.8 5.60u 1.8 "
-            "5.62u 0 7.8u 0)",
+            reset_pwl,
         )
         deck = replace_required(
             deck,
             "VRESETN_HYR rstn_hyr 0 PWL(0 1.8 3.58u 1.8 3.60u 0 4.00u 0 4.02u 1.8 "
             "5.18u 1.8 5.20u 0 5.60u 0 5.62u 1.8 7.8u 1.8)",
-            "VRESETN_HYR rstn_hyr 0 PWL(0 1.8 2.48u 1.8 2.50u 0 2.62u 0 2.64u 1.8 "
-            "3.58u 1.8 3.60u 0 4.00u 0 4.02u 1.8 5.18u 1.8 5.20u 0 5.60u 0 "
-            "5.62u 1.8 7.8u 1.8)",
+            resetn_pwl,
         )
+        if first_reset_active_width_us is not None:
+            first_read_rise_us = max(2.72, first_reset_fall_us + 0.10)
+            if first_read_rise_us >= 3.30:
+                raise ValueError("first reset recovery sweep leaves too little read-settle time")
+            first_read_pwl = (
+                f"VREAD_HYR read_hyr 0 PWL(0 0 {first_read_rise_us - 0.02:.3f}u 0 "
+                f"{first_read_rise_us:.3f}u 1.15 3.560u 1.15 3.580u 0 7.8u 0)"
+            )
+            first_pact_start_us = min(first_read_rise_us + 0.46, 3.30)
+            first_pact_end_us = first_pact_start_us + 0.13
+            first_pact_pwl = (
+                f"VPACT_HYR pact_hyr 0 PWL(0 0 {first_pact_start_us - 0.02:.3f}u 0 "
+                f"{first_pact_start_us:.3f}u 1.8 {first_pact_end_us:.3f}u 1.8 "
+                f"{first_pact_end_us + 0.02:.3f}u 0 7.8u 0)"
+            )
+            first_pactn_pwl = (
+                f"VPACTN_HYR pactn_hyr 0 PWL(0 1.8 {first_pact_start_us - 0.02:.3f}u 1.8 "
+                f"{first_pact_start_us:.3f}u 0 {first_pact_end_us:.3f}u 0 "
+                f"{first_pact_end_us + 0.02:.3f}u 1.8 7.8u 1.8)"
+            )
+            deck = replace_required(deck, timing_read_pwl, first_read_pwl)
+            deck = replace_required(deck, timing_base_pact_pwl, first_pact_pwl + "\n" + first_pactn_pwl)
         deck = replace_required(
             deck,
             "mos_hidden_writer_restored_gate_hybrid_update_forward_read_reuse.dat",
@@ -10747,6 +10790,112 @@ quit
     require(
         np.all(np.abs(shift_refz_h_mean[:, -1] - shift_refz_h_mean[:, 0]) > 0.020),
         "megaohm reset-reference sources should visibly move the stored activation",
+    )
+
+    shift_refz_width_cases = [
+        ("w120ns", "120 ns", 0.120),
+        ("w180ns", "180 ns", 0.180),
+        ("w240ns", "240 ns", 0.240),
+        ("w320ns", "320 ns", 0.320),
+        ("w400ns", "400 ns", 0.400),
+    ]
+    shift_refz_width_source_cases = [
+        ("r10k", "10k", 1e4),
+        ("r100k", "100k", 1e5),
+    ]
+    shift_refz_width_sample_time = 3.555e-6
+    shift_refz_width_trim_error = []
+    shift_refz_width_h_sample = []
+    shift_refz_width_z_sample = []
+    shift_refz_width_reset_z = []
+    shift_refz_width_traces = []
+    for branch_name, branch_label, nfp_vto, nfm_vto, reset_trim_v in shift_reset_branch_specs:
+        branch_trim_error = []
+        branch_h_sample = []
+        branch_z_sample = []
+        branch_reset_z = []
+        for source_name, source_label, series_ohm in shift_refz_width_source_cases:
+            source_trim_error = []
+            source_h_sample = []
+            source_z_sample = []
+            source_reset_z = []
+            for width_name, width_label, width_us in shift_refz_width_cases:
+                rt, rw_cols = run_trimmed_reuse_skew_law_case(
+                    f"{branch_name}_{source_name}_{width_name}",
+                    nfp_vto,
+                    nfm_vto,
+                    reset_trim_v,
+                    family="refzwidth",
+                    reset_ref_series_ohm=series_ohm,
+                    first_reset_active_width_us=width_us,
+                )
+
+                def rwfat(time_s: float, values: np.ndarray) -> float:
+                    return float(values[np.argmin(np.abs(rt - time_s))])
+
+                gate_diff = rw_cols[0] - rw_cols[1]
+                gate_common = 0.5 * (rw_cols[0] + rw_cols[1])
+                z = rw_cols[12] - rw_cols[11]
+                store = rw_cols[16] - rw_cols[15]
+                gate_sample_time = (2.50 + width_us + 0.08) * 1e-6
+                trim_error = abs(rwfat(gate_sample_time, gate_diff) - reset_trim_v)
+                z_reset = abs(rwfat(gate_sample_time, z))
+                h_reset = abs(rwfat(gate_sample_time, store))
+                h_sample = rwfat(shift_refz_width_sample_time, store)
+                z_sample = rwfat(shift_refz_width_sample_time, z)
+                require(
+                    z_reset < 0.010 and h_reset < 0.010,
+                    f"{branch_label} {source_label} {width_label} first-reset recovery should clear z/h",
+                )
+                require(
+                    z_sample > 0.030,
+                    f"{branch_label} {source_label} {width_label} first-reset recovery should keep useful read preactivation",
+                )
+                source_trim_error.append(trim_error)
+                source_h_sample.append(h_sample)
+                source_z_sample.append(z_sample)
+                source_reset_z.append(z_reset)
+                if width_name in {"w120ns", "w400ns"}:
+                    shift_refz_width_traces.append(
+                        (branch_label, source_label, width_label, rt, store)
+                    )
+            branch_trim_error.append(source_trim_error)
+            branch_h_sample.append(source_h_sample)
+            branch_z_sample.append(source_z_sample)
+            branch_reset_z.append(source_reset_z)
+        shift_refz_width_trim_error.append(branch_trim_error)
+        shift_refz_width_h_sample.append(branch_h_sample)
+        shift_refz_width_z_sample.append(branch_z_sample)
+        shift_refz_width_reset_z.append(branch_reset_z)
+
+    shift_refz_width_trim_error = np.array(shift_refz_width_trim_error)
+    shift_refz_width_h_sample = np.array(shift_refz_width_h_sample)
+    shift_refz_width_z_sample = np.array(shift_refz_width_z_sample)
+    shift_refz_width_reset_z = np.array(shift_refz_width_reset_z)
+    r10k_idx = 0
+    r100k_idx = 1
+    require(
+        np.all(np.diff(shift_refz_width_trim_error[:, r10k_idx, :], axis=1) < 0.0),
+        "10k reset-reference trim error should improve monotonically with first-reset width",
+    )
+    require(
+        np.all(shift_refz_width_trim_error[:, r10k_idx, -1] < 0.006),
+        "400 ns first reset should recover 10k trim delivery",
+    )
+    require(
+        np.all(
+            np.abs(shift_refz_width_h_sample[:, r10k_idx, -1] - shift_refz_width_h_sample[:, r10k_idx, 0])
+            > 0.020
+        ),
+        "400 ns first reset should visibly improve the 10k first-cycle activation error",
+    )
+    require(
+        np.all(shift_refz_width_trim_error[:, r100k_idx, -1] > 0.020),
+        "400 ns first reset should still not be enough for 100k trim-source impedance",
+    )
+    require(
+        np.all(np.abs(shift_refz_width_h_sample[:, r100k_idx, -1] - shift_refz_width_h_sample[:, r10k_idx, -1]) > 0.020),
+        "100k trim-source impedance should still visibly miss the recovered 10k activation",
     )
 
     tail_bias_forward_tail_line = "MNFT_HYR ftail_hyr vbias 0 0 NMOS L={LCH} W=48u"
@@ -12334,6 +12483,68 @@ quit
     save_plot(
         shift_refz_fig,
         "mos_hidden_writer_restored_gate_hybrid_update_forward_guard_forward_pair_96u_shifted_gate_reset_ref_impedance_ngspice",
+    )
+
+    shift_refz_width_fig, shift_refz_width_axes = plt.subplots(
+        3,
+        1,
+        figsize=(7.4, 7.4),
+        gridspec_kw={"height_ratios": [0.85, 0.85, 1.0]},
+    )
+    refz_width_x = np.array([width_us * 1e3 for _name, _label, width_us in shift_refz_width_cases])
+    for source_idx, (_source_name, source_label, _series_ohm) in enumerate(shift_refz_width_source_cases):
+        for branch_idx, (_branch_name, branch_label, _nfp, _nfm, _trim) in enumerate(shift_reset_branch_specs):
+            marker = "o-" if branch_idx == 0 else "s--"
+            alpha = 1.0 if source_label == "10k" else 0.55
+            shift_refz_width_axes[0].plot(
+                refz_width_x,
+                1e3 * shift_refz_width_trim_error[branch_idx, source_idx],
+                marker,
+                alpha=alpha,
+                label=f"{branch_label.split(', ')[1]}, {source_label}",
+            )
+    shift_refz_width_axes[0].axhline(6, color="0.4", linestyle=":", linewidth=0.9, label="6 mV trim-error gate")
+    shift_refz_width_axes[0].set_ylabel("max trim error (mV)")
+    shift_refz_width_axes[0].set_title("Longer first reset recovers moderate trim-source impedance")
+    shift_refz_width_axes[0].grid(True, axis="y", alpha=0.25)
+    shift_refz_width_axes[0].legend(loc="upper right", ncol=2, fontsize="xx-small")
+    for source_idx, (_source_name, source_label, _series_ohm) in enumerate(shift_refz_width_source_cases):
+        for branch_idx, (_branch_name, branch_label, _nfp, _nfm, _trim) in enumerate(shift_reset_branch_specs):
+            marker = "o-" if branch_idx == 0 else "s--"
+            alpha = 1.0 if source_label == "10k" else 0.55
+            shift_refz_width_axes[1].plot(
+                refz_width_x,
+                1e3 * shift_refz_width_h_sample[branch_idx, source_idx],
+                marker,
+                alpha=alpha,
+                label=f"{branch_label.split(', ')[1]}, {source_label}",
+            )
+    shift_refz_width_axes[1].axhspan(40, 55, color="0.7", alpha=0.12, label="calibrated window")
+    shift_refz_width_axes[1].set_ylabel("first stored $h$ (mV)")
+    shift_refz_width_axes[1].set_title("Trim recovery improves 10k activation, but schedule still matters")
+    shift_refz_width_axes[1].grid(True, axis="y", alpha=0.25)
+    shift_refz_width_axes[1].legend(loc="upper right", ncol=2, fontsize="xx-small")
+    for branch_label, source_label, width_label, rwt, store in shift_refz_width_traces:
+        if source_label == "100k" and width_label == "120 ns":
+            continue
+        linestyle = "-" if source_label == "10k" else ":"
+        shift_refz_width_axes[2].plot(
+            1e6 * rwt,
+            1e3 * store,
+            linestyle,
+            label=f"{branch_label.split(', ')[1]}, {source_label}, {width_label}",
+        )
+    shift_refz_width_axes[2].axhline(0, color="0.4", linewidth=0.8)
+    shift_refz_width_axes[2].set_xlim(2.35, 3.75)
+    shift_refz_width_axes[2].set_xlabel("time (us)")
+    shift_refz_width_axes[2].set_ylabel("stored $h$ (mV)")
+    shift_refz_width_axes[2].set_title("First-cycle traces expose reset-width recovery")
+    shift_refz_width_axes[2].grid(True, alpha=0.25)
+    shift_refz_width_axes[2].legend(loc="upper left", ncol=2, fontsize="xx-small")
+    shift_refz_width_fig.tight_layout()
+    save_plot(
+        shift_refz_width_fig,
+        "mos_hidden_writer_restored_gate_hybrid_update_forward_guard_forward_pair_96u_shifted_gate_reset_ref_width_ngspice",
     )
 
     tail_bias_fig, tail_bias_axes = plt.subplots(2, 1, figsize=(7.4, 6.4), gridspec_kw={"height_ratios": [1.0, 0.8]})

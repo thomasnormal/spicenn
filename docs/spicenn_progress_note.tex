@@ -2736,6 +2736,28 @@ must satisfy before it can replace the current behavioral prototype.
 
 \begin{figure}[H]
   \centering
+  \includegraphics[width=0.95\linewidth]{figures/mos_hidden_writer_restored_gate_hybrid_update_forward_guard_forward_pair_96u_shifted_gate_reset_ref_partition_refresh_ngspice.png}
+  \caption{Ngspice joint local-partition and refresh-impedance sweep for the
+  remaining \(1\,\mu\mathrm{s}\) repeated fresh-bank failure.  The total
+  shifted-gate load is still sixteen \(5\) pF gates and the total split-trim
+  reservoir is still \(1\) nF.  Each partition keeps a passive reservoir, real
+  finite refresh resistance, \(2\times\) MOS startup precharge, and ordinary
+  complementary reset switches.  With \(100\,\mathrm{k}\Omega\) local refresh,
+  even sixteen one-load partitions fail by the third cycle
+  (\(11.41\) mV worst error).  Eight two-load partitions with
+  \(10\,\mathrm{k}\Omega\) refresh nearly close the case but still miss on the
+  \(+65\) mV branch (\(6.99\) mV).  The same eight partitions pass with
+  \(3\,\mathrm{k}\Omega\) refresh (\(3.77\) mV), and sixteen one-load
+  partitions pass with \(10\,\mathrm{k}\Omega\) refresh (\(4.89\) mV).  A
+  single global \(1\times16\) reservoir still fails even with a
+  \(3\,\mathrm{k}\Omega\) source (\(9.84\) mV).  Thus the \(1\,\mu\mathrm{s}\)
+  reset-reference cell is not fixed by one scalar knob: it needs local
+  reservoir partitioning and a low enough local refresh impedance.}
+  \label{fig:mos-hidden-writer-restored-gate-hybrid-update-forward-guard-forward-pair-96u-shifted-gate-reset-ref-partition-refresh-ngspice}
+\end{figure}
+
+\begin{figure}[H]
+  \centering
   \includegraphics[width=0.95\linewidth]{figures/mos_hidden_writer_restored_gate_hybrid_update_forward_guard_forward_pair_96u_shifted_gate_reset_ref_precharge_strength_ngspice.png}
   \caption{Ngspice startup-precharge strength-margin check for the same cold
   local trim-reference reservoir.  The \(250\) pF reservoirs, \(100\)

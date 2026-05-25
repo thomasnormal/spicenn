@@ -15978,6 +15978,338 @@ quit
         "partitioned fanout reset should keep first and last loads in each partition matched",
     )
 
+    shift_refz_fanout_partition_refresh_parts = [
+        ("p1", "1 x 16", 1),
+        ("p4", "4 x 4", 4),
+        ("p8", "8 x 2", 8),
+        ("p16", "16 x 1", 16),
+    ]
+    shift_refz_fanout_partition_refresh_sources = [
+        ("r100k", "100 kOhm", 100_000.0),
+        ("r30k", "30 kOhm", 30_000.0),
+        ("r10k", "10 kOhm", 10_000.0),
+        ("r3k", "3 kOhm", 3_000.0),
+    ]
+
+    def run_reset_ref_partition_refresh_case(
+        branch_name: str,
+        reset_trim_v: float,
+    ) -> tuple[np.ndarray, list[np.ndarray]]:
+        stem = (
+            "mos_hidden_writer_restored_gate_hybrid_update_forward_guard_"
+            f"forward_pair_96u_shifted_gate_reset_ref_partition_refresh_{branch_name}"
+        )
+        reset_common_v = shift_refz_precharge_tuned_common_v
+        reset_ref_p = reset_common_v + 0.5 * reset_trim_v
+        reset_ref_m = reset_common_v - 0.5 * reset_trim_v
+        total_cref_pf = 1000.0
+        total_load_count = 16
+        pulse_width_ns = 40.0
+        strength_scale = 2.0
+        gap_us = 1.0
+        pre_end_us = 0.420 + 0.001 * pulse_width_ns
+        pre_fall_us = pre_end_us + 0.020
+        wpren_u = 300.0 * strength_scale
+        wprep_u = 900.0 * strength_scale
+        tran_stop_us = 2.95 + 2.0 * gap_us
+        deck_lines = [
+            "* Joint partition/source-impedance sweep for 1 us repeated fresh fanout reset.",
+            "* Total reservoir capacitance and load count stay fixed; only local partitioning",
+            "* and the real local refresh resistance are swept.",
+            COMMON_MODELS,
+            ".param CGATE=5p WRESETN=60u WRESETP=180u",
+            "VDD vdd 0 1.8",
+        ]
+        prints = []
+        case_idx = 0
+        for part_name, part_label, partition_count in shift_refz_fanout_partition_refresh_parts:
+            cap_pf = total_cref_pf / partition_count
+            loads_per_partition = total_load_count // partition_count
+            for source_name, source_label, source_ohm in shift_refz_fanout_partition_refresh_sources:
+                deck_lines.extend(
+                    [
+                        (
+                            f"* {part_name}_{source_name}: {part_label}, {cap_pf:g} pF per partition, "
+                            f"{source_label} local refresh, 1 us cadence."
+                        ),
+                        (
+                            f"VPRE_FOPARI_{case_idx} pre_fopari_{case_idx} 0 "
+                            f"PWL(0 0 0.400u 0 0.420u 1.8 {pre_end_us:.3f}u 1.8 "
+                            f"{pre_fall_us:.3f}u 0 {tran_stop_us:.3f}u 0)"
+                        ),
+                        (
+                            f"VPREN_FOPARI_{case_idx} pren_fopari_{case_idx} 0 "
+                            f"PWL(0 1.8 0.400u 1.8 0.420u 0 {pre_end_us:.3f}u 0 "
+                            f"{pre_fall_us:.3f}u 1.8 {tran_stop_us:.3f}u 1.8)"
+                        ),
+                    ]
+                )
+                for part_idx in range(partition_count):
+                    deck_lines.extend(
+                        [
+                            f"VZRP_FOPARI_{case_idx}_{part_idx} zrp_fopari_src_{case_idx}_{part_idx} 0 {reset_ref_p:.5f}",
+                            f"VZRM_FOPARI_{case_idx}_{part_idx} zrm_fopari_src_{case_idx}_{part_idx} 0 {reset_ref_m:.5f}",
+                            f"RZRP_FOPARI_{case_idx}_{part_idx} zrp_fopari_src_{case_idx}_{part_idx} zrp_fopari_{case_idx}_{part_idx} {source_ohm:g}",
+                            f"RZRM_FOPARI_{case_idx}_{part_idx} zrm_fopari_src_{case_idx}_{part_idx} zrm_fopari_{case_idx}_{part_idx} {source_ohm:g}",
+                            f"CZRP_FOPARI_{case_idx}_{part_idx} zrp_fopari_{case_idx}_{part_idx} 0 {cap_pf:g}p IC=0",
+                            f"CZRM_FOPARI_{case_idx}_{part_idx} zrm_fopari_{case_idx}_{part_idx} 0 {cap_pf:g}p IC=0",
+                            (
+                                f"MPREPN_FOPARI_{case_idx}_{part_idx} zrp_fopari_{case_idx}_{part_idx} "
+                                f"pre_fopari_{case_idx} zrp_fopari_src_{case_idx}_{part_idx} 0 "
+                                f"NMOS L={{LCH}} W={wpren_u:g}u"
+                            ),
+                            (
+                                f"MPREMN_FOPARI_{case_idx}_{part_idx} zrm_fopari_{case_idx}_{part_idx} "
+                                f"pre_fopari_{case_idx} zrm_fopari_src_{case_idx}_{part_idx} 0 "
+                                f"NMOS L={{LCH}} W={wpren_u:g}u"
+                            ),
+                            (
+                                f"MPREPP_FOPARI_{case_idx}_{part_idx} zrp_fopari_{case_idx}_{part_idx} "
+                                f"pren_fopari_{case_idx} zrp_fopari_src_{case_idx}_{part_idx} vdd "
+                                f"PMOS L={{LCH}} W={wprep_u:g}u"
+                            ),
+                            (
+                                f"MPREMP_FOPARI_{case_idx}_{part_idx} zrm_fopari_{case_idx}_{part_idx} "
+                                f"pren_fopari_{case_idx} zrm_fopari_src_{case_idx}_{part_idx} vdd "
+                                f"PMOS L={{LCH}} W={wprep_u:g}u"
+                            ),
+                        ]
+                    )
+                for cycle_idx in range(3):
+                    reset_start_us = 2.50 + cycle_idx * gap_us
+                    reset_end_us = reset_start_us + 0.120
+                    reset_fall_us = reset_end_us + 0.020
+                    deck_lines.extend(
+                        [
+                            (
+                                f"VRST_FOPARI_{case_idx}_{cycle_idx} rst_fopari_{case_idx}_{cycle_idx} 0 "
+                                f"PWL(0 0 {reset_start_us - 0.020:.3f}u 0 "
+                                f"{reset_start_us:.3f}u 1.8 {reset_end_us:.3f}u 1.8 "
+                                f"{reset_fall_us:.3f}u 0 {tran_stop_us:.3f}u 0)"
+                            ),
+                            (
+                                f"VRSTN_FOPARI_{case_idx}_{cycle_idx} rstn_fopari_{case_idx}_{cycle_idx} 0 "
+                                f"PWL(0 1.8 {reset_start_us - 0.020:.3f}u 1.8 "
+                                f"{reset_start_us:.3f}u 0 {reset_end_us:.3f}u 0 "
+                                f"{reset_fall_us:.3f}u 1.8 {tran_stop_us:.3f}u 1.8)"
+                            ),
+                        ]
+                    )
+                    for part_idx in range(partition_count):
+                        for load_idx in range(loads_per_partition):
+                            deck_lines.extend(
+                                [
+                                    (
+                                        f"CZPG_FOPARI_{case_idx}_{cycle_idx}_{part_idx}_{load_idx} "
+                                        f"zpg_fopari_{case_idx}_{cycle_idx}_{part_idx}_{load_idx} 0 "
+                                        f"{{CGATE}} IC={reset_common_v:.5f}"
+                                    ),
+                                    (
+                                        f"CZMG_FOPARI_{case_idx}_{cycle_idx}_{part_idx}_{load_idx} "
+                                        f"zmg_fopari_{case_idx}_{cycle_idx}_{part_idx}_{load_idx} 0 "
+                                        f"{{CGATE}} IC={reset_common_v:.5f}"
+                                    ),
+                                    (
+                                        f"MRZGPN_FOPARI_{case_idx}_{cycle_idx}_{part_idx}_{load_idx} "
+                                        f"zpg_fopari_{case_idx}_{cycle_idx}_{part_idx}_{load_idx} "
+                                        f"rst_fopari_{case_idx}_{cycle_idx} zrp_fopari_{case_idx}_{part_idx} 0 "
+                                        f"NMOS L={{LCH}} W={{WRESETN}}"
+                                    ),
+                                    (
+                                        f"MRZGMN_FOPARI_{case_idx}_{cycle_idx}_{part_idx}_{load_idx} "
+                                        f"zmg_fopari_{case_idx}_{cycle_idx}_{part_idx}_{load_idx} "
+                                        f"rst_fopari_{case_idx}_{cycle_idx} zrm_fopari_{case_idx}_{part_idx} 0 "
+                                        f"NMOS L={{LCH}} W={{WRESETN}}"
+                                    ),
+                                    (
+                                        f"MRZGPP_FOPARI_{case_idx}_{cycle_idx}_{part_idx}_{load_idx} "
+                                        f"zpg_fopari_{case_idx}_{cycle_idx}_{part_idx}_{load_idx} "
+                                        f"rstn_fopari_{case_idx}_{cycle_idx} zrp_fopari_{case_idx}_{part_idx} vdd "
+                                        f"PMOS L={{LCH}} W={{WRESETP}}"
+                                    ),
+                                    (
+                                        f"MRZGMP_FOPARI_{case_idx}_{cycle_idx}_{part_idx}_{load_idx} "
+                                        f"zmg_fopari_{case_idx}_{cycle_idx}_{part_idx}_{load_idx} "
+                                        f"rstn_fopari_{case_idx}_{cycle_idx} zrm_fopari_{case_idx}_{part_idx} vdd "
+                                        f"PMOS L={{LCH}} W={{WRESETP}}"
+                                    ),
+                                ]
+                            )
+                selected_part_indices = [0] if partition_count == 1 else [0, partition_count - 1]
+                for part_idx in selected_part_indices:
+                    prints.extend(
+                        [
+                            f"v(zrp_fopari_{case_idx}_{part_idx})",
+                            f"v(zrm_fopari_{case_idx}_{part_idx})",
+                        ]
+                    )
+                    last_load_idx = loads_per_partition - 1
+                    for cycle_idx in range(3):
+                        prints.extend(
+                            [
+                                f"v(zpg_fopari_{case_idx}_{cycle_idx}_{part_idx}_0)",
+                                f"v(zmg_fopari_{case_idx}_{cycle_idx}_{part_idx}_0)",
+                                f"v(zpg_fopari_{case_idx}_{cycle_idx}_{part_idx}_{last_load_idx})",
+                                f"v(zmg_fopari_{case_idx}_{cycle_idx}_{part_idx}_{last_load_idx})",
+                            ]
+                        )
+                case_idx += 1
+        deck_lines.extend(
+            [
+                ".control",
+                "set noaskquit",
+                f"tran 5n {tran_stop_us:.3f}u uic",
+                f"wrdata {stem}.dat " + " ".join(prints),
+                "quit",
+                ".endc",
+                ".end",
+            ]
+        )
+        data = run_ngspice("\n".join(deck_lines), stem)
+        return load_wrdata(data, len(prints))
+
+    shift_refz_fanout_partition_refresh_trim_error = []
+    shift_refz_fanout_partition_refresh_common_error = []
+    shift_refz_fanout_partition_refresh_load_mismatch = []
+    shift_refz_fanout_partition_refresh_ref_diff = []
+    shift_refz_fanout_partition_refresh_traces = []
+    for branch_name, branch_label, _nfp_vto, _nfm_vto, reset_trim_v in shift_reset_branch_specs:
+        foparit, fanout_partition_refresh_cols = run_reset_ref_partition_refresh_case(
+            branch_name,
+            reset_trim_v,
+        )
+
+        def fopariat(time_s: float, values: np.ndarray) -> float:
+            return float(values[np.argmin(np.abs(foparit - time_s))])
+
+        branch_trim_error = []
+        branch_common_error = []
+        branch_load_mismatch = []
+        branch_ref_diff = []
+        col_base = 0
+        for _part_name, part_label, partition_count in shift_refz_fanout_partition_refresh_parts:
+            part_trim_error = []
+            part_common_error = []
+            part_load_mismatch = []
+            part_ref_diff = []
+            for _source_name, source_label, _source_ohm in shift_refz_fanout_partition_refresh_sources:
+                selected_partition_count = 1 if partition_count == 1 else 2
+                case_width = 14 * selected_partition_count
+                source_trim_error = []
+                source_common_error = []
+                source_load_mismatch = []
+                source_ref_diff = []
+                for cycle_idx in range(3):
+                    cycle_trim_errors = []
+                    cycle_common_errors = []
+                    cycle_load_mismatches = []
+                    cycle_ref_diffs = []
+                    sample_time_s = (2.50 + cycle_idx * 1.0 + 0.200) * 1e-6
+                    for selected_part_idx in range(selected_partition_count):
+                        part_col_base = col_base + 14 * selected_part_idx
+                        ref_p = fanout_partition_refresh_cols[part_col_base]
+                        ref_m = fanout_partition_refresh_cols[part_col_base + 1]
+                        ref_diff = ref_p - ref_m
+                        gate_col_base = part_col_base + 2 + 4 * cycle_idx
+                        gate_p_first = fanout_partition_refresh_cols[gate_col_base]
+                        gate_m_first = fanout_partition_refresh_cols[gate_col_base + 1]
+                        gate_p_last = fanout_partition_refresh_cols[gate_col_base + 2]
+                        gate_m_last = fanout_partition_refresh_cols[gate_col_base + 3]
+                        gate_diff_first = gate_p_first - gate_m_first
+                        gate_diff_last = gate_p_last - gate_m_last
+                        gate_common_first = 0.5 * (gate_p_first + gate_m_first)
+                        cycle_trim_errors.append(abs(fopariat(sample_time_s, gate_diff_first) - reset_trim_v))
+                        cycle_common_errors.append(
+                            abs(fopariat(sample_time_s, gate_common_first) - shift_refz_precharge_tuned_common_v)
+                        )
+                        cycle_load_mismatches.append(abs(fopariat(sample_time_s, gate_diff_first - gate_diff_last)))
+                        cycle_ref_diffs.append(fopariat(sample_time_s, ref_diff))
+                    source_trim_error.append(max(cycle_trim_errors))
+                    source_common_error.append(max(cycle_common_errors))
+                    source_load_mismatch.append(max(cycle_load_mismatches))
+                    source_ref_diff.append(np.mean(cycle_ref_diffs))
+                part_trim_error.append(source_trim_error)
+                part_common_error.append(source_common_error)
+                part_load_mismatch.append(source_load_mismatch)
+                part_ref_diff.append(source_ref_diff)
+                if branch_name == "pos_trim" and (
+                    (part_label == "1 x 16" and source_label == "100 kOhm")
+                    or (part_label == "8 x 2" and source_label == "10 kOhm")
+                    or (part_label == "8 x 2" and source_label == "3 kOhm")
+                    or (part_label == "16 x 1" and source_label in {"10 kOhm", "3 kOhm"})
+                ):
+                    ref_p0 = fanout_partition_refresh_cols[col_base]
+                    ref_m0 = fanout_partition_refresh_cols[col_base + 1]
+                    shift_refz_fanout_partition_refresh_traces.append((f"{part_label}, {source_label}", foparit, ref_p0 - ref_m0))
+                col_base += case_width
+            branch_trim_error.append(part_trim_error)
+            branch_common_error.append(part_common_error)
+            branch_load_mismatch.append(part_load_mismatch)
+            branch_ref_diff.append(part_ref_diff)
+        shift_refz_fanout_partition_refresh_trim_error.append(branch_trim_error)
+        shift_refz_fanout_partition_refresh_common_error.append(branch_common_error)
+        shift_refz_fanout_partition_refresh_load_mismatch.append(branch_load_mismatch)
+        shift_refz_fanout_partition_refresh_ref_diff.append(branch_ref_diff)
+
+    shift_refz_fanout_partition_refresh_trim_error = np.array(shift_refz_fanout_partition_refresh_trim_error)
+    shift_refz_fanout_partition_refresh_common_error = np.array(shift_refz_fanout_partition_refresh_common_error)
+    shift_refz_fanout_partition_refresh_load_mismatch = np.array(shift_refz_fanout_partition_refresh_load_mismatch)
+    shift_refz_fanout_partition_refresh_ref_diff = np.array(shift_refz_fanout_partition_refresh_ref_diff)
+    fopari_p1_idx = 0
+    fopari_p8_idx = 2
+    fopari_p16_idx = 3
+    fopari_r100k_idx = 0
+    fopari_r10k_idx = 2
+    fopari_r3k_idx = 3
+    require(
+        np.all(shift_refz_fanout_partition_refresh_trim_error[:, :, :, for_cycle1_idx] < 0.006),
+        "partition/source refresh sweep should keep the startup-precharged first reset valid",
+    )
+    require(
+        np.all(
+            np.diff(shift_refz_fanout_partition_refresh_trim_error[:, :, :, for_cycle3_idx], axis=2) < 0.0
+        ),
+        "1 us third-cycle trim error should improve monotonically as local refresh impedance falls",
+    )
+    require(
+        np.all(
+            np.diff(shift_refz_fanout_partition_refresh_trim_error[:, :, fopari_r100k_idx, for_cycle3_idx], axis=1)
+            < 0.0
+        ),
+        "100 kOhm 1 us third-cycle trim error should still improve monotonically with partitioning",
+    )
+    require(
+        np.all(shift_refz_fanout_partition_refresh_trim_error[:, fopari_p16_idx, fopari_r100k_idx, for_cycle3_idx] > 0.006),
+        "100 kOhm refresh should keep the one-load-partition 1 us case visibly failing",
+    )
+    require(
+        shift_refz_fanout_partition_refresh_trim_error[1, fopari_p8_idx, fopari_r10k_idx, for_cycle3_idx] > 0.006,
+        "eight two-load partitions with 10 kOhm local refresh should still expose the positive-trim 1 us limit",
+    )
+    require(
+        np.all(shift_refz_fanout_partition_refresh_trim_error[:, fopari_p8_idx, fopari_r3k_idx, for_cycle3_idx] < 0.006),
+        "eight two-load partitions with 3 kOhm local refresh should recover 1 us repeated resets",
+    )
+    require(
+        np.all(shift_refz_fanout_partition_refresh_trim_error[:, fopari_p16_idx, fopari_r10k_idx, for_cycle3_idx] < 0.006),
+        "sixteen one-load partitions with 10 kOhm local refresh should recover 1 us repeated resets",
+    )
+    require(
+        np.all(
+            shift_refz_fanout_partition_refresh_trim_error[:, fopari_p1_idx, fopari_r3k_idx, for_cycle3_idx]
+            > shift_refz_fanout_partition_refresh_trim_error[:, fopari_p16_idx, fopari_r10k_idx, for_cycle3_idx]
+        ),
+        "partitioning should buy more 1 us margin than merely making the single global source very strong",
+    )
+    require(
+        np.max(shift_refz_fanout_partition_refresh_common_error) < 0.010,
+        "partition/source refresh sweep should preserve reset common mode",
+    )
+    require(
+        np.max(shift_refz_fanout_partition_refresh_load_mismatch) < 1e-5,
+        "partition/source refresh sweep should keep first and last loads in each partition matched",
+    )
+
     tail_bias_forward_tail_line = "MNFT_HYR ftail_hyr vbias 0 0 NMOS L={LCH} W=48u"
     tail_bias_cases_v = [0.70, 0.80, 0.90, 0.95, 1.05, 1.15, 1.25]
     tail_bias_labels = []
@@ -19643,6 +19975,116 @@ quit
     save_plot(
         shift_refz_fanout_partition_fig,
         "mos_hidden_writer_restored_gate_hybrid_update_forward_guard_forward_pair_96u_shifted_gate_reset_ref_fanout_partition_ngspice",
+    )
+
+    shift_refz_fanout_partition_refresh_fig, shift_refz_fanout_partition_refresh_axes = plt.subplots(
+        3,
+        1,
+        figsize=(7.4, 7.4),
+        gridspec_kw={"height_ratios": [0.95, 0.9, 1.0]},
+    )
+    fopari_source_x = np.array(
+        [source_ohm for _name, _label, source_ohm in shift_refz_fanout_partition_refresh_sources]
+    )
+    fopari_source_labels = [
+        label for _name, label, _source_ohm in shift_refz_fanout_partition_refresh_sources
+    ]
+    for part_idx, (_part_name, part_label, _partition_count) in enumerate(shift_refz_fanout_partition_refresh_parts):
+        marker = {"1 x 16": "o-", "4 x 4": "s--", "8 x 2": "^-.", "16 x 1": "d:"}[part_label]
+        shift_refz_fanout_partition_refresh_axes[0].plot(
+            fopari_source_x,
+            1e3
+            * np.max(
+                shift_refz_fanout_partition_refresh_trim_error[:, part_idx, :, for_cycle3_idx],
+                axis=0,
+            ),
+            marker,
+            label=f"{part_label}, cycle 3",
+        )
+    shift_refz_fanout_partition_refresh_axes[0].axhline(
+        6,
+        color="0.4",
+        linestyle=":",
+        linewidth=0.9,
+        label="6 mV trim-error gate",
+    )
+    shift_refz_fanout_partition_refresh_axes[0].set_xscale("log")
+    shift_refz_fanout_partition_refresh_axes[0].invert_xaxis()
+    shift_refz_fanout_partition_refresh_axes[0].set_xticks(fopari_source_x)
+    shift_refz_fanout_partition_refresh_axes[0].set_xticklabels(fopari_source_labels)
+    shift_refz_fanout_partition_refresh_axes[0].set_ylabel("trim error (mV)")
+    shift_refz_fanout_partition_refresh_axes[0].set_title(
+        "Fast repeated reset needs partitioning plus lower local refresh impedance"
+    )
+    shift_refz_fanout_partition_refresh_axes[0].grid(True, axis="y", alpha=0.25)
+    shift_refz_fanout_partition_refresh_axes[0].text(
+        0.43,
+        0.28,
+        "16 x 1, 100 kOhm, cycle 3 max = "
+        f"{1e3 * np.max(shift_refz_fanout_partition_refresh_trim_error[:, fopari_p16_idx, fopari_r100k_idx, for_cycle3_idx]):.2f} mV / >6 mV\n"
+        "8 x 2, 10 kOhm, cycle 3 max = "
+        f"{1e3 * np.max(shift_refz_fanout_partition_refresh_trim_error[:, fopari_p8_idx, fopari_r10k_idx, for_cycle3_idx]):.2f} mV / >6 mV\n"
+        "8 x 2, 3 kOhm, cycle 3 max = "
+        f"{1e3 * np.max(shift_refz_fanout_partition_refresh_trim_error[:, fopari_p8_idx, fopari_r3k_idx, for_cycle3_idx]):.2f} mV / <6 mV\n"
+        "16 x 1, 10 kOhm, cycle 3 max = "
+        f"{1e3 * np.max(shift_refz_fanout_partition_refresh_trim_error[:, fopari_p16_idx, fopari_r10k_idx, for_cycle3_idx]):.2f} mV / <6 mV\n"
+        "1 x 16, 3 kOhm, cycle 3 min = "
+        f"{1e3 * np.min(shift_refz_fanout_partition_refresh_trim_error[:, fopari_p1_idx, fopari_r3k_idx, for_cycle3_idx]):.2f} mV",
+        transform=shift_refz_fanout_partition_refresh_axes[0].transAxes,
+        fontsize="x-small",
+        bbox={"facecolor": "white", "alpha": 0.82, "edgecolor": "0.8"},
+    )
+    shift_refz_fanout_partition_refresh_axes[0].legend(loc="upper right", ncol=2, fontsize="xx-small")
+    fopari_cycle_series = [
+        ("1 x 16, 100 kOhm", fopari_p1_idx, fopari_r100k_idx, "o:"),
+        ("1 x 16, 3 kOhm", fopari_p1_idx, fopari_r3k_idx, "s--"),
+        ("8 x 2, 10 kOhm", fopari_p8_idx, fopari_r10k_idx, "^:"),
+        ("8 x 2, 3 kOhm", fopari_p8_idx, fopari_r3k_idx, "^-"),
+        ("16 x 1, 10 kOhm", fopari_p16_idx, fopari_r10k_idx, "d-"),
+    ]
+    for label, part_idx, source_idx, marker in fopari_cycle_series:
+        shift_refz_fanout_partition_refresh_axes[1].plot(
+            [1, 2, 3],
+            1e3 * shift_refz_fanout_partition_refresh_trim_error[1, part_idx, source_idx, :],
+            marker,
+            label=label,
+        )
+    shift_refz_fanout_partition_refresh_axes[1].axhline(6, color="0.4", linestyle=":", linewidth=0.9)
+    shift_refz_fanout_partition_refresh_axes[1].set_xticks([1, 2, 3])
+    shift_refz_fanout_partition_refresh_axes[1].set_ylabel("+65 mV error (mV)")
+    shift_refz_fanout_partition_refresh_axes[1].set_title(
+        "The 1 us positive-trim branch recovers only with local recharge margin"
+    )
+    shift_refz_fanout_partition_refresh_axes[1].grid(True, axis="y", alpha=0.25)
+    shift_refz_fanout_partition_refresh_axes[1].legend(loc="upper right", ncol=2, fontsize="xx-small")
+    for label, foparit, ref_diff in shift_refz_fanout_partition_refresh_traces:
+        linestyle = ":" if "100 kOhm" in label else ("--" if "8 x 2" in label else "-")
+        shift_refz_fanout_partition_refresh_axes[2].plot(
+            1e6 * foparit,
+            1e3 * ref_diff,
+            linestyle,
+            label=label,
+        )
+    shift_refz_fanout_partition_refresh_axes[2].axhline(
+        65,
+        color="0.4",
+        linestyle=":",
+        linewidth=0.9,
+        label="target +65 mV",
+    )
+    shift_refz_fanout_partition_refresh_axes[2].axhline(0, color="0.4", linewidth=0.8)
+    shift_refz_fanout_partition_refresh_axes[2].set_xlim(2.3, 4.9)
+    shift_refz_fanout_partition_refresh_axes[2].set_xlabel("time (us)")
+    shift_refz_fanout_partition_refresh_axes[2].set_ylabel("partition trim (mV)")
+    shift_refz_fanout_partition_refresh_axes[2].set_title(
+        "A smaller local reservoir can recharge inside the 1 us gap when the source is stronger"
+    )
+    shift_refz_fanout_partition_refresh_axes[2].grid(True, alpha=0.25)
+    shift_refz_fanout_partition_refresh_axes[2].legend(loc="lower right", ncol=2, fontsize="xx-small")
+    shift_refz_fanout_partition_refresh_fig.tight_layout()
+    save_plot(
+        shift_refz_fanout_partition_refresh_fig,
+        "mos_hidden_writer_restored_gate_hybrid_update_forward_guard_forward_pair_96u_shifted_gate_reset_ref_partition_refresh_ngspice",
     )
 
     tail_bias_fig, tail_bias_axes = plt.subplots(2, 1, figsize=(7.4, 6.4), gridspec_kw={"height_ratios": [1.0, 0.8]})

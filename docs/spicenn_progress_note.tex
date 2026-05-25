@@ -2773,10 +2773,15 @@ must satisfy before it can replace the current behavioral prototype.
   \centering
   \includegraphics[width=0.88\linewidth]{figures/mos_writer_analog_gate_ngspice.png}
   \caption{Ngspice analog gate-strength characterization of the MOS writer.
-  The selected same-sign branch uses active-low PMOS gates, so lowering either
-  the activation gate or the hidden-error gate increases the selected
-  \(W^+\) write current.  The sweep shows a monotone, compressed update curve
-  over the tested gate range while the inactive \(W^-\) branch remains quiet.
+  The selected same-sign and opposite-sign branches both use active-low PMOS
+  gates, so lowering either the activation gate or the hidden-error gate
+  increases the selected \(W^+\) or \(W^-\) write current.  The sweep now
+  instantiates matched \(W^+\) and \(W^-\) copies for both gate axes:
+  activation-gate selected steps are \(0.360/2.994/5.381/6.531\) mV on both
+  rails, hidden-error-gate selected steps are \(0.317/2.141/4.687/7.337\) mV
+  on both rails, and inactive opposite rails remain at about
+  \(0.004\,\mu\mathrm{V}\).  The result is monotone and symmetric, but
+  compressed over the tested gate range.
   This is not an ideal four-quadrant multiplier; it is the usable analog
   operating window for a local coincidence writer whose magnitude is still
   controlled by the stored rails and phase pulse.}

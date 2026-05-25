@@ -2,6 +2,18 @@
 
 ## 2026-05-25
 
+- Family-completed the basic MOS writer analog-gate characterization.  The
+  earlier sweep only varied the same-sign \(W^+\) selected branch with analog
+  activation/error gates; the opposite-sign \(W^-\) branch had only binary and
+  mismatch coverage.  The regenerated ngspice deck now instantiates matched
+  same-sign and opposite-sign copies for both activation-gate and
+  hidden-error-gate sweeps.  Activation-gate selected steps are
+  \(0.360/2.994/5.381/6.531\) mV on both \(W^+\) and \(W^-\) for gate strengths
+  \(0.60/0.70/0.80/0.90\) V.  Hidden-error-gate selected steps are
+  \(0.317/2.141/4.687/7.337\) mV on both rails.  The inactive opposite rails
+  stay at about \(0.004\,\mu\mathrm{V}\).  This closes a writer family gap:
+  analog magnitude control is now plotted and asserted for both selected
+  update signs, not just \(W^+\).
 - Added the tuned-\(0.80\) V fast-start precharge strength sweep that the
   previous startup note left as a design option.  The ngspice fixture keeps
   the same MOS precharge/reset path and cold \(250\) pF trim reservoirs, but

@@ -8745,6 +8745,8 @@ quit
         gate_pf: float = 5.0,
         gate_ic_p: float = 0.90,
         gate_ic_m: float = 0.90,
+        reset_ref_p: float = 0.90,
+        reset_ref_m: float = 0.90,
         forward_p_model: str = "NMOS",
         forward_m_model: str = "NMOS",
         forward_tail_model: str = "NMOS",
@@ -8754,17 +8756,29 @@ quit
                 return f"{value:.2f}"
             return f"{value:.5f}"
 
+        if abs(reset_ref_p - reset_ref_m) < 1e-12:
+            reset_ref_lines = [f"VZGCM_HYR zgcm_hyr 0 {fmt_gate_ic(reset_ref_p)}"]
+            reset_ref_p_node = "zgcm_hyr"
+            reset_ref_m_node = "zgcm_hyr"
+        else:
+            reset_ref_lines = [
+                f"VZGRP_HYR zgrp_hyr 0 {fmt_gate_ic(reset_ref_p)}",
+                f"VZGRM_HYR zgrm_hyr 0 {fmt_gate_ic(reset_ref_m)}",
+            ]
+            reset_ref_p_node = "zgrp_hyr"
+            reset_ref_m_node = "zgrm_hyr"
+
         return "\n".join(
             [
-                "VZGCM_HYR zgcm_hyr 0 0.90",
+                *reset_ref_lines,
                 f"CZPG_HYR zpg_hyr 0 {gate_pf:g}p IC={fmt_gate_ic(gate_ic_p)}",
                 f"CZMG_HYR zmg_hyr 0 {gate_pf:g}p IC={fmt_gate_ic(gate_ic_m)}",
                 "RZPG_HYR zpg_hyr 0 100G",
                 "RZMG_HYR zmg_hyr 0 100G",
-                "MRZGPN_HYR zpg_hyr rst_hyr zgcm_hyr 0 NMOS L={LCH} W={WRESETN}",
-                "MRZGMN_HYR zmg_hyr rst_hyr zgcm_hyr 0 NMOS L={LCH} W={WRESETN}",
-                "MRZGPP_HYR zpg_hyr rstn_hyr zgcm_hyr vdd PMOS L={LCH} W={WRESETP}",
-                "MRZGMP_HYR zmg_hyr rstn_hyr zgcm_hyr vdd PMOS L={LCH} W={WRESETP}",
+                f"MRZGPN_HYR zpg_hyr rst_hyr {reset_ref_p_node} 0 NMOS L={{LCH}} W={{WRESETN}}",
+                f"MRZGMN_HYR zmg_hyr rst_hyr {reset_ref_m_node} 0 NMOS L={{LCH}} W={{WRESETN}}",
+                f"MRZGPP_HYR zpg_hyr rstn_hyr {reset_ref_p_node} vdd PMOS L={{LCH}} W={{WRESETP}}",
+                f"MRZGMP_HYR zmg_hyr rstn_hyr {reset_ref_m_node} vdd PMOS L={{LCH}} W={{WRESETP}}",
                 f"CCZP_HYR zp_hyr zpg_hyr {couple_pf:g}p",
                 f"CCZM_HYR zm_hyr zmg_hyr {couple_pf:g}p",
                 f"MNFP_HYR hp_hyr zmg_hyr ftail_hyr 0 {forward_p_model} L={{LCH}} W=96u",
@@ -9333,6 +9347,136 @@ quit
         )
         < 0.001,
         "untrimmed input-pair threshold sweep should not change the passive shifted-gate sampled differential",
+    )
+
+    shift_trimmed_reset_cases = [
+        ("untrimmed", "reset trim 0 mV", 0.0),
+        ("trim10mv", "reset trim -10 mV", -0.010),
+        ("trim15mv", "reset trim -15 mV", -0.015),
+        ("trim20mv", "reset trim -20 mV", -0.020),
+        ("trim25mv", "reset trim -25 mV", -0.025),
+        ("trim50mv", "reset trim -50 mV", -0.050),
+        ("trim75mv", "reset trim -75 mV", -0.075),
+        ("trim100mv", "reset trim -100 mV", -0.100),
+    ]
+    shift_trimmed_reset_labels = []
+    shift_trimmed_reset_gate_pre_samples = []
+    shift_trimmed_reset_gate_common_samples = []
+    shift_trimmed_reset_load_samples = []
+    shift_trimmed_reset_store_samples = []
+    shift_trimmed_reset_traces = []
+    for name, label, reset_trim_v in shift_trimmed_reset_cases:
+        stem = (
+            "mos_hidden_writer_restored_gate_hybrid_update_forward_guard_"
+            f"forward_pair_96u_zcm_0p75v_shift_trimmed_reset_{name}"
+        )
+        nfp_model = f"NSHTRFP_{name.upper()}"
+        nfm_model = f"NSHTRFM_{name.upper()}"
+        shift_trimmed_reset_models = (
+            f".model {nfp_model} NMOS (LEVEL=1 VTO=0.57 KP=220u LAMBDA=0.03)\n"
+            f".model {nfm_model} NMOS (LEVEL=1 VTO=0.53 KP=220u LAMBDA=0.03)"
+        )
+        shift_trimmed_reset_deck = replace_required(high_gain_hold_deck, zcm_source_line, "VZCM zcm 0 0.75")
+        shift_trimmed_reset_deck = replace_required(
+            shift_trimmed_reset_deck,
+            zcm_cap_p_line,
+            "CZP_HYR zp_hyr 0 {CSUM} IC=0.75",
+        )
+        shift_trimmed_reset_deck = replace_required(
+            shift_trimmed_reset_deck,
+            zcm_cap_m_line,
+            "CZM_HYR zm_hyr 0 {CSUM} IC=0.75",
+        )
+        shift_trimmed_reset_deck = replace_required(
+            shift_trimmed_reset_deck,
+            corner_param_line,
+            shift_trimmed_reset_models + "\n" + corner_param_line,
+        )
+        shift_trimmed_reset_deck = replace_required(
+            shift_trimmed_reset_deck,
+            high_gain_forward_pair_lines,
+            shifted_forward_pair_lines(
+                10.0,
+                gate_ic_p=0.35,
+                gate_ic_m=1.45,
+                reset_ref_p=0.90 + 0.5 * reset_trim_v,
+                reset_ref_m=0.90 - 0.5 * reset_trim_v,
+                forward_p_model=nfp_model,
+                forward_m_model=nfm_model,
+            ),
+        )
+        shift_trimmed_reset_deck = replace_required(
+            shift_trimmed_reset_deck,
+            "VRESET_HYR rst_hyr 0 0",
+            shift_reset_pulse,
+        )
+        shift_trimmed_reset_deck = replace_required(
+            shift_trimmed_reset_deck,
+            "VRESETN_HYR rstn_hyr 0 1.8",
+            shift_resetn_pulse,
+        )
+        shift_trimmed_reset_deck = replace_required(
+            shift_trimmed_reset_deck,
+            "mos_hidden_writer_restored_gate_hybrid_update_forward_guard_forward_pair_96u_hold.dat",
+            f"{stem}.dat",
+        )
+        shift_trimmed_reset_deck = add_shifted_gate_probes(shift_trimmed_reset_deck, stem)
+        shift_trimmed_reset_data = run_ngspice(shift_trimmed_reset_deck, stem)
+        strt, shift_trimmed_reset_cols = load_wrdata(shift_trimmed_reset_data, 25)
+
+        def strtat(time_s: float, values: np.ndarray) -> float:
+            return float(values[np.argmin(np.abs(strt - time_s))])
+
+        shift_trimmed_reset_gate_diff = shift_trimmed_reset_cols[0] - shift_trimmed_reset_cols[1]
+        shift_trimmed_reset_gate_common = 0.5 * (shift_trimmed_reset_cols[0] + shift_trimmed_reset_cols[1])
+        shift_trimmed_reset_load = shift_trimmed_reset_cols[14] - shift_trimmed_reset_cols[13]
+        shift_trimmed_reset_store = shift_trimmed_reset_cols[16] - shift_trimmed_reset_cols[15]
+        shift_trimmed_reset_labels.append(label)
+        shift_trimmed_reset_gate_pre_samples.append(strtat(2.70e-6, shift_trimmed_reset_gate_diff))
+        shift_trimmed_reset_gate_common_samples.append(strtat(2.70e-6, shift_trimmed_reset_gate_common))
+        shift_trimmed_reset_load_samples.append(strtat(3.315e-6, shift_trimmed_reset_load))
+        shift_trimmed_reset_store_samples.append(strtat(3.575e-6, shift_trimmed_reset_store))
+        shift_trimmed_reset_traces.append(
+            (label, strt, shift_trimmed_reset_gate_diff, shift_trimmed_reset_load, shift_trimmed_reset_store)
+        )
+
+    shift_trimmed_reset_gate_pre_samples = np.array(shift_trimmed_reset_gate_pre_samples)
+    shift_trimmed_reset_gate_common_samples = np.array(shift_trimmed_reset_gate_common_samples)
+    shift_trimmed_reset_load_samples = np.array(shift_trimmed_reset_load_samples)
+    shift_trimmed_reset_store_samples = np.array(shift_trimmed_reset_store_samples)
+    require(
+        shift_trimmed_reset_store_samples[0] < -0.010,
+        "physical untrimmed reset should reproduce the +20/-20 mV threshold-skew polarity hazard",
+    )
+    require(
+        np.all(np.diff(shift_trimmed_reset_store_samples) > 0.008),
+        "larger helpful split reset trim should monotonically recover the skewed shifted-gate activation",
+    )
+    require(
+        shift_trimmed_reset_store_samples[2] > 0.005,
+        "15 mV physical split reset trim should recover positive sign under threshold skew",
+    )
+    require(
+        shift_trimmed_reset_store_samples[4] > 0.020,
+        "25 mV physical split reset trim should recover useful margin under threshold skew",
+    )
+    require(
+        shift_trimmed_reset_store_samples[5] > 0.070,
+        "50 mV physical split reset trim should add margin beyond the minimally recovered case",
+    )
+    require(
+        np.max(np.abs(shift_trimmed_reset_gate_common_samples - 0.90)) < 0.006,
+        "split shifted-gate reset should preserve the shifted-gate common mode before read",
+    )
+    require(
+        np.max(
+            np.abs(
+                shift_trimmed_reset_gate_pre_samples
+                - np.array([case[2] for case in shift_trimmed_reset_cases], dtype=float)
+            )
+        )
+        < 0.003,
+        "split shifted-gate reset should establish the requested trim differential before read",
     )
 
     tail_bias_forward_tail_line = "MNFT_HYR ftail_hyr vbias 0 0 NMOS L={LCH} W=48u"
@@ -10194,6 +10338,61 @@ quit
     save_plot(
         shift_threshold_fig,
         "mos_hidden_writer_restored_gate_hybrid_update_forward_guard_forward_pair_96u_shifted_gate_threshold_ngspice",
+    )
+
+    shift_trimmed_reset_fig, shift_trimmed_reset_axes = plt.subplots(
+        2,
+        1,
+        figsize=(7.4, 6.4),
+        gridspec_kw={"height_ratios": [1.0, 0.85]},
+    )
+    for label, strt, _gate_diff, _load, store in shift_trimmed_reset_traces:
+        if label in {
+            "reset trim 0 mV",
+            "reset trim -15 mV",
+            "reset trim -50 mV",
+            "reset trim -75 mV",
+            "reset trim -100 mV",
+        }:
+            shift_trimmed_reset_axes[0].plot(1e6 * strt, 1e3 * store, label=label)
+    shift_trimmed_reset_axes[0].axhline(0, color="0.4", linewidth=0.8)
+    shift_trimmed_reset_axes[0].axvspan(2.50, 2.62, color="0.75", alpha=0.18, label="split reset")
+    shift_trimmed_reset_axes[0].axvline(3.33, color="0.25", linestyle="--", linewidth=0.9, alpha=0.6, label="guard off")
+    shift_trimmed_reset_axes[0].set_xlim(2.35, 3.75)
+    shift_trimmed_reset_axes[0].set_ylabel("stored activation (mV)")
+    shift_trimmed_reset_axes[0].set_title("Split physical reset trims the skewed shifted-gate forward pair")
+    shift_trimmed_reset_axes[0].grid(True, alpha=0.25)
+    shift_trimmed_reset_axes[0].legend(loc="upper left", ncol=2, fontsize="x-small")
+    shift_trimmed_reset_x = np.arange(len(shift_trimmed_reset_labels))
+    shift_trimmed_reset_axes[1].bar(
+        shift_trimmed_reset_x - 0.24,
+        1e3 * shift_trimmed_reset_gate_pre_samples,
+        width=0.24,
+        label="pre-read gate diff",
+    )
+    shift_trimmed_reset_axes[1].bar(
+        shift_trimmed_reset_x,
+        1e3 * shift_trimmed_reset_load_samples,
+        width=0.24,
+        label="forward load",
+    )
+    shift_trimmed_reset_axes[1].bar(
+        shift_trimmed_reset_x + 0.24,
+        1e3 * shift_trimmed_reset_store_samples,
+        width=0.24,
+        label="stored $h$",
+    )
+    shift_trimmed_reset_axes[1].axhline(0, color="0.4", linewidth=0.8)
+    shift_trimmed_reset_axes[1].set_xticks(shift_trimmed_reset_x)
+    shift_trimmed_reset_axes[1].set_xticklabels(shift_trimmed_reset_labels, rotation=18, ha="right")
+    shift_trimmed_reset_axes[1].set_ylabel("sampled differential (mV)")
+    shift_trimmed_reset_axes[1].set_title("Real reset rails establish the trim; activation recovers with enough offset budget")
+    shift_trimmed_reset_axes[1].grid(True, axis="y", alpha=0.25)
+    shift_trimmed_reset_axes[1].legend(loc="upper right", ncol=3, fontsize="small")
+    shift_trimmed_reset_fig.tight_layout()
+    save_plot(
+        shift_trimmed_reset_fig,
+        "mos_hidden_writer_restored_gate_hybrid_update_forward_guard_forward_pair_96u_shifted_gate_trimmed_reset_ngspice",
     )
 
     tail_bias_fig, tail_bias_axes = plt.subplots(2, 1, figsize=(7.4, 6.4), gridspec_kw={"height_ratios": [1.0, 0.8]})

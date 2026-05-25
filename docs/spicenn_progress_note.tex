@@ -1900,8 +1900,8 @@ must satisfy before it can replace the current behavioral prototype.
   \rightarrow3.263\rightarrow0.166\) mV), so this plot is testing isolation of
   the stored activation, not quiet hold.  The shifted-gate topology therefore
   passes the same basic later-control-activity check as the unshifted guarded
-  store.  The remaining promotion gaps are reset/feedthrough, mismatch/noise,
-  and repeated-cycle behavior.}
+  store.  At this point the remaining promotion gaps are reset/feedthrough,
+  mismatch/noise, and repeated-cycle behavior.}
   \label{fig:mos-hidden-writer-restored-gate-hybrid-update-forward-guard-forward-pair-96u-shifted-gate-off-isolation-ngspice}
 \end{figure}
 
@@ -1923,6 +1923,28 @@ must satisfy before it can replace the current behavioral prototype.
   the reset devices remove the bad-initial-state overdrive path and preserve a
   useful low-common-mode activation.}
   \label{fig:mos-hidden-writer-restored-gate-hybrid-update-forward-guard-forward-pair-96u-shifted-gate-reset-feedthrough-ngspice}
+\end{figure}
+
+\begin{figure}[H]
+  \centering
+  \includegraphics[width=0.95\linewidth]{figures/mos_hidden_writer_restored_gate_hybrid_update_forward_guard_forward_pair_96u_shifted_gate_repeated_reset_reuse_ngspice.png}
+  \caption{Ngspice repeated physical reset/read/store reuse check for the
+  shifted-gate headroom fix.  This deck starts from one MOS-written \(W/B\)
+  state at \(V_{ZCM}=0.75\) V, uses the selected \(10\) pF coupling into
+  \(5\) pF shifted-gate capacitors, and runs three read/forward-store cycles
+  with real reset pulses between cycles.  The three read preactivation samples
+  are \(46.625,46.823,\) and \(46.582\) mV; the stored activation samples are
+  \(49.528,56.585,\) and \(56.585\) mV.  The reset pulses clear the shifted
+  gate differential between reads to \(0.000466\) and \(0.000456\) mV, return
+  the gate common mode to \(0.900003\) V, leave only about \(0.019\) mV of
+  summing-node residue, and clear the activation store to numerical zero.
+  The persistent trainable state is not read-disturbed: over the repeated
+  cycles the \(W\) and \(B\) differentials drift by only \(0.003\) and
+  \(0.002\,\mu\mathrm{V}\).  The later captures are higher than the first
+  because the reset path adds a small repeatable charge/feedthrough offset, so
+  reset sizing is still worth tuning, but the circuit now demonstrates useful
+  repeated low-common-mode operation without Python capacitor forcing.}
+  \label{fig:mos-hidden-writer-restored-gate-hybrid-update-forward-guard-forward-pair-96u-shifted-gate-repeated-reset-reuse-ngspice}
 \end{figure}
 
 \begin{figure}[H]

@@ -9040,6 +9040,91 @@ quit
         "physical shifted-gate reset should materially reduce bad-initial-state feedthrough",
     )
 
+    shift_reuse_stem = (
+        "mos_hidden_writer_restored_gate_hybrid_update_forward_guard_"
+        "forward_pair_96u_zcm_0p75v_shift_repeated_reset_reuse"
+    )
+    shift_reuse_deck = replace_required(hybrid_forward_read_reuse_deck, zcm_source_line, "VZCM zcm 0 0.75")
+    shift_reuse_deck = replace_required(shift_reuse_deck, zcm_cap_p_line, "CZP_HYR zp_hyr 0 {CSUM} IC=0.75")
+    shift_reuse_deck = replace_required(shift_reuse_deck, zcm_cap_m_line, "CZM_HYR zm_hyr 0 {CSUM} IC=0.75")
+    shift_reuse_deck = replace_required(shift_reuse_deck, forward_pair_lines, shifted_forward_pair_lines(10.0))
+    shift_reuse_deck = replace_required(
+        shift_reuse_deck,
+        "mos_hidden_writer_restored_gate_hybrid_update_forward_read_reuse.dat",
+        f"{shift_reuse_stem}.dat",
+    )
+    shift_reuse_deck = add_shifted_gate_probes(shift_reuse_deck, shift_reuse_stem)
+    shift_reuse_data = run_ngspice(shift_reuse_deck, shift_reuse_stem)
+    shrpt, shift_reuse_cols = load_wrdata(shift_reuse_data, 25)
+
+    def shrpat(time_s: float, values: np.ndarray) -> float:
+        return float(values[np.argmin(np.abs(shrpt - time_s))])
+
+    shift_reuse_gate_diff = shift_reuse_cols[0] - shift_reuse_cols[1]
+    shift_reuse_gate_common = 0.5 * (shift_reuse_cols[0] + shift_reuse_cols[1])
+    shift_reuse_weight = shift_reuse_cols[7] - shift_reuse_cols[8]
+    shift_reuse_bias = shift_reuse_cols[9] - shift_reuse_cols[10]
+    shift_reuse_preact = shift_reuse_cols[12] - shift_reuse_cols[11]
+    shift_reuse_load = shift_reuse_cols[14] - shift_reuse_cols[13]
+    shift_reuse_store = shift_reuse_cols[16] - shift_reuse_cols[15]
+    shift_reuse_z_times = np.array([3.35, 4.95, 6.55]) * 1e-6
+    shift_reuse_h_times = np.array([3.45, 5.05, 6.70]) * 1e-6
+    shift_reuse_reset_times = np.array([4.10, 5.70]) * 1e-6
+    shift_reuse_z_samples = np.array([shrpat(ts, shift_reuse_preact) for ts in shift_reuse_z_times])
+    shift_reuse_h_samples = np.array([shrpat(ts, shift_reuse_store) for ts in shift_reuse_h_times])
+    shift_reuse_gate_reset_residue = np.array([abs(shrpat(ts, shift_reuse_gate_diff)) for ts in shift_reuse_reset_times])
+    shift_reuse_gate_reset_common = np.array([shrpat(ts, shift_reuse_gate_common) for ts in shift_reuse_reset_times])
+    shift_reuse_z_reset = np.array([abs(shrpat(ts, shift_reuse_preact)) for ts in shift_reuse_reset_times])
+    shift_reuse_h_reset = np.array([abs(shrpat(ts, shift_reuse_store)) for ts in shift_reuse_reset_times])
+    shift_reuse_weight_after_write = shrpat(2.55e-6, shift_reuse_weight)
+    shift_reuse_bias_after_write = shrpat(2.55e-6, shift_reuse_bias)
+    shift_reuse_weight_drift = shrpat(7.45e-6, shift_reuse_weight) - shift_reuse_weight_after_write
+    shift_reuse_bias_drift = shrpat(7.45e-6, shift_reuse_bias) - shift_reuse_bias_after_write
+    require(
+        shift_reuse_weight_after_write > 0.020,
+        "shifted-gate repeated-reuse deck should write positive weight state",
+    )
+    require(
+        shift_reuse_bias_after_write > 0.030,
+        "shifted-gate repeated-reuse deck should write positive bias state",
+    )
+    require(
+        np.all(shift_reuse_z_samples > 0.040),
+        "shifted-gate repeated-reuse cycles should repeatedly read useful low-common-mode preactivation",
+    )
+    require(
+        np.all(shift_reuse_h_samples > 0.045),
+        "shifted-gate repeated-reuse cycles should repeatedly store useful low-common-mode activation",
+    )
+    require(
+        np.max(shift_reuse_h_samples) - np.min(shift_reuse_h_samples) < 0.010,
+        "shifted-gate repeated-reuse stored activations should stay within a 10 mV cycle window",
+    )
+    require(
+        np.max(shift_reuse_gate_reset_residue) < 0.002,
+        "shifted-gate repeated physical resets should clear the gate differential between reads",
+    )
+    require(
+        np.max(np.abs(shift_reuse_gate_reset_common - 0.90)) < 0.005,
+        "shifted-gate repeated physical resets should restore gate common mode between reads",
+    )
+    require(
+        np.max(shift_reuse_z_reset) < 0.001,
+        "shifted-gate repeated reset should clear preactivation between reads",
+    )
+    require(
+        np.max(shift_reuse_h_reset) < 0.001,
+        "shifted-gate repeated reset should clear stored activation between reads",
+    )
+    require(
+        abs(shift_reuse_weight_drift) < 1e-5,
+        "shifted-gate repeated read/reset cycles should not disturb weight state",
+    )
+    require(
+        abs(shift_reuse_bias_drift) < 1e-5,
+        "shifted-gate repeated read/reset cycles should not disturb bias state",
+    )
+
     tail_bias_forward_tail_line = "MNFT_HYR ftail_hyr vbias 0 0 NMOS L={LCH} W=48u"
     tail_bias_cases_v = [0.70, 0.80, 0.90, 0.95, 1.05, 1.15, 1.25]
     tail_bias_labels = []
@@ -9766,6 +9851,51 @@ quit
     save_plot(
         shift_reset_fig,
         "mos_hidden_writer_restored_gate_hybrid_update_forward_guard_forward_pair_96u_shifted_gate_reset_feedthrough_ngspice",
+    )
+
+    shift_reuse_fig, shift_reuse_axes = plt.subplots(
+        3,
+        1,
+        figsize=(7.4, 7.4),
+        gridspec_kw={"height_ratios": [1.0, 1.0, 0.9]},
+    )
+    shift_reuse_axes[0].plot(1e6 * shrpt, 1e3 * shift_reuse_gate_diff, label="shifted-gate diff")
+    shift_reuse_axes[0].plot(1e6 * shrpt, 1e3 * (shift_reuse_gate_common - 0.90), "--", label="gate common error")
+    shift_reuse_axes[0].plot(1e6 * shrpt, 1e3 * shift_reuse_cols[20] / 20.0, color="0.45", alpha=0.25, label="$reset/20$")
+    for start_us, end_us, label in [(3.60, 4.00, "reset 1"), (5.20, 5.60, "reset 2")]:
+        shift_reuse_axes[0].axvspan(start_us, end_us, color="0.75", alpha=0.16, label=label)
+    shift_reuse_axes[0].axhline(0, color="0.4", linewidth=0.8)
+    shift_reuse_axes[0].set_xlim(2.9, 7.1)
+    shift_reuse_axes[0].set_ylabel("gate error (mV)")
+    shift_reuse_axes[0].set_title("Physical resets re-center the shifted gate between repeated reads")
+    shift_reuse_axes[0].grid(True, alpha=0.25)
+    shift_reuse_axes[0].legend(loc="lower left", ncol=2, fontsize="small")
+    shift_reuse_axes[1].plot(1e6 * shrpt, 1e3 * shift_reuse_preact, label="$z^- - z^+$")
+    shift_reuse_axes[1].plot(1e6 * shrpt, 1e3 * shift_reuse_load, label="forward load")
+    shift_reuse_axes[1].plot(1e6 * shrpt, 1e3 * shift_reuse_store, label="stored activation")
+    shift_reuse_axes[1].plot(1e6 * shrpt, 1e3 * shift_reuse_cols[23] / 20.0, color="0.35", alpha=0.25, label="$read/20$")
+    shift_reuse_axes[1].plot(1e6 * shrpt, 1e3 * shift_reuse_cols[24] / 20.0, color="0.15", alpha=0.25, label="$pact/20$")
+    shift_reuse_axes[1].axhline(0, color="0.4", linewidth=0.8)
+    shift_reuse_axes[1].set_xlim(2.9, 7.1)
+    shift_reuse_axes[1].set_ylabel("differential (mV)")
+    shift_reuse_axes[1].set_title("Same MOS-written W/B state drives three low-common-mode reads")
+    shift_reuse_axes[1].grid(True, alpha=0.25)
+    shift_reuse_axes[1].legend(loc="upper left", ncol=2, fontsize="small")
+    shift_reuse_x = np.arange(len(shift_reuse_h_samples))
+    shift_reuse_axes[2].bar(shift_reuse_x - 0.18, 1e3 * shift_reuse_z_samples, width=0.36, label="$z$ sample")
+    shift_reuse_axes[2].bar(shift_reuse_x + 0.18, 1e3 * shift_reuse_h_samples, width=0.36, label="$h$ sample")
+    shift_reuse_axes[2].axhline(0, color="0.4", linewidth=0.8)
+    shift_reuse_axes[2].set_xticks(shift_reuse_x)
+    shift_reuse_axes[2].set_xticklabels(["cycle 1", "cycle 2", "cycle 3"])
+    shift_reuse_axes[2].set_xlabel("read/reset/store cycle")
+    shift_reuse_axes[2].set_ylabel("sampled differential (mV)")
+    shift_reuse_axes[2].set_title("Repeated shifted-gate captures remain useful after physical reset")
+    shift_reuse_axes[2].grid(True, axis="y", alpha=0.25)
+    shift_reuse_axes[2].legend(loc="upper right", fontsize="small")
+    shift_reuse_fig.tight_layout()
+    save_plot(
+        shift_reuse_fig,
+        "mos_hidden_writer_restored_gate_hybrid_update_forward_guard_forward_pair_96u_shifted_gate_repeated_reset_reuse_ngspice",
     )
 
     tail_bias_fig, tail_bias_axes = plt.subplots(2, 1, figsize=(7.4, 6.4), gridspec_kw={"height_ratios": [1.0, 0.8]})

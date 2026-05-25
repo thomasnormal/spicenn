@@ -8937,6 +8937,8 @@ quit
         forward_tail_model: str = "NMOS",
         reset_n_model: str = "NMOS",
         reset_p_model: str = "PMOS",
+        reset_n_width_u: float | None = None,
+        reset_p_width_u: float | None = None,
         reset_ref_series_ohm: float = 0.0,
         reset_ref_shunt_pf: float = 0.0,
     ) -> str:
@@ -8972,6 +8974,8 @@ quit
             ]
             reset_ref_p_node = "zgrp_hyr"
             reset_ref_m_node = "zgrm_hyr"
+        reset_n_width = f"{reset_n_width_u:g}u" if reset_n_width_u is not None else "{WRESETN}"
+        reset_p_width = f"{reset_p_width_u:g}u" if reset_p_width_u is not None else "{WRESETP}"
 
         return "\n".join(
             [
@@ -8980,10 +8984,10 @@ quit
                 f"CZMG_HYR zmg_hyr 0 {gate_pf:g}p IC={fmt_gate_ic(gate_ic_m)}",
                 "RZPG_HYR zpg_hyr 0 100G",
                 "RZMG_HYR zmg_hyr 0 100G",
-                f"MRZGPN_HYR zpg_hyr rst_hyr {reset_ref_p_node} 0 {reset_n_model} L={{LCH}} W={{WRESETN}}",
-                f"MRZGMN_HYR zmg_hyr rst_hyr {reset_ref_m_node} 0 {reset_n_model} L={{LCH}} W={{WRESETN}}",
-                f"MRZGPP_HYR zpg_hyr rstn_hyr {reset_ref_p_node} vdd {reset_p_model} L={{LCH}} W={{WRESETP}}",
-                f"MRZGMP_HYR zmg_hyr rstn_hyr {reset_ref_m_node} vdd {reset_p_model} L={{LCH}} W={{WRESETP}}",
+                f"MRZGPN_HYR zpg_hyr rst_hyr {reset_ref_p_node} 0 {reset_n_model} L={{LCH}} W={reset_n_width}",
+                f"MRZGMN_HYR zmg_hyr rst_hyr {reset_ref_m_node} 0 {reset_n_model} L={{LCH}} W={reset_n_width}",
+                f"MRZGPP_HYR zpg_hyr rstn_hyr {reset_ref_p_node} vdd {reset_p_model} L={{LCH}} W={reset_p_width}",
+                f"MRZGMP_HYR zmg_hyr rstn_hyr {reset_ref_m_node} vdd {reset_p_model} L={{LCH}} W={reset_p_width}",
                 f"CCZP_HYR zp_hyr zpg_hyr {couple_pf:g}p",
                 f"CCZM_HYR zm_hyr zmg_hyr {couple_pf:g}p",
                 f"MNFP_HYR hp_hyr zmg_hyr ftail_hyr 0 {forward_p_model} L={{LCH}} W=96u",
@@ -9265,6 +9269,90 @@ quit
     require(
         shift_reset_store_sample < 0.25 * shift_bad_store_sample,
         "physical shifted-gate reset should materially reduce bad-initial-state feedthrough",
+    )
+
+    shift_reset_size_cases = [
+        ("x002", "0.02x", 1.2, 3.6),
+        ("x005", "0.05x", 3.0, 9.0),
+        ("x010", "0.10x", 6.0, 18.0),
+        ("x025", "0.25x", 15.0, 45.0),
+        ("x100", "1.00x", 60.0, 180.0),
+    ]
+    shift_reset_size_labels = []
+    shift_reset_size_gate_residue = []
+    shift_reset_size_common_error = []
+    shift_reset_size_store_samples = []
+    shift_reset_size_traces = []
+    for name, label, n_width_u, p_width_u in shift_reset_size_cases:
+        stem = (
+            "mos_hidden_writer_restored_gate_hybrid_update_forward_guard_"
+            f"forward_pair_96u_zcm_0p75v_shift_reset_feedthrough_size_{name}"
+        )
+        deck = replace_required(high_gain_hold_deck, zcm_source_line, "VZCM zcm 0 0.75")
+        deck = replace_required(deck, zcm_cap_p_line, "CZP_HYR zp_hyr 0 {CSUM} IC=0.75")
+        deck = replace_required(deck, zcm_cap_m_line, "CZM_HYR zm_hyr 0 {CSUM} IC=0.75")
+        deck = replace_required(
+            deck,
+            high_gain_forward_pair_lines,
+            shifted_forward_pair_lines(
+                10.0,
+                gate_ic_p=0.35,
+                gate_ic_m=1.45,
+                reset_n_width_u=n_width_u,
+                reset_p_width_u=p_width_u,
+            ),
+        )
+        deck = replace_required(deck, "VRESET_HYR rst_hyr 0 0", shift_reset_pulse)
+        deck = replace_required(deck, "VRESETN_HYR rstn_hyr 0 1.8", shift_resetn_pulse)
+        deck = replace_required(
+            deck,
+            "mos_hidden_writer_restored_gate_hybrid_update_forward_guard_forward_pair_96u_hold.dat",
+            f"{stem}.dat",
+        )
+        deck = add_shifted_gate_probes(deck, stem)
+        data = run_ngspice(deck, stem)
+        rst, cols = load_wrdata(data, 25)
+
+        def rstat(time_s: float, values: np.ndarray) -> float:
+            return float(values[np.argmin(np.abs(rst - time_s))])
+
+        gate_diff = cols[0] - cols[1]
+        gate_common = 0.5 * (cols[0] + cols[1])
+        store = cols[16] - cols[15]
+        post_reset = (rst > 2.64e-6) & (rst < 2.72e-6)
+        shift_reset_size_labels.append(label)
+        shift_reset_size_gate_residue.append(np.max(np.abs(gate_diff[post_reset])))
+        shift_reset_size_common_error.append(abs(rstat(2.70e-6, gate_common) - 0.90))
+        shift_reset_size_store_samples.append(rstat(3.575e-6, store))
+        shift_reset_size_traces.append((label, rst, gate_diff, gate_common, store))
+
+    shift_reset_size_gate_residue = np.array(shift_reset_size_gate_residue)
+    shift_reset_size_common_error = np.array(shift_reset_size_common_error)
+    shift_reset_size_store_samples = np.array(shift_reset_size_store_samples)
+    shift_reset_size_feedthrough = shift_reset_size_store_samples - positive_shift_store_samples[0]
+    require(
+        shift_reset_size_gate_residue[0] > 0.050,
+        "very weak shifted-gate reset sizing should visibly leave bad-gate residue",
+    )
+    require(
+        0.003 < shift_reset_size_gate_residue[1] < 0.010,
+        "marginal shifted-gate reset sizing should expose the residue transition",
+    )
+    require(
+        np.all(shift_reset_size_gate_residue[2:] < 0.003),
+        "0.10x or stronger shifted-gate reset should clear the bad differential",
+    )
+    require(
+        np.all(shift_reset_size_common_error[2:] < 0.001),
+        "0.10x or stronger shifted-gate reset should restore common mode",
+    )
+    require(
+        np.all((shift_reset_size_store_samples[1:] > 0.045) & (shift_reset_size_store_samples[1:] < 0.080)),
+        "usable shifted-gate reset sizes should preserve bounded useful activation",
+    )
+    require(
+        np.min(np.abs(shift_reset_size_feedthrough[2:])) < 0.006,
+        "clearing shifted-gate reset sizes should keep reset feedthrough to a small activation offset",
     )
 
     shift_reuse_stem = (
@@ -12589,6 +12677,72 @@ quit
     save_plot(
         shift_reset_fig,
         "mos_hidden_writer_restored_gate_hybrid_update_forward_guard_forward_pair_96u_shifted_gate_reset_feedthrough_ngspice",
+    )
+
+    shift_reset_size_fig, shift_reset_size_axes = plt.subplots(
+        3,
+        1,
+        figsize=(7.4, 7.4),
+        gridspec_kw={"height_ratios": [0.85, 0.85, 1.0]},
+    )
+    reset_size_x = np.arange(len(shift_reset_size_labels))
+    shift_reset_size_axes[0].plot(
+        reset_size_x,
+        1e3 * shift_reset_size_gate_residue,
+        "o-",
+        label="max post-reset gate diff",
+    )
+    shift_reset_size_axes[0].plot(
+        reset_size_x,
+        1e3 * shift_reset_size_common_error,
+        "s--",
+        label="common-mode error",
+    )
+    shift_reset_size_axes[0].axhline(2.0, color="0.45", linestyle=":", linewidth=0.9, label="2 mV residue")
+    shift_reset_size_axes[0].set_xticks(reset_size_x)
+    shift_reset_size_axes[0].set_xticklabels(shift_reset_size_labels)
+    shift_reset_size_axes[0].set_ylabel("reset error (mV)")
+    shift_reset_size_axes[0].set_title("Shifted-gate reset strength clears bad initial gate state")
+    shift_reset_size_axes[0].set_yscale("log")
+    shift_reset_size_axes[0].grid(True, axis="y", alpha=0.25)
+    shift_reset_size_axes[0].legend(loc="upper right", fontsize="small")
+    shift_reset_size_axes[1].bar(
+        reset_size_x - 0.18,
+        1e3 * shift_reset_size_store_samples,
+        width=0.36,
+        label="with reset",
+    )
+    shift_reset_size_axes[1].bar(
+        reset_size_x + 0.18,
+        1e3 * shift_reset_size_feedthrough,
+        width=0.36,
+        label="offset from initialized",
+    )
+    shift_reset_size_axes[1].axhline(1e3 * positive_shift_store_samples[0], color="0.35", linestyle="--", linewidth=0.9)
+    shift_reset_size_axes[1].axhspan(45, 80, color="0.7", alpha=0.12, label="useful bounded window")
+    shift_reset_size_axes[1].set_xticks(reset_size_x)
+    shift_reset_size_axes[1].set_xticklabels(shift_reset_size_labels)
+    shift_reset_size_axes[1].set_ylabel("stored $h$ / offset (mV)")
+    shift_reset_size_axes[1].set_title("Reset feedthrough is a small sizing-dependent activation offset")
+    shift_reset_size_axes[1].grid(True, axis="y", alpha=0.25)
+    shift_reset_size_axes[1].legend(loc="upper left", ncol=2, fontsize="small")
+    for label, rst, gate_diff, _gate_common, store in shift_reset_size_traces:
+        if label in {"0.02x", "0.05x", "0.10x", "1.00x"}:
+            shift_reset_size_axes[2].plot(1e6 * rst, 1e3 * store, label=f"{label} $h$")
+            shift_reset_size_axes[2].plot(1e6 * rst, 1e3 * gate_diff, "--", alpha=0.55, label=f"{label} gate")
+    shift_reset_size_axes[2].axhline(0, color="0.4", linewidth=0.8)
+    shift_reset_size_axes[2].axvspan(2.50, 2.62, color="0.75", alpha=0.16, label="reset high")
+    shift_reset_size_axes[2].axvline(3.33, color="0.25", linestyle="--", linewidth=0.9, alpha=0.6, label="guard off")
+    shift_reset_size_axes[2].set_xlim(2.35, 3.75)
+    shift_reset_size_axes[2].set_xlabel("time (us)")
+    shift_reset_size_axes[2].set_ylabel("differential (mV)")
+    shift_reset_size_axes[2].set_title("Time traces show weak-reset residue versus usable reset sizes")
+    shift_reset_size_axes[2].grid(True, alpha=0.25)
+    shift_reset_size_axes[2].legend(loc="upper left", ncol=2, fontsize="xx-small")
+    shift_reset_size_fig.tight_layout()
+    save_plot(
+        shift_reset_size_fig,
+        "mos_hidden_writer_restored_gate_hybrid_update_forward_guard_forward_pair_96u_shifted_gate_reset_feedthrough_size_ngspice",
     )
 
     shift_reuse_fig, shift_reuse_axes = plt.subplots(

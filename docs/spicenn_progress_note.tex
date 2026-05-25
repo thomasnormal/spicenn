@@ -1946,6 +1946,27 @@ must satisfy before it can replace the current behavioral prototype.
 
 \begin{figure}[H]
   \centering
+  \includegraphics[width=0.95\linewidth]{figures/mos_hidden_writer_restored_gate_hybrid_update_forward_guard_forward_pair_96u_shifted_gate_reset_feedthrough_size_ngspice.png}
+  \caption{Ngspice shifted-gate reset-strength sweep for the same physical
+  reset/feedthrough fixture as Fig.~\ref{fig:mos-hidden-writer-restored-gate-hybrid-update-forward-guard-forward-pair-96u-shifted-gate-reset-feedthrough-ngspice}.
+  The earlier reset-size probe was too narrow: even \(0.25\times\) reset devices
+  already cleared the bad shifted-gate differential to about \(0.125\) mV.  This
+  sweep pushes the reset pair down to \(0.02\times\) nominal and shows the real
+  transition.  At \(0.02\times\), the post-reset shifted-gate residue is
+  \(67.196\) mV, common-mode error is \(18.971\) mV, and the activation store is
+  overdriven to \(186.251\) mV.  At \(0.05\times\), the residue falls to
+  \(5.358\) mV and the stored activation is a still-high but bounded
+  \(67.830\) mV.  At \(0.10\times,0.25\times,\) and \(1.00\times\), the
+  post-reset residue is \(0.244,0.125,\) and \(0.118\) mV, while the stored
+  activations are \(57.886,57.645,\) and \(57.628\) mV.  The reset no longer
+  hides a bad-initial-state failure; the remaining cost is a repeatable
+  \(5.5\) mV activation offset relative to the \(52.154\) mV initialized-gate
+  fixture.}
+  \label{fig:mos-hidden-writer-restored-gate-hybrid-update-forward-guard-forward-pair-96u-shifted-gate-reset-feedthrough-size-ngspice}
+\end{figure}
+
+\begin{figure}[H]
+  \centering
   \includegraphics[width=0.95\linewidth]{figures/mos_hidden_writer_restored_gate_hybrid_update_forward_guard_forward_pair_96u_shifted_gate_repeated_reset_reuse_ngspice.png}
   \caption{Ngspice repeated physical reset/read/store reuse check for the
   shifted-gate headroom fix.  This deck starts from one MOS-written \(W/B\)

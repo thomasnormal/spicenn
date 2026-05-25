@@ -13401,11 +13401,23 @@ quit
     shift_stress_x = np.arange(len(guard_off_sample_times))
     shift_stress_axes[1].plot(shift_stress_x, 1e6 * shift_stress_drift, "o-", label="stored activation drift")
     shift_stress_axes[1].axhline(0, color="0.4", linewidth=0.8)
+    shift_stress_axes[1].axhline(1.0, color="0.4", linestyle=":", linewidth=1.0, label="1 uV visual guide")
+    shift_stress_axes[1].axhline(-1.0, color="0.4", linestyle=":", linewidth=1.0)
+    shift_stress_axes[1].text(
+        0.03,
+        0.14,
+        f"max drift = {1e6 * np.max(np.abs(shift_stress_drift)):.2f} uV\n"
+        "assertion budget = 1000 uV",
+        transform=shift_stress_axes[1].transAxes,
+        fontsize="small",
+        bbox={"facecolor": "white", "alpha": 0.82, "edgecolor": "0.8"},
+    )
+    shift_stress_axes[1].set_ylim(-1.1, 1.1)
     shift_stress_axes[1].set_xticks(shift_stress_x)
     shift_stress_axes[1].set_xticklabels(guard_off_sample_labels)
     shift_stress_axes[1].set_xlabel("sample time (us)")
     shift_stress_axes[1].set_ylabel("drift ($\\mu$V)")
-    shift_stress_axes[1].set_title("Pact-only, guard-only, and read pulses do not disturb the shifted store")
+    shift_stress_axes[1].set_title("Off-state stress stays far below the shifted-store drift budget")
     shift_stress_axes[1].grid(True, axis="y", alpha=0.25)
     shift_stress_axes[1].legend(loc="upper right", fontsize="small")
     shift_stress_fig.tight_layout()

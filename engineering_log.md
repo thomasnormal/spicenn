@@ -2,6 +2,13 @@
 
 ## 2026-05-25
 
+- Clarified the shifted-gate off-isolation stress plot.  The ngspice assertion
+  permits up to \(1000\,\mu\)V stored-activation drift after pact-only,
+  guard-only, and read stress pulses, while the measured maximum drift is only
+  \(0.49\,\mu\)V.  The regenerated
+  `mos_hidden_writer_restored_gate_hybrid_update_forward_guard_forward_pair_96u_shifted_gate_off_isolation_ngspice`
+  plot now labels that measured maximum, prints the assertion budget, and uses
+  a \(\pm1\,\mu\)V visual guide so the sub-\(\mu\)V behavior remains readable.
 - Clarified the 96u high-gain guarded-hold robustness drift plot.  The ngspice
   assertions allow \(300\,\mu\)V drift for the positive and negative hold
   fixtures and \(1000\,\mu\)V for later off-state stress, while the measured

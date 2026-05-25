@@ -2,6 +2,16 @@
 
 ## 2026-05-25
 
+- Clarified the reusable MOS reset/precharge plot after the assertion evidence
+  was stronger than the rendered figure.  The same ngspice deck still checks
+  that the transmission-gate reset restores \(z\) common mode, clears
+  activation and hidden-error capacitors, allows a signed write, and clears it
+  again without Python capacitor forcing.  The regenerated
+  `mos_reset_precharge_ngspice` plot now labels those measured checkpoints:
+  first reset common mode is about \(0.900\) V with \(-31.0\) mV rail
+  differential, activation/error residuals are about \(\mp27.2\) mV, the
+  synapse write stores about \(+71\) mV, and the second reset leaves about
+  \(+2.8\) mV differential with \(0.898\) V common mode.
 - Tightened the forward-pair mismatch plot so the rendered ngspice evidence
   carries the same margin as the assertion.  The MOS-only mismatch sweep still
   measures zero-crossing shifts of about \(-20/0/+20\) mV for \(-20/0/+20\)

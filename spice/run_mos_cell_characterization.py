@@ -15970,6 +15970,13 @@ quit
     require(abs(at(2.25e-6, common) - 0.9) < 0.02, "second reset should restore common mode")
     require(abs(at(2.25e-6, h_signed)) < 0.015, "second reset should keep activation state clear")
     require(abs(at(2.25e-6, d_signed)) < 0.015, "second reset should keep hidden-error state clear")
+    first_reset_signed = at(0.55e-6, signed)
+    first_reset_common = at(0.55e-6, common)
+    first_reset_h = at(0.55e-6, h_signed)
+    first_reset_d = at(0.55e-6, d_signed)
+    written_signed = at(1.65e-6, signed)
+    second_reset_signed = at(2.25e-6, signed)
+    second_reset_common = at(2.25e-6, common)
 
     sweep_data = run_ngspice(sweep_deck, "mos_reset_width")
     st, sweep_cols = load_wrdata(sweep_data, 4 * len(widths_us))
@@ -16044,21 +16051,60 @@ quit
     axes[0].plot(1e6 * t, zp, label="$z^+$ cap")
     axes[0].plot(1e6 * t, zm, label="$z^-$ cap")
     axes[0].plot(1e6 * t, rst / 2.0, color="0.5", alpha=0.45, label="$reset/2$")
+    axes[0].axhline(0.9, color="0.4", linestyle=":", linewidth=0.9, label="$V_{CM}$")
+    axes[0].plot(0.55, at(0.55e-6, zp), "o", color="C0", markersize=4)
+    axes[0].plot(0.55, at(0.55e-6, zm), "o", color="C1", markersize=4)
+    axes[0].text(
+        0.60,
+        0.72,
+        f"first reset: cm={first_reset_common:.3f} V\n"
+        f"rail diff={1e3 * first_reset_signed:+.1f} mV",
+        fontsize="small",
+        bbox={"facecolor": "white", "alpha": 0.82, "edgecolor": "0.8"},
+    )
     axes[0].set_ylabel("cap voltage (V)")
     axes[0].set_title("Transmission-gate reset restores preactivation common mode")
     axes[0].grid(True, alpha=0.25)
-    axes[0].legend()
+    axes[0].legend(loc="upper right", ncol=2, fontsize="small")
     axes[1].plot(1e6 * t, h_signed, label="activation $h^- - h^+$")
     axes[1].plot(1e6 * t, d_signed, label="hidden error $\\delta^- - \\delta^+$")
     axes[1].axhline(0, color="0.4", linewidth=0.8)
+    axes[1].axhline(0.06, color="0.4", linestyle=":", linewidth=0.9, label="60 mV clear bound")
+    axes[1].axhline(-0.06, color="0.4", linestyle=":", linewidth=0.9)
+    axes[1].text(
+        0.60,
+        0.20,
+        f"after reset: h={1e3 * first_reset_h:+.1f} mV, "
+        f"d={1e3 * first_reset_d:+.1f} mV",
+        fontsize="small",
+        bbox={"facecolor": "white", "alpha": 0.82, "edgecolor": "0.8"},
+    )
     axes[1].set_ylabel("differential voltage (V)")
     axes[1].set_title("Same reset phase clears activation and hidden-error state")
     axes[1].grid(True, alpha=0.25)
-    axes[1].legend()
+    axes[1].legend(loc="upper right", fontsize="small")
     axes[2].plot(1e6 * t, signed, label="stored $z^- - z^+$")
     axes[2].plot(1e6 * t, wpulse / 8.0, color="0.5", alpha=0.45, label="$w_{gate}/8$")
     axes[2].plot(1e6 * t, rst / 10.0, color="0.25", alpha=0.35, label="$reset/10$")
     axes[2].axhline(0, color="0.4", linewidth=0.8)
+    axes[2].plot(1.65, written_signed, "o", color="C0", markersize=4)
+    axes[2].plot(2.25, second_reset_signed, "o", color="C0", markersize=4)
+    axes[2].text(
+        1.53,
+        written_signed + 0.03,
+        f"write {1e3 * written_signed:+.0f} mV",
+        fontsize="small",
+        ha="center",
+        bbox={"facecolor": "white", "alpha": 0.82, "edgecolor": "0.8"},
+    )
+    axes[2].text(
+        2.32,
+        -0.18,
+        f"second reset: diff={1e3 * second_reset_signed:+.1f} mV\n"
+        f"cm={second_reset_common:.3f} V",
+        fontsize="small",
+        bbox={"facecolor": "white", "alpha": 0.82, "edgecolor": "0.8"},
+    )
     axes[2].set_xlabel("time (us)")
     axes[2].set_ylabel("differential voltage (V)")
     axes[2].set_title("Reset, write, and reset again without Python capacitor forcing")

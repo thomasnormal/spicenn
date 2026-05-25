@@ -8299,6 +8299,70 @@ quit
         "weak control swing should visibly undercharge the activation store",
     )
 
+    read_drive_cases_v = [0.75, 0.90, 1.05, 1.15, 1.30, 1.45]
+    read_drive_labels = []
+    read_drive_store_samples = []
+    read_drive_preact_samples = []
+    read_drive_traces = []
+
+    def read_drive_line(drive_v: float) -> str:
+        return (
+            f"VREAD_HYR read_hyr 0 PWL(0 0 2.700u 0 2.720u {drive_v:.3f} "
+            f"3.360u {drive_v:.3f} 3.380u 0 7.8u 0)"
+        )
+
+    for drive_v in read_drive_cases_v:
+        stem = (
+            "mos_hidden_writer_restored_gate_hybrid_update_forward_read_pact_"
+            f"guard_read_drive_{str(drive_v).replace('.', 'p')}v"
+        )
+        read_drive_deck = replace_required(hybrid_forward_read_reuse_deck, timing_read_pwl, read_drive_line(drive_v))
+        read_drive_deck = replace_required(
+            read_drive_deck,
+            timing_base_pact_pwl,
+            long_pact_pwl + "\n" + long_pactn_pwl + "\n" + corner_guard_pwl + "\n" + corner_guardn_pwl,
+        )
+        read_drive_deck = replace_required(read_drive_deck, nmos_store_line_p, guard_store_line_p)
+        read_drive_deck = replace_required(read_drive_deck, nmos_store_line_m, guard_store_line_m)
+        read_drive_deck = replace_required(
+            read_drive_deck,
+            "mos_hidden_writer_restored_gate_hybrid_update_forward_read_reuse.dat",
+            f"{stem}.dat",
+        )
+        read_drive_data = run_ngspice(read_drive_deck, stem)
+        rdt, read_drive_cols = load_wrdata(read_drive_data, 23)
+
+        def rdrat(time_s: float, values: np.ndarray) -> float:
+            return float(values[np.argmin(np.abs(rdt - time_s))])
+
+        read_drive_preact = read_drive_cols[10] - read_drive_cols[9]
+        read_drive_store = read_drive_cols[14] - read_drive_cols[13]
+        read_drive_labels.append(f"{drive_v:.2f} V")
+        read_drive_preact_samples.append(rdrat(3.575e-6, read_drive_preact))
+        read_drive_store_samples.append(rdrat(3.575e-6, read_drive_store))
+        read_drive_traces.append((f"{drive_v:.2f} V", rdt, read_drive_preact, read_drive_store, read_drive_cols[21]))
+
+    read_drive_preact_samples = np.array(read_drive_preact_samples)
+    read_drive_store_samples = np.array(read_drive_store_samples)
+    nominal_read_drive_idx = read_drive_cases_v.index(1.15)
+    require(
+        abs(read_drive_store_samples[nominal_read_drive_idx] - guard_timing_samples[2]) < 0.002,
+        "nominal read-drive case should match the nominal guard timing sample",
+    )
+    require(
+        read_drive_preact_samples[0] < read_drive_preact_samples[nominal_read_drive_idx] - 0.020,
+        "low read-drive voltage should visibly reduce the read preactivation",
+    )
+    require(
+        read_drive_store_samples[0] < read_drive_store_samples[nominal_read_drive_idx] - 0.010,
+        "low read-drive voltage should visibly undercharge the guarded activation store",
+    )
+    require(np.all(np.diff(read_drive_preact_samples) > 0.0005), "read preactivation should increase with read-drive voltage")
+    require(
+        read_drive_store_samples[-1] > read_drive_store_samples[nominal_read_drive_idx] + 0.004,
+        "strong read drive should increase the sampled activation in the fixed guard window",
+    )
+
     read_gated_fig, read_gated_axes = plt.subplots(2, 1, figsize=(7.4, 6.6), gridspec_kw={"height_ratios": [1.0, 0.9]})
     for label, rgt, store in guard_gated_traces:
         if label in {"40 ns", "120 ns", "240 ns", "320 ns"}:
@@ -8685,6 +8749,32 @@ quit
     guard_control_swing_axes[1].legend(loc="lower left", ncol=2, fontsize="small")
     guard_control_swing_fig.tight_layout()
     save_plot(guard_control_swing_fig, "mos_hidden_writer_restored_gate_hybrid_update_forward_guard_control_swing_ngspice")
+
+    read_drive_fig, read_drive_axes = plt.subplots(2, 1, figsize=(7.4, 6.4), gridspec_kw={"height_ratios": [1.0, 0.8]})
+    for label, rdt, _preact, store, read_ctl in read_drive_traces:
+        if label in {"0.75 V", "1.05 V", "1.15 V", "1.45 V"}:
+            read_drive_axes[0].plot(1e6 * rdt, 1e3 * store, label=label)
+    read_drive_axes[0].plot(1e6 * read_drive_traces[nominal_read_drive_idx][1], read_drive_traces[nominal_read_drive_idx][4] / 20.0, color="0.45", alpha=0.25, label="$read/20$")
+    read_drive_axes[0].axhline(0, color="0.4", linewidth=0.8)
+    read_drive_axes[0].axvline(3.33, color="0.25", linestyle="--", linewidth=0.9, alpha=0.6, label="guard off")
+    read_drive_axes[0].set_xlim(3.05, 3.65)
+    read_drive_axes[0].set_ylabel("stored activation (mV)")
+    read_drive_axes[0].set_title("Read-valid drive sets preactivation strength before the guard closes")
+    read_drive_axes[0].grid(True, alpha=0.25)
+    read_drive_axes[0].legend(loc="upper left", ncol=2, fontsize="small")
+    read_drive_x = np.arange(len(read_drive_labels))
+    read_drive_axes[1].bar(read_drive_x - 0.18, 1e3 * read_drive_preact_samples, width=0.36, label="$z^- - z^+$")
+    read_drive_axes[1].bar(read_drive_x + 0.18, 1e3 * read_drive_store_samples, width=0.36, label="stored $h^- - h^+$")
+    read_drive_axes[1].axhline(0, color="0.4", linewidth=0.8)
+    read_drive_axes[1].set_xticks(read_drive_x)
+    read_drive_axes[1].set_xticklabels(read_drive_labels)
+    read_drive_axes[1].set_xlabel("read-valid gate drive")
+    read_drive_axes[1].set_ylabel("sampled differential (mV)")
+    read_drive_axes[1].set_title("Weak read drive is a real signal-path limiter, not a store-switch issue")
+    read_drive_axes[1].grid(True, axis="y", alpha=0.25)
+    read_drive_axes[1].legend(loc="upper left", ncol=2, fontsize="small")
+    read_drive_fig.tight_layout()
+    save_plot(read_drive_fig, "mos_hidden_writer_restored_gate_hybrid_update_forward_guard_read_drive_ngspice")
 
     hybrid_repeated_deck = f"""
 * Hybrid restored-enable/analog-error writer repeated-pulse accumulation check.

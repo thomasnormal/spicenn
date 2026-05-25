@@ -1731,6 +1731,26 @@ must satisfy before it can replace the current behavioral prototype.
 
 \begin{figure}[H]
   \centering
+  \includegraphics[width=0.88\linewidth]{figures/mos_hidden_writer_restored_gate_hybrid_update_forward_guard_read_drive_ngspice.png}
+  \caption{Ngspice read-valid drive sweep for the guarded MOS activation store.
+  The persistent \(W/B\) state, \(C_\mathrm{store}=10\) pF, \(pact\) window,
+  and guard window are fixed; only the NMOS read-gate drive voltage changes.
+  The measured preactivations are
+  \(6.655,22.013,41.643,52.066,59.820,\) and \(62.056\) mV for
+  \(0.75,0.90,1.05,1.15,1.30,\) and \(1.45\) V read drive, while the stored
+  activations are
+  \(8.428,26.991,44.247,51.355,56.009,\) and \(56.687\) mV.  This separates
+  read-path headroom from store-switch headroom.  A weak read gate does not
+  primarily fail because the activation capacitor cannot hold; it fails
+  earlier because the read tail current cannot build enough preactivation
+  before the guard closes.  Increasing read drive above the nominal \(1.15\) V
+  gives additional stored activation, but the benefit saturates near the
+  mid-\(50\) mV range as the forward/store path becomes the limiter.}
+  \label{fig:mos-hidden-writer-restored-gate-hybrid-update-forward-guard-read-drive-ngspice}
+\end{figure}
+
+\begin{figure}[H]
+  \centering
   \includegraphics[width=0.88\linewidth]{figures/mos_hidden_writer_restored_gate_hybrid_repeated_ngspice.png}
   \caption{Ngspice repeated-pulse accumulation characterization of the hybrid
   restored writer.  One stored \(r^+\) hidden-error rail drives one persistent

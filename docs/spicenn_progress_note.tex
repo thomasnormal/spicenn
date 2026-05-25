@@ -2304,6 +2304,30 @@ must satisfy before it can replace the current behavioral prototype.
 
 \begin{figure}[H]
   \centering
+  \includegraphics[width=0.95\linewidth]{figures/mos_hidden_writer_restored_gate_hybrid_update_forward_guard_forward_pair_96u_shifted_gate_polarity_common_ngspice.png}
+  \caption{Ngspice severe-skew polarity calibration check at both shifted-gate
+  reset common modes.  The polarity-offset calibration in
+  Fig.~\ref{fig:mos-hidden-writer-restored-gate-hybrid-update-forward-guard-forward-pair-96u-shifted-gate-polarity-calibration-ngspice}
+  was measured with the older \(0.90\) V shifted-gate reset common mode,
+  while the later reset-common-mode sweep selected \(0.80\) V as the tuned
+  repeated-reuse target.  This deck keeps the same physical split reset,
+  repeated read/reset/store schedule, \(V_{ZCM}=0.75\) V read common mode,
+  \(10\) pF coupling capacitors, \(5\) pF shifted gates, and the two severe
+  calibrated branches: \(+30\) mV forward-pair threshold skew with
+  \(-55\) mV trim, and \(-30\) mV skew with \(+65\) mV trim.  At \(0.80\) V
+  reset common mode, the first reset samples \(-54.998\) and \(64.997\) mV
+  gate differentials and the mean stored activations are \(40.915\) and
+  \(40.919\) mV.  At \(0.90\) V common mode, the first reset samples
+  \(-54.998\) and \(64.998\) mV and the means are \(46.972\) and
+  \(46.978\) mV.  Thus the tuned common mode preserves signed severe-skew
+  alignment and repeated-cycle stability, but it lowers the activation by
+  about \(6.1\) mV.  Reset common mode is therefore part of the calibrated
+  gain budget, not merely a harmless common-mode label.}
+  \label{fig:mos-hidden-writer-restored-gate-hybrid-update-forward-guard-forward-pair-96u-shifted-gate-polarity-common-ngspice}
+\end{figure}
+
+\begin{figure}[H]
+  \centering
   \includegraphics[width=0.98\linewidth]{figures/mos_hidden_writer_restored_gate_hybrid_update_forward_guard_forward_pair_96u_shifted_gate_trim_sensitivity_ngspice.png}
   \caption{Ngspice fine trim-code sensitivity check around the calibrated
   severe-polarity shifted-gate trims.  This fixture reuses the same MOS

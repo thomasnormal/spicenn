@@ -10747,6 +10747,7 @@ quit
         reset_ref_series_ohm: float = 0.0,
         reset_ref_shunt_pf: float = 0.0,
         first_reset_active_width_us: float | None = None,
+        reset_common_v: float = 0.90,
     ) -> tuple[np.ndarray, list[np.ndarray]]:
         model_tag = name.upper()
         stem = (
@@ -10779,8 +10780,8 @@ quit
             forward_pair_lines,
             shifted_forward_pair_lines(
                 10.0,
-                reset_ref_p=0.90 + 0.5 * reset_trim_v,
-                reset_ref_m=0.90 - 0.5 * reset_trim_v,
+                reset_ref_p=reset_common_v + 0.5 * reset_trim_v,
+                reset_ref_m=reset_common_v - 0.5 * reset_trim_v,
                 forward_p_model=f"NSHTRSLFP_{model_tag}",
                 forward_m_model=f"NSHTRSLFM_{model_tag}",
                 reset_n_model=reset_n_model,
@@ -11152,6 +11153,101 @@ quit
         shift_polcal_h_mean[shift_polcal_index["mp30_pos65"]]
         < shift_polcal_h_mean[shift_polcal_index["mp30_pos55"]] - 0.010,
         "positive-trim offset calibration should improve the old +55 mV case",
+    )
+
+    shift_polcal_common_cases = [
+        ("pm30_neg55_cm080", "+30 mV skew, -55 mV trim, 0.80 V common", 0.580, 0.520, -0.055, 0.80),
+        ("pm30_neg55_cm090", "+30 mV skew, -55 mV trim, 0.90 V common", 0.580, 0.520, -0.055, 0.90),
+        ("mp30_pos65_cm080", "-30 mV skew, +65 mV trim, 0.80 V common", 0.520, 0.580, 0.065, 0.80),
+        ("mp30_pos65_cm090", "-30 mV skew, +65 mV trim, 0.90 V common", 0.520, 0.580, 0.065, 0.90),
+    ]
+    shift_polcal_common_labels = []
+    shift_polcal_common_modes = []
+    shift_polcal_common_groups = []
+    shift_polcal_common_gate_samples = []
+    shift_polcal_common_common_samples = []
+    shift_polcal_common_z_samples = []
+    shift_polcal_common_h_samples = []
+    shift_polcal_common_traces = []
+    for name, label, nfp_vto, nfm_vto, reset_trim_v, reset_common_v in shift_polcal_common_cases:
+        pct, polcal_common_cols = run_trimmed_reuse_skew_law_case(
+            name,
+            nfp_vto,
+            nfm_vto,
+            reset_trim_v,
+            family="polcal_common",
+            reset_common_v=reset_common_v,
+        )
+
+        def pccat(time_s: float, values: np.ndarray) -> float:
+            return float(values[np.argmin(np.abs(pct - time_s))])
+
+        gate_diff = polcal_common_cols[0] - polcal_common_cols[1]
+        gate_common = 0.5 * (polcal_common_cols[0] + polcal_common_cols[1])
+        z = polcal_common_cols[12] - polcal_common_cols[11]
+        load = polcal_common_cols[14] - polcal_common_cols[13]
+        store = polcal_common_cols[16] - polcal_common_cols[15]
+        gate_samples = np.array([pccat(ts, gate_diff) for ts in shift_trimmed_reuse_reset_times])
+        common_samples = np.array([pccat(ts, gate_common) for ts in shift_trimmed_reuse_reset_times])
+        z_samples = np.array([pccat(ts, z) for ts in shift_reuse_z_times])
+        h_samples = np.array([pccat(ts, store) for ts in shift_reuse_h_times])
+        z_reset = np.array([abs(pccat(ts, z)) for ts in shift_trimmed_reuse_reset_times])
+        h_reset = np.array([abs(pccat(ts, store)) for ts in shift_trimmed_reuse_reset_times])
+        require(
+            np.max(np.abs(gate_samples - reset_trim_v)) < 0.006,
+            f"{label} should establish the requested severe-skew trim",
+        )
+        require(
+            np.max(np.abs(common_samples - reset_common_v)) < 0.006,
+            f"{label} should establish the requested severe-skew reset common mode",
+        )
+        require(
+            np.max(z_reset) < 0.001 and np.max(h_reset) < 0.001,
+            f"{label} should clear z/h state during severe-skew common-mode reset",
+        )
+        require(
+            np.all(z_samples > 0.035),
+            f"{label} should keep useful read preactivation",
+        )
+        require(
+            np.all((h_samples > 0.025) & (h_samples < 0.085)),
+            f"{label} should keep calibrated activation positive and non-overdriven",
+        )
+        require(
+            np.max(h_samples) - np.min(h_samples) < 0.030,
+            f"{label} should remain repeatable across common-mode comparison cycles",
+        )
+        shift_polcal_common_labels.append(label)
+        shift_polcal_common_modes.append(reset_common_v)
+        shift_polcal_common_groups.append("positive skew" if reset_trim_v < 0 else "negative skew")
+        shift_polcal_common_gate_samples.append(gate_samples)
+        shift_polcal_common_common_samples.append(common_samples)
+        shift_polcal_common_z_samples.append(z_samples)
+        shift_polcal_common_h_samples.append(h_samples)
+        shift_polcal_common_traces.append((label, pct, load, store))
+
+    shift_polcal_common_modes = np.array(shift_polcal_common_modes)
+    shift_polcal_common_gate_samples = np.array(shift_polcal_common_gate_samples)
+    shift_polcal_common_common_samples = np.array(shift_polcal_common_common_samples)
+    shift_polcal_common_z_samples = np.array(shift_polcal_common_z_samples)
+    shift_polcal_common_h_samples = np.array(shift_polcal_common_h_samples)
+    shift_polcal_common_h_mean = np.mean(shift_polcal_common_h_samples, axis=1)
+    shift_polcal_common_index = {case[0]: idx for idx, case in enumerate(shift_polcal_common_cases)}
+    pm_cm080_idx = shift_polcal_common_index["pm30_neg55_cm080"]
+    pm_cm090_idx = shift_polcal_common_index["pm30_neg55_cm090"]
+    mp_cm080_idx = shift_polcal_common_index["mp30_pos65_cm080"]
+    mp_cm090_idx = shift_polcal_common_index["mp30_pos65_cm090"]
+    require(
+        abs(shift_polcal_common_h_mean[pm_cm080_idx] - shift_polcal_common_h_mean[mp_cm080_idx]) < 0.018,
+        "tuned 0.80 V common mode should preserve severe-skew polarity alignment",
+    )
+    require(
+        abs(shift_polcal_common_h_mean[pm_cm090_idx] - shift_polcal_common_h_mean[mp_cm090_idx]) < 0.018,
+        "legacy 0.90 V common mode should preserve severe-skew polarity alignment",
+    )
+    require(
+        np.all(shift_polcal_common_h_mean[[pm_cm090_idx, mp_cm090_idx]] - shift_polcal_common_h_mean[[pm_cm080_idx, mp_cm080_idx]] > 0.002),
+        "legacy 0.90 V reset common should store slightly higher than tuned 0.80 V for severe calibrated trims",
     )
 
     shift_polsens_cases = [
@@ -14009,6 +14105,61 @@ quit
     save_plot(
         shift_polcal_fig,
         "mos_hidden_writer_restored_gate_hybrid_update_forward_guard_forward_pair_96u_shifted_gate_polarity_calibration_ngspice",
+    )
+
+    shift_polcal_common_fig, shift_polcal_common_axes = plt.subplots(
+        2,
+        1,
+        figsize=(7.4, 6.0),
+        gridspec_kw={"height_ratios": [0.95, 1.05]},
+    )
+    polcal_common_modes = np.array([0.80, 0.90])
+    pm_common_order = [pm_cm080_idx, pm_cm090_idx]
+    mp_common_order = [mp_cm080_idx, mp_cm090_idx]
+    shift_polcal_common_axes[0].plot(
+        polcal_common_modes,
+        1e3 * shift_polcal_common_h_mean[pm_common_order],
+        "o-",
+        label="+30 mV skew, -55 mV trim",
+    )
+    shift_polcal_common_axes[0].plot(
+        polcal_common_modes,
+        1e3 * shift_polcal_common_h_mean[mp_common_order],
+        "s--",
+        label="-30 mV skew, +65 mV trim",
+    )
+    shift_polcal_common_axes[0].axhspan(25, 85, color="0.7", alpha=0.12, label="accepted window")
+    shift_polcal_common_axes[0].axvline(0.80, color="tab:green", linestyle=":", linewidth=1.0, label="tuned common")
+    shift_polcal_common_axes[0].axvline(0.90, color="tab:red", linestyle=":", linewidth=1.0, label="legacy common")
+    shift_polcal_common_axes[0].set_xticks(polcal_common_modes)
+    shift_polcal_common_axes[0].set_ylabel("mean stored $h$ (mV)")
+    shift_polcal_common_axes[0].set_title("Severe trim calibration survives the tuned reset common mode")
+    shift_polcal_common_axes[0].grid(True, alpha=0.25)
+    shift_polcal_common_axes[0].legend(loc="upper left", ncol=2, fontsize="x-small")
+    common_cycle_x = np.arange(3)
+    for idx in [pm_cm080_idx, pm_cm090_idx, mp_cm080_idx, mp_cm090_idx]:
+        label = shift_polcal_common_labels[idx]
+        short_label = label.replace(" mV skew, ", " ").replace(" mV trim, ", " ").replace(" V common", " Vcm")
+        shift_polcal_common_axes[1].plot(
+            common_cycle_x,
+            1e3 * shift_polcal_common_h_samples[idx],
+            marker="o" if "0.80" in label else "s",
+            linestyle="-" if "+30" in label else "--",
+            label=short_label,
+        )
+    shift_polcal_common_axes[1].axhspan(25, 85, color="0.7", alpha=0.12)
+    shift_polcal_common_axes[1].axhline(0, color="0.4", linewidth=0.8)
+    shift_polcal_common_axes[1].set_xticks(common_cycle_x)
+    shift_polcal_common_axes[1].set_xticklabels(["cycle 1", "cycle 2", "cycle 3"])
+    shift_polcal_common_axes[1].set_xlabel("read/store cycle")
+    shift_polcal_common_axes[1].set_ylabel("stored $h$ (mV)")
+    shift_polcal_common_axes[1].set_title("Both severe-skew polarities remain repeatable at 0.80 V")
+    shift_polcal_common_axes[1].grid(True, axis="y", alpha=0.25)
+    shift_polcal_common_axes[1].legend(loc="upper left", ncol=2, fontsize="xx-small")
+    shift_polcal_common_fig.tight_layout()
+    save_plot(
+        shift_polcal_common_fig,
+        "mos_hidden_writer_restored_gate_hybrid_update_forward_guard_forward_pair_96u_shifted_gate_polarity_common_ngspice",
     )
 
     shift_polsens_fig, shift_polsens_axes = plt.subplots(

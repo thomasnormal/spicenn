@@ -2,6 +2,17 @@
 
 ## 2026-05-25
 
+- Family-completed the guarded hold drift display for the positive hold and
+  off-isolation cases.  The `guard_hold` assertion budget is \(200\,\mu\)V and
+  the `guard_off_isolation` budget is \(500\,\mu\)V, but the rendered plots
+  only showed sub-\(\mu\)V drift without those budgets.  The regenerated
+  `mos_hidden_writer_restored_gate_hybrid_update_forward_guard_hold_ngspice`
+  plot now labels the measured maximum drift as \(0.48\,\mu\)V and the
+  assertion budget as \(200\,\mu\)V.  The regenerated
+  `mos_hidden_writer_restored_gate_hybrid_update_forward_guard_off_isolation_ngspice`
+  plot labels the measured maximum drift as \(0.49\,\mu\)V and the budget as
+  \(500\,\mu\)V.  Both use a \(\pm1\,\mu\)V visual guide so the actual
+  drift remains readable while the much larger assertion budget is explicit.
 - Fixed the guarded signed-hold plot's mixed-unit ambiguity.  The underlying
   ngspice assertions require positive and negative guarded activation holds to
   mirror within \(0.2\) mV and each held sign to drift less than \(0.2\) mV;

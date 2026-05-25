@@ -12959,11 +12959,23 @@ quit
     hold_x = np.arange(len(hold_sample_times))
     hold_axes[1].plot(hold_x, 1e6 * hold_drift, "o-", label="drift from first sample")
     hold_axes[1].axhline(0, color="0.4", linewidth=0.8)
+    hold_axes[1].axhline(1.0, color="0.4", linestyle=":", linewidth=1.0, label="1 uV visual guide")
+    hold_axes[1].axhline(-1.0, color="0.4", linestyle=":", linewidth=1.0)
+    hold_axes[1].text(
+        0.03,
+        0.14,
+        f"max drift = {1e6 * np.max(np.abs(hold_drift)):.2f} uV\n"
+        "assertion budget = 200 uV",
+        transform=hold_axes[1].transAxes,
+        fontsize="small",
+        bbox={"facecolor": "white", "alpha": 0.82, "edgecolor": "0.8"},
+    )
+    hold_axes[1].set_ylim(-1.1, 1.1)
     hold_axes[1].set_xticks(hold_x)
     hold_axes[1].set_xticklabels(hold_sample_labels)
     hold_axes[1].set_xlabel("sample time (us)")
     hold_axes[1].set_ylabel("drift ($\\mu$V)")
-    hold_axes[1].set_title("No-reset hold drift stays below one microvolt")
+    hold_axes[1].set_title("No-reset hold drift is far below the assertion budget")
     hold_axes[1].grid(True, axis="y", alpha=0.25)
     hold_axes[1].legend(loc="upper right", fontsize="small")
     hold_fig.tight_layout()
@@ -12987,13 +12999,25 @@ quit
     guard_off_x = np.arange(len(guard_off_sample_times))
     guard_off_axes[1].plot(guard_off_x, 1e6 * guard_off_drift, "o-", label="stored activation drift")
     guard_off_axes[1].axhline(0, color="0.4", linewidth=0.8)
+    guard_off_axes[1].axhline(1.0, color="0.4", linestyle=":", linewidth=1.0, label="1 uV visual guide")
+    guard_off_axes[1].axhline(-1.0, color="0.4", linestyle=":", linewidth=1.0)
+    guard_off_axes[1].text(
+        0.03,
+        0.14,
+        f"max drift = {1e6 * np.max(np.abs(guard_off_drift)):.2f} uV\n"
+        "assertion budget = 500 uV",
+        transform=guard_off_axes[1].transAxes,
+        fontsize="small",
+        bbox={"facecolor": "white", "alpha": 0.82, "edgecolor": "0.8"},
+    )
+    guard_off_axes[1].set_ylim(-1.1, 1.1)
     guard_off_axes[1].set_xticks(guard_off_x)
     guard_off_axes[1].set_xticklabels(guard_off_sample_labels)
     guard_off_axes[1].set_xlabel("sample time (us)")
     guard_off_axes[1].set_ylabel("drift ($\\mu$V)")
-    guard_off_axes[1].set_title("Pact-only, guard-only, and read pulses leave the held value unchanged")
+    guard_off_axes[1].set_title("Off-state control toggles stay far below the drift budget")
     guard_off_axes[1].grid(True, axis="y", alpha=0.25)
-    guard_off_axes[1].legend(loc="lower right", fontsize="small")
+    guard_off_axes[1].legend(loc="upper right", fontsize="small")
     guard_off_fig.tight_layout()
     save_plot(guard_off_fig, "mos_hidden_writer_restored_gate_hybrid_update_forward_guard_off_isolation_ngspice")
 

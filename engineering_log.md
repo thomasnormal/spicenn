@@ -2,6 +2,28 @@
 
 ## 2026-05-25
 
+- Clarified the MOS hidden-error primitive plots.  The ngspice decks already
+  asserted nonnegative finite-difference derivative gain, active-window
+  attenuation, signed hidden-error storage, retained sampled derivative
+  proxies, mirrored r+/r- sign stores, nudge-magnitude scaling, threshold
+  mismatch robustness, and input-common-mode robustness.  The regenerated
+  `mos_hidden_error_ngspice`, `mos_hidden_error_gain_store_ngspice`,
+  `mos_hidden_error_sign_store_ngspice`,
+  `mos_hidden_error_nudge_sweep_ngspice`,
+  `mos_hidden_error_mismatch_ngspice`, and
+  `mos_hidden_error_common_mode_ngspice` figures now label those margins
+  directly: the finite-difference derivative window has \(0.98\) V/V center
+  gain, \(0.13\) V/V edge gain, and \(0.0915\) V/V minimum gain; selected
+  r+/r- storage lands at \(+177.4\) mV and \(-177.4\) mV with no displayed
+  hold error; sampled derivative storage keeps \(0.98\) V/V center gain with
+  \(14\%\) saturated edge ratio and no displayed hold error; cross-connected
+  sign storage gives \(+78.8\) mV and \(-78.8\) mV center rails with \(20\%\)
+  saturation ratio, \(0.7\) mV hold error, and no displayed mirror error; the
+  nudge sweep reaches \(+118.2\) mV with \(19.7\) mV minimum step and no
+  displayed zero, mirror, or hold error; threshold mismatch preserves at least
+  a \(0.66\) V active window with \(0.99\) V/V minimum peak gain; and
+  common-mode shifts preserve at least a \(0.48\) V active window with
+  \(0.98\)--\(0.99\) V/V center gain.
 - Clarified the synapse-to-forward-store integration plots.  The ngspice decks
   already asserted signed synapse storage on real summing capacitors, crossed
   forward-pair sign preservation, activation-cap storage/hold, reset reuse

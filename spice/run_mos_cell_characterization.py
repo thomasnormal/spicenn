@@ -2102,6 +2102,9 @@ quit
     require(center_gain > 0.5, "hidden-error derivative gain should be positive near z balance")
     require(edge_gain < 0.65 * center_gain, "hidden-error derivative gain should fall at saturated z")
     require(np.all(gain > -1e-4), "finite-difference gain should stay nonnegative")
+    center_gain = float(center_gain)
+    hidden_min_gain = float(np.min(gain))
+    edge_gain_ratio = edge_gain / max(center_gain, 1e-30)
 
     store_data = run_ngspice(store_deck, "mos_hidden_error_store")
     t, store_cols = load_wrdata(store_data, 7)
@@ -2115,6 +2118,12 @@ quit
     require(at(1.2e-6, neg_stored) < -0.12, "r- storage should make negative delta rail differential")
     require(at(2.2e-6, pos_stored) > 0.12, "r+ hidden-error storage should hold after phase")
     require(at(2.2e-6, neg_stored) < -0.12, "r- hidden-error storage should hold after phase")
+    hidden_pos_store = at(1.2e-6, pos_stored)
+    hidden_neg_store = at(1.2e-6, neg_stored)
+    hidden_store_hold_error = max(
+        abs(at(2.2e-6, pos_stored) - hidden_pos_store),
+        abs(at(2.2e-6, neg_stored) - hidden_neg_store),
+    )
 
     gain_store_data = run_ngspice(gain_store_deck, "mos_hidden_error_gain_store")
     gt, gain_store_cols = load_wrdata(gain_store_data, 4 * len(gain_store_cases) + 1)
@@ -2129,6 +2138,8 @@ quit
     require(stored_gain_final[0] < 0.35 * stored_gain_final[1], "negative saturated stored gain should be much lower")
     require(stored_gain_final[2] < 0.35 * stored_gain_final[1], "positive saturated stored gain should be much lower")
     require(np.max(np.abs(stored_gain_hold - stored_gain_final)) < 0.04, "stored hidden-error gain samples should hold")
+    stored_gain_hold_error = float(np.max(np.abs(stored_gain_hold - stored_gain_final)))
+    stored_gain_sat_ratio = float(max(stored_gain_final[0], stored_gain_final[2]) / max(stored_gain_final[1], 1e-30))
 
     sign_store_data = run_ngspice(sign_store_deck, "mos_hidden_error_sign_store")
     st, sign_store_cols = load_wrdata(sign_store_data, 4 * len(sign_store_cases) + 1)
@@ -2148,6 +2159,11 @@ quit
     require(np.max(np.abs(pos_final + neg_final)) < 0.01, "r+ and r- cross-connected stores should be opposite")
     require(np.max(np.abs(pos_hold - pos_final)) < 0.01, "r+ derivative-sign store should hold")
     require(np.max(np.abs(neg_hold - neg_final)) < 0.01, "r- derivative-sign store should hold")
+    sign_center_pos = float(pos_final[1])
+    sign_center_neg = float(neg_final[1])
+    sign_symmetry_error = float(np.max(np.abs(pos_final + neg_final)))
+    sign_hold_error = max(float(np.max(np.abs(pos_hold - pos_final))), float(np.max(np.abs(neg_hold - neg_final))))
+    sign_sat_ratio = float(max(abs(pos_final[0]), abs(pos_final[2])) / max(abs(pos_final[1]), 1e-30))
 
     nudge_data = run_ngspice(nudge_sweep_deck, "mos_hidden_error_nudge_sweep")
     nt, nudge_cols = load_wrdata(nudge_data, 4 * len(nudge_sweep_values) + 1)
@@ -2174,6 +2190,13 @@ quit
     )
     require(np.max(np.abs(nudge_pos_hold - nudge_pos_final)) < 0.01, "r+ nudge-magnitude store should hold")
     require(np.max(np.abs(nudge_neg_hold - nudge_neg_final)) < 0.01, "r- nudge-magnitude store should hold")
+    nudge_zero_residual = max(abs(float(nudge_pos_final[0])), abs(float(nudge_neg_final[0])))
+    nudge_min_step = float(np.min(np.diff(nudge_pos_final)))
+    nudge_symmetry_error = float(np.max(np.abs(nudge_pos_final + nudge_neg_final)))
+    nudge_hold_error = max(
+        float(np.max(np.abs(nudge_pos_hold - nudge_pos_final))),
+        float(np.max(np.abs(nudge_neg_hold - nudge_neg_final))),
+    )
 
     mismatch_data = run_ngspice(mismatch_deck, "mos_hidden_error_mismatch")
     mt, mismatch_cols = load_wrdata(mismatch_data, 4 * len(mismatch_cases))
@@ -2210,6 +2233,11 @@ quit
     )
     nominal_center_gain = mismatch_gains[1][int(np.argmin(np.abs(mt)))]
     require(nominal_center_gain > 0.7, "nominal hidden-error mismatch deck should retain high center gain")
+    mismatch_window_widths = mismatch_right_edges - mismatch_left_edges
+    mismatch_min_width = float(np.min(mismatch_window_widths))
+    mismatch_shift_span = float(np.max(mismatch_left_edges) - np.min(mismatch_left_edges))
+    mismatch_peak_min = float(np.min([np.max(series) for series in mismatch_gains]))
+    nominal_center_gain = float(nominal_center_gain)
 
     cm_data = run_ngspice(cm_deck, "mos_hidden_error_common_mode")
     cmt, cm_cols = load_wrdata(cm_data, 4 * len(cm_cases))
@@ -2242,8 +2270,14 @@ quit
     cm_left_edges = np.array(cm_left_edges)
     cm_right_edges = np.array(cm_right_edges)
     cm_center_gains = np.array(cm_center_gains)
+    cm_window_widths = cm_right_edges - cm_left_edges
+    cm_min_width = float(np.min(cm_window_widths))
+    cm_center_min = float(np.min(cm_center_gains))
+    cm_center_max = float(np.max(cm_center_gains))
+    cm_peak_min = float(np.min([np.max(series) for series in cm_gains]))
 
     fig, axes = plt.subplots(2, 1, figsize=(7.2, 6.2))
+    callout_box = {"facecolor": "white", "alpha": 0.82, "edgecolor": "0.8"}
     axes[0].plot(xdiff, gain, label="finite-difference gain")
     axes[0].axhline(0, color="0.4", linewidth=0.8)
     axes[0].axvline(0, color="0.4", linewidth=0.8)
@@ -2252,6 +2286,20 @@ quit
     axes[0].set_title("Hidden-error replicas produce derivative window")
     axes[0].grid(True, alpha=0.25)
     axes[0].legend()
+    axes[0].text(
+        0.55,
+        0.16,
+        "\n".join(
+            [
+                f"center gain {center_gain:.2f} V/V",
+                f"edge gain {edge_gain:.2f} V/V ({100 * edge_gain_ratio:.0f}%)",
+                f"min gain {hidden_min_gain:.4f} V/V",
+            ]
+        ),
+        transform=axes[0].transAxes,
+        fontsize="x-small",
+        bbox=callout_box,
+    )
     axes[1].plot(1e6 * t, pos_stored, label="$r^+$: stored $\\delta^+ - \\delta^-$")
     axes[1].plot(1e6 * t, neg_stored, label="$r^-$: stored $\\delta^+ - \\delta^-$")
     axes[1].plot(1e6 * t, store_cols[6] / 10.0, color="0.5", alpha=0.45, label="$pbwd/10$")
@@ -2261,6 +2309,20 @@ quit
     axes[1].set_title("MOS pass switches store selected error sign")
     axes[1].grid(True, alpha=0.25)
     axes[1].legend()
+    axes[1].text(
+        0.52,
+        0.16,
+        "\n".join(
+            [
+                f"r+ store {1e3 * hidden_pos_store:+.1f} mV",
+                f"r- store {1e3 * hidden_neg_store:+.1f} mV",
+                f"hold error {1e3 * hidden_store_hold_error:.2f} mV",
+            ]
+        ),
+        transform=axes[1].transAxes,
+        fontsize="x-small",
+        bbox=callout_box,
+    )
     fig.tight_layout()
     hidden_plot = save_plot(fig, "mos_hidden_error_ngspice")
 
@@ -2274,6 +2336,20 @@ quit
     gain_axes[0].set_title("Stored replica derivative is high only in the active window")
     gain_axes[0].grid(True, alpha=0.25)
     gain_axes[0].legend()
+    gain_axes[0].text(
+        0.52,
+        0.16,
+        "\n".join(
+            [
+                f"center stored gain {stored_gain_final[1]:.2f} V/V",
+                f"saturation ratio {100 * stored_gain_sat_ratio:.0f}%",
+                f"hold error {stored_gain_hold_error:.3f} V/V",
+            ]
+        ),
+        transform=gain_axes[0].transAxes,
+        fontsize="x-small",
+        bbox=callout_box,
+    )
     zdiffs = np.array([diff for _, diff in gain_store_cases])
     order = np.argsort(zdiffs)
     gain_axes[1].plot(zdiffs[order], stored_gain_final[order], "o-", label="after sample")
@@ -2285,6 +2361,20 @@ quit
     gain_axes[1].set_title("Sampled derivative proxy is retained on capacitors")
     gain_axes[1].grid(True, alpha=0.25)
     gain_axes[1].legend()
+    gain_axes[1].text(
+        0.52,
+        0.16,
+        "\n".join(
+            [
+                f"center {stored_gain_final[1]:.2f} V/V",
+                f"edge max {max(stored_gain_final[0], stored_gain_final[2]):.2f} V/V",
+                f"hold max {stored_gain_hold_error:.3f} V/V",
+            ]
+        ),
+        transform=gain_axes[1].transAxes,
+        fontsize="x-small",
+        bbox=callout_box,
+    )
     gain_fig.tight_layout()
     save_plot(gain_fig, "mos_hidden_error_gain_store_ngspice")
 
@@ -2311,6 +2401,20 @@ quit
     sign_axes[0].set_title("Cross-connected replica outputs store derivative-weighted error sign")
     sign_axes[0].grid(True, alpha=0.25)
     sign_axes[0].legend(loc="upper right", ncol=2, fontsize="small")
+    sign_axes[0].text(
+        0.05,
+        0.15,
+        "\n".join(
+            [
+                f"center r+ {1e3 * sign_center_pos:+.1f} mV",
+                f"center r- {1e3 * sign_center_neg:+.1f} mV",
+                f"mirror error {1e3 * sign_symmetry_error:.1f} mV",
+            ]
+        ),
+        transform=sign_axes[0].transAxes,
+        fontsize="x-small",
+        bbox=callout_box,
+    )
     zdiffs = np.array([diff for _, diff in sign_store_cases])
     order = np.argsort(zdiffs)
     sign_axes[1].plot(zdiffs[order], pos_final[order], "o-", label="$r^+$ after sample")
@@ -2324,6 +2428,20 @@ quit
     sign_axes[1].set_title("Stored hidden error is signed and active-window limited")
     sign_axes[1].grid(True, alpha=0.25)
     sign_axes[1].legend(loc="upper right", ncol=2)
+    sign_axes[1].text(
+        0.05,
+        0.15,
+        "\n".join(
+            [
+                f"saturation ratio {100 * sign_sat_ratio:.0f}%",
+                f"hold error {1e3 * sign_hold_error:.1f} mV",
+                f"mirror error {1e3 * sign_symmetry_error:.1f} mV",
+            ]
+        ),
+        transform=sign_axes[1].transAxes,
+        fontsize="x-small",
+        bbox=callout_box,
+    )
     sign_fig.tight_layout()
     save_plot(sign_fig, "mos_hidden_error_sign_store_ngspice")
 
@@ -2338,6 +2456,20 @@ quit
     nudge_axes[0].set_title("Hidden-error storage scales with replica nudge")
     nudge_axes[0].grid(True, alpha=0.25)
     nudge_axes[0].legend(loc="upper right", ncol=2, fontsize="small")
+    nudge_axes[0].text(
+        0.05,
+        0.15,
+        "\n".join(
+            [
+                f"zero residual {1e3 * nudge_zero_residual:.1f} mV",
+                f"max store {1e3 * nudge_pos_final[-1]:+.1f} mV",
+                f"mirror error {1e3 * nudge_symmetry_error:.1f} mV",
+            ]
+        ),
+        transform=nudge_axes[0].transAxes,
+        fontsize="x-small",
+        bbox=callout_box,
+    )
     nudge_axes[1].plot(nudge_sweep_values, nudge_pos_final, "o-", label="$r^+$ after sample")
     nudge_axes[1].plot(nudge_sweep_values, nudge_neg_final, "s-", label="$r^-$ after sample")
     nudge_axes[1].plot(nudge_sweep_values, nudge_pos_hold, "o--", color="0.35", label="$r^+$ after hold")
@@ -2348,6 +2480,20 @@ quit
     nudge_axes[1].set_title("Stored magnitude is graded, mirrored, and retained")
     nudge_axes[1].grid(True, alpha=0.25)
     nudge_axes[1].legend(loc="upper right", ncol=2)
+    nudge_axes[1].text(
+        0.05,
+        0.15,
+        "\n".join(
+            [
+                f"min step {1e3 * nudge_min_step:.1f} mV",
+                f"hold error {1e3 * nudge_hold_error:.1f} mV",
+                f"mirror error {1e3 * nudge_symmetry_error:.1f} mV",
+            ]
+        ),
+        transform=nudge_axes[1].transAxes,
+        fontsize="x-small",
+        bbox=callout_box,
+    )
     nudge_fig.tight_layout()
     save_plot(nudge_fig, "mos_hidden_error_nudge_sweep_ngspice")
 
@@ -2361,15 +2507,41 @@ quit
     mismatch_axes[0].set_title("Hidden-error derivative window shifts under input-pair mismatch")
     mismatch_axes[0].grid(True, alpha=0.25)
     mismatch_axes[0].legend(loc="upper right")
+    mismatch_axes[0].text(
+        0.05,
+        0.14,
+        "\n".join(
+            [
+                f"min peak gain {mismatch_peak_min:.2f} V/V",
+                f"nominal center {nominal_center_gain:.2f} V/V",
+                f"min window {mismatch_min_width:.2f} V",
+            ]
+        ),
+        transform=mismatch_axes[0].transAxes,
+        fontsize="x-small",
+        bbox=callout_box,
+    )
     vt_offsets = np.array([0.53, 0.55, 0.57])
-    window_widths = mismatch_right_edges - mismatch_left_edges
     mismatch_axes[1].plot(vt_offsets, mismatch_left_edges, "o-", label="left 0.5-gain edge")
     mismatch_axes[1].plot(vt_offsets, mismatch_right_edges, "s--", label="right 0.5-gain edge")
-    mismatch_axes[1].plot(vt_offsets, window_widths, "^-.", label="active-window width")
+    mismatch_axes[1].plot(vt_offsets, mismatch_window_widths, "^-.", label="active-window width")
     mismatch_axes[1].axhline(0.55, color="0.4", linestyle=":", linewidth=1.0, label="0.55 V width bound")
     mismatch_axes[1].axhline(0, color="0.4", linewidth=0.8)
-    for x, width in zip(vt_offsets, window_widths):
+    for x, width in zip(vt_offsets, mismatch_window_widths):
         mismatch_axes[1].text(x, width + 0.025, f"{width:.2f} V", ha="center", va="bottom", fontsize="x-small")
+    mismatch_axes[1].text(
+        0.05,
+        0.14,
+        "\n".join(
+            [
+                f"min width {mismatch_min_width:.2f} V",
+                f"left-edge shift {1e3 * mismatch_shift_span:.0f} mV",
+            ]
+        ),
+        transform=mismatch_axes[1].transAxes,
+        fontsize="x-small",
+        bbox=callout_box,
+    )
     mismatch_axes[1].set_xlabel("z+ input device $V_{TO}$ (V)")
     mismatch_axes[1].set_ylabel("window edge / width (V)")
     mismatch_axes[1].set_title("Mismatch shifts both active-window edges while preserving width")
@@ -2388,8 +2560,21 @@ quit
     cm_axes[0].set_title("Hidden-error derivative window survives input common-mode shifts")
     cm_axes[0].grid(True, alpha=0.25)
     cm_axes[0].legend(loc="upper right")
+    cm_axes[0].text(
+        0.05,
+        0.14,
+        "\n".join(
+            [
+                f"min peak gain {cm_peak_min:.2f} V/V",
+                f"center gain {cm_center_min:.2f}-{cm_center_max:.2f} V/V",
+                f"min window {cm_min_width:.2f} V",
+            ]
+        ),
+        transform=cm_axes[0].transAxes,
+        fontsize="x-small",
+        bbox=callout_box,
+    )
     cm_values = np.array([cm_value for _name, cm_value in cm_cases])
-    cm_window_widths = cm_right_edges - cm_left_edges
     cm_axes[1].plot(cm_values, cm_left_edges, "o-", label="left 0.5-gain edge")
     cm_axes[1].plot(cm_values, cm_right_edges, "s--", label="right 0.5-gain edge")
     cm_axes[1].plot(cm_values, cm_window_widths, "^-.", label="active-window width")
@@ -2398,6 +2583,19 @@ quit
     cm_axes[1].axhline(0, color="0.4", linewidth=0.8)
     for x, width in zip(cm_values, cm_window_widths):
         cm_axes[1].text(x, width + 0.025, f"{width:.2f} V", ha="center", va="bottom", fontsize="x-small")
+    cm_axes[1].text(
+        0.05,
+        0.14,
+        "\n".join(
+            [
+                f"min width {cm_min_width:.2f} V",
+                f"center gain span {cm_center_min:.2f}-{cm_center_max:.2f}",
+            ]
+        ),
+        transform=cm_axes[1].transAxes,
+        fontsize="x-small",
+        bbox=callout_box,
+    )
     cm_axes[1].set_xlabel("input common-mode voltage (V)")
     cm_axes[1].set_ylabel("edge / width / gain")
     cm_axes[1].set_title("Bias shifts change gain slightly but keep a broad derivative window")

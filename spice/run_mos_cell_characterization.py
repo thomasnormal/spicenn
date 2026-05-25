@@ -873,6 +873,9 @@ quit
     require(abs(signed[np.argmin(np.abs(xdiff))]) < 1e-3, "forward pair should be centered near zero")
     peak = max(float(np.max(np.abs(signed))), 1e-30)
     require(np.max(np.abs(signed + signed[::-1])) < 0.03 * peak, "forward pair should be approximately odd-symmetric")
+    forward_peak = peak
+    forward_center_error = abs(float(signed[np.argmin(np.abs(xdiff))]))
+    forward_odd_error = float(np.max(np.abs(signed + signed[::-1])))
     store_data = run_ngspice(store_deck, "mos_forward_store")
     t, store_cols = load_wrdata(store_data, 5)
     load_signed = store_cols[1] - store_cols[0]
@@ -885,10 +888,18 @@ quit
     require(at(1.8e-6, cap_signed) > 0.25, "activation cap should hold after first pact")
     require(at(3.2e-6, cap_signed) < -0.18, "activation cap should store negative phase")
     require(at(3.8e-6, cap_signed) < -0.18, "activation cap should hold after second pact")
+    store_pos = at(1.2e-6, cap_signed)
+    hold_pos = at(1.8e-6, cap_signed)
+    store_neg = at(3.2e-6, cap_signed)
+    hold_neg = at(3.8e-6, cap_signed)
+    store_hold_error = max(abs(hold_pos - store_pos), abs(hold_neg - store_neg))
 
     cm_data = run_ngspice(cm_deck, "mos_forward_common_mode")
     _cmt, cm_cols = load_wrdata(cm_data, 4 * len(cm_cases))
     cm_curves: list[tuple[str, float, np.ndarray, np.ndarray]] = []
+    cm_zero_errors = []
+    cm_peaks = []
+    cm_gains = []
     for idx, (name, cm) in enumerate(cm_cases):
         zp = cm_cols[4 * idx]
         zm = cm_cols[4 * idx + 1]
@@ -906,6 +917,9 @@ quit
         require(abs(cm_zero) < 0.015, f"{name} common-mode forward transfer should stay centered")
         require(cm_curve_peak > 0.12, f"{name} common-mode forward transfer should retain usable swing")
         require(local_fit[0] > 0.25, f"{name} common-mode forward transfer should retain center gain")
+        cm_zero_errors.append(abs(cm_zero))
+        cm_peaks.append(cm_curve_peak)
+        cm_gains.append(float(local_fit[0]))
         cm_curves.append((name, cm, cm_xdiff, cm_signed))
 
     store_sweep_data = run_ngspice(store_sweep_deck, "mos_forward_store_sweep")
@@ -937,6 +951,12 @@ quit
         np.max(np.abs(sweep_cap_final - sweep_load_final)) < 0.015,
         "stored forward activation should track the diode-loaded pair output",
     )
+    sweep_min_step = float(np.min(np.diff(sweep_cap_final)))
+    sweep_center_error = abs(float(sweep_cap_final[len(store_sweep_cases) // 2]))
+    sweep_swing = float(min(abs(sweep_cap_final[0]), abs(sweep_cap_final[-1])))
+    sweep_odd_error = float(np.max(np.abs(sweep_cap_final + sweep_cap_final[::-1])))
+    sweep_hold_error = float(np.max(np.abs(sweep_cap_final - sweep_cap_hold)))
+    sweep_track_error = float(np.max(np.abs(sweep_cap_final - sweep_load_final)))
 
     mismatch_data = run_ngspice(mismatch_deck, "mos_forward_mismatch")
     _mt, mismatch_cols = load_wrdata(mismatch_data, 4 * len(mismatch_cases))
@@ -978,8 +998,11 @@ quit
     require(left_high_offset > balanced_offset + 0.015, "high left VTO should move zero crossing positive")
     require(np.max(np.abs(mismatch_offsets)) < 0.06, "20 mV VTO mismatch should keep forward offset bounded")
     require(np.min(mismatch_gains) > 0.55, "mismatched forward pair should retain useful center gain")
+    mismatch_max_offset = float(np.max(np.abs(mismatch_offsets)))
+    mismatch_min_gain = float(np.min(mismatch_gains))
 
     fig, axes = plt.subplots(2, 1, figsize=(7.2, 6.4))
+    callout_box = {"facecolor": "white", "alpha": 0.82, "edgecolor": "0.8"}
     # The diode-connected PMOS load is voltage-inverting: the rail that sinks
     # more differential-pair current moves lower.  Plot the usable signed load
     # voltage convention so the transfer rises with z+ - z-.
@@ -991,6 +1014,20 @@ quit
     axes[0].set_title("Forward pair gives monotone bounded transfer")
     axes[0].grid(True, alpha=0.25)
     axes[0].legend()
+    axes[0].text(
+        0.55,
+        0.15,
+        "\n".join(
+            [
+                f"peak swing {forward_peak:.3f} V",
+                f"center error {1e3 * forward_center_error:.2f} mV",
+                f"odd-symmetry error {1e3 * forward_odd_error:.1f} mV",
+            ]
+        ),
+        transform=axes[0].transAxes,
+        fontsize="x-small",
+        bbox=callout_box,
+    )
     axes[1].plot(1e6 * t, load_signed, label="load $h^- - h^+$", alpha=0.75)
     axes[1].plot(1e6 * t, cap_signed, label="stored $C_{h^-}-C_{h^+}$")
     axes[1].plot(1e6 * t, store_cols[4] / 5.0, color="0.5", alpha=0.45, label="$pact/5$")
@@ -1000,6 +1037,20 @@ quit
     axes[1].set_title("Phase switch stores and holds activation on capacitors")
     axes[1].grid(True, alpha=0.25)
     axes[1].legend()
+    axes[1].text(
+        0.54,
+        0.12,
+        "\n".join(
+            [
+                f"positive store {1e3 * store_pos:+.1f} mV",
+                f"negative store {1e3 * store_neg:+.1f} mV",
+                f"max hold error {1e3 * store_hold_error:.2f} mV",
+            ]
+        ),
+        transform=axes[1].transAxes,
+        fontsize="x-small",
+        bbox=callout_box,
+    )
     fig.tight_layout()
     forward_plot = save_plot(fig, "mos_forward_pair_ngspice")
 
@@ -1014,6 +1065,20 @@ quit
     cm_axes[0].set_title("Forward pair remains centered across input common-mode")
     cm_axes[0].grid(True, alpha=0.25)
     cm_axes[0].legend()
+    cm_axes[0].text(
+        0.55,
+        0.15,
+        "\n".join(
+            [
+                f"max center error {1e3 * max(cm_zero_errors):.2f} mV",
+                f"min peak swing {min(cm_peaks):.3f} V",
+                f"min center gain {min(cm_gains):.2f} V/V",
+            ]
+        ),
+        transform=cm_axes[0].transAxes,
+        fontsize="x-small",
+        bbox=callout_box,
+    )
     cm_axes[1].axhline(0, color="0.4", linewidth=0.8)
     cm_axes[1].axvline(0, color="0.4", linewidth=0.8)
     cm_axes[1].set_xlabel("$z^+ - z^-$ (V)")
@@ -1023,6 +1088,19 @@ quit
     cm_axes[1].set_ylim(-0.20, 0.20)
     cm_axes[1].grid(True, alpha=0.25)
     cm_axes[1].legend(title="$V_{CM}$")
+    cm_axes[1].text(
+        0.55,
+        0.14,
+        "\n".join(
+            [
+                f"gain range {min(cm_gains):.2f}-{max(cm_gains):.2f} V/V",
+                f"zero range < {1e3 * max(cm_zero_errors):.2f} mV",
+            ]
+        ),
+        transform=cm_axes[1].transAxes,
+        fontsize="x-small",
+        bbox=callout_box,
+    )
     cm_fig.tight_layout()
     save_plot(cm_fig, "mos_forward_common_mode_ngspice")
 
@@ -1036,6 +1114,20 @@ quit
     sweep_axes[0].set_title("Forward-store capacitor samples graded activations")
     sweep_axes[0].grid(True, alpha=0.25)
     sweep_axes[0].legend(loc="upper right")
+    sweep_axes[0].text(
+        0.05,
+        0.14,
+        "\n".join(
+            [
+                f"stored swing >= {1e3 * sweep_swing:.1f} mV",
+                f"hold error {1e3 * sweep_hold_error:.2f} mV",
+                f"track error {1e3 * sweep_track_error:.2f} mV",
+            ]
+        ),
+        transform=sweep_axes[0].transAxes,
+        fontsize="x-small",
+        bbox=callout_box,
+    )
     sweep_axes[1].plot(store_sweep_cases, sweep_load_final, "o-", label="load output")
     sweep_axes[1].plot(store_sweep_cases, sweep_cap_final, "s--", label="after pact sample")
     sweep_axes[1].plot(store_sweep_cases, sweep_cap_hold, "d:", color="0.45", label="after hold")
@@ -1046,6 +1138,20 @@ quit
     sweep_axes[1].set_title("Stored activation is monotone, centered, and retained")
     sweep_axes[1].grid(True, alpha=0.25)
     sweep_axes[1].legend(loc="upper left")
+    sweep_axes[1].text(
+        0.55,
+        0.14,
+        "\n".join(
+            [
+                f"min monotone step {1e3 * sweep_min_step:.1f} mV",
+                f"center error {1e3 * sweep_center_error:.2f} mV",
+                f"odd-symmetry error {1e3 * sweep_odd_error:.1f} mV",
+            ]
+        ),
+        transform=sweep_axes[1].transAxes,
+        fontsize="x-small",
+        bbox=callout_box,
+    )
     sweep_fig.tight_layout()
     save_plot(sweep_fig, "mos_forward_store_sweep_ngspice")
 
@@ -1060,6 +1166,19 @@ quit
     mismatch_axes[0].set_title("Forward-pair threshold mismatch shifts the zero crossing")
     mismatch_axes[0].grid(True, alpha=0.25)
     mismatch_axes[0].legend(loc="upper left")
+    mismatch_axes[0].text(
+        0.55,
+        0.14,
+        "\n".join(
+            [
+                f"max offset {1e3 * mismatch_max_offset:.1f} mV",
+                f"min center gain {mismatch_min_gain:.2f} V/V",
+            ]
+        ),
+        transform=mismatch_axes[0].transAxes,
+        fontsize="x-small",
+        bbox=callout_box,
+    )
     mismatch_axes[1].plot([case[3] for case in mismatch_cases], mismatch_offsets, "o-", label="zero crossing")
     mismatch_axes[1].axhline(0, color="0.4", linewidth=0.8)
     mismatch_axes[1].axhline(0.06, color="0.4", linestyle=":", linewidth=1.0, label="60 mV offset bound")
@@ -1072,10 +1191,16 @@ quit
     mismatch_axes[1].text(
         0.62,
         0.10,
-        "labels: zero-crossing mV",
+        "\n".join(
+            [
+                "labels: zero-crossing mV",
+                f"max offset {1e3 * mismatch_max_offset:.1f} mV",
+                f"min gain {mismatch_min_gain:.2f} V/V",
+            ]
+        ),
         transform=mismatch_axes[1].transAxes,
-        fontsize="small",
-        bbox={"facecolor": "white", "alpha": 0.8, "edgecolor": "0.8"},
+        fontsize="x-small",
+        bbox=callout_box,
     )
     mismatch_axes[1].set_xlabel("input-pair threshold skew")
     mismatch_axes[1].set_ylabel("zero crossing $z^+ - z^-$ (V)")

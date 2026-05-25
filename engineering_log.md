@@ -2,6 +2,22 @@
 
 ## 2026-05-25
 
+- Clarified the MOS forward-pair and activation-store plots.  The ngspice
+  decks already asserted monotone bounded transfer, center alignment,
+  approximate odd symmetry, positive/negative phase storage, common-mode
+  robustness, graded store behavior, load/cap tracking, and bounded threshold
+  mismatch.  The regenerated `mos_forward_pair_ngspice`,
+  `mos_forward_common_mode_ngspice`, `mos_forward_store_sweep_ngspice`, and
+  `mos_forward_mismatch_ngspice` figures now label those margins directly:
+  the nominal forward pair has \(0.382\) V peak swing, zero displayed center
+  error, and \(0.2\) mV odd-symmetry error; phase storage lands at
+  \(+321.8\) mV and \(-321.6\) mV with \(0.99\) mV maximum hold error;
+  common-mode sweeps keep center error below \(0.78\) mV, peak swing above
+  \(0.341\) V, and center gain at \(0.98\)--\(0.99\) V/V; the store sweep
+  keeps at least \(339.4\) mV stored swing with \(1.52\) mV hold error and
+  \(3.12\) mV load/cap tracking error; and the \(\pm20\) mV threshold skew
+  cases stay within a \(20.0\) mV zero-crossing offset while retaining
+  \(0.98\) V/V center gain.
 - Clarified the base MOS synapse primitive plots.  The ngspice decks already
   asserted signed W+/W- reversal, odd symmetry, shared-cap cancellation,
   weight-rail imbalance monotonicity, tail-gate off isolation, active dynamic

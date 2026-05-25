@@ -1541,13 +1541,31 @@ must satisfy before it can replace the current behavioral prototype.
   Only the second, guard-controlled transmission gate changes threshold model:
   strong, nominal, N-weak, P-weak, and both-weak.  The read preactivation is
   \(52.066\) mV in all cases, and the stored activation is
-  \(51.360,51.355,51.368,51.347,\) and \(51.365\) mV.  The first hypothesis
-  was that the both-weak corner would visibly undercharge the store capacitor;
-  instead, the current guard TG sizing is essentially threshold-corner flat
-  over this Level-1 sweep.  The next robustness risks for this store are
-  clock skew/overlap and hold leakage, not nominal pass-device threshold at
-  these widths.}
+  \(51.884,51.355,51.361,51.266,\) and \(51.274\) mV.  Correctly targeting
+  the guard-controlled devices shows a small but real threshold sensitivity:
+  the span is about \(0.62\) mV, dominated by the strong and P-weak cases,
+  rather than the nearly flat result obtained when the wrong series switch was
+  swept.  The dominant robustness risk is still clock skew/overlap, but the
+  guard TG should be treated as a real sampled-data switch with finite corner
+  sensitivity.}
   \label{fig:mos-hidden-writer-restored-gate-hybrid-update-forward-guard-corner-ngspice}
+\end{figure}
+
+\begin{figure}[H]
+  \centering
+  \includegraphics[width=0.88\linewidth]{figures/mos_hidden_writer_restored_gate_hybrid_update_forward_guard_size_ngspice.png}
+  \caption{Ngspice guard transmission-gate width sweep for the corrected
+  guard-controlled switch in the MOS activation store.  The nominal device
+  pair is \(96\,\mu\mathrm{m}/240\,\mu\mathrm{m}\) for NMOS/PMOS; the sweep
+  uses \(0.125\times,0.25\times,0.5\times,1.0\times,\) and \(1.5\times\)
+  scaling, corresponding to \(12/30,24/60,48/120,96/240,\) and
+  \(144/360\,\mu\mathrm{m}\).  The read preactivation remains
+  \(52.066\) mV and the stored activation is
+  \(51.078,51.255,51.425,51.355,\) and \(51.365\) mV.  Even the smallest
+  tested guard switch captures the signed activation, so the current topology
+  is not width-limited at the nominal point; timing closure remains the larger
+  design constraint.}
+  \label{fig:mos-hidden-writer-restored-gate-hybrid-update-forward-guard-size-ngspice}
 \end{figure}
 
 \begin{figure}[H]

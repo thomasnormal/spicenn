@@ -7315,8 +7315,34 @@ quit
     guard_gated_store_samples = []
     guard_gated_preact_samples = []
     guard_gated_traces = []
-    guard_store_line_p = read_gated_store_line_p.replace("reads_hyr", "guard_hyr").replace("readsn_hyr", "guardn_hyr")
-    guard_store_line_m = read_gated_store_line_m.replace("reads_hyr", "guard_hyr").replace("readsn_hyr", "guardn_hyr")
+
+    def make_guard_store_lines(
+        guard_n_width_u: float = 96.0,
+        guard_p_width_u: float = 240.0,
+        guard_n_model: str = "NMOS",
+        guard_p_model: str = "PMOS",
+    ) -> tuple[str, str]:
+        guard_n_width = f"{guard_n_width_u:g}u"
+        guard_p_width = f"{guard_p_width_u:g}u"
+        store_p = "\n".join(
+            [
+                "MSFP_HYR hp_hyr pact_hyr hp_mid_hyr 0 NMOS L={LCH} W=96u",
+                "MSFPP_HYR hp_hyr pactn_hyr hp_mid_hyr vdd PMOS L={LCH} W=240u",
+                f"MSFPV_HYR hp_mid_hyr guard_hyr hp_fwd_hyr 0 {guard_n_model} L={{LCH}} W={guard_n_width}",
+                f"MSFPVP_HYR hp_mid_hyr guardn_hyr hp_fwd_hyr vdd {guard_p_model} L={{LCH}} W={guard_p_width}",
+            ]
+        )
+        store_m = "\n".join(
+            [
+                "MSFM_HYR hm_hyr pact_hyr hm_mid_hyr 0 NMOS L={LCH} W=96u",
+                "MSFMP_HYR hm_hyr pactn_hyr hm_mid_hyr vdd PMOS L={LCH} W=240u",
+                f"MSFMV_HYR hm_mid_hyr guard_hyr hm_fwd_hyr 0 {guard_n_model} L={{LCH}} W={guard_n_width}",
+                f"MSFMVP_HYR hm_mid_hyr guardn_hyr hm_fwd_hyr vdd {guard_p_model} L={{LCH}} W={guard_p_width}",
+            ]
+        )
+        return store_p, store_m
+
+    guard_store_line_p, guard_store_line_m = make_guard_store_lines()
     for width_ns in aperture_cases_ns:
         stem = f"mos_hidden_writer_restored_gate_hybrid_update_forward_read_pact_guarded_tg_aperture_{width_ns}ns"
         end_us = aperture_start_us + width_ns / 1000.0
@@ -7603,10 +7629,10 @@ quit
             f".model {n_model} NMOS (LEVEL=1 VTO={n_vto:.2f} KP=220u LAMBDA=0.03)\n"
             f".model {p_model} PMOS (LEVEL=1 VTO={p_vto:.2f} KP=90u LAMBDA=0.03)"
         )
-        corner_store_line_p = guard_store_line_p.replace("NMOS L={LCH} W=96u", f"{n_model} L={{LCH}} W=96u", 1)
-        corner_store_line_p = corner_store_line_p.replace("PMOS L={LCH} W=240u", f"{p_model} L={{LCH}} W=240u", 1)
-        corner_store_line_m = guard_store_line_m.replace("NMOS L={LCH} W=96u", f"{n_model} L={{LCH}} W=96u", 1)
-        corner_store_line_m = corner_store_line_m.replace("PMOS L={LCH} W=240u", f"{p_model} L={{LCH}} W=240u", 1)
+        corner_store_line_p, corner_store_line_m = make_guard_store_lines(
+            guard_n_model=n_model,
+            guard_p_model=p_model,
+        )
         corner_deck = replace_required(hybrid_forward_read_reuse_deck, timing_read_pwl, timing_single_read_pwl)
         corner_deck = replace_required(
             corner_deck,
@@ -7643,8 +7669,63 @@ quit
         "nominal guard corner should match the nominal timing sample",
     )
     require(
-        np.max(guard_corner_store_samples) - np.min(guard_corner_store_samples) < 0.00008,
-        "oversized guard pass gates should make threshold-corner capture nearly flat",
+        np.max(guard_corner_store_samples) - np.min(guard_corner_store_samples) < 0.0008,
+        "oversized guard pass gates should keep threshold-corner variation below 0.8 mV",
+    )
+
+    guard_size_cases = [
+        (0.125, 12.0, 30.0),
+        (0.25, 24.0, 60.0),
+        (0.50, 48.0, 120.0),
+        (1.00, 96.0, 240.0),
+        (1.50, 144.0, 360.0),
+    ]
+    guard_size_labels = []
+    guard_size_store_samples = []
+    guard_size_preact_samples = []
+    guard_size_traces = []
+    for scale, n_width_u, p_width_u in guard_size_cases:
+        stem = (
+            "mos_hidden_writer_restored_gate_hybrid_update_forward_read_pact_"
+            f"guard_size_{str(scale).replace('.', 'p')}x"
+        )
+        sized_store_line_p, sized_store_line_m = make_guard_store_lines(
+            guard_n_width_u=n_width_u,
+            guard_p_width_u=p_width_u,
+        )
+        size_deck = replace_required(hybrid_forward_read_reuse_deck, timing_read_pwl, timing_single_read_pwl)
+        size_deck = replace_required(
+            size_deck,
+            timing_base_pact_pwl,
+            long_pact_pwl + "\n" + long_pactn_pwl + "\n" + corner_guard_pwl + "\n" + corner_guardn_pwl,
+        )
+        size_deck = replace_required(size_deck, nmos_store_line_p, sized_store_line_p)
+        size_deck = replace_required(size_deck, nmos_store_line_m, sized_store_line_m)
+        size_deck = replace_required(
+            size_deck,
+            "mos_hidden_writer_restored_gate_hybrid_update_forward_read_reuse.dat",
+            f"{stem}.dat",
+        )
+        size_data = run_ngspice(size_deck, stem)
+        st, size_cols = load_wrdata(size_data, 23)
+
+        def gsizat(time_s: float, values: np.ndarray) -> float:
+            return float(values[np.argmin(np.abs(st - time_s))])
+
+        size_preact = size_cols[10] - size_cols[9]
+        size_store = size_cols[14] - size_cols[13]
+        guard_size_labels.append(f"{scale:g}x")
+        guard_size_preact_samples.append(gsizat(3.575e-6, size_preact))
+        guard_size_store_samples.append(gsizat(3.575e-6, size_store))
+        guard_size_traces.append((f"{scale:g}x", st, size_store))
+
+    guard_size_preact_samples = np.array(guard_size_preact_samples)
+    guard_size_store_samples = np.array(guard_size_store_samples)
+    require(np.min(guard_size_preact_samples) > 0.048, "guard sizing sweep should keep a valid read state")
+    require(guard_size_store_samples[0] > 0.045, "smallest guard TG should still capture a signed activation")
+    require(
+        guard_size_store_samples[-1] - guard_size_store_samples[0] < 0.010,
+        "guard TG sizing should not be the dominant capture limiter above 0.125x",
     )
 
     read_gated_fig, read_gated_axes = plt.subplots(2, 1, figsize=(7.4, 6.6), gridspec_kw={"height_ratios": [1.0, 0.9]})
@@ -7753,7 +7834,7 @@ quit
         guard_corner_axes[0].plot(1e6 * ct, 1e3 * store, label=label)
     guard_corner_axes[0].axhline(0, color="0.4", linewidth=0.8)
     guard_corner_axes[0].axvline(3.33, color="0.25", linestyle="--", linewidth=0.9, alpha=0.6, label="guard off")
-    guard_corner_axes[0].set_xlim(3.05, 3.65)
+    guard_corner_axes[0].set_xlim(3.15, 3.38)
     guard_corner_axes[0].set_ylabel("stored activation (mV)")
     guard_corner_axes[0].set_title("Guarded store remains signed correctly across pass-gate corners")
     guard_corner_axes[0].grid(True, alpha=0.25)
@@ -7766,11 +7847,35 @@ quit
     guard_corner_axes[1].set_xticks(guard_corner_x)
     guard_corner_axes[1].set_xticklabels(guard_corner_labels)
     guard_corner_axes[1].set_ylabel("sampled differential (mV)")
-    guard_corner_axes[1].set_title("Oversized guard pass gates make threshold corners nearly flat")
+    guard_corner_axes[1].set_title("Correct guard-device corners span about 0.62 mV")
     guard_corner_axes[1].grid(True, axis="y", alpha=0.25)
-    guard_corner_axes[1].legend(loc="upper right", fontsize="small")
+    guard_corner_axes[1].legend(loc="lower right", ncol=2, fontsize="small")
     guard_corner_fig.tight_layout()
     save_plot(guard_corner_fig, "mos_hidden_writer_restored_gate_hybrid_update_forward_guard_corner_ngspice")
+
+    guard_size_fig, guard_size_axes = plt.subplots(2, 1, figsize=(7.4, 6.2), gridspec_kw={"height_ratios": [1.0, 0.8]})
+    for label, st, store in guard_size_traces:
+        guard_size_axes[0].plot(1e6 * st, 1e3 * store, label=label)
+    guard_size_axes[0].axhline(0, color="0.4", linewidth=0.8)
+    guard_size_axes[0].axvline(3.33, color="0.25", linestyle="--", linewidth=0.9, alpha=0.6, label="guard off")
+    guard_size_axes[0].set_xlim(3.15, 3.38)
+    guard_size_axes[0].set_ylabel("stored activation (mV)")
+    guard_size_axes[0].set_title("Guard TG width sweep after the timing fix")
+    guard_size_axes[0].grid(True, alpha=0.25)
+    guard_size_axes[0].legend(loc="upper left", ncol=3, fontsize="small")
+    guard_size_x = np.arange(len(guard_size_labels))
+    guard_size_axes[1].bar(guard_size_x - 0.18, 1e3 * guard_size_preact_samples, width=0.36, label="$z^- - z^+$")
+    guard_size_axes[1].bar(guard_size_x + 0.18, 1e3 * guard_size_store_samples, width=0.36, label="stored $h^- - h^+$")
+    guard_size_axes[1].axhline(0, color="0.4", linewidth=0.8)
+    guard_size_axes[1].set_xticks(guard_size_x)
+    guard_size_axes[1].set_xticklabels(guard_size_labels)
+    guard_size_axes[1].set_xlabel("guard TG width scale")
+    guard_size_axes[1].set_ylabel("sampled differential (mV)")
+    guard_size_axes[1].set_title("The width knee tells where the guard switch stops being oversized")
+    guard_size_axes[1].grid(True, axis="y", alpha=0.25)
+    guard_size_axes[1].legend(loc="lower right", ncol=2, fontsize="small")
+    guard_size_fig.tight_layout()
+    save_plot(guard_size_fig, "mos_hidden_writer_restored_gate_hybrid_update_forward_guard_size_ngspice")
 
     hybrid_repeated_deck = f"""
 * Hybrid restored-enable/analog-error writer repeated-pulse accumulation check.

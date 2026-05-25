@@ -2171,6 +2171,26 @@ must satisfy before it can replace the current behavioral prototype.
 
 \begin{figure}[H]
   \centering
+  \includegraphics[width=0.95\linewidth]{figures/mos_hidden_writer_restored_gate_hybrid_update_forward_guard_forward_pair_96u_shifted_gate_polarity_calibration_ngspice.png}
+  \caption{Ngspice polarity-offset calibration sweep for the severe
+  \(30\) mV shifted-gate threshold-skew corners.  The previous signed-law plot
+  showed that simply mirroring the trim sign leaves the \(V_{TO,+}<V_{TO,-}\)
+  polarity around \(66.20\) mV while the \(V_{TO,+}>V_{TO,-}\) polarity lands
+  around \(46.97\) mV.  Here the positive-skew branch is swept through
+  \(-45,-55,\) and \(-65\) mV trims and stores mean activations
+  \(27.720,46.972,\) and \(66.200\) mV.  The negative-skew branch is swept
+  through \(+55,+65,\) and \(+75\) mV trims and stores
+  \(66.207,46.978,\) and \(27.727\) mV.  The physical reset network samples
+  all requested trims to the plotted precision and keeps the shifted-gate
+  common mode near \(0.90\) V.  Therefore the opposite-polarity asymmetry is
+  not a missing hardware path; it is a per-polarity trim-code offset.  In this
+  fixture, \(+65\) mV positive trim aligns the \(-30\) mV skew branch with the
+  \(-55\) mV negative-trim reference.}
+  \label{fig:mos-hidden-writer-restored-gate-hybrid-update-forward-guard-forward-pair-96u-shifted-gate-polarity-calibration-ngspice}
+\end{figure}
+
+\begin{figure}[H]
+  \centering
   \includegraphics[width=0.88\linewidth]{figures/mos_hidden_writer_restored_gate_hybrid_update_forward_guard_forward_tail_bias_ngspice.png}
   \caption{Ngspice isolated forward-tail bias sweep for the same guarded MOS
   activation store.  The failed shared-bias experiment changed the read path

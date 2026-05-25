@@ -10312,6 +10312,98 @@ quit
         "positive trim for -30 mV skew should reduce the under-trimmed over-activation case",
     )
 
+    shift_polcal_cases = [
+        ("pm30_neg45", "+30 mV skew, -45 mV trim", 0.580, 0.520, -0.045, "positive skew"),
+        ("pm30_neg55", "+30 mV skew, -55 mV trim", 0.580, 0.520, -0.055, "positive skew"),
+        ("pm30_neg65", "+30 mV skew, -65 mV trim", 0.580, 0.520, -0.065, "positive skew"),
+        ("mp30_pos55", "-30 mV skew, +55 mV trim", 0.520, 0.580, 0.055, "negative skew"),
+        ("mp30_pos65", "-30 mV skew, +65 mV trim", 0.520, 0.580, 0.065, "negative skew"),
+        ("mp30_pos75", "-30 mV skew, +75 mV trim", 0.520, 0.580, 0.075, "negative skew"),
+    ]
+    shift_polcal_labels = []
+    shift_polcal_trim_mv = []
+    shift_polcal_h_samples = []
+    shift_polcal_traces = []
+    for name, label, nfp_vto, nfm_vto, reset_trim_v, _group in shift_polcal_cases:
+        pt, polcal_cols = run_trimmed_reuse_skew_law_case(
+            name,
+            nfp_vto,
+            nfm_vto,
+            reset_trim_v,
+            family="polcal",
+        )
+
+        def polat(time_s: float, values: np.ndarray) -> float:
+            return float(values[np.argmin(np.abs(pt - time_s))])
+
+        gate_diff = polcal_cols[0] - polcal_cols[1]
+        gate_common = 0.5 * (polcal_cols[0] + polcal_cols[1])
+        z = polcal_cols[12] - polcal_cols[11]
+        load = polcal_cols[14] - polcal_cols[13]
+        store = polcal_cols[16] - polcal_cols[15]
+        gate_samples = np.array([polat(ts, gate_diff) for ts in shift_trimmed_reuse_reset_times])
+        common_samples = np.array([polat(ts, gate_common) for ts in shift_trimmed_reuse_reset_times])
+        z_samples = np.array([polat(ts, z) for ts in shift_reuse_z_times])
+        h_samples = np.array([polat(ts, store) for ts in shift_reuse_h_times])
+        z_reset = np.array([abs(polat(ts, z)) for ts in shift_trimmed_reuse_reset_times])
+        h_reset = np.array([abs(polat(ts, store)) for ts in shift_trimmed_reuse_reset_times])
+        require(
+            np.max(np.abs(gate_samples - reset_trim_v)) < 0.006,
+            f"{label} should establish the requested polarity-calibration trim",
+        )
+        require(
+            np.max(np.abs(common_samples - 0.90)) < 0.006,
+            f"{label} should preserve reset common mode during polarity calibration",
+        )
+        require(
+            np.max(z_reset) < 0.001 and np.max(h_reset) < 0.001,
+            f"{label} should clear z/h state during polarity calibration reset",
+        )
+        require(
+            np.all(z_samples > 0.035),
+            f"{label} should keep useful read preactivation during polarity calibration",
+        )
+        require(
+            np.all((h_samples > 0.015) & (h_samples < 0.090)),
+            f"{label} should stay inside the non-railed calibration sweep band",
+        )
+        require(
+            np.max(h_samples) - np.min(h_samples) < 0.025,
+            f"{label} should remain repeatable across calibration cycles",
+        )
+        shift_polcal_labels.append(label)
+        shift_polcal_trim_mv.append(1e3 * reset_trim_v)
+        shift_polcal_h_samples.append(h_samples)
+        shift_polcal_traces.append((label, pt, load, store))
+
+    shift_polcal_trim_mv = np.array(shift_polcal_trim_mv)
+    shift_polcal_h_samples = np.array(shift_polcal_h_samples)
+    shift_polcal_h_mean = np.mean(shift_polcal_h_samples, axis=1)
+    shift_polcal_index = {case[0]: idx for idx, case in enumerate(shift_polcal_cases)}
+    pm_order = [shift_polcal_index[name] for name in ["pm30_neg45", "pm30_neg55", "pm30_neg65"]]
+    mp_order = [shift_polcal_index[name] for name in ["mp30_pos55", "mp30_pos65", "mp30_pos75"]]
+    require(
+        np.all(np.diff(shift_polcal_h_mean[pm_order]) > 0.010),
+        "stronger negative trim should monotonically raise the +30 mV skew activation",
+    )
+    require(
+        np.all(np.diff(shift_polcal_h_mean[mp_order]) < -0.010),
+        "stronger positive trim should monotonically lower the -30 mV skew activation",
+    )
+    require(
+        abs(
+            shift_polcal_h_mean[shift_polcal_index["pm30_neg55"]]
+            - shift_polcal_h_mean[shift_polcal_index["mp30_pos65"]]
+        )
+        < 0.006,
+        "opposite skew polarities should align when the positive-trim branch uses the offset calibration",
+    )
+    require(
+        shift_polcal_h_mean[shift_polcal_index["mp30_pos65"]]
+        < shift_polcal_h_mean[shift_polcal_index["mp30_pos55"]] - 0.010,
+        "positive-trim offset calibration should improve the old +55 mV case",
+    )
+
     tail_bias_forward_tail_line = "MNFT_HYR ftail_hyr vbias 0 0 NMOS L={LCH} W=48u"
     tail_bias_cases_v = [0.70, 0.80, 0.90, 0.95, 1.05, 1.15, 1.25]
     tail_bias_labels = []
@@ -11679,6 +11771,59 @@ quit
     save_plot(
         shift_signlaw_fig,
         "mos_hidden_writer_restored_gate_hybrid_update_forward_guard_forward_pair_96u_shifted_gate_signed_skew_trim_law_ngspice",
+    )
+
+    shift_polcal_fig, shift_polcal_axes = plt.subplots(
+        2,
+        1,
+        figsize=(7.4, 6.0),
+        gridspec_kw={"height_ratios": [0.95, 1.05]},
+    )
+    pm_trim_abs = np.abs(shift_polcal_trim_mv[pm_order])
+    mp_trim_abs = np.abs(shift_polcal_trim_mv[mp_order])
+    shift_polcal_axes[0].plot(
+        pm_trim_abs,
+        1e3 * shift_polcal_h_mean[pm_order],
+        "o-",
+        label="+30 mV skew, negative trim",
+    )
+    shift_polcal_axes[0].plot(
+        mp_trim_abs,
+        1e3 * shift_polcal_h_mean[mp_order],
+        "s--",
+        label="-30 mV skew, positive trim",
+    )
+    shift_polcal_axes[0].axhline(
+        1e3 * shift_polcal_h_mean[shift_polcal_index["pm30_neg55"]],
+        color="0.25",
+        linestyle=":",
+        linewidth=1.0,
+        label="-55 mV reference",
+    )
+    shift_polcal_axes[0].axvline(65, color="0.5", linestyle="--", linewidth=0.9, alpha=0.75)
+    shift_polcal_axes[0].set_xlabel("trim magnitude (mV)")
+    shift_polcal_axes[0].set_ylabel("mean stored $h$ (mV)")
+    shift_polcal_axes[0].set_title("Opposite skew polarity needs an offset trim code")
+    shift_polcal_axes[0].grid(True, alpha=0.25)
+    shift_polcal_axes[0].legend(loc="upper right", fontsize="small")
+    for label, pt, load, store in shift_polcal_traces:
+        if "+30" in label and "-55" not in label:
+            continue
+        if "-30" in label and "+65" not in label:
+            continue
+        shift_polcal_axes[1].plot(1e6 * pt, 1e3 * store, label=f"{label} $h$")
+        shift_polcal_axes[1].plot(1e6 * pt, 1e3 * load, "--", alpha=0.55, label=f"{label} load")
+    shift_polcal_axes[1].axhline(0, color="0.4", linewidth=0.8)
+    shift_polcal_axes[1].set_xlim(2.35, 7.1)
+    shift_polcal_axes[1].set_xlabel("time (us)")
+    shift_polcal_axes[1].set_ylabel("differential (mV)")
+    shift_polcal_axes[1].set_title("+65 mV positive trim aligns the opposite-polarity branch")
+    shift_polcal_axes[1].grid(True, alpha=0.25)
+    shift_polcal_axes[1].legend(loc="upper left", ncol=2, fontsize="x-small")
+    shift_polcal_fig.tight_layout()
+    save_plot(
+        shift_polcal_fig,
+        "mos_hidden_writer_restored_gate_hybrid_update_forward_guard_forward_pair_96u_shifted_gate_polarity_calibration_ngspice",
     )
 
     tail_bias_fig, tail_bias_axes = plt.subplots(2, 1, figsize=(7.4, 6.4), gridspec_kw={"height_ratios": [1.0, 0.8]})

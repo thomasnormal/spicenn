@@ -6267,6 +6267,298 @@ quit
     hyv_fig.tight_layout()
     save_plot(hyv_fig, "mos_hidden_writer_restored_gate_hybrid_update_forward_ngspice")
 
+    hybrid_forward_quadrant_devices = []
+    hybrid_forward_quadrant_prints = [
+        "v(cdp_rp_hyf)",
+        "v(cdm_rp_hyf)",
+        "v(cdp_rm_hyf)",
+        "v(cdm_rm_hyf)",
+        "v(rgp_rp_hyf)",
+        "v(rgm_rp_hyf)",
+        "v(rgp_rm_hyf)",
+        "v(rgm_rm_hyf)",
+    ]
+    for name, _label, hplus_src, hminus_src, err_sign, _expected_weight_sign in hybrid_product_cases:
+        if err_sign == "rp":
+            wp_activation = f"hp_store_hyf_{name}"
+            wm_activation = f"hm_store_hyf_{name}"
+            wp_restored = "rgp_rp_hyf"
+            wp_error = "cdm_rp_hyf"
+            wm_restored = "rgp_rp_hyf"
+            wm_error = "cdm_rp_hyf"
+            bp_restored = "rgp_rp_hyf"
+            bp_error = "cdm_rp_hyf"
+            bm_restored = "rgm_rp_hyf"
+            bm_error = "cdp_rp_hyf"
+        else:
+            wp_activation = f"hm_store_hyf_{name}"
+            wm_activation = f"hp_store_hyf_{name}"
+            wp_restored = "rgm_rm_hyf"
+            wp_error = "cdp_rm_hyf"
+            wm_restored = "rgm_rm_hyf"
+            wm_error = "cdp_rm_hyf"
+            bp_restored = "rgp_rm_hyf"
+            bp_error = "cdm_rm_hyf"
+            bm_restored = "rgm_rm_hyf"
+            bm_error = "cdp_rm_hyf"
+        xplus = 1.15 if hplus_src < hminus_src else 0.65
+        xminus = 0.65 if hplus_src < hminus_src else 1.15
+        hybrid_forward_quadrant_devices.append(
+            f"""
+VHP_SRC_HYF_{name} hp_src_hyf_{name} 0 {hplus_src:.3f}
+VHM_SRC_HYF_{name} hm_src_hyf_{name} 0 {hminus_src:.3f}
+CHP_ACT_HYF_{name} hp_store_hyf_{name} 0 {{CSTORE}} IC=1.45
+CHM_ACT_HYF_{name} hm_store_hyf_{name} 0 {{CSTORE}} IC=1.45
+RHP_ACT_HYF_{name} hp_store_hyf_{name} 0 50G
+RHM_ACT_HYF_{name} hm_store_hyf_{name} 0 50G
+MSHPN_HYF_{name} hp_src_hyf_{name} psamp_hyf hp_store_hyf_{name} 0 NMOS L={{LCH}} W={{WSW}}
+MSHPP_HYF_{name} hp_src_hyf_{name} psampn_hyf hp_store_hyf_{name} vdd PMOS L={{LCH}} W={{WSW}}
+MSHMN_HYF_{name} hm_src_hyf_{name} psamp_hyf hm_store_hyf_{name} 0 NMOS L={{LCH}} W={{WSW}}
+MSHMP_HYF_{name} hm_src_hyf_{name} psampn_hyf hm_store_hyf_{name} vdd PMOS L={{LCH}} W={{WSW}}
+
+CWP_HYF_{name} wp_hyf_{name} 0 {{CWRITE}} IC=0.85
+CWM_HYF_{name} wm_hyf_{name} 0 {{CWRITE}} IC=0.85
+CBP_HYF_{name} bp_hyf_{name} 0 {{CBIAS}} IC=0.85
+CBM_HYF_{name} bm_hyf_{name} 0 {{CBIAS}} IC=0.85
+
+MWP_HYF_{name}A vdd paccn_hyf n_wp_hyf_{name}_a vdd PMOS L={{LCH}} W={{WWRITE}}
+MWP_HYF_{name}B n_wp_hyf_{name}_a {wp_activation} n_wp_hyf_{name}_b vdd PMOS L={{LCH}} W={{WWRITE}}
+MWP_HYF_{name}C n_wp_hyf_{name}_b {wp_restored} n_wp_hyf_{name}_c vdd PMOS L={{LCH}} W={{WWRITE}}
+MWP_HYF_{name}D n_wp_hyf_{name}_c {wp_error} wp_hyf_{name} vdd PMOS L={{LCH}} W={{WWRITE}}
+MWM_HYF_{name}A vdd paccn_hyf n_wm_hyf_{name}_a vdd PMOS L={{LCH}} W={{WWRITE}}
+MWM_HYF_{name}B n_wm_hyf_{name}_a {wm_activation} n_wm_hyf_{name}_b vdd PMOS L={{LCH}} W={{WWRITE}}
+MWM_HYF_{name}C n_wm_hyf_{name}_b {wm_restored} n_wm_hyf_{name}_c vdd PMOS L={{LCH}} W={{WWRITE}}
+MWM_HYF_{name}D n_wm_hyf_{name}_c {wm_error} wm_hyf_{name} vdd PMOS L={{LCH}} W={{WWRITE}}
+
+MBP_HYF_{name}A vdd paccn_hyf n_bp_hyf_{name}_a vdd PMOS L={{LCH}} W={{WWRITE}}
+MBP_HYF_{name}B n_bp_hyf_{name}_a {bp_restored} n_bp_hyf_{name}_b vdd PMOS L={{LCH}} W={{WWRITE}}
+MBP_HYF_{name}C n_bp_hyf_{name}_b {bp_error} bp_hyf_{name} vdd PMOS L={{LCH}} W={{WWRITE}}
+MBM_HYF_{name}A vdd paccn_hyf n_bm_hyf_{name}_a vdd PMOS L={{LCH}} W={{WWRITE}}
+MBM_HYF_{name}B n_bm_hyf_{name}_a {bm_restored} n_bm_hyf_{name}_b vdd PMOS L={{LCH}} W={{WWRITE}}
+MBM_HYF_{name}C n_bm_hyf_{name}_b {bm_error} bm_hyf_{name} vdd PMOS L={{LCH}} W={{WWRITE}}
+
+CZP_HYF_{name} zp_hyf_{name} 0 {{CSUM}} IC=0.9
+CZM_HYF_{name} zm_hyf_{name} 0 {{CSUM}} IC=0.9
+RZP_HYF_{name} zp_hyf_{name} 0 100G
+RZM_HYF_{name} zm_hyf_{name} 0 100G
+VXP_W_HYF_{name} xp_w_hyf_{name} 0 {xplus:.3f}
+VXM_W_HYF_{name} xm_w_hyf_{name} 0 {xminus:.3f}
+VXP_B_HYF_{name} xp_b_hyf_{name} 0 1.15
+VXM_B_HYF_{name} xm_b_hyf_{name} 0 0.65
+MPP_W_HYF_{name} zp_hyf_{name} xp_w_hyf_{name} tail_wp_hyf_{name} 0 NMOS L={{LCH}} W={{WN}}
+MPM_W_HYF_{name} zm_hyf_{name} xm_w_hyf_{name} tail_wp_hyf_{name} 0 NMOS L={{LCH}} W={{WN}}
+MTW_GATE_HYF_{name} tail_wp_hyf_{name} read_hyf tail_wp_store_hyf_{name} 0 NMOS L={{LCH}} W={{WREAD}}
+MTW_STORE_HYF_{name} tail_wp_store_hyf_{name} wp_hyf_{name} 0 0 NMOS L={{LCH}} W=12u
+MNP_W_HYF_{name} zp_hyf_{name} xm_w_hyf_{name} tail_wm_hyf_{name} 0 NMOS L={{LCH}} W={{WN}}
+MNM_W_HYF_{name} zm_hyf_{name} xp_w_hyf_{name} tail_wm_hyf_{name} 0 NMOS L={{LCH}} W={{WN}}
+MTN_GATE_HYF_{name} tail_wm_hyf_{name} read_hyf tail_wm_store_hyf_{name} 0 NMOS L={{LCH}} W={{WREAD}}
+MTN_STORE_HYF_{name} tail_wm_store_hyf_{name} wm_hyf_{name} 0 0 NMOS L={{LCH}} W=12u
+MPP_B_HYF_{name} zp_hyf_{name} xp_b_hyf_{name} tail_bp_hyf_{name} 0 NMOS L={{LCH}} W={{WN}}
+MPM_B_HYF_{name} zm_hyf_{name} xm_b_hyf_{name} tail_bp_hyf_{name} 0 NMOS L={{LCH}} W={{WN}}
+MTB_GATE_HYF_{name} tail_bp_hyf_{name} read_hyf tail_bp_store_hyf_{name} 0 NMOS L={{LCH}} W={{WREAD}}
+MTB_STORE_HYF_{name} tail_bp_store_hyf_{name} bp_hyf_{name} 0 0 NMOS L={{LCH}} W=12u
+MNP_B_HYF_{name} zp_hyf_{name} xm_b_hyf_{name} tail_bm_hyf_{name} 0 NMOS L={{LCH}} W={{WN}}
+MNM_B_HYF_{name} zm_hyf_{name} xp_b_hyf_{name} tail_bm_hyf_{name} 0 NMOS L={{LCH}} W={{WN}}
+MTBN_GATE_HYF_{name} tail_bm_hyf_{name} read_hyf tail_bm_store_hyf_{name} 0 NMOS L={{LCH}} W={{WREAD}}
+MTBN_STORE_HYF_{name} tail_bm_store_hyf_{name} bm_hyf_{name} 0 0 NMOS L={{LCH}} W=12u
+
+MPFP_HYF_{name} hp_hyf_{name} hp_hyf_{name} vdd vdd PMOS L={{LCH}} W={{WP}}
+MPFM_HYF_{name} hm_hyf_{name} hm_hyf_{name} vdd vdd PMOS L={{LCH}} W={{WP}}
+MNFP_HYF_{name} hp_hyf_{name} zm_hyf_{name} ftail_hyf_{name} 0 NMOS L={{LCH}} W=48u
+MNFM_HYF_{name} hm_hyf_{name} zp_hyf_{name} ftail_hyf_{name} 0 NMOS L={{LCH}} W=48u
+MNFT_HYF_{name} ftail_hyf_{name} vbias 0 0 NMOS L={{LCH}} W=48u
+CHP_FWD_HYF_{name} hp_fwd_store_hyf_{name} 0 {{CSTORE}} IC=1.04
+CHM_FWD_HYF_{name} hm_fwd_store_hyf_{name} 0 {{CSTORE}} IC=1.04
+RHP_FWD_HYF_{name} hp_fwd_store_hyf_{name} 0 50G
+RHM_FWD_HYF_{name} hm_fwd_store_hyf_{name} 0 50G
+MSFP_HYF_{name} hp_hyf_{name} pact_hyf hp_fwd_store_hyf_{name} 0 NMOS L={{LCH}} W=48u
+MSFM_HYF_{name} hm_hyf_{name} pact_hyf hm_fwd_store_hyf_{name} 0 NMOS L={{LCH}} W=48u
+"""
+        )
+        hybrid_forward_quadrant_prints.extend(
+            [
+                f"v(wp_hyf_{name})",
+                f"v(wm_hyf_{name})",
+                f"v(bp_hyf_{name})",
+                f"v(bm_hyf_{name})",
+                f"v(zp_hyf_{name})",
+                f"v(zm_hyf_{name})",
+                f"v(hp_hyf_{name})",
+                f"v(hm_hyf_{name})",
+                f"v(hp_fwd_store_hyf_{name})",
+                f"v(hm_fwd_store_hyf_{name})",
+            ]
+        )
+
+    hybrid_forward_quadrant_deck = f"""
+* Hybrid restored writer four-quadrant update-to-forward-store check.
+* Each matched copy writes W/B from one activation/error quadrant, reads those
+* same persistent states into a summing pair, and stores the crossed MOS
+* forward-pair activation.  There are no behavioral update or readback sources.
+{COMMON_MODELS}
+.param CERR=10p CWRITE=500p CBIAS=500p CSTORE=10p CSUM=500p WSW=24u WWRITE=24u WRESTN=18u WRESTP=300u WREAD=24u
+VDD vdd 0 1.8
+VTAIL vbias 0 0.95
+VPBWD_HYF pbwd 0 PULSE(0 1.8 0.45u 20n 20n 0.80u 5.0u)
+VRP_HYF rp_hyf 0 PULSE(0 1.8 0.45u 20n 20n 0.80u 5.0u)
+VRM_HYF rm_hyf 0 PULSE(0 1.8 0.45u 20n 20n 0.80u 5.0u)
+VPSAMP_HYF psamp_hyf 0 PWL(0 0 1.42u 0 1.44u 1.8 1.76u 1.8 1.78u 0 4.6u 0)
+VPSAMPN_HYF psampn_hyf 0 PWL(0 1.8 1.42u 1.8 1.44u 0 1.76u 0 1.78u 1.8 4.6u 1.8)
+VPACC_HYF paccn_hyf 0 PWL(0 1.8 2.05u 1.8 2.07u 0 2.39u 0 2.41u 1.8 4.6u 1.8)
+VREAD_HYF read_hyf 0 PWL(0 0 2.70u 0 2.72u 1.15 3.36u 1.15 3.38u 0 4.6u 0)
+VPACT_HYF pact_hyf 0 PWL(0 0 3.16u 0 3.18u 1.8 3.31u 1.8 3.33u 0 4.6u 0)
+
+VZPP_HYF_SRC zpp_hyf_src 0 {0.9 + hybrid_mismatch_eps / 2.0:.5f}
+VZMM_HYF_SRC zmm_hyf_src 0 {0.9 - hybrid_mismatch_eps / 2.0:.5f}
+VZPM_HYF_SRC zpm_hyf_src 0 {0.9 - hybrid_mismatch_eps / 2.0:.5f}
+VZMP_HYF_SRC zmp_hyf_src 0 {0.9 + hybrid_mismatch_eps / 2.0:.5f}
+
+MPPP_HYF hpp_hyf hpp_hyf vdd vdd PMOS L={{LCH}} W={{WP}}
+MPPM_HYF hpm_hyf hpm_hyf vdd vdd PMOS L={{LCH}} W={{WP}}
+MNPP_HYF hpp_hyf zpp_hyf_src tailp_hyf 0 NMOS L={{LCH}} W={{WN}}
+MNPM_HYF hpm_hyf zmm_hyf_src tailp_hyf 0 NMOS L={{LCH}} W={{WN}}
+MNTP_HYF tailp_hyf vbias 0 0 NMOS L={{LCH}} W={{WN}}
+
+MPMP_HYF hmp_hyf hmp_hyf vdd vdd PMOS L={{LCH}} W={{WP}}
+MPMM_HYF hmm_hyf hmm_hyf vdd vdd PMOS L={{LCH}} W={{WP}}
+MNMP_HYF hmp_hyf zpm_hyf_src tailm_hyf 0 NMOS L={{LCH}} W={{WN}}
+MNMM_HYF hmm_hyf zmp_hyf_src tailm_hyf 0 NMOS L={{LCH}} W={{WN}}
+MNTM_HYF tailm_hyf vbias 0 0 NMOS L={{LCH}} W={{WN}}
+
+CDP_RP_HYF cdp_rp_hyf 0 {{CERR}} IC=1.04
+CDM_RP_HYF cdm_rp_hyf 0 {{CERR}} IC=1.04
+CDP_RM_HYF cdp_rm_hyf 0 {{CERR}} IC=1.04
+CDM_RM_HYF cdm_rm_hyf 0 {{CERR}} IC=1.04
+RDP_RP_HYF cdp_rp_hyf 0 50G
+RDM_RP_HYF cdm_rp_hyf 0 50G
+RDP_RM_HYF cdp_rm_hyf 0 50G
+RDM_RM_HYF cdm_rm_hyf 0 50G
+{sign_store_path("hpm_hyf", "rp_hyf", "cdp_rp_hyf", "hyfrp1")}
+{sign_store_path("hmp_hyf", "rp_hyf", "cdp_rp_hyf", "hyfrp2")}
+{sign_store_path("hpp_hyf", "rp_hyf", "cdm_rp_hyf", "hyfrp3")}
+{sign_store_path("hmm_hyf", "rp_hyf", "cdm_rp_hyf", "hyfrp4")}
+{sign_store_path("hpp_hyf", "rm_hyf", "cdp_rm_hyf", "hyfrm1")}
+{sign_store_path("hmm_hyf", "rm_hyf", "cdp_rm_hyf", "hyfrm2")}
+{sign_store_path("hpm_hyf", "rm_hyf", "cdm_rm_hyf", "hyfrm3")}
+{sign_store_path("hmp_hyf", "rm_hyf", "cdm_rm_hyf", "hyfrm4")}
+
+MPRP_CDP_HYF rgp_rp_hyf cdp_rp_hyf vdd vdd PMOS L={{LCH}} W={{WRESTP}}
+MNRP_CDP_HYF rgp_rp_hyf cdp_rp_hyf 0 0 NMOS L={{LCH}} W={{WRESTN}}
+MPRP_CDM_HYF rgm_rp_hyf cdm_rp_hyf vdd vdd PMOS L={{LCH}} W={{WRESTP}}
+MNRP_CDM_HYF rgm_rp_hyf cdm_rp_hyf 0 0 NMOS L={{LCH}} W={{WRESTN}}
+MPRM_CDP_HYF rgp_rm_hyf cdp_rm_hyf vdd vdd PMOS L={{LCH}} W={{WRESTP}}
+MNRM_CDP_HYF rgp_rm_hyf cdp_rm_hyf 0 0 NMOS L={{LCH}} W={{WRESTN}}
+MPRM_CDM_HYF rgm_rm_hyf cdm_rm_hyf vdd vdd PMOS L={{LCH}} W={{WRESTP}}
+MNRM_CDM_HYF rgm_rm_hyf cdm_rm_hyf 0 0 NMOS L={{LCH}} W={{WRESTN}}
+
+{''.join(hybrid_forward_quadrant_devices)}
+
+.control
+set noaskquit
+tran 5n 4.55u uic
+wrdata mos_hidden_writer_restored_gate_hybrid_update_forward_quadrants.dat {' '.join(hybrid_forward_quadrant_prints)} v(psamp_hyf) v(paccn_hyf) v(read_hyf) v(pact_hyf)
+quit
+.endc
+.end
+"""
+    hybrid_forward_quadrant_data = run_ngspice(
+        hybrid_forward_quadrant_deck,
+        "mos_hidden_writer_restored_gate_hybrid_update_forward_quadrants",
+    )
+    hyft, hyf_cols = load_wrdata(hybrid_forward_quadrant_data, len(hybrid_forward_quadrant_prints) + 4)
+
+    def hyfat(time_s: float, values: np.ndarray) -> float:
+        return float(values[np.argmin(np.abs(hyft - time_s))])
+
+    hyf_hidden_pos = hyf_cols[0] - hyf_cols[1]
+    hyf_hidden_neg = hyf_cols[2] - hyf_cols[3]
+    hyf_rp_selected_gate = hyf_cols[4]
+    hyf_rp_complement_gate = hyf_cols[5]
+    hyf_rm_complement_gate = hyf_cols[6]
+    hyf_rm_selected_gate = hyf_cols[7]
+    hyf_weight = []
+    hyf_bias = []
+    hyf_preact = []
+    hyf_forward_load = []
+    hyf_forward_store = []
+    for idx, (_name, _label, _hplus_src, _hminus_src, err_sign, _expected_weight_sign) in enumerate(hybrid_product_cases):
+        base = 8 + 10 * idx
+        wp = hyf_cols[base]
+        wm = hyf_cols[base + 1]
+        bp = hyf_cols[base + 2]
+        bm = hyf_cols[base + 3]
+        zp = hyf_cols[base + 4]
+        zm = hyf_cols[base + 5]
+        hp = hyf_cols[base + 6]
+        hm = hyf_cols[base + 7]
+        hp_store = hyf_cols[base + 8]
+        hm_store = hyf_cols[base + 9]
+        hyf_weight.append(hyfat(2.55e-6, wp - wm))
+        hyf_bias.append(hyfat(2.55e-6, bp - bm))
+        hyf_preact.append(hyfat(3.35e-6, zm - zp))
+        hyf_forward_load.append(hyfat(3.35e-6, hm - hp))
+        hyf_forward_store.append(hyfat(4.45e-6, hm_store - hp_store))
+    hyf_weight = np.array(hyf_weight)
+    hyf_bias = np.array(hyf_bias)
+    hyf_preact = np.array(hyf_preact)
+    hyf_forward_load = np.array(hyf_forward_load)
+    hyf_forward_store = np.array(hyf_forward_store)
+    hyf_weight_expected = np.array([expected_sign for *_rest, expected_sign in hybrid_product_cases])
+    hyf_error_expected = np.array([1.0 if err_sign == "rp" else -1.0 for *_prefix, err_sign, _expected_sign in hybrid_product_cases])
+    require(hyfat(1.35e-6, hyf_hidden_pos) > 0.07, "update-forward quadrants e+ store should be positive")
+    require(hyfat(1.35e-6, hyf_hidden_neg) < -0.07, "update-forward quadrants e- store should be negative")
+    require(abs(hyfat(1.35e-6, hyf_hidden_pos + hyf_hidden_neg)) < 0.003, "update-forward quadrant hidden stores should be symmetric")
+    require(hyfat(1.45e-6, hyf_rp_selected_gate) < 0.30, "update-forward quadrants e+ selected gate should be low")
+    require(hyfat(1.45e-6, hyf_rp_complement_gate) > 1.60, "update-forward quadrants e+ complement gate should be high")
+    require(hyfat(1.45e-6, hyf_rm_selected_gate) < 0.30, "update-forward quadrants e- selected gate should be low")
+    require(hyfat(1.45e-6, hyf_rm_complement_gate) > 1.60, "update-forward quadrants e- complement gate should be high")
+    require(np.all(np.sign(hyf_weight) == hyf_weight_expected), "update-forward quadrant weights should follow activation-error signs")
+    require(np.all(np.sign(hyf_bias) == hyf_error_expected), "update-forward quadrant biases should follow error signs")
+    require(np.all(np.sign(hyf_preact) == hyf_error_expected), "update-forward quadrant summing nodes should follow error signs")
+    require(np.all(np.sign(hyf_forward_load) == hyf_error_expected), "update-forward quadrant forward loads should follow error signs")
+    require(np.all(np.sign(hyf_forward_store) == hyf_error_expected), "update-forward quadrant stored activations should follow error signs")
+    require(np.all(np.abs(hyf_weight) > 0.018), "update-forward quadrant weights should have useful magnitude")
+    require(np.all(np.abs(hyf_bias) > 0.030), "update-forward quadrant biases should have useful magnitude")
+    require(np.all(np.abs(hyf_preact) > 0.045), "update-forward quadrant preactivations should have useful magnitude")
+    require(np.all(np.abs(hyf_forward_store) > 0.030), "update-forward quadrant stored activations should have useful magnitude")
+
+    hyf_x = np.arange(len(hybrid_product_cases))
+    hyf_labels = [label for _name, label, *_rest in hybrid_product_cases]
+    hyf_fig, hyf_axes = plt.subplots(3, 1, figsize=(7.4, 7.2), gridspec_kw={"height_ratios": [1.0, 1.0, 1.0]})
+    hyf_axes[0].plot(1e6 * hyft, hyf_hidden_pos, label="stored $e^+$")
+    hyf_axes[0].plot(1e6 * hyft, hyf_hidden_neg, label="stored $e^-$")
+    hyf_axes[0].plot(1e6 * hyft, hyf_rp_selected_gate, label="$e^+$ selected gate")
+    hyf_axes[0].plot(1e6 * hyft, hyf_rm_selected_gate, label="$e^-$ selected gate")
+    hyf_axes[0].plot(1e6 * hyft, hyf_cols[-4] / 2.0, color="0.45", alpha=0.35, label="$psamp/2$")
+    hyf_axes[0].plot(1e6 * hyft, hyf_cols[-3] / 20.0, color="0.15", alpha=0.25, label="$pacc_n/20$")
+    hyf_axes[0].set_xlim(0.35, 2.75)
+    hyf_axes[0].set_ylabel("voltage (V)")
+    hyf_axes[0].set_title("Four matched copies store both error signs once")
+    hyf_axes[0].grid(True, alpha=0.25)
+    hyf_axes[0].legend(loc="center right", ncol=2, fontsize="small")
+    hyf_axes[1].bar(hyf_x - 0.18, 1e3 * hyf_weight, width=0.36, label="$W^+ - W^-$")
+    hyf_axes[1].bar(hyf_x + 0.18, 1e3 * hyf_bias, width=0.36, label="$B^+ - B^-$")
+    hyf_axes[1].axhline(0, color="0.4", linewidth=0.8)
+    hyf_axes[1].set_xticks(hyf_x)
+    hyf_axes[1].set_xticklabels(hyf_labels)
+    hyf_axes[1].set_ylabel("state step (mV)")
+    hyf_axes[1].set_title("local update writes signed W/B capacitor states")
+    hyf_axes[1].grid(True, axis="y", alpha=0.25)
+    hyf_axes[1].legend(loc="upper right", fontsize="small")
+    hyf_axes[2].bar(hyf_x - 0.24, 1e3 * hyf_preact, width=0.24, label="$z^- - z^+$")
+    hyf_axes[2].bar(hyf_x, 1e3 * hyf_forward_load, width=0.24, label="forward load")
+    hyf_axes[2].bar(hyf_x + 0.24, 1e3 * hyf_forward_store, width=0.24, label="stored activation")
+    hyf_axes[2].axhline(0, color="0.4", linewidth=0.8)
+    hyf_axes[2].set_xticks(hyf_x)
+    hyf_axes[2].set_xticklabels(hyf_labels)
+    hyf_axes[2].set_xlabel("sampled activation/error quadrant")
+    hyf_axes[2].set_ylabel("differential (mV)")
+    hyf_axes[2].set_title("read, forward pair, and activation store follow the error sign")
+    hyf_axes[2].grid(True, axis="y", alpha=0.25)
+    hyf_axes[2].legend(loc="upper right", fontsize="small")
+    hyf_fig.tight_layout()
+    save_plot(hyf_fig, "mos_hidden_writer_restored_gate_hybrid_update_forward_quadrants_ngspice")
+
     hybrid_repeated_deck = f"""
 * Hybrid restored-enable/analog-error writer repeated-pulse accumulation check.
 * One stored r+ hidden-error rail and one activation gate drive the same

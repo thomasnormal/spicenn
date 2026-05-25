@@ -1297,6 +1297,31 @@ must satisfy before it can replace the current behavioral prototype.
 
 \begin{figure}[H]
   \centering
+  \includegraphics[width=0.88\linewidth]{figures/mos_hidden_writer_restored_gate_hybrid_update_forward_quadrants_ngspice.png}
+  \caption{Ngspice four-quadrant update-to-forward-store characterization for
+  the hybrid local-feature cell.  This family-completion deck extends
+  Fig.~\ref{fig:mos-hidden-writer-restored-gate-hybrid-update-forward-ngspice}
+  from \(a^+e^+\) to \(a^+e^+\), \(a^+e^-\), \(a^-e^+\), and \(a^-e^-\).
+  Each matched copy stores the same \(e^+\) and \(e^-\) rails, samples either
+  the \(a^+\) or \(a^-\) activation gate, writes persistent \(W^+/W^-\) and
+  \(B^+/B^-\), reads those states into a signed summing pair, and stores the
+  crossed-MOS forward-pair output on \(h^+/h^-\).  The experimentally checked
+  equations are \(\Delta W \propto ae\), \(\Delta B\propto e\), and, when the
+  next read input has the same sign as the sampled activation,
+  \(z^- - z^+ \propto \Delta W\,a+\Delta B\), so the stored activation follows
+  the error sign.  The measured \(W^+-W^-\) steps are \(+22.99\), \(-22.99\),
+  \(-22.99\), and \(+22.99\) mV; the measured \(B^+-B^-\) steps are
+  \(+34.54\), \(-34.54\), \(+34.54\), and \(-34.54\) mV.  The summed
+  preactivations are \(+50.76\), \(-50.76\), \(+50.76\), and \(-50.76\) mV,
+  and the held activations are \(+47.35\), \(-47.35\), \(+47.35\), and
+  \(-47.35\) mV.  This closes the quadrant gap left by the one-sample
+  update-forward plot: signed local writes now round-trip through the MOS
+  forward path with the expected sign in every activation/error quadrant.}
+  \label{fig:mos-hidden-writer-restored-gate-hybrid-update-forward-quadrants-ngspice}
+\end{figure}
+
+\begin{figure}[H]
+  \centering
   \includegraphics[width=0.88\linewidth]{figures/mos_hidden_writer_restored_gate_hybrid_repeated_ngspice.png}
   \caption{Ngspice repeated-pulse accumulation characterization of the hybrid
   restored writer.  One stored \(r^+\) hidden-error rail drives one persistent

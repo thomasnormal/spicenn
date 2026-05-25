@@ -1751,6 +1751,28 @@ must satisfy before it can replace the current behavioral prototype.
 
 \begin{figure}[H]
   \centering
+  \includegraphics[width=0.88\linewidth]{figures/mos_hidden_writer_restored_gate_hybrid_update_forward_guard_read_width_ngspice.png}
+  \caption{Ngspice read-tail width sweep for the guarded MOS activation store.
+  This is the device-sizing counterpart to
+  Fig.~\ref{fig:mos-hidden-writer-restored-gate-hybrid-update-forward-guard-read-drive-ngspice}:
+  the read-valid voltage remains at the nominal \(1.15\) V, while only the
+  NMOS read-tail width \(W_\mathrm{read}\) changes.  For
+  \(W_\mathrm{read}=6,12,24,48,96,\) and \(192\,\mu\mathrm{m}\), the measured
+  preactivations are
+  \(17.393,33.678,52.066,61.495,62.753,\) and \(62.898\) mV, and the stored
+  activations are
+  \(21.209,37.538,51.355,57.040,57.355,\) and \(57.202\) mV.  The sizing
+  result matches the drive-voltage result: undersized read devices limit the
+  summing/forward signal before the guard closes, while widths above roughly
+  \(48\)--\(96\,\mu\mathrm{m}\) mostly hit a forward/store saturation knee.
+  The nominal \(24\,\mu\mathrm{m}\) read tail is functional but not heavily
+  overdesigned; a larger read tail buys several millivolts of capture margin
+  before diminishing returns dominate.}
+  \label{fig:mos-hidden-writer-restored-gate-hybrid-update-forward-guard-read-width-ngspice}
+\end{figure}
+
+\begin{figure}[H]
+  \centering
   \includegraphics[width=0.88\linewidth]{figures/mos_hidden_writer_restored_gate_hybrid_repeated_ngspice.png}
   \caption{Ngspice repeated-pulse accumulation characterization of the hybrid
   restored writer.  One stored \(r^+\) hidden-error rail drives one persistent

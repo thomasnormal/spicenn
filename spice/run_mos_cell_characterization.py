@@ -8363,6 +8363,72 @@ quit
         "strong read drive should increase the sampled activation in the fixed guard window",
     )
 
+    read_width_cases_u = [6, 12, 24, 48, 96, 192]
+    read_width_labels = []
+    read_width_store_samples = []
+    read_width_preact_samples = []
+    read_width_traces = []
+    for read_width_u in read_width_cases_u:
+        stem = (
+            "mos_hidden_writer_restored_gate_hybrid_update_forward_read_pact_"
+            f"guard_wread_{read_width_u}u"
+        )
+        read_width_deck = replace_required(hybrid_forward_read_reuse_deck, timing_read_pwl, timing_single_read_pwl)
+        read_width_deck = replace_required(
+            read_width_deck,
+            timing_base_pact_pwl,
+            long_pact_pwl + "\n" + long_pactn_pwl + "\n" + corner_guard_pwl + "\n" + corner_guardn_pwl,
+        )
+        read_width_deck = replace_required(read_width_deck, corner_param_line, corner_param_line.replace("WREAD=24u", f"WREAD={read_width_u}u"))
+        read_width_deck = replace_required(read_width_deck, nmos_store_line_p, guard_store_line_p)
+        read_width_deck = replace_required(read_width_deck, nmos_store_line_m, guard_store_line_m)
+        read_width_deck = replace_required(
+            read_width_deck,
+            "mos_hidden_writer_restored_gate_hybrid_update_forward_read_reuse.dat",
+            f"{stem}.dat",
+        )
+        read_width_data = run_ngspice(read_width_deck, stem)
+        rwt, read_width_cols = load_wrdata(read_width_data, 23)
+
+        def rwdat(time_s: float, values: np.ndarray) -> float:
+            return float(values[np.argmin(np.abs(rwt - time_s))])
+
+        read_width_preact = read_width_cols[10] - read_width_cols[9]
+        read_width_store = read_width_cols[14] - read_width_cols[13]
+        read_width_labels.append(f"{read_width_u}u")
+        read_width_preact_samples.append(rwdat(3.575e-6, read_width_preact))
+        read_width_store_samples.append(rwdat(3.575e-6, read_width_store))
+        read_width_traces.append((f"{read_width_u}u", rwt, read_width_store))
+
+    read_width_preact_samples = np.array(read_width_preact_samples)
+    read_width_store_samples = np.array(read_width_store_samples)
+    nominal_read_width_idx = read_width_cases_u.index(24)
+    require(
+        abs(read_width_store_samples[nominal_read_width_idx] - guard_timing_samples[2]) < 0.002,
+        "nominal WREAD case should match the nominal guard timing sample",
+    )
+    require(
+        read_width_preact_samples[0] < read_width_preact_samples[nominal_read_width_idx] - 0.020,
+        "small WREAD should visibly reduce read preactivation",
+    )
+    require(
+        read_width_store_samples[0] < read_width_store_samples[nominal_read_width_idx] - 0.010,
+        "small WREAD should visibly undercharge the guarded activation store",
+    )
+    require(np.all(np.diff(read_width_preact_samples) > 0), "read preactivation should increase with read tail width")
+    require(
+        read_width_preact_samples[-1] - read_width_preact_samples[-2] < 0.001,
+        "largest WREAD points should show the preactivation saturation knee",
+    )
+    require(
+        read_width_store_samples[-1] > read_width_store_samples[nominal_read_width_idx] + 0.004,
+        "larger WREAD should improve sampled activation in the fixed guard window",
+    )
+    require(
+        abs(read_width_store_samples[-1] - read_width_store_samples[-2]) < 0.001,
+        "largest WREAD points should not materially improve stored activation",
+    )
+
     read_gated_fig, read_gated_axes = plt.subplots(2, 1, figsize=(7.4, 6.6), gridspec_kw={"height_ratios": [1.0, 0.9]})
     for label, rgt, store in guard_gated_traces:
         if label in {"40 ns", "120 ns", "240 ns", "320 ns"}:
@@ -8775,6 +8841,31 @@ quit
     read_drive_axes[1].legend(loc="upper left", ncol=2, fontsize="small")
     read_drive_fig.tight_layout()
     save_plot(read_drive_fig, "mos_hidden_writer_restored_gate_hybrid_update_forward_guard_read_drive_ngspice")
+
+    read_width_fig, read_width_axes = plt.subplots(2, 1, figsize=(7.4, 6.4), gridspec_kw={"height_ratios": [1.0, 0.8]})
+    for label, rwt, store in read_width_traces:
+        if label in {"6u", "24u", "96u", "192u"}:
+            read_width_axes[0].plot(1e6 * rwt, 1e3 * store, label=label)
+    read_width_axes[0].axhline(0, color="0.4", linewidth=0.8)
+    read_width_axes[0].axvline(3.33, color="0.25", linestyle="--", linewidth=0.9, alpha=0.6, label="guard off")
+    read_width_axes[0].set_xlim(3.05, 3.65)
+    read_width_axes[0].set_ylabel("stored activation (mV)")
+    read_width_axes[0].set_title("Read-tail width sets the same headroom as read-valid drive")
+    read_width_axes[0].grid(True, alpha=0.25)
+    read_width_axes[0].legend(loc="upper left", ncol=2, fontsize="small")
+    read_width_x = np.arange(len(read_width_labels))
+    read_width_axes[1].bar(read_width_x - 0.18, 1e3 * read_width_preact_samples, width=0.36, label="$z^- - z^+$")
+    read_width_axes[1].bar(read_width_x + 0.18, 1e3 * read_width_store_samples, width=0.36, label="stored $h^- - h^+$")
+    read_width_axes[1].axhline(0, color="0.4", linewidth=0.8)
+    read_width_axes[1].set_xticks(read_width_x)
+    read_width_axes[1].set_xticklabels(read_width_labels)
+    read_width_axes[1].set_xlabel("read-tail NMOS width")
+    read_width_axes[1].set_ylabel("sampled differential (mV)")
+    read_width_axes[1].set_title("Sizing helps until the forward/store path saturates")
+    read_width_axes[1].grid(True, axis="y", alpha=0.25)
+    read_width_axes[1].legend(loc="upper left", ncol=2, fontsize="small")
+    read_width_fig.tight_layout()
+    save_plot(read_width_fig, "mos_hidden_writer_restored_gate_hybrid_update_forward_guard_read_width_ngspice")
 
     hybrid_repeated_deck = f"""
 * Hybrid restored-enable/analog-error writer repeated-pulse accumulation check.

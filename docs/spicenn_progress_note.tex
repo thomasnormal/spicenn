@@ -2667,6 +2667,29 @@ must satisfy before it can replace the current behavioral prototype.
 
 \begin{figure}[H]
   \centering
+  \includegraphics[width=0.95\linewidth]{figures/mos_hidden_writer_restored_gate_hybrid_update_forward_guard_forward_pair_96u_shifted_gate_reset_ref_fanout_recharge_ngspice.png}
+  \caption{Ngspice repeated fresh-fanout recharge check for the larger
+  shifted-gate trim reservoirs.  This fixture uses the recovered
+  \(2\times\) startup transmission-gate schedules from
+  Fig.~\ref{fig:mos-hidden-writer-restored-gate-hybrid-update-forward-guard-forward-pair-96u-shifted-gate-reset-ref-fanout-precharge-strength-ngspice},
+  but then resets three fresh banks of real \(5\) pF shifted-gate loads from
+  the same passive local reservoir.  The first bank passes, as expected from
+  the startup-precharge sweep: worst first-cycle errors are \(5.21\) mV for
+  \(500\) pF/eight loads and \(5.30\) mV for \(1\) nF/sixteen loads.  With
+  only \(1\,\mu\mathrm{s}\) between fresh banks, the third reset under-delivers
+  badly: the worst third-cycle error reaches \(13.66\) mV.  Extending the
+  recharge interval to \(200\,\mu\mathrm{s}\) recovers the third reset below
+  the \(6\) mV gate, with worst error \(5.58\) mV and common-mode error below
+  \(5.94\) mV.  First/last load mismatch remains at displayed zero, so the
+  limiter is reservoir differential recharge through the \(100\,\mathrm{k}\Omega\)
+  trim source.  The larger-reservoir fanout fix is therefore not only a
+  startup condition; repeated fresh-load use needs a recharge phase, a more
+  local reservoir, or a lower-impedance trim refresh path.}
+  \label{fig:mos-hidden-writer-restored-gate-hybrid-update-forward-guard-forward-pair-96u-shifted-gate-reset-ref-fanout-recharge-ngspice}
+\end{figure}
+
+\begin{figure}[H]
+  \centering
   \includegraphics[width=0.95\linewidth]{figures/mos_hidden_writer_restored_gate_hybrid_update_forward_guard_forward_pair_96u_shifted_gate_reset_ref_precharge_strength_ngspice.png}
   \caption{Ngspice startup-precharge strength-margin check for the same cold
   local trim-reference reservoir.  The \(250\) pF reservoirs, \(100\)

@@ -17,6 +17,9 @@ from run_spice_sweep import ROOT, detect_spice, run_tiny_test
 from spicenn.timing import CYCLE_NS
 
 
+INPUT_RAIL_MODES = ("raw", "complement", "alternating-complement")
+
+
 def block_topology(image_size: int, block_size: int, stride: int, channels: int) -> tuple[list[list[int]], int]:
     if image_size <= 0:
         raise ValueError("image_size must be positive")
@@ -30,6 +33,25 @@ def block_topology(image_size: int, block_size: int, stride: int, channels: int)
 
 def encode_pixel_rail(value: float) -> float:
     return float(np.clip(0.08 + 0.92 * value, 0.05, 1.1))
+
+
+def input_rail_name(pixel: int, channel: int, mode: str) -> str:
+    if mode == "raw":
+        return f"x{pixel}"
+    if mode == "complement":
+        return f"nx{pixel}"
+    if mode == "alternating-complement":
+        return f"nx{pixel}" if channel % 2 else f"x{pixel}"
+    raise ValueError(f"unknown input rail mode {mode!r}")
+
+
+def required_input_rail_names(pixel_count: int, channels: int, mode: str) -> list[str]:
+    rails = {
+        input_rail_name(pixel, channel, mode)
+        for pixel in range(pixel_count)
+        for channel in range(channels)
+    }
+    return sorted(rails, key=lambda name: (name.startswith("nx"), int(name.removeprefix("nx").removeprefix("x"))))
 
 
 def initial_block_weights(
@@ -84,11 +106,11 @@ def block_weight_shape(weights: dict[str, Any]) -> tuple[int, int]:
     return int(feature_count), int(block_len)
 
 
-def validate_block_samples(samples: list[dict[str, Any]], *, pixel_count: int) -> None:
+def validate_block_samples(samples: list[dict[str, Any]], *, required_rails: list[str]) -> None:
     if not samples:
         raise ValueError("samples must not be empty")
     for idx, sample in enumerate(samples):
-        missing = [f"x{pixel}" for pixel in range(pixel_count) if f"x{pixel}" not in sample]
+        missing = [rail for rail in required_rails if rail not in sample]
         if missing:
             raise ValueError(f"sample {idx} missing pixel rails: {', '.join(missing[:4])}")
         if "target" not in sample:
@@ -107,11 +129,14 @@ def block_netlist(
     output_driver_model: str = "sense",
     readout_apply_scale: float = 0.35,
     hidden_forward_width: float = 3.0,
+    input_rail_mode: str = "alternating-complement",
 ) -> str:
     if readout_apply_scale <= 0.0:
         raise ValueError("readout_apply_scale must be positive")
     if hidden_forward_width <= 0.0:
         raise ValueError("hidden_forward_width must be positive")
+    if input_rail_mode not in INPUT_RAIL_MODES:
+        raise ValueError(f"input_rail_mode must be one of {INPUT_RAIL_MODES}")
     blocks, expected_features = block_topology(image_size, block_size, stride, channels)
     feature_count, block_len = block_weight_shape(weights)
     if feature_count != expected_features or block_len != len(blocks[0]):
@@ -120,7 +145,8 @@ def block_netlist(
             f"({expected_features}, {len(blocks[0])})"
         )
     pixel_count = image_size * image_size
-    validate_block_samples(samples, pixel_count=pixel_count)
+    required_rails = required_input_rail_names(pixel_count, channels, input_rail_mode)
+    validate_block_samples(samples, required_rails=required_rails)
 
     readout_pmos_w = 8.0 * readout_apply_scale
     readout_nmos_w = 2.0 * readout_apply_scale
@@ -178,8 +204,8 @@ def block_netlist(
         mos_models(),
         "Vdd vdd 0 {VDD}",
     ]
-    for pixel in range(pixel_count):
-        lines.append(f"Vx{pixel} x{pixel} 0 {sample_wave(samples, f'x{pixel}', stop)}")
+    for rail in required_rails:
+        lines.append(f"V{rail} {rail} 0 {sample_wave(samples, rail, stop)}")
     lines += [
         f"Vtarget target 0 {sample_wave(samples, 'target', stop)}",
         repeated_phases(len(samples), training_enabled=training_enabled),
@@ -278,17 +304,18 @@ def block_netlist(
             feature = block_idx * channels + channel
             lines += ["", f"* Feature {feature}: block {block_idx}, channel {channel}."]
             for pix, pixel_node in enumerate(block):
+                input_node = input_rail_name(pixel_node, channel, input_rail_mode)
                 lines += [
-                    f"Mhpos{feature}_{pix}_x vdd x{pixel_node} hp{feature}_{pix}_0 0 NMOS W={hidden_forward_width:.6g}u L=180n",
+                    f"Mhpos{feature}_{pix}_x vdd {input_node} hp{feature}_{pix}_0 0 NMOS W={hidden_forward_width:.6g}u L=180n",
                     f"Mhpos{feature}_{pix}_w hp{feature}_{pix}_0 whp{feature}_{pix} hp{feature}_{pix}_1 0 NMOS W={hidden_forward_width:.6g}u L=180n",
                     f"Mhpos{feature}_{pix}_f hp{feature}_{pix}_1 fwd pre{feature} 0 NMOS W={hidden_forward_width:.6g}u L=180n",
                     f"Mhneg{feature}_{pix}_f pre{feature} fwd hn{feature}_{pix}_0 0 NMOS W={hidden_neg_width:.6g}u L=180n",
-                    f"Mhneg{feature}_{pix}_x hn{feature}_{pix}_0 x{pixel_node} hn{feature}_{pix}_1 0 NMOS W={hidden_neg_width:.6g}u L=180n",
+                    f"Mhneg{feature}_{pix}_x hn{feature}_{pix}_0 {input_node} hn{feature}_{pix}_1 0 NMOS W={hidden_neg_width:.6g}u L=180n",
                     f"Mhneg{feature}_{pix}_w hn{feature}_{pix}_1 whn{feature}_{pix} 0 0 NMOS W={hidden_neg_width:.6g}u L=180n",
-                    f"Mghp{feature}_{pix}_x vdd x{pixel_node} ghp{feature}_{pix}_x 0 NMOS W=12u L=180n",
+                    f"Mghp{feature}_{pix}_x vdd {input_node} ghp{feature}_{pix}_x 0 NMOS W=12u L=180n",
                     f"Mghp{feature}_{pix}_d ghp{feature}_{pix}_x hdp{feature} ghp{feature}_{pix}_d 0 NSENSE W=12u L=180n",
                     f"Mghp{feature}_{pix}_g ghp{feature}_{pix}_d acc ghp{feature}_{pix} 0 NMOS W=12u L=180n",
-                    f"Mghn{feature}_{pix}_x vdd x{pixel_node} ghn{feature}_{pix}_x 0 NMOS W=12u L=180n",
+                    f"Mghn{feature}_{pix}_x vdd {input_node} ghn{feature}_{pix}_x 0 NMOS W=12u L=180n",
                     f"Mghn{feature}_{pix}_d ghn{feature}_{pix}_x hdn{feature} ghn{feature}_{pix}_d 0 NSENSE W=12u L=180n",
                     f"Mghn{feature}_{pix}_g ghn{feature}_{pix}_d acc ghn{feature}_{pix} 0 NMOS W=12u L=180n",
                     f"Mwhp{feature}_{pix}_up_g vdd ghp{feature}_{pix} whp{feature}_{pix}_up 0 NSENSE W=0.25u L=180n",
@@ -383,6 +410,7 @@ def load_mnist01_block_records(
     seed: int,
     positive_digit: int,
     negative_digit: int,
+    complement_rail_scale: float,
     download: bool,
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     from torchvision import datasets, transforms
@@ -390,6 +418,8 @@ def load_mnist01_block_records(
 
     if positive_digit == negative_digit:
         raise ValueError("positive and negative digits must differ")
+    if complement_rail_scale <= 0.0 or complement_rail_scale > 1.0:
+        raise ValueError("complement_rail_scale must be in (0, 1]")
     digits = (positive_digit, negative_digit)
     ds_train = datasets.MNIST(root=str(ROOT / "data"), train=True, download=download, transform=transforms.ToTensor())
     ds_eval = datasets.MNIST(root=str(ROOT / "data"), train=False, download=download, transform=transforms.ToTensor())
@@ -412,7 +442,9 @@ def load_mnist01_block_records(
                 "positive_label": 1.0 if digit_i == positive_digit else 0.0,
             }
             for pixel, value in enumerate(pixels):
-                record[f"x{pixel}"] = encode_pixel_rail(float(value))
+                pixel_value = float(value)
+                record[f"x{pixel}"] = encode_pixel_rail(pixel_value)
+                record[f"nx{pixel}"] = encode_pixel_rail(complement_rail_scale * (1.0 - pixel_value))
             records.append(record)
         return records
 
@@ -420,7 +452,11 @@ def load_mnist01_block_records(
 
 
 def rows_from_measures(
-    samples: list[dict[str, Any]], measures: dict[str, float], *, sequence: str, pixel_count: int
+    samples: list[dict[str, Any]],
+    measures: dict[str, float],
+    *,
+    sequence: str,
+    required_rails: list[str],
 ) -> pd.DataFrame:
     rows: list[dict[str, Any]] = []
     for sample_idx, sample in enumerate(samples):
@@ -434,8 +470,8 @@ def rows_from_measures(
             "positive_label": sample.get("positive_label"),
             "expected_direction": "positive" if positive else "negative",
         }
-        for pixel in range(pixel_count):
-            row[f"x{pixel}"] = sample[f"x{pixel}"]
+        for rail in required_rails:
+            row[rail] = sample[rail]
         for key, value in measures.items():
             suffix = f"_{sample_idx}"
             if key.endswith(suffix):
@@ -480,6 +516,7 @@ def run_device_sequence(
     output_driver_model: str,
     readout_apply_scale: float,
     hidden_forward_width: float,
+    input_rail_mode: str,
 ) -> pd.DataFrame:
     netlist = block_netlist(
         samples,
@@ -492,11 +529,13 @@ def run_device_sequence(
         output_driver_model=output_driver_model,
         readout_apply_scale=readout_apply_scale,
         hidden_forward_width=hidden_forward_width,
+        input_rail_mode=input_rail_mode,
     )
     if "\nB" in netlist:
         raise ValueError("block-stride device runner generated a behavioral source")
     measures = run_netlist(spice_bin, path, netlist, timeout)
-    return rows_from_measures(samples, measures, sequence=sequence, pixel_count=image_size * image_size)
+    required_rails = required_input_rail_names(image_size * image_size, channels, input_rail_mode)
+    return rows_from_measures(samples, measures, sequence=sequence, required_rails=required_rails)
 
 
 def main() -> None:
@@ -517,6 +556,8 @@ def main() -> None:
     ap.add_argument("--output-driver-model", choices=["sense", "nrel"], default="sense")
     ap.add_argument("--readout-apply-scale", type=float, default=0.35)
     ap.add_argument("--hidden-forward-width", type=float, default=3.0)
+    ap.add_argument("--input-rail-mode", choices=INPUT_RAIL_MODES, default="alternating-complement")
+    ap.add_argument("--complement-rail-scale", type=float, default=0.5)
     ap.add_argument("--hidden-bias-positive-init", type=float, default=0.50)
     ap.add_argument("--hidden-bias-negative-init", type=float, default=0.20)
     ap.add_argument("--decision-threshold", type=float, default=0.10)
@@ -547,6 +588,7 @@ def main() -> None:
         seed=args.seed,
         positive_digit=args.positive_digit,
         negative_digit=args.negative_digit,
+        complement_rail_scale=args.complement_rail_scale,
         download=args.download,
     )
     initial_weights = initial_block_weights(
@@ -567,6 +609,7 @@ def main() -> None:
         "output_driver_model": args.output_driver_model,
         "readout_apply_scale": args.readout_apply_scale,
         "hidden_forward_width": args.hidden_forward_width,
+        "input_rail_mode": args.input_rail_mode,
     }
     initial_eval_rows = run_device_sequence(
         spice_bin,
@@ -629,7 +672,11 @@ def main() -> None:
         "block_len": block_len,
         "feature_count": feature_count,
         "target_10x10_b4_stride2_c2_topology": target_topology,
-        "input_encoding": "raw resized pixel rails encoded as 0.08 + 0.92 * pixel intensity; no PCA/local-PCA",
+        "input_encoding": (
+            "raw and optional complemented resized pixel rails encoded as 0.08 + 0.92 * intensity; no PCA/local-PCA"
+        ),
+        "input_rail_mode": args.input_rail_mode,
+        "complement_rail_scale": args.complement_rail_scale,
         "hidden_bias_state": "persistent signed bhp/bhn capacitors with MOS/passive local bias writers",
         "hidden_credit_mode": "direct_feedback",
         "output_driver_model": args.output_driver_model,

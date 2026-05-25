@@ -21,6 +21,8 @@ def test_device_mnist01_block_script_help_runs_from_repo_root() -> None:
     assert "--block-size" in proc.stdout
     assert "--stride" in proc.stdout
     assert "--channels" in proc.stdout
+    assert "--input-rail-mode" in proc.stdout
+    assert "--complement-rail-scale" in proc.stdout
     assert "--hidden-bias-positive-init" in proc.stdout
     assert "--assert-nonbehavioral" in proc.stdout
 
@@ -79,6 +81,7 @@ def test_block_netlist_can_emit_target_topology_without_behavioral_sources() -> 
     image_size = 10
     weights = block.initial_block_weights(image_size, 4, 2, 2, seed=2)
     sample = {f"x{i}": 0.5 for i in range(image_size * image_size)}
+    sample.update({f"nx{i}": 0.6 for i in range(image_size * image_size)})
     sample["target"] = 0.0
     netlist = block.block_netlist(
         [sample],
@@ -94,9 +97,12 @@ def test_block_netlist_can_emit_target_topology_without_behavioral_sources() -> 
     assert netlist.count("Cwhp") == 32 * 16
     assert netlist.count("Cbhp") == 32
     assert "Vx99 x99 0 PWL" in netlist
+    assert "Vnx99 nx99 0 PWL" in netlist
     assert "Cwhp31_15 whp31_15 0 20f" in netlist
     assert "Cbhp31 bhp31 0 20f" in netlist
-    assert "Mhpos31_15_x vdd x99 hp31_15_0 0 NMOS" in netlist
+    assert "Mhpos30_15_x vdd x99 hp30_15_0 0 NMOS" in netlist
+    assert "Mhpos31_15_x vdd nx99 hp31_15_0 0 NMOS" in netlist
+    assert "Mghp31_15_x vdd nx99 ghp31_15_x 0 NMOS" in netlist
     assert "Mhbpos31_b vdd bhp31 hbp31_0 0 NMOS" in netlist
     assert "Mbhp31_up_a bhp31_up apply bhp31 0 NREL" in netlist
     assert "Movpos31_f op31_1 fwd score 0 NREL" in netlist
@@ -113,6 +119,25 @@ def test_block_netlist_rejects_mismatched_weight_shape() -> None:
         block.block_netlist(
             [sample],
             block.initial_block_weights(4, 2, 2, 1, seed=0),
+            image_size=4,
+            block_size=2,
+            stride=2,
+            channels=2,
+            training_enabled=True,
+        )
+
+
+def test_block_netlist_rejects_missing_complement_rail_for_c2_default_mode() -> None:
+    sys.path.insert(0, str(SPICE_DIR))
+    import pytest
+    import run_device_mnist01_block_training as block
+
+    sample = {f"x{i}": 0.5 for i in range(16)}
+    sample["target"] = 1.1
+    with pytest.raises(ValueError, match="missing pixel rails: nx0"):
+        block.block_netlist(
+            [sample],
+            block.initial_block_weights(4, 2, 2, 2, seed=0),
             image_size=4,
             block_size=2,
             stride=2,

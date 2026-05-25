@@ -14807,6 +14807,18 @@ quit
     shift_refz_width_axes[0].set_ylabel("max trim error (mV)")
     shift_refz_width_axes[0].set_title("Longer first reset recovers moderate trim-source impedance")
     shift_refz_width_axes[0].grid(True, axis="y", alpha=0.25)
+    shift_refz_width_axes[0].text(
+        0.05,
+        0.08,
+        "10k trim err: "
+        f"{1e3 * np.max(shift_refz_width_trim_error[:, r10k_idx, 0]):.1f} -> "
+        f"{1e3 * np.max(shift_refz_width_trim_error[:, r10k_idx, -1]):.2f} mV / 6 mV\n"
+        "100k at 400 ns = "
+        f"{1e3 * np.min(shift_refz_width_trim_error[:, r100k_idx, -1]):.1f} mV / >20 mV",
+        transform=shift_refz_width_axes[0].transAxes,
+        fontsize="x-small",
+        bbox={"facecolor": "white", "alpha": 0.82, "edgecolor": "0.8"},
+    )
     shift_refz_width_axes[0].legend(loc="upper right", ncol=2, fontsize="xx-small")
     for source_idx, (_source_name, source_label, _series_ohm) in enumerate(shift_refz_width_source_cases):
         for branch_idx, (_branch_name, branch_label, _nfp, _nfm, _trim) in enumerate(shift_reset_branch_specs):
@@ -14823,6 +14835,17 @@ quit
     shift_refz_width_axes[1].set_ylabel("first stored $h$ (mV)")
     shift_refz_width_axes[1].set_title("Trim recovery improves 10k activation, but schedule still matters")
     shift_refz_width_axes[1].grid(True, axis="y", alpha=0.25)
+    shift_refz_width_axes[1].text(
+        0.05,
+        0.08,
+        "10k h recovery = "
+        f"{1e3 * np.min(np.abs(shift_refz_width_h_sample[:, r10k_idx, -1] - shift_refz_width_h_sample[:, r10k_idx, 0])):.1f} mV\n"
+        "100k miss vs recovered 10k = "
+        f"{1e3 * np.min(np.abs(shift_refz_width_h_sample[:, r100k_idx, -1] - shift_refz_width_h_sample[:, r10k_idx, -1])):.1f} mV",
+        transform=shift_refz_width_axes[1].transAxes,
+        fontsize="x-small",
+        bbox={"facecolor": "white", "alpha": 0.82, "edgecolor": "0.8"},
+    )
     shift_refz_width_axes[1].legend(loc="upper right", ncol=2, fontsize="xx-small")
     for branch_label, source_label, width_label, rwt, store in shift_refz_width_traces:
         if source_label == "100k" and width_label == "120 ns":

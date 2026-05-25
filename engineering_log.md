@@ -2,6 +2,17 @@
 
 ## 2026-05-25
 
+- Clarified the shifted-gate first-reset width recovery plot.  The ngspice
+  deck sweeps first-reset aperture for \(10\)k and \(100\)k trim-source
+  impedances and already asserted monotonic \(10\)k trim-error improvement,
+  \(10\)k recovery below the \(6\) mV trim-error gate at \(400\) ns, visible
+  \(10\)k first-cycle activation recovery, and continued \(100\)k failure at
+  \(400\) ns.  The regenerated
+  `mos_hidden_writer_restored_gate_hybrid_update_forward_guard_forward_pair_96u_shifted_gate_reset_ref_width_ngspice`
+  plot now labels the measured schedule limits: \(10\)k trim error improves
+  from \(27.4\) to \(4.36\) mV, \(100\)k remains at \(41.8\) mV trim error at
+  \(400\) ns, \(10\)k first-cycle activation recovery is \(22.9\) mV, and
+  \(100\)k still misses the recovered \(10\)k activation by \(73.8\) mV.
 - Clarified the shifted-gate reset-reference source-impedance limit plot.  The
   ngspice deck sweeps ideal through \(3\)M trim-reference source impedance
   and already asserted that \(0\)--\(1\)k preserves split trim below \(1\) mV

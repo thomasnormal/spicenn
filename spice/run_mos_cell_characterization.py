@@ -10508,12 +10508,16 @@ quit
     )
 
     shift_polsens_cases = [
+        ("pm30_neg45", "+30 mV skew, -45 mV trim", 0.580, 0.520, -0.045, "positive skew", -10.0),
         ("pm30_neg50", "+30 mV skew, -50 mV trim", 0.580, 0.520, -0.050, "positive skew", -5.0),
         ("pm30_neg55", "+30 mV skew, -55 mV trim", 0.580, 0.520, -0.055, "positive skew", 0.0),
         ("pm30_neg60", "+30 mV skew, -60 mV trim", 0.580, 0.520, -0.060, "positive skew", 5.0),
+        ("pm30_neg65", "+30 mV skew, -65 mV trim", 0.580, 0.520, -0.065, "positive skew", 10.0),
+        ("mp30_pos55", "-30 mV skew, +55 mV trim", 0.520, 0.580, 0.055, "negative skew", -10.0),
         ("mp30_pos60", "-30 mV skew, +60 mV trim", 0.520, 0.580, 0.060, "negative skew", -5.0),
         ("mp30_pos65", "-30 mV skew, +65 mV trim", 0.520, 0.580, 0.065, "negative skew", 0.0),
         ("mp30_pos70", "-30 mV skew, +70 mV trim", 0.520, 0.580, 0.070, "negative skew", 5.0),
+        ("mp30_pos75", "-30 mV skew, +75 mV trim", 0.520, 0.580, 0.075, "negative skew", 10.0),
     ]
     shift_polsens_trim_error_mv = []
     shift_polsens_h_samples = []
@@ -10574,8 +10578,14 @@ quit
     shift_polsens_h_samples = np.array(shift_polsens_h_samples)
     shift_polsens_h_mean = np.mean(shift_polsens_h_samples, axis=1)
     shift_polsens_index = {case[0]: idx for idx, case in enumerate(shift_polsens_cases)}
-    pm_sens_order = [shift_polsens_index[name] for name in ["pm30_neg50", "pm30_neg55", "pm30_neg60"]]
-    mp_sens_order = [shift_polsens_index[name] for name in ["mp30_pos60", "mp30_pos65", "mp30_pos70"]]
+    pm_sens_order = [
+        shift_polsens_index[name]
+        for name in ["pm30_neg45", "pm30_neg50", "pm30_neg55", "pm30_neg60", "pm30_neg65"]
+    ]
+    mp_sens_order = [
+        shift_polsens_index[name]
+        for name in ["mp30_pos55", "mp30_pos60", "mp30_pos65", "mp30_pos70", "mp30_pos75"]
+    ]
     pm_slope = float(
         np.polyfit(
             shift_polsens_trim_error_mv[pm_sens_order],
@@ -10619,26 +10629,26 @@ quit
             np.abs(
                 1e3
                 * (
-                    shift_polsens_h_mean[[shift_polsens_index["pm30_neg50"], shift_polsens_index["pm30_neg60"]]]
+                    shift_polsens_h_mean[[shift_polsens_index["pm30_neg45"], shift_polsens_index["pm30_neg65"]]]
                     - shift_polsens_h_mean[shift_polsens_index["pm30_neg55"]]
                 )
             )
         )
-        > 7.0,
-        "+/-5 mV trim-code errors should be visibly resolvable on the +30 mV skew branch",
+        > 15.0,
+        "+/-10 mV trim-code errors should stay visibly resolvable on the +30 mV skew branch",
     )
     require(
         np.max(
             np.abs(
                 1e3
                 * (
-                    shift_polsens_h_mean[[shift_polsens_index["mp30_pos60"], shift_polsens_index["mp30_pos70"]]]
+                    shift_polsens_h_mean[[shift_polsens_index["mp30_pos55"], shift_polsens_index["mp30_pos75"]]]
                     - shift_polsens_h_mean[shift_polsens_index["mp30_pos65"]]
                 )
             )
         )
-        > 7.0,
-        "+/-5 mV trim-code errors should be visibly resolvable on the -30 mV skew branch",
+        > 15.0,
+        "+/-10 mV trim-code errors should stay visibly resolvable on the -30 mV skew branch",
     )
 
     shift_polref_cases = [
@@ -13118,7 +13128,7 @@ quit
     )
     shift_polsens_axes[0].set_xlabel("trim-code error from calibrated value (mV)")
     shift_polsens_axes[0].set_ylabel("mean stored $h$ (mV)")
-    shift_polsens_axes[0].set_title("Fine trim-code error maps directly into activation error")
+    shift_polsens_axes[0].set_title("Trim-code errors remain locally linear over +/-10 mV")
     shift_polsens_axes[0].grid(True, alpha=0.25)
     shift_polsens_axes[0].legend(loc="upper right", fontsize="small")
     for group, trim_error_mv, pst, load, store in shift_polsens_traces:

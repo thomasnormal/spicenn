@@ -2,6 +2,20 @@
 
 ## 2026-05-25
 
+- Clarified the core hybrid writer accumulation/readback plots.  The repeated,
+  alternating, and readback ngspice decks already asserted hidden-error
+  storage, restored-gate selectivity, monotone same-sign accumulation,
+  opposite-sign cancellation, readback sign reversal, and hold/read-disturb
+  limits.  The regenerated
+  `mos_hidden_writer_restored_gate_hybrid_repeated_ngspice`,
+  `mos_hidden_writer_restored_gate_hybrid_alternating_ngspice`, and
+  `mos_hidden_writer_restored_gate_hybrid_readback_ngspice` plots now label
+  those margins directly: repeated writes reach \(85.9\) mV with zero visible
+  complement step and no post-train hold error; alternating writes build to
+  \(36.8\) mV, cancel, and cross to \(-12.3\) mV while \(W^+\) holds during
+  the negative phase; continuous MOS readback reports \(30.7\,\mu\)A,
+  near-zero cancellation, \(-11.0\,\mu\)A after the extra negative pulse, and
+  no visible read-current hold drift.
 - Clarified the isolated forward-tail-bias plot.  The ngspice sweep already
   asserted that this bias keeps a valid read state, leaves the stored
   preactivation essentially unchanged, increases stored activation

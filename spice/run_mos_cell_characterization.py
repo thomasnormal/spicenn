@@ -15644,6 +15644,8 @@ quit
     hyr_wp_steps = np.array([hyrat(ts, hyr_wp) - hyrat(1.45e-6, hyr_wp) for ts in hyr_sample_times])
     hyr_wm_steps = np.array([hyrat(ts, hyr_wm) - hyrat(1.45e-6, hyr_wm) for ts in hyr_sample_times])
     hyr_increments = np.diff(hyr_steps)
+    hyr_increment_ratio = np.min(hyr_increments) / np.max(hyr_increments)
+    hyr_hold_error = abs(hyrat(4.60e-6, hyr_diff) - hyr_steps[-1])
     require(hyrat(1.35e-6, hyr_hidden) > 0.07, "hybrid repeated deck should store a positive hidden error")
     require(hyrat(1.45e-6, hyr_selected_gate) < 0.30, "hybrid repeated selected restored gate should be low")
     require(hyrat(1.45e-6, hyr_complement_gate) > 1.60, "hybrid repeated complement restored gate should be high")
@@ -15651,8 +15653,8 @@ quit
     require(hyr_steps[-1] > 0.080, "hybrid repeated write should build a large readable differential")
     require(hyr_steps[-1] < 0.20, "hybrid repeated write should remain incremental across seven pulses")
     require(np.max(hyr_wm_steps) < 5e-4, "hybrid repeated complement rail should remain suppressed")
-    require(np.min(hyr_increments) > 0.45 * np.max(hyr_increments), "hybrid repeated increments should not collapse over seven pulses")
-    require(abs(hyrat(4.60e-6, hyr_diff) - hyr_steps[-1]) < 5e-4, "hybrid repeated write should hold after pulse train")
+    require(hyr_increment_ratio > 0.45, "hybrid repeated increments should not collapse over seven pulses")
+    require(hyr_hold_error < 5e-4, "hybrid repeated write should hold after pulse train")
 
     hyr_fig, hyr_axes = plt.subplots(2, 1, figsize=(7.2, 5.8))
     hyr_axes[0].plot(1e6 * hyrt, hyr_hidden, label="stored $r^+$ hidden error")
@@ -15662,6 +15664,19 @@ quit
     hyr_axes[0].set_ylabel("voltage (V)")
     hyr_axes[0].set_title("Hybrid repeated writer reuses one stored hidden-error rail")
     hyr_axes[0].grid(True, alpha=0.25)
+    hyr_axes[0].text(
+        0.55,
+        0.20,
+        "hidden error = "
+        f"{1e3 * hyrat(1.35e-6, hyr_hidden):.1f} mV / >70 mV\n"
+        "selected gate = "
+        f"{hyrat(1.45e-6, hyr_selected_gate):.2f} V / <0.30 V\n"
+        "complement gate = "
+        f"{hyrat(1.45e-6, hyr_complement_gate):.2f} V / >1.60 V",
+        transform=hyr_axes[0].transAxes,
+        fontsize="x-small",
+        bbox={"facecolor": "white", "alpha": 0.82, "edgecolor": "0.8"},
+    )
     hyr_axes[0].legend(loc="center right", fontsize="small")
     hyr_axes[1].plot(1e6 * hyrt, hyr_wp - hyrat(1.45e-6, hyr_wp), label="selected $W^+$ step")
     hyr_axes[1].plot(1e6 * hyrt, hyr_wm - hyrat(1.45e-6, hyr_wm), label="complement $W^-$ step")
@@ -15672,6 +15687,21 @@ quit
     hyr_axes[1].set_ylabel("writer step (V)")
     hyr_axes[1].set_title("Repeated hybrid pacc pulses accumulate while complement stays off")
     hyr_axes[1].grid(True, alpha=0.25)
+    hyr_axes[1].text(
+        0.52,
+        0.18,
+        "final signed step = "
+        f"{1e3 * hyr_steps[-1]:.1f} mV / 80-200 mV\n"
+        "max complement step = "
+        f"{1e3 * np.max(hyr_wm_steps):.3f} mV / <0.5 mV\n"
+        "min/max increment = "
+        f"{hyr_increment_ratio:.2f} / >0.45\n"
+        "hold error = "
+        f"{1e3 * hyr_hold_error:.3f} mV / <0.5 mV",
+        transform=hyr_axes[1].transAxes,
+        fontsize="x-small",
+        bbox={"facecolor": "white", "alpha": 0.82, "edgecolor": "0.8"},
+    )
     hyr_axes[1].legend(loc="upper left", ncol=2, fontsize="small")
     hyr_fig.tight_layout()
     save_plot(hyr_fig, "mos_hidden_writer_restored_gate_hybrid_repeated_ngspice")
@@ -15790,9 +15820,12 @@ quit
     hyc_wm_steps = np.array([hycat(ts, hyc_wm) - hyc_initial_wm for ts in hyc_sample_times])
     hyc_pos_phase_steps = hyc_steps[:3]
     hyc_neg_phase_steps = hyc_steps[3:]
+    hyc_hidden_symmetry_error = abs(hycat(1.35e-6, hyc_hidden_pos + hyc_hidden_neg))
+    hyc_wp_hold_during_neg = np.max(np.abs(hyc_wp_steps[3:] - hyc_wp_steps[2]))
+    hyc_final_hold_error = abs(hycat(4.65e-6, hyc_diff) - hyc_steps[-1])
     require(hycat(1.35e-6, hyc_hidden_pos) > 0.07, "hybrid alternating r+ store should be positive")
     require(hycat(1.35e-6, hyc_hidden_neg) < -0.07, "hybrid alternating r- store should be negative")
-    require(abs(hycat(1.35e-6, hyc_hidden_pos + hyc_hidden_neg)) < 0.003, "hybrid alternating hidden-error stores should be symmetric")
+    require(hyc_hidden_symmetry_error < 0.003, "hybrid alternating hidden-error stores should be symmetric")
     require(hycat(1.45e-6, hyc_pos_selected_gate) < 0.30, "hybrid alternating r+ selected restored gate should be low")
     require(hycat(1.45e-6, hyc_pos_complement_gate) > 1.60, "hybrid alternating r+ complement restored gate should be high")
     require(hycat(1.45e-6, hyc_neg_selected_gate) < 0.30, "hybrid alternating r- selected restored gate should be low")
@@ -15802,9 +15835,9 @@ quit
     require(np.all(np.diff(hyc_neg_phase_steps) < -0.010), "hybrid alternating negative pulses should reduce signed weight")
     require(hyc_neg_phase_steps[0] < hyc_pos_phase_steps[-1] - 0.010, "first negative pulse should partially cancel the positive state")
     require(hyc_neg_phase_steps[-1] < -0.006, "extra negative pulse should cross the same signed weight below zero")
-    require(np.max(np.abs(hyc_wp_steps[3:] - hyc_wp_steps[2])) < 5e-4, "hybrid alternating W+ rail should hold during negative pulses")
+    require(hyc_wp_hold_during_neg < 5e-4, "hybrid alternating W+ rail should hold during negative pulses")
     require(np.min(np.diff(hyc_wm_steps[2:])) > 0.010, "hybrid alternating W- rail should accumulate during negative pulses")
-    require(abs(hycat(4.65e-6, hyc_diff) - hyc_steps[-1]) < 5e-4, "hybrid alternating signed weight should hold after final pulse")
+    require(hyc_final_hold_error < 5e-4, "hybrid alternating signed weight should hold after final pulse")
 
     hyc_fig, hyc_axes = plt.subplots(2, 1, figsize=(7.2, 5.8))
     hyc_axes[0].plot(1e6 * hyct, hyc_hidden_pos, label="stored $r^+$")
@@ -15817,6 +15850,21 @@ quit
     hyc_axes[0].set_ylabel("voltage (V)")
     hyc_axes[0].set_title("Hybrid alternating writer stores both hidden-error signs")
     hyc_axes[0].grid(True, alpha=0.25)
+    hyc_axes[0].text(
+        0.05,
+        0.15,
+        "r+ error = "
+        f"{1e3 * hycat(1.35e-6, hyc_hidden_pos):.1f} mV / >70 mV\n"
+        "r- error = "
+        f"{1e3 * hycat(1.35e-6, hyc_hidden_neg):.1f} mV / <-70 mV\n"
+        "symmetry error = "
+        f"{1e3 * hyc_hidden_symmetry_error:.2f} mV / <3 mV\n"
+        "selected gates = "
+        f"{hycat(1.45e-6, hyc_pos_selected_gate):.2f}, {hycat(1.45e-6, hyc_neg_selected_gate):.2f} V / <0.30 V",
+        transform=hyc_axes[0].transAxes,
+        fontsize="x-small",
+        bbox={"facecolor": "white", "alpha": 0.82, "edgecolor": "0.8"},
+    )
     hyc_axes[0].legend(loc="center right", ncol=2, fontsize="small")
     hyc_axes[1].plot(1e6 * hyct, hyc_wp - hyc_initial_wp, label="$W^+$ step")
     hyc_axes[1].plot(1e6 * hyct, hyc_wm - hyc_initial_wm, label="$W^-$ step")
@@ -15827,6 +15875,21 @@ quit
     hyc_axes[1].set_ylabel("writer step (V)")
     hyc_axes[1].set_title("Same weight pair accumulates, cancels, and crosses sign")
     hyc_axes[1].grid(True, alpha=0.25)
+    hyc_axes[1].text(
+        0.54,
+        0.18,
+        "positive phase final = "
+        f"{1e3 * hyc_pos_phase_steps[-1]:.1f} mV\n"
+        "final signed step = "
+        f"{1e3 * hyc_steps[-1]:.1f} mV / <-6 mV\n"
+        "W+ negative-phase drift = "
+        f"{1e3 * hyc_wp_hold_during_neg:.3f} mV / <0.5 mV\n"
+        "post-train hold error = "
+        f"{1e3 * hyc_final_hold_error:.3f} mV / <0.5 mV",
+        transform=hyc_axes[1].transAxes,
+        fontsize="x-small",
+        bbox={"facecolor": "white", "alpha": 0.82, "edgecolor": "0.8"},
+    )
     hyc_axes[1].legend(loc="upper left", ncol=2, fontsize="small")
     hyc_fig.tight_layout()
     save_plot(hyc_fig, "mos_hidden_writer_restored_gate_hybrid_alternating_ngspice")
@@ -15954,9 +16017,13 @@ quit
     hyd_negative_read = hydat(4.55e-6, hyd_net_read)
     hyd_hold_start = 4.55e-6
     hyd_hold_end = 9.5e-6
+    hyd_hidden_symmetry_error = abs(hydat(1.35e-6, hyd_hidden_pos + hyd_hidden_neg))
+    hyd_wp_hold_drift = abs(hydat(hyd_hold_end, hyd_wp) - hydat(hyd_hold_start, hyd_wp))
+    hyd_wm_hold_drift = abs(hydat(hyd_hold_end, hyd_wm) - hydat(hyd_hold_start, hyd_wm))
+    hyd_read_hold_drift = abs(hydat(hyd_hold_end, hyd_net_read) - hydat(hyd_hold_start, hyd_net_read))
     require(hydat(1.35e-6, hyd_hidden_pos) > 0.07, "hybrid readback r+ store should be positive")
     require(hydat(1.35e-6, hyd_hidden_neg) < -0.07, "hybrid readback r- store should be negative")
-    require(abs(hydat(1.35e-6, hyd_hidden_pos + hyd_hidden_neg)) < 0.003, "hybrid readback hidden-error stores should be symmetric")
+    require(hyd_hidden_symmetry_error < 0.003, "hybrid readback hidden-error stores should be symmetric")
     require(hydat(1.45e-6, hyd_cols[4]) < 0.30, "hybrid readback r+ selected gate should be low")
     require(hydat(1.45e-6, hyd_cols[5]) > 1.60, "hybrid readback r+ complement gate should be high")
     require(hydat(1.45e-6, hyd_cols[7]) < 0.30, "hybrid readback r- selected gate should be low")
@@ -15967,9 +16034,9 @@ quit
     require(hyd_negative_read < hyd_baseline_read - 4e-6, "hybrid extra W- pulse should read back as a negative contribution")
     require(hydat(2.75e-6, hyd_weight) > 0.025, "hybrid readback W+ pulses should build positive stored weight")
     require(hydat(hyd_hold_start, hyd_weight) < -0.006, "hybrid readback final stored weight should be negative")
-    require(abs(hydat(hyd_hold_end, hyd_wp) - hydat(hyd_hold_start, hyd_wp)) < 1e-5, "hybrid readback should not disturb W+ cap during hold")
-    require(abs(hydat(hyd_hold_end, hyd_wm) - hydat(hyd_hold_start, hyd_wm)) < 1e-5, "hybrid readback should not disturb W- cap during hold")
-    require(abs(hydat(hyd_hold_end, hyd_net_read) - hydat(hyd_hold_start, hyd_net_read)) < 0.5e-6, "hybrid read current should hold after writes")
+    require(hyd_wp_hold_drift < 1e-5, "hybrid readback should not disturb W+ cap during hold")
+    require(hyd_wm_hold_drift < 1e-5, "hybrid readback should not disturb W- cap during hold")
+    require(hyd_read_hold_drift < 0.5e-6, "hybrid read current should hold after writes")
 
     hyd_fig, hyd_axes = plt.subplots(3, 1, figsize=(7.2, 7.4))
     hyd_axes[0].plot(1e6 * hydt, hyd_hidden_pos, label="stored $r^+$")
@@ -15980,6 +16047,19 @@ quit
     hyd_axes[0].set_ylabel("voltage (V)")
     hyd_axes[0].set_title("Hybrid readback deck stores both writer signs")
     hyd_axes[0].grid(True, alpha=0.25)
+    hyd_axes[0].text(
+        0.52,
+        0.18,
+        "r+ error = "
+        f"{1e3 * hydat(1.35e-6, hyd_hidden_pos):.1f} mV / >70 mV\n"
+        "r- error = "
+        f"{1e3 * hydat(1.35e-6, hyd_hidden_neg):.1f} mV / <-70 mV\n"
+        "symmetry error = "
+        f"{1e3 * hyd_hidden_symmetry_error:.2f} mV / <3 mV",
+        transform=hyd_axes[0].transAxes,
+        fontsize="x-small",
+        bbox={"facecolor": "white", "alpha": 0.82, "edgecolor": "0.8"},
+    )
     hyd_axes[0].legend(loc="center right", ncol=2, fontsize="small")
     hyd_axes[1].plot(1e6 * hydt, hyd_wp - hydat(1.45e-6, hyd_wp), label="$W^+$ step")
     hyd_axes[1].plot(1e6 * hydt, hyd_wm - hydat(1.45e-6, hyd_wm), label="$W^-$ step")
@@ -15989,6 +16069,19 @@ quit
     hyd_axes[1].set_ylabel("weight step (V)")
     hyd_axes[1].set_title("Written weight caps hold while driving MOS synapse gates")
     hyd_axes[1].grid(True, alpha=0.25)
+    hyd_axes[1].text(
+        0.54,
+        0.18,
+        "positive weight = "
+        f"{1e3 * hydat(2.75e-6, hyd_weight):.1f} mV / >25 mV\n"
+        "final weight = "
+        f"{1e3 * hydat(hyd_hold_start, hyd_weight):.1f} mV / <-6 mV\n"
+        "hold drift W+, W- = "
+        f"{1e6 * hyd_wp_hold_drift:.2f}, {1e6 * hyd_wm_hold_drift:.2f} uV / <10 uV",
+        transform=hyd_axes[1].transAxes,
+        fontsize="x-small",
+        bbox={"facecolor": "white", "alpha": 0.82, "edgecolor": "0.8"},
+    )
     hyd_axes[1].legend(loc="upper right", ncol=2, fontsize="small")
     hyd_axes[2].plot(1e6 * hydt, 1e6 * hyd_net_read, label="net signed readback")
     hyd_axes[2].plot(1e6 * hydt, 1e6 * hyd_pos_read, "--", label="$W^+$ read component")
@@ -15999,6 +16092,21 @@ quit
     hyd_axes[2].set_ylabel("read current (uA)")
     hyd_axes[2].set_title("Hybrid-written rails read back, cancel, reverse, and retain sign")
     hyd_axes[2].grid(True, alpha=0.25)
+    hyd_axes[2].text(
+        0.50,
+        0.16,
+        "positive read = "
+        f"{1e6 * hyd_positive_read:.1f} uA / >+8 uA\n"
+        "near-cancel read = "
+        f"{1e6 * hyd_near_cancel_read:.2f} uA / |read|<2 uA\n"
+        "negative read = "
+        f"{1e6 * hyd_negative_read:.1f} uA / <-4 uA\n"
+        "hold drift = "
+        f"{1e6 * hyd_read_hold_drift:.3f} uA / <0.5 uA",
+        transform=hyd_axes[2].transAxes,
+        fontsize="x-small",
+        bbox={"facecolor": "white", "alpha": 0.82, "edgecolor": "0.8"},
+    )
     hyd_axes[2].legend(loc="upper right", ncol=2, fontsize="small")
     hyd_fig.tight_layout()
     save_plot(hyd_fig, "mos_hidden_writer_restored_gate_hybrid_readback_ngspice")

@@ -27,6 +27,7 @@ INPUT_RAIL_MODES = ("raw", "complement", "alternating-complement")
 TARGET_POLARITIES = ("active-high", "active-low")
 HIDDEN_ACTIVATION_MODELS = ("nrel", "sense")
 READOUT_FORWARD_MODELS = ("nrel", "sense")
+LEARNING_ACTIVATION_GATE_MODELS = ("nrel", "sense")
 HIDDEN_POLARITY_INITS = ("ink", "alternating-channel")
 SCORE_MODES = ("single-ended", "differential")
 
@@ -201,6 +202,14 @@ def readout_forward_device_model(model: str) -> str:
     raise ValueError(f"readout_forward_model must be one of {READOUT_FORWARD_MODELS}")
 
 
+def learning_activation_gate_device_model(model: str) -> str:
+    if model == "nrel":
+        return "NREL"
+    if model == "sense":
+        return "NSENSE"
+    raise ValueError(f"learning_activation_gate_model must be one of {LEARNING_ACTIVATION_GATE_MODELS}")
+
+
 def block_netlist(
     samples: list[dict[str, Any]],
     weights: dict[str, Any],
@@ -221,6 +230,7 @@ def block_netlist(
     hidden_activation_model: str = "nrel",
     readout_forward_width: float = 64.0,
     readout_forward_model: str = "nrel",
+    learning_activation_gate_model: str = "nrel",
     phase_time_scale: float = 1.0,
     score_mode: str = "single-ended",
     input_rail_mode: str = "alternating-complement",
@@ -247,6 +257,7 @@ def block_netlist(
         raise ValueError(f"score_mode must be one of {SCORE_MODES}")
     activation_model = hidden_activation_device_model(hidden_activation_model)
     readout_model = readout_forward_device_model(readout_forward_model)
+    learning_activation_model = learning_activation_gate_device_model(learning_activation_gate_model)
     if input_rail_mode not in INPUT_RAIL_MODES:
         raise ValueError(f"input_rail_mode must be one of {INPUT_RAIL_MODES}")
     blocks, expected_features = block_topology(image_size, block_size, stride, channels)
@@ -293,6 +304,8 @@ def block_netlist(
                 f".meas tran vwn{feature}_before_{idx} FIND V(vwn{feature}) AT={base + 0.60 * scale:.2f}n",
                 f".meas tran hdp{feature}_after_{idx} FIND V(hdp{feature}) AT={base + 7.10 * scale:.2f}n",
                 f".meas tran hdn{feature}_after_{idx} FIND V(hdn{feature}) AT={base + 7.10 * scale:.2f}n",
+                f".meas tran gvp{feature}_after_{idx} FIND V(gvp{feature}) AT={base + 9.10 * scale:.2f}n",
+                f".meas tran gvn{feature}_after_{idx} FIND V(gvn{feature}) AT={base + 9.10 * scale:.2f}n",
                 f".meas tran gbp{feature}_after_{idx} FIND V(gbp{feature}) AT={base + 9.10 * scale:.2f}n",
                 f".meas tran gbn{feature}_after_{idx} FIND V(gbn{feature}) AT={base + 9.10 * scale:.2f}n",
                 f".meas tran bhp{feature}_after_apply_{idx} FIND V(bhp{feature}) AT={base + 11.50 * scale:.2f}n",
@@ -470,15 +483,15 @@ def block_netlist(
                     ]
                 ),
                 f"Mhdp{feature}_d0 vdd dp hdp{feature}_d0 0 NSENSE W={hidden_error_width:.6g}u L=180n",
-                f"Mhdp{feature}_d1 hdp{feature}_d0 act{feature} hdp{feature}_d1 0 NREL W={hidden_error_width:.6g}u L=180n",
+                f"Mhdp{feature}_d1 hdp{feature}_d0 act{feature} hdp{feature}_d1 0 {learning_activation_model} W={hidden_error_width:.6g}u L=180n",
                 f"Mhdp{feature}_d2 hdp{feature}_d1 bwd hdp{feature} 0 NMOS W={hidden_error_width:.6g}u L=180n",
                 f"Mhdn{feature}_d0 vdd dn hdn{feature}_d0 0 NSENSE W={hidden_error_width:.6g}u L=180n",
-                f"Mhdn{feature}_d1 hdn{feature}_d0 act{feature} hdn{feature}_d1 0 NREL W={hidden_error_width:.6g}u L=180n",
+                f"Mhdn{feature}_d1 hdn{feature}_d0 act{feature} hdn{feature}_d1 0 {learning_activation_model} W={hidden_error_width:.6g}u L=180n",
                 f"Mhdn{feature}_d2 hdn{feature}_d1 bwd hdn{feature} 0 NMOS W={hidden_error_width:.6g}u L=180n",
-                f"Mgvp{feature}_a vdd act{feature} gvp{feature}_a 0 NREL W={readout_gradient_width:.6g}u L=180n",
+                f"Mgvp{feature}_a vdd act{feature} gvp{feature}_a 0 {learning_activation_model} W={readout_gradient_width:.6g}u L=180n",
                 f"Mgvp{feature}_d gvp{feature}_a dp gvp{feature}_d 0 NSENSE W={readout_gradient_width:.6g}u L=180n",
                 f"Mgvp{feature}_g gvp{feature}_d acc gvp{feature} 0 NREL W={readout_gradient_width:.6g}u L=180n",
-                f"Mgvn{feature}_a vdd act{feature} gvn{feature}_a 0 NREL W={readout_gradient_width:.6g}u L=180n",
+                f"Mgvn{feature}_a vdd act{feature} gvn{feature}_a 0 {learning_activation_model} W={readout_gradient_width:.6g}u L=180n",
                 f"Mgvn{feature}_d gvn{feature}_a dn gvn{feature}_d 0 NSENSE W={readout_gradient_width:.6g}u L=180n",
                 f"Mgvn{feature}_g gvn{feature}_d acc gvn{feature} 0 NREL W={readout_gradient_width:.6g}u L=180n",
                 f"Mgbp{feature}_d vdd hdp{feature} gbp{feature}_d 0 NSENSE W={hidden_update_width:.6g}u L=180n",
@@ -684,6 +697,7 @@ def run_device_sequence(
     hidden_activation_model: str,
     readout_forward_width: float,
     readout_forward_model: str,
+    learning_activation_gate_model: str,
     phase_time_scale: float,
     score_mode: str,
     input_rail_mode: str,
@@ -707,6 +721,7 @@ def run_device_sequence(
         hidden_activation_model=hidden_activation_model,
         readout_forward_width=readout_forward_width,
         readout_forward_model=readout_forward_model,
+        learning_activation_gate_model=learning_activation_gate_model,
         phase_time_scale=phase_time_scale,
         score_mode=score_mode,
         input_rail_mode=input_rail_mode,
@@ -746,6 +761,7 @@ def main() -> None:
     ap.add_argument("--hidden-polarity-init", choices=HIDDEN_POLARITY_INITS, default="ink")
     ap.add_argument("--readout-forward-width", type=float, default=64.0)
     ap.add_argument("--readout-forward-model", choices=READOUT_FORWARD_MODELS, default="nrel")
+    ap.add_argument("--learning-activation-gate-model", choices=LEARNING_ACTIVATION_GATE_MODELS, default="nrel")
     ap.add_argument("--phase-time-scale", type=float, default=1.0)
     ap.add_argument("--score-mode", choices=SCORE_MODES, default="single-ended")
     ap.add_argument("--input-rail-mode", choices=INPUT_RAIL_MODES, default="alternating-complement")
@@ -811,6 +827,7 @@ def main() -> None:
         "hidden_activation_model": args.hidden_activation_model,
         "readout_forward_width": args.readout_forward_width,
         "readout_forward_model": args.readout_forward_model,
+        "learning_activation_gate_model": args.learning_activation_gate_model,
         "phase_time_scale": args.phase_time_scale,
         "score_mode": args.score_mode,
         "input_rail_mode": args.input_rail_mode,
@@ -902,6 +919,7 @@ def main() -> None:
         "hidden_polarity_init": args.hidden_polarity_init,
         "readout_forward_width": args.readout_forward_width,
         "readout_forward_model": args.readout_forward_model,
+        "learning_activation_gate_model": args.learning_activation_gate_model,
         "phase_time_scale": args.phase_time_scale,
         "score_mode": args.score_mode,
         "hidden_bias_positive_init": args.hidden_bias_positive_init,

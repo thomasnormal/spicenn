@@ -35,6 +35,7 @@ def test_device_mnist01_block_script_help_runs_from_repo_root() -> None:
     assert "--hidden-activation-model" in proc.stdout
     assert "--hidden-polarity-init" in proc.stdout
     assert "--readout-forward-model" in proc.stdout
+    assert "--learning-activation-gate-model" in proc.stdout
     assert "--score-mode" in proc.stdout
     assert "--readout-forward-width" in proc.stdout
     assert "--phase-time-scale" in proc.stdout
@@ -116,6 +117,8 @@ def test_block_netlist_emits_per_pixel_trainable_caps_and_no_behavioral_sources(
     assert "Movneg3_f score fwd on3_0 0 NREL W=96u" in netlist
     assert "Movpos3_f op3_1 fwd score 0 NREL" in netlist
     assert ".meas tran score_before_0 FIND V(score) AT=5.90n" in netlist
+    assert ".meas tran gvp3_after_0 FIND V(gvp3) AT=18.20n" in netlist
+    assert ".meas tran gvn3_after_0 FIND V(gvn3) AT=18.20n" in netlist
     assert ".tran 10p 32.00n uic" in netlist
     assert "Mrelu_o vdd score out 0 NSENSE" in netlist
 
@@ -175,6 +178,32 @@ def test_block_netlist_can_emit_low_threshold_readout_score_stack() -> None:
     assert "Movpos3_w op3_0 vwp3 op3_1 0 NSENSE W=64u" in netlist
     assert "Movneg3_a vdd act3 on3_0 0 NSENSE W=48u" in netlist
     assert "Movneg3_f on3_1 fwd scoren 0 NSENSE W=48u" in netlist
+
+
+def test_block_netlist_can_emit_low_threshold_learning_activation_gates() -> None:
+    sys.path.insert(0, str(SPICE_DIR))
+    import run_device_mnist01_block_training as block
+
+    image_size = 4
+    weights = block.initial_block_weights(image_size, 2, 2, 1, seed=1)
+    sample = {f"x{i}": 0.2 + 0.01 * i for i in range(image_size * image_size)}
+    sample["target"] = 1.1
+    netlist = block.block_netlist(
+        [sample],
+        weights,
+        image_size=image_size,
+        block_size=2,
+        stride=2,
+        channels=1,
+        training_enabled=True,
+        learning_activation_gate_model="sense",
+    )
+
+    assert "\nB" not in netlist
+    assert "Mhdp3_d1 hdp3_d0 act3 hdp3_d1 0 NSENSE W=32u" in netlist
+    assert "Mhdn3_d1 hdn3_d0 act3 hdn3_d1 0 NSENSE W=32u" in netlist
+    assert "Mgvp3_a vdd act3 gvp3_a 0 NSENSE W=24u" in netlist
+    assert "Mgvn3_a vdd act3 gvn3_a 0 NSENSE W=24u" in netlist
 
 
 def test_block_netlist_can_emit_target_topology_without_behavioral_sources() -> None:

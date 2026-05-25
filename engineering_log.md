@@ -2,6 +2,13 @@
 
 ## 2026-05-25
 
+- Tightened the writer-retention plot after the circuit assertions were doing
+  more work than the figure.  The MOS writer/readback deck still uses the same
+  physical \(W^+\)/\(W^-\) capacitors as continuous synapse tail gates after
+  the write pulse, but `mos_writer_retention_ngspice` now annotates the
+  measured hold evidence directly: maximum stored-cap drift is \(0.067\,\mu\)V
+  and the held read currents are \(+183.1/-183.1\,\mu\)A with drift below the
+  displayed \(0.001\,\mu\)A resolution over the read-disturb window.
 - Re-ran the complete `spice/run_mos_cell_characterization.py` ngspice suite
   from source; all current MOS component assertions passed and the tracked
   figures regenerated reproducibly.  While auditing the basic component

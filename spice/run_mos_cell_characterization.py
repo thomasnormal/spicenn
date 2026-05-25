@@ -16757,10 +16757,14 @@ quit
     require(abs(hold_at(hold_start, retention_cols[4]) - 0.85) < 1e-3, "retention inactive W+ rail should stay quiet")
     wp_hold_drift = abs(hold_at(hold_end, retention_cols[0]) - hold_at(hold_start, retention_cols[0]))
     wm_hold_drift = abs(hold_at(hold_end, retention_cols[5]) - hold_at(hold_start, retention_cols[5]))
+    max_cap_hold_drift = max(wp_hold_drift, wm_hold_drift)
     require(wp_hold_drift < 1e-5, "continuous synapse read should not disturb stored W+ gate voltage")
     require(wm_hold_drift < 1e-5, "continuous synapse read should not disturb stored W- gate voltage")
     pos_hold_drift = abs(hold_at(hold_end, hold_pos_contrib) - hold_at(hold_start, hold_pos_contrib))
     neg_hold_drift = abs(hold_at(hold_end, hold_neg_contrib) - hold_at(hold_start, hold_neg_contrib))
+    max_read_hold_drift = max(pos_hold_drift, neg_hold_drift)
+    pos_hold_read = hold_at(hold_start, hold_pos_contrib)
+    neg_hold_read = hold_at(hold_start, hold_neg_contrib)
     require(pos_hold_drift < 0.5e-6, "positive read contribution should remain stable during hold")
     require(neg_hold_drift < 0.5e-6, "negative read contribution should remain stable during hold")
 
@@ -16946,6 +16950,14 @@ quit
     retention_axes[0].axvspan(2.0, 9.5, color="0.8", alpha=0.18, label="read-disturb hold window")
     retention_axes[0].set_ylabel("weight cap voltage (V)")
     retention_axes[0].set_title("Written weight caps hold while used as synapse tail gates")
+    retention_axes[0].text(
+        0.02,
+        0.88,
+        f"max hold drift = {1e6 * max_cap_hold_drift:.3f} uV",
+        transform=retention_axes[0].transAxes,
+        fontsize="small",
+        bbox={"facecolor": "white", "alpha": 0.8, "edgecolor": "0.8"},
+    )
     retention_axes[0].grid(True, alpha=0.25)
     retention_axes[0].legend(loc="lower right", ncol=2)
     retention_axes[1].plot(1e6 * ht, 1e6 * hold_pos_contrib, label="$W^+$ read contribution")
@@ -16955,6 +16967,15 @@ quit
     retention_axes[1].set_xlabel("time (us)")
     retention_axes[1].set_ylabel("read current (uA)")
     retention_axes[1].set_title("Continuous read current stays stable after write phase")
+    retention_axes[1].text(
+        0.02,
+        0.88,
+        f"hold read = {1e6 * pos_hold_read:+.1f}/{1e6 * neg_hold_read:+.1f} uA\n"
+        f"max drift = {1e6 * max_read_hold_drift:.3f} uA",
+        transform=retention_axes[1].transAxes,
+        fontsize="small",
+        bbox={"facecolor": "white", "alpha": 0.8, "edgecolor": "0.8"},
+    )
     retention_axes[1].grid(True, alpha=0.25)
     retention_axes[1].legend(loc="upper right")
     retention_fig.tight_layout()

@@ -61,6 +61,18 @@ def test_grid_features_generalize_quadrants_row_major() -> None:
     assert features[0] < features[1] < features[2]
 
 
+def test_sample_wave_has_strictly_increasing_time_points() -> None:
+    sys.path.insert(0, str(SPICE_DIR))
+    import run_device_mnist01_quad_training as quad
+
+    wave = quad.sample_wave([{"x0": 0.1}, {"x0": 0.9}, {"x0": 0.2}], "x0", stop_ns=48.0)
+    pairs = wave.removeprefix("PWL(").removesuffix(")").split()
+    times = [float(token.removesuffix("n")) for token in pairs[0::2]]
+
+    assert times == sorted(times)
+    assert len(times) == len(set(times))
+
+
 def test_quad_netlist_uses_four_transistor_feature_slices_and_no_behavioral_sources() -> None:
     sys.path.insert(0, str(SPICE_DIR))
     import run_device_mnist01_quad_training as quad

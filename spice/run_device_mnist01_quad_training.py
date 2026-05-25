@@ -57,7 +57,6 @@ def sample_wave(samples: list[dict[str, Any]], key: str, stop_ns: float) -> str:
         if idx == 0:
             points.append((0.0, value))
         else:
-            points.append((start - 0.05, float(samples[idx - 1][key])))
             points.append((start, value))
         points.append((min(stop_ns, end - 0.05), value))
     points.append((stop_ns, float(samples[-1][key])))

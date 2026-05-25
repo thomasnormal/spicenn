@@ -21,6 +21,7 @@ def test_device_mnist01_block_script_help_runs_from_repo_root() -> None:
     assert "--block-size" in proc.stdout
     assert "--stride" in proc.stdout
     assert "--channels" in proc.stdout
+    assert "--hidden-bias-positive-init" in proc.stdout
     assert "--assert-nonbehavioral" in proc.stdout
 
 
@@ -57,11 +58,16 @@ def test_block_netlist_emits_per_pixel_trainable_caps_and_no_behavioral_sources(
 
     assert "\nB" not in netlist
     assert netlist.count("Cwhp") == 16
+    assert netlist.count("Cbhp") == 4
     assert "Vx15 x15 0 PWL" in netlist
     assert "Vx16 x16 0 PWL" not in netlist
     assert "Cwhp3_3 whp3_3 0 20f" in netlist
+    assert "Cbhp3 bhp3 0 20f" in netlist
     assert "Mhpos3_3_x vdd x15 hp3_3_0 0 NMOS" in netlist
+    assert "Mhbpos3_b vdd bhp3 hbp3_0 0 NMOS" in netlist
     assert "Mghp3_3_d ghp3_3_x hdp3 ghp3_3_d 0 NSENSE" in netlist
+    assert "Mgbp3_d vdd hdp3 gbp3_d 0 NSENSE" in netlist
+    assert "Mbhp3_up_a bhp3_up apply bhp3 0 NREL" in netlist
     assert "Movpos3_f op3_1 fwd score 0 NREL" in netlist
     assert "Mrelu_o vdd score out 0 NSENSE" in netlist
 
@@ -86,9 +92,13 @@ def test_block_netlist_can_emit_target_topology_without_behavioral_sources() -> 
 
     assert "\nB" not in netlist
     assert netlist.count("Cwhp") == 32 * 16
+    assert netlist.count("Cbhp") == 32
     assert "Vx99 x99 0 PWL" in netlist
     assert "Cwhp31_15 whp31_15 0 20f" in netlist
+    assert "Cbhp31 bhp31 0 20f" in netlist
     assert "Mhpos31_15_x vdd x99 hp31_15_0 0 NMOS" in netlist
+    assert "Mhbpos31_b vdd bhp31 hbp31_0 0 NMOS" in netlist
+    assert "Mbhp31_up_a bhp31_up apply bhp31 0 NREL" in netlist
     assert "Movpos31_f op31_1 fwd score 0 NREL" in netlist
 
 

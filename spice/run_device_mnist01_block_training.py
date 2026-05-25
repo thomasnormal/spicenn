@@ -33,25 +33,43 @@ def encode_pixel_rail(value: float) -> float:
 
 
 def initial_block_weights(
-    image_size: int, block_size: int, stride: int, channels: int, *, seed: int = 0
+    image_size: int,
+    block_size: int,
+    stride: int,
+    channels: int,
+    *,
+    seed: int = 0,
+    hidden_bias_positive_init: float = 0.50,
+    hidden_bias_negative_init: float = 0.20,
 ) -> dict[str, Any]:
     blocks, feature_count = block_topology(image_size, block_size, stride, channels)
     block_len = len(blocks[0])
     rng = np.random.default_rng(seed)
     whp = np.clip(0.72 + rng.normal(0.0, 0.035, size=(feature_count, block_len)), 0.50, 0.92)
     whn = np.clip(0.22 + rng.normal(0.0, 0.025, size=(feature_count, block_len)), 0.05, 0.42)
+    bhp = np.clip(hidden_bias_positive_init + rng.normal(0.0, 0.025, size=feature_count), 0.05, 1.15)
+    bhn = np.clip(hidden_bias_negative_init + rng.normal(0.0, 0.020, size=feature_count), 0.02, 1.10)
     vwp = np.clip(0.52 + rng.normal(0.0, 0.025, size=feature_count), 0.35, 0.75)
     vwn = np.clip(0.25 + rng.normal(0.0, 0.020, size=feature_count), 0.08, 0.45)
-    return {"whp": whp.tolist(), "whn": whn.tolist(), "vwp": vwp.tolist(), "vwn": vwn.tolist()}
+    return {
+        "whp": whp.tolist(),
+        "whn": whn.tolist(),
+        "bhp": bhp.tolist(),
+        "bhn": bhn.tolist(),
+        "vwp": vwp.tolist(),
+        "vwn": vwn.tolist(),
+    }
 
 
 def block_weight_shape(weights: dict[str, Any]) -> tuple[int, int]:
-    required = ("whp", "whn", "vwp", "vwn")
+    required = ("whp", "whn", "bhp", "bhn", "vwp", "vwn")
     missing = [key for key in required if key not in weights]
     if missing:
         raise ValueError(f"missing weight rails: {', '.join(missing)}")
     whp = np.asarray(weights["whp"], dtype=float)
     whn = np.asarray(weights["whn"], dtype=float)
+    bhp = np.asarray(weights["bhp"], dtype=float)
+    bhn = np.asarray(weights["bhn"], dtype=float)
     vwp = np.asarray(weights["vwp"], dtype=float)
     vwn = np.asarray(weights["vwn"], dtype=float)
     if whp.ndim != 2 or whn.shape != whp.shape:
@@ -59,6 +77,8 @@ def block_weight_shape(weights: dict[str, Any]) -> tuple[int, int]:
     feature_count, block_len = whp.shape
     if feature_count <= 0 or block_len <= 0:
         raise ValueError("hidden weight arrays must be nonempty")
+    if bhp.shape != (feature_count,) or bhn.shape != (feature_count,):
+        raise ValueError("hidden bias rails must match hidden feature count")
     if vwp.shape != (feature_count,) or vwn.shape != (feature_count,):
         raise ValueError("readout weight rails must match hidden feature count")
     return int(feature_count), int(block_len)
@@ -124,14 +144,23 @@ def block_netlist(
             measures += [
                 f".meas tran act{feature}_before_{idx} FIND V(act{feature}) AT={base + 2.95:.2f}n",
                 f".meas tran act{feature}_after_{idx} FIND V(act{feature}) AT={base + 15.50:.2f}n",
+                f".meas tran bhp{feature}_before_{idx} FIND V(bhp{feature}) AT={base + 0.60:.2f}n",
+                f".meas tran bhn{feature}_before_{idx} FIND V(bhn{feature}) AT={base + 0.60:.2f}n",
                 f".meas tran vwp{feature}_before_{idx} FIND V(vwp{feature}) AT={base + 0.60:.2f}n",
                 f".meas tran vwn{feature}_before_{idx} FIND V(vwn{feature}) AT={base + 0.60:.2f}n",
                 f".meas tran hdp{feature}_after_{idx} FIND V(hdp{feature}) AT={base + 7.10:.2f}n",
                 f".meas tran hdn{feature}_after_{idx} FIND V(hdn{feature}) AT={base + 7.10:.2f}n",
+                f".meas tran gbp{feature}_after_{idx} FIND V(gbp{feature}) AT={base + 9.10:.2f}n",
+                f".meas tran gbn{feature}_after_{idx} FIND V(gbn{feature}) AT={base + 9.10:.2f}n",
+                f".meas tran bhp{feature}_after_apply_{idx} FIND V(bhp{feature}) AT={base + 11.50:.2f}n",
+                f".meas tran bhn{feature}_after_apply_{idx} FIND V(bhn{feature}) AT={base + 11.50:.2f}n",
                 f".meas tran vwp{feature}_after_apply_{idx} FIND V(vwp{feature}) AT={base + 11.50:.2f}n",
                 f".meas tran vwn{feature}_after_apply_{idx} FIND V(vwn{feature}) AT={base + 11.50:.2f}n",
+                f".meas tran bias{feature}_signed_before_{idx} PARAM='bhp{feature}_before_{idx}-bhn{feature}_before_{idx}'",
+                f".meas tran bias{feature}_signed_after_{idx} PARAM='bhp{feature}_after_apply_{idx}-bhn{feature}_after_apply_{idx}'",
                 f".meas tran readout{feature}_signed_before_{idx} PARAM='vwp{feature}_before_{idx}-vwn{feature}_before_{idx}'",
                 f".meas tran readout{feature}_signed_after_{idx} PARAM='vwp{feature}_after_apply_{idx}-vwn{feature}_after_apply_{idx}'",
+                f".meas tran d_bias{feature}_signed_{idx} PARAM='bias{feature}_signed_after_{idx}-bias{feature}_signed_before_{idx}'",
                 f".meas tran d_readout{feature}_signed_{idx} PARAM='readout{feature}_signed_after_{idx}-readout{feature}_signed_before_{idx}'",
             ]
             for pix in range(block_len):
@@ -166,8 +195,12 @@ def block_netlist(
                 f"Rwhn{feature}_{pix} whn{feature}_{pix} 0 1e15",
             ]
         lines += [
+            f"Cbhp{feature} bhp{feature} 0 20f IC={float(weights['bhp'][feature]):.12g}",
+            f"Cbhn{feature} bhn{feature} 0 20f IC={float(weights['bhn'][feature]):.12g}",
             f"Cvwp{feature} vwp{feature} 0 20f IC={float(weights['vwp'][feature]):.12g}",
             f"Cvwn{feature} vwn{feature} 0 20f IC={float(weights['vwn'][feature]):.12g}",
+            f"Rbhp{feature} bhp{feature} 0 1e15",
+            f"Rbhn{feature} bhn{feature} 0 1e15",
             f"Rvwp{feature} vwp{feature} 0 1e15",
             f"Rvwn{feature} vwn{feature} 0 1e15",
         ]
@@ -192,6 +225,8 @@ def block_netlist(
             f"Chdn{feature} hdn{feature} 0 12f IC=0",
             f"Cgvp{feature} gvp{feature} 0 2f IC=0",
             f"Cgvn{feature} gvn{feature} 0 2f IC=0",
+            f"Cgbp{feature} gbp{feature} 0 10f IC=0",
+            f"Cgbn{feature} gbn{feature} 0 10f IC=0",
             f"Crgp{feature} rgp{feature} 0 4f IC=1.2",
             f"Crgn{feature} rgn{feature} 0 4f IC=1.2",
             f"Rpre{feature} pre{feature} 0 1G",
@@ -200,6 +235,8 @@ def block_netlist(
             f"Rhdn{feature} hdn{feature} 0 1G",
             f"Rgvp{feature} gvp{feature} 0 1G",
             f"Rgvn{feature} gvn{feature} 0 1G",
+            f"Rgbp{feature} gbp{feature} 0 1G",
+            f"Rgbn{feature} gbn{feature} 0 1G",
             f"Rrgp{feature} rgp{feature} vdd 50k",
             f"Rrgn{feature} rgn{feature} vdd 50k",
         ]
@@ -227,6 +264,8 @@ def block_netlist(
             f"Mreset_hdn{feature} hdn{feature} rstg 0 0 NMOS W=4u L=180n",
             f"Mreset_gvp{feature} gvp{feature} rstg 0 0 NMOS W=4u L=180n",
             f"Mreset_gvn{feature} gvn{feature} rstg 0 0 NMOS W=4u L=180n",
+            f"Mreset_gbp{feature} gbp{feature} rstg 0 0 NMOS W=4u L=180n",
+            f"Mreset_gbn{feature} gbn{feature} rstg 0 0 NMOS W=4u L=180n",
         ]
         for pix in range(block_len):
             lines += [
@@ -262,6 +301,10 @@ def block_netlist(
                     f"Mwhp{feature}_{pix}_dn_g whp{feature}_{pix}_dn ghn{feature}_{pix} 0 0 NSENSE W=0.25u L=180n",
                 ]
             lines += [
+                f"Mhbpos{feature}_b vdd bhp{feature} hbp{feature}_0 0 NMOS W={hidden_forward_width:.6g}u L=180n",
+                f"Mhbpos{feature}_f hbp{feature}_0 fwd pre{feature} 0 NMOS W={hidden_forward_width:.6g}u L=180n",
+                f"Mhbneg{feature}_f pre{feature} fwd hbn{feature}_0 0 NMOS W={hidden_neg_width:.6g}u L=180n",
+                f"Mhbneg{feature}_b hbn{feature}_0 bhn{feature} 0 0 NMOS W={hidden_neg_width:.6g}u L=180n",
                 f"Mrelu_h{feature} vdd pre{feature} act{feature} 0 NREL W=24u L=180n",
                 f"Movpos{feature}_a vdd act{feature} op{feature}_0 0 NREL W=64u L=180n",
                 f"Movpos{feature}_w op{feature}_0 vwp{feature} op{feature}_1 0 NREL W=64u L=180n",
@@ -281,8 +324,20 @@ def block_netlist(
                 f"Mgvn{feature}_a vdd act{feature} gvn{feature}_a 0 NREL W=24u L=180n",
                 f"Mgvn{feature}_d gvn{feature}_a dn gvn{feature}_d 0 NSENSE W=24u L=180n",
                 f"Mgvn{feature}_g gvn{feature}_d acc gvn{feature} 0 NREL W=24u L=180n",
+                f"Mgbp{feature}_d vdd hdp{feature} gbp{feature}_d 0 NSENSE W=12u L=180n",
+                f"Mgbp{feature}_g gbp{feature}_d acc gbp{feature} 0 NMOS W=12u L=180n",
+                f"Mgbn{feature}_d vdd hdn{feature} gbn{feature}_d 0 NSENSE W=12u L=180n",
+                f"Mgbn{feature}_g gbn{feature}_d acc gbn{feature} 0 NMOS W=12u L=180n",
                 f"Mrgp{feature}_pd rgp{feature} gvp{feature} 0 0 NSENSE W=16u L=180n",
                 f"Mrgn{feature}_pd rgn{feature} gvn{feature} 0 0 NSENSE W=16u L=180n",
+                f"Mbhp{feature}_up_g vdd gbp{feature} bhp{feature}_up 0 NSENSE W=0.25u L=180n",
+                f"Mbhp{feature}_up_a bhp{feature}_up apply bhp{feature} 0 NREL W=0.25u L=180n",
+                f"Mbhn{feature}_dn_a bhn{feature} apply bhn{feature}_dn 0 NREL W=0.25u L=180n",
+                f"Mbhn{feature}_dn_g bhn{feature}_dn gbp{feature} 0 0 NSENSE W=0.25u L=180n",
+                f"Mbhn{feature}_up_g vdd gbn{feature} bhn{feature}_up 0 NSENSE W=0.25u L=180n",
+                f"Mbhn{feature}_up_a bhn{feature}_up apply bhn{feature} 0 NREL W=0.25u L=180n",
+                f"Mbhp{feature}_dn_a bhp{feature} apply bhp{feature}_dn 0 NREL W=0.25u L=180n",
+                f"Mbhp{feature}_dn_g bhp{feature}_dn gbn{feature} 0 0 NSENSE W=0.25u L=180n",
                 f"Mvwp{feature}_up_p0 vdd rgp{feature} vwp{feature}_up vdd PMOS W={readout_pmos_w:.6g}u L=180n",
                 f"Mvwp{feature}_up_p1 vwp{feature}_up applyn vwp{feature} vdd PMOS W={readout_pmos_w:.6g}u L=180n",
                 f"Mvwn{feature}_dn_a vwn{feature} apply vwn{feature}_dn 0 NREL W={readout_nmos_w:.6g}u L=180n",
@@ -402,6 +457,8 @@ def final_weights_from_rows(rows: pd.DataFrame, *, feature_count: int, block_len
             [float(final[f"whn{feature}_{pix}_after_apply"]) for pix in range(block_len)]
             for feature in range(feature_count)
         ],
+        "bhp": [float(final[f"bhp{feature}_after_apply"]) for feature in range(feature_count)],
+        "bhn": [float(final[f"bhn{feature}_after_apply"]) for feature in range(feature_count)],
         "vwp": [float(final[f"vwp{feature}_after_apply"]) for feature in range(feature_count)],
         "vwn": [float(final[f"vwn{feature}_after_apply"]) for feature in range(feature_count)],
     }
@@ -460,6 +517,8 @@ def main() -> None:
     ap.add_argument("--output-driver-model", choices=["sense", "nrel"], default="sense")
     ap.add_argument("--readout-apply-scale", type=float, default=0.35)
     ap.add_argument("--hidden-forward-width", type=float, default=3.0)
+    ap.add_argument("--hidden-bias-positive-init", type=float, default=0.50)
+    ap.add_argument("--hidden-bias-negative-init", type=float, default=0.20)
     ap.add_argument("--decision-threshold", type=float, default=0.10)
     ap.add_argument("--assert-nonbehavioral", action="store_true")
     args = ap.parse_args()
@@ -491,7 +550,13 @@ def main() -> None:
         download=args.download,
     )
     initial_weights = initial_block_weights(
-        args.image_size, args.block_size, args.stride, args.channels, seed=args.weight_seed
+        args.image_size,
+        args.block_size,
+        args.stride,
+        args.channels,
+        seed=args.weight_seed,
+        hidden_bias_positive_init=args.hidden_bias_positive_init,
+        hidden_bias_negative_init=args.hidden_bias_negative_init,
     )
     common = {
         "image_size": args.image_size,
@@ -565,10 +630,13 @@ def main() -> None:
         "feature_count": feature_count,
         "target_10x10_b4_stride2_c2_topology": target_topology,
         "input_encoding": "raw resized pixel rails encoded as 0.08 + 0.92 * pixel intensity; no PCA/local-PCA",
+        "hidden_bias_state": "persistent signed bhp/bhn capacitors with MOS/passive local bias writers",
         "hidden_credit_mode": "direct_feedback",
         "output_driver_model": args.output_driver_model,
         "readout_apply_scale": args.readout_apply_scale,
         "hidden_forward_width": args.hidden_forward_width,
+        "hidden_bias_positive_init": args.hidden_bias_positive_init,
+        "hidden_bias_negative_init": args.hidden_bias_negative_init,
         "learning_device_implementation": "transistor_passive",
         "no_behavioral_signal_math": True,
         "no_behavioral_learning_devices": True,

@@ -1502,6 +1502,25 @@ must satisfy before it can replace the current behavioral prototype.
 
 \begin{figure}[H]
   \centering
+  \includegraphics[width=0.88\linewidth]{figures/mos_hidden_writer_restored_gate_hybrid_update_forward_guard_corner_ngspice.png}
+  \caption{Ngspice guard pass-gate threshold-corner sweep for the same
+  integrated MOS activation store.  The \(pact\) aperture is held long at
+  \(320\) ns, and the guard uses the nominal \(130\) ns valid window from
+  Fig.~\ref{fig:mos-hidden-writer-restored-gate-hybrid-update-forward-guard-timing-ngspice}.
+  Only the second, guard-controlled transmission gate changes threshold model:
+  strong, nominal, N-weak, P-weak, and both-weak.  The read preactivation is
+  \(52.066\) mV in all cases, and the stored activation is
+  \(51.360,51.355,51.368,51.347,\) and \(51.365\) mV.  The first hypothesis
+  was that the both-weak corner would visibly undercharge the store capacitor;
+  instead, the current guard TG sizing is essentially threshold-corner flat
+  over this Level-1 sweep.  The next robustness risks for this store are
+  clock skew/overlap and hold leakage, not nominal pass-device threshold at
+  these widths.}
+  \label{fig:mos-hidden-writer-restored-gate-hybrid-update-forward-guard-corner-ngspice}
+\end{figure}
+
+\begin{figure}[H]
+  \centering
   \includegraphics[width=0.88\linewidth]{figures/mos_hidden_writer_restored_gate_hybrid_repeated_ngspice.png}
   \caption{Ngspice repeated-pulse accumulation characterization of the hybrid
   restored writer.  One stored \(r^+\) hidden-error rail drives one persistent

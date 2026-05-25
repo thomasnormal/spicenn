@@ -7461,6 +7461,71 @@ quit
         "late guard-off should start tracking post-valid forward-load droop",
     )
 
+    guard_corner_cases = [
+        ("strong", 0.50, -0.50, "strong"),
+        ("nominal", 0.55, -0.55, "nominal"),
+        ("nweak", 0.64, -0.55, "N weak"),
+        ("pweak", 0.55, -0.64, "P weak"),
+        ("bothweak", 0.64, -0.64, "both weak"),
+    ]
+    guard_corner_store_samples = []
+    guard_corner_preact_samples = []
+    guard_corner_traces = []
+    corner_guard_pwl = "VGUARD_HYR guard_hyr 0 PWL(0 0 3.16u 0 3.18u 1.8 3.31u 1.8 3.33u 0 7.8u 0)"
+    corner_guardn_pwl = "VGUARDN_HYR guardn_hyr 0 PWL(0 1.8 3.16u 1.8 3.18u 0 3.31u 0 3.33u 1.8 7.8u 1.8)"
+    corner_param_line = ".param CERR=10p CWRITE=500p CBIAS=500p CSTORE=10p CSUM=500p WSW=24u WWRITE=24u WRESTN=18u WRESTP=300u WREAD=24u WRESETN=60u WRESETP=180u"
+    for name, n_vto, p_vto, label in guard_corner_cases:
+        stem = f"mos_hidden_writer_restored_gate_hybrid_update_forward_read_pact_guard_corner_{name}"
+        n_model = f"NGUARD_{name.upper()}"
+        p_model = f"PGUARD_{name.upper()}"
+        corner_models = (
+            f".model {n_model} NMOS (LEVEL=1 VTO={n_vto:.2f} KP=220u LAMBDA=0.03)\n"
+            f".model {p_model} PMOS (LEVEL=1 VTO={p_vto:.2f} KP=90u LAMBDA=0.03)"
+        )
+        corner_store_line_p = guard_store_line_p.replace("NMOS L={LCH} W=96u", f"{n_model} L={{LCH}} W=96u", 1)
+        corner_store_line_p = corner_store_line_p.replace("PMOS L={LCH} W=240u", f"{p_model} L={{LCH}} W=240u", 1)
+        corner_store_line_m = guard_store_line_m.replace("NMOS L={LCH} W=96u", f"{n_model} L={{LCH}} W=96u", 1)
+        corner_store_line_m = corner_store_line_m.replace("PMOS L={LCH} W=240u", f"{p_model} L={{LCH}} W=240u", 1)
+        corner_deck = replace_required(hybrid_forward_read_reuse_deck, timing_read_pwl, timing_single_read_pwl)
+        corner_deck = replace_required(
+            corner_deck,
+            timing_base_pact_pwl,
+            long_pact_pwl + "\n" + long_pactn_pwl + "\n" + corner_guard_pwl + "\n" + corner_guardn_pwl,
+        )
+        corner_deck = replace_required(corner_deck, corner_param_line, corner_models + "\n" + corner_param_line)
+        corner_deck = replace_required(corner_deck, nmos_store_line_p, corner_store_line_p)
+        corner_deck = replace_required(corner_deck, nmos_store_line_m, corner_store_line_m)
+        corner_deck = replace_required(
+            corner_deck,
+            "mos_hidden_writer_restored_gate_hybrid_update_forward_read_reuse.dat",
+            f"{stem}.dat",
+        )
+        corner_data = run_ngspice(corner_deck, stem)
+        ct, corner_cols = load_wrdata(corner_data, 23)
+
+        def gcat(time_s: float, values: np.ndarray) -> float:
+            return float(values[np.argmin(np.abs(ct - time_s))])
+
+        corner_preact = corner_cols[10] - corner_cols[9]
+        corner_store = corner_cols[14] - corner_cols[13]
+        guard_corner_preact_samples.append(gcat(3.575e-6, corner_preact))
+        guard_corner_store_samples.append(gcat(3.575e-6, corner_store))
+        guard_corner_traces.append((label, ct, corner_store))
+
+    guard_corner_preact_samples = np.array(guard_corner_preact_samples)
+    guard_corner_store_samples = np.array(guard_corner_store_samples)
+    require(np.min(guard_corner_preact_samples) > 0.048, "guard corner sweep should keep a valid read state")
+    require(np.all(guard_corner_store_samples > 0.035), "guard pass corners should retain positive stored activation")
+    require(np.all(guard_corner_store_samples < 0.060), "guard pass corners should remain bounded and incremental")
+    require(
+        abs(guard_corner_store_samples[1] - guard_timing_samples[2]) < 0.002,
+        "nominal guard corner should match the nominal timing sample",
+    )
+    require(
+        np.max(guard_corner_store_samples) - np.min(guard_corner_store_samples) < 0.00008,
+        "oversized guard pass gates should make threshold-corner capture nearly flat",
+    )
+
     read_gated_fig, read_gated_axes = plt.subplots(2, 1, figsize=(7.4, 6.6), gridspec_kw={"height_ratios": [1.0, 0.9]})
     for label, rgt, store in guard_gated_traces:
         if label in {"40 ns", "120 ns", "240 ns", "320 ns"}:
@@ -7510,6 +7575,30 @@ quit
     guard_timing_axes[1].legend(loc="upper right", fontsize="small")
     guard_timing_fig.tight_layout()
     save_plot(guard_timing_fig, "mos_hidden_writer_restored_gate_hybrid_update_forward_guard_timing_ngspice")
+
+    guard_corner_fig, guard_corner_axes = plt.subplots(2, 1, figsize=(7.4, 6.2), gridspec_kw={"height_ratios": [1.0, 0.8]})
+    for label, ct, store in guard_corner_traces:
+        guard_corner_axes[0].plot(1e6 * ct, 1e3 * store, label=label)
+    guard_corner_axes[0].axhline(0, color="0.4", linewidth=0.8)
+    guard_corner_axes[0].axvline(3.33, color="0.25", linestyle="--", linewidth=0.9, alpha=0.6, label="guard off")
+    guard_corner_axes[0].set_xlim(3.05, 3.65)
+    guard_corner_axes[0].set_ylabel("stored activation (mV)")
+    guard_corner_axes[0].set_title("Guarded store remains signed correctly across pass-gate corners")
+    guard_corner_axes[0].grid(True, alpha=0.25)
+    guard_corner_axes[0].legend(loc="upper left", ncol=2, fontsize="small")
+    guard_corner_x = np.arange(len(guard_corner_cases))
+    guard_corner_labels = [label for _name, _n_vto, _p_vto, label in guard_corner_cases]
+    guard_corner_axes[1].bar(guard_corner_x - 0.18, 1e3 * guard_corner_preact_samples, width=0.36, label="$z^- - z^+$")
+    guard_corner_axes[1].bar(guard_corner_x + 0.18, 1e3 * guard_corner_store_samples, width=0.36, label="stored $h^- - h^+$")
+    guard_corner_axes[1].axhline(0, color="0.4", linewidth=0.8)
+    guard_corner_axes[1].set_xticks(guard_corner_x)
+    guard_corner_axes[1].set_xticklabels(guard_corner_labels)
+    guard_corner_axes[1].set_ylabel("sampled differential (mV)")
+    guard_corner_axes[1].set_title("Oversized guard pass gates make threshold corners nearly flat")
+    guard_corner_axes[1].grid(True, axis="y", alpha=0.25)
+    guard_corner_axes[1].legend(loc="upper right", fontsize="small")
+    guard_corner_fig.tight_layout()
+    save_plot(guard_corner_fig, "mos_hidden_writer_restored_gate_hybrid_update_forward_guard_corner_ngspice")
 
     hybrid_repeated_deck = f"""
 * Hybrid restored-enable/analog-error writer repeated-pulse accumulation check.

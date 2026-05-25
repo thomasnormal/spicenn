@@ -8503,6 +8503,111 @@ quit
         "large forward pair should expose activation gain headroom beyond nominal sizing",
     )
 
+    high_gain_forward_pair_width_u = 96
+    high_gain_forward_pair_lines = forward_pair_lines.replace("W=48u", f"W={high_gain_forward_pair_width_u}u")
+    high_gain_forward_pair_idx = forward_pair_cases_u.index(high_gain_forward_pair_width_u)
+
+    high_gain_hold_deck = replace_required(hold_deck, forward_pair_lines, high_gain_forward_pair_lines)
+    high_gain_hold_deck = replace_required(
+        high_gain_hold_deck,
+        "mos_hidden_writer_restored_gate_hybrid_update_forward_guard_hold.dat",
+        "mos_hidden_writer_restored_gate_hybrid_update_forward_guard_forward_pair_96u_hold.dat",
+    )
+    high_gain_hold_data = run_ngspice(
+        high_gain_hold_deck,
+        "mos_hidden_writer_restored_gate_hybrid_update_forward_guard_forward_pair_96u_hold",
+    )
+    hght, high_gain_hold_cols = load_wrdata(high_gain_hold_data, 23)
+
+    def hghat(time_s: float, values: np.ndarray) -> float:
+        return float(values[np.argmin(np.abs(hght - time_s))])
+
+    high_gain_hold_preact = high_gain_hold_cols[10] - high_gain_hold_cols[9]
+    high_gain_hold_store = high_gain_hold_cols[14] - high_gain_hold_cols[13]
+    high_gain_hold_store_samples = np.array([hghat(ts, high_gain_hold_store) for ts in hold_sample_times])
+    high_gain_hold_preact_samples = np.array([hghat(ts, high_gain_hold_preact) for ts in hold_sample_times])
+    high_gain_hold_drift = high_gain_hold_store_samples - high_gain_hold_store_samples[0]
+
+    high_gain_negative_hold_deck = replace_required(negative_hold_deck, forward_pair_lines, high_gain_forward_pair_lines)
+    high_gain_negative_hold_deck = replace_required(
+        high_gain_negative_hold_deck,
+        "mos_hidden_writer_restored_gate_hybrid_update_forward_guard_signed_hold_negative.dat",
+        "mos_hidden_writer_restored_gate_hybrid_update_forward_guard_forward_pair_96u_signed_hold_negative.dat",
+    )
+    high_gain_negative_hold_data = run_ngspice(
+        high_gain_negative_hold_deck,
+        "mos_hidden_writer_restored_gate_hybrid_update_forward_guard_forward_pair_96u_signed_hold_negative",
+    )
+    hgnht, high_gain_negative_hold_cols = load_wrdata(high_gain_negative_hold_data, 23)
+
+    def hgnhat(time_s: float, values: np.ndarray) -> float:
+        return float(values[np.argmin(np.abs(hgnht - time_s))])
+
+    high_gain_negative_hold_preact = high_gain_negative_hold_cols[10] - high_gain_negative_hold_cols[9]
+    high_gain_negative_hold_store = high_gain_negative_hold_cols[14] - high_gain_negative_hold_cols[13]
+    high_gain_negative_hold_store_samples = np.array([hgnhat(ts, high_gain_negative_hold_store) for ts in hold_sample_times])
+    high_gain_negative_hold_preact_samples = np.array([hgnhat(ts, high_gain_negative_hold_preact) for ts in hold_sample_times])
+    high_gain_negative_hold_drift = high_gain_negative_hold_store_samples - high_gain_negative_hold_store_samples[0]
+    high_gain_signed_mirror_error = high_gain_hold_store_samples + high_gain_negative_hold_store_samples
+
+    high_gain_stress_deck = replace_required(stress_deck, forward_pair_lines, high_gain_forward_pair_lines)
+    high_gain_stress_deck = replace_required(
+        high_gain_stress_deck,
+        "mos_hidden_writer_restored_gate_hybrid_update_forward_guard_off_isolation.dat",
+        "mos_hidden_writer_restored_gate_hybrid_update_forward_guard_forward_pair_96u_off_isolation.dat",
+    )
+    high_gain_stress_data = run_ngspice(
+        high_gain_stress_deck,
+        "mos_hidden_writer_restored_gate_hybrid_update_forward_guard_forward_pair_96u_off_isolation",
+    )
+    hgot, high_gain_guard_off_cols = load_wrdata(high_gain_stress_data, 23)
+
+    def hgoat(time_s: float, values: np.ndarray) -> float:
+        return float(values[np.argmin(np.abs(hgot - time_s))])
+
+    high_gain_guard_off_preact = high_gain_guard_off_cols[10] - high_gain_guard_off_cols[9]
+    high_gain_guard_off_store = high_gain_guard_off_cols[14] - high_gain_guard_off_cols[13]
+    high_gain_guard_off_store_samples = np.array([hgoat(ts, high_gain_guard_off_store) for ts in guard_off_sample_times])
+    high_gain_guard_off_preact_samples = np.array([hgoat(ts, high_gain_guard_off_preact) for ts in guard_off_sample_times])
+    high_gain_guard_off_drift = high_gain_guard_off_store_samples - high_gain_guard_off_store_samples[0]
+
+    require(
+        abs(high_gain_hold_store_samples[0] - forward_pair_store_samples[high_gain_forward_pair_idx]) < 0.002,
+        "96u high-gain hold fixture should match the 96u forward-pair sweep sample",
+    )
+    require(
+        high_gain_hold_store_samples[0] > guard_timing_samples[2] + 0.020,
+        "96u forward pair should retain materially larger stored activation than nominal",
+    )
+    require(
+        np.max(np.abs(high_gain_hold_drift)) < 0.0003,
+        "96u forward-pair positive hold should stay within 0.3 mV over the no-reset interval",
+    )
+    require(
+        high_gain_negative_hold_store_samples[0] < -0.070,
+        "96u forward-pair negative hold should capture a full negative activation",
+    )
+    require(
+        np.max(np.abs(high_gain_negative_hold_drift)) < 0.0003,
+        "96u forward-pair negative hold should stay within 0.3 mV over the no-reset interval",
+    )
+    require(
+        np.max(np.abs(high_gain_signed_mirror_error)) < 0.0003,
+        "96u forward-pair positive and negative stores should mirror within 0.3 mV",
+    )
+    require(
+        np.max(np.abs(high_gain_hold_preact_samples + high_gain_negative_hold_preact_samples)) < 0.002,
+        "96u forward-pair positive and negative preactivations should mirror",
+    )
+    require(
+        high_gain_guard_off_store_samples[0] > 0.070,
+        "96u forward-pair off-isolation deck should capture the larger activation before stress",
+    )
+    require(
+        np.max(np.abs(high_gain_guard_off_drift)) < 0.001,
+        "96u forward-pair off-state control/read toggles should not disturb the held activation by more than 1 mV",
+    )
+
     tail_bias_forward_tail_line = "MNFT_HYR ftail_hyr vbias 0 0 NMOS L={LCH} W=48u"
     tail_bias_cases_v = [0.70, 0.80, 0.90, 0.95, 1.05, 1.15, 1.25]
     tail_bias_labels = []
@@ -9039,6 +9144,37 @@ quit
     forward_pair_axes[1].legend(loc="upper left", ncol=2, fontsize="small")
     forward_pair_fig.tight_layout()
     save_plot(forward_pair_fig, "mos_hidden_writer_restored_gate_hybrid_update_forward_guard_forward_pair_ngspice")
+
+    high_gain_fig, high_gain_axes = plt.subplots(2, 1, figsize=(7.4, 6.4), gridspec_kw={"height_ratios": [1.0, 0.8]})
+    high_gain_axes[0].plot(1e6 * hght, 1e3 * high_gain_hold_store, label="+ 96u hold")
+    high_gain_axes[0].plot(1e6 * hgnht, 1e3 * high_gain_negative_hold_store, "--", label="- 96u hold")
+    high_gain_axes[0].plot(1e6 * hgot, 1e3 * high_gain_guard_off_store, ":", label="+ 96u off-isolation")
+    high_gain_axes[0].plot(1e6 * hght, 1e3 * high_gain_hold_preact, color="0.35", alpha=0.30, label="+ $z^- - z^+$")
+    high_gain_axes[0].axhline(0, color="0.4", linewidth=0.8)
+    high_gain_axes[0].axvline(3.33, color="0.25", linestyle="--", linewidth=0.9, alpha=0.6, label="guard off")
+    high_gain_axes[0].set_xlim(3.05, 7.55)
+    high_gain_axes[0].set_ylabel("differential (mV)")
+    high_gain_axes[0].set_title("96u forward pair keeps the larger stored activation in hold")
+    high_gain_axes[0].grid(True, alpha=0.25)
+    high_gain_axes[0].legend(loc="upper right", ncol=2, fontsize="small")
+    high_gain_drift_labels = ["+ hold", "- hold", "off stress"]
+    high_gain_drift_values = np.array(
+        [
+            np.max(np.abs(high_gain_hold_drift)),
+            np.max(np.abs(high_gain_negative_hold_drift)),
+            np.max(np.abs(high_gain_guard_off_drift)),
+        ]
+    )
+    high_gain_x = np.arange(len(high_gain_drift_labels))
+    high_gain_axes[1].bar(high_gain_x, 1e6 * high_gain_drift_values)
+    high_gain_axes[1].set_xticks(high_gain_x)
+    high_gain_axes[1].set_xticklabels(high_gain_drift_labels)
+    high_gain_axes[1].set_ylabel("max held-value drift ($\\mu$V)")
+    high_gain_axes[1].set_ylim(0.0, max(1.0, 1.25 * 1e6 * float(np.max(high_gain_drift_values))))
+    high_gain_axes[1].set_title("Sign symmetry and later control activity stay at sub-microvolt drift")
+    high_gain_axes[1].grid(True, axis="y", alpha=0.25)
+    high_gain_fig.tight_layout()
+    save_plot(high_gain_fig, "mos_hidden_writer_restored_gate_hybrid_update_forward_guard_forward_pair_96u_robustness_ngspice")
 
     tail_bias_fig, tail_bias_axes = plt.subplots(2, 1, figsize=(7.4, 6.4), gridspec_kw={"height_ratios": [1.0, 0.8]})
     for label, tbt, load, store in tail_bias_traces:

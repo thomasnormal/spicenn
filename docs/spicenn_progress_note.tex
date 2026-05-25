@@ -1798,6 +1798,30 @@ must satisfy before it can replace the current behavioral prototype.
 
 \begin{figure}[H]
   \centering
+  \includegraphics[width=0.88\linewidth]{figures/mos_hidden_writer_restored_gate_hybrid_update_forward_guard_forward_pair_96u_robustness_ngspice.png}
+  \caption{Ngspice robustness check for the \(96\,\mu\mathrm{m}\) forward-pair
+  candidate from
+  Fig.~\ref{fig:mos-hidden-writer-restored-gate-hybrid-update-forward-guard-forward-pair-ngspice}.
+  The deck keeps the same MOS-written \(W/B\) state, read path, \(pact\),
+  guard timing, and \(10\) pF activation store, but repeats the signed hold
+  and off-isolation checks with the larger forward pair.  The positive
+  \(96\,\mu\mathrm{m}\) stored activation samples are
+  \(76.07747,76.07731,76.07713,76.07694,\) and \(76.07677\) mV at
+  \(3.575,4.50,5.50,6.50,\) and \(7.45\,\mu\mathrm{s}\), while the negative
+  case mirrors them exactly to the saved precision.  The read preactivation
+  remains \(\pm52.06585\) mV, so the larger stored activation comes from
+  forward-pair gain, not a changed summing state.  In the off-isolation stress
+  deck, later read and phase-control activity moves the preactivation side
+  through \(52.066,64.749,69.981,69.981,53.486,20.843,\) and \(6.105\) mV,
+  but the held \(96\,\mu\mathrm{m}\) activation drifts only
+  \(0,-0.16,-0.27,-0.35,-0.49,-0.59,\) and \(-0.71\,\mu\mathrm{V}\).  This
+  makes \(96\,\mu\mathrm{m}\) a credible next gain candidate for further
+  mismatch/noise/common-mode checks rather than only a nominal-width plot.}
+  \label{fig:mos-hidden-writer-restored-gate-hybrid-update-forward-guard-forward-pair-96u-robustness-ngspice}
+\end{figure}
+
+\begin{figure}[H]
+  \centering
   \includegraphics[width=0.88\linewidth]{figures/mos_hidden_writer_restored_gate_hybrid_update_forward_guard_forward_tail_bias_ngspice.png}
   \caption{Ngspice isolated forward-tail bias sweep for the same guarded MOS
   activation store.  The failed shared-bias experiment changed the read path

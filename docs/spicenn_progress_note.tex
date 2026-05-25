@@ -1287,7 +1287,9 @@ must satisfy before it can replace the current behavioral prototype.
   \(+29.17\), \(-29.17\), \(+29.17\), and \(-29.17\,\mu\)A.  This does not
   yet make a full transistor MNIST cell, but it closes the signed local-update
   routing contract for the weight and local-bias state roles without
-  behavioral update sources.}
+  behavioral update sources.  The plotted bars are labeled with the measured
+  final values so each quadrant remains auditable without relying on the
+  caption text alone.}
   \label{fig:mos-hidden-writer-restored-gate-hybrid-cell-quadrants-ngspice}
 \end{figure}
 
@@ -1337,7 +1339,9 @@ must satisfy before it can replace the current behavioral prototype.
   and the held activations are \(+47.35\), \(-47.35\), \(+47.35\), and
   \(-47.35\) mV.  This closes the quadrant gap left by the one-sample
   update-forward plot: signed local writes now round-trip through the MOS
-  forward path with the expected sign in every activation/error quadrant.}
+  forward path with the expected sign in every activation/error quadrant.  The
+  plotted bar labels expose the measured write, summing, forward-load, and
+  stored-activation values directly for each quadrant.}
   \label{fig:mos-hidden-writer-restored-gate-hybrid-update-forward-quadrants-ngspice}
 \end{figure}
 

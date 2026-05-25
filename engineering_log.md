@@ -2,6 +2,16 @@
 
 ## 2026-05-25
 
+- Family-completed the quadrant-plot readability fix for the integrated hybrid
+  local-feature evidence.  The one-level hidden-writer quadrant plot already
+  had an explicit final-value panel, but the deeper integrated
+  update/readback and update-to-forward quadrant figures still placed legends
+  over the fourth-quadrant bars.  The regenerated ngspice plots now move those
+  legends out of the data area and label the measured bar values directly:
+  \(W/B=\pm23.0/\pm34.5\) mV, readback \(=\pm19.1/\pm29.2\,\mu\mathrm{A}\),
+  and update-forward \(z/\mathrm{load}/h=\pm50.8/\pm61.5/\pm47.3\) mV.  This
+  makes the full integrated sign-family evidence auditable from the figures
+  themselves.
 - Clarified the ngspice four-quadrant hidden-error writer plot after the
   circuit assertions were stronger than the visual evidence.  The four products
   still come from the same MOS-only deck and measure

@@ -1534,6 +1534,23 @@ must satisfy before it can replace the current behavioral prototype.
 
 \begin{figure}[H]
   \centering
+  \includegraphics[width=0.88\linewidth]{figures/mos_hidden_writer_restored_gate_hybrid_update_forward_guard_start_ngspice.png}
+  \caption{Ngspice guard-start timing sweep for the integrated MOS
+  activation store.  The guard fall is fixed at \(3.31\,\mu\mathrm{s}\), the
+  \(pact\) aperture is held long at \(320\) ns, and only the guard rise end is
+  moved through \(3.10,3.14,3.18,3.22,3.26,\) and
+  \(3.29\,\mu\mathrm{s}\).  The read preactivation remains \(52.066\) mV,
+  while the stored activation is
+  \(51.359,51.359,51.355,49.183,40.449,\) and \(26.159\) mV.  This isolates
+  the start-side requirement from the close-side droop in the skew sweep:
+  opening the guard before \(pact\) is harmless because the series \(pact\)
+  transmission gate still blocks the store, but opening after the nominal
+  point directly cuts charge time and undercharges the activation capacitor.}
+  \label{fig:mos-hidden-writer-restored-gate-hybrid-update-forward-guard-start-ngspice}
+\end{figure}
+
+\begin{figure}[H]
+  \centering
   \includegraphics[width=0.88\linewidth]{figures/mos_hidden_writer_restored_gate_hybrid_update_forward_read_fall_ngspice.png}
   \caption{Ngspice read-valid fall sweep for the guarded MOS activation
   store.  The guard remains fixed at \(3.18\)--\(3.31\,\mu\mathrm{s}\), with

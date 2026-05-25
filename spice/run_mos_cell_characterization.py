@@ -7647,6 +7647,65 @@ quit
         "slow guard edge should begin tracking the read-path collapse",
     )
 
+    guard_start_cases_us = [3.10, 3.14, 3.18, 3.22, 3.26, 3.29]
+    guard_start_labels = []
+    guard_start_store_samples = []
+    guard_start_preact_samples = []
+    guard_start_traces = []
+    for guard_start_us in guard_start_cases_us:
+        guard_pwl, guardn_pwl = guard_phase_lines(guard_start_us, 3.31, 20.0)
+        label = f"{guard_start_us:.2f} us"
+        stem = (
+            "mos_hidden_writer_restored_gate_hybrid_update_forward_read_pact_"
+            f"guard_start_{int(round(guard_start_us * 1000))}ns"
+        )
+        start_guard_deck = replace_required(hybrid_forward_read_reuse_deck, timing_read_pwl, timing_single_read_pwl)
+        start_guard_deck = replace_required(
+            start_guard_deck,
+            timing_base_pact_pwl,
+            long_pact_pwl + "\n" + long_pactn_pwl + "\n" + guard_pwl + "\n" + guardn_pwl,
+        )
+        start_guard_deck = replace_required(start_guard_deck, nmos_store_line_p, guard_store_line_p)
+        start_guard_deck = replace_required(start_guard_deck, nmos_store_line_m, guard_store_line_m)
+        start_guard_deck = replace_required(
+            start_guard_deck,
+            "mos_hidden_writer_restored_gate_hybrid_update_forward_read_reuse.dat",
+            f"{stem}.dat",
+        )
+        start_guard_data = run_ngspice(start_guard_deck, stem)
+        gst, guard_start_cols = load_wrdata(start_guard_data, 23)
+
+        def gsat_start(time_s: float, values: np.ndarray) -> float:
+            return float(values[np.argmin(np.abs(gst - time_s))])
+
+        guard_start_preact = guard_start_cols[10] - guard_start_cols[9]
+        guard_start_store = guard_start_cols[14] - guard_start_cols[13]
+        guard_start_labels.append(label)
+        guard_start_preact_samples.append(gsat_start(3.575e-6, guard_start_preact))
+        guard_start_store_samples.append(gsat_start(3.575e-6, guard_start_store))
+        guard_start_traces.append((label, gst, guard_start_store))
+
+    guard_start_store_samples = np.array(guard_start_store_samples)
+    guard_start_preact_samples = np.array(guard_start_preact_samples)
+    nominal_guard_start_idx = guard_start_cases_us.index(3.18)
+    require(np.min(guard_start_preact_samples) > 0.048, "guard-start sweep should keep a valid read state")
+    require(
+        abs(guard_start_store_samples[nominal_guard_start_idx] - guard_timing_samples[2]) < 0.002,
+        "nominal guard start should match the nominal guard timing sample",
+    )
+    require(
+        guard_start_store_samples[0] > guard_start_store_samples[nominal_guard_start_idx] - 0.002,
+        "early guard start should remain in the valid capture plateau when pact still gates the store",
+    )
+    require(
+        guard_start_store_samples[-1] < guard_start_store_samples[nominal_guard_start_idx] - 0.020,
+        "very late guard start should undercharge the activation store",
+    )
+    require(
+        np.all(np.diff(guard_start_store_samples[2:]) < -0.002),
+        "guard starts after nominal should monotonically reduce the stored activation",
+    )
+
     read_fall_cases_us = [3.26, 3.30, 3.33, 3.36, 3.40, 3.44]
     read_fall_labels = []
     read_fall_store_samples = []
@@ -8016,6 +8075,32 @@ quit
     guard_edge_axes[1].legend(loc="lower right", ncol=2, fontsize="small")
     guard_edge_fig.tight_layout()
     save_plot(guard_edge_fig, "mos_hidden_writer_restored_gate_hybrid_update_forward_guard_edge_ngspice")
+
+    guard_start_fig, guard_start_axes = plt.subplots(2, 1, figsize=(7.4, 6.4), gridspec_kw={"height_ratios": [1.0, 0.8]})
+    for label, gst, store in guard_start_traces:
+        if label in {"3.10 us", "3.18 us", "3.26 us", "3.29 us"}:
+            guard_start_axes[0].plot(1e6 * gst, 1e3 * store, label=f"start {label}")
+    guard_start_axes[0].axhline(0, color="0.4", linewidth=0.8)
+    guard_start_axes[0].axvline(3.18, color="0.25", linestyle="--", linewidth=0.9, alpha=0.6, label="nominal start")
+    guard_start_axes[0].axvline(3.31, color="0.45", linestyle=":", linewidth=0.9, alpha=0.6, label="fixed fall")
+    guard_start_axes[0].set_xlim(3.05, 3.45)
+    guard_start_axes[0].set_ylabel("stored activation (mV)")
+    guard_start_axes[0].set_title("Guard-start timing isolates charge-time loss with fixed guard close")
+    guard_start_axes[0].grid(True, alpha=0.25)
+    guard_start_axes[0].legend(loc="upper left", ncol=2, fontsize="small")
+    guard_start_x = np.arange(len(guard_start_labels))
+    guard_start_axes[1].bar(guard_start_x - 0.18, 1e3 * guard_start_preact_samples, width=0.36, label="$z^- - z^+$")
+    guard_start_axes[1].bar(guard_start_x + 0.18, 1e3 * guard_start_store_samples, width=0.36, label="stored $h^- - h^+$")
+    guard_start_axes[1].axhline(0, color="0.4", linewidth=0.8)
+    guard_start_axes[1].set_xticks(guard_start_x)
+    guard_start_axes[1].set_xticklabels(guard_start_labels)
+    guard_start_axes[1].set_xlabel("guard rise end")
+    guard_start_axes[1].set_ylabel("sampled differential (mV)")
+    guard_start_axes[1].set_title("Opening before pact is harmless; opening after nominal cuts charge time")
+    guard_start_axes[1].grid(True, axis="y", alpha=0.25)
+    guard_start_axes[1].legend(loc="lower left", ncol=2, fontsize="small")
+    guard_start_fig.tight_layout()
+    save_plot(guard_start_fig, "mos_hidden_writer_restored_gate_hybrid_update_forward_guard_start_ngspice")
 
     read_fall_fig, read_fall_axes = plt.subplots(2, 1, figsize=(7.4, 6.4), gridspec_kw={"height_ratios": [1.0, 0.8]})
     for label, rft, store, read_ctl in read_fall_traces:

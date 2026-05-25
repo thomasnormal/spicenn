@@ -9479,6 +9479,129 @@ quit
         "split shifted-gate reset should establish the requested trim differential before read",
     )
 
+    def run_split_reset_threshold_case(
+        stem: str,
+        model_tag: str,
+        nfp_vto: float,
+        nfm_vto: float,
+        reset_trim_v: float,
+    ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+        nfp_model = f"NSHBALFP_{model_tag}"
+        nfm_model = f"NSHBALFM_{model_tag}"
+        models = (
+            f".model {nfp_model} NMOS (LEVEL=1 VTO={nfp_vto:.2f} KP=220u LAMBDA=0.03)\n"
+            f".model {nfm_model} NMOS (LEVEL=1 VTO={nfm_vto:.2f} KP=220u LAMBDA=0.03)"
+        )
+        deck = replace_required(high_gain_hold_deck, zcm_source_line, "VZCM zcm 0 0.75")
+        deck = replace_required(deck, zcm_cap_p_line, "CZP_HYR zp_hyr 0 {CSUM} IC=0.75")
+        deck = replace_required(deck, zcm_cap_m_line, "CZM_HYR zm_hyr 0 {CSUM} IC=0.75")
+        deck = replace_required(deck, corner_param_line, models + "\n" + corner_param_line)
+        deck = replace_required(
+            deck,
+            high_gain_forward_pair_lines,
+            shifted_forward_pair_lines(
+                10.0,
+                gate_ic_p=0.35,
+                gate_ic_m=1.45,
+                reset_ref_p=0.90 + 0.5 * reset_trim_v,
+                reset_ref_m=0.90 - 0.5 * reset_trim_v,
+                forward_p_model=nfp_model,
+                forward_m_model=nfm_model,
+            ),
+        )
+        deck = replace_required(deck, "VRESET_HYR rst_hyr 0 0", shift_reset_pulse)
+        deck = replace_required(deck, "VRESETN_HYR rstn_hyr 0 1.8", shift_resetn_pulse)
+        deck = replace_required(
+            deck,
+            "mos_hidden_writer_restored_gate_hybrid_update_forward_guard_forward_pair_96u_hold.dat",
+            f"{stem}.dat",
+        )
+        deck = add_shifted_gate_probes(deck, stem)
+        data = run_ngspice(deck, stem)
+        time, cols = load_wrdata(data, 25)
+        gate_diff = cols[0] - cols[1]
+        gate_common = 0.5 * (cols[0] + cols[1])
+        load = cols[14] - cols[13]
+        store = cols[16] - cols[15]
+        return time, gate_diff, gate_common, load, store
+
+    shift_balance_cases = [
+        ("nominal", "nominal", 0.55, 0.55, 0.0),
+        ("hp_weak_untrimmed", "$h^+$ weak, untrimmed", 0.57, 0.55, 0.0),
+        ("hp_weak_trimmed", "$h^+$ weak, trim -20 mV", 0.57, 0.55, -0.020),
+        ("hm_weak_untrimmed", "$h^-$ weak, untrimmed", 0.55, 0.57, 0.0),
+        ("hm_weak_trimmed", "$h^-$ weak, trim +15 mV", 0.55, 0.57, 0.015),
+        ("skew_pm_untrimmed", "skew +20/-20, untrimmed", 0.57, 0.53, 0.0),
+        ("skew_pm_trimmed", "skew +20/-20, trim -35 mV", 0.57, 0.53, -0.035),
+        ("skew_mp_untrimmed", "skew -20/+20, untrimmed", 0.53, 0.57, 0.0),
+        ("skew_mp_trimmed", "skew -20/+20, trim +35 mV", 0.53, 0.57, 0.035),
+    ]
+    shift_balance_labels = []
+    shift_balance_gate_samples = []
+    shift_balance_load_samples = []
+    shift_balance_store_samples = []
+    shift_balance_traces = []
+    for name, label, nfp_vto, nfm_vto, reset_trim_v in shift_balance_cases:
+        stem = (
+            "mos_hidden_writer_restored_gate_hybrid_update_forward_guard_"
+            f"forward_pair_96u_zcm_0p75v_shift_balance_{name}"
+        )
+        time, gate_diff, _gate_common, load, store = run_split_reset_threshold_case(
+            stem,
+            name.upper(),
+            nfp_vto,
+            nfm_vto,
+            reset_trim_v,
+        )
+
+        def sbalat(time_s: float, values: np.ndarray) -> float:
+            return float(values[np.argmin(np.abs(time - time_s))])
+
+        shift_balance_labels.append(label)
+        shift_balance_gate_samples.append(sbalat(2.70e-6, gate_diff))
+        shift_balance_load_samples.append(sbalat(3.315e-6, load))
+        shift_balance_store_samples.append(sbalat(3.575e-6, store))
+        shift_balance_traces.append((label, time, load, store))
+
+    shift_balance_gate_samples = np.array(shift_balance_gate_samples)
+    shift_balance_load_samples = np.array(shift_balance_load_samples)
+    shift_balance_store_samples = np.array(shift_balance_store_samples)
+    shift_balance_index = {case[0]: idx for idx, case in enumerate(shift_balance_cases)}
+    shift_balance_nominal = shift_balance_store_samples[shift_balance_index["nominal"]]
+    for untrimmed_name, trimmed_name in [
+        ("hp_weak_untrimmed", "hp_weak_trimmed"),
+        ("hm_weak_untrimmed", "hm_weak_trimmed"),
+        ("skew_pm_untrimmed", "skew_pm_trimmed"),
+        ("skew_mp_untrimmed", "skew_mp_trimmed"),
+    ]:
+        untrimmed_idx = shift_balance_index[untrimmed_name]
+        trimmed_idx = shift_balance_index[trimmed_name]
+        require(
+            abs(shift_balance_store_samples[trimmed_idx] - shift_balance_nominal)
+            < abs(shift_balance_store_samples[untrimmed_idx] - shift_balance_nominal),
+            f"{trimmed_name} should move closer to nominal split-reset activation than {untrimmed_name}",
+        )
+    shift_balance_trimmed_indices = [
+        shift_balance_index[name]
+        for name in ["hp_weak_trimmed", "hm_weak_trimmed", "skew_pm_trimmed", "skew_mp_trimmed"]
+    ]
+    require(
+        np.all(shift_balance_store_samples[shift_balance_trimmed_indices] > 0.030),
+        "calibrated split-reset threshold corners should keep useful positive activation",
+    )
+    require(
+        np.all(shift_balance_store_samples[shift_balance_trimmed_indices] < 0.090),
+        "calibrated split-reset threshold corners should avoid the uncalibrated overdrive cases",
+    )
+    require(
+        shift_balance_store_samples[shift_balance_index["skew_pm_untrimmed"]] < -0.010,
+        "untrimmed split reset should still expose the +20/-20 threshold-skew sign flip in the balance deck",
+    )
+    require(
+        shift_balance_store_samples[shift_balance_index["skew_mp_untrimmed"]] > 0.10,
+        "untrimmed split reset should expose the opposite skew overdrive in the balance deck",
+    )
+
     tail_bias_forward_tail_line = "MNFT_HYR ftail_hyr vbias 0 0 NMOS L={LCH} W=48u"
     tail_bias_cases_v = [0.70, 0.80, 0.90, 0.95, 1.05, 1.15, 1.25]
     tail_bias_labels = []
@@ -10393,6 +10516,61 @@ quit
     save_plot(
         shift_trimmed_reset_fig,
         "mos_hidden_writer_restored_gate_hybrid_update_forward_guard_forward_pair_96u_shifted_gate_trimmed_reset_ngspice",
+    )
+
+    shift_balance_fig, shift_balance_axes = plt.subplots(
+        2,
+        1,
+        figsize=(7.4, 6.4),
+        gridspec_kw={"height_ratios": [1.0, 0.9]},
+    )
+    for label, sbt, _load, store in shift_balance_traces:
+        if label in {
+            "nominal",
+            "skew +20/-20, untrimmed",
+            "skew +20/-20, trim -35 mV",
+            "skew -20/+20, untrimmed",
+            "skew -20/+20, trim +35 mV",
+        }:
+            shift_balance_axes[0].plot(1e6 * sbt, 1e3 * store, label=label)
+    shift_balance_axes[0].axhline(0, color="0.4", linewidth=0.8)
+    shift_balance_axes[0].axvspan(2.50, 2.62, color="0.75", alpha=0.18, label="split reset")
+    shift_balance_axes[0].axvline(3.33, color="0.25", linestyle="--", linewidth=0.9, alpha=0.6, label="guard off")
+    shift_balance_axes[0].set_xlim(2.35, 3.75)
+    shift_balance_axes[0].set_ylabel("stored activation (mV)")
+    shift_balance_axes[0].set_title("Signed split-reset trim pulls opposite threshold skews back toward nominal")
+    shift_balance_axes[0].grid(True, alpha=0.25)
+    shift_balance_axes[0].legend(loc="upper left", ncol=2, fontsize="x-small")
+    shift_balance_x = np.arange(len(shift_balance_labels))
+    shift_balance_axes[1].bar(
+        shift_balance_x - 0.24,
+        1e3 * shift_balance_gate_samples,
+        width=0.24,
+        label="pre-read gate diff",
+    )
+    shift_balance_axes[1].bar(
+        shift_balance_x,
+        1e3 * shift_balance_load_samples,
+        width=0.24,
+        label="forward load",
+    )
+    shift_balance_axes[1].bar(
+        shift_balance_x + 0.24,
+        1e3 * shift_balance_store_samples,
+        width=0.24,
+        label="stored $h$",
+    )
+    shift_balance_axes[1].axhline(0, color="0.4", linewidth=0.8)
+    shift_balance_axes[1].set_xticks(shift_balance_x)
+    shift_balance_axes[1].set_xticklabels(shift_balance_labels, rotation=18, ha="right")
+    shift_balance_axes[1].set_ylabel("sampled differential (mV)")
+    shift_balance_axes[1].set_title("The same split-reset primitive corrects both skew signs when trim polarity is chosen")
+    shift_balance_axes[1].grid(True, axis="y", alpha=0.25)
+    shift_balance_axes[1].legend(loc="upper right", ncol=3, fontsize="small")
+    shift_balance_fig.tight_layout()
+    save_plot(
+        shift_balance_fig,
+        "mos_hidden_writer_restored_gate_hybrid_update_forward_guard_forward_pair_96u_shifted_gate_balanced_trim_ngspice",
     )
 
     tail_bias_fig, tail_bias_axes = plt.subplots(2, 1, figsize=(7.4, 6.4), gridspec_kw={"height_ratios": [1.0, 0.8]})

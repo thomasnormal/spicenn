@@ -2024,6 +2024,27 @@ must satisfy before it can replace the current behavioral prototype.
 
 \begin{figure}[H]
   \centering
+  \includegraphics[width=0.95\linewidth]{figures/mos_hidden_writer_restored_gate_hybrid_update_forward_guard_forward_pair_96u_shifted_gate_balanced_trim_ngspice.png}
+  \caption{Ngspice signed split-reset calibration check across both
+  threshold-skew polarities.  This uses the same physical reset-switch deck as
+  Fig.~\ref{fig:mos-hidden-writer-restored-gate-hybrid-update-forward-guard-forward-pair-96u-shifted-gate-trimmed-reset-ngspice},
+  but compares the nominal reset case, one-sided \(20\) mV threshold corners,
+  and both opposite \(+20/-20\) mV skew signs.  The nominal physical-reset
+  store is \(57.628\) mV.  Without trim, the one-sided \(h^+\)-weak and
+  \(h^-\)-weak cases store \(18.653\) and \(96.295\) mV; signed trims of
+  \(-20\) and \(+15\) mV move them back to \(57.510\) and \(67.220\) mV.
+  The full skews are more severe: untrimmed \(+20/-20\) mV skew flips to
+  \(-20.241\) mV, and untrimmed \(-20/+20\) mV skew overdrives to
+  \(135.237\) mV.  Reversing the reset-trim polarity corrects both signs:
+  \(-35\) mV trim stores \(47.897\) mV in the first skew, and \(+35\) mV trim
+  stores \(67.355\) mV in the opposite skew.  This does not eliminate the
+  need for calibration, but it shows the split-reset rail is a bidirectional
+  offset-cancellation primitive rather than a one-corner workaround.}
+  \label{fig:mos-hidden-writer-restored-gate-hybrid-update-forward-guard-forward-pair-96u-shifted-gate-balanced-trim-ngspice}
+\end{figure}
+
+\begin{figure}[H]
+  \centering
   \includegraphics[width=0.88\linewidth]{figures/mos_hidden_writer_restored_gate_hybrid_update_forward_guard_forward_tail_bias_ngspice.png}
   \caption{Ngspice isolated forward-tail bias sweep for the same guarded MOS
   activation store.  The failed shared-bias experiment changed the read path

@@ -11525,6 +11525,25 @@ quit
         shift_reset_ref_perturb_store_samples[reset_ref_perturb_destructive_idx[1]] > 0.010,
         "20 mV destructive physical reset-reference differential perturbation should stay positive but expose limited margin",
     )
+    reset_ref_perturb_common_store_error = float(
+        np.max(
+            np.abs(
+                shift_reset_ref_perturb_store_samples[reset_ref_perturb_common_idx]
+                - shift_reset_ref_perturb_store_samples[reset_ref_perturb_nominal_idx]
+            )
+        )
+    )
+    reset_ref_perturb_helpful_gain = float(
+        shift_reset_ref_perturb_store_samples[reset_ref_perturb_helpful_idx]
+        - shift_reset_ref_perturb_store_samples[reset_ref_perturb_nominal_idx]
+    )
+    reset_ref_perturb_destructive_10_drop = float(
+        shift_reset_ref_perturb_store_samples[reset_ref_perturb_nominal_idx]
+        - shift_reset_ref_perturb_store_samples[reset_ref_perturb_destructive_idx[0]]
+    )
+    reset_ref_perturb_destructive_20_store = float(
+        shift_reset_ref_perturb_store_samples[reset_ref_perturb_destructive_idx[1]]
+    )
 
     shift_noise_cases = [
         ("nominal", "nominal", 0.0, 0.0),
@@ -12526,6 +12545,17 @@ quit
         > 0.005,
         "common-mode reference perturbation deck should expose finite reset-settling/feedthrough rather than ideal tracking",
     )
+    shift_refpert_trim_error = np.abs(shift_refpert_gate_samples - shift_refpert_expected_trims)
+    shift_refpert_common_error = np.abs(shift_refpert_common_samples - shift_refpert_expected_common)
+    shift_refpert_clean_trim_error = float(np.max(shift_refpert_trim_error[shift_refpert_index["clean"]]))
+    shift_refpert_common_tracking_error = float(
+        np.max(shift_refpert_common_error[shift_refpert_index["common_jitter"]])
+    )
+    shift_refpert_common_h_spread = float(np.ptp(shift_refpert_h_samples[shift_refpert_index["common_jitter"]]))
+    shift_refpert_diff10_trim_span = float(np.ptp(shift_refpert_gate_samples[shift_refpert_index["diff_jitter10"]]))
+    shift_refpert_diff10_h_span = float(np.ptp(shift_refpert_h_samples[shift_refpert_index["diff_jitter10"]]))
+    shift_refpert_h_min = float(np.min(shift_refpert_h_samples))
+    shift_refpert_h_max = float(np.max(shift_refpert_h_samples))
 
     def run_trimmed_reuse_skew_law_case(
         name: str,
@@ -13287,6 +13317,15 @@ quit
         ),
         "positive calibrated common-mode jitter should remain secondary to differential trim jitter",
     )
+    shift_polref_clean_trim_error = float(
+        np.max(np.abs(shift_polref_gate_samples[shift_polref_index["clean_pos65"]] - 0.065))
+    )
+    shift_polref_common_h_spread = float(np.ptp(shift_polref_h_samples[shift_polref_index["common_jitter_pos65"]]))
+    shift_polref_diff10_trim_span = float(np.ptp(shift_polref_gate_samples[shift_polref_index["diff_jitter10_pos65"]]))
+    shift_polref_diff10_h_span = float(np.ptp(shift_polref_h_samples[shift_polref_index["diff_jitter10_pos65"]]))
+    shift_polref_mixed_h_span = float(np.ptp(shift_polref_h_samples[shift_polref_index["mixed_jitter_pos65"]]))
+    shift_polref_h_min = float(np.min(shift_polref_h_samples))
+    shift_polref_h_max = float(np.max(shift_polref_h_samples))
 
     shift_reset_corner_specs = [
         ("strong", "strong TG", 0.500, -0.500),
@@ -15379,6 +15418,19 @@ quit
     shift_reset_ref_perturb_axes[0].set_ylabel("stored activation (mV)")
     shift_reset_ref_perturb_axes[0].set_title("Physical reset-reference differential error changes shifted-gate margin")
     shift_reset_ref_perturb_axes[0].grid(True, alpha=0.25)
+    shift_reset_ref_perturb_axes[0].text(
+        0.04,
+        0.58,
+        "nominal store = "
+        f"{1e3 * shift_reset_ref_perturb_store_samples[reset_ref_perturb_nominal_idx]:.1f} mV\n"
+        "helpful -10 mV gain = "
+        f"{1e3 * reset_ref_perturb_helpful_gain:.1f} mV\n"
+        "destructive +10 mV drop = "
+        f"{1e3 * reset_ref_perturb_destructive_10_drop:.1f} mV",
+        transform=shift_reset_ref_perturb_axes[0].transAxes,
+        fontsize="x-small",
+        bbox={"facecolor": "white", "alpha": 0.82, "edgecolor": "0.8"},
+    )
     shift_reset_ref_perturb_axes[0].legend(loc="upper right", fontsize="small")
     shift_reset_ref_perturb_x = np.arange(len(shift_reset_ref_perturb_labels))
     shift_reset_ref_perturb_axes[1].bar(
@@ -15404,7 +15456,20 @@ quit
     shift_reset_ref_perturb_axes[1].set_xticklabels(shift_reset_ref_perturb_labels, rotation=18, ha="right")
     shift_reset_ref_perturb_axes[1].set_ylabel("sampled differential (mV)")
     shift_reset_ref_perturb_axes[1].set_title("Common reset-reference errors are mild; differential errors consume margin")
+    shift_reset_ref_perturb_axes[1].set_ylim(-14, 88)
     shift_reset_ref_perturb_axes[1].grid(True, axis="y", alpha=0.25)
+    shift_reset_ref_perturb_axes[1].text(
+        0.04,
+        0.72,
+        "common +/-10 mV store error = "
+        f"{1e3 * reset_ref_perturb_common_store_error:.1f} mV / <10 mV\n"
+        "destructive +20 mV store = "
+        f"{1e3 * reset_ref_perturb_destructive_20_store:.1f} mV / >10 mV\n"
+        "differential trim controls margin",
+        transform=shift_reset_ref_perturb_axes[1].transAxes,
+        fontsize="x-small",
+        bbox={"facecolor": "white", "alpha": 0.82, "edgecolor": "0.8"},
+    )
     shift_reset_ref_perturb_axes[1].legend(loc="upper right", ncol=3, fontsize="small")
     shift_reset_ref_perturb_fig.tight_layout()
     save_plot(
@@ -15908,7 +15973,21 @@ quit
     shift_refpert_axes[0].set_xticklabels(["reset 0", "reset 1", "reset 2"])
     shift_refpert_axes[0].set_ylabel("gate diff (mV)")
     shift_refpert_axes[0].set_title("PWL reset references produce bounded cycle-by-cycle trim errors")
+    shift_refpert_axes[0].set_ylim(-46, -25)
     shift_refpert_axes[0].grid(True, alpha=0.25)
+    shift_refpert_axes[0].text(
+        0.54,
+        0.68,
+        "clean trim err = "
+        f"{1e3 * shift_refpert_clean_trim_error:.3f} mV / <6 mV\n"
+        "common tracking err = "
+        f"{1e3 * shift_refpert_common_tracking_error:.1f} mV\n"
+        "+/-10 mV diff span = "
+        f"{1e3 * shift_refpert_diff10_trim_span:.1f} mV",
+        transform=shift_refpert_axes[0].transAxes,
+        fontsize="x-small",
+        bbox={"facecolor": "white", "alpha": 0.82, "edgecolor": "0.8"},
+    )
     shift_refpert_axes[0].legend(loc="lower left", ncol=2, fontsize="x-small")
     for idx, label in enumerate(shift_refpert_labels):
         shift_refpert_axes[1].plot(
@@ -15930,7 +16009,21 @@ quit
     shift_refpert_axes[1].set_xticklabels(["cycle 1", "cycle 2", "cycle 3"])
     shift_refpert_axes[1].set_ylabel("cycle samples (mV)")
     shift_refpert_axes[1].set_title("Differential trim jitter dominates; common-mode jitter is small")
+    shift_refpert_axes[1].set_ylim(-3, 96)
     shift_refpert_axes[1].grid(True, axis="y", alpha=0.25)
+    shift_refpert_axes[1].text(
+        0.52,
+        0.08,
+        "all h range = "
+        f"{1e3 * shift_refpert_h_min:.1f}..{1e3 * shift_refpert_h_max:.1f} mV\n"
+        "common h spread = "
+        f"{1e3 * shift_refpert_common_h_spread:.1f} mV / <6 mV\n"
+        "+/-10 mV diff h span = "
+        f"{1e3 * shift_refpert_diff10_h_span:.1f} mV",
+        transform=shift_refpert_axes[1].transAxes,
+        fontsize="x-small",
+        bbox={"facecolor": "white", "alpha": 0.82, "edgecolor": "0.8"},
+    )
     shift_refpert_axes[1].legend(loc="upper left", ncol=2, fontsize="x-small")
     for label, rpt, load, store in shift_refpert_traces:
         shift_refpert_axes[2].plot(1e6 * rpt, 1e3 * store, label=f"{label} $h$")
@@ -16289,6 +16382,18 @@ quit
     shift_polref_axes[0].set_ylabel("sampled trim (mV)")
     shift_polref_axes[0].set_title("Positive calibrated split reset tracks cycle-varying trim commands")
     shift_polref_axes[0].grid(True, axis="y", alpha=0.25)
+    shift_polref_axes[0].text(
+        0.52,
+        0.13,
+        "clean trim err = "
+        f"{1e3 * shift_polref_clean_trim_error:.3f} mV / <6 mV\n"
+        "+/-10 mV diff span = "
+        f"{1e3 * shift_polref_diff10_trim_span:.1f} mV\n"
+        "sampled trim stays inside 50..80 mV",
+        transform=shift_polref_axes[0].transAxes,
+        fontsize="x-small",
+        bbox={"facecolor": "white", "alpha": 0.82, "edgecolor": "0.8"},
+    )
     shift_polref_axes[0].legend(loc="upper left", ncol=2, fontsize="x-small")
     for idx, label in enumerate(shift_polref_labels):
         style = "o-" if idx in {0, 1} else "s--"
@@ -16298,7 +16403,21 @@ quit
     shift_polref_axes[1].set_xticklabels(["cycle 1", "cycle 2", "cycle 3"])
     shift_polref_axes[1].set_ylabel("stored $h$ (mV)")
     shift_polref_axes[1].set_title("Differential trim jitter dominates over common-mode reference jitter")
+    shift_polref_axes[1].set_ylim(20, 76)
     shift_polref_axes[1].grid(True, axis="y", alpha=0.25)
+    shift_polref_axes[1].text(
+        0.52,
+        0.67,
+        "all h range = "
+        f"{1e3 * shift_polref_h_min:.1f}..{1e3 * shift_polref_h_max:.1f} mV\n"
+        "common h spread = "
+        f"{1e3 * shift_polref_common_h_spread:.1f} mV / <6 mV\n"
+        "+/-10 mV diff h span = "
+        f"{1e3 * shift_polref_diff10_h_span:.1f} mV",
+        transform=shift_polref_axes[1].transAxes,
+        fontsize="x-small",
+        bbox={"facecolor": "white", "alpha": 0.82, "edgecolor": "0.8"},
+    )
     shift_polref_axes[1].legend(loc="upper left", ncol=2, fontsize="x-small")
     for label, prt, load, store in shift_polref_traces:
         shift_polref_axes[2].plot(1e6 * prt, 1e3 * store, label=f"{label} $h$")

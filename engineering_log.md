@@ -2,6 +2,18 @@
 
 ## 2026-05-25
 
+- Clarified the MOS reset width and write-timing plots.  The reset decks
+  already asserted that a complementary transmission-gate reset beats an
+  NMOS-only reset, preserves common mode, suppresses writes while reset is
+  active, allows a partial reset-edge write, and gives matching clean
+  post-reset writes.  The regenerated `mos_reset_width_ngspice` and
+  `mos_reset_write_timing_ngspice` figures now label those margins directly:
+  a \(400\) ns transmission-gate reset leaves \(39.3\) mV differential
+  residue versus a \(50\) mV target while the NMOS-only copy remains at
+  \(223\) mV, transmission-gate common-mode error stays at \(0.64\) mV
+  versus a \(5\) mV budget, a during-reset write leaves only \(6.3\) mV,
+  and clean post-reset writes both land at \(57.5\) mV with below-display
+  spread.
 - Family-completed the remaining low-level MOS writer plots.  The analog-gate,
   PMOS-mismatch, alternating-readback, and retention decks already asserted
   analog gate monotonicity, W+/W- symmetry, inactive-rail quietness, mismatch

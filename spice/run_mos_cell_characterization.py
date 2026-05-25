@@ -16528,6 +16528,10 @@ quit
     require(nmos_residual[-1] > 0.15, "400 ns NMOS-only reset should still leave visible differential residue")
     require(np.max(np.abs(tg_common - 0.9)) < 0.005, "transmission-gate reset should preserve reset common mode")
     require(np.max(np.abs(nmos_common - 0.9)) > 0.03, "NMOS-only reset should show common-mode error")
+    tg_long_residual = float(tg_residual[-1])
+    nmos_long_residual = float(nmos_residual[-1])
+    tg_common_error_max = float(np.max(np.abs(tg_common - 0.9)))
+    nmos_common_error_max = float(np.max(np.abs(nmos_common - 0.9)))
 
     write_timing_data = run_ngspice(write_timing_deck, "mos_reset_write_timing")
     wt, write_timing_cols = load_wrdata(write_timing_data, 3 * len(write_timing_cases) + 1)
@@ -16550,7 +16554,10 @@ quit
     require(write_final[1] < 0.95 * write_final[-1], "reset-edge write should remain below a clean post-reset write")
     require(np.min(write_final[2:]) > 0.95 * write_final[-1], "post-reset writes should reach the full signed state")
     require(np.max(write_final[2:]) - np.min(write_final[2:]) < 0.004, "post-reset write timings should agree")
-    require(np.max(np.abs([wat(0.50e-6, common_case) - 0.9 for common_case in write_common])) < 0.02, "reset/write timing copies should leave reset near common mode")
+    write_common_error_max = float(np.max(np.abs([wat(0.50e-6, common_case) - 0.9 for common_case in write_common])))
+    require(write_common_error_max < 0.02, "reset/write timing copies should leave reset near common mode")
+    write_post_min = float(np.min(write_final[2:]))
+    write_post_spread = float(np.max(write_final[2:]) - np.min(write_final[2:]))
 
     mismatch_data = run_ngspice(mismatch_deck, "mos_reset_mismatch")
     mt, mismatch_cols = load_wrdata(mismatch_data, 2 * len(mismatch_cases) + 1)
@@ -16643,6 +16650,17 @@ quit
     sweep_axes[0].set_ylabel("$|z^- - z^+|$ after reset (V)")
     sweep_axes[0].set_title("Complementary reset gives usable pulse-width margin")
     sweep_axes[0].grid(True, which="both", alpha=0.25)
+    sweep_axes[0].text(
+        0.06,
+        0.20,
+        "TG 400 ns residual = "
+        f"{1e3 * tg_long_residual:.1f} mV / <50 mV\n"
+        "NMOS-only 400 ns residual = "
+        f"{1e3 * nmos_long_residual:.0f} mV / >150 mV",
+        transform=sweep_axes[0].transAxes,
+        fontsize="x-small",
+        bbox={"facecolor": "white", "alpha": 0.82, "edgecolor": "0.8"},
+    )
     sweep_axes[0].legend()
     sweep_axes[1].plot(widths_us, nmos_common, "o-", label="NMOS-only common mode")
     sweep_axes[1].plot(widths_us, tg_common, "s--", label="transmission-gate common mode")
@@ -16651,6 +16669,17 @@ quit
     sweep_axes[1].set_ylabel("post-reset common mode (V)")
     sweep_axes[1].set_title("Transmission gate preserves common mode while clearing both rails")
     sweep_axes[1].grid(True, alpha=0.25)
+    sweep_axes[1].text(
+        0.06,
+        0.70,
+        "TG max common error = "
+        f"{1e3 * tg_common_error_max:.2f} mV / <5 mV\n"
+        "NMOS-only max common error = "
+        f"{1e3 * nmos_common_error_max:.1f} mV / >30 mV",
+        transform=sweep_axes[1].transAxes,
+        fontsize="x-small",
+        bbox={"facecolor": "white", "alpha": 0.82, "edgecolor": "0.8"},
+    )
     sweep_axes[1].legend()
     sweep_fig.tight_layout()
     save_plot(sweep_fig, "mos_reset_width_ngspice")
@@ -16663,6 +16692,19 @@ quit
     write_timing_axes[0].set_ylabel("$z^- - z^+$ (V)")
     write_timing_axes[0].set_title("Reset suppresses writes until release")
     write_timing_axes[0].grid(True, alpha=0.25)
+    write_timing_axes[0].text(
+        0.05,
+        0.63,
+        "during-reset final = "
+        f"{1e3 * write_final[0]:.1f} mV / |final|<10 mV\n"
+        "edge final = "
+        f"{1e3 * write_final[1]:.1f} mV / partial\n"
+        "common error max = "
+        f"{1e3 * write_common_error_max:.2f} mV / <20 mV",
+        transform=write_timing_axes[0].transAxes,
+        fontsize="x-small",
+        bbox={"facecolor": "white", "alpha": 0.82, "edgecolor": "0.8"},
+    )
     write_timing_axes[0].legend(loc="upper right", ncol=2)
     labels = [label for _name, label, _start_us, _end_us in write_timing_cases]
     write_timing_axes[1].bar(labels, write_final)
@@ -16673,6 +16715,17 @@ quit
     write_timing_axes[1].set_ylabel("final $z^- - z^+$ (V)")
     write_timing_axes[1].set_title("Clean post-reset writes agree; reset-edge writes are partial (mV labels)")
     write_timing_axes[1].grid(True, axis="y", alpha=0.25)
+    write_timing_axes[1].text(
+        0.05,
+        0.70,
+        "post-reset min = "
+        f"{1e3 * write_post_min:.1f} mV / >95% late\n"
+        "post-reset spread = "
+        f"{1e3 * write_post_spread:.2f} mV / <4 mV",
+        transform=write_timing_axes[1].transAxes,
+        fontsize="x-small",
+        bbox={"facecolor": "white", "alpha": 0.82, "edgecolor": "0.8"},
+    )
     write_timing_fig.tight_layout()
     save_plot(write_timing_fig, "mos_reset_write_timing_ngspice")
 

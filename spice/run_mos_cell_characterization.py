@@ -2021,12 +2021,15 @@ quit
     mismatch_axes[1].plot(vt_offsets, mismatch_left_edges, "o-", label="left 0.5-gain edge")
     mismatch_axes[1].plot(vt_offsets, mismatch_right_edges, "s--", label="right 0.5-gain edge")
     mismatch_axes[1].plot(vt_offsets, window_widths, "^-.", label="active-window width")
+    mismatch_axes[1].axhline(0.55, color="0.4", linestyle=":", linewidth=1.0, label="0.55 V width bound")
     mismatch_axes[1].axhline(0, color="0.4", linewidth=0.8)
+    for x, width in zip(vt_offsets, window_widths):
+        mismatch_axes[1].text(x, width + 0.025, f"{width:.2f} V", ha="center", va="bottom", fontsize="x-small")
     mismatch_axes[1].set_xlabel("z+ input device $V_{TO}$ (V)")
     mismatch_axes[1].set_ylabel("window edge / width (V)")
     mismatch_axes[1].set_title("Mismatch shifts both active-window edges while preserving width")
     mismatch_axes[1].grid(True, alpha=0.25)
-    mismatch_axes[1].legend(loc="lower right")
+    mismatch_axes[1].legend(loc="lower right", fontsize="small")
     mismatch_fig.tight_layout()
     save_plot(mismatch_fig, "mos_hidden_error_mismatch_ngspice")
 
@@ -2046,12 +2049,15 @@ quit
     cm_axes[1].plot(cm_values, cm_right_edges, "s--", label="right 0.5-gain edge")
     cm_axes[1].plot(cm_values, cm_window_widths, "^-.", label="active-window width")
     cm_axes[1].plot(cm_values, cm_center_gains, "d:", label="center gain")
+    cm_axes[1].axhline(0.45, color="0.4", linestyle=":", linewidth=1.0, label="0.45 V width bound")
     cm_axes[1].axhline(0, color="0.4", linewidth=0.8)
+    for x, width in zip(cm_values, cm_window_widths):
+        cm_axes[1].text(x, width + 0.025, f"{width:.2f} V", ha="center", va="bottom", fontsize="x-small")
     cm_axes[1].set_xlabel("input common-mode voltage (V)")
     cm_axes[1].set_ylabel("edge / width / gain")
     cm_axes[1].set_title("Bias shifts change gain slightly but keep a broad derivative window")
     cm_axes[1].grid(True, alpha=0.25)
-    cm_axes[1].legend(loc="upper left", ncol=2, fontsize="small")
+    cm_axes[1].legend(loc="upper center", bbox_to_anchor=(0.5, -0.22), ncol=3, fontsize="small")
     cm_fig.tight_layout()
     save_plot(cm_fig, "mos_hidden_error_common_mode_ngspice")
     return hidden_plot

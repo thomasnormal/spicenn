@@ -2,6 +2,16 @@
 
 ## 2026-05-25
 
+- Family-completed the active-window margin display for hidden-error
+  derivative plots.  The ngspice assertions already required the finite
+  difference replica gain to stay nonnegative, preserve a broad active window,
+  and attenuate away from the center under both input-pair threshold mismatch
+  and input common-mode shifts.  The regenerated
+  `mos_hidden_error_mismatch_ngspice` plot now draws the asserted \(0.55\) V
+  width bound and labels measured widths of about \(0.68/0.66/0.66\) V.  The
+  regenerated `mos_hidden_error_common_mode_ngspice` plot draws the asserted
+  \(0.45\) V width bound and labels measured widths of about
+  \(0.48/0.67/0.78\) V for \(V_{CM}=0.75/0.90/1.05\) V.
 - Clarified the reusable MOS reset/precharge plot after the assertion evidence
   was stronger than the rendered figure.  The same ngspice deck still checks
   that the transmission-gate reset restores \(z\) common mode, clears

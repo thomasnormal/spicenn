@@ -6087,6 +6087,186 @@ quit
     hyz_fig.tight_layout()
     save_plot(hyz_fig, "mos_hidden_writer_restored_gate_hybrid_cell_quadrants_ngspice")
 
+    hybrid_cell_forward_deck = f"""
+* Hybrid restored writer update-to-forward-store integration check.
+* A single positive sample writes persistent W+ and B+ capacitors, then those
+* same capacitors drive a shared z+/z- summing pair through NMOS synapse
+* slices.  A crossed MOS forward pair reads that summed preactivation and
+* stores the activation on h+/h- capacitors.  No behavioral update or readback
+* source is used.
+{COMMON_MODELS}
+.param CERR=10p CWRITE=500p CBIAS=500p CSTORE=10p CSUM=500p WSW=24u WWRITE=24u WRESTN=18u WRESTP=300u WREAD=24u
+VDD vdd 0 1.8
+VTAIL vbias 0 0.95
+VPBWD_HYV pbwd 0 PULSE(0 1.8 0.45u 20n 20n 0.80u 5.0u)
+VRP_HYV rp_hyv 0 PULSE(0 1.8 0.45u 20n 20n 0.80u 5.0u)
+VACT_SRC_HYV hsrc_hyv 0 PWL(0 1.45 1.35u 1.45 1.37u 0.92 1.82u 0.92 1.84u 1.45 4.6u 1.45)
+VPSAMP_HYV psamp_hyv 0 PWL(0 0 1.42u 0 1.44u 1.8 1.76u 1.8 1.78u 0 4.6u 0)
+VPSAMPN_HYV psampn_hyv 0 PWL(0 1.8 1.42u 1.8 1.44u 0 1.76u 0 1.78u 1.8 4.6u 1.8)
+VPACC_HYV paccn_hyv 0 PWL(0 1.8 2.05u 1.8 2.07u 0 2.39u 0 2.41u 1.8 4.6u 1.8)
+VREAD_HYV read_hyv 0 PWL(0 0 2.70u 0 2.72u 1.15 3.36u 1.15 3.38u 0 4.6u 0)
+VPACT_HYV pact_hyv 0 PWL(0 0 3.16u 0 3.18u 1.8 3.31u 1.8 3.33u 0 4.6u 0)
+
+VXP_HYV xp_hyv 0 1.15
+VXM_HYV xm_hyv 0 0.65
+VZPP_HYV_SRC zpp_hyv_src 0 {0.9 + hybrid_mismatch_eps / 2.0:.5f}
+VZMM_HYV_SRC zmm_hyv_src 0 {0.9 - hybrid_mismatch_eps / 2.0:.5f}
+VZPM_HYV_SRC zpm_hyv_src 0 {0.9 - hybrid_mismatch_eps / 2.0:.5f}
+VZMP_HYV_SRC zmp_hyv_src 0 {0.9 + hybrid_mismatch_eps / 2.0:.5f}
+
+MPPP_HYV hpp_hyv hpp_hyv vdd vdd PMOS L={{LCH}} W={{WP}}
+MPPM_HYV hpm_hyv hpm_hyv vdd vdd PMOS L={{LCH}} W={{WP}}
+MNPP_HYV hpp_hyv zpp_hyv_src tailp_hyv 0 NMOS L={{LCH}} W={{WN}}
+MNPM_HYV hpm_hyv zmm_hyv_src tailp_hyv 0 NMOS L={{LCH}} W={{WN}}
+MNTP_HYV tailp_hyv vbias 0 0 NMOS L={{LCH}} W={{WN}}
+
+MPMP_HYV hmp_hyv hmp_hyv vdd vdd PMOS L={{LCH}} W={{WP}}
+MPMM_HYV hmm_hyv hmm_hyv vdd vdd PMOS L={{LCH}} W={{WP}}
+MNMP_HYV hmp_hyv zpm_hyv_src tailm_hyv 0 NMOS L={{LCH}} W={{WN}}
+MNMM_HYV hmm_hyv zmp_hyv_src tailm_hyv 0 NMOS L={{LCH}} W={{WN}}
+MNTM_HYV tailm_hyv vbias 0 0 NMOS L={{LCH}} W={{WN}}
+
+CDP_RP_HYV cdp_rp_hyv 0 {{CERR}} IC=1.04
+CDM_RP_HYV cdm_rp_hyv 0 {{CERR}} IC=1.04
+RDP_RP_HYV cdp_rp_hyv 0 50G
+RDM_RP_HYV cdm_rp_hyv 0 50G
+{sign_store_path("hpm_hyv", "rp_hyv", "cdp_rp_hyv", "hyvrp1")}
+{sign_store_path("hmp_hyv", "rp_hyv", "cdp_rp_hyv", "hyvrp2")}
+{sign_store_path("hpp_hyv", "rp_hyv", "cdm_rp_hyv", "hyvrp3")}
+{sign_store_path("hmm_hyv", "rp_hyv", "cdm_rp_hyv", "hyvrp4")}
+
+MPRP_CDP_HYV rgp_rp_hyv cdp_rp_hyv vdd vdd PMOS L={{LCH}} W={{WRESTP}}
+MNRP_CDP_HYV rgp_rp_hyv cdp_rp_hyv 0 0 NMOS L={{LCH}} W={{WRESTN}}
+MPRP_CDM_HYV rgm_rp_hyv cdm_rp_hyv vdd vdd PMOS L={{LCH}} W={{WRESTP}}
+MNRP_CDM_HYV rgm_rp_hyv cdm_rp_hyv 0 0 NMOS L={{LCH}} W={{WRESTN}}
+
+CHM_HYV hm_store_hyv 0 {{CSTORE}} IC=1.45
+RHM_HYV hm_store_hyv 0 50G
+MSACTN_HYV hsrc_hyv psamp_hyv hm_store_hyv 0 NMOS L={{LCH}} W={{WSW}}
+MSACTP_HYV hsrc_hyv psampn_hyv hm_store_hyv vdd PMOS L={{LCH}} W={{WSW}}
+
+CWP_HYV wp_hyv 0 {{CWRITE}} IC=0.85
+CWM_HYV wm_hyv 0 {{CWRITE}} IC=0.85
+CBP_HYV bp_hyv 0 {{CBIAS}} IC=0.85
+CBM_HYV bm_hyv 0 {{CBIAS}} IC=0.85
+MWP_HYV_A vdd paccn_hyv n_wp_hyv_a vdd PMOS L={{LCH}} W={{WWRITE}}
+MWP_HYV_B n_wp_hyv_a hm_store_hyv n_wp_hyv_b vdd PMOS L={{LCH}} W={{WWRITE}}
+MWP_HYV_C n_wp_hyv_b rgp_rp_hyv n_wp_hyv_c vdd PMOS L={{LCH}} W={{WWRITE}}
+MWP_HYV_D n_wp_hyv_c cdm_rp_hyv wp_hyv vdd PMOS L={{LCH}} W={{WWRITE}}
+MWM_HYV_A vdd paccn_hyv n_wm_hyv_a vdd PMOS L={{LCH}} W={{WWRITE}}
+MWM_HYV_B n_wm_hyv_a hm_store_hyv n_wm_hyv_b vdd PMOS L={{LCH}} W={{WWRITE}}
+MWM_HYV_C n_wm_hyv_b rgm_rp_hyv n_wm_hyv_c vdd PMOS L={{LCH}} W={{WWRITE}}
+MWM_HYV_D n_wm_hyv_c cdp_rp_hyv wm_hyv vdd PMOS L={{LCH}} W={{WWRITE}}
+MBP_HYV_A vdd paccn_hyv n_bp_hyv_a vdd PMOS L={{LCH}} W={{WWRITE}}
+MBP_HYV_B n_bp_hyv_a rgp_rp_hyv n_bp_hyv_b vdd PMOS L={{LCH}} W={{WWRITE}}
+MBP_HYV_C n_bp_hyv_b cdm_rp_hyv bp_hyv vdd PMOS L={{LCH}} W={{WWRITE}}
+MBM_HYV_A vdd paccn_hyv n_bm_hyv_a vdd PMOS L={{LCH}} W={{WWRITE}}
+MBM_HYV_B n_bm_hyv_a rgm_rp_hyv n_bm_hyv_b vdd PMOS L={{LCH}} W={{WWRITE}}
+MBM_HYV_C n_bm_hyv_b cdp_rp_hyv bm_hyv vdd PMOS L={{LCH}} W={{WWRITE}}
+
+CZP_HYV zp_hyv 0 {{CSUM}} IC=0.9
+CZM_HYV zm_hyv 0 {{CSUM}} IC=0.9
+RZP_HYV zp_hyv 0 100G
+RZM_HYV zm_hyv 0 100G
+MPP_W_HYV zp_hyv xp_hyv tail_wp_hyv 0 NMOS L={{LCH}} W={{WN}}
+MPM_W_HYV zm_hyv xm_hyv tail_wp_hyv 0 NMOS L={{LCH}} W={{WN}}
+MTW_GATE_HYV tail_wp_hyv read_hyv tail_wp_store_hyv 0 NMOS L={{LCH}} W={{WREAD}}
+MTW_STORE_HYV tail_wp_store_hyv wp_hyv 0 0 NMOS L={{LCH}} W=12u
+MNP_W_HYV zp_hyv xm_hyv tail_wm_hyv 0 NMOS L={{LCH}} W={{WN}}
+MNM_W_HYV zm_hyv xp_hyv tail_wm_hyv 0 NMOS L={{LCH}} W={{WN}}
+MTN_GATE_HYV tail_wm_hyv read_hyv tail_wm_store_hyv 0 NMOS L={{LCH}} W={{WREAD}}
+MTN_STORE_HYV tail_wm_store_hyv wm_hyv 0 0 NMOS L={{LCH}} W=12u
+MPP_B_HYV zp_hyv xp_hyv tail_bp_hyv 0 NMOS L={{LCH}} W={{WN}}
+MPM_B_HYV zm_hyv xm_hyv tail_bp_hyv 0 NMOS L={{LCH}} W={{WN}}
+MTB_GATE_HYV tail_bp_hyv read_hyv tail_bp_store_hyv 0 NMOS L={{LCH}} W={{WREAD}}
+MTB_STORE_HYV tail_bp_store_hyv bp_hyv 0 0 NMOS L={{LCH}} W=12u
+MNP_B_HYV zp_hyv xm_hyv tail_bm_hyv 0 NMOS L={{LCH}} W={{WN}}
+MNM_B_HYV zm_hyv xp_hyv tail_bm_hyv 0 NMOS L={{LCH}} W={{WN}}
+MTBN_GATE_HYV tail_bm_hyv read_hyv tail_bm_store_hyv 0 NMOS L={{LCH}} W={{WREAD}}
+MTBN_STORE_HYV tail_bm_store_hyv bm_hyv 0 0 NMOS L={{LCH}} W=12u
+
+MPFP_HYV hp_hyv hp_hyv vdd vdd PMOS L={{LCH}} W={{WP}}
+MPFM_HYV hm_hyv hm_hyv vdd vdd PMOS L={{LCH}} W={{WP}}
+MNFP_HYV hp_hyv zm_hyv ftail_hyv 0 NMOS L={{LCH}} W=48u
+MNFM_HYV hm_hyv zp_hyv ftail_hyv 0 NMOS L={{LCH}} W=48u
+MNFT_HYV ftail_hyv vbias 0 0 NMOS L={{LCH}} W=48u
+CHP_HYV hp_store_hyv 0 {{CSTORE}} IC=1.04
+CHM_FWD_HYV hm_fwd_store_hyv 0 {{CSTORE}} IC=1.04
+RHP_HYV hp_store_hyv 0 50G
+RHM_FWD_HYV hm_fwd_store_hyv 0 50G
+MSFP_HYV hp_hyv pact_hyv hp_store_hyv 0 NMOS L={{LCH}} W=48u
+MSFM_HYV hm_hyv pact_hyv hm_fwd_store_hyv 0 NMOS L={{LCH}} W=48u
+
+.control
+set noaskquit
+tran 5n 4.55u uic
+wrdata mos_hidden_writer_restored_gate_hybrid_update_forward.dat v(cdp_rp_hyv) v(cdm_rp_hyv) v(rgp_rp_hyv) v(rgm_rp_hyv) v(hm_store_hyv) v(wp_hyv) v(wm_hyv) v(bp_hyv) v(bm_hyv) v(zp_hyv) v(zm_hyv) v(hp_hyv) v(hm_hyv) v(hp_store_hyv) v(hm_fwd_store_hyv) v(paccn_hyv) v(read_hyv) v(pact_hyv)
+quit
+.endc
+.end
+"""
+    hybrid_cell_forward_data = run_ngspice(
+        hybrid_cell_forward_deck,
+        "mos_hidden_writer_restored_gate_hybrid_update_forward",
+    )
+    hyvt, hyv_cols = load_wrdata(hybrid_cell_forward_data, 18)
+
+    def hyvat(time_s: float, values: np.ndarray) -> float:
+        return float(values[np.argmin(np.abs(hyvt - time_s))])
+
+    hyv_hidden = hyv_cols[0] - hyv_cols[1]
+    hyv_selected_gate = hyv_cols[2]
+    hyv_complement_gate = hyv_cols[3]
+    hyv_hcap = hyv_cols[4]
+    hyv_weight = hyv_cols[5] - hyv_cols[6]
+    hyv_bias = hyv_cols[7] - hyv_cols[8]
+    hyv_preact = hyv_cols[10] - hyv_cols[9]
+    hyv_forward_load = hyv_cols[12] - hyv_cols[11]
+    hyv_forward_store = hyv_cols[14] - hyv_cols[13]
+    require(hyvat(1.35e-6, hyv_hidden) > 0.07, "update-forward deck should store positive error")
+    require(hyvat(1.45e-6, hyv_selected_gate) < 0.30, "update-forward selected restored gate should be low")
+    require(hyvat(1.45e-6, hyv_complement_gate) > 1.60, "update-forward complement restored gate should be high")
+    require(abs(hyvat(1.90e-6, hyv_hcap) - 0.92) < 0.012, "update-forward deck should sample active activation")
+    require(hyvat(2.55e-6, hyv_weight) > 0.020, "update-forward deck should write positive weight state")
+    require(hyvat(2.55e-6, hyv_bias) > 0.030, "update-forward deck should write positive bias state")
+    require(abs(hyvat(2.60e-6, hyv_preact)) < 0.003, "summed preactivation should stay quiet before read phase")
+    require(hyvat(3.35e-6, hyv_preact) > 0.050, "written W/B states should drive positive summed preactivation")
+    require(hyvat(3.35e-6, hyv_forward_load) > 0.040, "forward pair should read the summed W/B preactivation before common-mode collapse")
+    require(hyvat(3.50e-6, hyv_forward_store) > 0.040, "pact should store the forward activation during the valid read window")
+    require(hyvat(4.45e-6, hyv_forward_store) > 0.040, "stored forward activation should hold after pact")
+    require(abs(hyvat(4.45e-6, hyv_weight) - hyvat(2.55e-6, hyv_weight)) < 5e-4, "read/forward phases should not disturb weight state")
+    require(abs(hyvat(4.45e-6, hyv_bias) - hyvat(2.55e-6, hyv_bias)) < 5e-4, "read/forward phases should not disturb bias state")
+
+    hyv_fig, hyv_axes = plt.subplots(3, 1, figsize=(7.2, 7.4), gridspec_kw={"height_ratios": [1.0, 1.0, 1.0]})
+    hyv_axes[0].plot(1e6 * hyvt, hyv_hidden, label="stored $e^+$")
+    hyv_axes[0].plot(1e6 * hyvt, hyv_selected_gate, label="selected error gate")
+    hyv_axes[0].plot(1e6 * hyvt, hyv_complement_gate, label="complement error gate")
+    hyv_axes[0].plot(1e6 * hyvt, hyv_hcap, label="sampled activation gate")
+    hyv_axes[0].set_ylabel("voltage (V)")
+    hyv_axes[0].set_title("Update-forward deck stores error and activation")
+    hyv_axes[0].grid(True, alpha=0.25)
+    hyv_axes[0].legend(loc="center right", ncol=2, fontsize="small")
+    hyv_axes[1].plot(1e6 * hyvt, 1e3 * hyv_weight, label="$W^+ - W^-$")
+    hyv_axes[1].plot(1e6 * hyvt, 1e3 * hyv_bias, label="$B^+ - B^-$")
+    hyv_axes[1].plot(1e6 * hyvt, 1e3 * hyv_preact, label="$z^- - z^+$")
+    hyv_axes[1].plot(1e6 * hyvt, hyv_cols[15] / 20.0, color="0.55", alpha=0.25, label="$pacc_n/20$")
+    hyv_axes[1].plot(1e6 * hyvt, hyv_cols[16] / 20.0, color="0.25", alpha=0.25, label="$read/20$")
+    hyv_axes[1].set_ylabel("mV")
+    hyv_axes[1].set_title("Written W/B capacitors drive one shared summing node")
+    hyv_axes[1].grid(True, alpha=0.25)
+    hyv_axes[1].legend(loc="upper left", ncol=3, fontsize="small")
+    hyv_axes[2].plot(1e6 * hyvt, 1e3 * hyv_forward_load, label="forward-pair load")
+    hyv_axes[2].plot(1e6 * hyvt, 1e3 * hyv_forward_store, label="stored activation")
+    hyv_axes[2].plot(1e6 * hyvt, hyv_cols[17] / 20.0, color="0.35", alpha=0.25, label="$pact/20$")
+    hyv_axes[2].axhline(0, color="0.4", linewidth=0.8)
+    hyv_axes[2].set_xlabel("time (us)")
+    hyv_axes[2].set_ylabel("activation differential (mV)")
+    hyv_axes[2].set_title("Crossed MOS forward pair stores the summed activation")
+    hyv_axes[2].grid(True, alpha=0.25)
+    hyv_axes[2].legend(loc="upper left", fontsize="small")
+    hyv_fig.tight_layout()
+    save_plot(hyv_fig, "mos_hidden_writer_restored_gate_hybrid_update_forward_ngspice")
+
     hybrid_repeated_deck = f"""
 * Hybrid restored-enable/analog-error writer repeated-pulse accumulation check.
 * One stored r+ hidden-error rail and one activation gate drive the same

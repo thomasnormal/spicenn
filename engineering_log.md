@@ -1,5 +1,9 @@
 # Engineering Log
 
+## 2026-05-25
+
+- Added a MOS-only hybrid update-to-forward-store characterization. The deck writes one \(a^+e^+\) sample into persistent \(W^+/W^-\) and \(B^+/B^-\) capacitors, then uses those same states to drive a shared signed summing pair and crossed MOS forward pair before sampling the resulting activation on \(h^+/h^-\). Measured values are \(W^+ - W^- = 22.99\) mV, \(B^+ - B^- = 34.54\) mV, \(z^- - z^+ = 52.07\) mV, peak forward load \(73.34\) mV, and held activation \(h^- - h^+ = 47.35\) mV. The read/forward phases disturb the weight and bias states by only \(0.005/0.002\) uV. The key circuit lesson is that \(pact\) must close inside the valid forward-load window; leaving the activation-store switch on after the summing common mode droops makes the cap track the wrong value even though the forward pair itself is strong enough.
+
 ## 2026-05-24
 
 - Added a four-quadrant integrated hybrid restored-writer local-feature update characterization. This extends the one-sample integrated deck from \(a^+e^+\) to \(a^+e^+\), \(a^+e^-\), \(a^-e^+\), and \(a^-e^-\), with sampled activation gates, stored/restored error rails, simultaneous weight and bias writes, and transistor readback on every copy. The measured weight differentials are \(+22.99\), \(-22.99\), \(-22.99\), and \(+22.99\) mV, matching \(\Delta W\propto ae\). The measured bias differentials are \(+34.54\), \(-34.54\), \(+34.54\), and \(-34.54\) mV, matching \(\Delta B\propto e\). Weight readback signs are \(+19.06\), \(-19.06\), \(-19.06\), and \(+19.06\) uA; bias readback signs are \(+29.17\), \(-29.17\), \(+29.17\), and \(-29.17\) uA.

@@ -1272,6 +1272,31 @@ must satisfy before it can replace the current behavioral prototype.
 
 \begin{figure}[H]
   \centering
+  \includegraphics[width=0.88\linewidth]{figures/mos_hidden_writer_restored_gate_hybrid_update_forward_ngspice.png}
+  \caption{Ngspice update-to-forward-store characterization for the hybrid
+  local-feature cell.  This MOS-only deck performs one positive
+  \(a^+e^+\) sample update, then uses the same persistent \(W^+/W^-\) and
+  \(B^+/B^-\) capacitor states to drive a shared signed summing pair and a
+  crossed MOS forward pair.  The experimentally checked contract is
+  \(\Delta(W^+-W^-)>0\), \(\Delta(B^+-B^-)>0\),
+  \(z^- - z^+ =
+  F_{\mathrm{read}}(W^+-W^-,B^+-B^-;x^+-x^-)>0\), and
+  \(h^- - h^+ = F_{\mathrm{fwd}}(z^- - z^+) > 0\), with the final
+  \(h^- - h^+\) value stored on activation capacitors through
+  a MOS pass switch.  The measured write step is
+  \(W^+-W^-=22.99\) mV and \(B^+-B^-=34.54\) mV.  During the read phase those
+  states create a \(52.07\) mV summed preactivation and a forward-pair load
+  that peaks at \(73.34\) mV; the activation store captures and holds
+  \(47.35\) mV after \(pact\) closes.  The read/forward phases disturb the
+  weight and bias states by only \(0.005\,\mu\)V and \(0.002\,\mu\)V,
+  respectively.  The important sizing lesson is that the activation-store
+  phase \(pact\) must close inside the valid forward-load window; otherwise the store
+  tracks the later common-mode droop.}
+  \label{fig:mos-hidden-writer-restored-gate-hybrid-update-forward-ngspice}
+\end{figure}
+
+\begin{figure}[H]
+  \centering
   \includegraphics[width=0.88\linewidth]{figures/mos_hidden_writer_restored_gate_hybrid_repeated_ngspice.png}
   \caption{Ngspice repeated-pulse accumulation characterization of the hybrid
   restored writer.  One stored \(r^+\) hidden-error rail drives one persistent

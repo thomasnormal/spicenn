@@ -31,6 +31,8 @@ def test_device_mnist01_block_script_help_runs_from_repo_root() -> None:
     assert "--hidden-error-width" in proc.stdout
     assert "--hidden-update-width" in proc.stdout
     assert "--hidden-weight-write-width" in proc.stdout
+    assert "--hidden-activation-width" in proc.stdout
+    assert "--readout-forward-width" in proc.stdout
     assert "--hidden-bias-positive-init" in proc.stdout
     assert "--assert-nonbehavioral" in proc.stdout
 
@@ -68,6 +70,8 @@ def test_block_netlist_emits_per_pixel_trainable_caps_and_no_behavioral_sources(
         hidden_error_width=40.0,
         hidden_update_width=18.0,
         hidden_weight_write_width=0.4,
+        hidden_activation_width=96.0,
+        readout_forward_width=128.0,
     )
 
     assert "\nB" not in netlist
@@ -84,6 +88,9 @@ def test_block_netlist_emits_per_pixel_trainable_caps_and_no_behavioral_sources(
     assert "Mhdp3_d0 vdd dp hdp3_d0 0 NSENSE W=40u" in netlist
     assert "Mgvp3_a vdd act3 gvp3_a 0 NREL W=36u" in netlist
     assert "Mbhp3_up_a bhp3_up apply bhp3 0 NREL W=0.4u" in netlist
+    assert "Mrelu_h3 vdd pre3 act3 0 NREL W=96u" in netlist
+    assert "Movpos3_a vdd act3 op3_0 0 NREL W=128u" in netlist
+    assert "Movneg3_f score fwd on3_0 0 NREL W=96u" in netlist
     assert "Movpos3_f op3_1 fwd score 0 NREL" in netlist
     assert "Mrelu_o vdd score out 0 NSENSE" in netlist
 

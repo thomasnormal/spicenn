@@ -134,6 +134,8 @@ def block_netlist(
     hidden_error_width: float = 32.0,
     hidden_update_width: float = 12.0,
     hidden_weight_write_width: float = 0.25,
+    hidden_activation_width: float = 24.0,
+    readout_forward_width: float = 64.0,
     input_rail_mode: str = "alternating-complement",
 ) -> str:
     if readout_apply_scale <= 0.0:
@@ -148,6 +150,10 @@ def block_netlist(
         raise ValueError("hidden_update_width must be positive")
     if hidden_weight_write_width <= 0.0:
         raise ValueError("hidden_weight_write_width must be positive")
+    if hidden_activation_width <= 0.0:
+        raise ValueError("hidden_activation_width must be positive")
+    if readout_forward_width <= 0.0:
+        raise ValueError("readout_forward_width must be positive")
     if input_rail_mode not in INPUT_RAIL_MODES:
         raise ValueError(f"input_rail_mode must be one of {INPUT_RAIL_MODES}")
     blocks, expected_features = block_topology(image_size, block_size, stride, channels)
@@ -164,6 +170,7 @@ def block_netlist(
     readout_pmos_w = 8.0 * readout_apply_scale
     readout_nmos_w = 2.0 * readout_apply_scale
     hidden_neg_width = max(0.5, hidden_forward_width * 0.75)
+    readout_negative_forward_width = max(0.5, readout_forward_width * 0.75)
     stop = len(samples) * CYCLE_NS
     measures: list[str] = []
     prints: list[str] = []
@@ -345,13 +352,13 @@ def block_netlist(
                 f"Mhbpos{feature}_f hbp{feature}_0 fwd pre{feature} 0 NMOS W={hidden_forward_width:.6g}u L=180n",
                 f"Mhbneg{feature}_f pre{feature} fwd hbn{feature}_0 0 NMOS W={hidden_neg_width:.6g}u L=180n",
                 f"Mhbneg{feature}_b hbn{feature}_0 bhn{feature} 0 0 NMOS W={hidden_neg_width:.6g}u L=180n",
-                f"Mrelu_h{feature} vdd pre{feature} act{feature} 0 NREL W=24u L=180n",
-                f"Movpos{feature}_a vdd act{feature} op{feature}_0 0 NREL W=64u L=180n",
-                f"Movpos{feature}_w op{feature}_0 vwp{feature} op{feature}_1 0 NREL W=64u L=180n",
-                f"Movpos{feature}_f op{feature}_1 fwd score 0 NREL W=64u L=180n",
-                f"Movneg{feature}_f score fwd on{feature}_0 0 NREL W=48u L=180n",
-                f"Movneg{feature}_a on{feature}_0 act{feature} on{feature}_1 0 NREL W=48u L=180n",
-                f"Movneg{feature}_w on{feature}_1 vwn{feature} 0 0 NREL W=48u L=180n",
+                f"Mrelu_h{feature} vdd pre{feature} act{feature} 0 NREL W={hidden_activation_width:.6g}u L=180n",
+                f"Movpos{feature}_a vdd act{feature} op{feature}_0 0 NREL W={readout_forward_width:.6g}u L=180n",
+                f"Movpos{feature}_w op{feature}_0 vwp{feature} op{feature}_1 0 NREL W={readout_forward_width:.6g}u L=180n",
+                f"Movpos{feature}_f op{feature}_1 fwd score 0 NREL W={readout_forward_width:.6g}u L=180n",
+                f"Movneg{feature}_f score fwd on{feature}_0 0 NREL W={readout_negative_forward_width:.6g}u L=180n",
+                f"Movneg{feature}_a on{feature}_0 act{feature} on{feature}_1 0 NREL W={readout_negative_forward_width:.6g}u L=180n",
+                f"Movneg{feature}_w on{feature}_1 vwn{feature} 0 0 NREL W={readout_negative_forward_width:.6g}u L=180n",
                 f"Mhdp{feature}_d0 vdd dp hdp{feature}_d0 0 NSENSE W={hidden_error_width:.6g}u L=180n",
                 f"Mhdp{feature}_d1 hdp{feature}_d0 act{feature} hdp{feature}_d1 0 NREL W={hidden_error_width:.6g}u L=180n",
                 f"Mhdp{feature}_d2 hdp{feature}_d1 bwd hdp{feature} 0 NMOS W={hidden_error_width:.6g}u L=180n",
@@ -538,6 +545,8 @@ def run_device_sequence(
     hidden_error_width: float,
     hidden_update_width: float,
     hidden_weight_write_width: float,
+    hidden_activation_width: float,
+    readout_forward_width: float,
     input_rail_mode: str,
 ) -> pd.DataFrame:
     netlist = block_netlist(
@@ -555,6 +564,8 @@ def run_device_sequence(
         hidden_error_width=hidden_error_width,
         hidden_update_width=hidden_update_width,
         hidden_weight_write_width=hidden_weight_write_width,
+        hidden_activation_width=hidden_activation_width,
+        readout_forward_width=readout_forward_width,
         input_rail_mode=input_rail_mode,
     )
     if "\nB" in netlist:
@@ -587,6 +598,8 @@ def main() -> None:
     ap.add_argument("--hidden-error-width", type=float, default=32.0)
     ap.add_argument("--hidden-update-width", type=float, default=12.0)
     ap.add_argument("--hidden-weight-write-width", type=float, default=0.25)
+    ap.add_argument("--hidden-activation-width", type=float, default=24.0)
+    ap.add_argument("--readout-forward-width", type=float, default=64.0)
     ap.add_argument("--input-rail-mode", choices=INPUT_RAIL_MODES, default="alternating-complement")
     ap.add_argument("--complement-rail-scale", type=float, default=0.5)
     ap.add_argument("--hidden-bias-positive-init", type=float, default=0.50)
@@ -645,6 +658,8 @@ def main() -> None:
         "hidden_error_width": args.hidden_error_width,
         "hidden_update_width": args.hidden_update_width,
         "hidden_weight_write_width": args.hidden_weight_write_width,
+        "hidden_activation_width": args.hidden_activation_width,
+        "readout_forward_width": args.readout_forward_width,
         "input_rail_mode": args.input_rail_mode,
     }
     initial_eval_rows = run_device_sequence(
@@ -729,6 +744,8 @@ def main() -> None:
         "hidden_error_width": args.hidden_error_width,
         "hidden_update_width": args.hidden_update_width,
         "hidden_weight_write_width": args.hidden_weight_write_width,
+        "hidden_activation_width": args.hidden_activation_width,
+        "readout_forward_width": args.readout_forward_width,
         "hidden_bias_positive_init": args.hidden_bias_positive_init,
         "hidden_bias_negative_init": args.hidden_bias_negative_init,
         "learning_device_implementation": "transistor_passive",

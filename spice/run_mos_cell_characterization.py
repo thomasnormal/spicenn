@@ -6559,6 +6559,218 @@ quit
     hyf_fig.tight_layout()
     save_plot(hyf_fig, "mos_hidden_writer_restored_gate_hybrid_update_forward_quadrants_ngspice")
 
+    hybrid_forward_reuse_deck = f"""
+* Hybrid restored writer same-cell update-to-forward reuse check.
+* One physical hidden-error store, activation sample cap, W/B state pair,
+* summing pair, and forward-store pair sees two samples.  The first sample is
+* a+e+ and writes a positive W/B state.  MOS transmission-gate reset clears
+* only the transient hidden/activation/z/h state.  The second sample is a+e-
+* and must cancel the persistent W/B differential without Python capacitor
+* writes or behavioral update/readback sources.
+{COMMON_MODELS}
+.param CERR=10p CWRITE=500p CBIAS=500p CSTORE=10p CSUM=500p WSW=24u WWRITE=24u WRESTN=18u WRESTP=300u WREAD=24u WRESETN=24u WRESETP=60u
+VDD vdd 0 1.8
+VTAIL vbias 0 0.95
+VECM ecm 0 1.04
+VACM acm 0 1.45
+VZCM zcm 0 0.90
+VHCM hcm 0 1.04
+VPBWD_HYR pbwd 0 PWL(0 0 0.45u 0 0.47u 1.8 1.25u 1.8 1.27u 0 4.25u 0 4.27u 1.8 5.05u 1.8 5.07u 0 7.8u 0)
+VRP_HYR rp_hyr 0 PWL(0 0 0.45u 0 0.47u 1.8 1.25u 1.8 1.27u 0 7.8u 0)
+VRM_HYR rm_hyr 0 PWL(0 0 4.25u 0 4.27u 1.8 5.05u 1.8 5.07u 0 7.8u 0)
+VRESET_HYR rst_hyr 0 PWL(0 0 3.58u 0 3.60u 1.8 4.00u 1.8 4.02u 0 7.8u 0)
+VRESETN_HYR rstn_hyr 0 PWL(0 1.8 3.58u 1.8 3.60u 0 4.00u 0 4.02u 1.8 7.8u 1.8)
+VACT_SRC_HYR hsrc_hyr 0 PWL(0 1.45 1.35u 1.45 1.37u 0.92 1.82u 0.92 1.84u 1.45 5.13u 1.45 5.15u 0.92 5.60u 0.92 5.62u 1.45 7.8u 1.45)
+VPSAMP_HYR psamp_hyr 0 PWL(0 0 1.42u 0 1.44u 1.8 1.76u 1.8 1.78u 0 5.20u 0 5.22u 1.8 5.54u 1.8 5.56u 0 7.8u 0)
+VPSAMPN_HYR psampn_hyr 0 PWL(0 1.8 1.42u 1.8 1.44u 0 1.76u 0 1.78u 1.8 5.20u 1.8 5.22u 0 5.54u 0 5.56u 1.8 7.8u 1.8)
+VPACC_HYR paccn_hyr 0 PWL(0 1.8 2.05u 1.8 2.07u 0 2.39u 0 2.41u 1.8 5.85u 1.8 5.87u 0 6.19u 0 6.21u 1.8 7.8u 1.8)
+VREAD_HYR read_hyr 0 PWL(0 0 2.70u 0 2.72u 1.15 3.36u 1.15 3.38u 0 6.50u 0 6.52u 1.15 7.16u 1.15 7.18u 0 7.8u 0)
+VPACT_HYR pact_hyr 0 PWL(0 0 3.16u 0 3.18u 1.8 3.31u 1.8 3.33u 0 6.96u 0 6.98u 1.8 7.11u 1.8 7.13u 0 7.8u 0)
+
+VXP_HYR xp_hyr 0 1.15
+VXM_HYR xm_hyr 0 0.65
+VZPP_HYR_SRC zpp_hyr_src 0 {0.9 + hybrid_mismatch_eps / 2.0:.5f}
+VZMM_HYR_SRC zmm_hyr_src 0 {0.9 - hybrid_mismatch_eps / 2.0:.5f}
+VZPM_HYR_SRC zpm_hyr_src 0 {0.9 - hybrid_mismatch_eps / 2.0:.5f}
+VZMP_HYR_SRC zmp_hyr_src 0 {0.9 + hybrid_mismatch_eps / 2.0:.5f}
+
+MPPP_HYR hpp_hyr hpp_hyr vdd vdd PMOS L={{LCH}} W={{WP}}
+MPPM_HYR hpm_hyr hpm_hyr vdd vdd PMOS L={{LCH}} W={{WP}}
+MNPP_HYR hpp_hyr zpp_hyr_src tailp_hyr 0 NMOS L={{LCH}} W={{WN}}
+MNPM_HYR hpm_hyr zmm_hyr_src tailp_hyr 0 NMOS L={{LCH}} W={{WN}}
+MNTP_HYR tailp_hyr vbias 0 0 NMOS L={{LCH}} W={{WN}}
+
+MPMP_HYR hmp_hyr hmp_hyr vdd vdd PMOS L={{LCH}} W={{WP}}
+MPMM_HYR hmm_hyr hmm_hyr vdd vdd PMOS L={{LCH}} W={{WP}}
+MNMP_HYR hmp_hyr zpm_hyr_src tailm_hyr 0 NMOS L={{LCH}} W={{WN}}
+MNMM_HYR hmm_hyr zmp_hyr_src tailm_hyr 0 NMOS L={{LCH}} W={{WN}}
+MNTM_HYR tailm_hyr vbias 0 0 NMOS L={{LCH}} W={{WN}}
+
+CDP_HYR cdp_hyr 0 {{CERR}} IC=1.04
+CDM_HYR cdm_hyr 0 {{CERR}} IC=1.04
+RDP_HYR cdp_hyr 0 50G
+RDM_HYR cdm_hyr 0 50G
+MRDPN_HYR cdp_hyr rst_hyr ecm 0 NMOS L={{LCH}} W={{WRESETN}}
+MRDMN_HYR cdm_hyr rst_hyr ecm 0 NMOS L={{LCH}} W={{WRESETN}}
+MRDPP_HYR cdp_hyr rstn_hyr ecm vdd PMOS L={{LCH}} W={{WRESETP}}
+MRDMP_HYR cdm_hyr rstn_hyr ecm vdd PMOS L={{LCH}} W={{WRESETP}}
+{sign_store_path("hpm_hyr", "rp_hyr", "cdp_hyr", "hyrrp1")}
+{sign_store_path("hmp_hyr", "rp_hyr", "cdp_hyr", "hyrrp2")}
+{sign_store_path("hpp_hyr", "rp_hyr", "cdm_hyr", "hyrrp3")}
+{sign_store_path("hmm_hyr", "rp_hyr", "cdm_hyr", "hyrrp4")}
+{sign_store_path("hpp_hyr", "rm_hyr", "cdp_hyr", "hyrrm1")}
+{sign_store_path("hmm_hyr", "rm_hyr", "cdp_hyr", "hyrrm2")}
+{sign_store_path("hpm_hyr", "rm_hyr", "cdm_hyr", "hyrrm3")}
+{sign_store_path("hmp_hyr", "rm_hyr", "cdm_hyr", "hyrrm4")}
+
+MPRP_CDP_HYR rgp_hyr cdp_hyr vdd vdd PMOS L={{LCH}} W={{WRESTP}}
+MNRP_CDP_HYR rgp_hyr cdp_hyr 0 0 NMOS L={{LCH}} W={{WRESTN}}
+MPRP_CDM_HYR rgm_hyr cdm_hyr vdd vdd PMOS L={{LCH}} W={{WRESTP}}
+MNRP_CDM_HYR rgm_hyr cdm_hyr 0 0 NMOS L={{LCH}} W={{WRESTN}}
+
+CHM_ACT_HYR hm_act_hyr 0 {{CSTORE}} IC=1.45
+RHM_ACT_HYR hm_act_hyr 0 50G
+MRHAN_HYR hm_act_hyr rst_hyr acm 0 NMOS L={{LCH}} W={{WRESETN}}
+MRHAP_HYR hm_act_hyr rstn_hyr acm vdd PMOS L={{LCH}} W={{WRESETP}}
+MSACTN_HYR hsrc_hyr psamp_hyr hm_act_hyr 0 NMOS L={{LCH}} W={{WSW}}
+MSACTP_HYR hsrc_hyr psampn_hyr hm_act_hyr vdd PMOS L={{LCH}} W={{WSW}}
+
+CWP_HYR wp_hyr 0 {{CWRITE}} IC=0.85
+CWM_HYR wm_hyr 0 {{CWRITE}} IC=0.85
+CBP_HYR bp_hyr 0 {{CBIAS}} IC=0.85
+CBM_HYR bm_hyr 0 {{CBIAS}} IC=0.85
+MWP_HYR_A vdd paccn_hyr n_wp_hyr_a vdd PMOS L={{LCH}} W={{WWRITE}}
+MWP_HYR_B n_wp_hyr_a hm_act_hyr n_wp_hyr_b vdd PMOS L={{LCH}} W={{WWRITE}}
+MWP_HYR_C n_wp_hyr_b rgp_hyr n_wp_hyr_c vdd PMOS L={{LCH}} W={{WWRITE}}
+MWP_HYR_D n_wp_hyr_c cdm_hyr wp_hyr vdd PMOS L={{LCH}} W={{WWRITE}}
+MWM_HYR_A vdd paccn_hyr n_wm_hyr_a vdd PMOS L={{LCH}} W={{WWRITE}}
+MWM_HYR_B n_wm_hyr_a hm_act_hyr n_wm_hyr_b vdd PMOS L={{LCH}} W={{WWRITE}}
+MWM_HYR_C n_wm_hyr_b rgm_hyr n_wm_hyr_c vdd PMOS L={{LCH}} W={{WWRITE}}
+MWM_HYR_D n_wm_hyr_c cdp_hyr wm_hyr vdd PMOS L={{LCH}} W={{WWRITE}}
+MBP_HYR_A vdd paccn_hyr n_bp_hyr_a vdd PMOS L={{LCH}} W={{WWRITE}}
+MBP_HYR_B n_bp_hyr_a rgp_hyr n_bp_hyr_b vdd PMOS L={{LCH}} W={{WWRITE}}
+MBP_HYR_C n_bp_hyr_b cdm_hyr bp_hyr vdd PMOS L={{LCH}} W={{WWRITE}}
+MBM_HYR_A vdd paccn_hyr n_bm_hyr_a vdd PMOS L={{LCH}} W={{WWRITE}}
+MBM_HYR_B n_bm_hyr_a rgm_hyr n_bm_hyr_b vdd PMOS L={{LCH}} W={{WWRITE}}
+MBM_HYR_C n_bm_hyr_b cdp_hyr bm_hyr vdd PMOS L={{LCH}} W={{WWRITE}}
+
+CZP_HYR zp_hyr 0 {{CSUM}} IC=0.9
+CZM_HYR zm_hyr 0 {{CSUM}} IC=0.9
+RZP_HYR zp_hyr 0 100G
+RZM_HYR zm_hyr 0 100G
+MRZPN_HYR zp_hyr rst_hyr zcm 0 NMOS L={{LCH}} W={{WRESETN}}
+MRZMN_HYR zm_hyr rst_hyr zcm 0 NMOS L={{LCH}} W={{WRESETN}}
+MRZPP_HYR zp_hyr rstn_hyr zcm vdd PMOS L={{LCH}} W={{WRESETP}}
+MRZMP_HYR zm_hyr rstn_hyr zcm vdd PMOS L={{LCH}} W={{WRESETP}}
+MPP_W_HYR zp_hyr xp_hyr tail_wp_hyr 0 NMOS L={{LCH}} W={{WN}}
+MPM_W_HYR zm_hyr xm_hyr tail_wp_hyr 0 NMOS L={{LCH}} W={{WN}}
+MTW_GATE_HYR tail_wp_hyr read_hyr tail_wp_store_hyr 0 NMOS L={{LCH}} W={{WREAD}}
+MTW_STORE_HYR tail_wp_store_hyr wp_hyr 0 0 NMOS L={{LCH}} W=12u
+MNP_W_HYR zp_hyr xm_hyr tail_wm_hyr 0 NMOS L={{LCH}} W={{WN}}
+MNM_W_HYR zm_hyr xp_hyr tail_wm_hyr 0 NMOS L={{LCH}} W={{WN}}
+MTN_GATE_HYR tail_wm_hyr read_hyr tail_wm_store_hyr 0 NMOS L={{LCH}} W={{WREAD}}
+MTN_STORE_HYR tail_wm_store_hyr wm_hyr 0 0 NMOS L={{LCH}} W=12u
+MPP_B_HYR zp_hyr xp_hyr tail_bp_hyr 0 NMOS L={{LCH}} W={{WN}}
+MPM_B_HYR zm_hyr xm_hyr tail_bp_hyr 0 NMOS L={{LCH}} W={{WN}}
+MTB_GATE_HYR tail_bp_hyr read_hyr tail_bp_store_hyr 0 NMOS L={{LCH}} W={{WREAD}}
+MTB_STORE_HYR tail_bp_store_hyr bp_hyr 0 0 NMOS L={{LCH}} W=12u
+MNP_B_HYR zp_hyr xm_hyr tail_bm_hyr 0 NMOS L={{LCH}} W={{WN}}
+MNM_B_HYR zm_hyr xp_hyr tail_bm_hyr 0 NMOS L={{LCH}} W={{WN}}
+MTBN_GATE_HYR tail_bm_hyr read_hyr tail_bm_store_hyr 0 NMOS L={{LCH}} W={{WREAD}}
+MTBN_STORE_HYR tail_bm_store_hyr bm_hyr 0 0 NMOS L={{LCH}} W=12u
+
+MPFP_HYR hp_hyr hp_hyr vdd vdd PMOS L={{LCH}} W={{WP}}
+MPFM_HYR hm_hyr hm_hyr vdd vdd PMOS L={{LCH}} W={{WP}}
+MNFP_HYR hp_hyr zm_hyr ftail_hyr 0 NMOS L={{LCH}} W=48u
+MNFM_HYR hm_hyr zp_hyr ftail_hyr 0 NMOS L={{LCH}} W=48u
+MNFT_HYR ftail_hyr vbias 0 0 NMOS L={{LCH}} W=48u
+CHP_FWD_HYR hp_fwd_hyr 0 {{CSTORE}} IC=1.04
+CHM_FWD_HYR hm_fwd_hyr 0 {{CSTORE}} IC=1.04
+RHP_FWD_HYR hp_fwd_hyr 0 50G
+RHM_FWD_HYR hm_fwd_hyr 0 50G
+MRFPN_HYR hp_fwd_hyr rst_hyr hcm 0 NMOS L={{LCH}} W={{WRESETN}}
+MRFMN_HYR hm_fwd_hyr rst_hyr hcm 0 NMOS L={{LCH}} W={{WRESETN}}
+MRFPP_HYR hp_fwd_hyr rstn_hyr hcm vdd PMOS L={{LCH}} W={{WRESETP}}
+MRFMP_HYR hm_fwd_hyr rstn_hyr hcm vdd PMOS L={{LCH}} W={{WRESETP}}
+MSFP_HYR hp_hyr pact_hyr hp_fwd_hyr 0 NMOS L={{LCH}} W=48u
+MSFM_HYR hm_hyr pact_hyr hm_fwd_hyr 0 NMOS L={{LCH}} W=48u
+
+.control
+set noaskquit
+tran 5n 7.75u uic
+wrdata mos_hidden_writer_restored_gate_hybrid_update_forward_reuse.dat v(cdp_hyr) v(cdm_hyr) v(rgp_hyr) v(rgm_hyr) v(hm_act_hyr) v(wp_hyr) v(wm_hyr) v(bp_hyr) v(bm_hyr) v(zp_hyr) v(zm_hyr) v(hp_hyr) v(hm_hyr) v(hp_fwd_hyr) v(hm_fwd_hyr) v(pbwd) v(rp_hyr) v(rm_hyr) v(rst_hyr) v(psamp_hyr) v(paccn_hyr) v(read_hyr) v(pact_hyr)
+quit
+.endc
+.end
+"""
+    hybrid_forward_reuse_data = run_ngspice(
+        hybrid_forward_reuse_deck,
+        "mos_hidden_writer_restored_gate_hybrid_update_forward_reuse",
+    )
+    hyrt, hyr_cols = load_wrdata(hybrid_forward_reuse_data, 23)
+
+    def hyrat(time_s: float, values: np.ndarray) -> float:
+        return float(values[np.argmin(np.abs(hyrt - time_s))])
+
+    hyr_hidden = hyr_cols[0] - hyr_cols[1]
+    hyr_rgp = hyr_cols[2]
+    hyr_rgm = hyr_cols[3]
+    hyr_hcap = hyr_cols[4]
+    hyr_weight = hyr_cols[5] - hyr_cols[6]
+    hyr_bias = hyr_cols[7] - hyr_cols[8]
+    hyr_preact = hyr_cols[10] - hyr_cols[9]
+    hyr_forward_load = hyr_cols[12] - hyr_cols[11]
+    hyr_forward_store = hyr_cols[14] - hyr_cols[13]
+    require(hyrat(1.35e-6, hyr_hidden) > 0.07, "reuse first sample should store positive hidden error")
+    require(hyrat(1.45e-6, hyr_rgp) < 0.30, "reuse first sample should select e+ restored gate")
+    require(abs(hyrat(1.90e-6, hyr_hcap) - 0.92) < 0.012, "reuse first sample should store active activation")
+    require(hyrat(2.55e-6, hyr_weight) > 0.020, "reuse first sample should write positive weight state")
+    require(hyrat(2.55e-6, hyr_bias) > 0.030, "reuse first sample should write positive bias state")
+    require(hyrat(3.35e-6, hyr_preact) > 0.045, "reuse first sample should read positive preactivation")
+    require(hyrat(4.10e-6, np.abs(hyr_hidden)) < 0.004, "reuse reset should clear hidden-error differential")
+    require(abs(hyrat(4.10e-6, hyr_hcap) - 1.45) < 0.015, "reuse reset should return activation gate inactive")
+    require(abs(hyrat(4.10e-6, hyr_preact)) < 0.006, "reuse reset should clear summing differential")
+    require(abs(hyrat(4.10e-6, hyr_forward_store)) < 0.006, "reuse reset should clear stored forward activation")
+    require(hyrat(5.15e-6, hyr_hidden) < -0.07, "reuse second sample should store negative hidden error")
+    require(hyrat(5.20e-6, hyr_rgm) < 0.30, "reuse second sample should select e- restored gate")
+    require(abs(hyrat(5.75e-6, hyr_hcap) - 0.92) < 0.012, "reuse second sample should resample active activation")
+    require(abs(hyrat(6.35e-6, hyr_weight)) < 0.004, "reuse second opposite update should cancel weight differential")
+    require(abs(hyrat(6.35e-6, hyr_bias)) < 0.004, "reuse second opposite update should cancel bias differential")
+    require(abs(hyrat(7.15e-6, hyr_preact)) < 0.008, "reuse cancelled W/B state should read near-zero preactivation")
+    require(abs(hyrat(7.45e-6, hyr_forward_store)) < 0.008, "reuse cancelled state should store near-zero activation")
+
+    hyr_fig, hyr_axes = plt.subplots(3, 1, figsize=(7.4, 7.4), gridspec_kw={"height_ratios": [1.0, 1.0, 1.0]})
+    hyr_axes[0].plot(1e6 * hyrt, hyr_hidden, label="stored error differential")
+    hyr_axes[0].plot(1e6 * hyrt, hyr_rgp, label="$e^+$ selected gate")
+    hyr_axes[0].plot(1e6 * hyrt, hyr_rgm, label="$e^-$ selected gate")
+    hyr_axes[0].plot(1e6 * hyrt, hyr_hcap, label="activation gate")
+    hyr_axes[0].plot(1e6 * hyrt, hyr_cols[18] / 2.0, color="0.55", alpha=0.35, label="$reset/2$")
+    hyr_axes[0].set_ylabel("voltage (V)")
+    hyr_axes[0].set_title("MOS reset reuses the same error and activation storage")
+    hyr_axes[0].grid(True, alpha=0.25)
+    hyr_axes[0].legend(loc="center right", ncol=2, fontsize="small")
+    hyr_axes[1].plot(1e6 * hyrt, 1e3 * hyr_weight, label="$W^+ - W^-$")
+    hyr_axes[1].plot(1e6 * hyrt, 1e3 * hyr_bias, label="$B^+ - B^-$")
+    hyr_axes[1].plot(1e6 * hyrt, 1e3 * hyr_preact, label="$z^- - z^+$")
+    hyr_axes[1].plot(1e6 * hyrt, hyr_cols[20] / 20.0, color="0.35", alpha=0.25, label="$pacc_n/20$")
+    hyr_axes[1].plot(1e6 * hyrt, hyr_cols[21] / 20.0, color="0.15", alpha=0.25, label="$read/20$")
+    hyr_axes[1].axhline(0, color="0.4", linewidth=0.8)
+    hyr_axes[1].set_ylabel("mV")
+    hyr_axes[1].set_title("Opposite second sample cancels persistent W/B differentials")
+    hyr_axes[1].grid(True, alpha=0.25)
+    hyr_axes[1].legend(loc="upper left", ncol=3, fontsize="small")
+    hyr_axes[2].plot(1e6 * hyrt, 1e3 * hyr_forward_load, label="forward load")
+    hyr_axes[2].plot(1e6 * hyrt, 1e3 * hyr_forward_store, label="stored activation")
+    hyr_axes[2].plot(1e6 * hyrt, hyr_cols[22] / 20.0, color="0.35", alpha=0.25, label="$pact/20$")
+    hyr_axes[2].axhline(0, color="0.4", linewidth=0.8)
+    hyr_axes[2].set_xlabel("time (us)")
+    hyr_axes[2].set_ylabel("activation differential (mV)")
+    hyr_axes[2].set_title("Forward store resets, then stays near zero after cancellation")
+    hyr_axes[2].grid(True, alpha=0.25)
+    hyr_axes[2].legend(loc="upper left", fontsize="small")
+    hyr_fig.tight_layout()
+    save_plot(hyr_fig, "mos_hidden_writer_restored_gate_hybrid_update_forward_reuse_ngspice")
+
     hybrid_repeated_deck = f"""
 * Hybrid restored-enable/analog-error writer repeated-pulse accumulation check.
 * One stored r+ hidden-error rail and one activation gate drive the same

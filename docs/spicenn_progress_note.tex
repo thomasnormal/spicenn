@@ -1322,6 +1322,30 @@ must satisfy before it can replace the current behavioral prototype.
 
 \begin{figure}[H]
   \centering
+  \includegraphics[width=0.88\linewidth]{figures/mos_hidden_writer_restored_gate_hybrid_update_forward_reuse_ngspice.png}
+  \caption{Ngspice same-cell reuse characterization for the hybrid
+  update-to-forward path.  Unlike the matched-copy quadrant plots, this deck
+  reuses one physical hidden-error store, one activation sample capacitor, one
+  persistent \(W^+/W^-\) and \(B^+/B^-\) state, one summing pair, and one
+  forward-store pair across two samples.  The first sample stores \(e^+\) and
+  \(a^+\), writes \(W^+-W^-=22.99\) mV and \(B^+-B^-=34.54\) mV, reads a
+  \(52.07\) mV preactivation, and stores \(47.35\) mV of activation.  A MOS
+  transmission-gate reset then clears only the transient hidden-error,
+  activation-input, summing, and forward-store capacitors; the persistent
+  \(W/B\) rails remain untouched.  The second sample stores \(e^-\) with the
+  same \(a^+\) activation and locally writes the opposite rails, cancelling the
+  persistent differentials to the plotted precision.  After cancellation the
+  individual rails are both elevated
+  (\(W^+=W^-\approx0.873\) V and \(B^+=B^-\approx0.885\) V), so the zero is a
+  differential cancellation rather than a hidden reset of the trainable state.
+  The residual summed preactivation is about \(2.46\) mV and the second stored
+  activation is about \(1.37\) mV, making the current common-mode residual
+  visible for later sizing.}
+  \label{fig:mos-hidden-writer-restored-gate-hybrid-update-forward-reuse-ngspice}
+\end{figure}
+
+\begin{figure}[H]
+  \centering
   \includegraphics[width=0.88\linewidth]{figures/mos_hidden_writer_restored_gate_hybrid_repeated_ngspice.png}
   \caption{Ngspice repeated-pulse accumulation characterization of the hybrid
   restored writer.  One stored \(r^+\) hidden-error rail drives one persistent

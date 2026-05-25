@@ -1448,6 +1448,25 @@ must satisfy before it can replace the current behavioral prototype.
 
 \begin{figure}[H]
   \centering
+  \includegraphics[width=0.88\linewidth]{figures/mos_hidden_writer_restored_gate_hybrid_update_forward_read_pact_store_topology_ngspice.png}
+  \caption{Ngspice activation-store topology comparison for the integrated MOS
+  update-to-forward path.  The baseline uses the NMOS-only \(pact\) sampling
+  switches from Fig.~\ref{fig:mos-hidden-writer-restored-gate-hybrid-update-forward-read-pact-aperture-ngspice}.
+  The transmission-gate variant adds parallel PMOS pass devices
+  (\(W_P=120\,\mu\mathrm{m}\)) driven by complementary \(pact_n\), with all
+  update, read, reset, and storage capacitors otherwise unchanged.  For
+  \(40,80,120,160,240,320\) ns apertures, the NMOS-only store captures
+  \(38.289,46.704,47.858,43.543,31.693,32.925\) mV, while the TG store
+  captures \(46.588,52.124,52.141,46.246,34.668,37.163\) mV.  The TG store is
+  therefore the better physical sampling topology for short apertures and can
+  capture the full differential near \(80\)--\(120\) ns.  It does not remove
+  the long-aperture failure mode: once \(pact\) is held through the forward
+  load droop, the activation capacitor still tracks downward.}
+  \label{fig:mos-hidden-writer-restored-gate-hybrid-update-forward-read-pact-store-topology-ngspice}
+\end{figure}
+
+\begin{figure}[H]
+  \centering
   \includegraphics[width=0.88\linewidth]{figures/mos_hidden_writer_restored_gate_hybrid_repeated_ngspice.png}
   \caption{Ngspice repeated-pulse accumulation characterization of the hybrid
   restored writer.  One stored \(r^+\) hidden-error rail drives one persistent

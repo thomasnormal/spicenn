@@ -7180,6 +7180,77 @@ quit
     aperture_fig.tight_layout()
     save_plot(aperture_fig, "mos_hidden_writer_restored_gate_hybrid_update_forward_read_pact_aperture_ngspice")
 
+    tg_aperture_store_samples = []
+    tg_aperture_preact_samples = []
+    tg_aperture_traces = []
+    nmos_store_line_p = "MSFP_HYR hp_hyr pact_hyr hp_fwd_hyr 0 NMOS L={LCH} W=48u"
+    nmos_store_line_m = "MSFM_HYR hm_hyr pact_hyr hm_fwd_hyr 0 NMOS L={LCH} W=48u"
+    tg_store_line_p = nmos_store_line_p + "\nMSFPP_HYR hp_hyr pactn_hyr hp_fwd_hyr vdd PMOS L={LCH} W=120u"
+    tg_store_line_m = nmos_store_line_m + "\nMSFMP_HYR hm_hyr pactn_hyr hm_fwd_hyr vdd PMOS L={LCH} W=120u"
+    for width_ns in aperture_cases_ns:
+        stem = f"mos_hidden_writer_restored_gate_hybrid_update_forward_read_pact_tg_aperture_{width_ns}ns"
+        end_us = aperture_start_us + width_ns / 1000.0
+        off_us = end_us + 0.02
+        sample_time = min((off_us + 0.08) * 1e-6, 3.575e-6)
+        pact_pwl = (
+            f"VPACT_HYR pact_hyr 0 PWL(0 0 {aperture_start_us - 0.02:.2f}u 0 "
+            f"{aperture_start_us:.2f}u 1.8 {end_us:.2f}u 1.8 {off_us:.2f}u 0 7.8u 0)"
+        )
+        pactn_pwl = (
+            f"VPACTN_HYR pactn_hyr 0 PWL(0 1.8 {aperture_start_us - 0.02:.2f}u 1.8 "
+            f"{aperture_start_us:.2f}u 0 {end_us:.2f}u 0 {off_us:.2f}u 1.8 7.8u 1.8)"
+        )
+        tg_deck = replace_required(hybrid_forward_read_reuse_deck, timing_read_pwl, timing_single_read_pwl)
+        tg_deck = replace_required(tg_deck, timing_base_pact_pwl, pact_pwl + "\n" + pactn_pwl)
+        tg_deck = replace_required(tg_deck, nmos_store_line_p, tg_store_line_p)
+        tg_deck = replace_required(tg_deck, nmos_store_line_m, tg_store_line_m)
+        tg_deck = replace_required(
+            tg_deck,
+            "mos_hidden_writer_restored_gate_hybrid_update_forward_read_reuse.dat",
+            f"{stem}.dat",
+        )
+        tg_data = run_ngspice(tg_deck, stem)
+        tg_time, tg_cols = load_wrdata(tg_data, 23)
+
+        def tgpat(time_s: float, values: np.ndarray) -> float:
+            return float(values[np.argmin(np.abs(tg_time - time_s))])
+
+        tg_preact = tg_cols[10] - tg_cols[9]
+        tg_store = tg_cols[14] - tg_cols[13]
+        tg_aperture_preact_samples.append(tgpat(sample_time, tg_preact))
+        tg_aperture_store_samples.append(tgpat(sample_time, tg_store))
+        tg_aperture_traces.append((f"{width_ns} ns", tg_time, tg_store))
+
+    tg_aperture_preact_samples = np.array(tg_aperture_preact_samples)
+    tg_aperture_store_samples = np.array(tg_aperture_store_samples)
+    require(tg_aperture_store_samples[0] > aperture_store_samples[0] + 0.006, "TG store should improve 40 ns aperture")
+    require(tg_aperture_store_samples[1] > aperture_store_samples[1] + 0.004, "TG store should improve 80 ns aperture")
+    require(tg_aperture_store_samples[2] > aperture_store_samples[2] + 0.003, "TG store should improve 120 ns aperture")
+    require(tg_aperture_store_samples[2] > 0.050, "TG store should capture a full 120 ns activation")
+    require(tg_aperture_store_samples[4] < 0.75 * tg_aperture_store_samples[2], "TG 240 ns aperture should still track droop")
+    require(tg_aperture_store_samples[5] < 0.75 * tg_aperture_store_samples[2], "TG 320 ns aperture should still track droop")
+    require(np.min(tg_aperture_preact_samples[1:]) > 0.048, "TG aperture comparison should keep valid read state")
+
+    store_topology_fig, store_topology_axes = plt.subplots(2, 1, figsize=(7.4, 6.6), gridspec_kw={"height_ratios": [1.0, 0.9]})
+    for label, atime, store in tg_aperture_traces:
+        if label in {"40 ns", "80 ns", "120 ns", "240 ns"}:
+            store_topology_axes[0].plot(1e6 * atime, 1e3 * store, label=f"TG {label}")
+    store_topology_axes[0].axhline(0, color="0.4", linewidth=0.8)
+    store_topology_axes[0].set_xlim(3.05, 3.65)
+    store_topology_axes[0].set_ylabel("stored activation (mV)")
+    store_topology_axes[0].set_title("Transmission-gate store charges faster but still has a finite aperture")
+    store_topology_axes[0].grid(True, alpha=0.25)
+    store_topology_axes[0].legend(loc="upper left", ncol=2, fontsize="small")
+    store_topology_axes[1].plot(aperture_cases_ns, 1e3 * aperture_store_samples, "o-", label="NMOS-only store")
+    store_topology_axes[1].plot(aperture_cases_ns, 1e3 * tg_aperture_store_samples, "s--", label="transmission-gate store")
+    store_topology_axes[1].set_xlabel("pact high-time (ns)")
+    store_topology_axes[1].set_ylabel("stored $h^- - h^+$ (mV)")
+    store_topology_axes[1].set_title("TG improves short apertures; long apertures still follow droop")
+    store_topology_axes[1].grid(True, alpha=0.25)
+    store_topology_axes[1].legend(loc="upper right")
+    store_topology_fig.tight_layout()
+    save_plot(store_topology_fig, "mos_hidden_writer_restored_gate_hybrid_update_forward_read_pact_store_topology_ngspice")
+
     hybrid_repeated_deck = f"""
 * Hybrid restored-enable/analog-error writer repeated-pulse accumulation check.
 * One stored r+ hidden-error rail and one activation gate drive the same

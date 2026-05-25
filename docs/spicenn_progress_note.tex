@@ -1467,6 +1467,25 @@ must satisfy before it can replace the current behavioral prototype.
 
 \begin{figure}[H]
   \centering
+  \includegraphics[width=0.88\linewidth]{figures/mos_hidden_writer_restored_gate_hybrid_update_forward_read_gated_store_ngspice.png}
+  \caption{Ngspice read-gated activation-store characterization for the
+  integrated MOS update-to-forward path.  The read-gated variant inserts a
+  second series transmission gate controlled by a read-valid phase, so a long
+  \(pact\) pulse cannot keep the activation capacitor connected indefinitely
+  after the read path turns off.  Raw read-gating improves the long apertures
+  but still samples some forward-load collapse:
+  \(46.634,52.090,52.117,46.266,40.625,40.625\) mV for
+  \(40,80,120,160,240,320\) ns.  A guarded non-overlap valid phase, ending at
+  the experimentally valid \(pact\) window, captures
+  \(46.577,52.075,52.111,51.355,51.355,51.355\) mV over the same sweep.  The
+  transistor-level lesson is that the store switch should be a
+  transmission-gate stack gated by both \(pact\) and a non-overlap read-valid
+  clock; sizing the pass devices alone does not fix a phase-validity error.}
+  \label{fig:mos-hidden-writer-restored-gate-hybrid-update-forward-read-gated-store-ngspice}
+\end{figure}
+
+\begin{figure}[H]
+  \centering
   \includegraphics[width=0.88\linewidth]{figures/mos_hidden_writer_restored_gate_hybrid_repeated_ngspice.png}
   \caption{Ngspice repeated-pulse accumulation characterization of the hybrid
   restored writer.  One stored \(r^+\) hidden-error rail drives one persistent

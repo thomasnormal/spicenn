@@ -7251,6 +7251,167 @@ quit
     store_topology_fig.tight_layout()
     save_plot(store_topology_fig, "mos_hidden_writer_restored_gate_hybrid_update_forward_read_pact_store_topology_ngspice")
 
+    read_gated_store_samples = []
+    read_gated_preact_samples = []
+    read_gated_traces = []
+    read_gated_store_line_p = "\n".join(
+        [
+            "MSFP_HYR hp_hyr pact_hyr hp_mid_hyr 0 NMOS L={LCH} W=96u",
+            "MSFPP_HYR hp_hyr pactn_hyr hp_mid_hyr vdd PMOS L={LCH} W=240u",
+            "MSFPV_HYR hp_mid_hyr reads_hyr hp_fwd_hyr 0 NMOS L={LCH} W=96u",
+            "MSFPVP_HYR hp_mid_hyr readsn_hyr hp_fwd_hyr vdd PMOS L={LCH} W=240u",
+        ]
+    )
+    read_gated_store_line_m = "\n".join(
+        [
+            "MSFM_HYR hm_hyr pact_hyr hm_mid_hyr 0 NMOS L={LCH} W=96u",
+            "MSFMP_HYR hm_hyr pactn_hyr hm_mid_hyr vdd PMOS L={LCH} W=240u",
+            "MSFMV_HYR hm_mid_hyr reads_hyr hm_fwd_hyr 0 NMOS L={LCH} W=96u",
+            "MSFMVP_HYR hm_mid_hyr readsn_hyr hm_fwd_hyr vdd PMOS L={LCH} W=240u",
+        ]
+    )
+    for width_ns in aperture_cases_ns:
+        stem = f"mos_hidden_writer_restored_gate_hybrid_update_forward_read_pact_read_gated_tg_aperture_{width_ns}ns"
+        end_us = aperture_start_us + width_ns / 1000.0
+        off_us = end_us + 0.02
+        sample_time = min((off_us + 0.08) * 1e-6, 3.575e-6)
+        pact_pwl = (
+            f"VPACT_HYR pact_hyr 0 PWL(0 0 {aperture_start_us - 0.02:.2f}u 0 "
+            f"{aperture_start_us:.2f}u 1.8 {end_us:.2f}u 1.8 {off_us:.2f}u 0 7.8u 0)"
+        )
+        pactn_pwl = (
+            f"VPACTN_HYR pactn_hyr 0 PWL(0 1.8 {aperture_start_us - 0.02:.2f}u 1.8 "
+            f"{aperture_start_us:.2f}u 0 {end_us:.2f}u 0 {off_us:.2f}u 1.8 7.8u 1.8)"
+        )
+        reads_pwl = "VREADS_HYR reads_hyr 0 PWL(0 0 2.70u 0 2.72u 1.8 3.36u 1.8 3.38u 0 7.8u 0)"
+        readsn_pwl = "VREADSN_HYR readsn_hyr 0 PWL(0 1.8 2.70u 1.8 2.72u 0 3.36u 0 3.38u 1.8 7.8u 1.8)"
+        read_gated_deck = replace_required(hybrid_forward_read_reuse_deck, timing_read_pwl, timing_single_read_pwl)
+        read_gated_deck = replace_required(
+            read_gated_deck,
+            timing_base_pact_pwl,
+            pact_pwl + "\n" + pactn_pwl + "\n" + reads_pwl + "\n" + readsn_pwl,
+        )
+        read_gated_deck = replace_required(read_gated_deck, nmos_store_line_p, read_gated_store_line_p)
+        read_gated_deck = replace_required(read_gated_deck, nmos_store_line_m, read_gated_store_line_m)
+        read_gated_deck = replace_required(
+            read_gated_deck,
+            "mos_hidden_writer_restored_gate_hybrid_update_forward_read_reuse.dat",
+            f"{stem}.dat",
+        )
+        read_gated_data = run_ngspice(read_gated_deck, stem)
+        rgt, rg_cols = load_wrdata(read_gated_data, 23)
+
+        def rgat(time_s: float, values: np.ndarray) -> float:
+            return float(values[np.argmin(np.abs(rgt - time_s))])
+
+        rg_preact = rg_cols[10] - rg_cols[9]
+        rg_store = rg_cols[14] - rg_cols[13]
+        read_gated_preact_samples.append(rgat(sample_time, rg_preact))
+        read_gated_store_samples.append(rgat(sample_time, rg_store))
+        read_gated_traces.append((f"{width_ns} ns", rgt, rg_store))
+
+    read_gated_preact_samples = np.array(read_gated_preact_samples)
+    read_gated_store_samples = np.array(read_gated_store_samples)
+    guard_gated_store_samples = []
+    guard_gated_preact_samples = []
+    guard_gated_traces = []
+    guard_store_line_p = read_gated_store_line_p.replace("reads_hyr", "guard_hyr").replace("readsn_hyr", "guardn_hyr")
+    guard_store_line_m = read_gated_store_line_m.replace("reads_hyr", "guard_hyr").replace("readsn_hyr", "guardn_hyr")
+    for width_ns in aperture_cases_ns:
+        stem = f"mos_hidden_writer_restored_gate_hybrid_update_forward_read_pact_guarded_tg_aperture_{width_ns}ns"
+        end_us = aperture_start_us + width_ns / 1000.0
+        off_us = end_us + 0.02
+        sample_time = min((off_us + 0.08) * 1e-6, 3.575e-6)
+        pact_pwl = (
+            f"VPACT_HYR pact_hyr 0 PWL(0 0 {aperture_start_us - 0.02:.2f}u 0 "
+            f"{aperture_start_us:.2f}u 1.8 {end_us:.2f}u 1.8 {off_us:.2f}u 0 7.8u 0)"
+        )
+        pactn_pwl = (
+            f"VPACTN_HYR pactn_hyr 0 PWL(0 1.8 {aperture_start_us - 0.02:.2f}u 1.8 "
+            f"{aperture_start_us:.2f}u 0 {end_us:.2f}u 0 {off_us:.2f}u 1.8 7.8u 1.8)"
+        )
+        guard_pwl = "VGUARD_HYR guard_hyr 0 PWL(0 0 3.16u 0 3.18u 1.8 3.31u 1.8 3.33u 0 7.8u 0)"
+        guardn_pwl = "VGUARDN_HYR guardn_hyr 0 PWL(0 1.8 3.16u 1.8 3.18u 0 3.31u 0 3.33u 1.8 7.8u 1.8)"
+        guard_deck = replace_required(hybrid_forward_read_reuse_deck, timing_read_pwl, timing_single_read_pwl)
+        guard_deck = replace_required(
+            guard_deck,
+            timing_base_pact_pwl,
+            pact_pwl + "\n" + pactn_pwl + "\n" + guard_pwl + "\n" + guardn_pwl,
+        )
+        guard_deck = replace_required(guard_deck, nmos_store_line_p, guard_store_line_p)
+        guard_deck = replace_required(guard_deck, nmos_store_line_m, guard_store_line_m)
+        guard_deck = replace_required(
+            guard_deck,
+            "mos_hidden_writer_restored_gate_hybrid_update_forward_read_reuse.dat",
+            f"{stem}.dat",
+        )
+        guard_data = run_ngspice(guard_deck, stem)
+        gtime, guard_cols = load_wrdata(guard_data, 23)
+
+        def gat(time_s: float, values: np.ndarray) -> float:
+            return float(values[np.argmin(np.abs(gtime - time_s))])
+
+        guard_preact = guard_cols[10] - guard_cols[9]
+        guard_store = guard_cols[14] - guard_cols[13]
+        guard_gated_preact_samples.append(gat(sample_time, guard_preact))
+        guard_gated_store_samples.append(gat(sample_time, guard_store))
+        guard_gated_traces.append((f"{width_ns} ns", gtime, guard_store))
+
+    guard_gated_preact_samples = np.array(guard_gated_preact_samples)
+    guard_gated_store_samples = np.array(guard_gated_store_samples)
+    require(read_gated_store_samples[2] > 0.045, "read-gated TG should capture a useful 120 ns activation")
+    require(
+        read_gated_store_samples[4] > tg_aperture_store_samples[4] + 0.005,
+        "read-gated TG should reduce 240 ns post-read droop",
+    )
+    require(
+        read_gated_store_samples[5] > tg_aperture_store_samples[5] + 0.003,
+        "read-gated TG should reduce 320 ns post-read droop",
+    )
+    require(
+        read_gated_store_samples[5] > 0.75 * read_gated_store_samples[2],
+        "read-gated TG should keep long pact apertures above the ungated droop floor",
+    )
+    require(np.min(read_gated_preact_samples[1:]) > 0.048, "read-gated TG comparison should keep valid read state")
+    require(guard_gated_store_samples[2] > 0.050, "guarded TG should capture a full 120 ns activation")
+    require(
+        guard_gated_store_samples[4] > read_gated_store_samples[4] + 0.008,
+        "guarded TG should improve 240 ns capture beyond raw read-gating",
+    )
+    require(
+        guard_gated_store_samples[5] > read_gated_store_samples[5] + 0.008,
+        "guarded TG should improve 320 ns capture beyond raw read-gating",
+    )
+    require(
+        guard_gated_store_samples[5] > 0.90 * guard_gated_store_samples[2],
+        "guarded TG should hold long apertures near the clipped valid-window sample",
+    )
+    require(np.min(guard_gated_preact_samples[1:]) > 0.048, "guarded TG comparison should keep valid read state")
+
+    read_gated_fig, read_gated_axes = plt.subplots(2, 1, figsize=(7.4, 6.6), gridspec_kw={"height_ratios": [1.0, 0.9]})
+    for label, rgt, store in guard_gated_traces:
+        if label in {"40 ns", "120 ns", "240 ns", "320 ns"}:
+            read_gated_axes[0].plot(1e6 * rgt, 1e3 * store, label=f"guarded {label}")
+    read_gated_axes[0].axhline(0, color="0.4", linewidth=0.8)
+    read_gated_axes[0].axvline(3.33, color="0.25", linestyle="--", linewidth=0.9, alpha=0.6, label="guard off")
+    read_gated_axes[0].axvline(3.38, color="0.5", linestyle=":", linewidth=0.9, alpha=0.6, label="read off")
+    read_gated_axes[0].set_xlim(3.05, 3.65)
+    read_gated_axes[0].set_ylabel("stored activation (mV)")
+    read_gated_axes[0].set_title("Guarded transmission store disconnects before forward-load collapse")
+    read_gated_axes[0].grid(True, alpha=0.25)
+    read_gated_axes[0].legend(loc="upper left", ncol=2, fontsize="small")
+    read_gated_axes[1].plot(aperture_cases_ns, 1e3 * aperture_store_samples, "o-", label="NMOS-only")
+    read_gated_axes[1].plot(aperture_cases_ns, 1e3 * tg_aperture_store_samples, "s--", label="TG")
+    read_gated_axes[1].plot(aperture_cases_ns, 1e3 * read_gated_store_samples, "^-.", label="read-gated TG")
+    read_gated_axes[1].plot(aperture_cases_ns, 1e3 * guard_gated_store_samples, "d:", label="guarded TG")
+    read_gated_axes[1].set_xlabel("pact high-time (ns)")
+    read_gated_axes[1].set_ylabel("stored $h^- - h^+$ (mV)")
+    read_gated_axes[1].set_title("Guarding the store with read-valid widens the safe aperture")
+    read_gated_axes[1].grid(True, alpha=0.25)
+    read_gated_axes[1].legend(loc="lower right")
+    read_gated_fig.tight_layout()
+    save_plot(read_gated_fig, "mos_hidden_writer_restored_gate_hybrid_update_forward_read_gated_store_ngspice")
+
     hybrid_repeated_deck = f"""
 * Hybrid restored-enable/analog-error writer repeated-pulse accumulation check.
 * One stored r+ hidden-error rail and one activation gate drive the same

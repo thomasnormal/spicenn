@@ -2526,6 +2526,33 @@ must satisfy before it can replace the current behavioral prototype.
 
 \begin{figure}[H]
   \centering
+  \includegraphics[width=0.95\linewidth]{figures/mos_hidden_writer_restored_gate_hybrid_update_forward_guard_forward_pair_96u_shifted_gate_reset_ref_precharge_080_ngspice.png}
+  \caption{Ngspice tuned-common-mode startup-precharge check for the same
+  cold passive local trim-reference reservoir.  This is the same physical
+  MOS reservoir, \(100\,\mathrm{k}\Omega\) trim source, \(250\) pF local
+  reservoir, \(5\) pF shifted-gate load, ordinary complementary reset switch,
+  and nominal \(300/900\,\mu\mathrm{m}\) startup precharge transmission gate
+  used in
+  Fig.~\ref{fig:mos-hidden-writer-restored-gate-hybrid-update-forward-guard-forward-pair-96u-shifted-gate-reset-ref-precharge-ngspice},
+  but the split reset references are centered on the tuned \(0.80\) V common
+  selected by the reset-common-mode sweep rather than the older \(0.90\) V
+  baseline.  With no startup pulse, the \(-55/+65\) mV branches again
+  reproduce the cold failure at \(49.617/58.639\) mV trim error and only
+  \(0.0939\) V gate common.  A \(5\) ns pulse is still marginal at
+  \(10.665/12.593\) mV error.  A \(10\) ns pulse crosses the plotted
+  \(6\) mV trim-error gate at \(4.008/4.759\) mV error with
+  \(0.774\) V common mode, and a \(20\) ns pulse reaches the
+  initialized-reservoir regime at \(1.344/1.590\) mV error with
+  \(0.796\) V common mode.  The lower common target therefore does not break
+  the MOS startup-precharge path, but it does leave less 10 ns timing margin
+  than the \(0.90\) V case; the safe nominal rule for tuned-common startup is
+  a roughly \(20\) ns precharge pulse, or equivalently more precharge switch
+  width if the schedule must stay near \(10\) ns.}
+  \label{fig:mos-hidden-writer-restored-gate-hybrid-update-forward-guard-forward-pair-96u-shifted-gate-reset-ref-precharge-080-ngspice}
+\end{figure}
+
+\begin{figure}[H]
+  \centering
   \includegraphics[width=0.95\linewidth]{figures/mos_hidden_writer_restored_gate_hybrid_update_forward_guard_forward_pair_96u_shifted_gate_reset_ref_precharge_strength_ngspice.png}
   \caption{Ngspice startup-precharge strength-margin check for the same cold
   local trim-reference reservoir.  The \(250\) pF reservoirs, \(100\)

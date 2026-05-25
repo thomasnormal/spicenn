@@ -6568,7 +6568,7 @@ quit
 * and must cancel the persistent W/B differential without Python capacitor
 * writes or behavioral update/readback sources.
 {COMMON_MODELS}
-.param CERR=10p CWRITE=500p CBIAS=500p CSTORE=10p CSUM=500p WSW=24u WWRITE=24u WRESTN=18u WRESTP=300u WREAD=24u WRESETN=24u WRESETP=60u
+.param CERR=10p CWRITE=500p CBIAS=500p CSTORE=10p CSUM=500p WSW=24u WWRITE=24u WRESTN=18u WRESTP=300u WREAD=24u WRESETN=60u WRESETP=180u
 VDD vdd 0 1.8
 VTAIL vbias 0 0.95
 VECM ecm 0 1.04
@@ -6729,15 +6729,15 @@ quit
     require(hyrat(3.35e-6, hyr_preact) > 0.045, "reuse first sample should read positive preactivation")
     require(hyrat(4.10e-6, np.abs(hyr_hidden)) < 0.004, "reuse reset should clear hidden-error differential")
     require(abs(hyrat(4.10e-6, hyr_hcap) - 1.45) < 0.015, "reuse reset should return activation gate inactive")
-    require(abs(hyrat(4.10e-6, hyr_preact)) < 0.006, "reuse reset should clear summing differential")
-    require(abs(hyrat(4.10e-6, hyr_forward_store)) < 0.006, "reuse reset should clear stored forward activation")
+    require(abs(hyrat(4.10e-6, hyr_preact)) < 0.001, "reuse reset should clear summing differential")
+    require(abs(hyrat(4.10e-6, hyr_forward_store)) < 0.001, "reuse reset should clear stored forward activation")
     require(hyrat(5.15e-6, hyr_hidden) < -0.07, "reuse second sample should store negative hidden error")
     require(hyrat(5.20e-6, hyr_rgm) < 0.30, "reuse second sample should select e- restored gate")
     require(abs(hyrat(5.75e-6, hyr_hcap) - 0.92) < 0.012, "reuse second sample should resample active activation")
     require(abs(hyrat(6.35e-6, hyr_weight)) < 0.004, "reuse second opposite update should cancel weight differential")
     require(abs(hyrat(6.35e-6, hyr_bias)) < 0.004, "reuse second opposite update should cancel bias differential")
-    require(abs(hyrat(7.15e-6, hyr_preact)) < 0.008, "reuse cancelled W/B state should read near-zero preactivation")
-    require(abs(hyrat(7.45e-6, hyr_forward_store)) < 0.008, "reuse cancelled state should store near-zero activation")
+    require(abs(hyrat(7.15e-6, hyr_preact)) < 0.001, "reuse cancelled W/B state should read near-zero preactivation")
+    require(abs(hyrat(7.45e-6, hyr_forward_store)) < 0.001, "reuse cancelled state should store near-zero activation")
 
     hyr_fig, hyr_axes = plt.subplots(3, 1, figsize=(7.4, 7.4), gridspec_kw={"height_ratios": [1.0, 1.0, 1.0]})
     hyr_axes[0].plot(1e6 * hyrt, hyr_hidden, label="stored error differential")

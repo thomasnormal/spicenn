@@ -1332,15 +1332,19 @@ must satisfy before it can replace the current behavioral prototype.
   \(52.07\) mV preactivation, and stores \(47.35\) mV of activation.  A MOS
   transmission-gate reset then clears only the transient hidden-error,
   activation-input, summing, and forward-store capacitors; the persistent
-  \(W/B\) rails remain untouched.  The second sample stores \(e^-\) with the
+  \(W/B\) rails remain untouched.  The reset devices are sized
+  \(W_N=60\,\mu\mathrm{m}\), \(W_P=180\,\mu\mathrm{m}\) in this integrated
+  reuse deck; the earlier \(24/60\,\mu\mathrm{m}\) reset left millivolt-scale
+  residue on the large summing capacitor.  The second sample stores \(e^-\) with the
   same \(a^+\) activation and locally writes the opposite rails, cancelling the
   persistent differentials to the plotted precision.  After cancellation the
   individual rails are both elevated
   (\(W^+=W^-\approx0.873\) V and \(B^+=B^-\approx0.885\) V), so the zero is a
   differential cancellation rather than a hidden reset of the trainable state.
-  The residual summed preactivation is about \(2.46\) mV and the second stored
-  activation is about \(1.37\) mV, making the current common-mode residual
-  visible for later sizing.}
+  The residual summed preactivation is about \(0.013\) mV and the second stored
+  activation is about \(0.011\) mV, showing that the previous residue was a
+  transient-state reset sizing issue rather than hidden cancellation of the
+  trainable rails.}
   \label{fig:mos-hidden-writer-restored-gate-hybrid-update-forward-reuse-ngspice}
 \end{figure}
 

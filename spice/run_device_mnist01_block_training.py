@@ -130,12 +130,24 @@ def block_netlist(
     output_driver_model: str = "sense",
     readout_apply_scale: float = 0.35,
     hidden_forward_width: float = 3.0,
+    readout_gradient_width: float = 24.0,
+    hidden_error_width: float = 32.0,
+    hidden_update_width: float = 12.0,
+    hidden_weight_write_width: float = 0.25,
     input_rail_mode: str = "alternating-complement",
 ) -> str:
     if readout_apply_scale <= 0.0:
         raise ValueError("readout_apply_scale must be positive")
     if hidden_forward_width <= 0.0:
         raise ValueError("hidden_forward_width must be positive")
+    if readout_gradient_width <= 0.0:
+        raise ValueError("readout_gradient_width must be positive")
+    if hidden_error_width <= 0.0:
+        raise ValueError("hidden_error_width must be positive")
+    if hidden_update_width <= 0.0:
+        raise ValueError("hidden_update_width must be positive")
+    if hidden_weight_write_width <= 0.0:
+        raise ValueError("hidden_weight_write_width must be positive")
     if input_rail_mode not in INPUT_RAIL_MODES:
         raise ValueError(f"input_rail_mode must be one of {INPUT_RAIL_MODES}")
     blocks, expected_features = block_topology(image_size, block_size, stride, channels)
@@ -313,20 +325,20 @@ def block_netlist(
                     f"Mhneg{feature}_{pix}_f pre{feature} fwd hn{feature}_{pix}_0 0 NMOS W={hidden_neg_width:.6g}u L=180n",
                     f"Mhneg{feature}_{pix}_x hn{feature}_{pix}_0 {input_node} hn{feature}_{pix}_1 0 NMOS W={hidden_neg_width:.6g}u L=180n",
                     f"Mhneg{feature}_{pix}_w hn{feature}_{pix}_1 whn{feature}_{pix} 0 0 NMOS W={hidden_neg_width:.6g}u L=180n",
-                    f"Mghp{feature}_{pix}_x vdd {input_node} ghp{feature}_{pix}_x 0 NMOS W=12u L=180n",
-                    f"Mghp{feature}_{pix}_d ghp{feature}_{pix}_x hdp{feature} ghp{feature}_{pix}_d 0 NSENSE W=12u L=180n",
-                    f"Mghp{feature}_{pix}_g ghp{feature}_{pix}_d acc ghp{feature}_{pix} 0 NMOS W=12u L=180n",
-                    f"Mghn{feature}_{pix}_x vdd {input_node} ghn{feature}_{pix}_x 0 NMOS W=12u L=180n",
-                    f"Mghn{feature}_{pix}_d ghn{feature}_{pix}_x hdn{feature} ghn{feature}_{pix}_d 0 NSENSE W=12u L=180n",
-                    f"Mghn{feature}_{pix}_g ghn{feature}_{pix}_d acc ghn{feature}_{pix} 0 NMOS W=12u L=180n",
-                    f"Mwhp{feature}_{pix}_up_g vdd ghp{feature}_{pix} whp{feature}_{pix}_up 0 NSENSE W=0.25u L=180n",
-                    f"Mwhp{feature}_{pix}_up_a whp{feature}_{pix}_up apply whp{feature}_{pix} 0 NREL W=0.25u L=180n",
-                    f"Mwhn{feature}_{pix}_dn_a whn{feature}_{pix} apply whn{feature}_{pix}_dn 0 NREL W=0.25u L=180n",
-                    f"Mwhn{feature}_{pix}_dn_g whn{feature}_{pix}_dn ghp{feature}_{pix} 0 0 NSENSE W=0.25u L=180n",
-                    f"Mwhn{feature}_{pix}_up_g vdd ghn{feature}_{pix} whn{feature}_{pix}_up 0 NSENSE W=0.25u L=180n",
-                    f"Mwhn{feature}_{pix}_up_a whn{feature}_{pix}_up apply whn{feature}_{pix} 0 NREL W=0.25u L=180n",
-                    f"Mwhp{feature}_{pix}_dn_a whp{feature}_{pix} apply whp{feature}_{pix}_dn 0 NREL W=0.25u L=180n",
-                    f"Mwhp{feature}_{pix}_dn_g whp{feature}_{pix}_dn ghn{feature}_{pix} 0 0 NSENSE W=0.25u L=180n",
+                    f"Mghp{feature}_{pix}_x vdd {input_node} ghp{feature}_{pix}_x 0 NMOS W={hidden_update_width:.6g}u L=180n",
+                    f"Mghp{feature}_{pix}_d ghp{feature}_{pix}_x hdp{feature} ghp{feature}_{pix}_d 0 NSENSE W={hidden_update_width:.6g}u L=180n",
+                    f"Mghp{feature}_{pix}_g ghp{feature}_{pix}_d acc ghp{feature}_{pix} 0 NMOS W={hidden_update_width:.6g}u L=180n",
+                    f"Mghn{feature}_{pix}_x vdd {input_node} ghn{feature}_{pix}_x 0 NMOS W={hidden_update_width:.6g}u L=180n",
+                    f"Mghn{feature}_{pix}_d ghn{feature}_{pix}_x hdn{feature} ghn{feature}_{pix}_d 0 NSENSE W={hidden_update_width:.6g}u L=180n",
+                    f"Mghn{feature}_{pix}_g ghn{feature}_{pix}_d acc ghn{feature}_{pix} 0 NMOS W={hidden_update_width:.6g}u L=180n",
+                    f"Mwhp{feature}_{pix}_up_g vdd ghp{feature}_{pix} whp{feature}_{pix}_up 0 NSENSE W={hidden_weight_write_width:.6g}u L=180n",
+                    f"Mwhp{feature}_{pix}_up_a whp{feature}_{pix}_up apply whp{feature}_{pix} 0 NREL W={hidden_weight_write_width:.6g}u L=180n",
+                    f"Mwhn{feature}_{pix}_dn_a whn{feature}_{pix} apply whn{feature}_{pix}_dn 0 NREL W={hidden_weight_write_width:.6g}u L=180n",
+                    f"Mwhn{feature}_{pix}_dn_g whn{feature}_{pix}_dn ghp{feature}_{pix} 0 0 NSENSE W={hidden_weight_write_width:.6g}u L=180n",
+                    f"Mwhn{feature}_{pix}_up_g vdd ghn{feature}_{pix} whn{feature}_{pix}_up 0 NSENSE W={hidden_weight_write_width:.6g}u L=180n",
+                    f"Mwhn{feature}_{pix}_up_a whn{feature}_{pix}_up apply whn{feature}_{pix} 0 NREL W={hidden_weight_write_width:.6g}u L=180n",
+                    f"Mwhp{feature}_{pix}_dn_a whp{feature}_{pix} apply whp{feature}_{pix}_dn 0 NREL W={hidden_weight_write_width:.6g}u L=180n",
+                    f"Mwhp{feature}_{pix}_dn_g whp{feature}_{pix}_dn ghn{feature}_{pix} 0 0 NSENSE W={hidden_weight_write_width:.6g}u L=180n",
                 ]
             lines += [
                 f"Mhbpos{feature}_b vdd bhp{feature} hbp{feature}_0 0 NMOS W={hidden_forward_width:.6g}u L=180n",
@@ -340,32 +352,32 @@ def block_netlist(
                 f"Movneg{feature}_f score fwd on{feature}_0 0 NREL W=48u L=180n",
                 f"Movneg{feature}_a on{feature}_0 act{feature} on{feature}_1 0 NREL W=48u L=180n",
                 f"Movneg{feature}_w on{feature}_1 vwn{feature} 0 0 NREL W=48u L=180n",
-                f"Mhdp{feature}_d0 vdd dp hdp{feature}_d0 0 NSENSE W=32u L=180n",
-                f"Mhdp{feature}_d1 hdp{feature}_d0 act{feature} hdp{feature}_d1 0 NREL W=32u L=180n",
-                f"Mhdp{feature}_d2 hdp{feature}_d1 bwd hdp{feature} 0 NMOS W=32u L=180n",
-                f"Mhdn{feature}_d0 vdd dn hdn{feature}_d0 0 NSENSE W=32u L=180n",
-                f"Mhdn{feature}_d1 hdn{feature}_d0 act{feature} hdn{feature}_d1 0 NREL W=32u L=180n",
-                f"Mhdn{feature}_d2 hdn{feature}_d1 bwd hdn{feature} 0 NMOS W=32u L=180n",
-                f"Mgvp{feature}_a vdd act{feature} gvp{feature}_a 0 NREL W=24u L=180n",
-                f"Mgvp{feature}_d gvp{feature}_a dp gvp{feature}_d 0 NSENSE W=24u L=180n",
-                f"Mgvp{feature}_g gvp{feature}_d acc gvp{feature} 0 NREL W=24u L=180n",
-                f"Mgvn{feature}_a vdd act{feature} gvn{feature}_a 0 NREL W=24u L=180n",
-                f"Mgvn{feature}_d gvn{feature}_a dn gvn{feature}_d 0 NSENSE W=24u L=180n",
-                f"Mgvn{feature}_g gvn{feature}_d acc gvn{feature} 0 NREL W=24u L=180n",
-                f"Mgbp{feature}_d vdd hdp{feature} gbp{feature}_d 0 NSENSE W=12u L=180n",
-                f"Mgbp{feature}_g gbp{feature}_d acc gbp{feature} 0 NMOS W=12u L=180n",
-                f"Mgbn{feature}_d vdd hdn{feature} gbn{feature}_d 0 NSENSE W=12u L=180n",
-                f"Mgbn{feature}_g gbn{feature}_d acc gbn{feature} 0 NMOS W=12u L=180n",
+                f"Mhdp{feature}_d0 vdd dp hdp{feature}_d0 0 NSENSE W={hidden_error_width:.6g}u L=180n",
+                f"Mhdp{feature}_d1 hdp{feature}_d0 act{feature} hdp{feature}_d1 0 NREL W={hidden_error_width:.6g}u L=180n",
+                f"Mhdp{feature}_d2 hdp{feature}_d1 bwd hdp{feature} 0 NMOS W={hidden_error_width:.6g}u L=180n",
+                f"Mhdn{feature}_d0 vdd dn hdn{feature}_d0 0 NSENSE W={hidden_error_width:.6g}u L=180n",
+                f"Mhdn{feature}_d1 hdn{feature}_d0 act{feature} hdn{feature}_d1 0 NREL W={hidden_error_width:.6g}u L=180n",
+                f"Mhdn{feature}_d2 hdn{feature}_d1 bwd hdn{feature} 0 NMOS W={hidden_error_width:.6g}u L=180n",
+                f"Mgvp{feature}_a vdd act{feature} gvp{feature}_a 0 NREL W={readout_gradient_width:.6g}u L=180n",
+                f"Mgvp{feature}_d gvp{feature}_a dp gvp{feature}_d 0 NSENSE W={readout_gradient_width:.6g}u L=180n",
+                f"Mgvp{feature}_g gvp{feature}_d acc gvp{feature} 0 NREL W={readout_gradient_width:.6g}u L=180n",
+                f"Mgvn{feature}_a vdd act{feature} gvn{feature}_a 0 NREL W={readout_gradient_width:.6g}u L=180n",
+                f"Mgvn{feature}_d gvn{feature}_a dn gvn{feature}_d 0 NSENSE W={readout_gradient_width:.6g}u L=180n",
+                f"Mgvn{feature}_g gvn{feature}_d acc gvn{feature} 0 NREL W={readout_gradient_width:.6g}u L=180n",
+                f"Mgbp{feature}_d vdd hdp{feature} gbp{feature}_d 0 NSENSE W={hidden_update_width:.6g}u L=180n",
+                f"Mgbp{feature}_g gbp{feature}_d acc gbp{feature} 0 NMOS W={hidden_update_width:.6g}u L=180n",
+                f"Mgbn{feature}_d vdd hdn{feature} gbn{feature}_d 0 NSENSE W={hidden_update_width:.6g}u L=180n",
+                f"Mgbn{feature}_g gbn{feature}_d acc gbn{feature} 0 NMOS W={hidden_update_width:.6g}u L=180n",
                 f"Mrgp{feature}_pd rgp{feature} gvp{feature} 0 0 NSENSE W=16u L=180n",
                 f"Mrgn{feature}_pd rgn{feature} gvn{feature} 0 0 NSENSE W=16u L=180n",
-                f"Mbhp{feature}_up_g vdd gbp{feature} bhp{feature}_up 0 NSENSE W=0.25u L=180n",
-                f"Mbhp{feature}_up_a bhp{feature}_up apply bhp{feature} 0 NREL W=0.25u L=180n",
-                f"Mbhn{feature}_dn_a bhn{feature} apply bhn{feature}_dn 0 NREL W=0.25u L=180n",
-                f"Mbhn{feature}_dn_g bhn{feature}_dn gbp{feature} 0 0 NSENSE W=0.25u L=180n",
-                f"Mbhn{feature}_up_g vdd gbn{feature} bhn{feature}_up 0 NSENSE W=0.25u L=180n",
-                f"Mbhn{feature}_up_a bhn{feature}_up apply bhn{feature} 0 NREL W=0.25u L=180n",
-                f"Mbhp{feature}_dn_a bhp{feature} apply bhp{feature}_dn 0 NREL W=0.25u L=180n",
-                f"Mbhp{feature}_dn_g bhp{feature}_dn gbn{feature} 0 0 NSENSE W=0.25u L=180n",
+                f"Mbhp{feature}_up_g vdd gbp{feature} bhp{feature}_up 0 NSENSE W={hidden_weight_write_width:.6g}u L=180n",
+                f"Mbhp{feature}_up_a bhp{feature}_up apply bhp{feature} 0 NREL W={hidden_weight_write_width:.6g}u L=180n",
+                f"Mbhn{feature}_dn_a bhn{feature} apply bhn{feature}_dn 0 NREL W={hidden_weight_write_width:.6g}u L=180n",
+                f"Mbhn{feature}_dn_g bhn{feature}_dn gbp{feature} 0 0 NSENSE W={hidden_weight_write_width:.6g}u L=180n",
+                f"Mbhn{feature}_up_g vdd gbn{feature} bhn{feature}_up 0 NSENSE W={hidden_weight_write_width:.6g}u L=180n",
+                f"Mbhn{feature}_up_a bhn{feature}_up apply bhn{feature} 0 NREL W={hidden_weight_write_width:.6g}u L=180n",
+                f"Mbhp{feature}_dn_a bhp{feature} apply bhp{feature}_dn 0 NREL W={hidden_weight_write_width:.6g}u L=180n",
+                f"Mbhp{feature}_dn_g bhp{feature}_dn gbn{feature} 0 0 NSENSE W={hidden_weight_write_width:.6g}u L=180n",
                 f"Mvwp{feature}_up_p0 vdd rgp{feature} vwp{feature}_up vdd PMOS W={readout_pmos_w:.6g}u L=180n",
                 f"Mvwp{feature}_up_p1 vwp{feature}_up applyn vwp{feature} vdd PMOS W={readout_pmos_w:.6g}u L=180n",
                 f"Mvwn{feature}_dn_a vwn{feature} apply vwn{feature}_dn 0 NREL W={readout_nmos_w:.6g}u L=180n",
@@ -522,6 +534,10 @@ def run_device_sequence(
     output_driver_model: str,
     readout_apply_scale: float,
     hidden_forward_width: float,
+    readout_gradient_width: float,
+    hidden_error_width: float,
+    hidden_update_width: float,
+    hidden_weight_write_width: float,
     input_rail_mode: str,
 ) -> pd.DataFrame:
     netlist = block_netlist(
@@ -535,6 +551,10 @@ def run_device_sequence(
         output_driver_model=output_driver_model,
         readout_apply_scale=readout_apply_scale,
         hidden_forward_width=hidden_forward_width,
+        readout_gradient_width=readout_gradient_width,
+        hidden_error_width=hidden_error_width,
+        hidden_update_width=hidden_update_width,
+        hidden_weight_write_width=hidden_weight_write_width,
         input_rail_mode=input_rail_mode,
     )
     if "\nB" in netlist:
@@ -563,6 +583,10 @@ def main() -> None:
     ap.add_argument("--output-driver-model", choices=["sense", "nrel"], default="sense")
     ap.add_argument("--readout-apply-scale", type=float, default=0.35)
     ap.add_argument("--hidden-forward-width", type=float, default=3.0)
+    ap.add_argument("--readout-gradient-width", type=float, default=24.0)
+    ap.add_argument("--hidden-error-width", type=float, default=32.0)
+    ap.add_argument("--hidden-update-width", type=float, default=12.0)
+    ap.add_argument("--hidden-weight-write-width", type=float, default=0.25)
     ap.add_argument("--input-rail-mode", choices=INPUT_RAIL_MODES, default="alternating-complement")
     ap.add_argument("--complement-rail-scale", type=float, default=0.5)
     ap.add_argument("--hidden-bias-positive-init", type=float, default=0.50)
@@ -617,6 +641,10 @@ def main() -> None:
         "output_driver_model": args.output_driver_model,
         "readout_apply_scale": args.readout_apply_scale,
         "hidden_forward_width": args.hidden_forward_width,
+        "readout_gradient_width": args.readout_gradient_width,
+        "hidden_error_width": args.hidden_error_width,
+        "hidden_update_width": args.hidden_update_width,
+        "hidden_weight_write_width": args.hidden_weight_write_width,
         "input_rail_mode": args.input_rail_mode,
     }
     initial_eval_rows = run_device_sequence(
@@ -697,6 +725,10 @@ def main() -> None:
         "output_driver_model": args.output_driver_model,
         "readout_apply_scale": args.readout_apply_scale,
         "hidden_forward_width": args.hidden_forward_width,
+        "readout_gradient_width": args.readout_gradient_width,
+        "hidden_error_width": args.hidden_error_width,
+        "hidden_update_width": args.hidden_update_width,
+        "hidden_weight_write_width": args.hidden_weight_write_width,
         "hidden_bias_positive_init": args.hidden_bias_positive_init,
         "hidden_bias_negative_init": args.hidden_bias_negative_init,
         "learning_device_implementation": "transistor_passive",

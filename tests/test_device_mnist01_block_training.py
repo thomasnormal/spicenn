@@ -27,6 +27,10 @@ def test_device_mnist01_block_script_help_runs_from_repo_root() -> None:
     assert "--target-polarity" in proc.stdout
     assert "--input-rail-mode" in proc.stdout
     assert "--complement-rail-scale" in proc.stdout
+    assert "--readout-gradient-width" in proc.stdout
+    assert "--hidden-error-width" in proc.stdout
+    assert "--hidden-update-width" in proc.stdout
+    assert "--hidden-weight-write-width" in proc.stdout
     assert "--hidden-bias-positive-init" in proc.stdout
     assert "--assert-nonbehavioral" in proc.stdout
 
@@ -60,6 +64,10 @@ def test_block_netlist_emits_per_pixel_trainable_caps_and_no_behavioral_sources(
         stride=2,
         channels=1,
         training_enabled=True,
+        readout_gradient_width=36.0,
+        hidden_error_width=40.0,
+        hidden_update_width=18.0,
+        hidden_weight_write_width=0.4,
     )
 
     assert "\nB" not in netlist
@@ -71,9 +79,11 @@ def test_block_netlist_emits_per_pixel_trainable_caps_and_no_behavioral_sources(
     assert "Cbhp3 bhp3 0 20f" in netlist
     assert "Mhpos3_3_x vdd x15 hp3_3_0 0 NMOS" in netlist
     assert "Mhbpos3_b vdd bhp3 hbp3_0 0 NMOS" in netlist
-    assert "Mghp3_3_d ghp3_3_x hdp3 ghp3_3_d 0 NSENSE" in netlist
-    assert "Mgbp3_d vdd hdp3 gbp3_d 0 NSENSE" in netlist
-    assert "Mbhp3_up_a bhp3_up apply bhp3 0 NREL" in netlist
+    assert "Mghp3_3_d ghp3_3_x hdp3 ghp3_3_d 0 NSENSE W=18u" in netlist
+    assert "Mgbp3_d vdd hdp3 gbp3_d 0 NSENSE W=18u" in netlist
+    assert "Mhdp3_d0 vdd dp hdp3_d0 0 NSENSE W=40u" in netlist
+    assert "Mgvp3_a vdd act3 gvp3_a 0 NREL W=36u" in netlist
+    assert "Mbhp3_up_a bhp3_up apply bhp3 0 NREL W=0.4u" in netlist
     assert "Movpos3_f op3_1 fwd score 0 NREL" in netlist
     assert "Mrelu_o vdd score out 0 NSENSE" in netlist
 

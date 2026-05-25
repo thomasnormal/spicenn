@@ -6158,19 +6158,27 @@ quit
     hyf_wp = hyf_cols[6]
     hyf_wm = hyf_cols[7]
     hyf_weight = hyf_wp - hyf_wm
+    hyf_hidden_sample = hyfat(1.35e-6, hyf_hidden)
+    hyf_selected_gate_sample = hyfat(1.45e-6, hyf_selected_gate)
+    hyf_complement_gate_sample = hyfat(1.45e-6, hyf_complement_gate)
+    hyf_active_hcap = hyfat(0.90e-6, hyf_hcap)
+    hyf_active_hold_error = abs(hyfat(1.40e-6, hyf_hcap) - hyf_active_hcap)
+    hyf_inactive_hcap = hyfat(2.65e-6, hyf_hcap)
     hyf_first_weight = hyfat(2.05e-6, hyf_weight)
     hyf_second_weight = hyfat(3.35e-6, hyf_weight)
     hyf_second_increment = hyf_second_weight - hyf_first_weight
+    hyf_final_drift = hyfat(3.85e-6, hyf_weight) - hyf_first_weight
+    hyf_complement_step = hyfat(3.35e-6, hyf_wm) - hyfat(1.45e-6, hyf_wm)
     require(hyfat(1.35e-6, hyf_hidden) > 0.07, "hybrid activation-store deck should store positive hidden error")
     require(hyfat(1.45e-6, hyf_selected_gate) < 0.30, "hybrid activation-store selected restored gate should be low")
     require(hyfat(1.45e-6, hyf_complement_gate) > 1.60, "hybrid activation-store complement restored gate should be high")
     require(hyfat(0.90e-6, hyf_hcap) < 0.95, "hybrid activation-store should sample active-low activation")
-    require(abs(hyfat(1.40e-6, hyf_hcap) - hyfat(0.90e-6, hyf_hcap)) < 0.003, "active activation cap should hold before first pacc")
+    require(hyf_active_hold_error < 0.003, "active activation cap should hold before first pacc")
     require(hyf_first_weight > 0.020, "active stored activation should produce a useful W+ write")
     require(hyfat(2.65e-6, hyf_hcap) > 1.35, "hybrid activation-store should overwrite with inactive-high activation")
     require(abs(hyf_second_increment) < 0.002, "inactive stored activation should suppress the second pacc write")
-    require(hyfat(3.85e-6, hyf_weight) - hyf_first_weight < 0.002, "hybrid activation-store final weight should not drift after inactive pulse")
-    require(hyfat(3.35e-6, hyf_wm) - hyfat(1.45e-6, hyf_wm) < 5e-4, "stored activation gate should keep complement rail suppressed")
+    require(hyf_final_drift < 0.002, "hybrid activation-store final weight should not drift after inactive pulse")
+    require(hyf_complement_step < 5e-4, "stored activation gate should keep complement rail suppressed")
 
     hyf_fig, hyf_axes = plt.subplots(3, 1, figsize=(7.2, 7.4))
     hyf_axes[0].plot(1e6 * hyft, hyf_hidden, label="stored $r^+$")
@@ -6179,6 +6187,19 @@ quit
     hyf_axes[0].set_ylabel("voltage (V)")
     hyf_axes[0].set_title("Hybrid stored-activation deck reuses one hidden-error rail")
     hyf_axes[0].grid(True, alpha=0.25)
+    hyf_axes[0].text(
+        0.52,
+        0.15,
+        "hidden error = "
+        f"{1e3 * hyf_hidden_sample:.1f} mV / >70 mV\n"
+        "selected gate = "
+        f"{hyf_selected_gate_sample:.2f} V / <0.30 V\n"
+        "complement gate = "
+        f"{hyf_complement_gate_sample:.2f} V / >1.60 V",
+        transform=hyf_axes[0].transAxes,
+        fontsize="x-small",
+        bbox=callout_box,
+    )
     hyf_axes[0].legend(loc="center right", fontsize="small")
     hyf_axes[1].plot(1e6 * hyft, hyf_hsrc, label="activation source")
     hyf_axes[1].plot(1e6 * hyft, hyf_hcap, label="stored activation gate $h^-$")
@@ -6188,6 +6209,19 @@ quit
     hyf_axes[1].set_ylabel("activation gate (V)")
     hyf_axes[1].set_title("MOS pass gate samples active, then inactive activation")
     hyf_axes[1].grid(True, alpha=0.25)
+    hyf_axes[1].text(
+        0.05,
+        0.13,
+        "active sample = "
+        f"{hyf_active_hcap:.3f} V / <0.95 V\n"
+        "active hold error = "
+        f"{1e3 * hyf_active_hold_error:.2f} mV / <3 mV\n"
+        "inactive overwrite = "
+        f"{hyf_inactive_hcap:.3f} V / >1.35 V",
+        transform=hyf_axes[1].transAxes,
+        fontsize="x-small",
+        bbox=callout_box,
+    )
     hyf_axes[1].legend(loc="center right", fontsize="small")
     hyf_axes[2].plot(1e6 * hyft, hyf_wp - hyfat(1.45e-6, hyf_wp), label="$W^+$ step")
     hyf_axes[2].plot(1e6 * hyft, hyf_wm - hyfat(1.45e-6, hyf_wm), label="$W^-$ step")
@@ -6199,6 +6233,21 @@ quit
     hyf_axes[2].set_ylabel("weight step (V)")
     hyf_axes[2].set_title("Stored active gate writes; stored inactive gate suppresses reuse pulse")
     hyf_axes[2].grid(True, alpha=0.25)
+    hyf_axes[2].text(
+        0.46,
+        0.15,
+        "active write = "
+        f"{1e3 * hyf_first_weight:.1f} mV / >20 mV\n"
+        "inactive increment = "
+        f"{1e3 * hyf_second_increment:.2f} mV / |inc|<2 mV\n"
+        "final drift = "
+        f"{1e3 * hyf_final_drift:.2f} mV / <2 mV\n"
+        "complement step = "
+        f"{1e3 * hyf_complement_step:.3f} mV / <0.5 mV",
+        transform=hyf_axes[2].transAxes,
+        fontsize="x-small",
+        bbox=callout_box,
+    )
     hyf_axes[2].legend(loc="upper left", ncol=2, fontsize="small")
     hyf_fig.tight_layout()
     save_plot(hyf_fig, "mos_hidden_writer_restored_gate_hybrid_activation_store_ngspice")
@@ -6303,6 +6352,9 @@ quit
     hygg_hidden = hygg_cols[0] - hygg_cols[1]
     hygg_selected_gate = hygg_cols[2]
     hygg_complement_gate = hygg_cols[3]
+    hygg_hidden_sample = hyggat(1.35e-6, hygg_hidden)
+    hygg_selected_gate_sample = hyggat(1.45e-6, hygg_selected_gate)
+    hygg_complement_gate_sample = hyggat(1.45e-6, hygg_complement_gate)
     hygg_final = []
     hygg_hcap_at_start = []
     hygg_wm_step = []
@@ -6319,6 +6371,9 @@ quit
     hygg_final = np.array(hygg_final)
     hygg_hcap_at_start = np.array(hygg_hcap_at_start)
     hygg_wm_step = np.array(hygg_wm_step)
+    hygg_settled_min = float(np.min(hygg_final[2:]))
+    hygg_settled_spread = float(np.max(hygg_final[2:]) - np.min(hygg_final[2:]))
+    hygg_complement_max = float(np.max(hygg_wm_step))
     require(hyggat(1.35e-6, hygg_hidden) > 0.07, "hybrid activation-timing deck should store positive hidden error")
     require(hyggat(1.45e-6, hygg_selected_gate) < 0.30, "hybrid activation-timing selected restored gate should be low")
     require(hyggat(1.45e-6, hygg_complement_gate) > 1.60, "hybrid activation-timing complement restored gate should be high")
@@ -6339,6 +6394,17 @@ quit
     hygg_axes[0].set_title("Hybrid activation-timing sweep shares one hidden-error rail")
     hygg_axes[0].set_xlim(0.35, 2.35)
     hygg_axes[0].grid(True, alpha=0.25)
+    hygg_axes[0].text(
+        0.05,
+        0.14,
+        "hidden error = "
+        f"{1e3 * hygg_hidden_sample:.1f} mV / >70 mV\n"
+        "selected/complement gates = "
+        f"{hygg_selected_gate_sample:.2f}/{hygg_complement_gate_sample:.2f} V",
+        transform=hygg_axes[0].transAxes,
+        fontsize="x-small",
+        bbox=callout_box,
+    )
     hygg_axes[0].legend(loc="center right", ncol=2, fontsize="small")
     hygg_x = np.arange(len(hybrid_activation_timing_cases))
     hygg_labels = [label for _name, label, _start, _end in hybrid_activation_timing_cases]
@@ -6350,6 +6416,17 @@ quit
     hygg_axes[1].set_ylabel("activation gate (V)")
     hygg_axes[1].set_title("sampled activation seen when pacc starts")
     hygg_axes[1].grid(True, alpha=0.25)
+    hygg_axes[1].text(
+        0.54,
+        0.13,
+        "pre/sample-edge gates = "
+        f"{hygg_hcap_at_start[0]:.2f}, {hygg_hcap_at_start[1]:.2f} V\n"
+        "settled active gates = "
+        f"{np.min(hygg_hcap_at_start[2:]):.2f}--{np.max(hygg_hcap_at_start[2:]):.2f} V",
+        transform=hygg_axes[1].transAxes,
+        fontsize="x-small",
+        bbox=callout_box,
+    )
     hygg_axes[1].legend(loc="center right", ncol=3, fontsize="small")
     hygg_axes[2].plot(hygg_x, 1e3 * hygg_final, "o-", label="$W^+ - W^-$")
     hygg_axes[2].plot(hygg_x, 1e3 * hygg_wm_step, "s--", label="complement $W^-$ step")
@@ -6359,6 +6436,23 @@ quit
     hygg_axes[2].set_ylabel("writer step (mV)")
     hygg_axes[2].set_title("pacc must wait for activation-store sampling margin")
     hygg_axes[2].grid(True, alpha=0.25)
+    hygg_axes[2].text(
+        0.49,
+        0.14,
+        "pre-sample = "
+        f"{1e3 * hygg_final[0]:.2f} mV / <2 mV\n"
+        "sample-edge = "
+        f"{1e3 * hygg_final[1]:.1f} mV\n"
+        "settled min = "
+        f"{1e3 * hygg_settled_min:.1f} mV / >90% final\n"
+        "settled spread = "
+        f"{1e3 * hygg_settled_spread:.2f} mV / <4 mV\n"
+        "complement max = "
+        f"{1e3 * hygg_complement_max:.3f} mV / <0.5 mV",
+        transform=hygg_axes[2].transAxes,
+        fontsize="x-small",
+        bbox=callout_box,
+    )
     hygg_axes[2].legend(loc="upper left", ncol=2, fontsize="small")
     hygg_fig.tight_layout()
     save_plot(hygg_fig, "mos_hidden_writer_restored_gate_hybrid_activation_timing_ngspice")
@@ -6470,6 +6564,11 @@ quit
     hyw_selected_gate = hyw_cols[2]
     hyw_complement_gate = hyw_cols[3]
     hyw_hcap = hyw_cols[4]
+    hyw_hidden_sample = hywat(1.35e-6, hyw_hidden)
+    hyw_selected_gate_sample = hywat(1.45e-6, hyw_selected_gate)
+    hyw_complement_gate_sample = hywat(1.45e-6, hyw_complement_gate)
+    hyw_hcap_sample = hywat(2.00e-6, hyw_hcap)
+    hyw_hcap_hold_error = abs(hywat(3.00e-6, hyw_hcap) - hyw_hcap_sample)
     hyw_width_ns = np.array([(end_us - start_us) * 1e3 for _name, _label, start_us, end_us in hybrid_width_cases])
     hyw_final = []
     hyw_wp_step = []
@@ -6487,6 +6586,8 @@ quit
     hyw_wm_step = np.array(hyw_wm_step)
     hyw_fit = np.polyval(np.polyfit(hyw_width_ns, hyw_final, 1), hyw_width_ns)
     hyw_r2 = 1.0 - float(np.sum((hyw_final - hyw_fit) ** 2) / np.sum((hyw_final - np.mean(hyw_final)) ** 2))
+    hyw_complement_max = float(np.max(hyw_wm_step))
+    hyw_selected_dominance_error = float(np.max(np.abs(hyw_final - hyw_wp_step)))
     require(hywat(1.35e-6, hyw_hidden) > 0.07, "hybrid width deck should store positive hidden error")
     require(hywat(1.45e-6, hyw_selected_gate) < 0.30, "hybrid width selected restored gate should be low")
     require(hywat(1.45e-6, hyw_complement_gate) > 1.60, "hybrid width complement restored gate should be high")
@@ -6496,8 +6597,8 @@ quit
     require(hyw_final[0] > 0.001, "short hybrid pacc pulse should create a measurable update")
     require(hyw_final[-1] < 0.12, "long hybrid pacc pulse should remain in incremental range")
     require(hyw_r2 > 0.995, "hybrid pacc width response should be near-linear over the tested width range")
-    require(np.max(hyw_wm_step) < 5e-4, "hybrid pacc width sweep should keep complement rail suppressed")
-    require(np.max(np.abs(hyw_final - hyw_wp_step)) < 6e-4, "hybrid pacc width signed write should be selected-rail dominated")
+    require(hyw_complement_max < 5e-4, "hybrid pacc width sweep should keep complement rail suppressed")
+    require(hyw_selected_dominance_error < 6e-4, "hybrid pacc width signed write should be selected-rail dominated")
 
     hyw_fig, hyw_axes = plt.subplots(3, 1, figsize=(7.2, 7.2), gridspec_kw={"height_ratios": [1.15, 1.0, 1.0]})
     hyw_axes[0].plot(1e6 * hywt, hyw_hidden, label="stored $r^+$")
@@ -6508,6 +6609,21 @@ quit
     hyw_axes[0].set_ylabel("voltage (V)")
     hyw_axes[0].set_title("Hybrid width sweep shares hidden-error and sampled activation state")
     hyw_axes[0].grid(True, alpha=0.25)
+    hyw_axes[0].text(
+        0.52,
+        0.14,
+        "hidden error = "
+        f"{1e3 * hyw_hidden_sample:.1f} mV / >70 mV\n"
+        "selected/complement gates = "
+        f"{hyw_selected_gate_sample:.2f}/{hyw_complement_gate_sample:.2f} V\n"
+        "sampled h- = "
+        f"{hyw_hcap_sample:.3f} V / 0.92+/-0.01 V\n"
+        "h- hold error = "
+        f"{1e3 * hyw_hcap_hold_error:.2f} mV / <2 mV",
+        transform=hyw_axes[0].transAxes,
+        fontsize="x-small",
+        bbox=callout_box,
+    )
     hyw_axes[0].legend(loc="center right", ncol=2, fontsize="small")
     for idx, (_name, label, _start_us, _end_us) in enumerate(hybrid_width_cases):
         base = 5 + 3 * idx
@@ -6516,6 +6632,17 @@ quit
     hyw_axes[1].set_ylabel("$W^+ - W^-$ (mV)")
     hyw_axes[1].set_title("active-low pacc pulse width controls signed update magnitude")
     hyw_axes[1].grid(True, alpha=0.25)
+    hyw_axes[1].text(
+        0.05,
+        0.15,
+        "step range = "
+        f"{1e3 * hyw_final[0]:.1f}--{1e3 * hyw_final[-1]:.1f} mV\n"
+        "monotone increments min = "
+        f"{1e3 * np.min(np.diff(hyw_final)):.1f} mV / >2 mV",
+        transform=hyw_axes[1].transAxes,
+        fontsize="x-small",
+        bbox=callout_box,
+    )
     hyw_axes[1].legend(loc="upper left", ncol=3, fontsize="small")
     hyw_axes[2].plot(hyw_width_ns, 1e3 * hyw_final, "o-", label="$W^+ - W^-$")
     hyw_axes[2].plot(hyw_width_ns, 1e3 * hyw_wm_step, "s--", label="complement $W^-$ step")
@@ -6524,6 +6651,19 @@ quit
     hyw_axes[2].set_ylabel("final step (mV)")
     hyw_axes[2].set_title("learning-rate pulse width is monotone and linear in this window")
     hyw_axes[2].grid(True, alpha=0.25)
+    hyw_axes[2].text(
+        0.48,
+        0.14,
+        "R2 = "
+        f"{hyw_r2:.5f} / >0.995\n"
+        "complement max = "
+        f"{1e3 * hyw_complement_max:.3f} mV / <0.5 mV\n"
+        "selected-dominance err = "
+        f"{1e3 * hyw_selected_dominance_error:.3f} mV / <0.6 mV",
+        transform=hyw_axes[2].transAxes,
+        fontsize="x-small",
+        bbox=callout_box,
+    )
     hyw_axes[2].legend(loc="upper left", fontsize="small")
     hyw_fig.tight_layout()
     save_plot(hyw_fig, "mos_hidden_writer_restored_gate_hybrid_width_ngspice")

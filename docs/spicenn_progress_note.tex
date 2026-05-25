@@ -1367,6 +1367,27 @@ must satisfy before it can replace the current behavioral prototype.
 
 \begin{figure}[H]
   \centering
+  \includegraphics[width=0.88\linewidth]{figures/mos_hidden_writer_restored_gate_hybrid_update_forward_read_reuse_ngspice.png}
+  \caption{Ngspice read-reuse characterization for the integrated MOS
+  update-to-forward path.  A single \(a^+e^+\) local update first writes
+  persistent \(W^+/W^-\) and \(B^+/B^-\) capacitor pairs; after that write,
+  the circuit performs three read/reset/forward-store cycles without any
+  second update and without forcing the trainable rails.  The stored state
+  after the write is \(W^+-W^-=22.988\) mV and \(B^+-B^-=34.543\) mV.
+  Repeated MOS reads reproduce \(z^- - z^+=50.762, 51.164, 50.775\) mV, and
+  repeated forward-store pulses produce \(h^- - h^+=47.346, 47.325,
+  47.326\) mV.  The reset transmission gates clear only the transient
+  summing and activation-storage capacitors between reads, leaving reset
+  samples of about \(0.013\) mV on \(z\) and \(0.000\) mV on \(h\).  The final
+  trainable-state drift is only \(0.003\,\mu\mathrm{V}\) on \(W\) and
+  \(0.002\,\mu\mathrm{V}\) on \(B\), so the same MOS-written state can be
+  reused by forward inference reads without measurable read disturb in this
+  operating window.}
+  \label{fig:mos-hidden-writer-restored-gate-hybrid-update-forward-read-reuse-ngspice}
+\end{figure}
+
+\begin{figure}[H]
+  \centering
   \includegraphics[width=0.88\linewidth]{figures/mos_hidden_writer_restored_gate_hybrid_repeated_ngspice.png}
   \caption{Ngspice repeated-pulse accumulation characterization of the hybrid
   restored writer.  One stored \(r^+\) hidden-error rail drives one persistent

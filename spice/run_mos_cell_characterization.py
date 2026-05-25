@@ -6771,6 +6771,10 @@ quit
     hyr_fig.tight_layout()
     save_plot(hyr_fig, "mos_hidden_writer_restored_gate_hybrid_update_forward_reuse_ngspice")
 
+    def replace_required(deck: str, old: str, new: str) -> str:
+        require(old in deck, f"missing deck fragment for replacement: {old[:80]}")
+        return deck.replace(old, new)
+
     reset_strength_cases = [
         (24, 60, "old 24/60"),
         (36, 108, "36/108"),
@@ -6786,10 +6790,13 @@ quit
     reset_strength_final_b = []
     for n_width, p_width, _label in reset_strength_cases:
         stem = f"mos_hidden_writer_restored_gate_hybrid_update_forward_reuse_reset_n{n_width}_p{p_width}"
-        strength_deck = hybrid_forward_reuse_deck.replace(
+        strength_deck = replace_required(
+            hybrid_forward_reuse_deck,
             "WRESETN=60u WRESETP=180u",
             f"WRESETN={n_width}u WRESETP={p_width}u",
-        ).replace(
+        )
+        strength_deck = replace_required(
+            strength_deck,
             "mos_hidden_writer_restored_gate_hybrid_update_forward_reuse.dat",
             f"{stem}.dat",
         )
@@ -6850,6 +6857,97 @@ quit
     strength_axes[1].legend(loc="center right")
     strength_fig.tight_layout()
     save_plot(strength_fig, "mos_hidden_writer_restored_gate_hybrid_update_forward_reset_strength_ngspice")
+
+    read_reuse_replacements = {
+        "VPBWD_HYR pbwd 0 PWL(0 0 0.45u 0 0.47u 1.8 1.25u 1.8 1.27u 0 4.25u 0 4.27u 1.8 5.05u 1.8 5.07u 0 7.8u 0)":
+            "VPBWD_HYR pbwd 0 PWL(0 0 0.45u 0 0.47u 1.8 1.25u 1.8 1.27u 0 7.8u 0)",
+        "VRM_HYR rm_hyr 0 PWL(0 0 4.25u 0 4.27u 1.8 5.05u 1.8 5.07u 0 7.8u 0)":
+            "VRM_HYR rm_hyr 0 0",
+        "VRESET_HYR rst_hyr 0 PWL(0 0 3.58u 0 3.60u 1.8 4.00u 1.8 4.02u 0 7.8u 0)":
+            "VRESET_HYR rst_hyr 0 PWL(0 0 3.58u 0 3.60u 1.8 4.00u 1.8 4.02u 0 5.18u 0 5.20u 1.8 5.60u 1.8 5.62u 0 7.8u 0)",
+        "VRESETN_HYR rstn_hyr 0 PWL(0 1.8 3.58u 1.8 3.60u 0 4.00u 0 4.02u 1.8 7.8u 1.8)":
+            "VRESETN_HYR rstn_hyr 0 PWL(0 1.8 3.58u 1.8 3.60u 0 4.00u 0 4.02u 1.8 5.18u 1.8 5.20u 0 5.60u 0 5.62u 1.8 7.8u 1.8)",
+        "VACT_SRC_HYR hsrc_hyr 0 PWL(0 1.45 1.35u 1.45 1.37u 0.92 1.82u 0.92 1.84u 1.45 5.13u 1.45 5.15u 0.92 5.60u 0.92 5.62u 1.45 7.8u 1.45)":
+            "VACT_SRC_HYR hsrc_hyr 0 PWL(0 1.45 1.35u 1.45 1.37u 0.92 1.82u 0.92 1.84u 1.45 7.8u 1.45)",
+        "VPSAMP_HYR psamp_hyr 0 PWL(0 0 1.42u 0 1.44u 1.8 1.76u 1.8 1.78u 0 5.20u 0 5.22u 1.8 5.54u 1.8 5.56u 0 7.8u 0)":
+            "VPSAMP_HYR psamp_hyr 0 PWL(0 0 1.42u 0 1.44u 1.8 1.76u 1.8 1.78u 0 7.8u 0)",
+        "VPSAMPN_HYR psampn_hyr 0 PWL(0 1.8 1.42u 1.8 1.44u 0 1.76u 0 1.78u 1.8 5.20u 1.8 5.22u 0 5.54u 0 5.56u 1.8 7.8u 1.8)":
+            "VPSAMPN_HYR psampn_hyr 0 PWL(0 1.8 1.42u 1.8 1.44u 0 1.76u 0 1.78u 1.8 7.8u 1.8)",
+        "VPACC_HYR paccn_hyr 0 PWL(0 1.8 2.05u 1.8 2.07u 0 2.39u 0 2.41u 1.8 5.85u 1.8 5.87u 0 6.19u 0 6.21u 1.8 7.8u 1.8)":
+            "VPACC_HYR paccn_hyr 0 PWL(0 1.8 2.05u 1.8 2.07u 0 2.39u 0 2.41u 1.8 7.8u 1.8)",
+        "VREAD_HYR read_hyr 0 PWL(0 0 2.70u 0 2.72u 1.15 3.36u 1.15 3.38u 0 6.50u 0 6.52u 1.15 7.16u 1.15 7.18u 0 7.8u 0)":
+            "VREAD_HYR read_hyr 0 PWL(0 0 2.70u 0 2.72u 1.15 3.36u 1.15 3.38u 0 4.30u 0 4.32u 1.15 4.96u 1.15 4.98u 0 5.90u 0 5.92u 1.15 6.56u 1.15 6.58u 0 7.8u 0)",
+        "VPACT_HYR pact_hyr 0 PWL(0 0 3.16u 0 3.18u 1.8 3.31u 1.8 3.33u 0 6.96u 0 6.98u 1.8 7.11u 1.8 7.13u 0 7.8u 0)":
+            "VPACT_HYR pact_hyr 0 PWL(0 0 3.16u 0 3.18u 1.8 3.31u 1.8 3.33u 0 4.76u 0 4.78u 1.8 4.91u 1.8 4.93u 0 6.36u 0 6.38u 1.8 6.51u 1.8 6.53u 0 7.8u 0)",
+        "mos_hidden_writer_restored_gate_hybrid_update_forward_reuse.dat":
+            "mos_hidden_writer_restored_gate_hybrid_update_forward_read_reuse.dat",
+    }
+    hybrid_forward_read_reuse_deck = hybrid_forward_reuse_deck
+    for old, new in read_reuse_replacements.items():
+        hybrid_forward_read_reuse_deck = replace_required(hybrid_forward_read_reuse_deck, old, new)
+    hybrid_forward_read_reuse_data = run_ngspice(
+        hybrid_forward_read_reuse_deck,
+        "mos_hidden_writer_restored_gate_hybrid_update_forward_read_reuse",
+    )
+    hyrrt, hyrr_cols = load_wrdata(hybrid_forward_read_reuse_data, 23)
+
+    def hyrrat(time_s: float, values: np.ndarray) -> float:
+        return float(values[np.argmin(np.abs(hyrrt - time_s))])
+
+    hyrr_weight = hyrr_cols[5] - hyrr_cols[6]
+    hyrr_bias = hyrr_cols[7] - hyrr_cols[8]
+    hyrr_preact = hyrr_cols[10] - hyrr_cols[9]
+    hyrr_forward_store = hyrr_cols[14] - hyrr_cols[13]
+    hyrr_z_times = np.array([3.35, 4.95, 6.55]) * 1e-6
+    hyrr_h_times = np.array([3.45, 5.05, 6.70]) * 1e-6
+    hyrr_reset_times = np.array([4.10, 5.70]) * 1e-6
+    hyrr_z_samples = np.array([hyrrat(ts, hyrr_preact) for ts in hyrr_z_times])
+    hyrr_h_samples = np.array([hyrrat(ts, hyrr_forward_store) for ts in hyrr_h_times])
+    hyrr_z_reset = np.array([abs(hyrrat(ts, hyrr_preact)) for ts in hyrr_reset_times])
+    hyrr_h_reset = np.array([abs(hyrrat(ts, hyrr_forward_store)) for ts in hyrr_reset_times])
+    hyrr_weight_after_write = hyrrat(2.55e-6, hyrr_weight)
+    hyrr_bias_after_write = hyrrat(2.55e-6, hyrr_bias)
+    hyrr_weight_drift = hyrrat(7.45e-6, hyrr_weight) - hyrr_weight_after_write
+    hyrr_bias_drift = hyrrat(7.45e-6, hyrr_bias) - hyrr_bias_after_write
+    require(hyrr_weight_after_write > 0.020, "read-reuse deck should write positive weight state")
+    require(hyrr_bias_after_write > 0.030, "read-reuse deck should write positive bias state")
+    require(np.all(hyrr_z_samples > 0.045), "read-reuse cycles should repeatedly read useful positive preactivation")
+    require(np.all(hyrr_h_samples > 0.040), "read-reuse cycles should repeatedly store useful positive activation")
+    require(np.max(hyrr_z_samples) - np.min(hyrr_z_samples) < 0.001, "read-reuse preactivation cycles should agree")
+    require(np.max(hyrr_h_samples) - np.min(hyrr_h_samples) < 0.001, "read-reuse stored activations should agree")
+    require(np.max(hyrr_z_reset) < 0.001, "read-reuse reset should clear preactivation between reads")
+    require(np.max(hyrr_h_reset) < 0.001, "read-reuse reset should clear stored activation between reads")
+    require(abs(hyrr_weight_drift) < 1e-5, "repeated read/reset cycles should not disturb weight state")
+    require(abs(hyrr_bias_drift) < 1e-5, "repeated read/reset cycles should not disturb bias state")
+
+    hyrr_fig, hyrr_axes = plt.subplots(3, 1, figsize=(7.4, 7.4), gridspec_kw={"height_ratios": [1.0, 1.0, 1.0]})
+    hyrr_axes[0].plot(1e6 * hyrrt, 1e3 * hyrr_weight, label="$W^+ - W^-$")
+    hyrr_axes[0].plot(1e6 * hyrrt, 1e3 * hyrr_bias, label="$B^+ - B^-$")
+    hyrr_axes[0].plot(1e6 * hyrrt, hyrr_cols[20] / 20.0, color="0.45", alpha=0.35, label="$pacc_n/20$")
+    hyrr_axes[0].set_ylabel("state differential (mV)")
+    hyrr_axes[0].set_title("One local update is reused by repeated forward reads")
+    hyrr_axes[0].grid(True, alpha=0.25)
+    hyrr_axes[0].legend(loc="upper left", ncol=3, fontsize="small")
+    hyrr_axes[1].plot(1e6 * hyrrt, 1e3 * hyrr_preact, label="$z^- - z^+$")
+    hyrr_axes[1].plot(1e6 * hyrrt, hyrr_cols[21] / 20.0, color="0.25", alpha=0.25, label="$read/20$")
+    hyrr_axes[1].plot(1e6 * hyrrt, hyrr_cols[18] / 20.0, color="0.55", alpha=0.35, label="$reset/20$")
+    hyrr_axes[1].plot(1e6 * hyrr_z_times, 1e3 * hyrr_z_samples, "o", color="black", label="read samples")
+    hyrr_axes[1].axhline(0, color="0.4", linewidth=0.8)
+    hyrr_axes[1].set_ylabel("preactivation (mV)")
+    hyrr_axes[1].set_title("MOS reset/read cycles reproduce the same summing result")
+    hyrr_axes[1].grid(True, alpha=0.25)
+    hyrr_axes[1].legend(loc="upper left", ncol=2, fontsize="small")
+    hyrr_axes[2].plot(1e6 * hyrrt, 1e3 * hyrr_forward_store, label="stored activation")
+    hyrr_axes[2].plot(1e6 * hyrrt, hyrr_cols[22] / 20.0, color="0.35", alpha=0.25, label="$pact/20$")
+    hyrr_axes[2].plot(1e6 * hyrr_h_times, 1e3 * hyrr_h_samples, "o", color="black", label="activation samples")
+    hyrr_axes[2].axhline(0, color="0.4", linewidth=0.8)
+    hyrr_axes[2].set_xlabel("time (us)")
+    hyrr_axes[2].set_ylabel("activation differential (mV)")
+    hyrr_axes[2].set_title("Repeated forward-store pulses agree without disturbing W/B")
+    hyrr_axes[2].grid(True, alpha=0.25)
+    hyrr_axes[2].legend(loc="upper left", fontsize="small")
+    hyrr_fig.tight_layout()
+    save_plot(hyrr_fig, "mos_hidden_writer_restored_gate_hybrid_update_forward_read_reuse_ngspice")
 
     hybrid_repeated_deck = f"""
 * Hybrid restored-enable/analog-error writer repeated-pulse accumulation check.

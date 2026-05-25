@@ -1971,6 +1971,31 @@ must satisfy before it can replace the current behavioral prototype.
 
 \begin{figure}[H]
   \centering
+  \includegraphics[width=0.95\linewidth]{figures/mos_hidden_writer_restored_gate_hybrid_update_forward_guard_forward_pair_96u_shifted_gate_threshold_ngspice.png}
+  \caption{Ngspice input-pair threshold-skew characterization for the
+  shifted-gate \(96\,\mu\mathrm{m}\) forward pair.  The deck keeps the same
+  low-common-mode \(V_{ZCM}=0.75\) V read, \(10\) pF coupling capacitors,
+  \(5\) pF shifted gates, and guarded activation store, but assigns separate
+  Level-1 NMOS threshold models to the two crossed forward-pair input
+  devices.  Matched strong/weak \(20\) mV corners keep the stored activation
+  positive (\(54.942\) and \(45.662\) mV versus \(52.154\) mV nominal), while
+  one-sided skew exposes the real offset budget.  Weakening the \(h^+\) side
+  leaves only \(15.771\) mV, weakening the \(h^-\) side raises the store to
+  \(81.091\) mV, and the two opposite \(20\) mV skews produce
+  \(-19.373\) and \(116.936\) mV.  The passive shifted-gate differential is
+  unchanged in the untrimmed cases, so this is not a latch sampling error; it
+  is forward-pair threshold offset consuming the recovered headroom.  Helpful
+  gate trim on the failing skew shows the required recovery scale:
+  \(-25\) mV is still negative (\(-4.176\) mV), \(-50\) mV barely recovers
+  positive sign (\(11.022\) mV), and \(-75\) mV gives \(26.162\) mV.  This
+  plot blocks promoting the shifted-gate fix as a complete robust neuron
+  element until the circuit adds per-cell offset trim/autozero, larger signal
+  margin, or a less offset-sensitive forward pair.}
+  \label{fig:mos-hidden-writer-restored-gate-hybrid-update-forward-guard-forward-pair-96u-shifted-gate-threshold-ngspice}
+\end{figure}
+
+\begin{figure}[H]
+  \centering
   \includegraphics[width=0.88\linewidth]{figures/mos_hidden_writer_restored_gate_hybrid_update_forward_guard_forward_tail_bias_ngspice.png}
   \caption{Ngspice isolated forward-tail bias sweep for the same guarded MOS
   activation store.  The failed shared-bias experiment changed the read path

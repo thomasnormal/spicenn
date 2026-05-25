@@ -8745,6 +8745,9 @@ quit
         gate_pf: float = 5.0,
         gate_ic_p: float = 0.90,
         gate_ic_m: float = 0.90,
+        forward_p_model: str = "NMOS",
+        forward_m_model: str = "NMOS",
+        forward_tail_model: str = "NMOS",
     ) -> str:
         def fmt_gate_ic(value: float) -> str:
             if abs(value - round(value, 2)) < 1e-12:
@@ -8764,9 +8767,9 @@ quit
                 "MRZGMP_HYR zmg_hyr rstn_hyr zgcm_hyr vdd PMOS L={LCH} W={WRESETP}",
                 f"CCZP_HYR zp_hyr zpg_hyr {couple_pf:g}p",
                 f"CCZM_HYR zm_hyr zmg_hyr {couple_pf:g}p",
-                "MNFP_HYR hp_hyr zmg_hyr ftail_hyr 0 NMOS L={LCH} W=96u",
-                "MNFM_HYR hm_hyr zpg_hyr ftail_hyr 0 NMOS L={LCH} W=96u",
-                "MNFT_HYR ftail_hyr vbias 0 0 NMOS L={LCH} W=96u",
+                f"MNFP_HYR hp_hyr zmg_hyr ftail_hyr 0 {forward_p_model} L={{LCH}} W=96u",
+                f"MNFM_HYR hm_hyr zpg_hyr ftail_hyr 0 {forward_m_model} L={{LCH}} W=96u",
+                f"MNFT_HYR ftail_hyr vbias 0 0 {forward_tail_model} L={{LCH}} W=96u",
             ]
         )
 
@@ -9210,6 +9213,126 @@ quit
     require(
         np.all(np.diff(shift_noise_store_samples[[nominal_shift_noise_idx, *destructive_noise_idx]]) < -0.010),
         "larger destructive shifted-gate differential residue should monotonically reduce stored activation",
+    )
+
+    shift_threshold_cases = [
+        ("nominal", "nominal", 0.55, 0.55, 0.0),
+        ("both_strong_20mv", "both strong -20 mV", 0.53, 0.53, 0.0),
+        ("both_weak_20mv", "both weak +20 mV", 0.57, 0.57, 0.0),
+        ("hp_weak_20mv", "$h^+$ side weak", 0.57, 0.55, 0.0),
+        ("hm_weak_20mv", "$h^-$ side weak", 0.55, 0.57, 0.0),
+        ("skew_plusminus_20mv", "skew +20/-20 mV", 0.57, 0.53, 0.0),
+        ("skew_minusplus_20mv", "skew -20/+20 mV", 0.53, 0.57, 0.0),
+        ("skew_plusminus_trim25mv", "skew +20/-20, trim -25 mV", 0.57, 0.53, -0.025),
+        ("skew_plusminus_trim50mv", "skew +20/-20, trim -50 mV", 0.57, 0.53, -0.050),
+        ("skew_plusminus_trim75mv", "skew +20/-20, trim -75 mV", 0.57, 0.53, -0.075),
+    ]
+    shift_threshold_labels = []
+    shift_threshold_gate_samples = []
+    shift_threshold_load_samples = []
+    shift_threshold_store_samples = []
+    shift_threshold_traces = []
+    for name, label, nfp_vto, nfm_vto, gate_diff_offset_v in shift_threshold_cases:
+        stem = (
+            "mos_hidden_writer_restored_gate_hybrid_update_forward_guard_"
+            f"forward_pair_96u_zcm_0p75v_shift_threshold_{name}"
+        )
+        nfp_model = f"NSHFP_{name.upper()}"
+        nfm_model = f"NSHFM_{name.upper()}"
+        shift_threshold_models = (
+            f".model {nfp_model} NMOS (LEVEL=1 VTO={nfp_vto:.2f} KP=220u LAMBDA=0.03)\n"
+            f".model {nfm_model} NMOS (LEVEL=1 VTO={nfm_vto:.2f} KP=220u LAMBDA=0.03)"
+        )
+        shift_threshold_deck = replace_required(high_gain_hold_deck, zcm_source_line, "VZCM zcm 0 0.75")
+        shift_threshold_deck = replace_required(shift_threshold_deck, zcm_cap_p_line, "CZP_HYR zp_hyr 0 {CSUM} IC=0.75")
+        shift_threshold_deck = replace_required(shift_threshold_deck, zcm_cap_m_line, "CZM_HYR zm_hyr 0 {CSUM} IC=0.75")
+        shift_threshold_deck = replace_required(
+            shift_threshold_deck,
+            corner_param_line,
+            shift_threshold_models + "\n" + corner_param_line,
+        )
+        shift_threshold_deck = replace_required(
+            shift_threshold_deck,
+            high_gain_forward_pair_lines,
+            shifted_forward_pair_lines(
+                10.0,
+                gate_ic_p=0.90 + 0.5 * gate_diff_offset_v,
+                gate_ic_m=0.90 - 0.5 * gate_diff_offset_v,
+                forward_p_model=nfp_model,
+                forward_m_model=nfm_model,
+            ),
+        )
+        shift_threshold_deck = replace_required(
+            shift_threshold_deck,
+            "mos_hidden_writer_restored_gate_hybrid_update_forward_guard_forward_pair_96u_hold.dat",
+            f"{stem}.dat",
+        )
+        shift_threshold_deck = add_shifted_gate_probes(shift_threshold_deck, stem)
+        shift_threshold_data = run_ngspice(shift_threshold_deck, stem)
+        stt, shift_threshold_cols = load_wrdata(shift_threshold_data, 25)
+
+        def shtat(time_s: float, values: np.ndarray) -> float:
+            return float(values[np.argmin(np.abs(stt - time_s))])
+
+        shift_threshold_gate_diff = shift_threshold_cols[0] - shift_threshold_cols[1]
+        shift_threshold_load = shift_threshold_cols[14] - shift_threshold_cols[13]
+        shift_threshold_store = shift_threshold_cols[16] - shift_threshold_cols[15]
+        shift_threshold_labels.append(label)
+        shift_threshold_gate_samples.append(shtat(3.315e-6, shift_threshold_gate_diff))
+        shift_threshold_load_samples.append(shtat(3.315e-6, shift_threshold_load))
+        shift_threshold_store_samples.append(shtat(3.575e-6, shift_threshold_store))
+        shift_threshold_traces.append((label, stt, shift_threshold_load, shift_threshold_store))
+
+    shift_threshold_gate_samples = np.array(shift_threshold_gate_samples)
+    shift_threshold_load_samples = np.array(shift_threshold_load_samples)
+    shift_threshold_store_samples = np.array(shift_threshold_store_samples)
+    nominal_shift_threshold_idx = 0
+    require(
+        shift_threshold_store_samples[nominal_shift_threshold_idx] > 0.045,
+        "shifted-gate threshold nominal case should reproduce a useful low-common-mode activation",
+    )
+    untrimmed_threshold_indices = np.arange(7)
+    threshold_hazard_idx = 5
+    threshold_trim25_idx = 7
+    threshold_trim50_idx = 8
+    threshold_trim75_idx = 9
+    require(
+        np.all(np.delete(shift_threshold_store_samples[untrimmed_threshold_indices], threshold_hazard_idx) > 0.015),
+        "untrimmed shifted-gate threshold corners except the known skew hazard should keep positive activation",
+    )
+    require(
+        shift_threshold_store_samples[threshold_hazard_idx] < -0.010,
+        "untrimmed +20/-20 mV input threshold skew should expose the shifted-gate polarity hazard",
+    )
+    require(
+        shift_threshold_store_samples[threshold_trim25_idx] > shift_threshold_store_samples[threshold_hazard_idx] + 0.010,
+        "25 mV helpful gate trim should materially improve the +20/-20 mV threshold skew hazard",
+    )
+    require(
+        shift_threshold_store_samples[threshold_trim50_idx] > 0.005,
+        "50 mV helpful gate trim should recover positive activation under the +20/-20 mV threshold skew",
+    )
+    require(
+        shift_threshold_store_samples[threshold_trim75_idx] > shift_threshold_store_samples[threshold_trim50_idx] + 0.010,
+        "75 mV helpful gate trim should add useful recovery margin under the +20/-20 mV threshold skew",
+    )
+    require(
+        shift_threshold_store_samples[1] > shift_threshold_store_samples[2],
+        "matched weak input pair should reduce activation relative to matched strong input pair",
+    )
+    require(
+        np.max(shift_threshold_store_samples) - np.min(shift_threshold_store_samples) > 0.010,
+        "threshold skew sweep should expose a visible activation-margin spread",
+    )
+    require(
+        np.max(
+            np.abs(
+                shift_threshold_gate_samples[untrimmed_threshold_indices]
+                - shift_threshold_gate_samples[nominal_shift_threshold_idx]
+            )
+        )
+        < 0.001,
+        "untrimmed input-pair threshold sweep should not change the passive shifted-gate sampled differential",
     )
 
     tail_bias_forward_tail_line = "MNFT_HYR ftail_hyr vbias 0 0 NMOS L={LCH} W=48u"
@@ -10016,6 +10139,61 @@ quit
     save_plot(
         shift_noise_fig,
         "mos_hidden_writer_restored_gate_hybrid_update_forward_guard_forward_pair_96u_shifted_gate_offset_noise_ngspice",
+    )
+
+    shift_threshold_fig, shift_threshold_axes = plt.subplots(
+        2,
+        1,
+        figsize=(7.4, 6.4),
+        gridspec_kw={"height_ratios": [1.0, 0.85]},
+    )
+    for label, stt, load, store in shift_threshold_traces:
+        if label in {
+            "nominal",
+            "both strong -20 mV",
+            "both weak +20 mV",
+            "skew +20/-20 mV",
+            "skew +20/-20, trim -50 mV",
+            "skew +20/-20, trim -75 mV",
+        }:
+            shift_threshold_axes[0].plot(1e6 * stt, 1e3 * store, label=label)
+    shift_threshold_axes[0].axhline(0, color="0.4", linewidth=0.8)
+    shift_threshold_axes[0].axvline(3.33, color="0.25", linestyle="--", linewidth=0.9, alpha=0.6, label="guard off")
+    shift_threshold_axes[0].set_xlim(3.05, 3.75)
+    shift_threshold_axes[0].set_ylabel("activation differential (mV)")
+    shift_threshold_axes[0].set_title("Shifted-gate forward pair under input-threshold corners")
+    shift_threshold_axes[0].grid(True, alpha=0.25)
+    shift_threshold_axes[0].legend(loc="upper left", ncol=2, fontsize="x-small")
+    shift_threshold_x = np.arange(len(shift_threshold_labels))
+    shift_threshold_axes[1].bar(
+        shift_threshold_x - 0.24,
+        1e3 * shift_threshold_gate_samples,
+        width=0.24,
+        label="gate diff",
+    )
+    shift_threshold_axes[1].bar(
+        shift_threshold_x,
+        1e3 * shift_threshold_load_samples,
+        width=0.24,
+        label="forward load",
+    )
+    shift_threshold_axes[1].bar(
+        shift_threshold_x + 0.24,
+        1e3 * shift_threshold_store_samples,
+        width=0.24,
+        label="stored $h$",
+    )
+    shift_threshold_axes[1].axhline(0, color="0.4", linewidth=0.8)
+    shift_threshold_axes[1].set_xticks(shift_threshold_x)
+    shift_threshold_axes[1].set_xticklabels(shift_threshold_labels, rotation=18, ha="right")
+    shift_threshold_axes[1].set_ylabel("sampled differential (mV)")
+    shift_threshold_axes[1].set_title("Threshold skew changes gain but must not flip the shifted activation")
+    shift_threshold_axes[1].grid(True, axis="y", alpha=0.25)
+    shift_threshold_axes[1].legend(loc="upper right", ncol=3, fontsize="small")
+    shift_threshold_fig.tight_layout()
+    save_plot(
+        shift_threshold_fig,
+        "mos_hidden_writer_restored_gate_hybrid_update_forward_guard_forward_pair_96u_shifted_gate_threshold_ngspice",
     )
 
     tail_bias_fig, tail_bias_axes = plt.subplots(2, 1, figsize=(7.4, 6.4), gridspec_kw={"height_ratios": [1.0, 0.8]})

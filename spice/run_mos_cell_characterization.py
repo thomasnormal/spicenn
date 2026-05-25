@@ -15379,6 +15379,286 @@ quit
         "repeated fanout reset should keep first and last reset loads matched",
     )
 
+    shift_refz_fanout_refresh_impedance_cases = [
+        ("r100k", "100 kOhm", 100000.0),
+        ("r30k", "30 kOhm", 30000.0),
+        ("r10k", "10 kOhm", 10000.0),
+        ("r3k", "3 kOhm", 3000.0),
+        ("r1k", "1 kOhm", 1000.0),
+    ]
+    shift_refz_fanout_refresh_impedance_gaps_us = [
+        ("g1us", "1 us", 1.0),
+        ("g20us", "20 us", 20.0),
+    ]
+
+    def run_reset_ref_fanout_refresh_impedance_case(
+        branch_name: str,
+        reset_trim_v: float,
+    ) -> tuple[np.ndarray, list[np.ndarray]]:
+        stem = (
+            "mos_hidden_writer_restored_gate_hybrid_update_forward_guard_"
+            f"forward_pair_96u_shifted_gate_reset_ref_fanout_refresh_impedance_{branch_name}"
+        )
+        reset_common_v = shift_refz_precharge_tuned_common_v
+        reset_ref_p = reset_common_v + 0.5 * reset_trim_v
+        reset_ref_m = reset_common_v - 0.5 * reset_trim_v
+        cref_pf = 1000.0
+        load_count = 16
+        pulse_width_ns = 40.0
+        strength_scale = 2.0
+        pre_end_us = 0.420 + 0.001 * pulse_width_ns
+        pre_fall_us = pre_end_us + 0.020
+        wpren_u = 300.0 * strength_scale
+        wprep_u = 900.0 * strength_scale
+        max_gap_us = max(gap_us for _name, _label, gap_us in shift_refz_fanout_refresh_impedance_gaps_us)
+        tran_stop_us = 2.95 + 2.0 * max_gap_us
+        deck_lines = [
+            "* Source-impedance refresh sweep for repeated fresh fanout reset.",
+            "* The hard 1 nF / 16-load reservoir is startup-precharged, then",
+            "* three fresh shifted-gate banks expose how quickly each source recovers.",
+            COMMON_MODELS,
+            ".param CGATE=5p WRESETN=60u WRESETP=180u",
+            "VDD vdd 0 1.8",
+        ]
+        prints = []
+        case_idx = 0
+        for source_name, source_label, source_ohm in shift_refz_fanout_refresh_impedance_cases:
+            for gap_name, gap_label, gap_us in shift_refz_fanout_refresh_impedance_gaps_us:
+                deck_lines.extend(
+                    [
+                        (
+                            f"* {source_name}_{gap_name}: 1 nF, 16 loads, "
+                            f"{source_label} refresh source, {gap_label} recharge."
+                        ),
+                        (
+                            f"VPRE_FORI_{case_idx} pre_fori_{case_idx} 0 "
+                            f"PWL(0 0 0.400u 0 0.420u 1.8 {pre_end_us:.3f}u 1.8 "
+                            f"{pre_fall_us:.3f}u 0 {tran_stop_us:.3f}u 0)"
+                        ),
+                        (
+                            f"VPREN_FORI_{case_idx} pren_fori_{case_idx} 0 "
+                            f"PWL(0 1.8 0.400u 1.8 0.420u 0 {pre_end_us:.3f}u 0 "
+                            f"{pre_fall_us:.3f}u 1.8 {tran_stop_us:.3f}u 1.8)"
+                        ),
+                        f"VZRP_FORI_{case_idx} zrp_fori_src_{case_idx} 0 {reset_ref_p:.5f}",
+                        f"VZRM_FORI_{case_idx} zrm_fori_src_{case_idx} 0 {reset_ref_m:.5f}",
+                        f"RZRP_FORI_{case_idx} zrp_fori_src_{case_idx} zrp_fori_{case_idx} {source_ohm:g}",
+                        f"RZRM_FORI_{case_idx} zrm_fori_src_{case_idx} zrm_fori_{case_idx} {source_ohm:g}",
+                        f"CZRP_FORI_{case_idx} zrp_fori_{case_idx} 0 {cref_pf:g}p IC=0",
+                        f"CZRM_FORI_{case_idx} zrm_fori_{case_idx} 0 {cref_pf:g}p IC=0",
+                        (
+                            f"MPREPN_FORI_{case_idx} zrp_fori_{case_idx} pre_fori_{case_idx} "
+                            f"zrp_fori_src_{case_idx} 0 NMOS L={{LCH}} W={wpren_u:g}u"
+                        ),
+                        (
+                            f"MPREMN_FORI_{case_idx} zrm_fori_{case_idx} pre_fori_{case_idx} "
+                            f"zrm_fori_src_{case_idx} 0 NMOS L={{LCH}} W={wpren_u:g}u"
+                        ),
+                        (
+                            f"MPREPP_FORI_{case_idx} zrp_fori_{case_idx} pren_fori_{case_idx} "
+                            f"zrp_fori_src_{case_idx} vdd PMOS L={{LCH}} W={wprep_u:g}u"
+                        ),
+                        (
+                            f"MPREMP_FORI_{case_idx} zrm_fori_{case_idx} pren_fori_{case_idx} "
+                            f"zrm_fori_src_{case_idx} vdd PMOS L={{LCH}} W={wprep_u:g}u"
+                        ),
+                    ]
+                )
+                for cycle_idx in range(3):
+                    reset_start_us = 2.50 + cycle_idx * gap_us
+                    reset_end_us = reset_start_us + 0.120
+                    reset_fall_us = reset_end_us + 0.020
+                    deck_lines.extend(
+                        [
+                            (
+                                f"VRST_FORI_{case_idx}_{cycle_idx} rst_fori_{case_idx}_{cycle_idx} 0 "
+                                f"PWL(0 0 {reset_start_us - 0.020:.3f}u 0 "
+                                f"{reset_start_us:.3f}u 1.8 {reset_end_us:.3f}u 1.8 "
+                                f"{reset_fall_us:.3f}u 0 {tran_stop_us:.3f}u 0)"
+                            ),
+                            (
+                                f"VRSTN_FORI_{case_idx}_{cycle_idx} rstn_fori_{case_idx}_{cycle_idx} 0 "
+                                f"PWL(0 1.8 {reset_start_us - 0.020:.3f}u 1.8 "
+                                f"{reset_start_us:.3f}u 0 {reset_end_us:.3f}u 0 "
+                                f"{reset_fall_us:.3f}u 1.8 {tran_stop_us:.3f}u 1.8)"
+                            ),
+                        ]
+                    )
+                    for load_idx in range(load_count):
+                        deck_lines.extend(
+                            [
+                                (
+                                    f"CZPG_FORI_{case_idx}_{cycle_idx}_{load_idx} "
+                                    f"zpg_fori_{case_idx}_{cycle_idx}_{load_idx} 0 "
+                                    f"{{CGATE}} IC={reset_common_v:.5f}"
+                                ),
+                                (
+                                    f"CZMG_FORI_{case_idx}_{cycle_idx}_{load_idx} "
+                                    f"zmg_fori_{case_idx}_{cycle_idx}_{load_idx} 0 "
+                                    f"{{CGATE}} IC={reset_common_v:.5f}"
+                                ),
+                                (
+                                    f"MRZGPN_FORI_{case_idx}_{cycle_idx}_{load_idx} "
+                                    f"zpg_fori_{case_idx}_{cycle_idx}_{load_idx} rst_fori_{case_idx}_{cycle_idx} "
+                                    f"zrp_fori_{case_idx} 0 NMOS L={{LCH}} W={{WRESETN}}"
+                                ),
+                                (
+                                    f"MRZGMN_FORI_{case_idx}_{cycle_idx}_{load_idx} "
+                                    f"zmg_fori_{case_idx}_{cycle_idx}_{load_idx} rst_fori_{case_idx}_{cycle_idx} "
+                                    f"zrm_fori_{case_idx} 0 NMOS L={{LCH}} W={{WRESETN}}"
+                                ),
+                                (
+                                    f"MRZGPP_FORI_{case_idx}_{cycle_idx}_{load_idx} "
+                                    f"zpg_fori_{case_idx}_{cycle_idx}_{load_idx} rstn_fori_{case_idx}_{cycle_idx} "
+                                    f"zrp_fori_{case_idx} vdd PMOS L={{LCH}} W={{WRESETP}}"
+                                ),
+                                (
+                                    f"MRZGMP_FORI_{case_idx}_{cycle_idx}_{load_idx} "
+                                    f"zmg_fori_{case_idx}_{cycle_idx}_{load_idx} rstn_fori_{case_idx}_{cycle_idx} "
+                                    f"zrm_fori_{case_idx} vdd PMOS L={{LCH}} W={{WRESETP}}"
+                                ),
+                            ]
+                        )
+                prints.extend([f"v(zrp_fori_{case_idx})", f"v(zrm_fori_{case_idx})"])
+                last_load_idx = load_count - 1
+                for cycle_idx in range(3):
+                    prints.extend(
+                        [
+                            f"v(zpg_fori_{case_idx}_{cycle_idx}_0)",
+                            f"v(zmg_fori_{case_idx}_{cycle_idx}_0)",
+                            f"v(zpg_fori_{case_idx}_{cycle_idx}_{last_load_idx})",
+                            f"v(zmg_fori_{case_idx}_{cycle_idx}_{last_load_idx})",
+                        ]
+                    )
+                case_idx += 1
+        deck_lines.extend(
+            [
+                ".control",
+                "set noaskquit",
+                f"tran 10n {tran_stop_us:.3f}u uic",
+                f"wrdata {stem}.dat " + " ".join(prints),
+                "quit",
+                ".endc",
+                ".end",
+            ]
+        )
+        data = run_ngspice("\n".join(deck_lines), stem)
+        return load_wrdata(data, len(prints))
+
+    shift_refz_fanout_refresh_impedance_trim_error = []
+    shift_refz_fanout_refresh_impedance_common_error = []
+    shift_refz_fanout_refresh_impedance_load_mismatch = []
+    shift_refz_fanout_refresh_impedance_ref_diff = []
+    shift_refz_fanout_refresh_impedance_traces = []
+    for branch_name, branch_label, _nfp_vto, _nfm_vto, reset_trim_v in shift_reset_branch_specs:
+        forit, fanout_refresh_impedance_cols = run_reset_ref_fanout_refresh_impedance_case(
+            branch_name,
+            reset_trim_v,
+        )
+
+        def foriat(time_s: float, values: np.ndarray) -> float:
+            return float(values[np.argmin(np.abs(forit - time_s))])
+
+        branch_trim_error = []
+        branch_common_error = []
+        branch_load_mismatch = []
+        branch_ref_diff = []
+        case_idx = 0
+        for _source_name, source_label, _source_ohm in shift_refz_fanout_refresh_impedance_cases:
+            source_trim_error = []
+            source_common_error = []
+            source_load_mismatch = []
+            source_ref_diff = []
+            for _gap_name, gap_label, gap_us in shift_refz_fanout_refresh_impedance_gaps_us:
+                ref_p = fanout_refresh_impedance_cols[14 * case_idx]
+                ref_m = fanout_refresh_impedance_cols[14 * case_idx + 1]
+                ref_diff = ref_p - ref_m
+                gap_trim_error = []
+                gap_common_error = []
+                gap_load_mismatch = []
+                gap_ref_diff = []
+                for cycle_idx in range(3):
+                    col_base = 14 * case_idx + 2 + 4 * cycle_idx
+                    gate_p_first = fanout_refresh_impedance_cols[col_base]
+                    gate_m_first = fanout_refresh_impedance_cols[col_base + 1]
+                    gate_p_last = fanout_refresh_impedance_cols[col_base + 2]
+                    gate_m_last = fanout_refresh_impedance_cols[col_base + 3]
+                    gate_diff_first = gate_p_first - gate_m_first
+                    gate_diff_last = gate_p_last - gate_m_last
+                    gate_common_first = 0.5 * (gate_p_first + gate_m_first)
+                    sample_time_s = (2.50 + cycle_idx * gap_us + 0.200) * 1e-6
+                    gap_trim_error.append(abs(foriat(sample_time_s, gate_diff_first) - reset_trim_v))
+                    gap_common_error.append(
+                        abs(foriat(sample_time_s, gate_common_first) - shift_refz_precharge_tuned_common_v)
+                    )
+                    gap_load_mismatch.append(abs(foriat(sample_time_s, gate_diff_first - gate_diff_last)))
+                    gap_ref_diff.append(foriat(sample_time_s, ref_diff))
+                source_trim_error.append(gap_trim_error)
+                source_common_error.append(gap_common_error)
+                source_load_mismatch.append(gap_load_mismatch)
+                source_ref_diff.append(gap_ref_diff)
+                if branch_name == "pos_trim" and gap_label == "20 us" and source_label in {"100 kOhm", "10 kOhm", "1 kOhm"}:
+                    shift_refz_fanout_refresh_impedance_traces.append(
+                        (source_label, forit, ref_diff)
+                    )
+                case_idx += 1
+            branch_trim_error.append(source_trim_error)
+            branch_common_error.append(source_common_error)
+            branch_load_mismatch.append(source_load_mismatch)
+            branch_ref_diff.append(source_ref_diff)
+        shift_refz_fanout_refresh_impedance_trim_error.append(branch_trim_error)
+        shift_refz_fanout_refresh_impedance_common_error.append(branch_common_error)
+        shift_refz_fanout_refresh_impedance_load_mismatch.append(branch_load_mismatch)
+        shift_refz_fanout_refresh_impedance_ref_diff.append(branch_ref_diff)
+
+    shift_refz_fanout_refresh_impedance_trim_error = np.array(shift_refz_fanout_refresh_impedance_trim_error)
+    shift_refz_fanout_refresh_impedance_common_error = np.array(shift_refz_fanout_refresh_impedance_common_error)
+    shift_refz_fanout_refresh_impedance_load_mismatch = np.array(shift_refz_fanout_refresh_impedance_load_mismatch)
+    shift_refz_fanout_refresh_impedance_ref_diff = np.array(shift_refz_fanout_refresh_impedance_ref_diff)
+    fori_r100k_idx = 0
+    fori_r10k_idx = 2
+    fori_r1k_idx = 4
+    fori_gap1_idx = 0
+    fori_gap20_idx = 1
+    require(
+        np.all(shift_refz_fanout_refresh_impedance_trim_error[:, :, :, for_cycle1_idx] < 0.006),
+        "source-impedance refresh sweep should keep the startup-precharged first reset valid",
+    )
+    require(
+        np.all(
+            np.diff(
+                shift_refz_fanout_refresh_impedance_trim_error[:, :, fori_gap20_idx, for_cycle3_idx],
+                axis=1,
+            )
+            < 0.0
+        ),
+        "20 us third-cycle trim error should improve monotonically as source impedance falls",
+    )
+    require(
+        np.all(shift_refz_fanout_refresh_impedance_trim_error[:, fori_r100k_idx, fori_gap20_idx, for_cycle3_idx] > 0.006),
+        "100 kOhm refresh source should reproduce the 20 us repeated-fanout failure",
+    )
+    require(
+        np.all(shift_refz_fanout_refresh_impedance_trim_error[:, fori_r10k_idx, fori_gap20_idx, for_cycle3_idx] < 0.006),
+        "10 kOhm refresh source should recover 20 us repeated fresh-fanout resets",
+    )
+    require(
+        np.all(
+            shift_refz_fanout_refresh_impedance_trim_error[:, fori_r1k_idx, fori_gap1_idx, for_cycle3_idx]
+            < shift_refz_fanout_refresh_impedance_trim_error[:, fori_r100k_idx, fori_gap1_idx, for_cycle3_idx]
+            - 0.004
+        ),
+        "1 kOhm refresh source should visibly improve the 1 us repeated-fanout stress",
+    )
+    require(
+        np.max(shift_refz_fanout_refresh_impedance_common_error[:, fori_r10k_idx:, :, :]) < 0.010,
+        "lower-impedance repeated fanout refresh should preserve reset common mode",
+    )
+    require(
+        np.max(shift_refz_fanout_refresh_impedance_load_mismatch) < 1e-5,
+        "source-impedance refresh sweep should keep first and last reset loads matched",
+    )
+
     tail_bias_forward_tail_line = "MNFT_HYR ftail_hyr vbias 0 0 NMOS L={LCH} W=48u"
     tail_bias_cases_v = [0.70, 0.80, 0.90, 0.95, 1.05, 1.15, 1.25]
     tail_bias_labels = []
@@ -18833,6 +19113,111 @@ quit
     save_plot(
         shift_refz_fanout_recharge_fig,
         "mos_hidden_writer_restored_gate_hybrid_update_forward_guard_forward_pair_96u_shifted_gate_reset_ref_fanout_recharge_ngspice",
+    )
+
+    shift_refz_fanout_refresh_impedance_fig, shift_refz_fanout_refresh_impedance_axes = plt.subplots(
+        3,
+        1,
+        figsize=(7.4, 7.4),
+        gridspec_kw={"height_ratios": [0.95, 0.9, 1.0]},
+    )
+    fori_x = np.array([source_ohm for _name, _label, source_ohm in shift_refz_fanout_refresh_impedance_cases])
+    fori_labels = [label for _name, label, _source_ohm in shift_refz_fanout_refresh_impedance_cases]
+    for gap_idx, (_gap_name, gap_label, _gap_us) in enumerate(shift_refz_fanout_refresh_impedance_gaps_us):
+        linestyle = ":" if gap_label == "1 us" else "-"
+        shift_refz_fanout_refresh_impedance_axes[0].plot(
+            fori_x,
+            1e3 * np.max(
+                shift_refz_fanout_refresh_impedance_trim_error[:, :, gap_idx, for_cycle3_idx],
+                axis=0,
+            ),
+            "o",
+            linestyle=linestyle,
+            label=f"{gap_label}, cycle 3",
+        )
+        shift_refz_fanout_refresh_impedance_axes[0].plot(
+            fori_x,
+            1e3 * np.max(
+                shift_refz_fanout_refresh_impedance_trim_error[:, :, gap_idx, for_cycle1_idx],
+                axis=0,
+            ),
+            "s",
+            linestyle=linestyle,
+            alpha=0.58,
+            label=f"{gap_label}, cycle 1",
+        )
+    shift_refz_fanout_refresh_impedance_axes[0].axhline(
+        6,
+        color="0.4",
+        linestyle=":",
+        linewidth=0.9,
+        label="6 mV trim-error gate",
+    )
+    shift_refz_fanout_refresh_impedance_axes[0].set_xscale("log")
+    shift_refz_fanout_refresh_impedance_axes[0].invert_xaxis()
+    shift_refz_fanout_refresh_impedance_axes[0].set_xticks(fori_x)
+    shift_refz_fanout_refresh_impedance_axes[0].set_xticklabels(fori_labels)
+    shift_refz_fanout_refresh_impedance_axes[0].set_ylabel("trim error (mV)")
+    shift_refz_fanout_refresh_impedance_axes[0].set_title("Lower trim-source impedance buys back repeated fanout rate")
+    shift_refz_fanout_refresh_impedance_axes[0].grid(True, axis="y", alpha=0.25)
+    shift_refz_fanout_refresh_impedance_axes[0].text(
+        0.42,
+        0.30,
+        "100 kOhm, 20 us, cycle 3 min err = "
+        f"{1e3 * np.min(shift_refz_fanout_refresh_impedance_trim_error[:, fori_r100k_idx, fori_gap20_idx, for_cycle3_idx]):.2f} mV / >6 mV\n"
+        "10 kOhm, 20 us, cycle 3 max err = "
+        f"{1e3 * np.max(shift_refz_fanout_refresh_impedance_trim_error[:, fori_r10k_idx, fori_gap20_idx, for_cycle3_idx]):.2f} mV / <6 mV\n"
+        "1 kOhm, 1 us, cycle 3 max err = "
+        f"{1e3 * np.max(shift_refz_fanout_refresh_impedance_trim_error[:, fori_r1k_idx, fori_gap1_idx, for_cycle3_idx]):.2f} mV",
+        transform=shift_refz_fanout_refresh_impedance_axes[0].transAxes,
+        fontsize="x-small",
+        bbox={"facecolor": "white", "alpha": 0.82, "edgecolor": "0.8"},
+    )
+    shift_refz_fanout_refresh_impedance_axes[0].legend(loc="upper right", ncol=2, fontsize="xx-small")
+    for source_idx, (_source_name, source_label, _source_ohm) in enumerate(shift_refz_fanout_refresh_impedance_cases):
+        if source_label not in {"100 kOhm", "10 kOhm", "1 kOhm"}:
+            continue
+        marker = "o-" if source_label == "100 kOhm" else ("s--" if source_label == "10 kOhm" else "^-")
+        short_gap_marker = "o:" if source_label == "100 kOhm" else ("s:" if source_label == "10 kOhm" else "^:")
+        shift_refz_fanout_refresh_impedance_axes[1].plot(
+            [1, 2, 3],
+            1e3 * shift_refz_fanout_refresh_impedance_trim_error[1, source_idx, fori_gap20_idx, :],
+            marker,
+            label=f"{source_label}, 20 us",
+        )
+        shift_refz_fanout_refresh_impedance_axes[1].plot(
+            [1, 2, 3],
+            1e3 * shift_refz_fanout_refresh_impedance_trim_error[1, source_idx, fori_gap1_idx, :],
+            short_gap_marker,
+            alpha=0.62,
+            label=f"{source_label}, 1 us",
+        )
+    shift_refz_fanout_refresh_impedance_axes[1].axhline(6, color="0.4", linestyle=":", linewidth=0.9)
+    shift_refz_fanout_refresh_impedance_axes[1].set_xticks([1, 2, 3])
+    shift_refz_fanout_refresh_impedance_axes[1].set_ylabel("+65 mV error (mV)")
+    shift_refz_fanout_refresh_impedance_axes[1].set_title("A 10 kOhm refresh source stabilizes the 20 us fresh-bank cadence")
+    shift_refz_fanout_refresh_impedance_axes[1].grid(True, axis="y", alpha=0.25)
+    shift_refz_fanout_refresh_impedance_axes[1].legend(loc="upper right", ncol=2, fontsize="xx-small")
+    for source_label, forit, ref_diff in shift_refz_fanout_refresh_impedance_traces:
+        linestyle = ":" if source_label == "100 kOhm" else ("--" if source_label == "10 kOhm" else "-")
+        shift_refz_fanout_refresh_impedance_axes[2].plot(
+            1e6 * forit,
+            1e3 * ref_diff,
+            linestyle,
+            label=f"{source_label}, 20 us",
+        )
+    shift_refz_fanout_refresh_impedance_axes[2].axhline(65, color="0.4", linestyle=":", linewidth=0.9, label="target +65 mV")
+    shift_refz_fanout_refresh_impedance_axes[2].axhline(0, color="0.4", linewidth=0.8)
+    shift_refz_fanout_refresh_impedance_axes[2].set_xlim(2.3, 43.0)
+    shift_refz_fanout_refresh_impedance_axes[2].set_xlabel("time (us)")
+    shift_refz_fanout_refresh_impedance_axes[2].set_ylabel("reservoir trim (mV)")
+    shift_refz_fanout_refresh_impedance_axes[2].set_title("The reservoir recovers between fresh banks only with a stronger source")
+    shift_refz_fanout_refresh_impedance_axes[2].grid(True, alpha=0.25)
+    shift_refz_fanout_refresh_impedance_axes[2].legend(loc="lower right", ncol=2, fontsize="xx-small")
+    shift_refz_fanout_refresh_impedance_fig.tight_layout()
+    save_plot(
+        shift_refz_fanout_refresh_impedance_fig,
+        "mos_hidden_writer_restored_gate_hybrid_update_forward_guard_forward_pair_96u_shifted_gate_reset_ref_fanout_refresh_impedance_ngspice",
     )
 
     tail_bias_fig, tail_bias_axes = plt.subplots(2, 1, figsize=(7.4, 6.4), gridspec_kw={"height_ratios": [1.0, 0.8]})

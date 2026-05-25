@@ -2690,6 +2690,29 @@ must satisfy before it can replace the current behavioral prototype.
 
 \begin{figure}[H]
   \centering
+  \includegraphics[width=0.95\linewidth]{figures/mos_hidden_writer_restored_gate_hybrid_update_forward_guard_forward_pair_96u_shifted_gate_reset_ref_fanout_refresh_impedance_ngspice.png}
+  \caption{Ngspice trim-refresh source-impedance sweep for the hardest
+  repeated fresh-fanout case in
+  Fig.~\ref{fig:mos-hidden-writer-restored-gate-hybrid-update-forward-guard-forward-pair-96u-shifted-gate-reset-ref-fanout-recharge-ngspice}.
+  The circuit keeps the cold \(1\) nF split-trim reservoirs, the recovered
+  \(2\times\) startup precharge, real MOS reset switches, and sixteen fresh
+  \(5\) pF shifted-gate loads.  Only the refresh source impedance and
+  inter-bank recharge interval are swept.  With the original
+  \(100\,\mathrm{k}\Omega\) refresh source, a \(20\,\mu\mathrm{s}\) cadence
+  still fails by the third fresh bank: the best trim polarity is already
+  \(9.67\) mV away from the target.  Reducing the source to
+  \(10\,\mathrm{k}\Omega\) recovers the \(20\,\mu\mathrm{s}\) cadence below the
+  \(6\) mV trim-error gate, with worst third-cycle error \(5.44\) mV.  A
+  \(1\,\mathrm{k}\Omega\) source at \(1\,\mu\mathrm{s}\) is close but not fully
+  closed for the positive-trim branch: the worst third-cycle error remains
+  \(6.26\) mV.  Thus the repeated-fanout reservoir can be made array-realistic
+  by paying for lower trim-refresh impedance or a longer refresh interval, not
+  by assuming an ideal behavioral reset rail.}
+  \label{fig:mos-hidden-writer-restored-gate-hybrid-update-forward-guard-forward-pair-96u-shifted-gate-reset-ref-fanout-refresh-impedance-ngspice}
+\end{figure}
+
+\begin{figure}[H]
+  \centering
   \includegraphics[width=0.95\linewidth]{figures/mos_hidden_writer_restored_gate_hybrid_update_forward_guard_forward_pair_96u_shifted_gate_reset_ref_precharge_strength_ngspice.png}
   \caption{Ngspice startup-precharge strength-margin check for the same cold
   local trim-reference reservoir.  The \(250\) pF reservoirs, \(100\)

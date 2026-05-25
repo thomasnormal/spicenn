@@ -1410,6 +1410,26 @@ must satisfy before it can replace the current behavioral prototype.
 
 \begin{figure}[H]
   \centering
+  \includegraphics[width=0.88\linewidth]{figures/mos_hidden_writer_restored_gate_hybrid_update_forward_read_pact_timing_ngspice.png}
+  \caption{Ngspice read-to-\(pact\) timing characterization for the integrated
+  MOS update-to-forward path.  Each variant first performs the same positive
+  local update and read setup as
+  Fig.~\ref{fig:mos-hidden-writer-restored-gate-hybrid-update-forward-read-reuse-ngspice},
+  then changes only the activation-store pulse timing.  A pre-read \(pact\)
+  stores \(0.000\) mV because no summing state has been produced.  A read-edge
+  \(pact\) stores a partial \(32.969\) mV while the summing state is still only
+  \(z^- - z^+=32.764\) mV.  The settled timing stores \(47.346\) mV from a
+  \(52.066\) mV preactivation.  A late short pulse sees the same valid
+  \(52.066\) mV preactivation but stores only \(20.806\) mV because the
+  activation capacitor does not have enough aperture before reset.  After the
+  reset pulse clears the transient state, \(pact\) stores only \(0.018\) mV.
+  The resulting circuit rule is stricter than ``sample sometime after read'':
+  \(pact\) must overlap a settled read state for long enough before reset.}
+  \label{fig:mos-hidden-writer-restored-gate-hybrid-update-forward-read-pact-timing-ngspice}
+\end{figure}
+
+\begin{figure}[H]
+  \centering
   \includegraphics[width=0.88\linewidth]{figures/mos_hidden_writer_restored_gate_hybrid_repeated_ngspice.png}
   \caption{Ngspice repeated-pulse accumulation characterization of the hybrid
   restored writer.  One stored \(r^+\) hidden-error rail drives one persistent

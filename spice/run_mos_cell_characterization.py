@@ -7033,6 +7033,83 @@ quit
     hynr_fig.tight_layout()
     save_plot(hynr_fig, "mos_hidden_writer_restored_gate_hybrid_update_forward_signed_read_reuse_ngspice")
 
+    timing_read_pwl = "VREAD_HYR read_hyr 0 PWL(0 0 2.70u 0 2.72u 1.15 3.36u 1.15 3.38u 0 4.30u 0 4.32u 1.15 4.96u 1.15 4.98u 0 5.90u 0 5.92u 1.15 6.56u 1.15 6.58u 0 7.8u 0)"
+    timing_single_read_pwl = "VREAD_HYR read_hyr 0 PWL(0 0 2.70u 0 2.72u 1.15 3.36u 1.15 3.38u 0 7.8u 0)"
+    timing_base_pact_pwl = "VPACT_HYR pact_hyr 0 PWL(0 0 3.16u 0 3.18u 1.8 3.31u 1.8 3.33u 0 4.76u 0 4.78u 1.8 4.91u 1.8 4.93u 0 6.36u 0 6.38u 1.8 6.51u 1.8 6.53u 0 7.8u 0)"
+    timing_cases = [
+        ("pre_read", "pre-read", "VPACT_HYR pact_hyr 0 PWL(0 0 2.40u 0 2.42u 1.8 2.55u 1.8 2.57u 0 7.8u 0)", 2.65e-6),
+        ("read_edge", "read edge", "VPACT_HYR pact_hyr 0 PWL(0 0 2.88u 0 2.90u 1.8 3.03u 1.8 3.05u 0 7.8u 0)", 3.12e-6),
+        ("settled", "settled", "VPACT_HYR pact_hyr 0 PWL(0 0 3.16u 0 3.18u 1.8 3.31u 1.8 3.33u 0 7.8u 0)", 3.45e-6),
+        ("late_short", "late short", "VPACT_HYR pact_hyr 0 PWL(0 0 3.40u 0 3.42u 1.8 3.55u 1.8 3.57u 0 7.8u 0)", 3.575e-6),
+        ("after_reset", "after reset", "VPACT_HYR pact_hyr 0 PWL(0 0 4.12u 0 4.14u 1.8 4.27u 1.8 4.29u 0 7.8u 0)", 4.38e-6),
+    ]
+    timing_labels = []
+    timing_store_samples = []
+    timing_preact_samples = []
+    timing_traces = []
+    timing_times = None
+    for suffix, label, pact_pwl, sample_time in timing_cases:
+        stem = f"mos_hidden_writer_restored_gate_hybrid_update_forward_read_pact_timing_{suffix}"
+        timing_deck = replace_required(hybrid_forward_read_reuse_deck, timing_read_pwl, timing_single_read_pwl)
+        timing_deck = replace_required(timing_deck, timing_base_pact_pwl, pact_pwl)
+        timing_deck = replace_required(
+            timing_deck,
+            "mos_hidden_writer_restored_gate_hybrid_update_forward_read_reuse.dat",
+            f"{stem}.dat",
+        )
+        timing_data = run_ngspice(timing_deck, stem)
+        tt, timing_cols = load_wrdata(timing_data, 23)
+
+        def timat(time_s: float, values: np.ndarray) -> float:
+            return float(values[np.argmin(np.abs(tt - time_s))])
+
+        timing_preact = timing_cols[10] - timing_cols[9]
+        timing_store = timing_cols[14] - timing_cols[13]
+        timing_labels.append(label)
+        timing_preact_samples.append(timat(sample_time, timing_preact))
+        timing_store_samples.append(timat(sample_time, timing_store))
+        timing_traces.append((label, tt, timing_preact, timing_store, timing_cols[22]))
+        timing_times = tt
+
+    timing_store_samples = np.array(timing_store_samples)
+    timing_preact_samples = np.array(timing_preact_samples)
+    require(abs(timing_store_samples[0]) < 0.002, "pre-read pact should not store activation before read settles")
+    require(
+        0.005 < timing_store_samples[1] < 0.90 * timing_store_samples[2],
+        "read-edge pact should store a partial activation",
+    )
+    require(timing_store_samples[2] > 0.040, "settled pact should store a useful activation")
+    require(
+        0.005 < timing_store_samples[3] < 0.70 * timing_store_samples[2],
+        "late short pact should show aperture loss despite valid preactivation",
+    )
+    require(abs(timing_store_samples[4]) < 0.002, "post-reset pact should store near zero after transient state is cleared")
+    require(timing_preact_samples[2] > 0.045, "settled timing case should have useful preactivation")
+    require(timing_preact_samples[4] < 0.001, "post-reset timing case should have cleared preactivation")
+
+    timing_x = np.arange(len(timing_cases))
+    timing_fig, timing_axes = plt.subplots(2, 1, figsize=(7.4, 6.6), gridspec_kw={"height_ratios": [1.0, 0.9]})
+    for label, tt, _preact, store, pact in timing_traces:
+        timing_axes[0].plot(1e6 * tt, 1e3 * store, label=label)
+    timing_axes[0].plot(1e6 * timing_times, timing_traces[2][4] / 20.0, color="0.35", alpha=0.25, label="$pact/20$")
+    timing_axes[0].axhline(0, color="0.4", linewidth=0.8)
+    timing_axes[0].set_xlim(2.25, 4.55)
+    timing_axes[0].set_ylabel("stored activation (mV)")
+    timing_axes[0].set_title("Integrated update-forward store depends on read/reset timing")
+    timing_axes[0].grid(True, alpha=0.25)
+    timing_axes[0].legend(loc="upper left", ncol=3, fontsize="small")
+    timing_axes[1].bar(timing_x - 0.18, 1e3 * timing_preact_samples, width=0.36, label="$z^- - z^+$ at sample")
+    timing_axes[1].bar(timing_x + 0.18, 1e3 * timing_store_samples, width=0.36, label="stored $h^- - h^+$")
+    timing_axes[1].axhline(0, color="0.4", linewidth=0.8)
+    timing_axes[1].set_xticks(timing_x)
+    timing_axes[1].set_xticklabels(timing_labels, rotation=15, ha="right")
+    timing_axes[1].set_ylabel("sampled differential (mV)")
+    timing_axes[1].set_title("Good pact timing needs both valid read state and enough aperture")
+    timing_axes[1].grid(True, axis="y", alpha=0.25)
+    timing_axes[1].legend(loc="upper left", fontsize="small")
+    timing_fig.tight_layout()
+    save_plot(timing_fig, "mos_hidden_writer_restored_gate_hybrid_update_forward_read_pact_timing_ngspice")
+
     hybrid_repeated_deck = f"""
 * Hybrid restored-enable/analog-error writer repeated-pulse accumulation check.
 * One stored r+ hidden-error rail and one activation gate drive the same

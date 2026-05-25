@@ -2,6 +2,14 @@
 
 ## 2026-05-25
 
+- Clarified the ngspice four-quadrant hidden-error writer plot after the
+  circuit assertions were stronger than the visual evidence.  The four products
+  still come from the same MOS-only deck and measure
+  \(+13.4/-13.4/-13.4/+13.4\) mV for
+  \(x^+r^+,x^+r^-,x^-r^+,x^-r^-\), but the regenerated figure now uses
+  distinct trace styles plus a final-value bar panel.  This fixes the plot
+  ambiguity where the two positive and two negative transient traces overlapped
+  and made the sign-family check look like only two visible products.
 - Family-completed the basic MOS writer analog-gate characterization.  The
   earlier sweep only varied the same-sign \(W^+\) selected branch with analog
   activation/error gates; the opposite-sign \(W^-\) branch had only binary and

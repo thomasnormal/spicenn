@@ -2317,7 +2317,7 @@ quit
     qfinal = np.array([qat(2.75e-6, diff) for diff in qdiffs])
     require(qfinal[0] > 0 and qfinal[1] < 0 and qfinal[2] < 0 and qfinal[3] > 0, "all four update quadrants should have the expected signs")
 
-    quadrant_fig, quadrant_axes = plt.subplots(2, 1, figsize=(7.2, 5.8))
+    quadrant_fig, quadrant_axes = plt.subplots(3, 1, figsize=(7.2, 7.4))
     quadrant_axes[0].plot(1e6 * qt, q_pos_hidden, label="$r^+$ stored $\\delta^+ - \\delta^-$")
     quadrant_axes[0].plot(1e6 * qt, q_neg_hidden, label="$r^-$ stored $\\delta^+ - \\delta^-$")
     quadrant_axes[0].plot(1e6 * qt, qcols[-2] / 20.0, color="0.5", alpha=0.35, label="$pbwd/20$")
@@ -2326,8 +2326,14 @@ quit
     quadrant_axes[0].set_title("One hidden-error store feeds all writer quadrants")
     quadrant_axes[0].grid(True, alpha=0.25)
     quadrant_axes[0].legend(loc="upper right")
-    for (_name, label, _wp_xgate, _wp_dgate, _wm_xgate, _wm_dgate, _expected), diff in zip(quadrant_cases, qdiffs):
-        quadrant_axes[1].plot(1e6 * qt, diff, label=label)
+    quadrant_colors = ["C0", "C1", "C2", "C3"]
+    quadrant_styles = ["-", "--", ":", "-."]
+    quadrant_labels = []
+    for color, style, (_name, label, _wp_xgate, _wp_dgate, _wm_xgate, _wm_dgate, _expected), diff in zip(
+        quadrant_colors, quadrant_styles, quadrant_cases, qdiffs
+    ):
+        quadrant_labels.append(label)
+        quadrant_axes[1].plot(1e6 * qt, diff, color=color, linestyle=style, linewidth=2.0, label=label)
     quadrant_axes[1].plot(1e6 * qt, qcols[-1] / 25.0, color="0.5", alpha=0.35, label="$\\overline{pacc}/25$")
     quadrant_axes[1].axhline(0, color="0.4", linewidth=0.8)
     quadrant_axes[1].set_xlabel("time (us)")
@@ -2335,6 +2341,16 @@ quit
     quadrant_axes[1].set_title("Activation/error sign products select W+ or W-")
     quadrant_axes[1].grid(True, alpha=0.25)
     quadrant_axes[1].legend(loc="upper right", ncol=2)
+    final_mv = 1e3 * qfinal
+    bars = quadrant_axes[2].bar(quadrant_labels, final_mv, color=quadrant_colors, alpha=0.85)
+    quadrant_axes[2].axhline(0, color="0.4", linewidth=0.8)
+    quadrant_axes[2].bar_label(bars, labels=[f"{value:+.1f}" for value in final_mv], padding=3)
+    max_final = max(1.0, float(np.max(np.abs(final_mv))))
+    quadrant_axes[2].set_ylim(-1.35 * max_final, 1.35 * max_final)
+    quadrant_axes[2].set_xlabel("activation/error quadrant")
+    quadrant_axes[2].set_ylabel("final $W^+ - W^-$ (mV)")
+    quadrant_axes[2].set_title("All four final update products are separately checked")
+    quadrant_axes[2].grid(True, axis="y", alpha=0.25)
     quadrant_fig.tight_layout()
     save_plot(quadrant_fig, "mos_hidden_writer_quadrants_ngspice")
 

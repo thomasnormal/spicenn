@@ -8740,6 +8740,167 @@ quit
         "96u tail-rebias sweep should preserve useful nominal-z activation above the underbiased tail corner",
     )
 
+    def shifted_forward_pair_lines(couple_pf: float, gate_pf: float = 5.0) -> str:
+        return "\n".join(
+            [
+                "VZGCM_HYR zgcm_hyr 0 0.90",
+                f"CZPG_HYR zpg_hyr 0 {gate_pf:g}p IC=0.90",
+                f"CZMG_HYR zmg_hyr 0 {gate_pf:g}p IC=0.90",
+                "RZPG_HYR zpg_hyr 0 100G",
+                "RZMG_HYR zmg_hyr 0 100G",
+                "MRZGPN_HYR zpg_hyr rst_hyr zgcm_hyr 0 NMOS L={LCH} W={WRESETN}",
+                "MRZGMN_HYR zmg_hyr rst_hyr zgcm_hyr 0 NMOS L={LCH} W={WRESETN}",
+                "MRZGPP_HYR zpg_hyr rstn_hyr zgcm_hyr vdd PMOS L={LCH} W={WRESETP}",
+                "MRZGMP_HYR zmg_hyr rstn_hyr zgcm_hyr vdd PMOS L={LCH} W={WRESETP}",
+                f"CCZP_HYR zp_hyr zpg_hyr {couple_pf:g}p",
+                f"CCZM_HYR zm_hyr zmg_hyr {couple_pf:g}p",
+                "MNFP_HYR hp_hyr zmg_hyr ftail_hyr 0 NMOS L={LCH} W=96u",
+                "MNFM_HYR hm_hyr zpg_hyr ftail_hyr 0 NMOS L={LCH} W=96u",
+                "MNFT_HYR ftail_hyr vbias 0 0 NMOS L={LCH} W=96u",
+            ]
+        )
+
+    high_gain_shift_couple_cases_pf = [5.0, 10.0, 20.0, 50.0]
+    high_gain_shift_couple_labels = [f"{value:g} pF" for value in high_gain_shift_couple_cases_pf]
+    high_gain_shift_store_samples = []
+    high_gain_shift_preact_samples = []
+    high_gain_shift_traces = []
+    for couple_pf in high_gain_shift_couple_cases_pf:
+        stem = (
+            "mos_hidden_writer_restored_gate_hybrid_update_forward_guard_"
+            f"forward_pair_96u_zcm_0p75v_shift_cc{str(couple_pf).replace('.', 'p')}p_cg5p"
+        )
+        shift_deck = replace_required(high_gain_hold_deck, zcm_source_line, "VZCM zcm 0 0.75")
+        shift_deck = replace_required(shift_deck, zcm_cap_p_line, "CZP_HYR zp_hyr 0 {CSUM} IC=0.75")
+        shift_deck = replace_required(shift_deck, zcm_cap_m_line, "CZM_HYR zm_hyr 0 {CSUM} IC=0.75")
+        shift_deck = replace_required(shift_deck, high_gain_forward_pair_lines, shifted_forward_pair_lines(couple_pf))
+        shift_deck = replace_required(
+            shift_deck,
+            "mos_hidden_writer_restored_gate_hybrid_update_forward_guard_forward_pair_96u_hold.dat",
+            f"{stem}.dat",
+        )
+        shift_data = run_ngspice(shift_deck, stem)
+        sht, shift_cols = load_wrdata(shift_data, 23)
+
+        def shat(time_s: float, values: np.ndarray) -> float:
+            return float(values[np.argmin(np.abs(sht - time_s))])
+
+        shift_preact = shift_cols[10] - shift_cols[9]
+        shift_store = shift_cols[14] - shift_cols[13]
+        high_gain_shift_preact_samples.append(shat(3.575e-6, shift_preact))
+        high_gain_shift_store_samples.append(shat(3.575e-6, shift_store))
+        high_gain_shift_traces.append((f"{couple_pf:g} pF", sht, shift_store))
+
+    high_gain_shift_preact_samples = np.array(high_gain_shift_preact_samples)
+    high_gain_shift_store_samples = np.array(high_gain_shift_store_samples)
+    chosen_shift_idx = high_gain_shift_couple_cases_pf.index(10.0)
+    require(
+        np.min(high_gain_shift_preact_samples) > 0.040,
+        "shifted-gate coupling sweep should keep a real low-common-mode read preactivation",
+    )
+    require(
+        high_gain_shift_store_samples[chosen_shift_idx] > 0.045,
+        "10 pF shifted-gate coupling should recover useful 0.75 V z common-mode activation",
+    )
+    require(
+        high_gain_shift_store_samples[chosen_shift_idx] > high_gain_shift_store_samples[0] + 0.006,
+        "10 pF shifted-gate coupling should improve over weak 5 pF coupling",
+    )
+    require(
+        high_gain_shift_store_samples[2] < high_gain_shift_store_samples[chosen_shift_idx] - 0.030,
+        "overcoupled 20 pF shifted-gate case should expose a sizing window, not monotone improvement",
+    )
+    require(
+        high_gain_shift_store_samples[-1] < 0.005,
+        "strongly overcoupled 50 pF shifted-gate case should collapse again",
+    )
+
+    chosen_shift_zcm_cases_v = [0.75, 0.85, 0.90]
+    chosen_shift_zcm_labels = []
+    chosen_shift_zcm_store_samples = []
+    chosen_shift_zcm_traces = []
+    for zcm_v in chosen_shift_zcm_cases_v:
+        stem = (
+            "mos_hidden_writer_restored_gate_hybrid_update_forward_guard_"
+            f"forward_pair_96u_zcm_{str(zcm_v).replace('.', 'p')}v_shift_cc10p_cg5p"
+        )
+        shift_zcm_deck = replace_required(high_gain_hold_deck, zcm_source_line, f"VZCM zcm 0 {zcm_v:.2f}")
+        shift_zcm_deck = replace_required(shift_zcm_deck, zcm_cap_p_line, f"CZP_HYR zp_hyr 0 {{CSUM}} IC={zcm_v:.2f}")
+        shift_zcm_deck = replace_required(shift_zcm_deck, zcm_cap_m_line, f"CZM_HYR zm_hyr 0 {{CSUM}} IC={zcm_v:.2f}")
+        shift_zcm_deck = replace_required(shift_zcm_deck, high_gain_forward_pair_lines, shifted_forward_pair_lines(10.0))
+        shift_zcm_deck = replace_required(
+            shift_zcm_deck,
+            "mos_hidden_writer_restored_gate_hybrid_update_forward_guard_forward_pair_96u_hold.dat",
+            f"{stem}.dat",
+        )
+        shift_zcm_data = run_ngspice(shift_zcm_deck, stem)
+        szct, shift_zcm_cols = load_wrdata(shift_zcm_data, 23)
+
+        def szcat(time_s: float, values: np.ndarray) -> float:
+            return float(values[np.argmin(np.abs(szct - time_s))])
+
+        shift_zcm_store = shift_zcm_cols[14] - shift_zcm_cols[13]
+        chosen_shift_zcm_labels.append(f"{zcm_v:.2f} V")
+        chosen_shift_zcm_store_samples.append(szcat(3.575e-6, shift_zcm_store))
+        chosen_shift_zcm_traces.append((f"shifted {zcm_v:.2f} V", szct, shift_zcm_store))
+
+    chosen_shift_zcm_store_samples = np.array(chosen_shift_zcm_store_samples)
+    require(
+        chosen_shift_zcm_store_samples[0] > high_gain_zcm_store_samples[0] + 0.045,
+        "chosen shifted-gate latch should rescue the 0.75 V case relative to unshifted 96u",
+    )
+    require(
+        chosen_shift_zcm_store_samples[1] > high_gain_zcm_store_samples[1] + 0.015,
+        "chosen shifted-gate latch should improve the partial 0.85 V case",
+    )
+    require(
+        chosen_shift_zcm_store_samples[2] > 0.045,
+        "chosen shifted-gate latch should preserve useful nominal-z activation",
+    )
+
+    negative_shift_deck = replace_required(high_gain_negative_hold_deck, zcm_source_line, "VZCM zcm 0 0.75")
+    negative_shift_deck = replace_required(negative_shift_deck, zcm_cap_p_line, "CZP_HYR zp_hyr 0 {CSUM} IC=0.75")
+    negative_shift_deck = replace_required(negative_shift_deck, zcm_cap_m_line, "CZM_HYR zm_hyr 0 {CSUM} IC=0.75")
+    negative_shift_deck = replace_required(negative_shift_deck, high_gain_forward_pair_lines, shifted_forward_pair_lines(10.0))
+    negative_shift_deck = replace_required(
+        negative_shift_deck,
+        "mos_hidden_writer_restored_gate_hybrid_update_forward_guard_forward_pair_96u_signed_hold_negative.dat",
+        "mos_hidden_writer_restored_gate_hybrid_update_forward_guard_forward_pair_96u_zcm_0p75v_shift_signed_negative.dat",
+    )
+    negative_shift_data = run_ngspice(
+        negative_shift_deck,
+        "mos_hidden_writer_restored_gate_hybrid_update_forward_guard_forward_pair_96u_zcm_0p75v_shift_signed_negative",
+    )
+    nsht, negative_shift_cols = load_wrdata(negative_shift_data, 23)
+
+    def nshat(time_s: float, values: np.ndarray) -> float:
+        return float(values[np.argmin(np.abs(nsht - time_s))])
+
+    negative_shift_store = negative_shift_cols[14] - negative_shift_cols[13]
+    negative_shift_store_samples = np.array([nshat(ts, negative_shift_store) for ts in hold_sample_times])
+    positive_shift_t = high_gain_shift_traces[chosen_shift_idx][1]
+    positive_shift_store = high_gain_shift_traces[chosen_shift_idx][2]
+    positive_shift_store_samples = np.array(
+        [float(positive_shift_store[np.argmin(np.abs(positive_shift_t - ts))]) for ts in hold_sample_times]
+    )
+    shifted_signed_mirror_error = positive_shift_store_samples + negative_shift_store_samples
+    require(
+        negative_shift_store_samples[0] < -0.045,
+        "shifted-gate latch should also capture a useful negative 0.75 V activation",
+    )
+    require(
+        np.max(np.abs(positive_shift_store_samples - positive_shift_store_samples[0])) < 0.0003,
+        "shifted-gate positive store should hold within 0.3 mV",
+    )
+    require(
+        np.max(np.abs(negative_shift_store_samples - negative_shift_store_samples[0])) < 0.0003,
+        "shifted-gate negative store should hold within 0.3 mV",
+    )
+    require(
+        np.max(np.abs(shifted_signed_mirror_error)) < 0.0003,
+        "shifted-gate positive and negative 0.75 V stores should mirror within 0.3 mV",
+    )
+
     tail_bias_forward_tail_line = "MNFT_HYR ftail_hyr vbias 0 0 NMOS L={LCH} W=48u"
     tail_bias_cases_v = [0.70, 0.80, 0.90, 0.95, 1.05, 1.15, 1.25]
     tail_bias_labels = []
@@ -9364,6 +9525,38 @@ quit
     tail_rebias_axes[1].legend(loc="upper right", fontsize="small")
     tail_rebias_fig.tight_layout()
     save_plot(tail_rebias_fig, "mos_hidden_writer_restored_gate_hybrid_update_forward_guard_forward_pair_96u_tail_rebias_ngspice")
+
+    shift_fig, shift_axes = plt.subplots(2, 1, figsize=(7.4, 6.4), gridspec_kw={"height_ratios": [1.0, 0.85]})
+    unshifted_075 = next((trace for trace in high_gain_zcm_traces if trace[0] == "0.75 V"), None)
+    if unshifted_075 is not None:
+        _label, ust, _load, ustore = unshifted_075
+        shift_axes[0].plot(1e6 * ust, 1e3 * ustore, "k:", label="unshifted 0.75 V")
+    for label, szct, store in chosen_shift_zcm_traces:
+        shift_axes[0].plot(1e6 * szct, 1e3 * store, label=label)
+    shift_axes[0].plot(1e6 * positive_shift_t, 1e3 * positive_shift_store, "--", color="tab:blue", label="+ signed hold")
+    shift_axes[0].plot(1e6 * nsht, 1e3 * negative_shift_store, "--", color="tab:red", label="- signed hold")
+    shift_axes[0].axhline(0, color="0.4", linewidth=0.8)
+    shift_axes[0].axvline(3.33, color="0.25", linestyle="--", linewidth=0.9, alpha=0.6, label="guard off")
+    shift_axes[0].set_xlim(3.05, 3.65)
+    shift_axes[0].set_ylabel("stored activation (mV)")
+    shift_axes[0].set_title("Passive shifted-gate latch restores low-z headroom")
+    shift_axes[0].grid(True, alpha=0.25)
+    shift_axes[0].legend(loc="upper left", ncol=2, fontsize="x-small")
+    shift_x = np.arange(len(high_gain_shift_couple_labels) + 1)
+    shift_labels = ["none", *high_gain_shift_couple_labels]
+    shift_values = np.array([high_gain_zcm_store_samples[0], *high_gain_shift_store_samples])
+    shift_axes[1].plot(shift_x, 1e3 * shift_values, marker="o", label="zcm 0.75 V")
+    shift_axes[1].axhline(1e3 * high_gain_zcm_store_samples[nominal_zcm_idx], color="0.35", linestyle="--", linewidth=0.9, label="unshifted 0.90 V")
+    shift_axes[1].axhline(0, color="0.4", linewidth=0.8)
+    shift_axes[1].set_xticks(shift_x)
+    shift_axes[1].set_xticklabels(shift_labels)
+    shift_axes[1].set_xlabel("coupling capacitance into 5 pF shifted gate latch")
+    shift_axes[1].set_ylabel("stored activation (mV)")
+    shift_axes[1].set_title("The useful coupling ratio is a window, not monotone gain")
+    shift_axes[1].grid(True, alpha=0.25)
+    shift_axes[1].legend(loc="upper right", fontsize="small")
+    shift_fig.tight_layout()
+    save_plot(shift_fig, "mos_hidden_writer_restored_gate_hybrid_update_forward_guard_forward_pair_96u_shifted_gate_ngspice")
 
     tail_bias_fig, tail_bias_axes = plt.subplots(2, 1, figsize=(7.4, 6.4), gridspec_kw={"height_ratios": [1.0, 0.8]})
     for label, tbt, load, store in tail_bias_traces:

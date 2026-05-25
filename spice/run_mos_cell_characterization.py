@@ -4437,6 +4437,191 @@ quit
     hyt_fig.tight_layout()
     save_plot(hyt_fig, "mos_hidden_writer_restored_gate_hybrid_timing_ngspice")
 
+    hybrid_timing_corner_cases = [
+        ("nom", "nominal", 0.55, -0.55, 0.55, -0.55, -0.55),
+        ("weak", "combined weak", 0.60, -0.55, 0.50, -0.55, -0.60),
+        ("strong", "writer strong", 0.55, -0.55, 0.55, -0.55, -0.50),
+    ]
+    hybrid_timing_corner_models = []
+    hybrid_timing_corner_devices = []
+    hybrid_timing_corner_prints = []
+    for cidx, (cname, clabel, nsel, psel, ncomp, pcomp, pwrite) in enumerate(hybrid_timing_corner_cases):
+        hybrid_timing_corner_models.append(
+            f"""
+.model NRSEL_HYTC{cidx} NMOS (LEVEL=1 VTO={nsel:.2f} KP=220u LAMBDA=0.03)
+.model PRSEL_HYTC{cidx} PMOS (LEVEL=1 VTO={psel:.2f} KP=90u LAMBDA=0.03)
+.model NRCOMP_HYTC{cidx} NMOS (LEVEL=1 VTO={ncomp:.2f} KP=220u LAMBDA=0.03)
+.model PRCOMP_HYTC{cidx} PMOS (LEVEL=1 VTO={pcomp:.2f} KP=90u LAMBDA=0.03)
+.model PWRITE_HYTC{cidx} PMOS (LEVEL=1 VTO={pwrite:.2f} KP=90u LAMBDA=0.03)
+"""
+        )
+        hybrid_timing_corner_devices.append(
+            f"""
+* Hybrid timing corner copy: {clabel}.
+VZPP_HYTC{cidx} zpp_hytc{cidx} 0 {0.9 + hybrid_mismatch_eps / 2.0:.5f}
+VZMM_HYTC{cidx} zmm_hytc{cidx} 0 {0.9 - hybrid_mismatch_eps / 2.0:.5f}
+VZPM_HYTC{cidx} zpm_hytc{cidx} 0 {0.9 - hybrid_mismatch_eps / 2.0:.5f}
+VZMP_HYTC{cidx} zmp_hytc{cidx} 0 {0.9 + hybrid_mismatch_eps / 2.0:.5f}
+
+MPPP_HYTC{cidx} hpp_hytc{cidx} hpp_hytc{cidx} vdd vdd PMOS L={{LCH}} W={{WP}}
+MPPM_HYTC{cidx} hpm_hytc{cidx} hpm_hytc{cidx} vdd vdd PMOS L={{LCH}} W={{WP}}
+MNPP_HYTC{cidx} hpp_hytc{cidx} zpp_hytc{cidx} tailp_hytc{cidx} 0 NMOS L={{LCH}} W={{WN}}
+MNPM_HYTC{cidx} hpm_hytc{cidx} zmm_hytc{cidx} tailp_hytc{cidx} 0 NMOS L={{LCH}} W={{WN}}
+MNTP_HYTC{cidx} tailp_hytc{cidx} vbias 0 0 NMOS L={{LCH}} W={{WN}}
+
+MPMP_HYTC{cidx} hmp_hytc{cidx} hmp_hytc{cidx} vdd vdd PMOS L={{LCH}} W={{WP}}
+MPMM_HYTC{cidx} hmm_hytc{cidx} hmm_hytc{cidx} vdd vdd PMOS L={{LCH}} W={{WP}}
+MNMP_HYTC{cidx} hmp_hytc{cidx} zpm_hytc{cidx} tailm_hytc{cidx} 0 NMOS L={{LCH}} W={{WN}}
+MNMM_HYTC{cidx} hmm_hytc{cidx} zmp_hytc{cidx} tailm_hytc{cidx} 0 NMOS L={{LCH}} W={{WN}}
+MNTM_HYTC{cidx} tailm_hytc{cidx} vbias 0 0 NMOS L={{LCH}} W={{WN}}
+
+CDP_RP_HYTC{cidx} cdp_rp_hytc{cidx} 0 {{CERR}} IC=1.04
+CDM_RP_HYTC{cidx} cdm_rp_hytc{cidx} 0 {{CERR}} IC=1.04
+RDP_RP_HYTC{cidx} cdp_rp_hytc{cidx} 0 50G
+RDM_RP_HYTC{cidx} cdm_rp_hytc{cidx} 0 50G
+{sign_store_path(f"hpm_hytc{cidx}", "rp", f"cdp_rp_hytc{cidx}", f"hytc{cidx}rp1")}
+{sign_store_path(f"hmp_hytc{cidx}", "rp", f"cdp_rp_hytc{cidx}", f"hytc{cidx}rp2")}
+{sign_store_path(f"hpp_hytc{cidx}", "rp", f"cdm_rp_hytc{cidx}", f"hytc{cidx}rp3")}
+{sign_store_path(f"hmm_hytc{cidx}", "rp", f"cdm_rp_hytc{cidx}", f"hytc{cidx}rp4")}
+
+MPRP_CDP_HYTC{cidx} rgp_rp_hytc{cidx} cdp_rp_hytc{cidx} vdd vdd PRSEL_HYTC{cidx} L={{LCH}} W={{WRESTP}}
+MNRP_CDP_HYTC{cidx} rgp_rp_hytc{cidx} cdp_rp_hytc{cidx} 0 0 NRSEL_HYTC{cidx} L={{LCH}} W={{WRESTN}}
+MPRP_CDM_HYTC{cidx} rgm_rp_hytc{cidx} cdm_rp_hytc{cidx} vdd vdd PRCOMP_HYTC{cidx} L={{LCH}} W={{WRESTP}}
+MNRP_CDM_HYTC{cidx} rgm_rp_hytc{cidx} cdm_rp_hytc{cidx} 0 0 NRCOMP_HYTC{cidx} L={{LCH}} W={{WRESTN}}
+"""
+        )
+        hybrid_timing_corner_prints.extend(
+            [
+                f"v(cdp_rp_hytc{cidx})",
+                f"v(cdm_rp_hytc{cidx})",
+                f"v(rgp_rp_hytc{cidx})",
+                f"v(rgm_rp_hytc{cidx})",
+            ]
+        )
+        for tname, _tlabel, start_us, end_us in hybrid_timing_cases:
+            hybrid_timing_corner_devices.append(
+                f"""
+VPACC_HYTC{cidx}_{tname} paccn_hytc{cidx}_{tname} 0 PWL(0 1.8 {start_us:.2f}u 1.8 {start_us + 0.02:.2f}u 0 {end_us:.2f}u 0 {end_us + 0.02:.2f}u 1.8 3.2u 1.8)
+CWP_HYTC{cidx}_{tname} wp_hytc{cidx}_{tname} 0 {{CWRITE}} IC=0.85
+CWM_HYTC{cidx}_{tname} wm_hytc{cidx}_{tname} 0 {{CWRITE}} IC=0.85
+MWP_HYTC{cidx}_{tname}A vdd paccn_hytc{cidx}_{tname} n_wp_hytc{cidx}_{tname}_a vdd PWRITE_HYTC{cidx} L={{LCH}} W={{WWRITE}}
+MWP_HYTC{cidx}_{tname}B n_wp_hytc{cidx}_{tname}_a hm_pos n_wp_hytc{cidx}_{tname}_b vdd PWRITE_HYTC{cidx} L={{LCH}} W={{WWRITE}}
+MWP_HYTC{cidx}_{tname}C n_wp_hytc{cidx}_{tname}_b rgp_rp_hytc{cidx} n_wp_hytc{cidx}_{tname}_c vdd PWRITE_HYTC{cidx} L={{LCH}} W={{WWRITE}}
+MWP_HYTC{cidx}_{tname}D n_wp_hytc{cidx}_{tname}_c cdm_rp_hytc{cidx} wp_hytc{cidx}_{tname} vdd PWRITE_HYTC{cidx} L={{LCH}} W={{WWRITE}}
+MWM_HYTC{cidx}_{tname}A vdd paccn_hytc{cidx}_{tname} n_wm_hytc{cidx}_{tname}_a vdd PWRITE_HYTC{cidx} L={{LCH}} W={{WWRITE}}
+MWM_HYTC{cidx}_{tname}B n_wm_hytc{cidx}_{tname}_a hm_pos n_wm_hytc{cidx}_{tname}_b vdd PWRITE_HYTC{cidx} L={{LCH}} W={{WWRITE}}
+MWM_HYTC{cidx}_{tname}C n_wm_hytc{cidx}_{tname}_b rgm_rp_hytc{cidx} n_wm_hytc{cidx}_{tname}_c vdd PWRITE_HYTC{cidx} L={{LCH}} W={{WWRITE}}
+MWM_HYTC{cidx}_{tname}D n_wm_hytc{cidx}_{tname}_c cdp_rp_hytc{cidx} wm_hytc{cidx}_{tname} vdd PWRITE_HYTC{cidx} L={{LCH}} W={{WWRITE}}
+"""
+            )
+            hybrid_timing_corner_prints.extend(
+                [
+                    f"v(wp_hytc{cidx}_{tname})",
+                    f"v(wm_hytc{cidx}_{tname})",
+                    f"v(paccn_hytc{cidx}_{tname})",
+                ]
+            )
+
+    hybrid_timing_corner_deck = f"""
+* Hybrid restored-enable/analog-error writer phase-overlap corners.
+* This is the intersection of the timing and threshold-corner tests: each
+* corner has its own MOS hidden-error store, restored gates, and writer PMOS
+* threshold, while matched writer copies sweep active-low pacc timing.
+{COMMON_MODELS}
+{''.join(hybrid_timing_corner_models)}
+.param CERR=10p CWRITE=500p WSW=24u WWRITE=24u WRESTN=18u WRESTP=300u
+VDD vdd 0 1.8
+VTAIL vbias 0 0.95
+VPBWD pbwd 0 PULSE(0 1.8 0.45u 20n 20n 0.80u 5.0u)
+VRP rp 0 PULSE(0 1.8 0.45u 20n 20n 0.80u 5.0u)
+VHM_POS hm_pos 0 0.92
+{''.join(hybrid_timing_corner_devices)}
+
+.control
+set noaskquit
+tran 5n 3.2u uic
+wrdata mos_hidden_writer_restored_gate_hybrid_timing_corner.dat {' '.join(hybrid_timing_corner_prints)} v(pbwd)
+quit
+.endc
+.end
+"""
+    hybrid_timing_corner_data = run_ngspice(
+        hybrid_timing_corner_deck,
+        "mos_hidden_writer_restored_gate_hybrid_timing_corner",
+    )
+    hytct, hytc_cols = load_wrdata(hybrid_timing_corner_data, len(hybrid_timing_corner_prints) + 1)
+
+    def hytcat(time_s: float, values: np.ndarray) -> float:
+        return float(values[np.argmin(np.abs(hytct - time_s))])
+
+    timing_count = len(hybrid_timing_cases)
+    corner_stride = 4 + 3 * timing_count
+    hytc_final = np.zeros((len(hybrid_timing_corner_cases), timing_count))
+    hytc_comp_step = np.zeros_like(hytc_final)
+    hytc_diffs: dict[tuple[str, str], np.ndarray] = {}
+    hytc_hidden = []
+    hytc_selected_gate = []
+    hytc_complement_gate = []
+    for cidx, (cname, clabel, *_rest) in enumerate(hybrid_timing_corner_cases):
+        base = cidx * corner_stride
+        hidden = hytc_cols[base] - hytc_cols[base + 1]
+        selected_gate = hytc_cols[base + 2]
+        complement_gate = hytc_cols[base + 3]
+        hytc_hidden.append(hytcat(1.35e-6, hidden))
+        hytc_selected_gate.append(hytcat(1.45e-6, selected_gate))
+        hytc_complement_gate.append(hytcat(1.45e-6, complement_gate))
+        require(hytc_hidden[-1] > 0.07, f"{clabel} timing-corner deck should store positive hidden error")
+        require(hytc_selected_gate[-1] < 0.35, f"{clabel} timing-corner selected restored gate should be low")
+        require(hytc_complement_gate[-1] > 1.60, f"{clabel} timing-corner complement restored gate should be high")
+        for tidx, (tname, tlabel, _start_us, _end_us) in enumerate(hybrid_timing_cases):
+            offset = base + 4 + 3 * tidx
+            wp = hytc_cols[offset]
+            wm = hytc_cols[offset + 1]
+            diff = wp - wm
+            hytc_diffs[(cname, tname)] = diff
+            hytc_final[cidx, tidx] = hytcat(2.85e-6, diff)
+            hytc_comp_step[cidx, tidx] = hytcat(2.85e-6, wm) - hytcat(0.05e-6, wm)
+        full = hytc_final[cidx, -1]
+        require(abs(hytc_final[cidx, 0]) < 0.001, f"{clabel} pre-store pacc should remain quiet")
+        require(full > 0.010, f"{clabel} settled pacc should still produce a useful write")
+        require(hytc_final[cidx, 1] < 0.25 * full, f"{clabel} early-overlap write should be a limited fraction of full")
+        require(np.min(hytc_final[cidx, 2:]) > 0.90 * full, f"{clabel} post-store pacc timings should reach full write")
+        require(
+            np.max(hytc_final[cidx, 2:]) - np.min(hytc_final[cidx, 2:]) < 0.004,
+            f"{clabel} post-store pacc timings should agree",
+        )
+        require(np.max(hytc_comp_step[cidx, 2:]) < 5e-4, f"{clabel} complement rail should stay suppressed")
+
+    hytc_hidden = np.array(hytc_hidden)
+    hytc_selected_gate = np.array(hytc_selected_gate)
+    hytc_complement_gate = np.array(hytc_complement_gate)
+
+    hytc_fig, hytc_axes = plt.subplots(2, 1, figsize=(7.4, 6.0))
+    hytc_x = np.arange(timing_count)
+    hytc_tlabels = [label for _name, label, _start_us, _end_us in hybrid_timing_cases]
+    for cidx, (_cname, clabel, *_rest) in enumerate(hybrid_timing_corner_cases):
+        hytc_axes[0].plot(hytc_x, 1e3 * hytc_final[cidx], "o-", label=clabel)
+    hytc_axes[0].axhline(0, color="0.4", linewidth=0.8)
+    hytc_axes[0].set_xticks(hytc_x)
+    hytc_axes[0].set_xticklabels(hytc_tlabels, rotation=15, ha="right")
+    hytc_axes[0].set_ylabel("final $W^+ - W^-$ (mV)")
+    hytc_axes[0].set_title("Hybrid pacc timing rule survives selected threshold corners")
+    hytc_axes[0].grid(True, alpha=0.25)
+    hytc_axes[0].legend(loc="upper left", fontsize="small")
+    hytc_axes[1].plot(1e6 * hytct, hytc_diffs[("nom", "pre")], color="0.5", linestyle=":", label="nominal pre")
+    hytc_axes[1].plot(1e6 * hytct, hytc_diffs[("nom", "gap")], label="nominal settled")
+    hytc_axes[1].plot(1e6 * hytct, hytc_diffs[("weak", "early")], label="combined weak early")
+    hytc_axes[1].plot(1e6 * hytct, hytc_diffs[("weak", "gap")], label="combined weak settled")
+    hytc_axes[1].plot(1e6 * hytct, hytc_diffs[("strong", "gap")], label="writer strong settled")
+    hytc_axes[1].axhline(0, color="0.4", linewidth=0.8)
+    hytc_axes[1].set_xlabel("time (us)")
+    hytc_axes[1].set_ylabel("$W^+ - W^-$ (V)")
+    hytc_axes[1].set_title("Cornered traces keep sign; weak corner mainly reduces gain")
+    hytc_axes[1].grid(True, alpha=0.25)
+    hytc_axes[1].legend(loc="upper left", fontsize="small")
+    hytc_fig.tight_layout()
+    save_plot(hytc_fig, "mos_hidden_writer_restored_gate_hybrid_timing_corner_ngspice")
+
     hybrid_noise_cases = [
         ("none", "no kick", 0.000, 0.000),
         ("cmup", "common +25mV", 0.025, 0.025),

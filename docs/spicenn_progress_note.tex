@@ -1057,9 +1057,9 @@ must satisfy before it can replace the current behavioral prototype.
   the weak-writer corner, \(55.1\) mV nominally, and \(75.7\) mV in the
   strong-writer corner.  The combined selected-weak, complement-strong,
   writer-weak corner still writes the correct sign at about \(37.3\) mV.  This
-  supports the hybrid topology as the current best MOS writer candidate; the
-  next robustness gap is dynamic noise and phase-overlap sensitivity rather
-  than static threshold sign failure.}
+  supports the hybrid topology as the current best MOS writer candidate:
+  static threshold offsets change gain, but do not create a sign failure in
+  this operating window.}
   \label{fig:mos-hidden-writer-restored-gate-hybrid-mismatch-ngspice}
 \end{figure}
 
@@ -1080,6 +1080,25 @@ must satisfy before it can replace the current behavioral prototype.
   pre-store interval, but it can begin at or after the hidden-error storage edge
   once the restored gates have settled.}
   \label{fig:mos-hidden-writer-restored-gate-hybrid-timing-ngspice}
+\end{figure}
+
+\begin{figure}[H]
+  \centering
+  \includegraphics[width=0.90\linewidth]{figures/mos_hidden_writer_restored_gate_hybrid_timing_corner_ngspice.png}
+  \caption{Ngspice cornered phase-overlap characterization of the hybrid
+  restored-enable plus analog-error writer.  This combines the timing test with
+  nominal, combined-weak, and writer-strong threshold corners.  All three
+  corners keep a pre-store \(pacc\) pulse quiet.  The early-overlap pulse is
+  bounded but visible: about \(2.3\) mV nominal, \(1.3\) mV in the
+  combined-weak corner, and \(3.2\) mV in the writer-strong corner.
+  Store-edge or later pulses keep the same sign and converge by corner:
+  \(26.4\)--\(27.0\) mV nominal, \(17.6\)--\(18.2\) mV combined weak, and
+  \(36.3\)--\(37.2\) mV writer strong.  The post-store complement rail remains
+  below \(0.01\,\mu\mathrm{V}\) in this deck.  The phase rule therefore
+  survives the tested static threshold corners; the remaining concern is not a
+  hidden timing sign flip, but dynamic disturbance, reset/reference integrity,
+  and loading when the slice is embedded in a larger cell.}
+  \label{fig:mos-hidden-writer-restored-gate-hybrid-timing-corner-ngspice}
 \end{figure}
 
 \begin{figure}[H]

@@ -511,6 +511,18 @@ quit
     weighted_axes[1].plot(imbalance[order], weighted_hold[order], "s--", label="after hold")
     weighted_axes[1].axhline(0, color="0.4", linewidth=0.8)
     weighted_axes[1].axvline(0, color="0.4", linewidth=0.8)
+    weighted_abs_max = max(0.01, float(np.max(np.abs(np.concatenate([weighted_final, weighted_hold])))))
+    weighted_axes[1].set_ylim(-1.25 * weighted_abs_max, 1.25 * weighted_abs_max)
+    for x, value in zip(imbalance[order], weighted_final[order]):
+        weighted_axes[1].text(x, value + 0.06 * weighted_abs_max, f"{1e3 * value:+.0f}", ha="center", va="bottom", fontsize="x-small")
+    weighted_axes[1].text(
+        0.02,
+        0.88,
+        "labels: after-write mV",
+        transform=weighted_axes[1].transAxes,
+        fontsize="small",
+        bbox={"facecolor": "white", "alpha": 0.8, "edgecolor": "0.8"},
+    )
     weighted_axes[1].set_xlabel("$V_{W^+} - V_{W^-}$ during pulse (V)")
     weighted_axes[1].set_ylabel("stored preactivation (V)")
     weighted_axes[1].set_title("Net stored sign follows weight-rail imbalance")

@@ -2,6 +2,13 @@
 
 ## 2026-05-25
 
+- Clarified the weighted signed-synapse cancellation plot.  The underlying
+  ngspice assertions already checked that shared \(z^+/z^-\) summing
+  capacitors move monotonically as \(W^-\) dominates \(W^+\), cancel near zero
+  for balanced rails, and hold after the pulse.  The regenerated
+  `mos_synapse_weighted_ngspice` plot now labels the after-write preactivation
+  values directly: about \(+105,+18,0,-18,-105\) mV across the five
+  imbalance cases.
 - Tightened the writer-retention plot after the circuit assertions were doing
   more work than the figure.  The MOS writer/readback deck still uses the same
   physical \(W^+\)/\(W^-\) capacitors as continuous synapse tail gates after

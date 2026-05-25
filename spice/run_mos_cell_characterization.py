@@ -5631,6 +5631,13 @@ quit
     hytc_hidden = np.array(hytc_hidden)
     hytc_selected_gate = np.array(hytc_selected_gate)
     hytc_complement_gate = np.array(hytc_complement_gate)
+    hytc_pre_max = float(np.max(np.abs(hytc_final[:, 0])))
+    hytc_early_max_frac = float(np.max(hytc_final[:, 1] / hytc_final[:, -1]))
+    hytc_settled_min = float(np.min(hytc_final[:, 2:]))
+    hytc_settled_spread_max = float(np.max(np.max(hytc_final[:, 2:], axis=1) - np.min(hytc_final[:, 2:], axis=1)))
+    hytc_complement_max = float(np.max(hytc_comp_step[:, 2:]))
+    hytc_selected_max = float(np.max(hytc_selected_gate))
+    hytc_gate_sep_min = float(np.min(hytc_complement_gate - hytc_selected_gate))
 
     hytc_fig, hytc_axes = plt.subplots(2, 1, figsize=(7.4, 6.0))
     hytc_x = np.arange(timing_count)
@@ -5643,6 +5650,21 @@ quit
     hytc_axes[0].set_ylabel("final $W^+ - W^-$ (mV)")
     hytc_axes[0].set_title("Hybrid pacc timing rule survives selected threshold corners")
     hytc_axes[0].grid(True, alpha=0.25)
+    hytc_axes[0].text(
+        0.55,
+        0.13,
+        "pre max = "
+        f"{1e3 * hytc_pre_max:.2f} mV / <1 mV\n"
+        "early/full max = "
+        f"{hytc_early_max_frac:.2f} / <0.25\n"
+        "settled min = "
+        f"{1e3 * hytc_settled_min:.1f} mV / >10 mV\n"
+        "settled spread max = "
+        f"{1e3 * hytc_settled_spread_max:.2f} mV / <4 mV",
+        transform=hytc_axes[0].transAxes,
+        fontsize="x-small",
+        bbox=callout_box,
+    )
     hytc_axes[0].legend(loc="upper left", fontsize="small")
     hytc_axes[1].plot(1e6 * hytct, hytc_diffs[("nom", "pre")], color="0.5", linestyle=":", label="nominal pre")
     hytc_axes[1].plot(1e6 * hytct, hytc_diffs[("nom", "gap")], label="nominal settled")
@@ -5654,6 +5676,19 @@ quit
     hytc_axes[1].set_ylabel("$W^+ - W^-$ (V)")
     hytc_axes[1].set_title("Cornered traces keep sign; weak corner mainly reduces gain")
     hytc_axes[1].grid(True, alpha=0.25)
+    hytc_axes[1].text(
+        0.55,
+        0.13,
+        "selected gate max = "
+        f"{hytc_selected_max:.2f} V / <0.35 V\n"
+        "min gate separation = "
+        f"{hytc_gate_sep_min:.2f} V\n"
+        "complement max = "
+        f"{1e3 * hytc_complement_max:.3f} mV / <0.5 mV",
+        transform=hytc_axes[1].transAxes,
+        fontsize="x-small",
+        bbox=callout_box,
+    )
     hytc_axes[1].legend(loc="upper left", fontsize="small")
     hytc_fig.tight_layout()
     save_plot(hytc_fig, "mos_hidden_writer_restored_gate_hybrid_timing_corner_ngspice")
@@ -7052,20 +7087,29 @@ quit
     hyb_neg_bm_step = hybat(2.55e-6, hyb_bm_rm) - hybat(1.60e-6, hyb_bm_rm)
     hyb_pos_final = hybat(2.55e-6, hyb_pos_signed)
     hyb_neg_final = hybat(2.55e-6, hyb_neg_signed)
+    hyb_hidden_pos_sample = hybat(1.35e-6, hyb_hidden_pos)
+    hyb_hidden_neg_sample = hybat(1.35e-6, hyb_hidden_neg)
+    hyb_hidden_symmetry_error = abs(hybat(1.35e-6, hyb_hidden_pos + hyb_hidden_neg))
+    hyb_selected_max = max(hybat(1.45e-6, hyb_rp_selected_gate), hybat(1.45e-6, hyb_rm_selected_gate))
+    hyb_complement_min = min(hybat(1.45e-6, hyb_rp_complement_gate), hybat(1.45e-6, hyb_rm_complement_gate))
+    hyb_inactive_max = max(hyb_pos_bm_step, hyb_neg_bp_step)
+    hyb_sign_symmetry_error = abs(hyb_pos_final + hyb_neg_final)
+    hyb_pos_hold_error = abs(hybat(2.90e-6, hyb_pos_signed) - hyb_pos_final)
+    hyb_neg_hold_error = abs(hybat(2.90e-6, hyb_neg_signed) - hyb_neg_final)
     require(hybat(1.35e-6, hyb_hidden_pos) > 0.07, "hybrid bias e+ store should be positive")
     require(hybat(1.35e-6, hyb_hidden_neg) < -0.07, "hybrid bias e- store should be negative")
-    require(abs(hybat(1.35e-6, hyb_hidden_pos + hyb_hidden_neg)) < 0.003, "hybrid bias hidden stores should be symmetric")
+    require(hyb_hidden_symmetry_error < 0.003, "hybrid bias hidden stores should be symmetric")
     require(hybat(1.45e-6, hyb_rp_selected_gate) < 0.30, "hybrid bias e+ selected gate should be low")
     require(hybat(1.45e-6, hyb_rp_complement_gate) > 1.60, "hybrid bias e+ complement gate should be high")
     require(hybat(1.45e-6, hyb_rm_selected_gate) < 0.30, "hybrid bias e- selected gate should be low")
     require(hybat(1.45e-6, hyb_rm_complement_gate) > 1.60, "hybrid bias e- complement gate should be high")
     require(hyb_pos_final > 0.020, "hybrid bias e+ should write positive bias differential")
     require(hyb_neg_final < -0.020, "hybrid bias e- should write negative bias differential")
-    require(abs(hyb_pos_final + hyb_neg_final) < 0.003, "hybrid bias signs should write symmetric magnitudes")
+    require(hyb_sign_symmetry_error < 0.003, "hybrid bias signs should write symmetric magnitudes")
     require(hyb_pos_bp_step > 0.020 and hyb_neg_bm_step > 0.020, "hybrid bias selected rails should move")
-    require(max(hyb_pos_bm_step, hyb_neg_bp_step) < 5e-4, "hybrid bias inactive rails should stay suppressed")
-    require(abs(hybat(2.90e-6, hyb_pos_signed) - hyb_pos_final) < 5e-4, "hybrid bias positive write should hold")
-    require(abs(hybat(2.90e-6, hyb_neg_signed) - hyb_neg_final) < 5e-4, "hybrid bias negative write should hold")
+    require(hyb_inactive_max < 5e-4, "hybrid bias inactive rails should stay suppressed")
+    require(hyb_pos_hold_error < 5e-4, "hybrid bias positive write should hold")
+    require(hyb_neg_hold_error < 5e-4, "hybrid bias negative write should hold")
 
     hyb_fig, hyb_axes = plt.subplots(2, 1, figsize=(7.2, 5.8))
     hyb_axes[0].plot(1e6 * hybt, hyb_hidden_pos, label="stored $e^+$")
@@ -7076,6 +7120,21 @@ quit
     hyb_axes[0].set_ylabel("voltage (V)")
     hyb_axes[0].set_title("Hybrid bias writer stores both error signs")
     hyb_axes[0].grid(True, alpha=0.25)
+    hyb_axes[0].text(
+        0.05,
+        0.14,
+        "e+/e- stores = "
+        f"{1e3 * hyb_hidden_pos_sample:.1f}/{1e3 * hyb_hidden_neg_sample:.1f} mV\n"
+        "symmetry error = "
+        f"{1e3 * hyb_hidden_symmetry_error:.2f} mV / <3 mV\n"
+        "selected max = "
+        f"{hyb_selected_max:.2f} V / <0.30 V\n"
+        "complement min = "
+        f"{hyb_complement_min:.2f} V / >1.60 V",
+        transform=hyb_axes[0].transAxes,
+        fontsize="x-small",
+        bbox=callout_box,
+    )
     hyb_axes[0].legend(loc="center right", ncol=2, fontsize="small")
     hyb_axes[1].plot(1e6 * hybt, 1e3 * hyb_pos_signed, label="$B^+ - B^-$ from $e^+$")
     hyb_axes[1].plot(1e6 * hybt, 1e3 * hyb_neg_signed, label="$B^+ - B^-$ from $e^-$")
@@ -7086,6 +7145,21 @@ quit
     hyb_axes[1].set_ylabel("bias step (mV)")
     hyb_axes[1].set_title("local bias update follows $\\Delta b \\propto e$")
     hyb_axes[1].grid(True, alpha=0.25)
+    hyb_axes[1].text(
+        0.47,
+        0.14,
+        "signed steps = "
+        f"{1e3 * hyb_pos_final:.1f}/{1e3 * hyb_neg_final:.1f} mV\n"
+        "sign symmetry error = "
+        f"{1e3 * hyb_sign_symmetry_error:.2f} mV / <3 mV\n"
+        "inactive max = "
+        f"{1e3 * hyb_inactive_max:.3f} mV / <0.5 mV\n"
+        "hold errors = "
+        f"{1e3 * hyb_pos_hold_error:.3f}/{1e3 * hyb_neg_hold_error:.3f} mV",
+        transform=hyb_axes[1].transAxes,
+        fontsize="x-small",
+        bbox=callout_box,
+    )
     hyb_axes[1].legend(loc="upper left", ncol=2, fontsize="small")
     hyb_fig.tight_layout()
     save_plot(hyb_fig, "mos_hidden_writer_restored_gate_hybrid_bias_ngspice")
@@ -7226,18 +7300,26 @@ quit
     hyu_bias_final = hyuat(2.75e-6, hyu_bias)
     hyu_weight_read_step = hyuat(2.75e-6, hyu_weight_read) - hyuat(1.95e-6, hyu_weight_read)
     hyu_bias_read_step = hyuat(2.75e-6, hyu_bias_read) - hyuat(1.95e-6, hyu_bias_read)
+    hyu_hidden_sample = hyuat(1.35e-6, hyu_hidden)
+    hyu_selected_gate_sample = hyuat(1.45e-6, hyu_selected_gate)
+    hyu_complement_gate_sample = hyuat(1.45e-6, hyu_complement_gate)
+    hyu_hcap_sample = hyuat(1.85e-6, hyu_hcap)
+    hyu_inactive_weight_step = hyuat(2.75e-6, hyu_wm) - hyuat(1.95e-6, hyu_wm)
+    hyu_inactive_bias_step = hyuat(2.75e-6, hyu_bm) - hyuat(1.95e-6, hyu_bm)
+    hyu_weight_hold_error = abs(hyuat(3.55e-6, hyu_weight) - hyu_weight_final)
+    hyu_bias_hold_error = abs(hyuat(3.55e-6, hyu_bias) - hyu_bias_final)
     require(hyuat(1.35e-6, hyu_hidden) > 0.07, "hybrid cell update should store positive error")
     require(hyuat(1.45e-6, hyu_selected_gate) < 0.30, "hybrid cell update selected restored gate should be low")
     require(hyuat(1.45e-6, hyu_complement_gate) > 1.60, "hybrid cell update complement restored gate should be high")
-    require(abs(hyuat(1.85e-6, hyu_hcap) - 0.92) < 0.012, "hybrid cell update should sample active activation gate")
+    require(abs(hyu_hcap_sample - 0.92) < 0.012, "hybrid cell update should sample active activation gate")
     require(hyu_weight_final > 0.020, "integrated cell update should write positive weight differential")
     require(hyu_bias_final > 0.030, "integrated cell update should write positive bias differential")
-    require(hyuat(2.75e-6, hyu_wm) - hyuat(1.95e-6, hyu_wm) < 5e-4, "integrated cell update should keep W- quiet")
-    require(hyuat(2.75e-6, hyu_bm) - hyuat(1.95e-6, hyu_bm) < 5e-4, "integrated cell update should keep B- quiet")
+    require(hyu_inactive_weight_step < 5e-4, "integrated cell update should keep W- quiet")
+    require(hyu_inactive_bias_step < 5e-4, "integrated cell update should keep B- quiet")
     require(hyu_weight_read_step > 3e-6, "weight readback current should increase after weight write")
     require(hyu_bias_read_step > 5e-6, "bias readback current should increase after bias write")
-    require(abs(hyuat(3.55e-6, hyu_weight) - hyu_weight_final) < 5e-4, "integrated weight state should hold after pacc")
-    require(abs(hyuat(3.55e-6, hyu_bias) - hyu_bias_final) < 5e-4, "integrated bias state should hold after pacc")
+    require(hyu_weight_hold_error < 5e-4, "integrated weight state should hold after pacc")
+    require(hyu_bias_hold_error < 5e-4, "integrated bias state should hold after pacc")
 
     hyu_fig, hyu_axes = plt.subplots(3, 1, figsize=(7.2, 7.4), gridspec_kw={"height_ratios": [1.05, 1.0, 1.0]})
     hyu_axes[0].plot(1e6 * hyut, hyu_hidden, label="stored $e^+$")
@@ -7248,6 +7330,19 @@ quit
     hyu_axes[0].set_ylabel("voltage (V)")
     hyu_axes[0].set_title("One MOS sample cycle stores error and activation operands")
     hyu_axes[0].grid(True, alpha=0.25)
+    hyu_axes[0].text(
+        0.05,
+        0.13,
+        "error store = "
+        f"{1e3 * hyu_hidden_sample:.1f} mV / >70 mV\n"
+        "selected/complement gates = "
+        f"{hyu_selected_gate_sample:.2f}/{hyu_complement_gate_sample:.2f} V\n"
+        "activation sample = "
+        f"{hyu_hcap_sample:.3f} V / 0.92+/-0.012 V",
+        transform=hyu_axes[0].transAxes,
+        fontsize="x-small",
+        bbox=callout_box,
+    )
     hyu_axes[0].legend(loc="center right", ncol=2, fontsize="small")
     hyu_axes[1].plot(1e6 * hyut, 1e3 * (hyu_wp - hyuat(1.95e-6, hyu_wp)), label="$W^+$")
     hyu_axes[1].plot(1e6 * hyut, 1e3 * (hyu_wm - hyuat(1.95e-6, hyu_wm)), label="$W^-$")
@@ -7257,6 +7352,19 @@ quit
     hyu_axes[1].set_ylabel("state step (mV)")
     hyu_axes[1].set_title("Same pacc pulse writes activation-gated weight and ungated bias")
     hyu_axes[1].grid(True, alpha=0.25)
+    hyu_axes[1].text(
+        0.50,
+        0.13,
+        "weight/bias steps = "
+        f"{1e3 * hyu_weight_final:.1f}/{1e3 * hyu_bias_final:.1f} mV\n"
+        "inactive W-/B- = "
+        f"{1e3 * hyu_inactive_weight_step:.3f}/{1e3 * hyu_inactive_bias_step:.3f} mV\n"
+        "hold errors = "
+        f"{1e3 * hyu_weight_hold_error:.3f}/{1e3 * hyu_bias_hold_error:.3f} mV",
+        transform=hyu_axes[1].transAxes,
+        fontsize="x-small",
+        bbox=callout_box,
+    )
     hyu_axes[1].legend(loc="upper left", ncol=3, fontsize="small")
     hyu_axes[2].plot(1e6 * hyut, 1e6 * (hyu_weight_read - hyuat(1.95e-6, hyu_weight_read)), label="weight read current step")
     hyu_axes[2].plot(1e6 * hyut, 1e6 * (hyu_bias_read - hyuat(1.95e-6, hyu_bias_read)), label="bias read current step")
@@ -7267,6 +7375,17 @@ quit
     hyu_axes[2].set_ylabel("uA / mV")
     hyu_axes[2].set_title("Persistent states immediately read back through NMOS slices")
     hyu_axes[2].grid(True, alpha=0.25)
+    hyu_axes[2].text(
+        0.52,
+        0.13,
+        "read-current steps = "
+        f"{1e6 * hyu_weight_read_step:.1f}/{1e6 * hyu_bias_read_step:.1f} uA\n"
+        "stored states = "
+        f"{1e3 * hyu_weight_final:.1f}/{1e3 * hyu_bias_final:.1f} mV",
+        transform=hyu_axes[2].transAxes,
+        fontsize="x-small",
+        bbox=callout_box,
+    )
     hyu_axes[2].legend(loc="upper left", ncol=2, fontsize="small")
     hyu_fig.tight_layout()
     save_plot(hyu_fig, "mos_hidden_writer_restored_gate_hybrid_cell_update_ngspice")
@@ -7529,6 +7648,15 @@ quit
     require(np.all(hyz_hm_final[:2] > 1.35), "integrated quadrant a+ cases should leave a- inactive")
     require(np.all(hyz_hp_final[2:] > 1.35), "integrated quadrant a- cases should leave a+ inactive")
     require(np.all(np.abs(hyz_hm_final[2:] - 0.92) < 0.010), "integrated quadrant a- cases should sample active a-")
+    hyz_hidden_symmetry_error = abs(hyzat(1.35e-6, hyz_hidden_pos + hyz_hidden_neg))
+    hyz_selected_max = max(hyzat(1.45e-6, hyz_rp_selected_gate), hyzat(1.45e-6, hyz_rm_selected_gate))
+    hyz_complement_min = min(hyzat(1.45e-6, hyz_rp_complement_gate), hyzat(1.45e-6, hyz_rm_complement_gate))
+    hyz_weight_mag_spread = float(np.max(np.abs(hyz_weight_signed)) - np.min(np.abs(hyz_weight_signed)))
+    hyz_bias_mag_spread = float(np.max(np.abs(hyz_bias_signed)) - np.min(np.abs(hyz_bias_signed)))
+    hyz_weight_read_mag_spread = float(np.max(np.abs(hyz_weight_read_step)) - np.min(np.abs(hyz_weight_read_step)))
+    hyz_bias_read_mag_spread = float(np.max(np.abs(hyz_bias_read_step)) - np.min(np.abs(hyz_bias_read_step)))
+    hyz_inactive_weight_max = float(np.max(np.minimum(hyz_wp_step, hyz_wm_step)))
+    hyz_inactive_bias_max = float(np.max(np.minimum(hyz_bp_step, hyz_bm_step)))
 
     hyz_x = np.arange(len(hybrid_product_cases))
     hyz_labels = [label for _name, label, *_rest in hybrid_product_cases]
@@ -7543,6 +7671,19 @@ quit
     hyz_axes[0].set_ylabel("voltage (V)")
     hyz_axes[0].set_title("Integrated quadrant deck stores both error signs once")
     hyz_axes[0].grid(True, alpha=0.25)
+    hyz_axes[0].text(
+        0.05,
+        0.13,
+        "e+/e- stores = "
+        f"{1e3 * hyzat(1.35e-6, hyz_hidden_pos):.1f}/{1e3 * hyzat(1.35e-6, hyz_hidden_neg):.1f} mV\n"
+        "symmetry error = "
+        f"{1e3 * hyz_hidden_symmetry_error:.2f} mV / <3 mV\n"
+        "selected max = "
+        f"{hyz_selected_max:.2f} V, complement min = {hyz_complement_min:.2f} V",
+        transform=hyz_axes[0].transAxes,
+        fontsize="x-small",
+        bbox=callout_box,
+    )
     hyz_axes[0].legend(loc="center right", ncol=2, fontsize="small")
     hyz_weight_bars = hyz_axes[1].bar(hyz_x - 0.18, 1e3 * hyz_weight_signed, width=0.36, label="$W^+ - W^-$")
     hyz_bias_bars = hyz_axes[1].bar(hyz_x + 0.18, 1e3 * hyz_bias_signed, width=0.36, label="$B^+ - B^-$")
@@ -7552,11 +7693,24 @@ quit
     hyz_axes[1].set_ylabel("state step (mV)")
     hyz_axes[1].set_title("weight follows $ae$ while bias follows $e$")
     hyz_state_max = max(1.0, float(1e3 * np.max(np.abs(np.concatenate([hyz_weight_signed, hyz_bias_signed])))))
-    hyz_axes[1].set_ylim(-1.35 * hyz_state_max, 1.35 * hyz_state_max)
+    hyz_axes[1].set_ylim(-1.55 * hyz_state_max, 2.80 * hyz_state_max)
     hyz_axes[1].bar_label(hyz_weight_bars, labels=[f"{value:+.1f}" for value in 1e3 * hyz_weight_signed], padding=2, fontsize="x-small")
     hyz_axes[1].bar_label(hyz_bias_bars, labels=[f"{value:+.1f}" for value in 1e3 * hyz_bias_signed], padding=2, fontsize="x-small")
     hyz_axes[1].grid(True, axis="y", alpha=0.25)
-    hyz_axes[1].legend(loc="center left", bbox_to_anchor=(1.01, 0.5), fontsize="small")
+    hyz_axes[1].text(
+        0.04,
+        0.76,
+        "weight |spread| = "
+        f"{1e3 * hyz_weight_mag_spread:.2f} mV\n"
+        "bias |spread| = "
+        f"{1e3 * hyz_bias_mag_spread:.2f} mV\n"
+        "inactive W/B max = "
+        f"{1e3 * hyz_inactive_weight_max:.3f}/{1e3 * hyz_inactive_bias_max:.3f} mV",
+        transform=hyz_axes[1].transAxes,
+        fontsize="x-small",
+        bbox=callout_box,
+    )
+    hyz_axes[1].legend(loc="upper right", ncol=2, fontsize="small")
     hyz_weight_read_bars = hyz_axes[2].bar(hyz_x - 0.18, 1e6 * hyz_weight_read_step, width=0.36, label="weight read current")
     hyz_bias_read_bars = hyz_axes[2].bar(hyz_x + 0.18, 1e6 * hyz_bias_read_step, width=0.36, label="bias read current")
     hyz_axes[2].axhline(0, color="0.4", linewidth=0.8)
@@ -7566,11 +7720,21 @@ quit
     hyz_axes[2].set_ylabel("read current step (uA)")
     hyz_axes[2].set_title("readback signs match the stored differential states")
     hyz_read_max = max(1.0, float(1e6 * np.max(np.abs(np.concatenate([hyz_weight_read_step, hyz_bias_read_step])))))
-    hyz_axes[2].set_ylim(-1.35 * hyz_read_max, 1.35 * hyz_read_max)
+    hyz_axes[2].set_ylim(-1.55 * hyz_read_max, 2.80 * hyz_read_max)
     hyz_axes[2].bar_label(hyz_weight_read_bars, labels=[f"{value:+.1f}" for value in 1e6 * hyz_weight_read_step], padding=2, fontsize="x-small")
     hyz_axes[2].bar_label(hyz_bias_read_bars, labels=[f"{value:+.1f}" for value in 1e6 * hyz_bias_read_step], padding=2, fontsize="x-small")
     hyz_axes[2].grid(True, axis="y", alpha=0.25)
-    hyz_axes[2].legend(loc="center left", bbox_to_anchor=(1.01, 0.5), fontsize="small")
+    hyz_axes[2].text(
+        0.04,
+        0.78,
+        "read |spread| = "
+        f"{1e6 * hyz_weight_read_mag_spread:.2f}/{1e6 * hyz_bias_read_mag_spread:.2f} uA\n"
+        "read signs match stored signs",
+        transform=hyz_axes[2].transAxes,
+        fontsize="x-small",
+        bbox=callout_box,
+    )
+    hyz_axes[2].legend(loc="upper right", ncol=2, fontsize="small")
     hyz_fig.tight_layout()
     save_plot(hyz_fig, "mos_hidden_writer_restored_gate_hybrid_cell_quadrants_ngspice")
 

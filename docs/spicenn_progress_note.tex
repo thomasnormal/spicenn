@@ -1841,6 +1841,27 @@ must satisfy before it can replace the current behavioral prototype.
 
 \begin{figure}[H]
   \centering
+  \includegraphics[width=0.90\linewidth]{figures/mos_hidden_writer_restored_gate_hybrid_update_forward_guard_forward_pair_96u_tail_rebias_ngspice.png}
+  \caption{Ngspice private forward-tail rebias sweep for the same
+  \(96\,\mu\mathrm{m}\) forward-pair common-mode failure.  This is a negative
+  design result: the deck keeps the same MOS-written state and \(96\,\mu\mathrm{m}\)
+  forward pair, resets the summing capacitors to \(0.75,0.85,\) or \(0.90\) V,
+  and replaces only the crossed forward-pair tail gate with a private
+  \(0.55,0.65,0.75,0.85,\) or \(0.95\) V bias.  The read preactivation remains
+  real in every case, but tail rebias does not solve the low-common-mode
+  headroom problem.  At \(V_{ZCM}=0.75\) V, the stored activations are
+  \(0,0,0.00001,0.00001,\) and \(0\) mV.  At \(V_{ZCM}=0.85\) V, they are
+  \(0,24.957,26.456,26.921,\) and \(27.139\) mV: still a partial,
+  underdriven activation.  At nominal \(V_{ZCM}=0.90\) V, the same tail sweep
+  gives \(0,72.284,74.965,75.729,\) and \(76.077\) mV, so an excessively low
+  tail bias can also kill an otherwise valid nominal-common-mode readout.
+  The high-gain path therefore needs a summing-common-mode or input-headroom
+  fix, not merely a forward-tail-bias trim.}
+  \label{fig:mos-hidden-writer-restored-gate-hybrid-update-forward-guard-forward-pair-96u-tail-rebias-ngspice}
+\end{figure}
+
+\begin{figure}[H]
+  \centering
   \includegraphics[width=0.88\linewidth]{figures/mos_hidden_writer_restored_gate_hybrid_update_forward_guard_forward_tail_bias_ngspice.png}
   \caption{Ngspice isolated forward-tail bias sweep for the same guarded MOS
   activation store.  The failed shared-bias experiment changed the read path

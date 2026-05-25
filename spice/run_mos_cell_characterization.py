@@ -8672,6 +8672,74 @@ quit
         "96u stored activation should increase monotonically with z common mode in this headroom sweep",
     )
 
+    high_gain_tail_bias_line = "MNFT_HYR ftail_hyr vbias 0 0 NMOS L={LCH} W=96u"
+    high_gain_tail_rebias_zcm_cases_v = [0.75, 0.85, 0.90]
+    high_gain_tail_rebias_cases_v = [0.55, 0.65, 0.75, 0.85, 0.95]
+    high_gain_tail_rebias_labels = [f"{bias_v:.2f} V" for bias_v in high_gain_tail_rebias_cases_v]
+    high_gain_tail_rebias_store = np.zeros((len(high_gain_tail_rebias_zcm_cases_v), len(high_gain_tail_rebias_cases_v)))
+    high_gain_tail_rebias_load = np.zeros_like(high_gain_tail_rebias_store)
+    high_gain_tail_rebias_preact = np.zeros_like(high_gain_tail_rebias_store)
+    high_gain_tail_rebias_traces = []
+    for zi, zcm_v in enumerate(high_gain_tail_rebias_zcm_cases_v):
+        for bi, tail_bias_v in enumerate(high_gain_tail_rebias_cases_v):
+            stem = (
+                "mos_hidden_writer_restored_gate_hybrid_update_forward_guard_"
+                f"forward_pair_96u_zcm_{str(zcm_v).replace('.', 'p')}v_tail_{str(tail_bias_v).replace('.', 'p')}v"
+            )
+            rebias_deck = replace_required(high_gain_hold_deck, zcm_source_line, f"VZCM zcm 0 {zcm_v:.2f}")
+            rebias_deck = replace_required(rebias_deck, zcm_cap_p_line, f"CZP_HYR zp_hyr 0 {{CSUM}} IC={zcm_v:.2f}")
+            rebias_deck = replace_required(rebias_deck, zcm_cap_m_line, f"CZM_HYR zm_hyr 0 {{CSUM}} IC={zcm_v:.2f}")
+            rebias_deck = replace_required(
+                rebias_deck,
+                high_gain_tail_bias_line,
+                f"VHFBIAS_HYR vhfbias_hyr 0 {tail_bias_v:.2f}\n"
+                "MNFT_HYR ftail_hyr vhfbias_hyr 0 0 NMOS L={LCH} W=96u",
+            )
+            rebias_deck = replace_required(
+                rebias_deck,
+                "mos_hidden_writer_restored_gate_hybrid_update_forward_guard_forward_pair_96u_hold.dat",
+                f"{stem}.dat",
+            )
+            rebias_data = run_ngspice(rebias_deck, stem)
+            rbt, rebias_cols = load_wrdata(rebias_data, 23)
+
+            def rbat(time_s: float, values: np.ndarray) -> float:
+                return float(values[np.argmin(np.abs(rbt - time_s))])
+
+            rebias_preact = rebias_cols[10] - rebias_cols[9]
+            rebias_load = rebias_cols[12] - rebias_cols[11]
+            rebias_store = rebias_cols[14] - rebias_cols[13]
+            high_gain_tail_rebias_preact[zi, bi] = rbat(3.575e-6, rebias_preact)
+            high_gain_tail_rebias_load[zi, bi] = rbat(3.315e-6, rebias_load)
+            high_gain_tail_rebias_store[zi, bi] = rbat(3.575e-6, rebias_store)
+            if zcm_v in {0.75, 0.85, 0.90} and tail_bias_v in {0.55, 0.75, 0.95}:
+                high_gain_tail_rebias_traces.append((f"zcm {zcm_v:.2f}, tail {tail_bias_v:.2f}", rbt, rebias_store))
+
+    require(
+        np.min(high_gain_tail_rebias_preact) > 0.040,
+        "96u tail-rebias sweep should keep a real read preactivation in every z common-mode case",
+    )
+    require(
+        high_gain_tail_rebias_store[0, -1] < 0.001,
+        "96u tail-rebias nominal tail at 0.75 V z common mode should reproduce the headroom failure",
+    )
+    require(
+        np.max(high_gain_tail_rebias_store[0]) < 0.010,
+        "forward-tail rebias alone should not rescue the 0.75 V z common-mode failure",
+    )
+    require(
+        np.max(high_gain_tail_rebias_store[1]) < 0.030,
+        "forward-tail rebias alone should not materially rescue the partial 0.85 V z common-mode case",
+    )
+    require(
+        high_gain_tail_rebias_store[2, 0] < 0.001,
+        "too-low forward-tail bias should collapse even the nominal 0.90 V z common-mode case",
+    )
+    require(
+        np.min(high_gain_tail_rebias_store[2, 1:]) > 0.070,
+        "96u tail-rebias sweep should preserve useful nominal-z activation above the underbiased tail corner",
+    )
+
     tail_bias_forward_tail_line = "MNFT_HYR ftail_hyr vbias 0 0 NMOS L={LCH} W=48u"
     tail_bias_cases_v = [0.70, 0.80, 0.90, 0.95, 1.05, 1.15, 1.25]
     tail_bias_labels = []
@@ -9266,6 +9334,36 @@ quit
     high_gain_zcm_axes[1].legend(loc="upper left", ncol=2, fontsize="small")
     high_gain_zcm_fig.tight_layout()
     save_plot(high_gain_zcm_fig, "mos_hidden_writer_restored_gate_hybrid_update_forward_guard_forward_pair_96u_zcm_ngspice")
+
+    tail_rebias_fig, tail_rebias_axes = plt.subplots(2, 1, figsize=(7.4, 6.4), gridspec_kw={"height_ratios": [1.0, 0.9]})
+    for label, rbt, store in high_gain_tail_rebias_traces:
+        tail_rebias_axes[0].plot(1e6 * rbt, 1e3 * store, label=label)
+    tail_rebias_axes[0].axhline(0, color="0.4", linewidth=0.8)
+    tail_rebias_axes[0].axvline(3.33, color="0.25", linestyle="--", linewidth=0.9, alpha=0.6, label="guard off")
+    tail_rebias_axes[0].set_xlim(3.05, 3.65)
+    tail_rebias_axes[0].set_ylim(-4, 82)
+    tail_rebias_axes[0].set_ylabel("stored activation (mV)")
+    tail_rebias_axes[0].set_title("Stored activation shows the same low-common-mode limit")
+    tail_rebias_axes[0].grid(True, alpha=0.25)
+    tail_rebias_axes[0].legend(loc="upper left", ncol=2, fontsize="x-small")
+    tail_rebias_x = np.arange(len(high_gain_tail_rebias_labels))
+    for zi, zcm_v in enumerate(high_gain_tail_rebias_zcm_cases_v):
+        tail_rebias_axes[1].plot(
+            tail_rebias_x,
+            1e3 * high_gain_tail_rebias_store[zi],
+            marker="o",
+            label=f"zcm {zcm_v:.2f} V",
+        )
+    tail_rebias_axes[1].axhline(0, color="0.4", linewidth=0.8)
+    tail_rebias_axes[1].set_xticks(tail_rebias_x)
+    tail_rebias_axes[1].set_xticklabels(high_gain_tail_rebias_labels)
+    tail_rebias_axes[1].set_xlabel("private 96u forward-tail bias")
+    tail_rebias_axes[1].set_ylabel("stored activation (mV)")
+    tail_rebias_axes[1].set_title("0.75 V stays failed; 0.85 V stays partial; too-low tail bias kills nominal")
+    tail_rebias_axes[1].grid(True, alpha=0.25)
+    tail_rebias_axes[1].legend(loc="upper right", fontsize="small")
+    tail_rebias_fig.tight_layout()
+    save_plot(tail_rebias_fig, "mos_hidden_writer_restored_gate_hybrid_update_forward_guard_forward_pair_96u_tail_rebias_ngspice")
 
     tail_bias_fig, tail_bias_axes = plt.subplots(2, 1, figsize=(7.4, 6.4), gridspec_kw={"height_ratios": [1.0, 0.8]})
     for label, tbt, load, store in tail_bias_traces:

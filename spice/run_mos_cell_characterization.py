@@ -7110,6 +7110,76 @@ quit
     timing_fig.tight_layout()
     save_plot(timing_fig, "mos_hidden_writer_restored_gate_hybrid_update_forward_read_pact_timing_ngspice")
 
+    aperture_cases_ns = [40, 80, 120, 160, 240, 320]
+    aperture_start_us = 3.18
+    aperture_labels = []
+    aperture_store_samples = []
+    aperture_preact_samples = []
+    aperture_traces = []
+    for width_ns in aperture_cases_ns:
+        stem = f"mos_hidden_writer_restored_gate_hybrid_update_forward_read_pact_aperture_{width_ns}ns"
+        end_us = aperture_start_us + width_ns / 1000.0
+        off_us = end_us + 0.02
+        sample_time = min((off_us + 0.08) * 1e-6, 3.575e-6)
+        pact_pwl = (
+            f"VPACT_HYR pact_hyr 0 PWL(0 0 {aperture_start_us - 0.02:.2f}u 0 "
+            f"{aperture_start_us:.2f}u 1.8 {end_us:.2f}u 1.8 {off_us:.2f}u 0 7.8u 0)"
+        )
+        aperture_deck = replace_required(hybrid_forward_read_reuse_deck, timing_read_pwl, timing_single_read_pwl)
+        aperture_deck = replace_required(aperture_deck, timing_base_pact_pwl, pact_pwl)
+        aperture_deck = replace_required(
+            aperture_deck,
+            "mos_hidden_writer_restored_gate_hybrid_update_forward_read_reuse.dat",
+            f"{stem}.dat",
+        )
+        aperture_data = run_ngspice(aperture_deck, stem)
+        atime, aperture_cols = load_wrdata(aperture_data, 23)
+
+        def apat(time_s: float, values: np.ndarray) -> float:
+            return float(values[np.argmin(np.abs(atime - time_s))])
+
+        aperture_preact = aperture_cols[10] - aperture_cols[9]
+        aperture_store = aperture_cols[14] - aperture_cols[13]
+        aperture_labels.append(f"{width_ns} ns")
+        aperture_preact_samples.append(apat(sample_time, aperture_preact))
+        aperture_store_samples.append(apat(sample_time, aperture_store))
+        aperture_traces.append((f"{width_ns} ns", atime, aperture_store))
+
+    aperture_preact_samples = np.array(aperture_preact_samples)
+    aperture_store_samples = np.array(aperture_store_samples)
+    peak_idx = int(np.argmax(aperture_store_samples))
+    require(peak_idx == 2, "integrated pact aperture sweep should peak near 120 ns")
+    require(aperture_store_samples[2] > 0.045, "120 ns pact aperture should capture a full activation")
+    require(aperture_store_samples[0] < 0.85 * aperture_store_samples[2], "40 ns pact aperture should undercharge")
+    require(aperture_store_samples[1] > aperture_store_samples[0] + 0.006, "80 ns aperture should improve over 40 ns")
+    require(aperture_store_samples[3] < 0.95 * aperture_store_samples[2], "160 ns aperture should begin tracking droop")
+    require(aperture_store_samples[4] < 0.75 * aperture_store_samples[2], "240 ns aperture should track too much droop")
+    require(aperture_store_samples[5] < 0.75 * aperture_store_samples[2], "320 ns aperture should remain degraded by droop")
+    require(np.min(aperture_preact_samples[1:]) > 0.048, "aperture sweep should keep a valid read state for non-short cases")
+
+    aperture_x = np.arange(len(aperture_cases_ns))
+    aperture_fig, aperture_axes = plt.subplots(2, 1, figsize=(7.4, 6.6), gridspec_kw={"height_ratios": [1.0, 0.9]})
+    for label, atime, store in aperture_traces:
+        aperture_axes[0].plot(1e6 * atime, 1e3 * store, label=label)
+    aperture_axes[0].axhline(0, color="0.4", linewidth=0.8)
+    aperture_axes[0].set_xlim(3.05, 3.65)
+    aperture_axes[0].set_ylabel("stored activation (mV)")
+    aperture_axes[0].set_title("Activation-store aperture has a finite optimum")
+    aperture_axes[0].grid(True, alpha=0.25)
+    aperture_axes[0].legend(loc="upper left", ncol=3, fontsize="small")
+    aperture_axes[1].bar(aperture_x - 0.18, 1e3 * aperture_preact_samples, width=0.36, label="$z^- - z^+$ at sample")
+    aperture_axes[1].bar(aperture_x + 0.18, 1e3 * aperture_store_samples, width=0.36, label="stored $h^- - h^+$")
+    aperture_axes[1].axhline(0, color="0.4", linewidth=0.8)
+    aperture_axes[1].set_xticks(aperture_x)
+    aperture_axes[1].set_xticklabels(aperture_labels)
+    aperture_axes[1].set_ylabel("sampled differential (mV)")
+    aperture_axes[1].set_xlabel("pact high-time")
+    aperture_axes[1].set_title("Too short undercharges; too long tracks the forward-load droop")
+    aperture_axes[1].grid(True, axis="y", alpha=0.25)
+    aperture_axes[1].legend(loc="upper right", fontsize="small")
+    aperture_fig.tight_layout()
+    save_plot(aperture_fig, "mos_hidden_writer_restored_gate_hybrid_update_forward_read_pact_aperture_ngspice")
+
     hybrid_repeated_deck = f"""
 * Hybrid restored-enable/analog-error writer repeated-pulse accumulation check.
 * One stored r+ hidden-error rail and one activation gate drive the same

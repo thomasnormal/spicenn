@@ -1430,6 +1430,24 @@ must satisfy before it can replace the current behavioral prototype.
 
 \begin{figure}[H]
   \centering
+  \includegraphics[width=0.88\linewidth]{figures/mos_hidden_writer_restored_gate_hybrid_update_forward_read_pact_aperture_ngspice.png}
+  \caption{Ngspice activation-store aperture-width characterization for the
+  integrated MOS update-to-forward path.  Each deck uses the same positive
+  MOS-written \(W/B\) state and the same read phase, then sweeps only the
+  \(pact\) high-time.  The measured stored activations for
+  \(40,80,120,160,240,320\) ns are \(38.289,46.704,47.858,43.543,31.693,
+  32.925\) mV.  The preactivation is already near \(52.066\) mV for every
+  case after the shortest one, so the non-monotone response is not a missing
+  read signal.  Short apertures undercharge the activation capacitor; long
+  apertures keep the capacitor connected after the forward load has started to
+  droop.  In this sizing and phase schedule, the useful window is centered
+  near \(80\)--\(120\) ns rather than being improved by simply holding
+  \(pact\) high longer.}
+  \label{fig:mos-hidden-writer-restored-gate-hybrid-update-forward-read-pact-aperture-ngspice}
+\end{figure}
+
+\begin{figure}[H]
+  \centering
   \includegraphics[width=0.88\linewidth]{figures/mos_hidden_writer_restored_gate_hybrid_repeated_ngspice.png}
   \caption{Ngspice repeated-pulse accumulation characterization of the hybrid
   restored writer.  One stored \(r^+\) hidden-error rail drives one persistent

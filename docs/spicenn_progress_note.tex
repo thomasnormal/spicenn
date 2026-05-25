@@ -1388,6 +1388,28 @@ must satisfy before it can replace the current behavioral prototype.
 
 \begin{figure}[H]
   \centering
+  \includegraphics[width=0.88\linewidth]{figures/mos_hidden_writer_restored_gate_hybrid_update_forward_signed_read_reuse_ngspice.png}
+  \caption{Ngspice signed read-reuse characterization for the integrated MOS
+  update-to-forward path.  This is the sign-family completion of
+  Fig.~\ref{fig:mos-hidden-writer-restored-gate-hybrid-update-forward-read-reuse-ngspice}:
+  one deck writes a positive \(W/B\) state from \(a^+e^+\), while a mirrored
+  deck writes a negative \(W/B\) state from \(a^+e^-\).  No second update is
+  applied; both decks repeatedly read, reset only the transient summing and
+  activation capacitors, and store the forward output from the same persistent
+  trainable rails.  The negative deck writes \(W^+-W^-=-22.988\) mV and
+  \(B^+-B^-=-34.543\) mV, then reproduces \(z^- - z^+=-50.762,-51.164,
+  -50.775\) mV and \(h^- - h^+=-47.346,-47.325,-47.326\) mV across the three
+  read/store cycles.  These values mirror the positive deck to the plotted
+  precision, while both signs reset \(z/h\) between reads to about
+  \(0.013/0.000\) mV and disturb the persistent W/B state by only about
+  \(0.003/0.002\,\mu\mathrm{V}\).  This closes the remaining same-physical-cell
+  sign gap for update-to-forward reuse: both signed trainable states can drive
+  repeated forward reads without behavioral readback or capacitor forcing.}
+  \label{fig:mos-hidden-writer-restored-gate-hybrid-update-forward-signed-read-reuse-ngspice}
+\end{figure}
+
+\begin{figure}[H]
+  \centering
   \includegraphics[width=0.88\linewidth]{figures/mos_hidden_writer_restored_gate_hybrid_repeated_ngspice.png}
   \caption{Ngspice repeated-pulse accumulation characterization of the hybrid
   restored writer.  One stored \(r^+\) hidden-error rail drives one persistent

@@ -36,6 +36,7 @@ def test_device_mnist01_block_script_help_runs_from_repo_root() -> None:
     assert "--hidden-polarity-init" in proc.stdout
     assert "--readout-forward-model" in proc.stdout
     assert "--learning-activation-gate-model" in proc.stdout
+    assert "--readout-weight-leak-resistance" in proc.stdout
     assert "--score-mode" in proc.stdout
     assert "--readout-forward-width" in proc.stdout
     assert "--phase-time-scale" in proc.stdout
@@ -204,6 +205,34 @@ def test_block_netlist_can_emit_low_threshold_learning_activation_gates() -> Non
     assert "Mhdn3_d1 hdn3_d0 act3 hdn3_d1 0 NSENSE W=32u" in netlist
     assert "Mgvp3_a vdd act3 gvp3_a 0 NSENSE W=24u" in netlist
     assert "Mgvn3_a vdd act3 gvn3_a 0 NSENSE W=24u" in netlist
+
+
+def test_block_netlist_can_emit_passive_readout_weight_leak() -> None:
+    sys.path.insert(0, str(SPICE_DIR))
+    import run_device_mnist01_block_training as block
+
+    image_size = 4
+    weights = block.initial_block_weights(image_size, 2, 2, 1, seed=1)
+    sample = {f"x{i}": 0.2 + 0.01 * i for i in range(image_size * image_size)}
+    sample["target"] = 1.1
+    netlist = block.block_netlist(
+        [sample],
+        weights,
+        image_size=image_size,
+        block_size=2,
+        stride=2,
+        channels=1,
+        training_enabled=True,
+        readout_weight_leak_resistance=5e6,
+        readout_weight_positive_ref=0.52,
+        readout_weight_negative_ref=0.25,
+    )
+
+    assert "\nB" not in netlist
+    assert "Vvwp_ref vwp_ref 0 0.52" in netlist
+    assert "Vvwn_ref vwn_ref 0 0.25" in netlist
+    assert "Rvwp0_leak vwp0 vwp_ref 5e+06" in netlist
+    assert "Rvwn3_leak vwn3 vwn_ref 5e+06" in netlist
 
 
 def test_block_netlist_can_emit_target_topology_without_behavioral_sources() -> None:

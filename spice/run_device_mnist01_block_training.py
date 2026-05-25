@@ -231,6 +231,9 @@ def block_netlist(
     readout_forward_width: float = 64.0,
     readout_forward_model: str = "nrel",
     learning_activation_gate_model: str = "nrel",
+    readout_weight_leak_resistance: float = 0.0,
+    readout_weight_positive_ref: float = 0.52,
+    readout_weight_negative_ref: float = 0.25,
     phase_time_scale: float = 1.0,
     score_mode: str = "single-ended",
     input_rail_mode: str = "alternating-complement",
@@ -251,6 +254,8 @@ def block_netlist(
         raise ValueError("hidden_activation_width must be positive")
     if readout_forward_width <= 0.0:
         raise ValueError("readout_forward_width must be positive")
+    if readout_weight_leak_resistance < 0.0:
+        raise ValueError("readout_weight_leak_resistance must be nonnegative")
     if phase_time_scale <= 0.0:
         raise ValueError("phase_time_scale must be positive")
     if score_mode not in SCORE_MODES:
@@ -334,6 +339,11 @@ def block_netlist(
         mos_models(),
         "Vdd vdd 0 {VDD}",
     ]
+    if readout_weight_leak_resistance > 0.0:
+        lines += [
+            f"Vvwp_ref vwp_ref 0 {readout_weight_positive_ref:.12g}",
+            f"Vvwn_ref vwn_ref 0 {readout_weight_negative_ref:.12g}",
+        ]
     for rail in required_rails:
         lines.append(f"V{rail} {rail} 0 {block_sample_wave(samples, rail, stop, cycle_ns=cycle_ns)}")
     lines += [
@@ -360,6 +370,11 @@ def block_netlist(
             f"Rvwp{feature} vwp{feature} 0 1e15",
             f"Rvwn{feature} vwn{feature} 0 1e15",
         ]
+        if readout_weight_leak_resistance > 0.0:
+            lines += [
+                f"Rvwp{feature}_leak vwp{feature} vwp_ref {readout_weight_leak_resistance:.6g}",
+                f"Rvwn{feature}_leak vwn{feature} vwn_ref {readout_weight_leak_resistance:.6g}",
+            ]
 
     lines += [
         "",
@@ -698,6 +713,9 @@ def run_device_sequence(
     readout_forward_width: float,
     readout_forward_model: str,
     learning_activation_gate_model: str,
+    readout_weight_leak_resistance: float,
+    readout_weight_positive_ref: float,
+    readout_weight_negative_ref: float,
     phase_time_scale: float,
     score_mode: str,
     input_rail_mode: str,
@@ -722,6 +740,9 @@ def run_device_sequence(
         readout_forward_width=readout_forward_width,
         readout_forward_model=readout_forward_model,
         learning_activation_gate_model=learning_activation_gate_model,
+        readout_weight_leak_resistance=readout_weight_leak_resistance,
+        readout_weight_positive_ref=readout_weight_positive_ref,
+        readout_weight_negative_ref=readout_weight_negative_ref,
         phase_time_scale=phase_time_scale,
         score_mode=score_mode,
         input_rail_mode=input_rail_mode,
@@ -762,6 +783,9 @@ def main() -> None:
     ap.add_argument("--readout-forward-width", type=float, default=64.0)
     ap.add_argument("--readout-forward-model", choices=READOUT_FORWARD_MODELS, default="nrel")
     ap.add_argument("--learning-activation-gate-model", choices=LEARNING_ACTIVATION_GATE_MODELS, default="nrel")
+    ap.add_argument("--readout-weight-leak-resistance", type=float, default=0.0)
+    ap.add_argument("--readout-weight-positive-ref", type=float, default=0.52)
+    ap.add_argument("--readout-weight-negative-ref", type=float, default=0.25)
     ap.add_argument("--phase-time-scale", type=float, default=1.0)
     ap.add_argument("--score-mode", choices=SCORE_MODES, default="single-ended")
     ap.add_argument("--input-rail-mode", choices=INPUT_RAIL_MODES, default="alternating-complement")
@@ -828,6 +852,9 @@ def main() -> None:
         "readout_forward_width": args.readout_forward_width,
         "readout_forward_model": args.readout_forward_model,
         "learning_activation_gate_model": args.learning_activation_gate_model,
+        "readout_weight_leak_resistance": args.readout_weight_leak_resistance,
+        "readout_weight_positive_ref": args.readout_weight_positive_ref,
+        "readout_weight_negative_ref": args.readout_weight_negative_ref,
         "phase_time_scale": args.phase_time_scale,
         "score_mode": args.score_mode,
         "input_rail_mode": args.input_rail_mode,
@@ -920,6 +947,9 @@ def main() -> None:
         "readout_forward_width": args.readout_forward_width,
         "readout_forward_model": args.readout_forward_model,
         "learning_activation_gate_model": args.learning_activation_gate_model,
+        "readout_weight_leak_resistance": args.readout_weight_leak_resistance,
+        "readout_weight_positive_ref": args.readout_weight_positive_ref,
+        "readout_weight_negative_ref": args.readout_weight_negative_ref,
         "phase_time_scale": args.phase_time_scale,
         "score_mode": args.score_mode,
         "hidden_bias_positive_init": args.hidden_bias_positive_init,

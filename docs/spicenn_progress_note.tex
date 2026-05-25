@@ -2824,6 +2824,29 @@ must satisfy before it can replace the current behavioral prototype.
 
 \begin{figure}[H]
   \centering
+  \includegraphics[width=0.95\linewidth]{figures/mos_hidden_writer_restored_gate_hybrid_update_forward_guard_forward_pair_96u_shifted_gate_reset_ref_fast_corner_ngspice.png}
+  \caption{Ngspice combined fast-corner check for the same two recovered
+  \(1\,\mu\mathrm{s}\) reset-reference configurations.  Unlike the prior
+  single-knob sweeps, this deck applies simultaneous shifted-gate load,
+  refresh-resistance, and reset-aperture stress while keeping the same cold
+  passive reservoirs, \(2\times\) startup precharge, finite local refresh
+  paths, and real complementary reset switches.  The nominal corner remains
+  inside the \(6\) mV gate (\(3.76\) mV worst for \(8\times2\)), and the
+  \(8\times2\), \(3\,\mathrm{k}\Omega\) option still passes the isolated
+  \(7.5\) pF load case.  But simultaneous \(7.5\) pF load, \(1.25\times\)
+  refresh resistance, and an \(80\) ns reset pulse pushes that same option to
+  \(6.61\) mV, so isolated pass margins do not compose linearly.  The
+  \(16\times1\), \(10\,\mathrm{k}\Omega\) option is already load-limited at
+  \(7.5\) pF (\(7.08\) mV on the \(+65\) mV branch), and the stronger
+  \(1.50\times/80\) ns combined corner reaches \(9.02\) mV worst case.  The
+  transistor-level design rule is now a combined budget: pick reservoir
+  partitioning, local refresh impedance, shifted-gate capacitance, and reset
+  pulse width together, not from independent one-dimensional margins.}
+  \label{fig:mos-hidden-writer-restored-gate-hybrid-update-forward-guard-forward-pair-96u-shifted-gate-reset-ref-fast-corner-ngspice}
+\end{figure}
+
+\begin{figure}[H]
+  \centering
   \includegraphics[width=0.95\linewidth]{figures/mos_hidden_writer_restored_gate_hybrid_update_forward_guard_forward_pair_96u_shifted_gate_reset_ref_precharge_strength_ngspice.png}
   \caption{Ngspice startup-precharge strength-margin check for the same cold
   local trim-reference reservoir.  The \(250\) pF reservoirs, \(100\)

@@ -17251,6 +17251,316 @@ quit
         "fast shifted-gate load sweep should keep first and last loads in each selected partition matched",
     )
 
+    shift_refz_fast_corner_cases = [
+        ("nom", "5 pF, 1.00x R, 120 ns", 5.0, 1.00, 120.0, 1.0),
+        ("load75", "7.5 pF, 1.00x R, 120 ns", 7.5, 1.00, 120.0, 1.0),
+        ("load75_r125", "7.5 pF, 1.25x R, 120 ns", 7.5, 1.25, 120.0, 1.0),
+        ("load75_w80", "7.5 pF, 1.00x R, 80 ns", 7.5, 1.00, 80.0, 1.0),
+        ("load75_r125_w80", "7.5 pF, 1.25x R, 80 ns", 7.5, 1.25, 80.0, 1.0),
+        ("load75_r150_w80", "7.5 pF, 1.50x R, 80 ns", 7.5, 1.50, 80.0, 1.0),
+    ]
+
+    def run_reset_ref_fast_corner_case(
+        branch_name: str,
+        reset_trim_v: float,
+    ) -> tuple[np.ndarray, list[np.ndarray]]:
+        stem = (
+            "mos_hidden_writer_restored_gate_hybrid_update_forward_guard_"
+            f"forward_pair_96u_shifted_gate_reset_ref_fast_corner_{branch_name}"
+        )
+        reset_common_v = shift_refz_precharge_tuned_common_v
+        reset_ref_p = reset_common_v + 0.5 * reset_trim_v
+        reset_ref_m = reset_common_v - 0.5 * reset_trim_v
+        total_cref_pf = 1000.0
+        total_load_count = 16
+        startup_pulse_width_ns = 40.0
+        startup_strength_scale = 2.0
+        gap_us = 1.0
+        pre_end_us = 0.420 + 0.001 * startup_pulse_width_ns
+        pre_fall_us = pre_end_us + 0.020
+        wpren_u = 300.0 * startup_strength_scale
+        wprep_u = 900.0 * startup_strength_scale
+        tran_stop_us = 2.95 + 2.0 * gap_us
+        deck_lines = [
+            "* Combined fast reset-reference corner sweep.",
+            "* The two recovered 1 us configurations are stressed with simultaneous",
+            "* shifted-gate load, refresh-resistance, and reset-aperture changes.",
+            COMMON_MODELS,
+            "VDD vdd 0 1.8",
+        ]
+        prints = []
+        case_idx = 0
+        for config_name, config_label, partition_count, base_source_ohm in shift_refz_fast_margin_configs:
+            cap_pf = total_cref_pf / partition_count
+            loads_per_partition = total_load_count // partition_count
+            for corner_name, corner_label, load_pf, source_scale, reset_width_ns, reset_scale in shift_refz_fast_corner_cases:
+                source_ohm = base_source_ohm * source_scale
+                wresetn_u = 60.0 * reset_scale
+                wresetp_u = 180.0 * reset_scale
+                deck_lines.extend(
+                    [
+                        (
+                            f"* {config_name}_{corner_name}: {config_label}, {corner_label}, "
+                            f"Rrefresh={source_ohm:g}, reset scale={reset_scale:g}."
+                        ),
+                        (
+                            f"VPRE_FOCOR_{case_idx} pre_focor_{case_idx} 0 "
+                            f"PWL(0 0 0.400u 0 0.420u 1.8 {pre_end_us:.3f}u 1.8 "
+                            f"{pre_fall_us:.3f}u 0 {tran_stop_us:.3f}u 0)"
+                        ),
+                        (
+                            f"VPREN_FOCOR_{case_idx} pren_focor_{case_idx} 0 "
+                            f"PWL(0 1.8 0.400u 1.8 0.420u 0 {pre_end_us:.3f}u 0 "
+                            f"{pre_fall_us:.3f}u 1.8 {tran_stop_us:.3f}u 1.8)"
+                        ),
+                    ]
+                )
+                for part_idx in range(partition_count):
+                    deck_lines.extend(
+                        [
+                            f"VZRP_FOCOR_{case_idx}_{part_idx} zrp_focor_src_{case_idx}_{part_idx} 0 {reset_ref_p:.5f}",
+                            f"VZRM_FOCOR_{case_idx}_{part_idx} zrm_focor_src_{case_idx}_{part_idx} 0 {reset_ref_m:.5f}",
+                            f"RZRP_FOCOR_{case_idx}_{part_idx} zrp_focor_src_{case_idx}_{part_idx} zrp_focor_{case_idx}_{part_idx} {source_ohm:g}",
+                            f"RZRM_FOCOR_{case_idx}_{part_idx} zrm_focor_src_{case_idx}_{part_idx} zrm_focor_{case_idx}_{part_idx} {source_ohm:g}",
+                            f"CZRP_FOCOR_{case_idx}_{part_idx} zrp_focor_{case_idx}_{part_idx} 0 {cap_pf:g}p IC=0",
+                            f"CZRM_FOCOR_{case_idx}_{part_idx} zrm_focor_{case_idx}_{part_idx} 0 {cap_pf:g}p IC=0",
+                            (
+                                f"MPREPN_FOCOR_{case_idx}_{part_idx} zrp_focor_{case_idx}_{part_idx} "
+                                f"pre_focor_{case_idx} zrp_focor_src_{case_idx}_{part_idx} 0 "
+                                f"NMOS L={{LCH}} W={wpren_u:g}u"
+                            ),
+                            (
+                                f"MPREMN_FOCOR_{case_idx}_{part_idx} zrm_focor_{case_idx}_{part_idx} "
+                                f"pre_focor_{case_idx} zrm_focor_src_{case_idx}_{part_idx} 0 "
+                                f"NMOS L={{LCH}} W={wpren_u:g}u"
+                            ),
+                            (
+                                f"MPREPP_FOCOR_{case_idx}_{part_idx} zrp_focor_{case_idx}_{part_idx} "
+                                f"pren_focor_{case_idx} zrp_focor_src_{case_idx}_{part_idx} vdd "
+                                f"PMOS L={{LCH}} W={wprep_u:g}u"
+                            ),
+                            (
+                                f"MPREMP_FOCOR_{case_idx}_{part_idx} zrm_focor_{case_idx}_{part_idx} "
+                                f"pren_focor_{case_idx} zrm_focor_src_{case_idx}_{part_idx} vdd "
+                                f"PMOS L={{LCH}} W={wprep_u:g}u"
+                            ),
+                        ]
+                    )
+                for cycle_idx in range(3):
+                    reset_start_us = 2.50 + cycle_idx * gap_us
+                    reset_end_us = reset_start_us + 0.001 * reset_width_ns
+                    reset_fall_us = reset_end_us + 0.020
+                    deck_lines.extend(
+                        [
+                            (
+                                f"VRST_FOCOR_{case_idx}_{cycle_idx} rst_focor_{case_idx}_{cycle_idx} 0 "
+                                f"PWL(0 0 {reset_start_us - 0.020:.3f}u 0 "
+                                f"{reset_start_us:.3f}u 1.8 {reset_end_us:.3f}u 1.8 "
+                                f"{reset_fall_us:.3f}u 0 {tran_stop_us:.3f}u 0)"
+                            ),
+                            (
+                                f"VRSTN_FOCOR_{case_idx}_{cycle_idx} rstn_focor_{case_idx}_{cycle_idx} 0 "
+                                f"PWL(0 1.8 {reset_start_us - 0.020:.3f}u 1.8 "
+                                f"{reset_start_us:.3f}u 0 {reset_end_us:.3f}u 0 "
+                                f"{reset_fall_us:.3f}u 1.8 {tran_stop_us:.3f}u 1.8)"
+                            ),
+                        ]
+                    )
+                    for part_idx in range(partition_count):
+                        for load_idx in range(loads_per_partition):
+                            deck_lines.extend(
+                                [
+                                    (
+                                        f"CZPG_FOCOR_{case_idx}_{cycle_idx}_{part_idx}_{load_idx} "
+                                        f"zpg_focor_{case_idx}_{cycle_idx}_{part_idx}_{load_idx} 0 "
+                                        f"{load_pf:g}p IC={reset_common_v:.5f}"
+                                    ),
+                                    (
+                                        f"CZMG_FOCOR_{case_idx}_{cycle_idx}_{part_idx}_{load_idx} "
+                                        f"zmg_focor_{case_idx}_{cycle_idx}_{part_idx}_{load_idx} 0 "
+                                        f"{load_pf:g}p IC={reset_common_v:.5f}"
+                                    ),
+                                    (
+                                        f"MRZGPN_FOCOR_{case_idx}_{cycle_idx}_{part_idx}_{load_idx} "
+                                        f"zpg_focor_{case_idx}_{cycle_idx}_{part_idx}_{load_idx} "
+                                        f"rst_focor_{case_idx}_{cycle_idx} zrp_focor_{case_idx}_{part_idx} 0 "
+                                        f"NMOS L={{LCH}} W={wresetn_u:g}u"
+                                    ),
+                                    (
+                                        f"MRZGMN_FOCOR_{case_idx}_{cycle_idx}_{part_idx}_{load_idx} "
+                                        f"zmg_focor_{case_idx}_{cycle_idx}_{part_idx}_{load_idx} "
+                                        f"rst_focor_{case_idx}_{cycle_idx} zrm_focor_{case_idx}_{part_idx} 0 "
+                                        f"NMOS L={{LCH}} W={wresetn_u:g}u"
+                                    ),
+                                    (
+                                        f"MRZGPP_FOCOR_{case_idx}_{cycle_idx}_{part_idx}_{load_idx} "
+                                        f"zpg_focor_{case_idx}_{cycle_idx}_{part_idx}_{load_idx} "
+                                        f"rstn_focor_{case_idx}_{cycle_idx} zrp_focor_{case_idx}_{part_idx} vdd "
+                                        f"PMOS L={{LCH}} W={wresetp_u:g}u"
+                                    ),
+                                    (
+                                        f"MRZGMP_FOCOR_{case_idx}_{cycle_idx}_{part_idx}_{load_idx} "
+                                        f"zmg_focor_{case_idx}_{cycle_idx}_{part_idx}_{load_idx} "
+                                        f"rstn_focor_{case_idx}_{cycle_idx} zrm_focor_{case_idx}_{part_idx} vdd "
+                                        f"PMOS L={{LCH}} W={wresetp_u:g}u"
+                                    ),
+                                ]
+                            )
+                selected_part_indices = [0, partition_count - 1]
+                for part_idx in selected_part_indices:
+                    prints.extend(
+                        [
+                            f"v(zrp_focor_{case_idx}_{part_idx})",
+                            f"v(zrm_focor_{case_idx}_{part_idx})",
+                        ]
+                    )
+                    last_load_idx = loads_per_partition - 1
+                    for cycle_idx in range(3):
+                        prints.extend(
+                            [
+                                f"v(zpg_focor_{case_idx}_{cycle_idx}_{part_idx}_0)",
+                                f"v(zmg_focor_{case_idx}_{cycle_idx}_{part_idx}_0)",
+                                f"v(zpg_focor_{case_idx}_{cycle_idx}_{part_idx}_{last_load_idx})",
+                                f"v(zmg_focor_{case_idx}_{cycle_idx}_{part_idx}_{last_load_idx})",
+                            ]
+                        )
+                case_idx += 1
+        deck_lines.extend(
+            [
+                ".control",
+                "set noaskquit",
+                f"tran 5n {tran_stop_us:.3f}u uic",
+                f"wrdata {stem}.dat " + " ".join(prints),
+                "quit",
+                ".endc",
+                ".end",
+            ]
+        )
+        data = run_ngspice("\n".join(deck_lines), stem)
+        return load_wrdata(data, len(prints))
+
+    shift_refz_fast_corner_trim_error = []
+    shift_refz_fast_corner_common_error = []
+    shift_refz_fast_corner_load_mismatch = []
+    shift_refz_fast_corner_ref_diff = []
+    shift_refz_fast_corner_traces = []
+    for branch_name, branch_label, _nfp_vto, _nfm_vto, reset_trim_v in shift_reset_branch_specs:
+        focort, fast_corner_cols = run_reset_ref_fast_corner_case(branch_name, reset_trim_v)
+
+        def focorat(time_s: float, values: np.ndarray) -> float:
+            return float(values[np.argmin(np.abs(focort - time_s))])
+
+        branch_trim_error = []
+        branch_common_error = []
+        branch_load_mismatch = []
+        branch_ref_diff = []
+        col_base = 0
+        for _config_name, config_label, partition_count, _source_ohm in shift_refz_fast_margin_configs:
+            config_trim_error = []
+            config_common_error = []
+            config_load_mismatch = []
+            config_ref_diff = []
+            selected_partition_count = 2
+            case_width = 14 * selected_partition_count
+            for _corner_name, corner_label, _load_pf, _source_scale, _reset_width_ns, _reset_scale in (
+                shift_refz_fast_corner_cases
+            ):
+                corner_trim_error = []
+                corner_common_error = []
+                corner_load_mismatch = []
+                corner_ref_diff = []
+                for cycle_idx in range(3):
+                    cycle_trim_errors = []
+                    cycle_common_errors = []
+                    cycle_load_mismatches = []
+                    cycle_ref_diffs = []
+                    sample_time_s = (2.50 + cycle_idx * 1.0 + 0.200) * 1e-6
+                    for selected_part_idx in range(selected_partition_count):
+                        part_col_base = col_base + 14 * selected_part_idx
+                        ref_p = fast_corner_cols[part_col_base]
+                        ref_m = fast_corner_cols[part_col_base + 1]
+                        ref_diff = ref_p - ref_m
+                        gate_col_base = part_col_base + 2 + 4 * cycle_idx
+                        gate_p_first = fast_corner_cols[gate_col_base]
+                        gate_m_first = fast_corner_cols[gate_col_base + 1]
+                        gate_p_last = fast_corner_cols[gate_col_base + 2]
+                        gate_m_last = fast_corner_cols[gate_col_base + 3]
+                        gate_diff_first = gate_p_first - gate_m_first
+                        gate_diff_last = gate_p_last - gate_m_last
+                        gate_common_first = 0.5 * (gate_p_first + gate_m_first)
+                        cycle_trim_errors.append(abs(focorat(sample_time_s, gate_diff_first) - reset_trim_v))
+                        cycle_common_errors.append(
+                            abs(focorat(sample_time_s, gate_common_first) - shift_refz_precharge_tuned_common_v)
+                        )
+                        cycle_load_mismatches.append(abs(focorat(sample_time_s, gate_diff_first - gate_diff_last)))
+                        cycle_ref_diffs.append(focorat(sample_time_s, ref_diff))
+                    corner_trim_error.append(max(cycle_trim_errors))
+                    corner_common_error.append(max(cycle_common_errors))
+                    corner_load_mismatch.append(max(cycle_load_mismatches))
+                    corner_ref_diff.append(np.mean(cycle_ref_diffs))
+                config_trim_error.append(corner_trim_error)
+                config_common_error.append(corner_common_error)
+                config_load_mismatch.append(corner_load_mismatch)
+                config_ref_diff.append(corner_ref_diff)
+                if branch_name == "pos_trim" and (
+                    (config_label == "8 x 2 @ 3 kOhm" and corner_label in {"5 pF, 1.00x R, 120 ns", "7.5 pF, 1.25x R, 80 ns"})
+                    or (config_label == "16 x 1 @ 10 kOhm" and corner_label in {"5 pF, 1.00x R, 120 ns", "7.5 pF, 1.25x R, 80 ns"})
+                ):
+                    ref_p0 = fast_corner_cols[col_base]
+                    ref_m0 = fast_corner_cols[col_base + 1]
+                    shift_refz_fast_corner_traces.append((f"{config_label}, {corner_label}", focort, ref_p0 - ref_m0))
+                col_base += case_width
+            branch_trim_error.append(config_trim_error)
+            branch_common_error.append(config_common_error)
+            branch_load_mismatch.append(config_load_mismatch)
+            branch_ref_diff.append(config_ref_diff)
+        shift_refz_fast_corner_trim_error.append(branch_trim_error)
+        shift_refz_fast_corner_common_error.append(branch_common_error)
+        shift_refz_fast_corner_load_mismatch.append(branch_load_mismatch)
+        shift_refz_fast_corner_ref_diff.append(branch_ref_diff)
+
+    shift_refz_fast_corner_trim_error = np.array(shift_refz_fast_corner_trim_error)
+    shift_refz_fast_corner_common_error = np.array(shift_refz_fast_corner_common_error)
+    shift_refz_fast_corner_load_mismatch = np.array(shift_refz_fast_corner_load_mismatch)
+    shift_refz_fast_corner_ref_diff = np.array(shift_refz_fast_corner_ref_diff)
+    focor_nom_idx = 0
+    focor_load75_idx = 1
+    focor_load75_r125_idx = 2
+    focor_load75_w80_idx = 3
+    focor_load75_r125_w80_idx = 4
+    focor_load75_r150_w80_idx = 5
+    require(
+        np.all(shift_refz_fast_corner_trim_error[:, :, focor_nom_idx, for_cycle3_idx] < 0.006),
+        "combined-corner baseline should preserve the recovered nominal fast reset points",
+    )
+    require(
+        shift_refz_fast_corner_trim_error[1, fold_p8_idx, focor_load75_idx, for_cycle3_idx] < 0.006,
+        "8 x 2 @ 3 kOhm should still pass the 7.5 pF load-only fast corner",
+    )
+    require(
+        shift_refz_fast_corner_trim_error[1, fold_p16_idx, focor_load75_idx, for_cycle3_idx] > 0.006,
+        "16 x 1 @ 10 kOhm should still expose the 7.5 pF load-only fast corner",
+    )
+    require(
+        np.all(
+            shift_refz_fast_corner_trim_error[:, :, focor_load75_r125_w80_idx, for_cycle3_idx]
+            > shift_refz_fast_corner_trim_error[:, :, focor_nom_idx, for_cycle3_idx]
+        ),
+        "simultaneous load, refresh, and reset-aperture stress should reduce fast reset margin",
+    )
+    require(
+        np.max(shift_refz_fast_corner_trim_error[:, :, focor_load75_r150_w80_idx, for_cycle3_idx]) > 0.006,
+        "stronger combined fast corner should visibly exceed the recovered reset margin",
+    )
+    require(
+        np.max(shift_refz_fast_corner_common_error) < 0.010,
+        "combined fast-corner sweep should preserve reset common mode",
+    )
+    require(
+        np.max(shift_refz_fast_corner_load_mismatch) < 1e-5,
+        "combined fast-corner sweep should keep first and last loads in each selected partition matched",
+    )
+
     tail_bias_forward_tail_line = "MNFT_HYR ftail_hyr vbias 0 0 NMOS L={LCH} W=48u"
     tail_bias_cases_v = [0.70, 0.80, 0.90, 0.95, 1.05, 1.15, 1.25]
     tail_bias_labels = []
@@ -21309,6 +21619,98 @@ quit
     save_plot(
         shift_refz_fast_load_fig,
         "mos_hidden_writer_restored_gate_hybrid_update_forward_guard_forward_pair_96u_shifted_gate_reset_ref_fast_load_ngspice",
+    )
+
+    shift_refz_fast_corner_fig, shift_refz_fast_corner_axes = plt.subplots(
+        3,
+        1,
+        figsize=(7.4, 7.4),
+        gridspec_kw={"height_ratios": [0.95, 0.9, 1.0]},
+    )
+    focor_labels = [label for _name, label, _load_pf, _source_scale, _reset_width_ns, _reset_scale in shift_refz_fast_corner_cases]
+    focor_x = np.arange(len(focor_labels))
+    width = 0.36
+    for config_idx, (_config_name, config_label, _partition_count, _source_ohm) in enumerate(
+        shift_refz_fast_margin_configs
+    ):
+        offset = -0.5 * width if config_idx == fold_p8_idx else 0.5 * width
+        shift_refz_fast_corner_axes[0].bar(
+            focor_x + offset,
+            1e3 * np.max(shift_refz_fast_corner_trim_error[:, config_idx, :, for_cycle3_idx], axis=0),
+            width=width,
+            label=f"{config_label}, worst branch",
+        )
+    shift_refz_fast_corner_axes[0].axhline(
+        6,
+        color="0.4",
+        linestyle=":",
+        linewidth=0.9,
+        label="6 mV trim-error gate",
+    )
+    shift_refz_fast_corner_axes[0].set_xticks(focor_x)
+    shift_refz_fast_corner_axes[0].set_xticklabels(focor_labels, rotation=24, ha="right")
+    shift_refz_fast_corner_axes[0].set_ylabel("cycle-3 trim error (mV)")
+    shift_refz_fast_corner_axes[0].set_title("Combined fast-reset corners expose true operating margin")
+    shift_refz_fast_corner_axes[0].grid(True, axis="y", alpha=0.25)
+    shift_refz_fast_corner_axes[0].text(
+        0.42,
+        0.26,
+        "8 x 2 nominal max = "
+        f"{1e3 * np.max(shift_refz_fast_corner_trim_error[:, fold_p8_idx, focor_nom_idx, for_cycle3_idx]):.2f} mV\n"
+        "8 x 2 combined 1.25x/80ns max = "
+        f"{1e3 * np.max(shift_refz_fast_corner_trim_error[:, fold_p8_idx, focor_load75_r125_w80_idx, for_cycle3_idx]):.2f} mV\n"
+        "16 x 1 7.5 pF +branch = "
+        f"{1e3 * shift_refz_fast_corner_trim_error[1, fold_p16_idx, focor_load75_idx, for_cycle3_idx]:.2f} mV\n"
+        "1.50x/80ns worst = "
+        f"{1e3 * np.max(shift_refz_fast_corner_trim_error[:, :, focor_load75_r150_w80_idx, for_cycle3_idx]):.2f} mV",
+        transform=shift_refz_fast_corner_axes[0].transAxes,
+        fontsize="x-small",
+        bbox={"facecolor": "white", "alpha": 0.82, "edgecolor": "0.8"},
+    )
+    shift_refz_fast_corner_axes[0].legend(loc="upper left", ncol=2, fontsize="xx-small")
+    for config_idx, (_config_name, config_label, _partition_count, _source_ohm) in enumerate(
+        shift_refz_fast_margin_configs
+    ):
+        marker = "o-" if config_idx == fold_p8_idx else "s--"
+        shift_refz_fast_corner_axes[1].plot(
+            [1, 2, 3],
+            1e3 * shift_refz_fast_corner_trim_error[1, config_idx, focor_load75_idx, :],
+            marker,
+            alpha=0.72,
+            label=f"{config_label}, 7.5 pF",
+        )
+        shift_refz_fast_corner_axes[1].plot(
+            [1, 2, 3],
+            1e3 * shift_refz_fast_corner_trim_error[1, config_idx, focor_load75_r125_w80_idx, :],
+            "o:" if config_idx == fold_p8_idx else "s:",
+            label=f"{config_label}, 7.5 pF + 1.25x R + 80 ns",
+        )
+    shift_refz_fast_corner_axes[1].axhline(6, color="0.4", linestyle=":", linewidth=0.9)
+    shift_refz_fast_corner_axes[1].set_xticks([1, 2, 3])
+    shift_refz_fast_corner_axes[1].set_ylabel("+65 mV trim error (mV)")
+    shift_refz_fast_corner_axes[1].set_title("Combined stress is not the sum of isolated pass margins")
+    shift_refz_fast_corner_axes[1].grid(True, axis="y", alpha=0.25)
+    shift_refz_fast_corner_axes[1].legend(loc="upper left", ncol=2, fontsize="xx-small")
+    for label, focort, ref_diff in shift_refz_fast_corner_traces:
+        linestyle = ":" if "1.25x R" in label else "-"
+        shift_refz_fast_corner_axes[2].plot(
+            1e6 * focort,
+            1e3 * ref_diff,
+            linestyle,
+            label=label,
+        )
+    shift_refz_fast_corner_axes[2].axhline(65, color="0.4", linestyle=":", linewidth=0.9, label="target +65 mV")
+    shift_refz_fast_corner_axes[2].axhline(0, color="0.4", linewidth=0.8)
+    shift_refz_fast_corner_axes[2].set_xlim(2.3, 4.9)
+    shift_refz_fast_corner_axes[2].set_xlabel("time (us)")
+    shift_refz_fast_corner_axes[2].set_ylabel("partition trim (mV)")
+    shift_refz_fast_corner_axes[2].set_title("The corner manifests as deeper third-cycle reservoir sag")
+    shift_refz_fast_corner_axes[2].grid(True, alpha=0.25)
+    shift_refz_fast_corner_axes[2].legend(loc="lower right", ncol=2, fontsize="xx-small")
+    shift_refz_fast_corner_fig.tight_layout()
+    save_plot(
+        shift_refz_fast_corner_fig,
+        "mos_hidden_writer_restored_gate_hybrid_update_forward_guard_forward_pair_96u_shifted_gate_reset_ref_fast_corner_ngspice",
     )
 
     tail_bias_fig, tail_bias_axes = plt.subplots(2, 1, figsize=(7.4, 6.4), gridspec_kw={"height_ratios": [1.0, 0.8]})

@@ -15251,6 +15251,21 @@ quit
     shift_refz_precharge_tuned_axes[0].set_ylabel("trim error (mV)")
     shift_refz_precharge_tuned_axes[0].set_title("The MOS startup-precharge path also works at tuned 0.80 V common")
     shift_refz_precharge_tuned_axes[0].grid(True, axis="y", alpha=0.25)
+    shift_refz_precharge_tuned_axes[0].text(
+        0.47,
+        0.34,
+        "0.80 Vcm no precharge min err = "
+        f"{1e3 * np.min(shift_refz_precharge_tuned_trim_error[:, pre_none_idx]):.1f} mV / >40 mV\n"
+        "0.80 Vcm 5 ns min err = "
+        f"{1e3 * np.min(shift_refz_precharge_tuned_trim_error[:, pre_5ns_idx]):.1f} mV / >6 mV\n"
+        "0.80 Vcm 10 ns max err = "
+        f"{1e3 * np.max(shift_refz_precharge_tuned_trim_error[:, pre_10ns_idx]):.2f} mV / 6 mV\n"
+        "0.80 Vcm 20 ns max err = "
+        f"{1e3 * np.max(shift_refz_precharge_tuned_trim_error[:, pre_20ns_idx]):.2f} mV / 1.7 mV",
+        transform=shift_refz_precharge_tuned_axes[0].transAxes,
+        fontsize="x-small",
+        bbox={"facecolor": "white", "alpha": 0.82, "edgecolor": "0.8"},
+    )
     shift_refz_precharge_tuned_axes[0].legend(loc="upper right", ncol=2, fontsize="xx-small")
     for branch_idx, (_branch_name, branch_label, _nfp, _nfm, _trim) in enumerate(shift_reset_branch_specs):
         marker = "o-" if branch_idx == 0 else "s--"
@@ -15265,6 +15280,17 @@ quit
     shift_refz_precharge_tuned_axes[1].set_ylabel("gate common (V)")
     shift_refz_precharge_tuned_axes[1].set_title("Tuned-common reservoirs recover the lower common-mode target")
     shift_refz_precharge_tuned_axes[1].grid(True, axis="y", alpha=0.25)
+    shift_refz_precharge_tuned_axes[1].text(
+        0.04,
+        0.14,
+        "20 ns max common error = "
+        f"{1e3 * np.max(np.abs(shift_refz_precharge_tuned_gate_common[:, pre_20ns_idx] - shift_refz_precharge_tuned_common_v)):.2f} mV / <6 mV\n"
+        "40 ns common = "
+        f"{np.mean(shift_refz_precharge_tuned_gate_common[:, -1]):.3f} V",
+        transform=shift_refz_precharge_tuned_axes[1].transAxes,
+        fontsize="x-small",
+        bbox={"facecolor": "white", "alpha": 0.82, "edgecolor": "0.8"},
+    )
     shift_refz_precharge_tuned_axes[1].legend(loc="lower right", ncol=2, fontsize="xx-small")
     for branch_label, case_label, pct, _ref_diff, gate_diff, _gate_common in shift_refz_precharge_tuned_traces:
         if case_label == "none":
@@ -15334,6 +15360,23 @@ quit
     shift_refz_precharge_strength_axes[0].set_ylabel("trim error (mV)")
     shift_refz_precharge_strength_axes[0].set_title("Startup precharge has a width/time tradeoff")
     shift_refz_precharge_strength_axes[0].grid(True, axis="y", alpha=0.25)
+    shift_refz_precharge_strength_axes[0].text(
+        0.48,
+        0.35,
+        "0.125x 40 ns min err = "
+        f"{1e3 * np.min(shift_refz_precharge_strength_trim_error[:, strength_0125_idx, strength_40ns_idx]):.1f} mV / >15 mV\n"
+        "0.25x 20 ns min err = "
+        f"{1e3 * np.min(shift_refz_precharge_strength_trim_error[:, strength_025_idx, strength_20ns_idx]):.1f} mV / >14 mV\n"
+        "0.25x 40 ns max err = "
+        f"{1e3 * np.max(shift_refz_precharge_strength_trim_error[:, strength_025_idx, strength_40ns_idx]):.2f} mV / 6 mV\n"
+        "0.5x 20 ns max err = "
+        f"{1e3 * np.max(shift_refz_precharge_strength_trim_error[:, strength_05_idx, strength_20ns_idx]):.2f} mV / 6 mV\n"
+        "1.0x 20 ns max err = "
+        f"{1e3 * np.max(shift_refz_precharge_strength_trim_error[:, strength_10_idx, strength_20ns_idx]):.2f} mV / 1.5 mV",
+        transform=shift_refz_precharge_strength_axes[0].transAxes,
+        fontsize="x-small",
+        bbox={"facecolor": "white", "alpha": 0.82, "edgecolor": "0.8"},
+    )
     shift_refz_precharge_strength_axes[0].legend(loc="upper right", ncol=2, fontsize="xx-small")
     for branch_idx, (_branch_name, branch_label, _nfp, _nfm, _trim) in enumerate(shift_reset_branch_specs):
         for pulse_idx, (_pulse_name, pulse_label, _pulse_width_ns) in enumerate(shift_refz_precharge_strength_pulses):
@@ -15357,6 +15400,17 @@ quit
     shift_refz_precharge_strength_axes[1].set_ylabel("gate common (V)")
     shift_refz_precharge_strength_axes[1].set_title("Common-mode restoration tracks the same strength margin")
     shift_refz_precharge_strength_axes[1].grid(True, axis="y", alpha=0.25)
+    shift_refz_precharge_strength_axes[1].text(
+        0.04,
+        0.13,
+        "0.5x 20 ns min common = "
+        f"{np.min(shift_refz_precharge_strength_common[:, strength_05_idx, strength_20ns_idx]):.3f} V / >0.840 V\n"
+        "1.0x 20 ns common = "
+        f"{np.mean(shift_refz_precharge_strength_common[:, strength_10_idx, strength_20ns_idx]):.3f} V",
+        transform=shift_refz_precharge_strength_axes[1].transAxes,
+        fontsize="x-small",
+        bbox={"facecolor": "white", "alpha": 0.82, "edgecolor": "0.8"},
+    )
     shift_refz_precharge_strength_fig.tight_layout()
     save_plot(
         shift_refz_precharge_strength_fig,
@@ -15409,6 +15463,21 @@ quit
     shift_refz_precharge_tuned_strength_axes[0].set_ylabel("trim error (mV)")
     shift_refz_precharge_tuned_strength_axes[0].set_title("Tuned 0.80 V startup can trade width for a 10 ns precharge")
     shift_refz_precharge_tuned_strength_axes[0].grid(True, axis="y", alpha=0.25)
+    shift_refz_precharge_tuned_strength_axes[0].text(
+        0.47,
+        0.35,
+        "1.0x 10 ns min err = "
+        f"{1e3 * np.min(shift_refz_precharge_tuned_strength_trim_error[:, tuned_strength_10_idx, tuned_strength_10ns_idx]):.2f} mV / >3.5 mV\n"
+        "1.25x 10 ns max err = "
+        f"{1e3 * np.max(shift_refz_precharge_tuned_strength_trim_error[:, tuned_strength_125_idx, tuned_strength_10ns_idx]):.2f} mV / 3 mV\n"
+        "1.5x 10 ns max err = "
+        f"{1e3 * np.max(shift_refz_precharge_tuned_strength_trim_error[:, tuned_strength_15_idx, tuned_strength_10ns_idx]):.2f} mV / 2.2 mV\n"
+        "1.0x 20 ns max err = "
+        f"{1e3 * np.max(shift_refz_precharge_tuned_strength_trim_error[:, tuned_strength_10_idx, tuned_strength_20ns_idx]):.2f} mV / 1.7 mV",
+        transform=shift_refz_precharge_tuned_strength_axes[0].transAxes,
+        fontsize="x-small",
+        bbox={"facecolor": "white", "alpha": 0.82, "edgecolor": "0.8"},
+    )
     shift_refz_precharge_tuned_strength_axes[0].legend(loc="upper right", ncol=2, fontsize="xx-small")
     for branch_idx, (_branch_name, branch_label, _nfp, _nfm, _trim) in enumerate(shift_reset_branch_specs):
         for pulse_idx, (_pulse_name, pulse_label, _pulse_width_ns) in enumerate(
@@ -15433,6 +15502,17 @@ quit
     shift_refz_precharge_tuned_strength_axes[1].set_ylabel("gate common (V)")
     shift_refz_precharge_tuned_strength_axes[1].set_title("Extra width restores the lower common target before a fast reset")
     shift_refz_precharge_tuned_strength_axes[1].grid(True, axis="y", alpha=0.25)
+    shift_refz_precharge_tuned_strength_axes[1].text(
+        0.04,
+        0.13,
+        "1.25x 10 ns max common error = "
+        f"{1e3 * np.max(np.abs(shift_refz_precharge_tuned_strength_common[:, tuned_strength_125_idx, tuned_strength_10ns_idx] - shift_refz_precharge_tuned_common_v)):.2f} mV / <15 mV\n"
+        "1.0x 20 ns common = "
+        f"{np.mean(shift_refz_precharge_tuned_strength_common[:, tuned_strength_10_idx, tuned_strength_20ns_idx]):.3f} V",
+        transform=shift_refz_precharge_tuned_strength_axes[1].transAxes,
+        fontsize="x-small",
+        bbox={"facecolor": "white", "alpha": 0.82, "edgecolor": "0.8"},
+    )
     shift_refz_precharge_tuned_strength_fig.tight_layout()
     save_plot(
         shift_refz_precharge_tuned_strength_fig,

@@ -2,6 +2,21 @@
 
 ## 2026-05-25
 
+- Family-completed the shifted-gate startup-precharge margin plots.  The
+  tuned-common and strength-sweep ngspice decks already asserted their
+  pass/fail edges, but the rendered figures forced the reader to infer those
+  margins from curves.  The regenerated
+  `mos_hidden_writer_restored_gate_hybrid_update_forward_guard_forward_pair_96u_shifted_gate_reset_ref_precharge_080_ngspice`
+  plot now labels the tuned \(0.80\) V case: no-precharge minimum trim error
+  \(49.6\) mV, \(5\) ns minimum trim error \(10.7\) mV, \(10\) ns maximum
+  trim error \(4.76\) mV, \(20\) ns maximum trim error \(1.59\) mV, and
+  \(20\) ns maximum common error \(3.59\) mV.  The strength-sweep plots now
+  label the width/time tradeoff directly: \(0.125\times\) remains above
+  \(15\) mV even at \(40\) ns, \(0.25\times\) is still marginal at
+  \(20\) ns but recovers at \(40\) ns, \(0.5\times\) recovers at \(20\) ns,
+  and tuned \(0.80\) V fast-start needs about \(1.25\times\) width for a
+  \(10\) ns pulse to clear the \(3\) mV trim gate with \(11.91\) mV common
+  error.
 - Clarified the shifted-gate reset-reference startup-precharge plot.  The
   ngspice deck sweeps explicit precharge pulse width for cold local
   trim-reference reservoirs and already asserted that no precharge remains

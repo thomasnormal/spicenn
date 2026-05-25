@@ -5994,6 +5994,12 @@ quit
     hya_selected_step = np.array(hya_selected_step)
     hya_complement_step = np.array(hya_complement_step)
     hya_net = np.array(hya_net)
+    hya_hidden_sample = hyaat(1.35e-6, hya_hidden)
+    hya_selected_gate_sample = hyaat(1.45e-6, hya_selected_gate)
+    hya_complement_gate_sample = hyaat(1.45e-6, hya_complement_gate)
+    hya_gate_separation = hya_complement_gate_sample - hya_selected_gate_sample
+    hya_gain_ratio = hya_net[0] / hya_net[-1]
+    hya_complement_max = float(np.max(hya_complement_step))
     require(hyaat(1.35e-6, hya_hidden) > 0.07, "hybrid activation deck should store a positive hidden error")
     require(hyaat(1.45e-6, hya_selected_gate) < 0.30, "hybrid activation selected restored gate should be low")
     require(hyaat(1.45e-6, hya_complement_gate) > 1.60, "hybrid activation complement restored gate should be high")
@@ -6013,6 +6019,21 @@ quit
     hya_axes[0].set_ylabel("voltage (V)")
     hya_axes[0].set_title("Hybrid activation sweep reuses one stored hidden-error rail")
     hya_axes[0].grid(True, alpha=0.25)
+    hya_axes[0].text(
+        0.52,
+        0.14,
+        "hidden error = "
+        f"{1e3 * hya_hidden_sample:.1f} mV / >70 mV\n"
+        "selected gate = "
+        f"{hya_selected_gate_sample:.2f} V / <0.30 V\n"
+        "complement gate = "
+        f"{hya_complement_gate_sample:.2f} V / >1.60 V\n"
+        "gate separation = "
+        f"{hya_gate_separation:.2f} V",
+        transform=hya_axes[0].transAxes,
+        fontsize="x-small",
+        bbox=callout_box,
+    )
     hya_axes[0].legend(loc="center right", fontsize="small")
     hya_axes[1].plot(hya_gates, hya_selected_step, "o-", label="selected rail step")
     hya_axes[1].plot(hya_gates, hya_complement_step, "s--", label="complement rail step")
@@ -6022,6 +6043,19 @@ quit
     hya_axes[1].set_ylabel("writer step (V)")
     hya_axes[1].set_title("Hybrid write gain follows the activation-side analog gate")
     hya_axes[1].grid(True, alpha=0.25)
+    hya_axes[1].text(
+        0.05,
+        0.14,
+        "net range = "
+        f"{1e3 * np.min(hya_net):.1f}--{1e3 * np.max(hya_net):.1f} mV\n"
+        "gain ratio = "
+        f"{hya_gain_ratio:.2f}x / >1.60x\n"
+        "max complement step = "
+        f"{1e3 * hya_complement_max:.3f} mV / <0.5 mV",
+        transform=hya_axes[1].transAxes,
+        fontsize="x-small",
+        bbox=callout_box,
+    )
     hya_axes[1].legend(loc="upper right")
     hya_fig.tight_layout()
     save_plot(hya_fig, "mos_hidden_writer_restored_gate_hybrid_activation_ngspice")
@@ -6641,6 +6675,9 @@ quit
     hyq_rp_complement_gate = hyq_cols[5]
     hyq_rm_complement_gate = hyq_cols[6]
     hyq_rm_selected_gate = hyq_cols[7]
+    hyq_hidden_symmetry_error = abs(hyqat(1.35e-6, hyq_hidden_pos + hyq_hidden_neg))
+    hyq_min_selected_gate = min(hyqat(1.45e-6, hyq_rp_selected_gate), hyqat(1.45e-6, hyq_rm_selected_gate))
+    hyq_min_complement_gate = min(hyqat(1.45e-6, hyq_rp_complement_gate), hyqat(1.45e-6, hyq_rm_complement_gate))
     hyq_signed = []
     hyq_wp_step = []
     hyq_wm_step = []
@@ -6664,9 +6701,18 @@ quit
     hyq_hm_final = np.array(hyq_hm_final)
     hyq_expected_sign = np.array([expected_sign for *_rest, expected_sign in hybrid_product_cases])
     hyq_abs = np.abs(hyq_signed)
+    hyq_quadrant_spread = float(np.max(hyq_abs) - np.min(hyq_abs))
+    hyq_inactive_max = float(np.max(np.minimum(hyq_wp_step, hyq_wm_step)))
+    hyq_active_sample_error = float(
+        max(
+            np.max(np.abs(hyq_hp_final[:2] - 0.92)),
+            np.max(np.abs(hyq_hm_final[2:] - 0.92)),
+        )
+    )
+    hyq_inactive_sample_min = float(min(np.min(hyq_hm_final[:2]), np.min(hyq_hp_final[2:])))
     require(hyqat(1.35e-6, hyq_hidden_pos) > 0.07, "hybrid product r+ store should be positive")
     require(hyqat(1.35e-6, hyq_hidden_neg) < -0.07, "hybrid product r- store should be negative")
-    require(abs(hyqat(1.35e-6, hyq_hidden_pos + hyq_hidden_neg)) < 0.003, "hybrid product hidden stores should be symmetric")
+    require(hyq_hidden_symmetry_error < 0.003, "hybrid product hidden stores should be symmetric")
     require(hyqat(1.45e-6, hyq_rp_selected_gate) < 0.30, "hybrid product r+ selected gate should be low")
     require(hyqat(1.45e-6, hyq_rp_complement_gate) > 1.60, "hybrid product r+ complement gate should be high")
     require(hyqat(1.45e-6, hyq_rm_selected_gate) < 0.30, "hybrid product r- selected gate should be low")
@@ -6690,6 +6736,21 @@ quit
     hyq_axes[0].set_ylabel("voltage (V)")
     hyq_axes[0].set_title("Hybrid product router stores both hidden-error signs")
     hyq_axes[0].grid(True, alpha=0.25)
+    hyq_axes[0].text(
+        0.53,
+        0.13,
+        "e+ store = "
+        f"{1e3 * hyqat(1.35e-6, hyq_hidden_pos):.1f} mV / >70 mV\n"
+        "e- store = "
+        f"{1e3 * hyqat(1.35e-6, hyq_hidden_neg):.1f} mV / <-70 mV\n"
+        "symmetry error = "
+        f"{1e3 * hyq_hidden_symmetry_error:.2f} mV / <3 mV\n"
+        "selected/complement gates = "
+        f"{hyq_min_selected_gate:.2f}/{hyq_min_complement_gate:.2f} V",
+        transform=hyq_axes[0].transAxes,
+        fontsize="x-small",
+        bbox=callout_box,
+    )
     hyq_axes[0].legend(loc="center right", ncol=2, fontsize="small")
     hyq_x = np.arange(len(hybrid_product_cases))
     hyq_labels = [label for _name, label, *_rest in hybrid_product_cases]
@@ -6702,6 +6763,17 @@ quit
     hyq_axes[1].set_ylabel("activation gate (V)")
     hyq_axes[1].set_title("MOS pass gates sample exactly one activation sign per quadrant")
     hyq_axes[1].grid(True, alpha=0.25)
+    hyq_axes[1].text(
+        0.04,
+        0.13,
+        "active sample error <= "
+        f"{1e3 * hyq_active_sample_error:.1f} mV / <10 mV\n"
+        "inactive gate min = "
+        f"{hyq_inactive_sample_min:.2f} V / >1.35 V",
+        transform=hyq_axes[1].transAxes,
+        fontsize="x-small",
+        bbox=callout_box,
+    )
     hyq_axes[1].legend(loc="center right", ncol=2, fontsize="small")
     hyq_axes[2].bar(hyq_x - 0.18, 1e3 * hyq_wp_step, width=0.36, label="$W^+$ step")
     hyq_axes[2].bar(hyq_x + 0.18, -1e3 * hyq_wm_step, width=0.36, label="$-W^-$ step")
@@ -6712,6 +6784,19 @@ quit
     hyq_axes[2].set_ylabel("writer step (mV)")
     hyq_axes[2].set_title("signed update follows the four-quadrant product rule")
     hyq_axes[2].grid(True, axis="y", alpha=0.25)
+    hyq_axes[2].text(
+        0.53,
+        0.14,
+        "min |update| = "
+        f"{1e3 * np.min(hyq_abs):.1f} mV / >18 mV\n"
+        "quadrant spread = "
+        f"{1e3 * hyq_quadrant_spread:.2f} mV / <4 mV\n"
+        "inactive rail max = "
+        f"{1e3 * hyq_inactive_max:.3f} mV / <0.5 mV",
+        transform=hyq_axes[2].transAxes,
+        fontsize="x-small",
+        bbox=callout_box,
+    )
     hyq_axes[2].legend(loc="upper left", ncol=3, fontsize="small")
     hyq_fig.tight_layout()
     save_plot(hyq_fig, "mos_hidden_writer_restored_gate_hybrid_product_ngspice")
@@ -17212,21 +17297,25 @@ quit
     hye_weight = hye_wp - hye_wm
     hye_pos_step = hyeat(1.90e-6, hye_weight)
     hye_reset_hidden = hyeat(2.55e-6, hye_hidden)
+    hye_reset_common_error = abs(hyeat(2.55e-6, hye_common) - 1.04)
+    hye_reset_weight_disturb = abs(hyeat(2.55e-6, hye_weight) - hye_pos_step)
     hye_neg_hidden = hyeat(3.60e-6, hye_hidden)
     hye_final_weight = hyeat(4.25e-6, hye_weight)
+    hye_negative_cancel = hye_pos_step - hye_final_weight
+    hye_final_hold_error = abs(hyeat(5.90e-6, hye_weight) - hye_final_weight)
     require(hyeat(1.35e-6, hye_hidden) > 0.07, "hybrid reuse first store should create positive hidden error")
     require(hyeat(1.35e-6, hye_rgp) < 0.30, "hybrid reuse first selected restored gate should be low")
     require(hyeat(1.35e-6, hye_rgm) > 1.60, "hybrid reuse first complement restored gate should be high")
     require(hye_pos_step > 0.020, "hybrid reuse first sample should write W+")
     require(abs(hye_reset_hidden) < 0.004, "hybrid reuse reset should clear hidden-error differential")
-    require(abs(hyeat(2.55e-6, hye_common) - 1.04) < 0.005, "hybrid reuse reset should restore hidden-error common mode")
-    require(abs(hyeat(2.55e-6, hye_weight) - hye_pos_step) < 5e-4, "hybrid reuse reset should not disturb persistent weight caps")
+    require(hye_reset_common_error < 0.005, "hybrid reuse reset should restore hidden-error common mode")
+    require(hye_reset_weight_disturb < 5e-4, "hybrid reuse reset should not disturb persistent weight caps")
     require(hye_neg_hidden < -0.07, "hybrid reuse second store should create negative hidden error")
     require(hyeat(3.60e-6, hye_rgm) < 0.30, "hybrid reuse second selected restored gate should be low")
     require(hyeat(3.60e-6, hye_rgp) > 1.60, "hybrid reuse second complement restored gate should be high")
     require(hye_final_weight < hye_pos_step - 0.020, "hybrid reuse negative sample should cancel the prior W+ write")
     require(hye_final_weight < 0.010, "hybrid reuse final signed weight should be near-zero or negative after opposite sign")
-    require(abs(hyeat(5.90e-6, hye_weight) - hye_final_weight) < 5e-4, "hybrid reuse final weight should hold")
+    require(hye_final_hold_error < 5e-4, "hybrid reuse final weight should hold")
 
     hye_fig, hye_axes = plt.subplots(3, 1, figsize=(7.2, 7.4))
     hye_axes[0].plot(1e6 * hyet, hye_hidden, label="$c_{d+}-c_{d-}$")
@@ -17238,6 +17327,21 @@ quit
     hye_axes[0].set_ylabel("hidden state (V)")
     hye_axes[0].set_title("One hidden-error capacitor pair is reset and reused")
     hye_axes[0].grid(True, alpha=0.25)
+    hye_axes[0].text(
+        0.51,
+        0.15,
+        "first store = "
+        f"{1e3 * hyeat(1.35e-6, hye_hidden):.1f} mV / >70 mV\n"
+        "reset residue = "
+        f"{1e3 * abs(hye_reset_hidden):.2f} mV / <4 mV\n"
+        "common error = "
+        f"{1e3 * hye_reset_common_error:.2f} mV / <5 mV\n"
+        "second store = "
+        f"{1e3 * hye_neg_hidden:.1f} mV / <-70 mV",
+        transform=hye_axes[0].transAxes,
+        fontsize="x-small",
+        bbox=callout_box,
+    )
     hye_axes[0].legend(loc="upper right", ncol=2, fontsize="small")
     hye_axes[1].plot(1e6 * hyet, hye_rgp, label="$c_{d+}$ restored gate")
     hye_axes[1].plot(1e6 * hyet, hye_rgm, label="$c_{d-}$ restored gate")
@@ -17245,6 +17349,18 @@ quit
     hye_axes[1].set_ylabel("gate voltage (V)")
     hye_axes[1].set_title("Restored select gate swaps after physical reset")
     hye_axes[1].grid(True, alpha=0.25)
+    hye_axes[1].text(
+        0.52,
+        0.16,
+        "first selected/complement = "
+        f"{hyeat(1.35e-6, hye_rgp):.2f}/{hyeat(1.35e-6, hye_rgm):.2f} V\n"
+        "second selected/complement = "
+        f"{hyeat(3.60e-6, hye_rgm):.2f}/{hyeat(3.60e-6, hye_rgp):.2f} V\n"
+        "limits: selected <0.30 V, complement >1.60 V",
+        transform=hye_axes[1].transAxes,
+        fontsize="x-small",
+        bbox=callout_box,
+    )
     hye_axes[1].legend(loc="center right", fontsize="small")
     hye_axes[2].plot(1e6 * hyet, hye_wp - hyeat(1.35e-6, hye_wp), label="$W^+$ step")
     hye_axes[2].plot(1e6 * hyet, hye_wm - hyeat(1.35e-6, hye_wm), label="$W^-$ step")
@@ -17256,6 +17372,21 @@ quit
     hye_axes[2].set_ylabel("weight step (V)")
     hye_axes[2].set_title("Persistent weight caps survive reset and accept opposite update")
     hye_axes[2].grid(True, alpha=0.25)
+    hye_axes[2].text(
+        0.48,
+        0.15,
+        "W+ sample = "
+        f"{1e3 * hye_pos_step:.1f} mV / >20 mV\n"
+        "reset weight disturb = "
+        f"{1e3 * hye_reset_weight_disturb:.3f} mV / <0.5 mV\n"
+        "negative cancellation = "
+        f"{1e3 * hye_negative_cancel:.1f} mV / >20 mV\n"
+        "final hold error = "
+        f"{1e3 * hye_final_hold_error:.3f} mV / <0.5 mV",
+        transform=hye_axes[2].transAxes,
+        fontsize="x-small",
+        bbox=callout_box,
+    )
     hye_axes[2].legend(loc="upper right", ncol=2, fontsize="small")
     hye_fig.tight_layout()
     save_plot(hye_fig, "mos_hidden_writer_restored_gate_hybrid_reuse_ngspice")

@@ -2581,6 +2581,27 @@ must satisfy before it can replace the current behavioral prototype.
 
 \begin{figure}[H]
   \centering
+  \includegraphics[width=0.95\linewidth]{figures/mos_hidden_writer_restored_gate_hybrid_update_forward_guard_forward_pair_96u_shifted_gate_reset_ref_fanout_ngspice.png}
+  \caption{Ngspice shifted-gate reset-reference fanout check for the tuned
+  local trim reservoir.  The deck uses initialized \(250\) pF split-trim
+  reservoirs, \(100\,\mathrm{k}\Omega\) trim sources, real complementary MOS
+  reset switches, and \(5\) pF shifted-gate loads centered at \(0.80\) V.  The
+  only swept quantity is how many shifted-gate reset loads share one local
+  reservoir.  One load preserves initialized-reservoir accuracy
+  (\(\le 1.27\) mV trim error), and four loads stay under the \(6\) mV
+  trim-error gate (\(\le 4.79\) mV).  Eight loads already exceed that gate
+  (\(\ge 7.55\) mV), and sixteen loads reach \(13.28/15.61\) mV error for the
+  \(-55/+65\) mV branches.  The common-mode error and first/last load mismatch
+  stay at the displayed zero level, so this is a differential charge-sharing
+  fanout limit, not a reset-switch mismatch or common-mode failure.  The
+  practical rule is that this \(250\) pF reservoir should be treated as a
+  small local trim source for roughly four \(5\) pF shifted-gate loads unless
+  the reservoir capacitance or reset schedule is increased.}
+  \label{fig:mos-hidden-writer-restored-gate-hybrid-update-forward-guard-forward-pair-96u-shifted-gate-reset-ref-fanout-ngspice}
+\end{figure}
+
+\begin{figure}[H]
+  \centering
   \includegraphics[width=0.95\linewidth]{figures/mos_hidden_writer_restored_gate_hybrid_update_forward_guard_forward_pair_96u_shifted_gate_reset_ref_precharge_strength_ngspice.png}
   \caption{Ngspice startup-precharge strength-margin check for the same cold
   local trim-reference reservoir.  The \(250\) pF reservoirs, \(100\)

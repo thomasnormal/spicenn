@@ -14435,6 +14435,172 @@ quit
         "1.25x 10 ns tuned-common startup precharge should nearly restore the 0.80 V common mode",
     )
 
+    shift_refz_fanout_cases = [
+        ("fo1", "1 load", 1),
+        ("fo2", "2 loads", 2),
+        ("fo4", "4 loads", 4),
+        ("fo8", "8 loads", 8),
+        ("fo16", "16 loads", 16),
+    ]
+
+    def run_reset_ref_fanout_case(
+        branch_name: str,
+        reset_trim_v: float,
+        reset_common_v: float = shift_refz_precharge_tuned_common_v,
+    ) -> tuple[np.ndarray, list[np.ndarray]]:
+        stem = (
+            "mos_hidden_writer_restored_gate_hybrid_update_forward_guard_"
+            f"forward_pair_96u_shifted_gate_reset_ref_fanout_{branch_name}"
+        )
+        reset_ref_p = reset_common_v + 0.5 * reset_trim_v
+        reset_ref_m = reset_common_v - 0.5 * reset_trim_v
+        deck_lines = [
+            "* MOS trim-reference reservoir fanout check for shifted-gate reset loads.",
+            "* The local 250 pF reservoirs start initialized; fanout sweeps how many",
+            "* real complementary reset switches and 5 pF shifted-gate loads share them.",
+            COMMON_MODELS,
+            ".param CREF=250p CGATE=5p WRESETN=60u WRESETP=180u",
+            "VDD vdd 0 1.8",
+            "VRST rst 0 PWL(0 0 2.48u 0 2.50u 1.8 2.62u 1.8 2.64u 0 3.0u 0)",
+            "VRSTN rstn 0 PWL(0 1.8 2.48u 1.8 2.50u 0 2.62u 0 2.64u 1.8 3.0u 1.8)",
+        ]
+        prints = []
+        for case_idx, (case_name, _case_label, load_count) in enumerate(shift_refz_fanout_cases):
+            deck_lines.extend(
+                [
+                    f"* {case_name}: one initialized reservoir drives {load_count} shifted-gate reset load(s).",
+                    f"VZRP_FO_{case_idx} zrp_fo_src_{case_idx} 0 {reset_ref_p:.5f}",
+                    f"VZRM_FO_{case_idx} zrm_fo_src_{case_idx} 0 {reset_ref_m:.5f}",
+                    f"RZRP_FO_{case_idx} zrp_fo_src_{case_idx} zrp_fo_{case_idx} 100k",
+                    f"RZRM_FO_{case_idx} zrm_fo_src_{case_idx} zrm_fo_{case_idx} 100k",
+                    f"CZRP_FO_{case_idx} zrp_fo_{case_idx} 0 {{CREF}} IC={reset_ref_p:.5f}",
+                    f"CZRM_FO_{case_idx} zrm_fo_{case_idx} 0 {{CREF}} IC={reset_ref_m:.5f}",
+                ]
+            )
+            for load_idx in range(load_count):
+                deck_lines.extend(
+                    [
+                        f"CZPG_FO_{case_idx}_{load_idx} zpg_fo_{case_idx}_{load_idx} 0 {{CGATE}} IC={reset_common_v:.5f}",
+                        f"CZMG_FO_{case_idx}_{load_idx} zmg_fo_{case_idx}_{load_idx} 0 {{CGATE}} IC={reset_common_v:.5f}",
+                        (
+                            f"MRZGPN_FO_{case_idx}_{load_idx} zpg_fo_{case_idx}_{load_idx} rst "
+                            f"zrp_fo_{case_idx} 0 NMOS L={{LCH}} W={{WRESETN}}"
+                        ),
+                        (
+                            f"MRZGMN_FO_{case_idx}_{load_idx} zmg_fo_{case_idx}_{load_idx} rst "
+                            f"zrm_fo_{case_idx} 0 NMOS L={{LCH}} W={{WRESETN}}"
+                        ),
+                        (
+                            f"MRZGPP_FO_{case_idx}_{load_idx} zpg_fo_{case_idx}_{load_idx} rstn "
+                            f"zrp_fo_{case_idx} vdd PMOS L={{LCH}} W={{WRESETP}}"
+                        ),
+                        (
+                            f"MRZGMP_FO_{case_idx}_{load_idx} zmg_fo_{case_idx}_{load_idx} rstn "
+                            f"zrm_fo_{case_idx} vdd PMOS L={{LCH}} W={{WRESETP}}"
+                        ),
+                    ]
+                )
+            last_load_idx = load_count - 1
+            prints.extend(
+                [
+                    f"v(zrp_fo_{case_idx})",
+                    f"v(zrm_fo_{case_idx})",
+                    f"v(zpg_fo_{case_idx}_0)",
+                    f"v(zmg_fo_{case_idx}_0)",
+                    f"v(zpg_fo_{case_idx}_{last_load_idx})",
+                    f"v(zmg_fo_{case_idx}_{last_load_idx})",
+                ]
+            )
+        deck_lines.extend(
+            [
+                ".control",
+                "set noaskquit",
+                "tran 1n 3.0u uic",
+                f"wrdata {stem}.dat " + " ".join(prints),
+                "quit",
+                ".endc",
+                ".end",
+            ]
+        )
+        data = run_ngspice("\n".join(deck_lines), stem)
+        return load_wrdata(data, len(prints))
+
+    shift_refz_fanout_trim_error = []
+    shift_refz_fanout_common_error = []
+    shift_refz_fanout_ref_droop = []
+    shift_refz_fanout_end_mismatch = []
+    shift_refz_fanout_traces = []
+    for branch_name, branch_label, _nfp_vto, _nfm_vto, reset_trim_v in shift_reset_branch_specs:
+        fot, fanout_cols = run_reset_ref_fanout_case(branch_name, reset_trim_v)
+
+        def foat(time_s: float, values: np.ndarray) -> float:
+            return float(values[np.argmin(np.abs(fot - time_s))])
+
+        branch_trim_error = []
+        branch_common_error = []
+        branch_ref_droop = []
+        branch_end_mismatch = []
+        for case_idx, (_case_name, case_label, _load_count) in enumerate(shift_refz_fanout_cases):
+            ref_p = fanout_cols[6 * case_idx]
+            ref_m = fanout_cols[6 * case_idx + 1]
+            gate_first_p = fanout_cols[6 * case_idx + 2]
+            gate_first_m = fanout_cols[6 * case_idx + 3]
+            gate_last_p = fanout_cols[6 * case_idx + 4]
+            gate_last_m = fanout_cols[6 * case_idx + 5]
+            ref_diff = ref_p - ref_m
+            gate_first_diff = gate_first_p - gate_first_m
+            gate_last_diff = gate_last_p - gate_last_m
+            gate_first_common = 0.5 * (gate_first_p + gate_first_m)
+            sampled_first = foat(2.70e-6, gate_first_diff)
+            sampled_last = foat(2.70e-6, gate_last_diff)
+            branch_trim_error.append(abs(sampled_first - reset_trim_v))
+            branch_common_error.append(abs(foat(2.70e-6, gate_first_common) - shift_refz_precharge_tuned_common_v))
+            branch_ref_droop.append(abs(foat(2.70e-6, ref_diff) - reset_trim_v))
+            branch_end_mismatch.append(abs(sampled_first - sampled_last))
+            if case_label in {"1 load", "4 loads", "8 loads", "16 loads"}:
+                shift_refz_fanout_traces.append((branch_label, case_label, fot, ref_diff, gate_first_diff))
+        shift_refz_fanout_trim_error.append(branch_trim_error)
+        shift_refz_fanout_common_error.append(branch_common_error)
+        shift_refz_fanout_ref_droop.append(branch_ref_droop)
+        shift_refz_fanout_end_mismatch.append(branch_end_mismatch)
+
+    shift_refz_fanout_trim_error = np.array(shift_refz_fanout_trim_error)
+    shift_refz_fanout_common_error = np.array(shift_refz_fanout_common_error)
+    shift_refz_fanout_ref_droop = np.array(shift_refz_fanout_ref_droop)
+    shift_refz_fanout_end_mismatch = np.array(shift_refz_fanout_end_mismatch)
+    fanout_1_idx = 0
+    fanout_4_idx = 2
+    fanout_8_idx = 3
+    fanout_16_idx = 4
+    require(
+        np.all(np.diff(shift_refz_fanout_trim_error, axis=1) > 0.0),
+        "trim-reference fanout error should increase as more shifted-gate loads share one reservoir",
+    )
+    require(
+        np.all(shift_refz_fanout_trim_error[:, fanout_1_idx] < 0.002),
+        "one shifted-gate reset load should preserve initialized-reservoir trim accuracy",
+    )
+    require(
+        np.all(shift_refz_fanout_trim_error[:, fanout_4_idx] < 0.006),
+        "four shifted-gate reset loads should stay below the 6 mV trim-error gate",
+    )
+    require(
+        np.all(shift_refz_fanout_trim_error[:, fanout_8_idx] > 0.006),
+        "eight shifted-gate reset loads should visibly exceed the 6 mV trim-error gate",
+    )
+    require(
+        np.all(shift_refz_fanout_trim_error[:, fanout_16_idx] > 0.010),
+        "sixteen shifted-gate reset loads should expose reservoir fanout collapse",
+    )
+    require(
+        np.max(shift_refz_fanout_common_error) < 0.006,
+        "fanout loading should mainly consume differential trim, not shifted-gate common mode",
+    )
+    require(
+        np.max(shift_refz_fanout_end_mismatch) < 0.0005,
+        "matched loads on one trim reservoir should sample the same shifted-gate differential",
+    )
+
     tail_bias_forward_tail_line = "MNFT_HYR ftail_hyr vbias 0 0 NMOS L={LCH} W=48u"
     tail_bias_cases_v = [0.70, 0.80, 0.90, 0.95, 1.05, 1.15, 1.25]
     tail_bias_labels = []
@@ -17448,6 +17614,112 @@ quit
     save_plot(
         shift_refz_precharge_tuned_strength_fig,
         "mos_hidden_writer_restored_gate_hybrid_update_forward_guard_forward_pair_96u_shifted_gate_reset_ref_precharge_strength_080_ngspice",
+    )
+
+    shift_refz_fanout_fig, shift_refz_fanout_axes = plt.subplots(
+        3,
+        1,
+        figsize=(7.4, 7.3),
+        gridspec_kw={"height_ratios": [0.85, 0.85, 1.0]},
+    )
+    fanout_x = np.array([load_count for _name, _label, load_count in shift_refz_fanout_cases])
+    fanout_labels = [label for _name, label, _load_count in shift_refz_fanout_cases]
+    for branch_idx, (_branch_name, branch_label, _nfp, _nfm, _trim) in enumerate(shift_reset_branch_specs):
+        marker = "o-" if branch_idx == 0 else "s--"
+        shift_refz_fanout_axes[0].plot(
+            fanout_x,
+            1e3 * shift_refz_fanout_trim_error[branch_idx],
+            marker,
+            label=branch_label,
+        )
+    shift_refz_fanout_axes[0].axhline(6, color="0.4", linestyle=":", linewidth=0.9, label="6 mV trim-error gate")
+    shift_refz_fanout_axes[0].set_xscale("log", base=2)
+    shift_refz_fanout_axes[0].set_xticks(fanout_x)
+    shift_refz_fanout_axes[0].set_xticklabels(fanout_labels)
+    shift_refz_fanout_axes[0].set_ylabel("trim error (mV)")
+    shift_refz_fanout_axes[0].set_title("One local trim reservoir has finite shifted-gate fanout")
+    shift_refz_fanout_axes[0].grid(True, axis="y", alpha=0.25)
+    shift_refz_fanout_axes[0].text(
+        0.48,
+        0.32,
+        "1-load max err = "
+        f"{1e3 * np.max(shift_refz_fanout_trim_error[:, fanout_1_idx]):.2f} mV / 2 mV\n"
+        "4-load max err = "
+        f"{1e3 * np.max(shift_refz_fanout_trim_error[:, fanout_4_idx]):.2f} mV / 6 mV\n"
+        "8-load min err = "
+        f"{1e3 * np.min(shift_refz_fanout_trim_error[:, fanout_8_idx]):.2f} mV / >6 mV\n"
+        "16-load min err = "
+        f"{1e3 * np.min(shift_refz_fanout_trim_error[:, fanout_16_idx]):.2f} mV / >10 mV",
+        transform=shift_refz_fanout_axes[0].transAxes,
+        fontsize="x-small",
+        bbox={"facecolor": "white", "alpha": 0.82, "edgecolor": "0.8"},
+    )
+    shift_refz_fanout_axes[0].legend(loc="upper left", ncol=2, fontsize="xx-small")
+    for branch_idx, (_branch_name, branch_label, _nfp, _nfm, _trim) in enumerate(shift_reset_branch_specs):
+        marker = "o-" if branch_idx == 0 else "s--"
+        shift_refz_fanout_axes[1].plot(
+            fanout_x,
+            1e3 * shift_refz_fanout_ref_droop[branch_idx],
+            marker,
+            label=f"{branch_label}, reservoir",
+        )
+        shift_refz_fanout_axes[1].plot(
+            fanout_x,
+            1e3 * shift_refz_fanout_common_error[branch_idx],
+            ":" if branch_idx == 0 else "-.",
+            alpha=0.75,
+            label=f"{branch_label.split(', ')[1]} common",
+        )
+    shift_refz_fanout_axes[1].axhline(6, color="0.4", linestyle=":", linewidth=0.9)
+    shift_refz_fanout_axes[1].set_xscale("log", base=2)
+    shift_refz_fanout_axes[1].set_xticks(fanout_x)
+    shift_refz_fanout_axes[1].set_xticklabels(fanout_labels)
+    shift_refz_fanout_axes[1].set_ylabel("error (mV)")
+    shift_refz_fanout_axes[1].set_title("Fanout consumes differential trim while common mode stays bounded")
+    shift_refz_fanout_axes[1].grid(True, axis="y", alpha=0.25)
+    shift_refz_fanout_axes[1].text(
+        0.04,
+        0.60,
+        "max common err = "
+        f"{1e3 * np.max(shift_refz_fanout_common_error):.2f} mV / <6 mV\n"
+        "max load mismatch = "
+        f"{1e3 * np.max(shift_refz_fanout_end_mismatch):.3f} mV / <0.5 mV",
+        transform=shift_refz_fanout_axes[1].transAxes,
+        fontsize="x-small",
+        bbox={"facecolor": "white", "alpha": 0.82, "edgecolor": "0.8"},
+    )
+    shift_refz_fanout_axes[1].legend(loc="upper left", ncol=2, fontsize="xx-small")
+    for branch_label, case_label, fot, ref_diff, gate_diff in shift_refz_fanout_traces:
+        if case_label == "1 load":
+            linestyle = "-"
+        elif case_label == "4 loads":
+            linestyle = "--"
+        elif case_label == "8 loads":
+            linestyle = "-."
+        else:
+            linestyle = ":"
+        shift_refz_fanout_axes[2].plot(
+            1e6 * fot,
+            1e3 * gate_diff,
+            linestyle,
+            label=f"{branch_label.split(', ')[1]}, {case_label}",
+        )
+    shift_refz_fanout_axes[2].axhline(0, color="0.4", linewidth=0.8)
+    shift_refz_fanout_axes[2].set_xlim(2.45, 2.82)
+    shift_refz_fanout_axes[2].set_xlabel("time (us)")
+    shift_refz_fanout_axes[2].set_ylabel("sampled gate trim (mV)")
+    shift_refz_fanout_axes[2].set_title("Shared reservoirs droop during the real reset pulse")
+    shift_refz_fanout_axes[2].grid(True, alpha=0.25)
+    shift_refz_fanout_axes[2].legend(
+        loc="upper center",
+        bbox_to_anchor=(0.5, -0.23),
+        ncol=2,
+        fontsize="xx-small",
+    )
+    shift_refz_fanout_fig.tight_layout()
+    save_plot(
+        shift_refz_fanout_fig,
+        "mos_hidden_writer_restored_gate_hybrid_update_forward_guard_forward_pair_96u_shifted_gate_reset_ref_fanout_ngspice",
     )
 
     tail_bias_fig, tail_bias_axes = plt.subplots(2, 1, figsize=(7.4, 6.4), gridspec_kw={"height_ratios": [1.0, 0.8]})

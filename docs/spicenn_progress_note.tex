@@ -1486,6 +1486,22 @@ must satisfy before it can replace the current behavioral prototype.
 
 \begin{figure}[H]
   \centering
+  \includegraphics[width=0.88\linewidth]{figures/mos_hidden_writer_restored_gate_hybrid_update_forward_guard_timing_ngspice.png}
+  \caption{Ngspice guard-off timing sweep for the same MOS integrated
+  update-to-forward activation store.  The \(pact\) aperture is deliberately
+  held long at \(320\) ns, while the non-overlap guard is ended after
+  \(60,100,130,150,180,\) or \(220\) ns.  The read preactivation remains
+  valid at about \(52.066\) mV in all cases, but the sampled activation is
+  \(50.275,52.654,51.355,48.570,40.624,\) and \(34.940\) mV.  This separates
+  the two timing requirements: the guard only needs to stay open long enough
+  to charge the activation capacitor, and it must close before the forward
+  read load collapses.  In this Level-1 sizing, the robust window is roughly
+  \(100\)--\(130\) ns rather than the full read pulse.}
+  \label{fig:mos-hidden-writer-restored-gate-hybrid-update-forward-guard-timing-ngspice}
+\end{figure}
+
+\begin{figure}[H]
+  \centering
   \includegraphics[width=0.88\linewidth]{figures/mos_hidden_writer_restored_gate_hybrid_repeated_ngspice.png}
   \caption{Ngspice repeated-pulse accumulation characterization of the hybrid
   restored writer.  One stored \(r^+\) hidden-error rail drives one persistent

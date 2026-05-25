@@ -7388,6 +7388,79 @@ quit
     )
     require(np.min(guard_gated_preact_samples[1:]) > 0.048, "guarded TG comparison should keep valid read state")
 
+    guard_end_cases_us = [3.24, 3.28, 3.31, 3.33, 3.36, 3.40]
+    guard_timing_labels = []
+    guard_timing_samples = []
+    guard_timing_preact_samples = []
+    guard_timing_traces = []
+    long_pact_end_us = aperture_start_us + 320 / 1000.0
+    long_pact_off_us = long_pact_end_us + 0.02
+    long_pact_pwl = (
+        f"VPACT_HYR pact_hyr 0 PWL(0 0 {aperture_start_us - 0.02:.2f}u 0 "
+        f"{aperture_start_us:.2f}u 1.8 {long_pact_end_us:.2f}u 1.8 {long_pact_off_us:.2f}u 0 7.8u 0)"
+    )
+    long_pactn_pwl = (
+        f"VPACTN_HYR pactn_hyr 0 PWL(0 1.8 {aperture_start_us - 0.02:.2f}u 1.8 "
+        f"{aperture_start_us:.2f}u 0 {long_pact_end_us:.2f}u 0 {long_pact_off_us:.2f}u 1.8 7.8u 1.8)"
+    )
+    for guard_end_us in guard_end_cases_us:
+        guard_off_us = guard_end_us + 0.02
+        label = f"{int(round((guard_end_us - aperture_start_us) * 1000))} ns"
+        stem = (
+            "mos_hidden_writer_restored_gate_hybrid_update_forward_read_pact_"
+            f"guard_timing_{int(round((guard_end_us - aperture_start_us) * 1000))}ns"
+        )
+        guard_pwl = (
+            f"VGUARD_HYR guard_hyr 0 PWL(0 0 {aperture_start_us - 0.02:.2f}u 0 "
+            f"{aperture_start_us:.2f}u 1.8 {guard_end_us:.2f}u 1.8 {guard_off_us:.2f}u 0 7.8u 0)"
+        )
+        guardn_pwl = (
+            f"VGUARDN_HYR guardn_hyr 0 PWL(0 1.8 {aperture_start_us - 0.02:.2f}u 1.8 "
+            f"{aperture_start_us:.2f}u 0 {guard_end_us:.2f}u 0 {guard_off_us:.2f}u 1.8 7.8u 1.8)"
+        )
+        timing_guard_deck = replace_required(hybrid_forward_read_reuse_deck, timing_read_pwl, timing_single_read_pwl)
+        timing_guard_deck = replace_required(
+            timing_guard_deck,
+            timing_base_pact_pwl,
+            long_pact_pwl + "\n" + long_pactn_pwl + "\n" + guard_pwl + "\n" + guardn_pwl,
+        )
+        timing_guard_deck = replace_required(timing_guard_deck, nmos_store_line_p, guard_store_line_p)
+        timing_guard_deck = replace_required(timing_guard_deck, nmos_store_line_m, guard_store_line_m)
+        timing_guard_deck = replace_required(
+            timing_guard_deck,
+            "mos_hidden_writer_restored_gate_hybrid_update_forward_read_reuse.dat",
+            f"{stem}.dat",
+        )
+        timing_guard_data = run_ngspice(timing_guard_deck, stem)
+        gt, guard_timing_cols = load_wrdata(timing_guard_data, 23)
+
+        def gtat(time_s: float, values: np.ndarray) -> float:
+            return float(values[np.argmin(np.abs(gt - time_s))])
+
+        guard_timing_preact = guard_timing_cols[10] - guard_timing_cols[9]
+        guard_timing_store = guard_timing_cols[14] - guard_timing_cols[13]
+        guard_timing_labels.append(label)
+        guard_timing_preact_samples.append(gtat(3.575e-6, guard_timing_preact))
+        guard_timing_samples.append(gtat(3.575e-6, guard_timing_store))
+        guard_timing_traces.append((label, gt, guard_timing_store))
+
+    guard_timing_samples = np.array(guard_timing_samples)
+    guard_timing_preact_samples = np.array(guard_timing_preact_samples)
+    require(np.min(guard_timing_preact_samples) > 0.048, "guard timing sweep should keep a valid read state")
+    require(guard_timing_samples[0] > 0.95 * guard_timing_samples[1], "60 ns guard should already capture most of the valid activation")
+    require(
+        guard_timing_samples[2] > 0.95 * guard_timing_samples[3],
+        "near-nominal guard-off timings should agree",
+    )
+    require(
+        guard_timing_samples[4] < guard_timing_samples[2] - 0.008,
+        "guard held past the valid window should begin tracking forward-load droop",
+    )
+    require(
+        guard_timing_samples[-1] < guard_timing_samples[1] - 0.015,
+        "late guard-off should start tracking post-valid forward-load droop",
+    )
+
     read_gated_fig, read_gated_axes = plt.subplots(2, 1, figsize=(7.4, 6.6), gridspec_kw={"height_ratios": [1.0, 0.9]})
     for label, rgt, store in guard_gated_traces:
         if label in {"40 ns", "120 ns", "240 ns", "320 ns"}:
@@ -7411,6 +7484,32 @@ quit
     read_gated_axes[1].legend(loc="lower right")
     read_gated_fig.tight_layout()
     save_plot(read_gated_fig, "mos_hidden_writer_restored_gate_hybrid_update_forward_read_gated_store_ngspice")
+
+    guard_timing_fig, guard_timing_axes = plt.subplots(2, 1, figsize=(7.4, 6.4), gridspec_kw={"height_ratios": [1.0, 0.8]})
+    for label, gt, store in guard_timing_traces:
+        if label in {"60 ns", "130 ns", "180 ns", "220 ns"}:
+            guard_timing_axes[0].plot(1e6 * gt, 1e3 * store, label=f"guard {label}")
+    guard_timing_axes[0].axhline(0, color="0.4", linewidth=0.8)
+    guard_timing_axes[0].axvline(3.33, color="0.25", linestyle="--", linewidth=0.9, alpha=0.6, label="nominal guard")
+    guard_timing_axes[0].axvline(3.38, color="0.5", linestyle=":", linewidth=0.9, alpha=0.6, label="read off")
+    guard_timing_axes[0].set_xlim(3.05, 3.65)
+    guard_timing_axes[0].set_ylabel("stored activation (mV)")
+    guard_timing_axes[0].set_title("Guard-off timing has a broad plateau before droop")
+    guard_timing_axes[0].grid(True, alpha=0.25)
+    guard_timing_axes[0].legend(loc="upper left", ncol=2, fontsize="small")
+    guard_timing_x = np.arange(len(guard_timing_labels))
+    guard_timing_axes[1].bar(guard_timing_x - 0.18, 1e3 * guard_timing_preact_samples, width=0.36, label="$z^- - z^+$")
+    guard_timing_axes[1].bar(guard_timing_x + 0.18, 1e3 * guard_timing_samples, width=0.36, label="stored $h^- - h^+$")
+    guard_timing_axes[1].axhline(0, color="0.4", linewidth=0.8)
+    guard_timing_axes[1].set_xticks(guard_timing_x)
+    guard_timing_axes[1].set_xticklabels(guard_timing_labels)
+    guard_timing_axes[1].set_xlabel("guard high-time")
+    guard_timing_axes[1].set_ylabel("sampled differential (mV)")
+    guard_timing_axes[1].set_title("Guard can close early after capture, but not after forward-load collapse")
+    guard_timing_axes[1].grid(True, axis="y", alpha=0.25)
+    guard_timing_axes[1].legend(loc="upper right", fontsize="small")
+    guard_timing_fig.tight_layout()
+    save_plot(guard_timing_fig, "mos_hidden_writer_restored_gate_hybrid_update_forward_guard_timing_ngspice")
 
     hybrid_repeated_deck = f"""
 * Hybrid restored-enable/analog-error writer repeated-pulse accumulation check.

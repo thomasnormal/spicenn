@@ -8901,6 +8901,47 @@ quit
         "shifted-gate positive and negative 0.75 V stores should mirror within 0.3 mV",
     )
 
+    shift_stress_stem = (
+        "mos_hidden_writer_restored_gate_hybrid_update_forward_guard_"
+        "forward_pair_96u_zcm_0p75v_shift_off_isolation"
+    )
+    shift_stress_deck = replace_required(stress_deck, zcm_source_line, "VZCM zcm 0 0.75")
+    shift_stress_deck = replace_required(shift_stress_deck, zcm_cap_p_line, "CZP_HYR zp_hyr 0 {CSUM} IC=0.75")
+    shift_stress_deck = replace_required(shift_stress_deck, zcm_cap_m_line, "CZM_HYR zm_hyr 0 {CSUM} IC=0.75")
+    shift_stress_deck = replace_required(
+        shift_stress_deck,
+        forward_pair_lines,
+        shifted_forward_pair_lines(10.0),
+    )
+    shift_stress_deck = replace_required(
+        shift_stress_deck,
+        "mos_hidden_writer_restored_gate_hybrid_update_forward_guard_off_isolation.dat",
+        f"{shift_stress_stem}.dat",
+    )
+    shift_stress_data = run_ngspice(shift_stress_deck, shift_stress_stem)
+    ssht, shift_stress_cols = load_wrdata(shift_stress_data, 23)
+
+    def sshat(time_s: float, values: np.ndarray) -> float:
+        return float(values[np.argmin(np.abs(ssht - time_s))])
+
+    shift_stress_preact = shift_stress_cols[10] - shift_stress_cols[9]
+    shift_stress_store = shift_stress_cols[14] - shift_stress_cols[13]
+    shift_stress_store_samples = np.array([sshat(ts, shift_stress_store) for ts in guard_off_sample_times])
+    shift_stress_preact_samples = np.array([sshat(ts, shift_stress_preact) for ts in guard_off_sample_times])
+    shift_stress_drift = shift_stress_store_samples - shift_stress_store_samples[0]
+    require(
+        shift_stress_store_samples[0] > 0.045,
+        "shifted-gate off-isolation deck should capture a useful low-common-mode activation before stress",
+    )
+    require(
+        shift_stress_preact_samples[0] > 0.040,
+        "shifted-gate off-isolation deck should start from a real low-common-mode preactivation",
+    )
+    require(
+        np.max(np.abs(shift_stress_drift)) < 0.001,
+        "shifted-gate later off-state control/read toggles should not disturb the held activation by more than 1 mV",
+    )
+
     tail_bias_forward_tail_line = "MNFT_HYR ftail_hyr vbias 0 0 NMOS L={LCH} W=48u"
     tail_bias_cases_v = [0.70, 0.80, 0.90, 0.95, 1.05, 1.15, 1.25]
     tail_bias_labels = []
@@ -9557,6 +9598,41 @@ quit
     shift_axes[1].legend(loc="upper right", fontsize="small")
     shift_fig.tight_layout()
     save_plot(shift_fig, "mos_hidden_writer_restored_gate_hybrid_update_forward_guard_forward_pair_96u_shifted_gate_ngspice")
+
+    shift_stress_fig, shift_stress_axes = plt.subplots(
+        2,
+        1,
+        figsize=(7.4, 6.4),
+        gridspec_kw={"height_ratios": [1.0, 0.8]},
+    )
+    shift_stress_axes[0].plot(1e6 * ssht, 1e3 * shift_stress_preact, label="$z^- - z^+$")
+    shift_stress_axes[0].plot(1e6 * ssht, 1e3 * shift_stress_store, label="stored shifted $h^- - h^+$")
+    shift_stress_axes[0].plot(1e6 * ssht, shift_stress_cols[21] / 20.0, color="0.25", alpha=0.25, label="$read/20$")
+    shift_stress_axes[0].plot(1e6 * ssht, shift_stress_cols[22] / 20.0, color="0.45", alpha=0.25, label="$pact/20$")
+    for start_us, end_us, label in [(5.22, 5.35, "guard-only"), (6.00, 6.13, "guard+read only")]:
+        shift_stress_axes[0].axvspan(start_us, end_us, color="0.75", alpha=0.18, label=label)
+    shift_stress_axes[0].axhline(0, color="0.4", linewidth=0.8)
+    shift_stress_axes[0].axvline(3.33, color="0.25", linestyle="--", linewidth=0.9, alpha=0.6, label="first guard off")
+    shift_stress_axes[0].set_xlim(3.05, 7.55)
+    shift_stress_axes[0].set_ylabel("differential / control (mV)")
+    shift_stress_axes[0].set_title("Shifted-gate latch holds through later off-state stress")
+    shift_stress_axes[0].grid(True, alpha=0.25)
+    shift_stress_axes[0].legend(loc="upper right", ncol=2, fontsize="small")
+    shift_stress_x = np.arange(len(guard_off_sample_times))
+    shift_stress_axes[1].plot(shift_stress_x, 1e6 * shift_stress_drift, "o-", label="stored activation drift")
+    shift_stress_axes[1].axhline(0, color="0.4", linewidth=0.8)
+    shift_stress_axes[1].set_xticks(shift_stress_x)
+    shift_stress_axes[1].set_xticklabels(guard_off_sample_labels)
+    shift_stress_axes[1].set_xlabel("sample time (us)")
+    shift_stress_axes[1].set_ylabel("drift ($\\mu$V)")
+    shift_stress_axes[1].set_title("Pact-only, guard-only, and read pulses do not disturb the shifted store")
+    shift_stress_axes[1].grid(True, axis="y", alpha=0.25)
+    shift_stress_axes[1].legend(loc="upper right", fontsize="small")
+    shift_stress_fig.tight_layout()
+    save_plot(
+        shift_stress_fig,
+        "mos_hidden_writer_restored_gate_hybrid_update_forward_guard_forward_pair_96u_shifted_gate_off_isolation_ngspice",
+    )
 
     tail_bias_fig, tail_bias_axes = plt.subplots(2, 1, figsize=(7.4, 6.4), gridspec_kw={"height_ratios": [1.0, 0.8]})
     for label, tbt, load, store in tail_bias_traces:

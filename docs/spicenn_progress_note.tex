@@ -1886,6 +1886,27 @@ must satisfy before it can replace the current behavioral prototype.
 
 \begin{figure}[H]
   \centering
+  \includegraphics[width=0.95\linewidth]{figures/mos_hidden_writer_restored_gate_hybrid_update_forward_guard_forward_pair_96u_shifted_gate_off_isolation_ngspice.png}
+  \caption{Ngspice off-isolation stress for the shifted-gate headroom fix.  The
+  deck uses the selected \(10\) pF coupling into \(5\) pF shifted gate-storage
+  capacitors, starts from the low \(V_{ZCM}=0.75\) V summing-common-mode case,
+  and then applies later read-only, \(pact\)-only, guard-only, and
+  guard-plus-read-only activity after the first activation capture.  The
+  shifted gate latch captures \(52.153750\) mV and the later stored samples are
+  \(52.153640,52.153560,52.153510,52.153410,52.153350,\) and
+  \(52.153260\) mV, for only about \(-0.49\,\mu\mathrm{V}\) total drift.  The
+  preactivation side is intentionally disturbed during the stress
+  (\(47.446\rightarrow52.972\rightarrow44.189\rightarrow26.215
+  \rightarrow3.263\rightarrow0.166\) mV), so this plot is testing isolation of
+  the stored activation, not quiet hold.  The shifted-gate topology therefore
+  passes the same basic later-control-activity check as the unshifted guarded
+  store.  The remaining promotion gaps are reset/feedthrough, mismatch/noise,
+  and repeated-cycle behavior.}
+  \label{fig:mos-hidden-writer-restored-gate-hybrid-update-forward-guard-forward-pair-96u-shifted-gate-off-isolation-ngspice}
+\end{figure}
+
+\begin{figure}[H]
+  \centering
   \includegraphics[width=0.88\linewidth]{figures/mos_hidden_writer_restored_gate_hybrid_update_forward_guard_forward_tail_bias_ngspice.png}
   \caption{Ngspice isolated forward-tail bias sweep for the same guarded MOS
   activation store.  The failed shared-bias experiment changed the read path

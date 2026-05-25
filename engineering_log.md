@@ -2,6 +2,14 @@
 
 ## 2026-05-25
 
+- Re-ran the complete `spice/run_mos_cell_characterization.py` ngspice suite
+  from source; all current MOS component assertions passed and the tracked
+  figures regenerated reproducibly.  While auditing the basic component
+  contact sheets, the reset threshold-corner plot was technically correct but
+  visually ambiguous: \(29/39/53/34/45\) mV post-reset residues looked large
+  without the asserted \(80\) mV Level-1 reset budget.  The regenerated
+  `mos_reset_mismatch_ngspice` figure now draws that margin and labels the bar
+  values directly, while keeping the circuit unchanged.
 - Family-completed the quadrant-plot readability fix for the integrated hybrid
   local-feature evidence.  The one-level hidden-writer quadrant plot already
   had an explicit final-value panel, but the deeper integrated

@@ -25,6 +25,7 @@ from spicenn.timing import CYCLE_NS
 
 INPUT_RAIL_MODES = ("raw", "complement", "alternating-complement")
 TARGET_POLARITIES = ("active-high", "active-low")
+HIDDEN_ACTIVATION_MODELS = ("nrel", "sense")
 
 
 def block_topology(image_size: int, block_size: int, stride: int, channels: int) -> tuple[list[list[int]], int]:
@@ -174,6 +175,14 @@ def block_repeated_phases(sample_count: int, *, training_enabled: bool, phase_ti
     )
 
 
+def hidden_activation_device_model(model: str) -> str:
+    if model == "nrel":
+        return "NREL"
+    if model == "sense":
+        return "NSENSE"
+    raise ValueError(f"hidden_activation_model must be one of {HIDDEN_ACTIVATION_MODELS}")
+
+
 def block_netlist(
     samples: list[dict[str, Any]],
     weights: dict[str, Any],
@@ -191,6 +200,7 @@ def block_netlist(
     hidden_update_width: float = 12.0,
     hidden_weight_write_width: float = 0.25,
     hidden_activation_width: float = 24.0,
+    hidden_activation_model: str = "nrel",
     readout_forward_width: float = 64.0,
     phase_time_scale: float = 1.0,
     input_rail_mode: str = "alternating-complement",
@@ -213,6 +223,7 @@ def block_netlist(
         raise ValueError("readout_forward_width must be positive")
     if phase_time_scale <= 0.0:
         raise ValueError("phase_time_scale must be positive")
+    activation_model = hidden_activation_device_model(hidden_activation_model)
     if input_rail_mode not in INPUT_RAIL_MODES:
         raise ValueError(f"input_rail_mode must be one of {INPUT_RAIL_MODES}")
     blocks, expected_features = block_topology(image_size, block_size, stride, channels)
@@ -413,7 +424,7 @@ def block_netlist(
                 f"Mhbpos{feature}_f hbp{feature}_0 fwd pre{feature} 0 NMOS W={hidden_forward_width:.6g}u L=180n",
                 f"Mhbneg{feature}_f pre{feature} fwd hbn{feature}_0 0 NMOS W={hidden_neg_width:.6g}u L=180n",
                 f"Mhbneg{feature}_b hbn{feature}_0 bhn{feature} 0 0 NMOS W={hidden_neg_width:.6g}u L=180n",
-                f"Mrelu_h{feature} vdd pre{feature} act{feature} 0 NREL W={hidden_activation_width:.6g}u L=180n",
+                f"Mrelu_h{feature} vdd pre{feature} act{feature} 0 {activation_model} W={hidden_activation_width:.6g}u L=180n",
                 f"Movpos{feature}_a vdd act{feature} op{feature}_0 0 NREL W={readout_forward_width:.6g}u L=180n",
                 f"Movpos{feature}_w op{feature}_0 vwp{feature} op{feature}_1 0 NREL W={readout_forward_width:.6g}u L=180n",
                 f"Movpos{feature}_f op{feature}_1 fwd score 0 NREL W={readout_forward_width:.6g}u L=180n",
@@ -607,6 +618,7 @@ def run_device_sequence(
     hidden_update_width: float,
     hidden_weight_write_width: float,
     hidden_activation_width: float,
+    hidden_activation_model: str,
     readout_forward_width: float,
     phase_time_scale: float,
     input_rail_mode: str,
@@ -627,6 +639,7 @@ def run_device_sequence(
         hidden_update_width=hidden_update_width,
         hidden_weight_write_width=hidden_weight_write_width,
         hidden_activation_width=hidden_activation_width,
+        hidden_activation_model=hidden_activation_model,
         readout_forward_width=readout_forward_width,
         phase_time_scale=phase_time_scale,
         input_rail_mode=input_rail_mode,
@@ -662,6 +675,7 @@ def main() -> None:
     ap.add_argument("--hidden-update-width", type=float, default=12.0)
     ap.add_argument("--hidden-weight-write-width", type=float, default=0.25)
     ap.add_argument("--hidden-activation-width", type=float, default=24.0)
+    ap.add_argument("--hidden-activation-model", choices=HIDDEN_ACTIVATION_MODELS, default="nrel")
     ap.add_argument("--readout-forward-width", type=float, default=64.0)
     ap.add_argument("--phase-time-scale", type=float, default=1.0)
     ap.add_argument("--input-rail-mode", choices=INPUT_RAIL_MODES, default="alternating-complement")
@@ -723,6 +737,7 @@ def main() -> None:
         "hidden_update_width": args.hidden_update_width,
         "hidden_weight_write_width": args.hidden_weight_write_width,
         "hidden_activation_width": args.hidden_activation_width,
+        "hidden_activation_model": args.hidden_activation_model,
         "readout_forward_width": args.readout_forward_width,
         "phase_time_scale": args.phase_time_scale,
         "input_rail_mode": args.input_rail_mode,
@@ -810,6 +825,7 @@ def main() -> None:
         "hidden_update_width": args.hidden_update_width,
         "hidden_weight_write_width": args.hidden_weight_write_width,
         "hidden_activation_width": args.hidden_activation_width,
+        "hidden_activation_model": args.hidden_activation_model,
         "readout_forward_width": args.readout_forward_width,
         "phase_time_scale": args.phase_time_scale,
         "hidden_bias_positive_init": args.hidden_bias_positive_init,

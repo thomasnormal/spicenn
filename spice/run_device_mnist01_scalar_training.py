@@ -137,6 +137,7 @@ def run_device_sequence(
     weights: dict[str, float],
     *,
     hidden_credit_mode: str,
+    output_driver_model: str,
     training_enabled: bool,
     timeout: float,
     sequence: str,
@@ -148,6 +149,7 @@ def run_device_sequence(
         weights["vwp"],
         weights["vwn"],
         hidden_credit_mode=hidden_credit_mode,
+        output_driver_model=output_driver_model,
         training_enabled=training_enabled,
     )
     if "\nB" in netlist:
@@ -168,7 +170,8 @@ def main() -> None:
     ap.add_argument("--timeout", type=float, default=60.0)
     ap.add_argument("--tag", default="device_mnist01_scalar")
     ap.add_argument("--hidden-credit-mode", choices=["direct_feedback", "exact_backprop"], default="direct_feedback")
-    ap.add_argument("--decision-threshold", type=float, default=1e-6)
+    ap.add_argument("--output-driver-model", choices=["sense", "nrel"], default="sense")
+    ap.add_argument("--decision-threshold", type=float, default=0.04)
     ap.add_argument("--assert-nonbehavioral", action="store_true")
     args = ap.parse_args()
 
@@ -204,6 +207,7 @@ def main() -> None:
         eval_samples,
         initial_weights,
         hidden_credit_mode=args.hidden_credit_mode,
+        output_driver_model=args.output_driver_model,
         training_enabled=False,
         timeout=args.timeout,
         sequence="initial_eval",
@@ -214,6 +218,7 @@ def main() -> None:
         train_samples,
         initial_weights,
         hidden_credit_mode=args.hidden_credit_mode,
+        output_driver_model=args.output_driver_model,
         training_enabled=True,
         timeout=args.timeout,
         sequence="train",
@@ -225,6 +230,7 @@ def main() -> None:
         eval_samples,
         final_weights,
         hidden_credit_mode=args.hidden_credit_mode,
+        output_driver_model=args.output_driver_model,
         training_enabled=False,
         timeout=args.timeout,
         sequence="final_eval",
@@ -256,6 +262,12 @@ def main() -> None:
         "image_size": args.image_size,
         "scalar_feature": "0.55 + 0.55 * mean_downsampled_ink / 0.35, clipped to [0.05, 1.1]",
         "hidden_credit_mode": args.hidden_credit_mode,
+        "output_driver_model": args.output_driver_model,
+        "output_driver_interpretation": (
+            "Low-threshold transistor sense follower on the output node."
+            if args.output_driver_model == "sense"
+            else "Nominal NREL output source follower."
+        ),
         "learning_device_implementation": "transistor_passive",
         "no_behavioral_signal_math": True,
         "no_behavioral_learning_devices": True,

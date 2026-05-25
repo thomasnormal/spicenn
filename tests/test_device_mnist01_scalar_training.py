@@ -23,6 +23,7 @@ def test_device_mnist01_scalar_script_help_runs_from_repo_root() -> None:
 
     assert "--train-samples" in proc.stdout
     assert "--eval-samples" in proc.stdout
+    assert "--output-driver-model" in proc.stdout
     assert "--assert-nonbehavioral" in proc.stdout
 
 

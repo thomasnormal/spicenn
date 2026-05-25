@@ -21,6 +21,7 @@ def test_device_sequential_training_script_help_runs_from_repo_root() -> None:
     assert "--timeout" in proc.stdout
     assert "--tag" in proc.stdout
     assert "--hidden-credit-mode" in proc.stdout
+    assert "--output-driver-model" in proc.stdout
     assert "--assert-pass" in proc.stdout
 
 
@@ -81,6 +82,32 @@ def test_exact_backprop_hidden_credit_keeps_transistor_readout_weight_gates() ->
     assert "\nB" not in hidden_delta_block
     assert "Mhdp_a1 hdp_a0 vwp hdp_a1 0 NMOS" in hidden_delta_block
     assert "Mhdp_b1 hdp_b0 vwn hdp_b1 0 NMOS" in hidden_delta_block
+
+
+def test_output_driver_model_selects_transistor_source_follower() -> None:
+    sys.path.insert(0, str(SPICE_DIR))
+    import run_device_sequential_training as seq
+
+    sense_netlist = seq.sequential_netlist(
+        [{"vin": 0.8, "target": 1.1}],
+        whp=0.85,
+        whn=0.25,
+        vwp=0.55,
+        vwn=0.25,
+        output_driver_model="sense",
+    )
+    nrel_netlist = seq.sequential_netlist(
+        [{"vin": 0.8, "target": 1.1}],
+        whp=0.85,
+        whn=0.25,
+        vwp=0.55,
+        vwn=0.25,
+        output_driver_model="nrel",
+    )
+
+    assert "Mrelu_o vdd score out 0 NSENSE W=24u L=180n" in sense_netlist
+    assert "Mrelu_o vdd score out 0 NREL W=24u L=180n" in nrel_netlist
+    assert "\nB" not in sense_netlist
 
 
 def test_eval_mode_disables_training_phase_pulses_without_removing_forward_path() -> None:

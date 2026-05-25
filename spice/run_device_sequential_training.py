@@ -157,6 +157,14 @@ Mhdn_d2 hdn_d1 bwd hdn 0 NMOS W=32u L=180n
     raise ValueError(f"unknown hidden credit mode: {hidden_credit_mode}")
 
 
+def output_driver_line(output_driver_model: str) -> str:
+    if output_driver_model == "nrel":
+        return "Mrelu_o vdd score out 0 NREL W=24u L=180n"
+    if output_driver_model == "sense":
+        return "Mrelu_o vdd score out 0 NSENSE W=24u L=180n"
+    raise ValueError(f"unknown output driver model: {output_driver_model}")
+
+
 def sequential_netlist(
     samples: list[dict[str, float]],
     whp: float,
@@ -165,6 +173,7 @@ def sequential_netlist(
     vwn: float,
     hidden_credit_mode: str = "direct_feedback",
     training_enabled: bool = True,
+    output_driver_model: str = "sense",
 ) -> str:
     stop = len(samples) * CYCLE_NS
     measures: list[str] = []
@@ -290,7 +299,7 @@ Movpos_f op1 fwd score 0 NREL W=64u L=180n
 Movneg_f score fwd on0 0 NREL W=48u L=180n
 Movneg_a on0 act on1 0 NREL W=48u L=180n
 Movneg_w on1 vwn 0 0 NREL W=48u L=180n
-Mrelu_o vdd score out 0 NREL W=24u L=180n
+{output_driver_line(output_driver_model)}
 
 * Output error: dplus/dminus from target/raw-score conductance competition.
 Mdp_t0 vdd target dp_t 0 NSENSE W=32u L=180n
@@ -381,6 +390,12 @@ def main() -> None:
         ),
     )
     ap.add_argument(
+        "--output-driver-model",
+        choices=["sense", "nrel"],
+        default="sense",
+        help="Transistor source-follower model used for the final output/sense node.",
+    )
+    ap.add_argument(
         "--assert-pass",
         action="store_true",
         help="Exit nonzero unless the sequential transistor smoke passes all readout, output, and hidden polarity gates.",
@@ -424,6 +439,7 @@ def main() -> None:
                 float(initial["vwp"]),
                 float(initial["vwn"]),
                 hidden_credit_mode=args.hidden_credit_mode,
+                output_driver_model=args.output_driver_model,
             ),
             args.timeout,
         )
@@ -483,6 +499,7 @@ def main() -> None:
         "status": "sequential_device_training_smoke",
         "model_level": "ngspice built-in LEVEL=1 MOS models; not a foundry PDK.",
         "hidden_credit_mode": args.hidden_credit_mode,
+        "output_driver_model": args.output_driver_model,
         "learning_device_implementation": "transistor_passive",
         "signal_path": (
             "A single SPICE transient repeats forward/error/backward/accumulate/apply guide phases. "

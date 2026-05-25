@@ -2,6 +2,20 @@
 
 ## 2026-05-25
 
+- Clarified the base MOS synapse primitive plots.  The ngspice decks already
+  asserted signed W+/W- reversal, odd symmetry, shared-cap cancellation,
+  weight-rail imbalance monotonicity, tail-gate off isolation, active dynamic
+  range, and gate-swapped mirror behavior.  The regenerated
+  `mos_synapse_slice_ngspice`, `mos_synapse_weighted_ngspice`, and
+  `mos_synapse_weight_gate_ngspice` figures now label those margins directly:
+  the signed slice has \(484.2\,\mu\)A peak swing with zero displayed W-/W+
+  mirror error and \(0.0148\,\mu\)A odd-symmetry error; stored W+ and W-
+  pulses land at \(+104.9\) mV and \(-104.9\) mV while the balanced shared-cap
+  case cancels to \(0.0\) mV with no displayed hold error; weighted imbalance
+  cases move monotonically with an \(18.4\) mV minimum step and no displayed
+  hold error; and the analog tail-gate sweep keeps inactive leakage at
+  \(1.83\) pA while providing \(352.2\,\mu\)A active range with zero displayed
+  signed mirror error.
 - Clarified the MOS reset width and write-timing plots.  The reset decks
   already asserted that a complementary transmission-gate reset beats an
   NMOS-only reset, preserves common mode, suppresses writes while reset is

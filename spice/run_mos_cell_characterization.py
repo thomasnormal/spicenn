@@ -342,6 +342,9 @@ quit
     peak = max(float(np.max(np.abs(pos_signed))), 1e-30)
     require(np.max(np.abs(pos_signed + neg_signed)) < 1e-6 * peak, "negative-weight copy should reverse sign")
     require(np.max(np.abs(pos_signed + pos_signed[::-1])) < 2e-3 * peak, "synapse transfer should be odd-symmetric")
+    synapse_peak_uA = 1e6 * peak
+    synapse_mirror_error_uA = 1e6 * float(np.max(np.abs(pos_signed + neg_signed)))
+    synapse_odd_error_uA = 1e6 * float(np.max(np.abs(pos_signed + pos_signed[::-1])))
 
     cm_data = run_ngspice(cm_deck, "mos_synapse_common_mode")
     _cmt, cm_cols = load_wrdata(cm_data, 6 * len(cm_cases))
@@ -378,6 +381,13 @@ quit
     require(at(2.1e-6, pos_cap_signed) > 0.06, "w+ signed z storage should hold after pulse")
     require(at(2.1e-6, neg_cap_signed) < -0.06, "w- signed z storage should hold after pulse")
     require(abs(at(2.1e-6, cancel_cap_signed)) < 0.01, "cancelled shared z storage should hold near zero")
+    pos_store = at(1.25e-6, pos_cap_signed)
+    neg_store = at(1.25e-6, neg_cap_signed)
+    cancel_store = at(1.25e-6, cancel_cap_signed)
+    pos_hold_error = abs(at(2.1e-6, pos_cap_signed) - pos_store)
+    neg_hold_error = abs(at(2.1e-6, neg_cap_signed) - neg_store)
+    cancel_hold = at(2.1e-6, cancel_cap_signed)
+    store_hold_error = max(pos_hold_error, neg_hold_error, abs(cancel_hold - cancel_store))
 
     weighted_data = run_ngspice(weighted_deck, "mos_synapse_weighted")
     wt, weighted_cols = load_wrdata(weighted_data, 2 * len(weighted_cases) + 1)
@@ -394,6 +404,8 @@ quit
     require(abs(weighted_final[2]) < 0.01, "balanced W+ and W- weighted synapse case should cancel")
     require(np.all(np.diff(weighted_final) < -0.01), "weighted synapse net should decrease as W- dominates")
     require(np.max(np.abs(weighted_hold - weighted_final)) < 0.005, "weighted synapse states should hold after pulse")
+    weighted_hold_error = float(np.max(np.abs(weighted_hold - weighted_final)))
+    weighted_min_step = float(np.min(-np.diff(weighted_final)))
 
     magnitude_data = run_ngspice(magnitude_deck, "mos_synapse_weight_gate")
     _mg_sweep, magnitude_cols = load_wrdata(magnitude_data, 5)
@@ -426,6 +438,16 @@ quit
         np.max(np.abs(mag_pos_signed + mag_neg_signed)) < 0.02 * np.max(np.abs(mag_pos_signed)),
         "W- analog tail-gate copy should mirror W+ magnitude with reversed sign",
     )
+    mag_inactive_max_uA = 1e6 * max(
+        float(np.max(np.abs(mag_pos_signed[inactive]))),
+        float(np.max(np.abs(mag_neg_signed[inactive]))),
+    )
+    mag_inactive_max_pA = 1e6 * mag_inactive_max_uA
+    mag_dynamic_range_uA = 1e6 * min(
+        float(mag_pos_signed[-1] - mag_pos_signed[active][0]),
+        float((-mag_neg_signed[-1]) - (-mag_neg_signed[active][0])),
+    )
+    mag_mirror_error_uA = 1e6 * float(np.max(np.abs(mag_pos_signed + mag_neg_signed)))
 
     mismatch_data = run_ngspice(mismatch_deck, "mos_synapse_mismatch")
     _mt, mismatch_cols = load_wrdata(mismatch_data, 6 * len(mismatch_cases))
@@ -467,6 +489,7 @@ quit
     require(np.max(np.abs(np.array(mismatch_offsets) + np.array(mismatch_neg_offsets))) < 0.01, "gate-swapped W- mismatch offsets should mirror W+")
 
     fig, axes = plt.subplots(2, 1, figsize=(7.2, 6.2))
+    callout_box = {"facecolor": "white", "alpha": 0.82, "edgecolor": "0.8"}
     axes[0].plot(xdiff, 1e6 * pos_signed, label="$w^+$ high")
     axes[0].plot(xdiff, 1e6 * neg_signed, label="$w^-$ high")
     axes[0].axhline(0, color="0.4", linewidth=0.8)
@@ -476,6 +499,20 @@ quit
     axes[0].set_title("Signed synapse slice reverses contribution sign")
     axes[0].grid(True, alpha=0.25)
     axes[0].legend()
+    axes[0].text(
+        0.52,
+        0.16,
+        "\n".join(
+            [
+                f"peak swing {synapse_peak_uA:.1f} uA",
+                f"W-/W+ mirror error {synapse_mirror_error_uA:.3g} uA",
+                f"odd-symmetry error {synapse_odd_error_uA:.3g} uA",
+            ]
+        ),
+        transform=axes[0].transAxes,
+        fontsize="x-small",
+        bbox=callout_box,
+    )
     axes[1].plot(1e6 * t, pos_cap_signed, label="$w^+$: stored $z^- - z^+$")
     axes[1].plot(1e6 * t, neg_cap_signed, label="$w^-$: stored $z^- - z^+$")
     axes[1].plot(1e6 * t, cancel_cap_signed, label="$w^+ + w^-$ shared caps")
@@ -486,6 +523,21 @@ quit
     axes[1].set_title("Signed branches add on shared summing capacitors")
     axes[1].grid(True, alpha=0.25)
     axes[1].legend()
+    axes[1].text(
+        0.50,
+        0.17,
+        "\n".join(
+            [
+                f"W+ store {1e3 * pos_store:+.1f} mV",
+                f"W- store {1e3 * neg_store:+.1f} mV",
+                f"cancel store {1e3 * cancel_store:+.1f} mV",
+                f"max hold error {1e3 * store_hold_error:.2f} mV",
+            ]
+        ),
+        transform=axes[1].transAxes,
+        fontsize="x-small",
+        bbox=callout_box,
+    )
     fig.tight_layout()
     synapse_plot = save_plot(fig, "mos_synapse_slice_ngspice")
 
@@ -505,6 +557,21 @@ quit
     weighted_axes[0].set_title("Unequal W+ and W- tails partially cancel on shared summing caps")
     weighted_axes[0].grid(True, alpha=0.25)
     weighted_axes[0].legend(loc="upper right", ncol=2)
+    weighted_axes[0].text(
+        0.05,
+        0.14,
+        "\n".join(
+            [
+                f"W+ only {1e3 * weighted_final[0]:+.1f} mV",
+                f"balanced {1e3 * weighted_final[2]:+.1f} mV",
+                f"W- only {1e3 * weighted_final[4]:+.1f} mV",
+                f"hold error {1e3 * weighted_hold_error:.2f} mV",
+            ]
+        ),
+        transform=weighted_axes[0].transAxes,
+        fontsize="x-small",
+        bbox=callout_box,
+    )
     imbalance = np.array([wp - wm for _, wp, wm in weighted_cases])
     order = np.argsort(imbalance)
     weighted_axes[1].plot(imbalance[order], weighted_final[order], "o-", label="after write")
@@ -518,10 +585,16 @@ quit
     weighted_axes[1].text(
         0.02,
         0.88,
-        "labels: after-write mV",
+        "\n".join(
+            [
+                "labels: after-write mV",
+                f"min monotone step {1e3 * weighted_min_step:.1f} mV",
+                f"hold max error {1e3 * weighted_hold_error:.2f} mV",
+            ]
+        ),
         transform=weighted_axes[1].transAxes,
-        fontsize="small",
-        bbox={"facecolor": "white", "alpha": 0.8, "edgecolor": "0.8"},
+        fontsize="x-small",
+        bbox=callout_box,
     )
     weighted_axes[1].set_xlabel("$V_{W^+} - V_{W^-}$ during pulse (V)")
     weighted_axes[1].set_ylabel("stored preactivation (V)")
@@ -540,6 +613,20 @@ quit
     magnitude_axes[0].set_title("Synapse current grows with analog weight-tail voltage")
     magnitude_axes[0].grid(True, alpha=0.25)
     magnitude_axes[0].legend(loc="upper left")
+    magnitude_axes[0].text(
+        0.48,
+        0.16,
+        "\n".join(
+            [
+                f"inactive max {mag_inactive_max_pA:.2f} pA",
+                f"active range {mag_dynamic_range_uA:.1f} uA",
+                f"mirror error {mag_mirror_error_uA:.3g} uA",
+            ]
+        ),
+        transform=magnitude_axes[0].transAxes,
+        fontsize="x-small",
+        bbox=callout_box,
+    )
     magnitude_axes[1].plot(weight_gate, 1e6 * mag_pos_signed, label="$W^+$ contribution")
     magnitude_axes[1].plot(weight_gate, 1e6 * mag_neg_signed, label="$W^-$ contribution")
     magnitude_axes[1].axhline(0, color="0.4", linewidth=0.8)
@@ -549,6 +636,20 @@ quit
     magnitude_axes[1].set_title("Gate-swapped copy preserves opposite sign over the sweep")
     magnitude_axes[1].grid(True, alpha=0.25)
     magnitude_axes[1].legend(loc="upper left")
+    magnitude_axes[1].text(
+        0.48,
+        0.16,
+        "\n".join(
+            [
+                "W+ and W- signs stay opposite",
+                f"off-tail leakage {mag_inactive_max_pA:.2f} pA",
+                f"signed mirror error {mag_mirror_error_uA:.3g} uA",
+            ]
+        ),
+        transform=magnitude_axes[1].transAxes,
+        fontsize="x-small",
+        bbox=callout_box,
+    )
     magnitude_fig.tight_layout()
     save_plot(magnitude_fig, "mos_synapse_weight_gate_ngspice")
 

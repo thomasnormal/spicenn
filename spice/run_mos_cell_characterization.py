@@ -9355,6 +9355,102 @@ quit
         "clearing shifted-gate reset sizes should keep reset feedthrough to a small activation offset",
     )
 
+    shift_reset_common_cases = [
+        ("cm076", "0.76 V", 0.76),
+        ("cm078", "0.78 V", 0.78),
+        ("cm080", "0.80 V", 0.80),
+        ("cm082", "0.82 V", 0.82),
+        ("cm084", "0.84 V", 0.84),
+        ("cm086", "0.86 V", 0.86),
+        ("cm088", "0.88 V", 0.88),
+        ("cm090", "0.90 V", 0.90),
+        ("cm092", "0.92 V", 0.92),
+    ]
+    shift_reset_common_labels = []
+    shift_reset_common_values = []
+    shift_reset_common_gate_pre = []
+    shift_reset_common_gate_read = []
+    shift_reset_common_gate_residue = []
+    shift_reset_common_load_samples = []
+    shift_reset_common_store_samples = []
+    shift_reset_common_traces = []
+    for name, label, reset_common_v in shift_reset_common_cases:
+        stem = (
+            "mos_hidden_writer_restored_gate_hybrid_update_forward_guard_"
+            f"forward_pair_96u_zcm_0p75v_shift_reset_common_{name}"
+        )
+        deck = replace_required(high_gain_hold_deck, zcm_source_line, "VZCM zcm 0 0.75")
+        deck = replace_required(deck, zcm_cap_p_line, "CZP_HYR zp_hyr 0 {CSUM} IC=0.75")
+        deck = replace_required(deck, zcm_cap_m_line, "CZM_HYR zm_hyr 0 {CSUM} IC=0.75")
+        deck = replace_required(
+            deck,
+            high_gain_forward_pair_lines,
+            shifted_forward_pair_lines(
+                10.0,
+                gate_ic_p=0.35,
+                gate_ic_m=1.45,
+                reset_ref_p=reset_common_v,
+                reset_ref_m=reset_common_v,
+            ),
+        )
+        deck = replace_required(deck, "VRESET_HYR rst_hyr 0 0", shift_reset_pulse)
+        deck = replace_required(deck, "VRESETN_HYR rstn_hyr 0 1.8", shift_resetn_pulse)
+        deck = replace_required(
+            deck,
+            "mos_hidden_writer_restored_gate_hybrid_update_forward_guard_forward_pair_96u_hold.dat",
+            f"{stem}.dat",
+        )
+        deck = add_shifted_gate_probes(deck, stem)
+        data = run_ngspice(deck, stem)
+        rct, cols = load_wrdata(data, 25)
+
+        def rctat(time_s: float, values: np.ndarray) -> float:
+            return float(values[np.argmin(np.abs(rct - time_s))])
+
+        gate_diff = cols[0] - cols[1]
+        gate_common = 0.5 * (cols[0] + cols[1])
+        load = cols[14] - cols[13]
+        store = cols[16] - cols[15]
+        post_reset = (rct > 2.64e-6) & (rct < 2.72e-6)
+        shift_reset_common_labels.append(label)
+        shift_reset_common_values.append(reset_common_v)
+        shift_reset_common_gate_pre.append(rctat(2.70e-6, gate_common))
+        shift_reset_common_gate_read.append(rctat(3.315e-6, gate_common))
+        shift_reset_common_gate_residue.append(np.max(np.abs(gate_diff[post_reset])))
+        shift_reset_common_load_samples.append(rctat(3.315e-6, load))
+        shift_reset_common_store_samples.append(rctat(3.575e-6, store))
+        shift_reset_common_traces.append((label, rct, gate_common, load, store))
+
+    shift_reset_common_values = np.array(shift_reset_common_values)
+    shift_reset_common_gate_pre = np.array(shift_reset_common_gate_pre)
+    shift_reset_common_gate_read = np.array(shift_reset_common_gate_read)
+    shift_reset_common_gate_residue = np.array(shift_reset_common_gate_residue)
+    shift_reset_common_load_samples = np.array(shift_reset_common_load_samples)
+    shift_reset_common_store_samples = np.array(shift_reset_common_store_samples)
+    shift_reset_common_store_error = shift_reset_common_store_samples - positive_shift_store_samples[0]
+    shift_reset_common_tuned_idx = shift_reset_common_labels.index("0.80 V")
+    shift_reset_common_old_idx = shift_reset_common_labels.index("0.90 V")
+    require(
+        np.max(shift_reset_common_gate_residue) < 0.002,
+        "reset-common sweep should clear the bad shifted-gate differential at every common-mode target",
+    )
+    require(
+        abs(shift_reset_common_store_error[shift_reset_common_tuned_idx]) < 0.001,
+        "0.80 V shifted-gate reset common should reproduce the initialized-gate activation",
+    )
+    require(
+        shift_reset_common_store_error[shift_reset_common_old_idx] > 0.004,
+        "0.90 V shifted-gate reset common should expose the previous activation feedthrough offset",
+    )
+    require(
+        shift_reset_common_store_samples[0] < 0.035,
+        "too-low shifted-gate reset common should underdrive the forward store",
+    )
+    require(
+        np.all(np.diff(shift_reset_common_store_samples) > 0.0),
+        "shifted-gate reset-common sweep should monotonically increase stored activation in this window",
+    )
+
     shift_reuse_stem = (
         "mos_hidden_writer_restored_gate_hybrid_update_forward_guard_"
         "forward_pair_96u_zcm_0p75v_shift_repeated_reset_reuse"
@@ -9438,6 +9534,83 @@ quit
     require(
         abs(shift_reuse_bias_drift) < 1e-5,
         "shifted-gate repeated read/reset cycles should not disturb bias state",
+    )
+
+    shift_reuse_common_stem = (
+        "mos_hidden_writer_restored_gate_hybrid_update_forward_guard_"
+        "forward_pair_96u_zcm_0p75v_shift_repeated_reset_reuse_cm080"
+    )
+    shift_reuse_common_deck = replace_required(hybrid_forward_read_reuse_deck, zcm_source_line, "VZCM zcm 0 0.75")
+    shift_reuse_common_deck = replace_required(shift_reuse_common_deck, zcm_cap_p_line, "CZP_HYR zp_hyr 0 {CSUM} IC=0.75")
+    shift_reuse_common_deck = replace_required(shift_reuse_common_deck, zcm_cap_m_line, "CZM_HYR zm_hyr 0 {CSUM} IC=0.75")
+    shift_reuse_common_deck = replace_required(
+        shift_reuse_common_deck,
+        forward_pair_lines,
+        shifted_forward_pair_lines(10.0, reset_ref_p=0.80, reset_ref_m=0.80),
+    )
+    shift_reuse_common_deck = replace_required(
+        shift_reuse_common_deck,
+        "mos_hidden_writer_restored_gate_hybrid_update_forward_read_reuse.dat",
+        f"{shift_reuse_common_stem}.dat",
+    )
+    shift_reuse_common_deck = add_shifted_gate_probes(shift_reuse_common_deck, shift_reuse_common_stem)
+    shift_reuse_common_data = run_ngspice(shift_reuse_common_deck, shift_reuse_common_stem)
+    shrct, shift_reuse_common_cols = load_wrdata(shift_reuse_common_data, 25)
+
+    def shrctat(time_s: float, values: np.ndarray) -> float:
+        return float(values[np.argmin(np.abs(shrct - time_s))])
+
+    shift_reuse_common_gate_diff = shift_reuse_common_cols[0] - shift_reuse_common_cols[1]
+    shift_reuse_common_gate_common = 0.5 * (shift_reuse_common_cols[0] + shift_reuse_common_cols[1])
+    shift_reuse_common_weight = shift_reuse_common_cols[7] - shift_reuse_common_cols[8]
+    shift_reuse_common_bias = shift_reuse_common_cols[9] - shift_reuse_common_cols[10]
+    shift_reuse_common_preact = shift_reuse_common_cols[12] - shift_reuse_common_cols[11]
+    shift_reuse_common_store = shift_reuse_common_cols[16] - shift_reuse_common_cols[15]
+    shift_reuse_common_z_samples = np.array([shrctat(ts, shift_reuse_common_preact) for ts in shift_reuse_z_times])
+    shift_reuse_common_h_samples = np.array([shrctat(ts, shift_reuse_common_store) for ts in shift_reuse_h_times])
+    shift_reuse_common_gate_reset_residue = np.array(
+        [abs(shrctat(ts, shift_reuse_common_gate_diff)) for ts in shift_reuse_reset_times]
+    )
+    shift_reuse_common_gate_reset_common = np.array(
+        [shrctat(ts, shift_reuse_common_gate_common) for ts in shift_reuse_reset_times]
+    )
+    shift_reuse_common_weight_after_write = shrctat(2.55e-6, shift_reuse_common_weight)
+    shift_reuse_common_bias_after_write = shrctat(2.55e-6, shift_reuse_common_bias)
+    shift_reuse_common_weight_drift = (
+        shrctat(7.45e-6, shift_reuse_common_weight) - shift_reuse_common_weight_after_write
+    )
+    shift_reuse_common_bias_drift = shrctat(7.45e-6, shift_reuse_common_bias) - shift_reuse_common_bias_after_write
+    require(
+        np.all(shift_reuse_common_z_samples > 0.040),
+        "0.80 V reset-common reuse deck should repeatedly read useful low-common-mode preactivation",
+    )
+    require(
+        np.all(shift_reuse_common_h_samples > 0.045),
+        "0.80 V reset-common reuse deck should repeatedly store useful low-common-mode activation",
+    )
+    require(
+        np.max(shift_reuse_common_h_samples) - np.min(shift_reuse_common_h_samples) < 0.001,
+        "0.80 V reset-common reuse deck should remove the repeatable reset feedthrough bump",
+    )
+    require(
+        np.max(shift_reuse_h_samples) - np.min(shift_reuse_h_samples) > 0.005,
+        "0.90 V reset-common reuse deck should continue exposing the old feedthrough bump",
+    )
+    require(
+        np.max(shift_reuse_common_gate_reset_residue) < 0.002,
+        "0.80 V reset-common reuse deck should clear the gate differential between reads",
+    )
+    require(
+        np.max(np.abs(shift_reuse_common_gate_reset_common - 0.80)) < 0.005,
+        "0.80 V reset-common reuse deck should restore the tuned gate common mode between reads",
+    )
+    require(
+        abs(shift_reuse_common_weight_drift) < 1e-5,
+        "0.80 V reset-common reuse deck should not disturb weight state",
+    )
+    require(
+        abs(shift_reuse_common_bias_drift) < 1e-5,
+        "0.80 V reset-common reuse deck should not disturb bias state",
     )
 
     shift_noise_cases = [
@@ -12743,6 +12916,73 @@ quit
     save_plot(
         shift_reset_size_fig,
         "mos_hidden_writer_restored_gate_hybrid_update_forward_guard_forward_pair_96u_shifted_gate_reset_feedthrough_size_ngspice",
+    )
+
+    shift_reset_common_fig, shift_reset_common_axes = plt.subplots(
+        3,
+        1,
+        figsize=(7.4, 7.2),
+        gridspec_kw={"height_ratios": [0.95, 0.8, 0.9]},
+    )
+    shift_reset_common_axes[0].plot(
+        shift_reset_common_values,
+        1e3 * shift_reset_common_store_samples,
+        "o-",
+        label="physical reset",
+    )
+    shift_reset_common_axes[0].axhline(
+        1e3 * positive_shift_store_samples[0],
+        color="0.35",
+        linestyle="--",
+        linewidth=0.9,
+        label="initialized-gate result",
+    )
+    shift_reset_common_axes[0].axhspan(45, 80, color="0.7", alpha=0.12, label="useful bounded window")
+    shift_reset_common_axes[0].axvline(0.80, color="tab:green", linestyle=":", linewidth=1.1, label="tuned 0.80 V")
+    shift_reset_common_axes[0].axvline(0.90, color="tab:red", linestyle=":", linewidth=1.1, label="old 0.90 V")
+    shift_reset_common_axes[0].set_ylabel("stored $h$ (mV)")
+    shift_reset_common_axes[0].set_title("Reset common-mode tunes out shifted-gate activation feedthrough")
+    shift_reset_common_axes[0].grid(True, alpha=0.25)
+    shift_reset_common_axes[0].legend(loc="lower right", ncol=2, fontsize="x-small")
+    shift_reset_common_axes[1].plot(
+        shift_reset_common_values,
+        shift_reset_common_gate_pre,
+        "o-",
+        label="post-reset gate common",
+    )
+    shift_reset_common_axes[1].plot(
+        shift_reset_common_values,
+        shift_reset_common_gate_read,
+        "s--",
+        label="read-time gate common",
+    )
+    shift_reset_common_axes[1].set_ylabel("gate common (V)")
+    shift_reset_common_axes[1].set_title("Read coupling preserves the common-mode offset set by reset")
+    shift_reset_common_axes[1].grid(True, alpha=0.25)
+    shift_reset_common_axes[1].legend(loc="upper left", ncol=2, fontsize="x-small")
+    reuse_cycle_x = np.arange(1, len(shift_reuse_h_samples) + 1)
+    shift_reset_common_axes[2].plot(
+        reuse_cycle_x,
+        1e3 * shift_reuse_h_samples,
+        "o-",
+        label="0.90 V reset common",
+    )
+    shift_reset_common_axes[2].plot(
+        reuse_cycle_x,
+        1e3 * shift_reuse_common_h_samples,
+        "s-",
+        label="0.80 V reset common",
+    )
+    shift_reset_common_axes[2].set_xticks(reuse_cycle_x)
+    shift_reset_common_axes[2].set_xlabel("read/store cycle")
+    shift_reset_common_axes[2].set_ylabel("stored $h$ (mV)")
+    shift_reset_common_axes[2].set_title("Tuned reset common removes the repeated-reset bump")
+    shift_reset_common_axes[2].grid(True, alpha=0.25)
+    shift_reset_common_axes[2].legend(loc="upper right", fontsize="small")
+    shift_reset_common_fig.tight_layout()
+    save_plot(
+        shift_reset_common_fig,
+        "mos_hidden_writer_restored_gate_hybrid_update_forward_guard_forward_pair_96u_shifted_gate_reset_common_ngspice",
     )
 
     shift_reuse_fig, shift_reuse_axes = plt.subplots(

@@ -1967,6 +1967,31 @@ must satisfy before it can replace the current behavioral prototype.
 
 \begin{figure}[H]
   \centering
+  \includegraphics[width=0.95\linewidth]{figures/mos_hidden_writer_restored_gate_hybrid_update_forward_guard_forward_pair_96u_shifted_gate_reset_common_ngspice.png}
+  \caption{Ngspice shifted-gate reset common-mode sweep for the same
+  transistor-level reset/read/store path.  The reset-strength sweep above
+  showed that the remaining \(5.5\) mV activation offset was not differential
+  reset residue: the MOS reset switches were clearing the bad gate differential
+  below the millivolt scale.  The missing parameter was common mode.  The
+  initialized-gate fixture begins readback near \(0.8007\) V gate common mode,
+  while the physical reset deck had been restoring the shifted gates to
+  \(0.900\) V.  Sweeping the physical reset target from \(0.76\) to \(0.92\) V
+  keeps the post-reset differential cleared at every point, but changes the
+  final stored activation monotonically from \(28.692\) to \(57.794\) mV.  A
+  \(0.80\) V reset target stores \(51.982\) mV, matching the
+  \(52.154\) mV initialized-gate result; the old \(0.90\) V target stores
+  \(57.628\) mV.  In the repeated-reset reuse deck, changing only the reset
+  common mode removes the repeatable capture bump: the old \(0.90\) V target
+  stores \(49.528,56.585,\) and \(56.585\) mV across three cycles, while the
+  tuned \(0.80\) V target stores \(49.528,49.323,\) and \(49.323\) mV.  The
+  fix does not introduce behavioral help or hidden state forcing; it is the
+  same complementary MOS reset network restoring the shifted-gate common mode
+  to the calibrated read point.}
+  \label{fig:mos-hidden-writer-restored-gate-hybrid-update-forward-guard-forward-pair-96u-shifted-gate-reset-common-ngspice}
+\end{figure}
+
+\begin{figure}[H]
+  \centering
   \includegraphics[width=0.95\linewidth]{figures/mos_hidden_writer_restored_gate_hybrid_update_forward_guard_forward_pair_96u_shifted_gate_repeated_reset_reuse_ngspice.png}
   \caption{Ngspice repeated physical reset/read/store reuse check for the
   shifted-gate headroom fix.  This deck starts from one MOS-written \(W/B\)

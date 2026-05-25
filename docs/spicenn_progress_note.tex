@@ -2017,6 +2017,28 @@ must satisfy before it can replace the current behavioral prototype.
 
 \begin{figure}[H]
   \centering
+  \includegraphics[width=0.95\linewidth]{figures/mos_hidden_writer_restored_gate_hybrid_update_forward_guard_forward_pair_96u_shifted_gate_reset_refpert080_ngspice.png}
+  \caption{Ngspice physical reset-reference perturbation check for the tuned
+  shifted-gate reset path.  This is the physical counterpart to the
+  initial-condition noise sweep below: the deck starts the shifted-gate
+  capacitors from the same deliberately bad state as the reset/feedthrough
+  stress, then uses the real MOS reset pulse while perturbing the reset
+  reference rails around the selected \(0.80\) V common-mode target.  The
+  nominal tuned-reset case stores \(51.982\) mV.  Common reset-reference
+  errors of \(-10\) and \(+10\) mV store \(49.382\) and \(53.685\) mV, so
+  common-mode reference error is mild in this operating window.  A helpful
+  \(-10\) mV differential reference error stores \(69.220\) mV, while
+  destructive \(+10\) and \(+20\) mV differential reference errors store
+  \(34.379\) and \(16.541\) mV.  The design rule is sharper than the
+  reset-common sweep alone: the reset network may restore the right common
+  mode and clear the old gate state, but differential error between the two
+  physical reset references directly consumes the shifted-gate margin and
+  needs a tighter budget than common-mode reference error.}
+  \label{fig:mos-hidden-writer-restored-gate-hybrid-update-forward-guard-forward-pair-96u-shifted-gate-reset-refpert080-ngspice}
+\end{figure}
+
+\begin{figure}[H]
+  \centering
   \includegraphics[width=0.95\linewidth]{figures/mos_hidden_writer_restored_gate_hybrid_update_forward_guard_forward_pair_96u_shifted_gate_offset_noise_ngspice.png}
   \caption{Ngspice deterministic shifted-gate offset/noise sweep for the
   \(96\,\mu\mathrm{m}\) low-common-mode headroom fix.  The deck keeps the

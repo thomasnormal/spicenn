@@ -9624,6 +9624,117 @@ quit
         "0.80 V reset-common reuse deck should not disturb bias state",
     )
 
+    shift_reset_ref_perturb_cases = [
+        ("nominal", "nominal", 0.0, 0.0),
+        ("common_low_10mv", "common -10 mV", -0.010, 0.0),
+        ("common_high_10mv", "common +10 mV", 0.010, 0.0),
+        ("helpful_diff_10mv", "helpful diff -10 mV", 0.0, -0.010),
+        ("destructive_diff_10mv", "destructive diff +10 mV", 0.0, 0.010),
+        ("destructive_diff_20mv", "destructive diff +20 mV", 0.0, 0.020),
+    ]
+    shift_reset_ref_perturb_labels = []
+    shift_reset_ref_perturb_gate_post = []
+    shift_reset_ref_perturb_gate_read = []
+    shift_reset_ref_perturb_load_samples = []
+    shift_reset_ref_perturb_store_samples = []
+    shift_reset_ref_perturb_traces = []
+    for name, label, common_offset_v, diff_offset_v in shift_reset_ref_perturb_cases:
+        reset_ref_p = 0.80 + common_offset_v + 0.5 * diff_offset_v
+        reset_ref_m = 0.80 + common_offset_v - 0.5 * diff_offset_v
+        stem = (
+            "mos_hidden_writer_restored_gate_hybrid_update_forward_guard_"
+            f"forward_pair_96u_zcm_0p75v_shift_reset_refpert080_{name}"
+        )
+        deck = replace_required(high_gain_hold_deck, zcm_source_line, "VZCM zcm 0 0.75")
+        deck = replace_required(deck, zcm_cap_p_line, "CZP_HYR zp_hyr 0 {CSUM} IC=0.75")
+        deck = replace_required(deck, zcm_cap_m_line, "CZM_HYR zm_hyr 0 {CSUM} IC=0.75")
+        deck = replace_required(
+            deck,
+            high_gain_forward_pair_lines,
+            shifted_forward_pair_lines(
+                10.0,
+                gate_ic_p=0.35,
+                gate_ic_m=1.45,
+                reset_ref_p=reset_ref_p,
+                reset_ref_m=reset_ref_m,
+            ),
+        )
+        deck = replace_required(deck, "VRESET_HYR rst_hyr 0 0", shift_reset_pulse)
+        deck = replace_required(deck, "VRESETN_HYR rstn_hyr 0 1.8", shift_resetn_pulse)
+        deck = replace_required(
+            deck,
+            "mos_hidden_writer_restored_gate_hybrid_update_forward_guard_forward_pair_96u_hold.dat",
+            f"{stem}.dat",
+        )
+        deck = add_shifted_gate_probes(deck, stem)
+        data = run_ngspice(deck, stem)
+        rpt, cols = load_wrdata(data, 25)
+
+        def rpat(time_s: float, values: np.ndarray) -> float:
+            return float(values[np.argmin(np.abs(rpt - time_s))])
+
+        gate_diff = cols[0] - cols[1]
+        load = cols[14] - cols[13]
+        store = cols[16] - cols[15]
+        shift_reset_ref_perturb_labels.append(label)
+        shift_reset_ref_perturb_gate_post.append(rpat(2.70e-6, gate_diff))
+        shift_reset_ref_perturb_gate_read.append(rpat(3.315e-6, gate_diff))
+        shift_reset_ref_perturb_load_samples.append(rpat(3.315e-6, load))
+        shift_reset_ref_perturb_store_samples.append(rpat(3.575e-6, store))
+        shift_reset_ref_perturb_traces.append((label, rpt, gate_diff, load, store))
+
+    shift_reset_ref_perturb_gate_post = np.array(shift_reset_ref_perturb_gate_post)
+    shift_reset_ref_perturb_gate_read = np.array(shift_reset_ref_perturb_gate_read)
+    shift_reset_ref_perturb_load_samples = np.array(shift_reset_ref_perturb_load_samples)
+    shift_reset_ref_perturb_store_samples = np.array(shift_reset_ref_perturb_store_samples)
+    reset_ref_perturb_nominal_idx = 0
+    reset_ref_perturb_common_idx = [1, 2]
+    reset_ref_perturb_helpful_idx = 3
+    reset_ref_perturb_destructive_idx = [4, 5]
+    require(
+        abs(shift_reset_ref_perturb_store_samples[reset_ref_perturb_nominal_idx] - shift_reset_common_store_samples[shift_reset_common_tuned_idx])
+        < 0.001,
+        "0.80 V reset-reference perturb nominal case should match the reset-common sweep",
+    )
+    require(
+        np.all(shift_reset_ref_perturb_store_samples[reset_ref_perturb_common_idx] > 0.040),
+        "10 mV physical reset-reference common perturbations should keep useful activation",
+    )
+    require(
+        np.max(
+            np.abs(
+                shift_reset_ref_perturb_store_samples[reset_ref_perturb_common_idx]
+                - shift_reset_ref_perturb_store_samples[reset_ref_perturb_nominal_idx]
+            )
+        )
+        < 0.010,
+        "10 mV physical reset-reference common perturbations should stay a small activation error",
+    )
+    require(
+        shift_reset_ref_perturb_store_samples[reset_ref_perturb_helpful_idx]
+        > shift_reset_ref_perturb_store_samples[reset_ref_perturb_nominal_idx],
+        "helpful physical reset-reference differential perturbation should increase stored activation",
+    )
+    require(
+        np.all(
+            np.diff(
+                shift_reset_ref_perturb_store_samples[
+                    [reset_ref_perturb_nominal_idx, *reset_ref_perturb_destructive_idx]
+                ]
+            )
+            < -0.004
+        ),
+        "destructive physical reset-reference differential perturbations should monotonically reduce activation",
+    )
+    require(
+        shift_reset_ref_perturb_store_samples[reset_ref_perturb_destructive_idx[0]] > 0.025,
+        "10 mV destructive physical reset-reference differential perturbation should keep useful activation",
+    )
+    require(
+        shift_reset_ref_perturb_store_samples[reset_ref_perturb_destructive_idx[1]] > 0.010,
+        "20 mV destructive physical reset-reference differential perturbation should stay positive but expose limited margin",
+    )
+
     shift_noise_cases = [
         ("nominal", "nominal", 0.0, 0.0),
         ("common_low_25mv", "$V_g$ common -25 mV", -0.025, 0.0),
@@ -13062,6 +13173,54 @@ quit
     save_plot(
         shift_reuse_fig,
         "mos_hidden_writer_restored_gate_hybrid_update_forward_guard_forward_pair_96u_shifted_gate_repeated_reset_reuse_ngspice",
+    )
+
+    shift_reset_ref_perturb_fig, shift_reset_ref_perturb_axes = plt.subplots(
+        2,
+        1,
+        figsize=(7.4, 6.4),
+        gridspec_kw={"height_ratios": [1.0, 0.85]},
+    )
+    for label, rpt, _gate_diff, _load, store in shift_reset_ref_perturb_traces:
+        if label in {"nominal", "helpful diff -10 mV", "destructive diff +10 mV", "destructive diff +20 mV"}:
+            shift_reset_ref_perturb_axes[0].plot(1e6 * rpt, 1e3 * store, label=label)
+    shift_reset_ref_perturb_axes[0].axhline(0, color="0.4", linewidth=0.8)
+    shift_reset_ref_perturb_axes[0].axvline(3.33, color="0.25", linestyle="--", linewidth=0.9, alpha=0.6, label="guard off")
+    shift_reset_ref_perturb_axes[0].set_xlim(3.05, 3.75)
+    shift_reset_ref_perturb_axes[0].set_ylabel("stored activation (mV)")
+    shift_reset_ref_perturb_axes[0].set_title("Physical reset-reference differential error changes shifted-gate margin")
+    shift_reset_ref_perturb_axes[0].grid(True, alpha=0.25)
+    shift_reset_ref_perturb_axes[0].legend(loc="upper right", fontsize="small")
+    shift_reset_ref_perturb_x = np.arange(len(shift_reset_ref_perturb_labels))
+    shift_reset_ref_perturb_axes[1].bar(
+        shift_reset_ref_perturb_x - 0.24,
+        1e3 * shift_reset_ref_perturb_gate_post,
+        width=0.24,
+        label="post-reset gate diff",
+    )
+    shift_reset_ref_perturb_axes[1].bar(
+        shift_reset_ref_perturb_x,
+        1e3 * shift_reset_ref_perturb_load_samples,
+        width=0.24,
+        label="forward load",
+    )
+    shift_reset_ref_perturb_axes[1].bar(
+        shift_reset_ref_perturb_x + 0.24,
+        1e3 * shift_reset_ref_perturb_store_samples,
+        width=0.24,
+        label="stored $h$",
+    )
+    shift_reset_ref_perturb_axes[1].axhline(0, color="0.4", linewidth=0.8)
+    shift_reset_ref_perturb_axes[1].set_xticks(shift_reset_ref_perturb_x)
+    shift_reset_ref_perturb_axes[1].set_xticklabels(shift_reset_ref_perturb_labels, rotation=18, ha="right")
+    shift_reset_ref_perturb_axes[1].set_ylabel("sampled differential (mV)")
+    shift_reset_ref_perturb_axes[1].set_title("Common reset-reference errors are mild; differential errors consume margin")
+    shift_reset_ref_perturb_axes[1].grid(True, axis="y", alpha=0.25)
+    shift_reset_ref_perturb_axes[1].legend(loc="upper right", ncol=3, fontsize="small")
+    shift_reset_ref_perturb_fig.tight_layout()
+    save_plot(
+        shift_reset_ref_perturb_fig,
+        "mos_hidden_writer_restored_gate_hybrid_update_forward_guard_forward_pair_96u_shifted_gate_reset_refpert080_ngspice",
     )
 
     shift_noise_fig, shift_noise_axes = plt.subplots(

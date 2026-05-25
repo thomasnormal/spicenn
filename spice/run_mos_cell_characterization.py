@@ -8753,6 +8753,7 @@ quit
         reset_n_model: str = "NMOS",
         reset_p_model: str = "PMOS",
         reset_ref_series_ohm: float = 0.0,
+        reset_ref_shunt_pf: float = 0.0,
     ) -> str:
         def fmt_gate_ic(value: float) -> str:
             if abs(value - round(value, 2)) < 1e-12:
@@ -8760,13 +8761,20 @@ quit
             return f"{value:.5f}"
 
         def reset_ref_source(name: str, node: str, value: float) -> list[str]:
+            lines: list[str] = []
             if reset_ref_series_ohm <= 0.0:
-                return [f"V{name}_HYR {node} 0 {fmt_gate_ic(value)}"]
-            source_node = f"{node}_src"
-            return [
-                f"V{name}_HYR {source_node} 0 {fmt_gate_ic(value)}",
-                f"R{name}_HYR {source_node} {node} {reset_ref_series_ohm:g}",
-            ]
+                lines.append(f"V{name}_HYR {node} 0 {fmt_gate_ic(value)}")
+            else:
+                source_node = f"{node}_src"
+                lines.extend(
+                    [
+                        f"V{name}_HYR {source_node} 0 {fmt_gate_ic(value)}",
+                        f"R{name}_HYR {source_node} {node} {reset_ref_series_ohm:g}",
+                    ]
+                )
+            if reset_ref_shunt_pf > 0.0:
+                lines.append(f"C{name}_DECAP_HYR {node} 0 {reset_ref_shunt_pf:g}p IC={fmt_gate_ic(value)}")
+            return lines
 
         if abs(reset_ref_p - reset_ref_m) < 1e-12:
             reset_ref_lines = reset_ref_source("ZGCM", "zgcm_hyr", reset_ref_p)
@@ -10090,6 +10098,7 @@ quit
         reset_n_vto: float | None = None,
         reset_p_vto: float | None = None,
         reset_ref_series_ohm: float = 0.0,
+        reset_ref_shunt_pf: float = 0.0,
         first_reset_active_width_us: float | None = None,
     ) -> tuple[np.ndarray, list[np.ndarray]]:
         model_tag = name.upper()
@@ -10130,6 +10139,7 @@ quit
                 reset_n_model=reset_n_model,
                 reset_p_model=reset_p_model,
                 reset_ref_series_ohm=reset_ref_series_ohm,
+                reset_ref_shunt_pf=reset_ref_shunt_pf,
             ),
         )
         if first_reset_active_width_us is None:
@@ -10896,6 +10906,83 @@ quit
     require(
         np.all(np.abs(shift_refz_width_h_sample[:, r100k_idx, -1] - shift_refz_width_h_sample[:, r10k_idx, -1]) > 0.020),
         "100k trim-source impedance should still visibly miss the recovered 10k activation",
+    )
+
+    shift_refz_decap_cases = [
+        ("c0p", "0 pF", 0.0),
+        ("c25p", "25 pF", 25.0),
+        ("c50p", "50 pF", 50.0),
+        ("c100p", "100 pF", 100.0),
+        ("c250p", "250 pF", 250.0),
+    ]
+    shift_refz_decap_sample_time = 3.555e-6
+    shift_refz_decap_trim_error = []
+    shift_refz_decap_h_sample = []
+    shift_refz_decap_z_sample = []
+    shift_refz_decap_traces = []
+    for branch_name, branch_label, nfp_vto, nfm_vto, reset_trim_v in shift_reset_branch_specs:
+        branch_trim_error = []
+        branch_h_sample = []
+        branch_z_sample = []
+        for cap_name, cap_label, cap_pf in shift_refz_decap_cases:
+            dt, dc_cols = run_trimmed_reuse_skew_law_case(
+                f"{branch_name}_r100k_{cap_name}",
+                nfp_vto,
+                nfm_vto,
+                reset_trim_v,
+                family="refzdecap",
+                reset_ref_series_ohm=1e5,
+                reset_ref_shunt_pf=cap_pf,
+                first_reset_active_width_us=0.120,
+            )
+
+            def dcat(time_s: float, values: np.ndarray) -> float:
+                return float(values[np.argmin(np.abs(dt - time_s))])
+
+            gate_diff = dc_cols[0] - dc_cols[1]
+            z = dc_cols[12] - dc_cols[11]
+            store = dc_cols[16] - dc_cols[15]
+            gate_sample_time = (2.50 + 0.120 + 0.08) * 1e-6
+            trim_error = abs(dcat(gate_sample_time, gate_diff) - reset_trim_v)
+            z_reset = abs(dcat(gate_sample_time, z))
+            h_reset = abs(dcat(gate_sample_time, store))
+            h_sample = dcat(shift_refz_decap_sample_time, store)
+            z_sample = dcat(shift_refz_decap_sample_time, z)
+            require(
+                z_reset < 0.010 and h_reset < 0.010,
+                f"{branch_label} {cap_label} local trim decoupling should still clear z/h",
+            )
+            require(
+                z_sample > 0.030,
+                f"{branch_label} {cap_label} local trim decoupling should keep useful read preactivation",
+            )
+            branch_trim_error.append(trim_error)
+            branch_h_sample.append(h_sample)
+            branch_z_sample.append(z_sample)
+            if cap_name in {"c0p", "c100p", "c250p"}:
+                shift_refz_decap_traces.append((branch_label, cap_label, dt, store))
+        shift_refz_decap_trim_error.append(branch_trim_error)
+        shift_refz_decap_h_sample.append(branch_h_sample)
+        shift_refz_decap_z_sample.append(branch_z_sample)
+
+    shift_refz_decap_trim_error = np.array(shift_refz_decap_trim_error)
+    shift_refz_decap_h_sample = np.array(shift_refz_decap_h_sample)
+    shift_refz_decap_z_sample = np.array(shift_refz_decap_z_sample)
+    require(
+        np.all(np.diff(shift_refz_decap_trim_error, axis=1) < 0.0),
+        "local reset-reference decoupling should monotonically reduce 100k trim error",
+    )
+    require(
+        np.all(shift_refz_decap_trim_error[:, -1] < 0.006),
+        "250 pF local reset-reference decoupling should recover 100k trim delivery",
+    )
+    require(
+        np.all(np.abs(shift_refz_decap_h_sample[:, -1] - shift_refz_decap_h_sample[:, 0]) > 0.060),
+        "local reset-reference decoupling should visibly recover 100k first-cycle activation",
+    )
+    require(
+        np.all((shift_refz_decap_h_sample[:, -1] > 0.020) & (shift_refz_decap_h_sample[:, -1] < 0.090)),
+        "250 pF local reset-reference decoupling should put first-cycle activation in the useful band",
     )
 
     tail_bias_forward_tail_line = "MNFT_HYR ftail_hyr vbias 0 0 NMOS L={LCH} W=48u"
@@ -12545,6 +12632,60 @@ quit
     save_plot(
         shift_refz_width_fig,
         "mos_hidden_writer_restored_gate_hybrid_update_forward_guard_forward_pair_96u_shifted_gate_reset_ref_width_ngspice",
+    )
+
+    shift_refz_decap_fig, shift_refz_decap_axes = plt.subplots(
+        3,
+        1,
+        figsize=(7.4, 7.4),
+        gridspec_kw={"height_ratios": [0.85, 0.85, 1.0]},
+    )
+    refz_decap_x = np.array([cap_pf for _name, _label, cap_pf in shift_refz_decap_cases])
+    for branch_idx, (_branch_name, branch_label, _nfp, _nfm, _trim) in enumerate(shift_reset_branch_specs):
+        marker = "o-" if branch_idx == 0 else "s--"
+        shift_refz_decap_axes[0].plot(
+            refz_decap_x,
+            1e3 * shift_refz_decap_trim_error[branch_idx],
+            marker,
+            label=branch_label,
+        )
+    shift_refz_decap_axes[0].axhline(6, color="0.4", linestyle=":", linewidth=0.9, label="6 mV trim-error gate")
+    shift_refz_decap_axes[0].set_ylabel("trim error (mV)")
+    shift_refz_decap_axes[0].set_title("Local trim-reference capacitance buffers a 100k source")
+    shift_refz_decap_axes[0].grid(True, axis="y", alpha=0.25)
+    shift_refz_decap_axes[0].legend(loc="upper right", ncol=2, fontsize="xx-small")
+    for branch_idx, (_branch_name, branch_label, _nfp, _nfm, _trim) in enumerate(shift_reset_branch_specs):
+        marker = "o-" if branch_idx == 0 else "s--"
+        shift_refz_decap_axes[1].plot(
+            refz_decap_x,
+            1e3 * shift_refz_decap_h_sample[branch_idx],
+            marker,
+            label=branch_label,
+        )
+    shift_refz_decap_axes[1].axhspan(40, 55, color="0.7", alpha=0.12, label="calibrated window")
+    shift_refz_decap_axes[1].set_ylabel("first stored $h$ (mV)")
+    shift_refz_decap_axes[1].set_title("Buffered trim rails recover first-cycle activation")
+    shift_refz_decap_axes[1].grid(True, axis="y", alpha=0.25)
+    shift_refz_decap_axes[1].legend(loc="upper right", ncol=2, fontsize="xx-small")
+    for branch_label, cap_label, dct, store in shift_refz_decap_traces:
+        linestyle = "-" if cap_label == "0 pF" else "--" if cap_label == "100 pF" else ":"
+        shift_refz_decap_axes[2].plot(
+            1e6 * dct,
+            1e3 * store,
+            linestyle,
+            label=f"{branch_label.split(', ')[1]}, {cap_label}",
+        )
+    shift_refz_decap_axes[2].axhline(0, color="0.4", linewidth=0.8)
+    shift_refz_decap_axes[2].set_xlim(2.35, 3.75)
+    shift_refz_decap_axes[2].set_xlabel("time (us)")
+    shift_refz_decap_axes[2].set_ylabel("stored $h$ (mV)")
+    shift_refz_decap_axes[2].set_title("Passive local capacitance supplies the reset-edge trim charge")
+    shift_refz_decap_axes[2].grid(True, alpha=0.25)
+    shift_refz_decap_axes[2].legend(loc="upper left", ncol=2, fontsize="xx-small")
+    shift_refz_decap_fig.tight_layout()
+    save_plot(
+        shift_refz_decap_fig,
+        "mos_hidden_writer_restored_gate_hybrid_update_forward_guard_forward_pair_96u_shifted_gate_reset_ref_decap_ngspice",
     )
 
     tail_bias_fig, tail_bias_axes = plt.subplots(2, 1, figsize=(7.4, 6.4), gridspec_kw={"height_ratios": [1.0, 0.8]})

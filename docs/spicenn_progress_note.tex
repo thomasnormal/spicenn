@@ -2283,6 +2283,26 @@ must satisfy before it can replace the current behavioral prototype.
 
 \begin{figure}[H]
   \centering
+  \includegraphics[width=0.95\linewidth]{figures/mos_hidden_writer_restored_gate_hybrid_update_forward_guard_forward_pair_96u_shifted_gate_reset_ref_decap_ngspice.png}
+  \caption{Ngspice passive local decoupling sweep for the same finite
+  reset-reference source-impedance failure.  The source impedance is held at
+  \(100\,\mathrm{k}\Omega\), the first reset active time is kept at \(120\)
+  ns, and each split trim-reference rail gets a local capacitor from \(0\) to
+  \(250\) pF.  These are passive capacitors with initial conditions matching
+  the trim-reference rails; no behavioral buffer or runtime capacitor forcing
+  is inserted.  The trim-error curves fall monotonically from
+  \(50.389/59.550\) mV at \(0\) pF to \(3.097/3.660\) mV at \(250\) pF for the
+  \(-55/+65\) mV trim branches, crossing the \(6\) mV gate.  The first-cycle
+  stored activations recover from \(-47.035/135.835\) mV to
+  \(40.942/53.933\) mV, which lands inside the calibrated activation window.
+  Thus the high-source-impedance reset-reference failure is not an argument
+  for an ideal trim driver; a local passive charge reservoir can supply the
+  reset-edge gate charge, with the obvious area and refresh/settle-time cost.}
+  \label{fig:mos-hidden-writer-restored-gate-hybrid-update-forward-guard-forward-pair-96u-shifted-gate-reset-ref-decap-ngspice}
+\end{figure}
+
+\begin{figure}[H]
+  \centering
   \includegraphics[width=0.88\linewidth]{figures/mos_hidden_writer_restored_gate_hybrid_update_forward_guard_forward_tail_bias_ngspice.png}
   \caption{Ngspice isolated forward-tail bias sweep for the same guarded MOS
   activation store.  The failed shared-bias experiment changed the read path

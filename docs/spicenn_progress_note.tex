@@ -2098,6 +2098,32 @@ must satisfy before it can replace the current behavioral prototype.
 
 \begin{figure}[H]
   \centering
+  \includegraphics[width=0.95\linewidth]{figures/mos_hidden_writer_restored_gate_hybrid_update_forward_guard_forward_pair_96u_shifted_gate_reset_refpert_ngspice.png}
+  \caption{Ngspice reset-reference perturbation check for the calibrated
+  shifted-gate reuse fixture.  The cell is the same low-common-mode
+  \(V_{ZCM}=0.75\) V, \(96\,\mu\mathrm{m}\) forward-pair, \(10\) pF
+  shifted-gate, \(+20/-20\) mV threshold-skew fixture as
+  Fig.~\ref{fig:mos-hidden-writer-restored-gate-hybrid-update-forward-guard-forward-pair-96u-shifted-gate-trimmed-reuse-ngspice}.
+  Instead of assuming perfect reset rails, the reference sources are driven by
+  cycle-varying PWL commands and sampled after the physical reset switches.
+  With common-mode reference commands of \(0.88,0.92,0.89\) V, the sampled
+  shifted-gate common modes are \(0.909527,0.911545,0.890003\) V; finite
+  reset settling/feedthrough is therefore visible, but the split differential
+  remains \(-34.999,-34.998,-35.000\) mV and the stored activation only moves
+  \(47.120,47.119,46.796\) mV.  Differential trim perturbations dominate the
+  stored activation: requested \(-30,-35,-40\) mV trims sample as
+  \(-33.690,-36.409,-39.999\) mV and store
+  \(44.467,49.679,56.585\) mV, while requested \(-25,-35,-45\) mV trims
+  sample as \(-32.382,-37.819,-44.999\) mV and store
+  \(41.949,52.390,66.196\) mV.  The useful rule is that the reset reference
+  network need not track ideal PWL commands exactly, but the sampled
+  differential trim must stay inside the calibrated \(\pm 10\) mV window and
+  reset must still clear \(z/h\) before each read.}
+  \label{fig:mos-hidden-writer-restored-gate-hybrid-update-forward-guard-forward-pair-96u-shifted-gate-reset-refpert-ngspice}
+\end{figure}
+
+\begin{figure}[H]
+  \centering
   \includegraphics[width=0.88\linewidth]{figures/mos_hidden_writer_restored_gate_hybrid_update_forward_guard_forward_tail_bias_ngspice.png}
   \caption{Ngspice isolated forward-tail bias sweep for the same guarded MOS
   activation store.  The failed shared-bias experiment changed the read path

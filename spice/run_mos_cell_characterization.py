@@ -9873,6 +9873,183 @@ quit
         "trimmed reuse margin sweep should bracket a useful non-overdriven calibration window",
     )
 
+    def run_trimmed_reuse_reference_perturb_case(
+        name: str,
+        reset_trims_v: tuple[float, float, float],
+        reset_common_v: tuple[float, float, float],
+    ) -> tuple[np.ndarray, list[np.ndarray]]:
+        model_tag = name.upper()
+        stem = (
+            "mos_hidden_writer_restored_gate_hybrid_update_forward_guard_"
+            f"forward_pair_96u_zcm_0p75v_shift_trimmed_reuse_refpert_{name}"
+        )
+        models = (
+            f".model NSHTRPFP_{model_tag} NMOS (LEVEL=1 VTO=0.57 KP=220u LAMBDA=0.03)\n"
+            f".model NSHTRPFM_{model_tag} NMOS (LEVEL=1 VTO=0.53 KP=220u LAMBDA=0.03)"
+        )
+        ref_p_values = [common + 0.5 * trim for common, trim in zip(reset_common_v, reset_trims_v)]
+        ref_m_values = [common - 0.5 * trim for common, trim in zip(reset_common_v, reset_trims_v)]
+
+        def ref_pwl(node: str, values: list[float]) -> str:
+            return (
+                f"V{node.upper()}_HYR {node}_hyr 0 PWL(0 {values[0]:.5f} "
+                f"3.55u {values[1]:.5f} 5.15u {values[2]:.5f} 7.8u {values[2]:.5f})"
+            )
+
+        deck = replace_required(hybrid_forward_read_reuse_deck, zcm_source_line, "VZCM zcm 0 0.75")
+        deck = replace_required(deck, zcm_cap_p_line, "CZP_HYR zp_hyr 0 {CSUM} IC=0.75")
+        deck = replace_required(deck, zcm_cap_m_line, "CZM_HYR zm_hyr 0 {CSUM} IC=0.75")
+        deck = replace_required(deck, corner_param_line, models + "\n" + corner_param_line)
+        deck = replace_required(
+            deck,
+            forward_pair_lines,
+            shifted_forward_pair_lines(
+                10.0,
+                reset_ref_p=0.90 - 0.0175,
+                reset_ref_m=0.90 + 0.0175,
+                forward_p_model=f"NSHTRPFP_{model_tag}",
+                forward_m_model=f"NSHTRPFM_{model_tag}",
+            ),
+        )
+        deck = replace_required(deck, "VZGRP_HYR zgrp_hyr 0 0.88250", ref_pwl("zgrp", ref_p_values))
+        deck = replace_required(deck, "VZGRM_HYR zgrm_hyr 0 0.91750", ref_pwl("zgrm", ref_m_values))
+        deck = replace_required(
+            deck,
+            "VRESET_HYR rst_hyr 0 PWL(0 0 3.58u 0 3.60u 1.8 4.00u 1.8 4.02u 0 "
+            "5.18u 0 5.20u 1.8 5.60u 1.8 5.62u 0 7.8u 0)",
+            "VRESET_HYR rst_hyr 0 PWL(0 0 2.48u 0 2.50u 1.8 2.62u 1.8 2.64u 0 "
+            "3.58u 0 3.60u 1.8 4.00u 1.8 4.02u 0 5.18u 0 5.20u 1.8 5.60u 1.8 "
+            "5.62u 0 7.8u 0)",
+        )
+        deck = replace_required(
+            deck,
+            "VRESETN_HYR rstn_hyr 0 PWL(0 1.8 3.58u 1.8 3.60u 0 4.00u 0 4.02u 1.8 "
+            "5.18u 1.8 5.20u 0 5.60u 0 5.62u 1.8 7.8u 1.8)",
+            "VRESETN_HYR rstn_hyr 0 PWL(0 1.8 2.48u 1.8 2.50u 0 2.62u 0 2.64u 1.8 "
+            "3.58u 1.8 3.60u 0 4.00u 0 4.02u 1.8 5.18u 1.8 5.20u 0 5.60u 0 "
+            "5.62u 1.8 7.8u 1.8)",
+        )
+        deck = replace_required(
+            deck,
+            "mos_hidden_writer_restored_gate_hybrid_update_forward_read_reuse.dat",
+            f"{stem}.dat",
+        )
+        deck = add_shifted_gate_probes(deck, stem)
+        data = run_ngspice(deck, stem)
+        return load_wrdata(data, 25)
+
+    shift_refpert_cases = [
+        ("clean", "clean refs", (-0.035, -0.035, -0.035), (0.90, 0.90, 0.90)),
+        ("common_jitter", "common jitter", (-0.035, -0.035, -0.035), (0.88, 0.92, 0.89)),
+        ("diff_jitter5", "diff jitter +/-5 mV", (-0.030, -0.035, -0.040), (0.90, 0.90, 0.90)),
+        ("diff_jitter10", "diff jitter +/-10 mV", (-0.025, -0.035, -0.045), (0.90, 0.90, 0.90)),
+        ("mixed_jitter", "mixed jitter", (-0.030, -0.040, -0.035), (0.885, 0.915, 0.900)),
+    ]
+    shift_refpert_labels = []
+    shift_refpert_gate_samples = []
+    shift_refpert_common_samples = []
+    shift_refpert_z_samples = []
+    shift_refpert_h_samples = []
+    shift_refpert_expected_trims = []
+    shift_refpert_expected_common = []
+    shift_refpert_traces = []
+    for name, label, reset_trims_v, reset_common_v in shift_refpert_cases:
+        if name == "clean":
+            rt, refpert_cols = strpt, shift_trimmed_reuse_cols
+        else:
+            rt, refpert_cols = run_trimmed_reuse_reference_perturb_case(name, reset_trims_v, reset_common_v)
+
+        def rpat(time_s: float, values: np.ndarray) -> float:
+            return float(values[np.argmin(np.abs(rt - time_s))])
+
+        gate_diff = refpert_cols[0] - refpert_cols[1]
+        gate_common = 0.5 * (refpert_cols[0] + refpert_cols[1])
+        z = refpert_cols[12] - refpert_cols[11]
+        load = refpert_cols[14] - refpert_cols[13]
+        store = refpert_cols[16] - refpert_cols[15]
+        gate_samples = np.array([rpat(ts, gate_diff) for ts in shift_trimmed_reuse_reset_times])
+        common_samples = np.array([rpat(ts, gate_common) for ts in shift_trimmed_reuse_reset_times])
+        z_samples = np.array([rpat(ts, z) for ts in shift_reuse_z_times])
+        h_samples = np.array([rpat(ts, store) for ts in shift_reuse_h_times])
+        z_reset = np.array([abs(rpat(ts, z)) for ts in shift_trimmed_reuse_reset_times])
+        h_reset = np.array([abs(rpat(ts, store)) for ts in shift_trimmed_reuse_reset_times])
+        expected_trims = np.array(reset_trims_v)
+        expected_common = np.array(reset_common_v)
+        if np.max(expected_trims) - np.min(expected_trims) < 1e-12:
+            require(
+                np.max(np.abs(gate_samples - expected_trims)) < 0.006,
+                f"{label} should preserve constant reset differential",
+            )
+        else:
+            require(
+                np.all((gate_samples > -0.047) & (gate_samples < -0.023)),
+                f"{label} should keep sampled reset differential inside the calibrated trim window",
+            )
+        if np.max(expected_common) - np.min(expected_common) < 1e-12:
+            require(
+                np.max(np.abs(common_samples - expected_common)) < 0.006,
+                f"{label} should preserve constant reset common mode",
+            )
+        else:
+            require(
+                np.all((common_samples > 0.86) & (common_samples < 0.93)),
+                f"{label} should keep reset common mode bounded under PWL reference perturbation",
+            )
+        require(
+            np.max(z_reset) < 0.001 and np.max(h_reset) < 0.001,
+            f"{label} should still clear z/h state during reset",
+        )
+        require(
+            np.all(z_samples > 0.035),
+            f"{label} should keep useful read preactivation under reference perturbation",
+        )
+        require(
+            np.all((h_samples > 0.020) & (h_samples < 0.085)),
+            f"{label} should keep stored activation positive and non-overdriven under reference perturbation",
+        )
+        if name == "common_jitter":
+            require(
+                np.max(h_samples) - np.min(h_samples) < 0.006,
+                "common-mode reference jitter should have much smaller activation effect than differential trim jitter",
+            )
+        if name in {"diff_jitter5", "diff_jitter10"}:
+            require(
+                np.all(np.diff(h_samples) > 0.004),
+                f"{label} should order stored activation by stronger helpful trim each cycle",
+            )
+        shift_refpert_labels.append(label)
+        shift_refpert_gate_samples.append(gate_samples)
+        shift_refpert_common_samples.append(common_samples)
+        shift_refpert_z_samples.append(z_samples)
+        shift_refpert_h_samples.append(h_samples)
+        shift_refpert_expected_trims.append(expected_trims)
+        shift_refpert_expected_common.append(expected_common)
+        if name in {"common_jitter", "diff_jitter10", "mixed_jitter"}:
+            shift_refpert_traces.append((label, rt, load, store))
+
+    shift_refpert_gate_samples = np.array(shift_refpert_gate_samples)
+    shift_refpert_common_samples = np.array(shift_refpert_common_samples)
+    shift_refpert_z_samples = np.array(shift_refpert_z_samples)
+    shift_refpert_h_samples = np.array(shift_refpert_h_samples)
+    shift_refpert_expected_trims = np.array(shift_refpert_expected_trims)
+    shift_refpert_expected_common = np.array(shift_refpert_expected_common)
+    shift_refpert_index = {case[0]: idx for idx, case in enumerate(shift_refpert_cases)}
+    require(
+        np.max(shift_refpert_h_samples[shift_refpert_index["common_jitter"]])
+        - np.min(shift_refpert_h_samples[shift_refpert_index["common_jitter"]])
+        < 0.25
+        * (
+            np.max(shift_refpert_h_samples[shift_refpert_index["diff_jitter10"]])
+            - np.min(shift_refpert_h_samples[shift_refpert_index["diff_jitter10"]])
+        ),
+        "common-mode reset reference jitter should be secondary to differential trim jitter",
+    )
+    require(
+        np.max(np.abs(shift_refpert_common_samples[shift_refpert_index["common_jitter"]] - np.array([0.88, 0.92, 0.89])))
+        > 0.005,
+        "common-mode reference perturbation deck should expose finite reset-settling/feedthrough rather than ideal tracking",
+    )
+
     tail_bias_forward_tail_line = "MNFT_HYR ftail_hyr vbias 0 0 NMOS L={LCH} W=48u"
     tail_bias_cases_v = [0.70, 0.80, 0.90, 0.95, 1.05, 1.15, 1.25]
     tail_bias_labels = []
@@ -11014,6 +11191,64 @@ quit
     save_plot(
         shift_trimmed_margin_fig,
         "mos_hidden_writer_restored_gate_hybrid_update_forward_guard_forward_pair_96u_shifted_gate_trimmed_margin_ngspice",
+    )
+
+    shift_refpert_fig, shift_refpert_axes = plt.subplots(
+        3,
+        1,
+        figsize=(7.4, 7.4),
+        gridspec_kw={"height_ratios": [1.0, 1.0, 1.0]},
+    )
+    shift_refpert_x = np.arange(3)
+    for idx, label in enumerate(shift_refpert_labels):
+        shift_refpert_axes[0].plot(
+            shift_refpert_x,
+            1e3 * shift_refpert_gate_samples[idx],
+            marker="o",
+            label=label,
+        )
+    shift_refpert_axes[0].set_xticks(shift_refpert_x)
+    shift_refpert_axes[0].set_xticklabels(["reset 0", "reset 1", "reset 2"])
+    shift_refpert_axes[0].set_ylabel("gate diff (mV)")
+    shift_refpert_axes[0].set_title("PWL reset references produce bounded cycle-by-cycle trim errors")
+    shift_refpert_axes[0].grid(True, alpha=0.25)
+    shift_refpert_axes[0].legend(loc="lower left", ncol=2, fontsize="x-small")
+    for idx, label in enumerate(shift_refpert_labels):
+        shift_refpert_axes[1].plot(
+            shift_refpert_x,
+            1e3 * shift_refpert_h_samples[idx],
+            marker="o",
+            label=label,
+        )
+    shift_refpert_axes[1].plot(
+        shift_refpert_x,
+        1e3 * shift_refpert_z_samples[shift_refpert_index["clean"]],
+        "s--",
+        color="0.35",
+        label="clean $z$",
+    )
+    shift_refpert_axes[1].axhspan(20, 85, color="0.7", alpha=0.12, label="accepted window")
+    shift_refpert_axes[1].axhline(0, color="0.4", linewidth=0.8)
+    shift_refpert_axes[1].set_xticks(shift_refpert_x)
+    shift_refpert_axes[1].set_xticklabels(["cycle 1", "cycle 2", "cycle 3"])
+    shift_refpert_axes[1].set_ylabel("cycle samples (mV)")
+    shift_refpert_axes[1].set_title("Differential trim jitter dominates; common-mode jitter is small")
+    shift_refpert_axes[1].grid(True, axis="y", alpha=0.25)
+    shift_refpert_axes[1].legend(loc="upper left", ncol=2, fontsize="x-small")
+    for label, rpt, load, store in shift_refpert_traces:
+        shift_refpert_axes[2].plot(1e6 * rpt, 1e3 * store, label=f"{label} $h$")
+        shift_refpert_axes[2].plot(1e6 * rpt, 1e3 * load, "--", alpha=0.55, label=f"{label} load")
+    shift_refpert_axes[2].axhline(0, color="0.4", linewidth=0.8)
+    shift_refpert_axes[2].set_xlim(2.35, 7.1)
+    shift_refpert_axes[2].set_xlabel("time (us)")
+    shift_refpert_axes[2].set_ylabel("differential (mV)")
+    shift_refpert_axes[2].set_title("Time-domain traces stay bounded under cycle-varying reset references")
+    shift_refpert_axes[2].grid(True, alpha=0.25)
+    shift_refpert_axes[2].legend(loc="upper left", ncol=2, fontsize="x-small")
+    shift_refpert_fig.tight_layout()
+    save_plot(
+        shift_refpert_fig,
+        "mos_hidden_writer_restored_gate_hybrid_update_forward_guard_forward_pair_96u_shifted_gate_reset_refpert_ngspice",
     )
 
     tail_bias_fig, tail_bias_axes = plt.subplots(2, 1, figsize=(7.4, 6.4), gridspec_kw={"height_ratios": [1.0, 0.8]})

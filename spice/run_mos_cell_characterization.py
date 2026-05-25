@@ -9565,6 +9565,7 @@ quit
     shift_reuse_common_weight = shift_reuse_common_cols[7] - shift_reuse_common_cols[8]
     shift_reuse_common_bias = shift_reuse_common_cols[9] - shift_reuse_common_cols[10]
     shift_reuse_common_preact = shift_reuse_common_cols[12] - shift_reuse_common_cols[11]
+    shift_reuse_common_load = shift_reuse_common_cols[14] - shift_reuse_common_cols[13]
     shift_reuse_common_store = shift_reuse_common_cols[16] - shift_reuse_common_cols[15]
     shift_reuse_common_z_samples = np.array([shrctat(ts, shift_reuse_common_preact) for ts in shift_reuse_z_times])
     shift_reuse_common_h_samples = np.array([shrctat(ts, shift_reuse_common_store) for ts in shift_reuse_h_times])
@@ -9574,6 +9575,8 @@ quit
     shift_reuse_common_gate_reset_common = np.array(
         [shrctat(ts, shift_reuse_common_gate_common) for ts in shift_reuse_reset_times]
     )
+    shift_reuse_common_z_reset = np.array([abs(shrctat(ts, shift_reuse_common_preact)) for ts in shift_reuse_reset_times])
+    shift_reuse_common_h_reset = np.array([abs(shrctat(ts, shift_reuse_common_store)) for ts in shift_reuse_reset_times])
     shift_reuse_common_weight_after_write = shrctat(2.55e-6, shift_reuse_common_weight)
     shift_reuse_common_bias_after_write = shrctat(2.55e-6, shift_reuse_common_bias)
     shift_reuse_common_weight_drift = (
@@ -9603,6 +9606,14 @@ quit
     require(
         np.max(np.abs(shift_reuse_common_gate_reset_common - 0.80)) < 0.005,
         "0.80 V reset-common reuse deck should restore the tuned gate common mode between reads",
+    )
+    require(
+        np.max(shift_reuse_common_z_reset) < 0.001,
+        "0.80 V reset-common reuse deck should clear preactivation state between reads",
+    )
+    require(
+        np.max(shift_reuse_common_h_reset) < 0.001,
+        "0.80 V reset-common reuse deck should clear activation state between reads",
     )
     require(
         abs(shift_reuse_common_weight_drift) < 1e-5,
@@ -12991,31 +13002,54 @@ quit
         figsize=(7.4, 7.4),
         gridspec_kw={"height_ratios": [1.0, 1.0, 0.9]},
     )
-    shift_reuse_axes[0].plot(1e6 * shrpt, 1e3 * shift_reuse_gate_diff, label="shifted-gate diff")
-    shift_reuse_axes[0].plot(1e6 * shrpt, 1e3 * (shift_reuse_gate_common - 0.90), "--", label="gate common error")
-    shift_reuse_axes[0].plot(1e6 * shrpt, 1e3 * shift_reuse_cols[20] / 20.0, color="0.45", alpha=0.25, label="$reset/20$")
+    shift_reuse_axes[0].plot(1e6 * shrct, 1e3 * shift_reuse_common_gate_diff, label="shifted-gate diff")
+    shift_reuse_axes[0].plot(
+        1e6 * shrct,
+        1e3 * (shift_reuse_common_gate_common - 0.80),
+        "--",
+        label="gate common - 0.80 V",
+    )
+    shift_reuse_axes[0].plot(
+        1e6 * shrct,
+        1e3 * shift_reuse_common_cols[20] / 20.0,
+        color="0.45",
+        alpha=0.25,
+        label="$reset/20$",
+    )
     for start_us, end_us, label in [(3.60, 4.00, "reset 1"), (5.20, 5.60, "reset 2")]:
         shift_reuse_axes[0].axvspan(start_us, end_us, color="0.75", alpha=0.16, label=label)
     shift_reuse_axes[0].axhline(0, color="0.4", linewidth=0.8)
     shift_reuse_axes[0].set_xlim(2.9, 7.1)
-    shift_reuse_axes[0].set_ylabel("gate error (mV)")
-    shift_reuse_axes[0].set_title("Physical resets re-center the shifted gate between repeated reads")
+    shift_reuse_axes[0].set_ylabel("gate diff / common offset (mV)")
+    shift_reuse_axes[0].set_title("Physical resets restore the shifted-gate state between repeated reads")
     shift_reuse_axes[0].grid(True, alpha=0.25)
     shift_reuse_axes[0].legend(loc="lower left", ncol=2, fontsize="small")
-    shift_reuse_axes[1].plot(1e6 * shrpt, 1e3 * shift_reuse_preact, label="$z^- - z^+$")
-    shift_reuse_axes[1].plot(1e6 * shrpt, 1e3 * shift_reuse_load, label="forward load")
-    shift_reuse_axes[1].plot(1e6 * shrpt, 1e3 * shift_reuse_store, label="stored activation")
-    shift_reuse_axes[1].plot(1e6 * shrpt, 1e3 * shift_reuse_cols[23] / 20.0, color="0.35", alpha=0.25, label="$read/20$")
-    shift_reuse_axes[1].plot(1e6 * shrpt, 1e3 * shift_reuse_cols[24] / 20.0, color="0.15", alpha=0.25, label="$pact/20$")
+    shift_reuse_axes[1].plot(1e6 * shrct, 1e3 * shift_reuse_common_preact, label="$z^- - z^+$")
+    shift_reuse_axes[1].plot(1e6 * shrct, 1e3 * shift_reuse_common_load, label="forward load")
+    shift_reuse_axes[1].plot(1e6 * shrct, 1e3 * shift_reuse_common_store, label="stored activation")
+    shift_reuse_axes[1].plot(
+        1e6 * shrct,
+        1e3 * shift_reuse_common_cols[23] / 20.0,
+        color="0.35",
+        alpha=0.25,
+        label="$read/20$",
+    )
+    shift_reuse_axes[1].plot(
+        1e6 * shrct,
+        1e3 * shift_reuse_common_cols[24] / 20.0,
+        color="0.15",
+        alpha=0.25,
+        label="$pact/20$",
+    )
     shift_reuse_axes[1].axhline(0, color="0.4", linewidth=0.8)
     shift_reuse_axes[1].set_xlim(2.9, 7.1)
     shift_reuse_axes[1].set_ylabel("differential (mV)")
     shift_reuse_axes[1].set_title("Same MOS-written W/B state drives three low-common-mode reads")
     shift_reuse_axes[1].grid(True, alpha=0.25)
     shift_reuse_axes[1].legend(loc="upper left", ncol=2, fontsize="small")
-    shift_reuse_x = np.arange(len(shift_reuse_h_samples))
-    shift_reuse_axes[2].bar(shift_reuse_x - 0.18, 1e3 * shift_reuse_z_samples, width=0.36, label="$z$ sample")
-    shift_reuse_axes[2].bar(shift_reuse_x + 0.18, 1e3 * shift_reuse_h_samples, width=0.36, label="$h$ sample")
+    shift_reuse_x = np.arange(len(shift_reuse_common_h_samples))
+    shift_reuse_axes[2].bar(shift_reuse_x - 0.18, 1e3 * shift_reuse_common_z_samples, width=0.36, label="$z$ sample")
+    shift_reuse_axes[2].bar(shift_reuse_x + 0.18, 1e3 * shift_reuse_common_h_samples, width=0.36, label="$h$ sample")
     shift_reuse_axes[2].axhline(0, color="0.4", linewidth=0.8)
     shift_reuse_axes[2].set_xticks(shift_reuse_x)
     shift_reuse_axes[2].set_xticklabels(["cycle 1", "cycle 2", "cycle 3"])

@@ -1997,18 +1997,21 @@ must satisfy before it can replace the current behavioral prototype.
   shifted-gate headroom fix.  This deck starts from one MOS-written \(W/B\)
   state at \(V_{ZCM}=0.75\) V, uses the selected \(10\) pF coupling into
   \(5\) pF shifted-gate capacitors, and runs three read/forward-store cycles
-  with real reset pulses between cycles.  The three read preactivation samples
-  are \(46.625,46.823,\) and \(46.582\) mV; the stored activation samples are
-  \(49.528,56.585,\) and \(56.585\) mV.  The reset pulses clear the shifted
-  gate differential between reads to \(0.000466\) and \(0.000456\) mV, return
-  the gate common mode to \(0.900003\) V, leave only about \(0.019\) mV of
+  with real reset pulses between cycles.  This is the tuned \(0.80\) V
+  reset-common version from Fig.~\ref{fig:mos-hidden-writer-restored-gate-hybrid-update-forward-guard-forward-pair-96u-shifted-gate-reset-common-ngspice},
+  not the older \(0.90\) V baseline that produced the repeatable capture bump.
+  The three read preactivation samples remain useful at
+  \(46.625,46.823,\) and \(46.582\) mV; the stored activation samples are now
+  repeatable at \(49.528,49.323,\) and \(49.323\) mV.  The reset pulses clear
+  the shifted-gate differential between reads to about \(0.0004\) mV, return
+  the gate common mode to \(0.800003\) V, leave only about \(0.019\) mV of
   summing-node residue, and clear the activation store to numerical zero.
   The persistent trainable state is not read-disturbed: over the repeated
   cycles the \(W\) and \(B\) differentials drift by only \(0.003\) and
-  \(0.002\,\mu\mathrm{V}\).  The later captures are higher than the first
-  because the reset path adds a small repeatable charge/feedthrough offset, so
-  reset sizing is still worth tuning, but the circuit now demonstrates useful
-  repeated low-common-mode operation without Python capacitor forcing.}
+  \(0.002\,\mu\mathrm{V}\).  The headline reuse plot therefore now shows the
+  behavior expected from the tuned transistor reset path: repeated
+  low-common-mode operation without Python capacitor forcing and without the
+  old reset-common-mode feedthrough bump.}
   \label{fig:mos-hidden-writer-restored-gate-hybrid-update-forward-guard-forward-pair-96u-shifted-gate-repeated-reset-reuse-ngspice}
 \end{figure}
 

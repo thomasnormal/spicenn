@@ -349,6 +349,10 @@ quit
     cm_data = run_ngspice(cm_deck, "mos_synapse_common_mode")
     _cmt, cm_cols = load_wrdata(cm_data, 6 * len(cm_cases))
     cm_curves: list[tuple[str, float, np.ndarray, np.ndarray, np.ndarray]] = []
+    cm_peaks = []
+    cm_zero_fracs = []
+    cm_mirror_fracs = []
+    cm_sign_margins = []
     for idx, (name, cm) in enumerate(cm_cases):
         xp = cm_cols[6 * idx]
         xm = cm_cols[6 * idx + 1]
@@ -364,7 +368,23 @@ quit
         require(cm_peak > 0.5e-6, f"{name} VCM synapse branch should retain useful current swing")
         require(abs(cm_zero) < 0.05 * cm_peak, f"{name} VCM synapse transfer should stay centered")
         require(np.max(np.abs(cm_pos_signed + cm_neg_signed)) < 0.02 * cm_peak, f"{name} VCM w- copy should reverse sign")
+        cm_peaks.append(cm_peak)
+        cm_zero_fracs.append(abs(cm_zero) / cm_peak)
+        cm_mirror_fracs.append(float(np.max(np.abs(cm_pos_signed + cm_neg_signed))) / cm_peak)
+        cm_sign_margins.extend(
+            [
+                float(np.mean(cm_pos_signed[cm_xdiff > 0.2])),
+                float(-np.mean(cm_pos_signed[cm_xdiff < -0.2])),
+                float(-np.mean(cm_neg_signed[cm_xdiff > 0.2])),
+                float(np.mean(cm_neg_signed[cm_xdiff < -0.2])),
+            ]
+        )
         cm_curves.append((name, cm, cm_xdiff, cm_pos_signed, cm_neg_signed))
+    cm_peak_min_uA = 1e6 * float(np.min(cm_peaks))
+    cm_peak_max_uA = 1e6 * float(np.max(cm_peaks))
+    cm_zero_frac_max = float(np.max(cm_zero_fracs))
+    cm_mirror_frac_max = float(np.max(cm_mirror_fracs))
+    cm_sign_margin_min_uA = 1e6 * float(np.min(cm_sign_margins))
 
     store_data = run_ngspice(store_deck, "mos_synapse_store")
     t, store_cols = load_wrdata(store_data, 7)
@@ -487,6 +507,13 @@ quit
     require(high_offset > balanced_offset + 0.012, "high VTO z+ branch should move W+ zero crossing positive")
     require(np.max(np.abs(mismatch_offsets)) < 0.06, "20 mV synapse input mismatch should keep W+ offset bounded")
     require(np.max(np.abs(np.array(mismatch_offsets) + np.array(mismatch_neg_offsets))) < 0.01, "gate-swapped W- mismatch offsets should mirror W+")
+    mismatch_offset_max = float(np.max(np.abs(mismatch_offsets)))
+    mismatch_offset_span = float(high_offset - low_offset)
+    mismatch_mirror_error = float(np.max(np.abs(np.array(mismatch_offsets) + np.array(mismatch_neg_offsets))))
+    mismatch_min_swing_uA = 1e6 * min(
+        min(float(np.max(mpos) - np.min(mpos)), float(np.max(mneg) - np.min(mneg)))
+        for _name, _label, _mxdiff, mpos, mneg in mismatch_curves
+    )
 
     fig, axes = plt.subplots(2, 1, figsize=(7.2, 6.2))
     callout_box = {"facecolor": "white", "alpha": 0.82, "edgecolor": "0.8"}
@@ -663,6 +690,19 @@ quit
     mismatch_axes[0].set_ylabel("contribution current (uA)")
     mismatch_axes[0].set_title("Synapse input-pair mismatch shifts contribution zero")
     mismatch_axes[0].grid(True, alpha=0.25)
+    mismatch_axes[0].text(
+        0.52,
+        0.15,
+        "max zero offset = "
+        f"{1e3 * mismatch_offset_max:.1f} mV / <60 mV\n"
+        "offset span = "
+        f"{1e3 * mismatch_offset_span:.1f} mV\n"
+        "min swing = "
+        f"{mismatch_min_swing_uA:.1f} uA",
+        transform=mismatch_axes[0].transAxes,
+        fontsize="x-small",
+        bbox=callout_box,
+    )
     mismatch_axes[0].legend(loc="upper left")
     labels_mm = [case[2] for case in mismatch_cases]
     mismatch_axes[1].plot(labels_mm, mismatch_offsets, "o-", label="$W^+$ zero")
@@ -672,6 +712,18 @@ quit
     mismatch_axes[1].set_ylabel("zero crossing $x^+ - x^-$ (V)")
     mismatch_axes[1].set_title("Gate-swapped copy mirrors the mismatch offset")
     mismatch_axes[1].grid(True, axis="y", alpha=0.25)
+    mismatch_axes[1].text(
+        0.05,
+        0.16,
+        "W+ zeros = "
+        + "/".join(f"{1e3 * value:+.0f}" for value in mismatch_offsets)
+        + " mV\n"
+        "W- mirror error = "
+        f"{1e3 * mismatch_mirror_error:.2f} mV / <10 mV",
+        transform=mismatch_axes[1].transAxes,
+        fontsize="x-small",
+        bbox=callout_box,
+    )
     mismatch_axes[1].legend(loc="upper left")
     mismatch_fig.tight_layout()
     save_plot(mismatch_fig, "mos_synapse_mismatch_ngspice")
@@ -688,6 +740,29 @@ quit
     cm_axes[0].set_title("Positive-weight synapse sign is stable across input common-mode")
     cm_axes[1].set_title("Gate-swapped negative-weight copy reverses sign across input common-mode")
     cm_axes[1].set_xlabel("$x^+ - x^-$ (V)")
+    cm_axes[0].text(
+        0.05,
+        0.14,
+        "peak range = "
+        f"{cm_peak_min_uA:.1f}--{cm_peak_max_uA:.1f} uA\n"
+        "min sign margin = "
+        f"{cm_sign_margin_min_uA:.1f} uA\n"
+        "zero/peak max = "
+        f"{100.0 * cm_zero_frac_max:.1f}% / <5%",
+        transform=cm_axes[0].transAxes,
+        fontsize="x-small",
+        bbox=callout_box,
+    )
+    cm_axes[1].text(
+        0.50,
+        0.76,
+        "W- mirror error max = "
+        f"{100.0 * cm_mirror_frac_max:.2f}% / <2%\n"
+        "all common-mode cases keep opposite sign",
+        transform=cm_axes[1].transAxes,
+        fontsize="x-small",
+        bbox=callout_box,
+    )
     cm_axes[0].legend(loc="upper left")
     cm_axes[1].legend(loc="lower left")
     cm_fig.tight_layout()

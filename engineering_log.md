@@ -2,6 +2,18 @@
 
 ## 2026-05-25
 
+- Clarified the restored-gate sizing and stored-error-swing margins.  The
+  restored-gate strength and swing decks already asserted that the selected
+  weak corner must recover a \(>20\) mV net write while complement leakage
+  stays below \(0.5\) mV.  The regenerated
+  `mos_hidden_writer_restored_gate_strength_ngspice` plot now labels the
+  usable restorer-NMOS window as \(18\)--\(36\,\mu\)m and shows the net-write
+  mV values directly.  The regenerated
+  `mos_hidden_writer_restored_gate_swing_ngspice` plot now labels the usable
+  finite-difference swing window as \(0.05\)--\(0.14\) V and overlays the same
+  \(20\) mV recovered-net and \(0.5\) mV complement limits.  Re-ran the full
+  `--only update` ngspice characterization after an interrupted first rerun;
+  the clean rerun completed and removed the partial tracked result-file diff.
 - Family-completed the active-window margin display for hidden-error
   derivative plots.  The ngspice assertions already required the finite
   difference replica gain to stay nonnegative, preserve a broad active window,

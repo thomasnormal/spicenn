@@ -3633,7 +3633,7 @@ quit
         "too-strong restorer NMOS should expose complement turn-on instead of being counted as robust",
     )
 
-    strength_fig, strength_axes = plt.subplots(2, 1, figsize=(7.2, 5.8))
+    strength_fig, strength_axes = plt.subplots(2, 1, figsize=(7.2, 6.4))
     recovered_widths = np.array(strength_wn_values)[recovered]
     if recovered_widths.size:
         for axis in strength_axes:
@@ -3644,9 +3644,17 @@ quit
                 alpha=0.08,
                 label="usable sizing window" if axis is strength_axes[0] else None,
             )
+        strength_axes[0].text(
+            float(np.mean(recovered_widths)),
+            1.55,
+            f"usable WN {np.min(recovered_widths):.0f}-{np.max(recovered_widths):.0f} um",
+            ha="center",
+            fontsize="small",
+            bbox={"facecolor": "white", "alpha": 0.82, "edgecolor": "0.8"},
+        )
     strength_axes[0].plot(strength_wn_values, strength_selected_gate, "o-", label="selected restored gate")
     strength_axes[0].plot(strength_wn_values, strength_complement_gate, "s--", label="complement restored gate")
-    strength_axes[0].axhline(0.9, color="0.4", linewidth=0.8, alpha=0.5)
+    strength_axes[0].axhline(0.9, color="0.4", linewidth=0.8, alpha=0.5, label="writer gate threshold")
     strength_axes[0].set_ylabel("gate voltage (V)")
     strength_axes[0].set_title("Restorer NMOS sizing has a finite selected-corner window")
     strength_axes[0].grid(True, alpha=0.25)
@@ -3656,11 +3664,15 @@ quit
     strength_axes[1].plot(strength_wn_values, strength_pos_net, "^-", label="$r^+$ net")
     strength_axes[1].plot(strength_wn_values, -strength_neg_net, "v:", label="$r^-$ net magnitude")
     strength_axes[1].axhline(0, color="0.4", linewidth=0.8)
+    strength_axes[1].axhline(0.020, color="0.4", linestyle=":", linewidth=1.0, label="20 mV recovered-net target")
+    strength_axes[1].axhline(0.0005, color="0.55", linestyle=":", linewidth=0.8, label="0.5 mV complement limit")
+    for x, net in zip(strength_wn_values, strength_pos_net):
+        strength_axes[1].text(x, net + 0.003, f"{1e3 * net:+.0f}", ha="center", va="bottom", fontsize="x-small")
     strength_axes[1].set_xlabel("restorer NMOS width (um)")
     strength_axes[1].set_ylabel("writer step (V)")
-    strength_axes[1].set_title("Weak sizing collapses; over-strong sizing cancels through complement turn-on")
+    strength_axes[1].set_title("Weak sizing collapses; over-strong sizing cancels through complement turn-on (mV net labels)")
     strength_axes[1].grid(True, alpha=0.25)
-    strength_axes[1].legend(loc="upper left", ncol=2)
+    strength_axes[1].legend(loc="upper center", bbox_to_anchor=(0.5, -0.24), ncol=3, fontsize="small")
     strength_fig.tight_layout()
     save_plot(strength_fig, "mos_hidden_writer_restored_gate_strength_ngspice")
 
@@ -3862,7 +3874,7 @@ quit
     require(swing_pos_net[-1] > swing_pos_net[0] + 0.020, "larger hidden-error swing should improve the recovered write")
     require(np.all(swing_pos_net[swing_usable] < 0.12), "swing-recovered writes should remain incremental")
 
-    swing_fig, swing_axes = plt.subplots(2, 1, figsize=(7.2, 5.8))
+    swing_fig, swing_axes = plt.subplots(2, 1, figsize=(7.2, 6.4))
     swing_eps_arr = np.array(swing_eps_values)
     if swing_usable.any():
         for axis in swing_axes:
@@ -3873,11 +3885,19 @@ quit
                 alpha=0.08,
                 label="usable swing window" if axis is swing_axes[0] else None,
             )
+        swing_axes[0].text(
+            float(np.mean(swing_eps_arr[swing_usable])),
+            1.52,
+            f"usable eps {np.min(swing_eps_arr[swing_usable]):.2f}-{np.max(swing_eps_arr[swing_usable]):.2f} V",
+            ha="center",
+            fontsize="small",
+            bbox={"facecolor": "white", "alpha": 0.82, "edgecolor": "0.8"},
+        )
     swing_axes[0].plot(swing_eps_values, swing_hidden, "o-", label="stored $r^+$ hidden error")
     swing_axes[0].plot(swing_eps_values, swing_neg_hidden_magnitude, ":", color="tab:blue", label="stored $r^-$ magnitude")
     swing_axes[0].plot(swing_eps_values, swing_selected_gate, "s-", label="selected restored gate")
     swing_axes[0].plot(swing_eps_values, swing_complement_gate, "d--", label="complement restored gate")
-    swing_axes[0].axhline(0.9, color="0.4", linewidth=0.8, alpha=0.5)
+    swing_axes[0].axhline(0.9, color="0.4", linewidth=0.8, alpha=0.5, label="writer gate threshold")
     swing_axes[0].set_ylabel("voltage (V)")
     swing_axes[0].set_title("Stored error swing moves the selected weak restorer through its trip point")
     swing_axes[0].grid(True, alpha=0.25)
@@ -3887,11 +3907,15 @@ quit
     swing_axes[1].plot(swing_eps_values, swing_pos_net, "^-", label="$r^+$ net")
     swing_axes[1].plot(swing_eps_values, -swing_neg_net, "v:", label="$r^-$ net magnitude")
     swing_axes[1].axhline(0, color="0.4", linewidth=0.8)
+    swing_axes[1].axhline(0.020, color="0.4", linestyle=":", linewidth=1.0, label="20 mV recovered-net target")
+    swing_axes[1].axhline(0.0005, color="0.55", linestyle=":", linewidth=0.8, label="0.5 mV complement limit")
+    for x, net in zip(swing_eps_values, swing_pos_net):
+        swing_axes[1].text(x, net + 0.003, f"{1e3 * net:+.0f}", ha="center", va="bottom", fontsize="x-small")
     swing_axes[1].set_xlabel("finite-difference epsilon (V)")
     swing_axes[1].set_ylabel("writer step (V)")
-    swing_axes[1].set_title("Recovered write appears only after sufficient stored-error swing")
+    swing_axes[1].set_title("Recovered write appears only after sufficient stored-error swing (mV net labels)")
     swing_axes[1].grid(True, alpha=0.25)
-    swing_axes[1].legend(loc="upper left", ncol=2, fontsize="small")
+    swing_axes[1].legend(loc="upper center", bbox_to_anchor=(0.5, -0.24), ncol=3, fontsize="small")
     swing_fig.tight_layout()
     save_plot(swing_fig, "mos_hidden_writer_restored_gate_swing_ngspice")
 

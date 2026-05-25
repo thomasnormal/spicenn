@@ -7538,6 +7538,50 @@ quit
         "large late guard skew should track read-path droop",
     )
 
+    hold_reset_line = (
+        "VRESET_HYR rst_hyr 0 PWL(0 0 3.58u 0 3.60u 1.8 4.00u 1.8 4.02u 0 "
+        "5.18u 0 5.20u 1.8 5.60u 1.8 5.62u 0 7.8u 0)"
+    )
+    hold_resetn_line = (
+        "VRESETN_HYR rstn_hyr 0 PWL(0 1.8 3.58u 1.8 3.60u 0 4.00u 0 4.02u 1.8 "
+        "5.18u 1.8 5.20u 0 5.60u 0 5.62u 1.8 7.8u 1.8)"
+    )
+    hold_guard_pwl = "VGUARD_HYR guard_hyr 0 PWL(0 0 3.16u 0 3.18u 1.8 3.31u 1.8 3.33u 0 7.8u 0)"
+    hold_guardn_pwl = "VGUARDN_HYR guardn_hyr 0 PWL(0 1.8 3.16u 1.8 3.18u 0 3.31u 0 3.33u 1.8 7.8u 1.8)"
+    hold_deck = replace_required(hybrid_forward_read_reuse_deck, timing_read_pwl, timing_single_read_pwl)
+    hold_deck = replace_required(
+        hold_deck,
+        timing_base_pact_pwl,
+        long_pact_pwl + "\n" + long_pactn_pwl + "\n" + hold_guard_pwl + "\n" + hold_guardn_pwl,
+    )
+    hold_deck = replace_required(hold_deck, hold_reset_line, "VRESET_HYR rst_hyr 0 0")
+    hold_deck = replace_required(hold_deck, hold_resetn_line, "VRESETN_HYR rstn_hyr 0 1.8")
+    hold_deck = replace_required(hold_deck, nmos_store_line_p, guard_store_line_p)
+    hold_deck = replace_required(hold_deck, nmos_store_line_m, guard_store_line_m)
+    hold_deck = replace_required(
+        hold_deck,
+        "mos_hidden_writer_restored_gate_hybrid_update_forward_read_reuse.dat",
+        "mos_hidden_writer_restored_gate_hybrid_update_forward_guard_hold.dat",
+    )
+    hold_data = run_ngspice(hold_deck, "mos_hidden_writer_restored_gate_hybrid_update_forward_guard_hold")
+    ht, hold_cols = load_wrdata(hold_data, 23)
+
+    def ghat(time_s: float, values: np.ndarray) -> float:
+        return float(values[np.argmin(np.abs(ht - time_s))])
+
+    hold_preact = hold_cols[10] - hold_cols[9]
+    hold_store = hold_cols[14] - hold_cols[13]
+    hold_sample_times = np.array([3.575, 4.50, 5.50, 6.50, 7.45]) * 1e-6
+    hold_store_samples = np.array([ghat(ts, hold_store) for ts in hold_sample_times])
+    hold_preact_samples = np.array([ghat(ts, hold_preact) for ts in hold_sample_times])
+    hold_drift = hold_store_samples - hold_store_samples[0]
+    require(hold_store_samples[0] > 0.050, "guard hold deck should capture a full activation before hold")
+    require(np.min(hold_preact_samples) > 0.048, "guard hold deck should keep the trained preactivation available")
+    require(
+        np.max(np.abs(hold_drift)) < 0.0002,
+        "guarded activation store should hold within 0.2 mV over the no-reset interval",
+    )
+
     guard_corner_cases = [
         ("strong", 0.50, -0.50, "strong"),
         ("nominal", 0.55, -0.55, "nominal"),
@@ -7678,6 +7722,31 @@ quit
     guard_skew_axes[1].legend(loc="upper right", fontsize="small")
     guard_skew_fig.tight_layout()
     save_plot(guard_skew_fig, "mos_hidden_writer_restored_gate_hybrid_update_forward_guard_skew_ngspice")
+
+    hold_fig, hold_axes = plt.subplots(2, 1, figsize=(7.4, 6.2), gridspec_kw={"height_ratios": [1.0, 0.8]})
+    hold_axes[0].plot(1e6 * ht, 1e3 * hold_preact, label="$z^- - z^+$")
+    hold_axes[0].plot(1e6 * ht, 1e3 * hold_store, label="stored $h^- - h^+$")
+    hold_axes[0].plot(1e6 * ht, hold_cols[22] / 20.0, color="0.35", alpha=0.25, label="$pact/20$")
+    hold_axes[0].axhline(0, color="0.4", linewidth=0.8)
+    hold_axes[0].axvline(3.33, color="0.25", linestyle="--", linewidth=0.9, alpha=0.6, label="guard off")
+    hold_axes[0].set_xlim(3.05, 7.55)
+    hold_axes[0].set_ylabel("differential (mV)")
+    hold_axes[0].set_title("Guarded activation store holds after read-valid closes")
+    hold_axes[0].grid(True, alpha=0.25)
+    hold_axes[0].legend(loc="upper right", ncol=2, fontsize="small")
+    hold_sample_labels = [f"{ts * 1e6:.2f}" for ts in hold_sample_times]
+    hold_x = np.arange(len(hold_sample_times))
+    hold_axes[1].plot(hold_x, 1e6 * hold_drift, "o-", label="drift from first sample")
+    hold_axes[1].axhline(0, color="0.4", linewidth=0.8)
+    hold_axes[1].set_xticks(hold_x)
+    hold_axes[1].set_xticklabels(hold_sample_labels)
+    hold_axes[1].set_xlabel("sample time (us)")
+    hold_axes[1].set_ylabel("drift ($\\mu$V)")
+    hold_axes[1].set_title("No-reset hold drift stays below one microvolt")
+    hold_axes[1].grid(True, axis="y", alpha=0.25)
+    hold_axes[1].legend(loc="upper right", fontsize="small")
+    hold_fig.tight_layout()
+    save_plot(hold_fig, "mos_hidden_writer_restored_gate_hybrid_update_forward_guard_hold_ngspice")
 
     guard_corner_fig, guard_corner_axes = plt.subplots(2, 1, figsize=(7.4, 6.2), gridspec_kw={"height_ratios": [1.0, 0.8]})
     for label, ct, store in guard_corner_traces:

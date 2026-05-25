@@ -1518,6 +1518,21 @@ must satisfy before it can replace the current behavioral prototype.
 
 \begin{figure}[H]
   \centering
+  \includegraphics[width=0.88\linewidth]{figures/mos_hidden_writer_restored_gate_hybrid_update_forward_guard_hold_ngspice.png}
+  \caption{Ngspice no-reset hold check for the guarded MOS activation store.
+  The same nominal guard window and long \(pact\) aperture are used, but the
+  reset pulse after capture is disabled so the activation capacitor must hold
+  until the end of the transient.  The stored activation is
+  \(51.35455,51.35444,51.35431,51.35419,\) and \(51.35407\) mV at
+  \(3.575,4.50,5.50,6.50,\) and \(7.45\,\mu\mathrm{s}\), for a total drift of
+  about \(-0.48\,\mu\mathrm{V}\).  The preactivation remains near
+  \(52.066\) mV.  In this Level-1 model and leakage setup, the guarded store
+  is limited by timing/skew rather than immediate hold leakage.}
+  \label{fig:mos-hidden-writer-restored-gate-hybrid-update-forward-guard-hold-ngspice}
+\end{figure}
+
+\begin{figure}[H]
+  \centering
   \includegraphics[width=0.88\linewidth]{figures/mos_hidden_writer_restored_gate_hybrid_update_forward_guard_corner_ngspice.png}
   \caption{Ngspice guard pass-gate threshold-corner sweep for the same
   integrated MOS activation store.  The \(pact\) aperture is held long at

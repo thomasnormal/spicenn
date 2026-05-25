@@ -8429,6 +8429,80 @@ quit
         "largest WREAD points should not materially improve stored activation",
     )
 
+    forward_pair_lines = "\n".join(
+        [
+            "MNFP_HYR hp_hyr zm_hyr ftail_hyr 0 NMOS L={LCH} W=48u",
+            "MNFM_HYR hm_hyr zp_hyr ftail_hyr 0 NMOS L={LCH} W=48u",
+            "MNFT_HYR ftail_hyr vbias 0 0 NMOS L={LCH} W=48u",
+        ]
+    )
+    forward_pair_cases_u = [6, 12, 24, 48, 96, 192]
+    forward_pair_labels = []
+    forward_pair_preact_samples = []
+    forward_pair_load_samples = []
+    forward_pair_store_samples = []
+    forward_pair_traces = []
+    for forward_width_u in forward_pair_cases_u:
+        stem = (
+            "mos_hidden_writer_restored_gate_hybrid_update_forward_read_pact_"
+            f"guard_forward_pair_{forward_width_u}u"
+        )
+        sized_forward_pair_lines = forward_pair_lines.replace("W=48u", f"W={forward_width_u}u")
+        forward_pair_deck = replace_required(hybrid_forward_read_reuse_deck, timing_read_pwl, timing_single_read_pwl)
+        forward_pair_deck = replace_required(
+            forward_pair_deck,
+            timing_base_pact_pwl,
+            long_pact_pwl + "\n" + long_pactn_pwl + "\n" + corner_guard_pwl + "\n" + corner_guardn_pwl,
+        )
+        forward_pair_deck = replace_required(forward_pair_deck, nmos_store_line_p, guard_store_line_p)
+        forward_pair_deck = replace_required(forward_pair_deck, nmos_store_line_m, guard_store_line_m)
+        forward_pair_deck = replace_required(forward_pair_deck, forward_pair_lines, sized_forward_pair_lines)
+        forward_pair_deck = replace_required(
+            forward_pair_deck,
+            "mos_hidden_writer_restored_gate_hybrid_update_forward_read_reuse.dat",
+            f"{stem}.dat",
+        )
+        forward_pair_data = run_ngspice(forward_pair_deck, stem)
+        fpt, forward_pair_cols = load_wrdata(forward_pair_data, 23)
+
+        def fpat(time_s: float, values: np.ndarray) -> float:
+            return float(values[np.argmin(np.abs(fpt - time_s))])
+
+        forward_pair_preact = forward_pair_cols[10] - forward_pair_cols[9]
+        forward_pair_load = forward_pair_cols[12] - forward_pair_cols[11]
+        forward_pair_store = forward_pair_cols[14] - forward_pair_cols[13]
+        forward_pair_labels.append(f"{forward_width_u}u")
+        forward_pair_preact_samples.append(fpat(3.575e-6, forward_pair_preact))
+        forward_pair_load_samples.append(fpat(3.315e-6, forward_pair_load))
+        forward_pair_store_samples.append(fpat(3.575e-6, forward_pair_store))
+        forward_pair_traces.append((f"{forward_width_u}u", fpt, forward_pair_load, forward_pair_store))
+
+    forward_pair_preact_samples = np.array(forward_pair_preact_samples)
+    forward_pair_load_samples = np.array(forward_pair_load_samples)
+    forward_pair_store_samples = np.array(forward_pair_store_samples)
+    nominal_forward_pair_idx = forward_pair_cases_u.index(48)
+    require(np.min(forward_pair_preact_samples) > 0.048, "forward-pair sweep should keep a valid read state")
+    require(
+        np.max(forward_pair_preact_samples) - np.min(forward_pair_preact_samples) < 0.001,
+        "forward-pair sizing should not perturb the stored preactivation",
+    )
+    require(
+        abs(forward_pair_store_samples[nominal_forward_pair_idx] - guard_timing_samples[2]) < 0.002,
+        "nominal forward-pair width should match the nominal guard timing sample",
+    )
+    require(
+        forward_pair_store_samples[0] < forward_pair_store_samples[nominal_forward_pair_idx] - 0.010,
+        "small forward pair should visibly underdrive the activation store",
+    )
+    require(
+        np.all(np.diff(forward_pair_store_samples) > 0.005),
+        "stored activation should increase with forward-pair strength over the tested range",
+    )
+    require(
+        forward_pair_store_samples[-1] > forward_pair_store_samples[nominal_forward_pair_idx] + 0.050,
+        "large forward pair should expose activation gain headroom beyond nominal sizing",
+    )
+
     read_gated_fig, read_gated_axes = plt.subplots(2, 1, figsize=(7.4, 6.6), gridspec_kw={"height_ratios": [1.0, 0.9]})
     for label, rgt, store in guard_gated_traces:
         if label in {"40 ns", "120 ns", "240 ns", "320 ns"}:
@@ -8866,6 +8940,33 @@ quit
     read_width_axes[1].legend(loc="upper left", ncol=2, fontsize="small")
     read_width_fig.tight_layout()
     save_plot(read_width_fig, "mos_hidden_writer_restored_gate_hybrid_update_forward_guard_read_width_ngspice")
+
+    forward_pair_fig, forward_pair_axes = plt.subplots(2, 1, figsize=(7.4, 6.4), gridspec_kw={"height_ratios": [1.0, 0.8]})
+    for label, fpt, load, store in forward_pair_traces:
+        if label in {"6u", "48u", "96u", "192u"}:
+            forward_pair_axes[0].plot(1e6 * fpt, 1e3 * load, label=f"{label} load")
+            forward_pair_axes[0].plot(1e6 * fpt, 1e3 * store, "--", label=f"{label} store")
+    forward_pair_axes[0].axhline(0, color="0.4", linewidth=0.8)
+    forward_pair_axes[0].axvline(3.33, color="0.25", linestyle="--", linewidth=0.9, alpha=0.6, label="guard off")
+    forward_pair_axes[0].set_xlim(3.05, 3.65)
+    forward_pair_axes[0].set_ylabel("activation differential (mV)")
+    forward_pair_axes[0].set_title("Forward-pair width is a real activation-gain knob")
+    forward_pair_axes[0].grid(True, alpha=0.25)
+    forward_pair_axes[0].legend(loc="upper left", ncol=2, fontsize="small")
+    forward_pair_x = np.arange(len(forward_pair_labels))
+    forward_pair_axes[1].bar(forward_pair_x - 0.24, 1e3 * forward_pair_preact_samples, width=0.24, label="$z^- - z^+$")
+    forward_pair_axes[1].bar(forward_pair_x, 1e3 * forward_pair_load_samples, width=0.24, label="forward load")
+    forward_pair_axes[1].bar(forward_pair_x + 0.24, 1e3 * forward_pair_store_samples, width=0.24, label="stored $h^- - h^+$")
+    forward_pair_axes[1].axhline(0, color="0.4", linewidth=0.8)
+    forward_pair_axes[1].set_xticks(forward_pair_x)
+    forward_pair_axes[1].set_xticklabels(forward_pair_labels)
+    forward_pair_axes[1].set_xlabel("forward-pair/tail NMOS width")
+    forward_pair_axes[1].set_ylabel("sampled differential (mV)")
+    forward_pair_axes[1].set_title("Read state is fixed while activation gain keeps increasing")
+    forward_pair_axes[1].grid(True, axis="y", alpha=0.25)
+    forward_pair_axes[1].legend(loc="upper left", ncol=2, fontsize="small")
+    forward_pair_fig.tight_layout()
+    save_plot(forward_pair_fig, "mos_hidden_writer_restored_gate_hybrid_update_forward_guard_forward_pair_ngspice")
 
     hybrid_repeated_deck = f"""
 * Hybrid restored-enable/analog-error writer repeated-pulse accumulation check.

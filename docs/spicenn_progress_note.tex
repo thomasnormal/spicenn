@@ -1764,11 +1764,36 @@ must satisfy before it can replace the current behavioral prototype.
   \(21.209,37.538,51.355,57.040,57.355,\) and \(57.202\) mV.  The sizing
   result matches the drive-voltage result: undersized read devices limit the
   summing/forward signal before the guard closes, while widths above roughly
-  \(48\)--\(96\,\mu\mathrm{m}\) mostly hit a forward/store saturation knee.
-  The nominal \(24\,\mu\mathrm{m}\) read tail is functional but not heavily
-  overdesigned; a larger read tail buys several millivolts of capture margin
-  before diminishing returns dominate.}
+  \(48\)--\(96\,\mu\mathrm{m}\) mostly hit the read-preactivation ceiling under
+  the nominal forward-pair gain.  The nominal \(24\,\mu\mathrm{m}\) read tail
+  is functional but not heavily overdesigned; a larger read tail buys several
+  millivolts of capture margin before diminishing returns dominate.  The next
+  forward-pair sweep shows that this is not a hard activation-store ceiling.}
   \label{fig:mos-hidden-writer-restored-gate-hybrid-update-forward-guard-read-width-ngspice}
+\end{figure}
+
+\begin{figure}[H]
+  \centering
+  \includegraphics[width=0.88\linewidth]{figures/mos_hidden_writer_restored_gate_hybrid_update_forward_guard_forward_pair_ngspice.png}
+  \caption{Ngspice forward-pair/tail width sweep for the guarded MOS activation
+  store.  This sweep keeps the same MOS-written \(W/B\) state, read-valid
+  drive, read-tail sizing, \(pact\), guard timing, and \(C_\mathrm{store}=10\)
+  pF as the nominal guarded readback case.  Only the three NMOS devices in the
+  crossed source-coupled forward pair and its tail are resized together.  The
+  measured read preactivation is essentially unchanged at \(52.066\) mV for
+  every case, proving that the sweep isolates the forward readout rather than
+  perturbing the stored summing capacitors.  For forward-pair/tail widths of
+  \(6,12,24,48,96,\) and \(192\,\mu\mathrm{m}\), the immediate forward-load
+  differentials are
+  \(12.318,21.020,33.618,51.130,75.728,\) and \(110.931\) mV, and the guarded
+  stored activations are
+  \(12.479,21.184,33.794,51.355,76.077,\) and \(111.674\) mV.  This corrects
+  the earlier interpretation of the read-width plateau: the current nominal
+  forward pair is a gain setting, not a saturated store limit.  If larger
+  activation swing is useful for the learning cell, the next design knob is
+  forward-pair/tail sizing or bias, followed by renewed mismatch, noise, and
+  common-mode checks at the chosen gain.}
+  \label{fig:mos-hidden-writer-restored-gate-hybrid-update-forward-guard-forward-pair-ngspice}
 \end{figure}
 
 \begin{figure}[H]

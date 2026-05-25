@@ -1822,6 +1822,25 @@ must satisfy before it can replace the current behavioral prototype.
 
 \begin{figure}[H]
   \centering
+  \includegraphics[width=0.90\linewidth]{figures/mos_hidden_writer_restored_gate_hybrid_update_forward_guard_forward_pair_96u_zcm_ngspice.png}
+  \caption{Ngspice summing-common-mode headroom sweep for the
+  \(96\,\mu\mathrm{m}\) forward-pair candidate.  The deck keeps the same
+  MOS-written \(W/B\) state, read path, guard timing, \(10\) pF activation
+  store, and \(96\,\mu\mathrm{m}\) crossed forward pair, but resets both
+  summing capacitors to \(0.75,0.85,0.90,0.95,\) and \(1.05\) V.  The read
+  preactivation remains positive in every case:
+  \(47.585,51.453,52.066,52.222,\) and \(52.297\) mV.  The stored activation
+  does not follow that preactivation at low common mode, however: the measured
+  stored values are \(0,27.139,76.077,88.630,\) and \(92.774\) mV.  Thus the
+  larger forward pair is not generally headroom-robust; it needs roughly the
+  nominal \(0.90\) V summing common mode or higher in this Level-1 fixture.
+  This turns common-mode generation/reset into a real circuit requirement
+  before the high-gain candidate can be promoted to mismatch/noise tests.}
+  \label{fig:mos-hidden-writer-restored-gate-hybrid-update-forward-guard-forward-pair-96u-zcm-ngspice}
+\end{figure}
+
+\begin{figure}[H]
+  \centering
   \includegraphics[width=0.88\linewidth]{figures/mos_hidden_writer_restored_gate_hybrid_update_forward_guard_forward_tail_bias_ngspice.png}
   \caption{Ngspice isolated forward-tail bias sweep for the same guarded MOS
   activation store.  The failed shared-bias experiment changed the read path

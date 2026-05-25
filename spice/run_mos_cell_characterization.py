@@ -8608,6 +8608,70 @@ quit
         "96u forward-pair off-state control/read toggles should not disturb the held activation by more than 1 mV",
     )
 
+    zcm_source_line = "VZCM zcm 0 0.90"
+    zcm_cap_p_line = "CZP_HYR zp_hyr 0 {CSUM} IC=0.9"
+    zcm_cap_m_line = "CZM_HYR zm_hyr 0 {CSUM} IC=0.9"
+    high_gain_zcm_cases_v = [0.75, 0.85, 0.90, 0.95, 1.05]
+    high_gain_zcm_labels = []
+    high_gain_zcm_preact_samples = []
+    high_gain_zcm_load_samples = []
+    high_gain_zcm_store_samples = []
+    high_gain_zcm_traces = []
+    for zcm_v in high_gain_zcm_cases_v:
+        zcm_token = str(zcm_v).replace(".", "p")
+        stem = (
+            "mos_hidden_writer_restored_gate_hybrid_update_forward_guard_"
+            f"forward_pair_96u_zcm_{zcm_token}v"
+        )
+        zcm_deck = replace_required(high_gain_hold_deck, zcm_source_line, f"VZCM zcm 0 {zcm_v:.2f}")
+        zcm_deck = replace_required(zcm_deck, zcm_cap_p_line, f"CZP_HYR zp_hyr 0 {{CSUM}} IC={zcm_v:.2f}")
+        zcm_deck = replace_required(zcm_deck, zcm_cap_m_line, f"CZM_HYR zm_hyr 0 {{CSUM}} IC={zcm_v:.2f}")
+        zcm_deck = replace_required(
+            zcm_deck,
+            "mos_hidden_writer_restored_gate_hybrid_update_forward_guard_forward_pair_96u_hold.dat",
+            f"{stem}.dat",
+        )
+        zcm_data = run_ngspice(zcm_deck, stem)
+        zcmt, zcm_cols = load_wrdata(zcm_data, 23)
+
+        def zcmat(time_s: float, values: np.ndarray) -> float:
+            return float(values[np.argmin(np.abs(zcmt - time_s))])
+
+        zcm_preact = zcm_cols[10] - zcm_cols[9]
+        zcm_load = zcm_cols[12] - zcm_cols[11]
+        zcm_store = zcm_cols[14] - zcm_cols[13]
+        high_gain_zcm_labels.append(f"{zcm_v:.2f} V")
+        high_gain_zcm_preact_samples.append(zcmat(3.575e-6, zcm_preact))
+        high_gain_zcm_load_samples.append(zcmat(3.315e-6, zcm_load))
+        high_gain_zcm_store_samples.append(zcmat(3.575e-6, zcm_store))
+        high_gain_zcm_traces.append((f"{zcm_v:.2f} V", zcmt, zcm_load, zcm_store))
+
+    high_gain_zcm_preact_samples = np.array(high_gain_zcm_preact_samples)
+    high_gain_zcm_load_samples = np.array(high_gain_zcm_load_samples)
+    high_gain_zcm_store_samples = np.array(high_gain_zcm_store_samples)
+    nominal_zcm_idx = high_gain_zcm_cases_v.index(0.90)
+    require(
+        abs(high_gain_zcm_store_samples[nominal_zcm_idx] - high_gain_hold_store_samples[0]) < 0.002,
+        "nominal 96u z common-mode sweep should match the 96u high-gain hold sample",
+    )
+    require(np.all(high_gain_zcm_preact_samples > 0.045), "96u z common-mode sweep should keep positive read preactivation")
+    require(
+        high_gain_zcm_store_samples[0] < 0.001,
+        "0.75 V z common mode should expose the 96u forward-pair lower-headroom failure",
+    )
+    require(
+        high_gain_zcm_store_samples[1] < high_gain_zcm_store_samples[nominal_zcm_idx] - 0.040,
+        "0.85 V z common mode should expose partial 96u forward-pair underdrive",
+    )
+    require(
+        np.min(high_gain_zcm_store_samples[2:]) > 0.070,
+        "96u forward pair should keep high activation gain from nominal z common mode upward",
+    )
+    require(
+        np.all(np.diff(high_gain_zcm_store_samples) > 0.003),
+        "96u stored activation should increase monotonically with z common mode in this headroom sweep",
+    )
+
     tail_bias_forward_tail_line = "MNFT_HYR ftail_hyr vbias 0 0 NMOS L={LCH} W=48u"
     tail_bias_cases_v = [0.70, 0.80, 0.90, 0.95, 1.05, 1.15, 1.25]
     tail_bias_labels = []
@@ -9175,6 +9239,33 @@ quit
     high_gain_axes[1].grid(True, axis="y", alpha=0.25)
     high_gain_fig.tight_layout()
     save_plot(high_gain_fig, "mos_hidden_writer_restored_gate_hybrid_update_forward_guard_forward_pair_96u_robustness_ngspice")
+
+    high_gain_zcm_fig, high_gain_zcm_axes = plt.subplots(2, 1, figsize=(7.4, 6.4), gridspec_kw={"height_ratios": [1.0, 0.8]})
+    for label, zcmt, load, store in high_gain_zcm_traces:
+        if label in {"0.75 V", "0.90 V", "1.05 V"}:
+            high_gain_zcm_axes[0].plot(1e6 * zcmt, 1e3 * load, label=f"{label} load")
+            high_gain_zcm_axes[0].plot(1e6 * zcmt, 1e3 * store, "--", label=f"{label} store")
+    high_gain_zcm_axes[0].axhline(0, color="0.4", linewidth=0.8)
+    high_gain_zcm_axes[0].axvline(3.33, color="0.25", linestyle="--", linewidth=0.9, alpha=0.6, label="guard off")
+    high_gain_zcm_axes[0].set_xlim(3.05, 3.65)
+    high_gain_zcm_axes[0].set_ylabel("activation differential (mV)")
+    high_gain_zcm_axes[0].set_title("96u forward pair exposes a lower summing-common-mode headroom limit")
+    high_gain_zcm_axes[0].grid(True, alpha=0.25)
+    high_gain_zcm_axes[0].legend(loc="upper left", ncol=2, fontsize="small")
+    high_gain_zcm_x = np.arange(len(high_gain_zcm_labels))
+    high_gain_zcm_axes[1].bar(high_gain_zcm_x - 0.24, 1e3 * high_gain_zcm_preact_samples, width=0.24, label="$z^- - z^+$")
+    high_gain_zcm_axes[1].bar(high_gain_zcm_x, 1e3 * high_gain_zcm_load_samples, width=0.24, label="forward load")
+    high_gain_zcm_axes[1].bar(high_gain_zcm_x + 0.24, 1e3 * high_gain_zcm_store_samples, width=0.24, label="stored $h^- - h^+$")
+    high_gain_zcm_axes[1].axhline(0, color="0.4", linewidth=0.8)
+    high_gain_zcm_axes[1].set_xticks(high_gain_zcm_x)
+    high_gain_zcm_axes[1].set_xticklabels(high_gain_zcm_labels)
+    high_gain_zcm_axes[1].set_xlabel("initial/reset summing common mode")
+    high_gain_zcm_axes[1].set_ylabel("sampled differential (mV)")
+    high_gain_zcm_axes[1].set_title("The larger forward pair needs roughly nominal or higher z common mode")
+    high_gain_zcm_axes[1].grid(True, axis="y", alpha=0.25)
+    high_gain_zcm_axes[1].legend(loc="upper left", ncol=2, fontsize="small")
+    high_gain_zcm_fig.tight_layout()
+    save_plot(high_gain_zcm_fig, "mos_hidden_writer_restored_gate_hybrid_update_forward_guard_forward_pair_96u_zcm_ngspice")
 
     tail_bias_fig, tail_bias_axes = plt.subplots(2, 1, figsize=(7.4, 6.4), gridspec_kw={"height_ratios": [1.0, 0.8]})
     for label, tbt, load, store in tail_bias_traces:

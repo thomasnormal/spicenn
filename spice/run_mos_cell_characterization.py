@@ -10927,6 +10927,14 @@ quit
         np.max(np.abs(shifted_signed_mirror_error)) < 0.0003,
         "shifted-gate positive and negative 0.75 V stores should mirror within 0.3 mV",
     )
+    shift_low_z_recovery = float(chosen_shift_zcm_store_samples[0] - high_gain_zcm_store_samples[0])
+    shift_partial_z_recovery = float(chosen_shift_zcm_store_samples[1] - high_gain_zcm_store_samples[1])
+    shift_best_coupling_idx = int(np.argmax(high_gain_shift_store_samples))
+    shift_best_coupling_pf = float(high_gain_shift_couple_cases_pf[shift_best_coupling_idx])
+    shift_best_coupling_store = float(high_gain_shift_store_samples[shift_best_coupling_idx])
+    shift_overcoupled_drop = float(high_gain_shift_store_samples[chosen_shift_idx] - high_gain_shift_store_samples[2])
+    shift_collapsed_50pf_store = float(high_gain_shift_store_samples[-1])
+    shifted_signed_mirror_error_max = float(np.max(np.abs(shifted_signed_mirror_error)))
 
     shift_stress_stem = (
         "mos_hidden_writer_restored_gate_hybrid_update_forward_guard_"
@@ -11746,6 +11754,16 @@ quit
         < 0.001,
         "untrimmed input-pair threshold sweep should not change the passive shifted-gate sampled differential",
     )
+    shift_threshold_untrimmed_gate_spread = float(
+        np.ptp(shift_threshold_gate_samples[untrimmed_threshold_indices])
+    )
+    shift_threshold_untrimmed_positive_min = float(
+        np.min(np.delete(shift_threshold_store_samples[untrimmed_threshold_indices], threshold_hazard_idx))
+    )
+    shift_threshold_hazard_store = float(shift_threshold_store_samples[threshold_hazard_idx])
+    shift_threshold_trim50_store = float(shift_threshold_store_samples[threshold_trim50_idx])
+    shift_threshold_trim75_store = float(shift_threshold_store_samples[threshold_trim75_idx])
+    shift_threshold_store_span = float(np.ptp(shift_threshold_store_samples))
 
     shift_trimmed_reset_cases = [
         ("untrimmed", "reset trim 0 mV", 0.0),
@@ -11876,6 +11894,19 @@ quit
         < 0.003,
         "split shifted-gate reset should establish the requested trim differential before read",
     )
+    shift_trimmed_reset_trim_tracking_error = float(
+        np.max(
+            np.abs(
+                shift_trimmed_reset_gate_pre_samples
+                - np.array([case[2] for case in shift_trimmed_reset_cases], dtype=float)
+            )
+        )
+    )
+    shift_trimmed_reset_common_error_max = float(np.max(np.abs(shift_trimmed_reset_gate_common_samples - 0.90)))
+    shift_trimmed_reset_first_positive_idx = int(np.flatnonzero(shift_trimmed_reset_store_samples > 0.0)[0])
+    shift_trimmed_reset_first_useful_idx = int(np.flatnonzero(shift_trimmed_reset_store_samples > 0.020)[0])
+    shift_trimmed_reset_50mv_store = float(shift_trimmed_reset_store_samples[5])
+    shift_trimmed_reset_100mv_store = float(shift_trimmed_reset_store_samples[-1])
 
     def run_split_reset_threshold_case(
         stem: str,
@@ -15102,6 +15133,19 @@ quit
     shift_axes[0].set_ylabel("stored activation (mV)")
     shift_axes[0].set_title("Passive shifted-gate latch restores low-z headroom")
     shift_axes[0].grid(True, alpha=0.25)
+    shift_axes[0].text(
+        0.55,
+        0.14,
+        "0.75 V rescue = "
+        f"{1e3 * shift_low_z_recovery:.1f} mV\n"
+        "0.85 V gain = "
+        f"{1e3 * shift_partial_z_recovery:.1f} mV\n"
+        "signed mirror err = "
+        f"{1e3 * shifted_signed_mirror_error_max:.3f} mV / <0.3 mV",
+        transform=shift_axes[0].transAxes,
+        fontsize="x-small",
+        bbox={"facecolor": "white", "alpha": 0.82, "edgecolor": "0.8"},
+    )
     shift_axes[0].legend(loc="upper left", ncol=2, fontsize="x-small")
     shift_x = np.arange(len(high_gain_shift_couple_labels) + 1)
     shift_labels = ["none", *high_gain_shift_couple_labels]
@@ -15114,7 +15158,21 @@ quit
     shift_axes[1].set_xlabel("coupling capacitance into 5 pF shifted gate latch")
     shift_axes[1].set_ylabel("stored activation (mV)")
     shift_axes[1].set_title("The useful coupling ratio is a window, not monotone gain")
+    shift_axes[1].set_ylim(-4, 86)
     shift_axes[1].grid(True, alpha=0.25)
+    shift_axes[1].text(
+        0.08,
+        0.67,
+        "best coupling = "
+        f"{shift_best_coupling_pf:g} pF -> {1e3 * shift_best_coupling_store:.1f} mV\n"
+        "20 pF drop vs 10 pF = "
+        f"{1e3 * shift_overcoupled_drop:.1f} mV / >30 mV\n"
+        "50 pF collapsed = "
+        f"{1e3 * shift_collapsed_50pf_store:.2f} mV / <5 mV",
+        transform=shift_axes[1].transAxes,
+        fontsize="x-small",
+        bbox={"facecolor": "white", "alpha": 0.82, "edgecolor": "0.8"},
+    )
     shift_axes[1].legend(loc="upper right", fontsize="small")
     shift_fig.tight_layout()
     save_plot(shift_fig, "mos_hidden_writer_restored_gate_hybrid_update_forward_guard_forward_pair_96u_shifted_gate_ngspice")
@@ -15532,6 +15590,19 @@ quit
     shift_threshold_axes[0].set_ylabel("activation differential (mV)")
     shift_threshold_axes[0].set_title("Shifted-gate forward pair under input-threshold corners")
     shift_threshold_axes[0].grid(True, alpha=0.25)
+    shift_threshold_axes[0].text(
+        0.55,
+        0.14,
+        "untrimmed skew flips to "
+        f"{1e3 * shift_threshold_hazard_store:.1f} mV\n"
+        "-50 mV trim recovers "
+        f"{1e3 * shift_threshold_trim50_store:.1f} mV\n"
+        "-75 mV trim margin = "
+        f"{1e3 * shift_threshold_trim75_store:.1f} mV",
+        transform=shift_threshold_axes[0].transAxes,
+        fontsize="x-small",
+        bbox={"facecolor": "white", "alpha": 0.82, "edgecolor": "0.8"},
+    )
     shift_threshold_axes[0].legend(loc="upper left", ncol=2, fontsize="x-small")
     shift_threshold_x = np.arange(len(shift_threshold_labels))
     shift_threshold_axes[1].bar(
@@ -15558,6 +15629,19 @@ quit
     shift_threshold_axes[1].set_ylabel("sampled differential (mV)")
     shift_threshold_axes[1].set_title("Threshold skew changes gain but must not flip the shifted activation")
     shift_threshold_axes[1].grid(True, axis="y", alpha=0.25)
+    shift_threshold_axes[1].text(
+        0.04,
+        0.72,
+        "untrimmed gate-diff spread = "
+        f"{1e3 * shift_threshold_untrimmed_gate_spread:.3f} mV / <1 mV\n"
+        "untrimmed nonhazard min h = "
+        f"{1e3 * shift_threshold_untrimmed_positive_min:.1f} mV / >15 mV\n"
+        "total h span = "
+        f"{1e3 * shift_threshold_store_span:.1f} mV",
+        transform=shift_threshold_axes[1].transAxes,
+        fontsize="x-small",
+        bbox={"facecolor": "white", "alpha": 0.82, "edgecolor": "0.8"},
+    )
     shift_threshold_axes[1].legend(loc="upper right", ncol=3, fontsize="small")
     shift_threshold_fig.tight_layout()
     save_plot(
@@ -15587,6 +15671,19 @@ quit
     shift_trimmed_reset_axes[0].set_ylabel("stored activation (mV)")
     shift_trimmed_reset_axes[0].set_title("Split physical reset trims the skewed shifted-gate forward pair")
     shift_trimmed_reset_axes[0].grid(True, alpha=0.25)
+    shift_trimmed_reset_axes[0].text(
+        0.50,
+        0.12,
+        "first positive = "
+        f"{shift_trimmed_reset_labels[shift_trimmed_reset_first_positive_idx].replace('reset trim ', '')}\n"
+        "first useful >20 mV = "
+        f"{shift_trimmed_reset_labels[shift_trimmed_reset_first_useful_idx].replace('reset trim ', '')}\n"
+        "-50 mV trim gives "
+        f"{1e3 * shift_trimmed_reset_50mv_store:.1f} mV",
+        transform=shift_trimmed_reset_axes[0].transAxes,
+        fontsize="x-small",
+        bbox={"facecolor": "white", "alpha": 0.82, "edgecolor": "0.8"},
+    )
     shift_trimmed_reset_axes[0].legend(loc="upper left", ncol=2, fontsize="x-small")
     shift_trimmed_reset_x = np.arange(len(shift_trimmed_reset_labels))
     shift_trimmed_reset_axes[1].bar(
@@ -15612,7 +15709,21 @@ quit
     shift_trimmed_reset_axes[1].set_xticklabels(shift_trimmed_reset_labels, rotation=18, ha="right")
     shift_trimmed_reset_axes[1].set_ylabel("sampled differential (mV)")
     shift_trimmed_reset_axes[1].set_title("Real reset rails establish the trim; activation recovers with enough offset budget")
+    shift_trimmed_reset_axes[1].set_ylim(-116, 190)
     shift_trimmed_reset_axes[1].grid(True, axis="y", alpha=0.25)
+    shift_trimmed_reset_axes[1].text(
+        0.04,
+        0.72,
+        "trim tracking err = "
+        f"{1e3 * shift_trimmed_reset_trim_tracking_error:.2f} mV / <3 mV\n"
+        "common err = "
+        f"{1e3 * shift_trimmed_reset_common_error_max:.2f} mV / <6 mV\n"
+        "-100 mV overdrive = "
+        f"{1e3 * shift_trimmed_reset_100mv_store:.1f} mV",
+        transform=shift_trimmed_reset_axes[1].transAxes,
+        fontsize="x-small",
+        bbox={"facecolor": "white", "alpha": 0.82, "edgecolor": "0.8"},
+    )
     shift_trimmed_reset_axes[1].legend(loc="upper right", ncol=3, fontsize="small")
     shift_trimmed_reset_fig.tight_layout()
     save_plot(

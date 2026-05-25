@@ -1596,6 +1596,26 @@ must satisfy before it can replace the current behavioral prototype.
 
 \begin{figure}[H]
   \centering
+  \includegraphics[width=0.88\linewidth]{figures/mos_hidden_writer_restored_gate_hybrid_update_forward_guard_off_isolation_ngspice.png}
+  \caption{Ngspice off-isolation stress for the guarded MOS activation store.
+  After one nominal capture, reset is disabled and the deck deliberately
+  toggles later read pulses, \(pact\)-only pulses with the guard off, and
+  guard-only/read+guard pulses with \(pact\) off.  The preactivation node is
+  not quiet under this stress: sampled \(z^- - z^+\) values move from
+  \(52.066\) mV to \(64.749,69.981,69.981,53.486,20.843,\) and
+  \(6.105\) mV as later read/control conditions change.  The stored
+  activation remains isolated, however: sampled \(h^- - h^+\) is
+  \(51.35455,51.35444,51.35437,51.35431,51.35422,51.35415,\) and
+  \(51.35406\) mV at \(3.575,4.50,5.05,5.50,6.25,6.75,\) and
+  \(7.45\,\mu\mathrm{s}\), for only \(-0.49\,\mu\mathrm{V}\) total drift.
+  This closes a separate robustness condition from static hold: later control
+  activity can disturb the summing/read side, but the series \(pact\)-and-guard
+  transmission-gate stack keeps the activation capacitor disconnected.}
+  \label{fig:mos-hidden-writer-restored-gate-hybrid-update-forward-guard-off-isolation-ngspice}
+\end{figure}
+
+\begin{figure}[H]
+  \centering
   \includegraphics[width=0.88\linewidth]{figures/mos_hidden_writer_restored_gate_hybrid_update_forward_guard_corner_ngspice.png}
   \caption{Ngspice guard pass-gate threshold-corner sweep for the same
   integrated MOS activation store.  The \(pact\) aperture is held long at

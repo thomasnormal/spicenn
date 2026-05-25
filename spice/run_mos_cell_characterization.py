@@ -7854,6 +7854,64 @@ quit
         "guarded activation store should hold within 0.2 mV over the no-reset interval",
     )
 
+    stress_read_pwl = (
+        "VREAD_HYR read_hyr 0 PWL(0 0 2.70u 0 2.72u 1.15 3.36u 1.15 3.38u 0 "
+        "4.30u 0 4.32u 1.15 4.96u 1.15 4.98u 0 "
+        "5.90u 0 5.92u 1.15 6.56u 1.15 6.58u 0 7.8u 0)"
+    )
+    stress_pact_pwl = (
+        "VPACT_HYR pact_hyr 0 PWL(0 0 3.16u 0 3.18u 1.8 3.50u 1.8 3.52u 0 "
+        "4.76u 0 4.78u 1.8 4.91u 1.8 4.93u 0 "
+        "6.36u 0 6.38u 1.8 6.51u 1.8 6.53u 0 7.8u 0)"
+    )
+    stress_pactn_pwl = (
+        "VPACTN_HYR pactn_hyr 0 PWL(0 1.8 3.16u 1.8 3.18u 0 3.50u 0 3.52u 1.8 "
+        "4.76u 1.8 4.78u 0 4.91u 0 4.93u 1.8 "
+        "6.36u 1.8 6.38u 0 6.51u 0 6.53u 1.8 7.8u 1.8)"
+    )
+    stress_guard_pwl = (
+        "VGUARD_HYR guard_hyr 0 PWL(0 0 3.16u 0 3.18u 1.8 3.31u 1.8 3.33u 0 "
+        "5.20u 0 5.22u 1.8 5.35u 1.8 5.37u 0 "
+        "5.98u 0 6.00u 1.8 6.13u 1.8 6.15u 0 7.8u 0)"
+    )
+    stress_guardn_pwl = (
+        "VGUARDN_HYR guardn_hyr 0 PWL(0 1.8 3.16u 1.8 3.18u 0 3.31u 0 3.33u 1.8 "
+        "5.20u 1.8 5.22u 0 5.35u 0 5.37u 1.8 "
+        "5.98u 1.8 6.00u 0 6.13u 0 6.15u 1.8 7.8u 1.8)"
+    )
+    stress_deck = replace_required(hybrid_forward_read_reuse_deck, timing_read_pwl, stress_read_pwl)
+    stress_deck = replace_required(
+        stress_deck,
+        timing_base_pact_pwl,
+        stress_pact_pwl + "\n" + stress_pactn_pwl + "\n" + stress_guard_pwl + "\n" + stress_guardn_pwl,
+    )
+    stress_deck = replace_required(stress_deck, hold_reset_line, "VRESET_HYR rst_hyr 0 0")
+    stress_deck = replace_required(stress_deck, hold_resetn_line, "VRESETN_HYR rstn_hyr 0 1.8")
+    stress_deck = replace_required(stress_deck, nmos_store_line_p, guard_store_line_p)
+    stress_deck = replace_required(stress_deck, nmos_store_line_m, guard_store_line_m)
+    stress_deck = replace_required(
+        stress_deck,
+        "mos_hidden_writer_restored_gate_hybrid_update_forward_read_reuse.dat",
+        "mos_hidden_writer_restored_gate_hybrid_update_forward_guard_off_isolation.dat",
+    )
+    stress_data = run_ngspice(stress_deck, "mos_hidden_writer_restored_gate_hybrid_update_forward_guard_off_isolation")
+    got, guard_off_cols = load_wrdata(stress_data, 23)
+
+    def goiat(time_s: float, values: np.ndarray) -> float:
+        return float(values[np.argmin(np.abs(got - time_s))])
+
+    guard_off_preact = guard_off_cols[10] - guard_off_cols[9]
+    guard_off_store = guard_off_cols[14] - guard_off_cols[13]
+    guard_off_sample_times = np.array([3.575, 4.50, 5.05, 5.50, 6.25, 6.75, 7.45]) * 1e-6
+    guard_off_store_samples = np.array([goiat(ts, guard_off_store) for ts in guard_off_sample_times])
+    guard_off_preact_samples = np.array([goiat(ts, guard_off_preact) for ts in guard_off_sample_times])
+    guard_off_drift = guard_off_store_samples - guard_off_store_samples[0]
+    require(guard_off_store_samples[0] > 0.050, "guard off-isolation deck should capture a full activation")
+    require(
+        np.max(np.abs(guard_off_drift)) < 0.0005,
+        "off-state control/read toggles should not disturb guarded activation store by more than 0.5 mV",
+    )
+
     guard_corner_cases = [
         ("strong", 0.50, -0.50, "strong"),
         ("nominal", 0.55, -0.55, "nominal"),
@@ -8179,6 +8237,34 @@ quit
     hold_axes[1].legend(loc="upper right", fontsize="small")
     hold_fig.tight_layout()
     save_plot(hold_fig, "mos_hidden_writer_restored_gate_hybrid_update_forward_guard_hold_ngspice")
+
+    guard_off_fig, guard_off_axes = plt.subplots(2, 1, figsize=(7.4, 6.4), gridspec_kw={"height_ratios": [1.0, 0.8]})
+    guard_off_axes[0].plot(1e6 * got, 1e3 * guard_off_preact, label="$z^- - z^+$")
+    guard_off_axes[0].plot(1e6 * got, 1e3 * guard_off_store, label="stored $h^- - h^+$")
+    guard_off_axes[0].plot(1e6 * got, guard_off_cols[21] / 20.0, color="0.25", alpha=0.25, label="$read/20$")
+    guard_off_axes[0].plot(1e6 * got, guard_off_cols[22] / 20.0, color="0.45", alpha=0.25, label="$pact/20$")
+    for start_us, end_us, label in [(5.22, 5.35, "guard-only"), (6.00, 6.13, "guard+read only")]:
+        guard_off_axes[0].axvspan(start_us, end_us, color="0.75", alpha=0.18, label=label)
+    guard_off_axes[0].axhline(0, color="0.4", linewidth=0.8)
+    guard_off_axes[0].axvline(3.33, color="0.25", linestyle="--", linewidth=0.9, alpha=0.6, label="first guard off")
+    guard_off_axes[0].set_xlim(3.05, 7.55)
+    guard_off_axes[0].set_ylabel("differential / control (mV)")
+    guard_off_axes[0].set_title("Guarded activation store rejects later off-state control toggles")
+    guard_off_axes[0].grid(True, alpha=0.25)
+    guard_off_axes[0].legend(loc="upper right", ncol=2, fontsize="small")
+    guard_off_sample_labels = [f"{ts * 1e6:.2f}" for ts in guard_off_sample_times]
+    guard_off_x = np.arange(len(guard_off_sample_times))
+    guard_off_axes[1].plot(guard_off_x, 1e6 * guard_off_drift, "o-", label="stored activation drift")
+    guard_off_axes[1].axhline(0, color="0.4", linewidth=0.8)
+    guard_off_axes[1].set_xticks(guard_off_x)
+    guard_off_axes[1].set_xticklabels(guard_off_sample_labels)
+    guard_off_axes[1].set_xlabel("sample time (us)")
+    guard_off_axes[1].set_ylabel("drift ($\\mu$V)")
+    guard_off_axes[1].set_title("Pact-only, guard-only, and read pulses leave the held value unchanged")
+    guard_off_axes[1].grid(True, axis="y", alpha=0.25)
+    guard_off_axes[1].legend(loc="lower right", fontsize="small")
+    guard_off_fig.tight_layout()
+    save_plot(guard_off_fig, "mos_hidden_writer_restored_gate_hybrid_update_forward_guard_off_isolation_ngspice")
 
     guard_corner_fig, guard_corner_axes = plt.subplots(2, 1, figsize=(7.4, 6.2), gridspec_kw={"height_ratios": [1.0, 0.8]})
     for label, ct, store in guard_corner_traces:

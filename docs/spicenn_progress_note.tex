@@ -1534,6 +1534,24 @@ must satisfy before it can replace the current behavioral prototype.
 
 \begin{figure}[H]
   \centering
+  \includegraphics[width=0.88\linewidth]{figures/mos_hidden_writer_restored_gate_hybrid_update_forward_pact_edge_ngspice.png}
+  \caption{Ngspice \(pact\)-edge slew sweep for the guarded MOS activation
+  store.  The read and guard windows are fixed at their nominal timings, while
+  the \(pact\) rise begins at \(3.16\,\mu\mathrm{s}\) and the rise/fall time
+  is swept through \(5,10,20,40,80,\) and \(120\) ns.  The read
+  preactivation remains \(52.066\) mV, while the stored activation is
+  \(51.378,51.352,51.355,50.934,48.721,\) and \(43.040\) mV.  This effect
+  is weaker than the guard-window placement errors, but it is not zero:
+  ordinary \(5\)--\(20\) ns \(pact\) edges agree to tens of microvolts, a
+  \(40\) ns edge loses only \(0.42\) mV, and a \(120\) ns edge loses about
+  \(8.31\) mV because \(pact\) is still slewing during much of the valid
+  guard window.  The series stack therefore needs both correct guard timing
+  and a reasonably settled \(pact\) gate at guard open.}
+  \label{fig:mos-hidden-writer-restored-gate-hybrid-update-forward-pact-edge-ngspice}
+\end{figure}
+
+\begin{figure}[H]
+  \centering
   \includegraphics[width=0.88\linewidth]{figures/mos_hidden_writer_restored_gate_hybrid_update_forward_guard_start_ngspice.png}
   \caption{Ngspice guard-start timing sweep for the integrated MOS
   activation store.  The guard fall is fixed at \(3.31\,\mu\mathrm{s}\), the

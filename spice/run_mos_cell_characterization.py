@@ -7461,6 +7461,20 @@ quit
             f"{rise_end_us:.3f}u 1.15 {fall_start_us:.3f}u 1.15 {fall_end_us:.3f}u 0 7.8u 0)"
         )
 
+    def pact_slew_lines(edge_ns: float, rise_start_us: float = 3.16, fall_start_us: float = 3.50) -> tuple[str, str]:
+        edge_us = edge_ns / 1000.0
+        rise_end_us = rise_start_us + edge_us
+        fall_end_us = fall_start_us + edge_us
+        pact_pwl = (
+            f"VPACT_HYR pact_hyr 0 PWL(0 0 {rise_start_us:.3f}u 0 "
+            f"{rise_end_us:.3f}u 1.8 {fall_start_us:.3f}u 1.8 {fall_end_us:.3f}u 0 7.8u 0)"
+        )
+        pactn_pwl = (
+            f"VPACTN_HYR pactn_hyr 0 PWL(0 1.8 {rise_start_us:.3f}u 1.8 "
+            f"{rise_end_us:.3f}u 0 {fall_start_us:.3f}u 0 {fall_end_us:.3f}u 1.8 7.8u 1.8)"
+        )
+        return pact_pwl, pactn_pwl
+
     for guard_end_us in guard_end_cases_us:
         guard_off_us = guard_end_us + 0.02
         label = f"{int(round((guard_end_us - aperture_start_us) * 1000))} ns"
@@ -7645,6 +7659,65 @@ quit
     require(
         guard_edge_store_samples[-1] < guard_edge_store_samples[nominal_edge_idx] - 0.004,
         "slow guard edge should begin tracking the read-path collapse",
+    )
+
+    pact_edge_cases_ns = [5, 10, 20, 40, 80, 120]
+    pact_edge_labels = []
+    pact_edge_store_samples = []
+    pact_edge_preact_samples = []
+    pact_edge_traces = []
+    guard_pwl, guardn_pwl = guard_phase_lines(3.18, 3.31, 20.0)
+    for edge_ns in pact_edge_cases_ns:
+        pact_pwl, pactn_pwl = pact_slew_lines(edge_ns)
+        stem = (
+            "mos_hidden_writer_restored_gate_hybrid_update_forward_read_pact_"
+            f"pact_edge_{edge_ns}ns"
+        )
+        pact_edge_deck = replace_required(hybrid_forward_read_reuse_deck, timing_read_pwl, timing_single_read_pwl)
+        pact_edge_deck = replace_required(
+            pact_edge_deck,
+            timing_base_pact_pwl,
+            pact_pwl + "\n" + pactn_pwl + "\n" + guard_pwl + "\n" + guardn_pwl,
+        )
+        pact_edge_deck = replace_required(pact_edge_deck, nmos_store_line_p, guard_store_line_p)
+        pact_edge_deck = replace_required(pact_edge_deck, nmos_store_line_m, guard_store_line_m)
+        pact_edge_deck = replace_required(
+            pact_edge_deck,
+            "mos_hidden_writer_restored_gate_hybrid_update_forward_read_reuse.dat",
+            f"{stem}.dat",
+        )
+        pact_edge_data = run_ngspice(pact_edge_deck, stem)
+        pet, pact_edge_cols = load_wrdata(pact_edge_data, 23)
+
+        def peat(time_s: float, values: np.ndarray) -> float:
+            return float(values[np.argmin(np.abs(pet - time_s))])
+
+        pact_edge_preact = pact_edge_cols[10] - pact_edge_cols[9]
+        pact_edge_store = pact_edge_cols[14] - pact_edge_cols[13]
+        pact_edge_labels.append(f"{edge_ns} ns")
+        pact_edge_preact_samples.append(peat(3.575e-6, pact_edge_preact))
+        pact_edge_store_samples.append(peat(3.575e-6, pact_edge_store))
+        pact_edge_traces.append((f"{edge_ns} ns", pet, pact_edge_store, pact_edge_cols[22]))
+
+    pact_edge_store_samples = np.array(pact_edge_store_samples)
+    pact_edge_preact_samples = np.array(pact_edge_preact_samples)
+    nominal_pact_edge_idx = pact_edge_cases_ns.index(20)
+    require(np.min(pact_edge_preact_samples) > 0.048, "pact edge sweep should keep a valid read state")
+    require(
+        abs(pact_edge_store_samples[nominal_pact_edge_idx] - guard_timing_samples[2]) < 0.002,
+        "20 ns pact edge should match the nominal timing sample",
+    )
+    require(
+        np.max(np.abs(pact_edge_store_samples[:3] - pact_edge_store_samples[nominal_pact_edge_idx])) < 0.003,
+        "fast pact edges should capture the same activation as the nominal edge",
+    )
+    require(
+        np.all(np.diff(pact_edge_store_samples[2:]) < -0.0002),
+        "slower pact rise after nominal should monotonically reduce stored activation",
+    )
+    require(
+        pact_edge_store_samples[-1] < pact_edge_store_samples[nominal_pact_edge_idx] - 0.006,
+        "very slow pact edge should visibly undercharge the guarded activation store",
     )
 
     guard_start_cases_us = [3.10, 3.14, 3.18, 3.22, 3.26, 3.29]
@@ -8174,6 +8247,33 @@ quit
     guard_edge_axes[1].legend(loc="lower right", ncol=2, fontsize="small")
     guard_edge_fig.tight_layout()
     save_plot(guard_edge_fig, "mos_hidden_writer_restored_gate_hybrid_update_forward_guard_edge_ngspice")
+
+    pact_edge_fig, pact_edge_axes = plt.subplots(2, 1, figsize=(7.4, 6.4), gridspec_kw={"height_ratios": [1.0, 0.8]})
+    for label, pet, store, pact_ctl in pact_edge_traces:
+        if label in {"5 ns", "20 ns", "40 ns", "80 ns", "120 ns"}:
+            pact_edge_axes[0].plot(1e6 * pet, 1e3 * store, label=f"pact edge {label}")
+    pact_edge_axes[0].plot(1e6 * pact_edge_traces[nominal_pact_edge_idx][1], pact_edge_traces[nominal_pact_edge_idx][3] / 20.0, color="0.5", alpha=0.25, label="$pact/20$")
+    pact_edge_axes[0].axhline(0, color="0.4", linewidth=0.8)
+    pact_edge_axes[0].axvline(3.18, color="0.25", linestyle="--", linewidth=0.9, alpha=0.6, label="guard rise")
+    pact_edge_axes[0].axvline(3.31, color="0.45", linestyle=":", linewidth=0.9, alpha=0.6, label="guard fall")
+    pact_edge_axes[0].set_xlim(3.05, 3.45)
+    pact_edge_axes[0].set_ylabel("stored activation (mV)")
+    pact_edge_axes[0].set_title("Slow pact rise reduces charge time inside the guard window")
+    pact_edge_axes[0].grid(True, alpha=0.25)
+    pact_edge_axes[0].legend(loc="upper left", ncol=2, fontsize="small")
+    pact_edge_x = np.arange(len(pact_edge_labels))
+    pact_edge_axes[1].bar(pact_edge_x - 0.18, 1e3 * pact_edge_preact_samples, width=0.36, label="$z^- - z^+$")
+    pact_edge_axes[1].bar(pact_edge_x + 0.18, 1e3 * pact_edge_store_samples, width=0.36, label="stored $h^- - h^+$")
+    pact_edge_axes[1].axhline(0, color="0.4", linewidth=0.8)
+    pact_edge_axes[1].set_xticks(pact_edge_x)
+    pact_edge_axes[1].set_xticklabels(pact_edge_labels)
+    pact_edge_axes[1].set_xlabel("pact rise/fall edge")
+    pact_edge_axes[1].set_ylabel("sampled differential (mV)")
+    pact_edge_axes[1].set_title("Pact must be mostly valid when the guard window opens")
+    pact_edge_axes[1].grid(True, axis="y", alpha=0.25)
+    pact_edge_axes[1].legend(loc="lower left", ncol=2, fontsize="small")
+    pact_edge_fig.tight_layout()
+    save_plot(pact_edge_fig, "mos_hidden_writer_restored_gate_hybrid_update_forward_pact_edge_ngspice")
 
     guard_start_fig, guard_start_axes = plt.subplots(2, 1, figsize=(7.4, 6.4), gridspec_kw={"height_ratios": [1.0, 0.8]})
     for label, gst, store in guard_start_traces:

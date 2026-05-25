@@ -16943,6 +16943,314 @@ quit
         "fast reset pulse/width sweep should keep first and last loads in each selected partition matched",
     )
 
+    shift_refz_fast_load_cases = [
+        ("c4p", "4 pF", 4.0),
+        ("c5p", "5 pF", 5.0),
+        ("c6p25", "6.25 pF", 6.25),
+        ("c7p5", "7.5 pF", 7.5),
+        ("c10p", "10 pF", 10.0),
+    ]
+
+    def run_reset_ref_fast_load_case(
+        branch_name: str,
+        reset_trim_v: float,
+    ) -> tuple[np.ndarray, list[np.ndarray]]:
+        stem = (
+            "mos_hidden_writer_restored_gate_hybrid_update_forward_guard_"
+            f"forward_pair_96u_shifted_gate_reset_ref_fast_load_{branch_name}"
+        )
+        reset_common_v = shift_refz_precharge_tuned_common_v
+        reset_ref_p = reset_common_v + 0.5 * reset_trim_v
+        reset_ref_m = reset_common_v - 0.5 * reset_trim_v
+        total_cref_pf = 1000.0
+        total_load_count = 16
+        startup_pulse_width_ns = 40.0
+        strength_scale = 2.0
+        gap_us = 1.0
+        reset_width_ns = 120.0
+        reset_scale = 1.0
+        pre_end_us = 0.420 + 0.001 * startup_pulse_width_ns
+        pre_fall_us = pre_end_us + 0.020
+        wpren_u = 300.0 * strength_scale
+        wprep_u = 900.0 * strength_scale
+        wresetn_u = 60.0 * reset_scale
+        wresetp_u = 180.0 * reset_scale
+        tran_stop_us = 2.95 + 2.0 * gap_us
+        deck_lines = [
+            "* Fast recovered reset-reference shifted-gate load-capacitance sweep.",
+            "* The two passing 1 us configurations keep nominal local refresh,",
+            "* reset pulse width, and reset switch sizing; only the load cap changes.",
+            COMMON_MODELS,
+            "VDD vdd 0 1.8",
+        ]
+        prints = []
+        case_idx = 0
+        for config_name, config_label, partition_count, source_ohm in shift_refz_fast_margin_configs:
+            cap_pf = total_cref_pf / partition_count
+            loads_per_partition = total_load_count // partition_count
+            for load_name, load_label, load_pf in shift_refz_fast_load_cases:
+                deck_lines.extend(
+                    [
+                        (
+                            f"* {config_name}_{load_name}: {config_label}, {load_label} shifted-gate loads, "
+                            f"Rrefresh={source_ohm:g}, 1 us cadence."
+                        ),
+                        (
+                            f"VPRE_FOLD_{case_idx} pre_fold_{case_idx} 0 "
+                            f"PWL(0 0 0.400u 0 0.420u 1.8 {pre_end_us:.3f}u 1.8 "
+                            f"{pre_fall_us:.3f}u 0 {tran_stop_us:.3f}u 0)"
+                        ),
+                        (
+                            f"VPREN_FOLD_{case_idx} pren_fold_{case_idx} 0 "
+                            f"PWL(0 1.8 0.400u 1.8 0.420u 0 {pre_end_us:.3f}u 0 "
+                            f"{pre_fall_us:.3f}u 1.8 {tran_stop_us:.3f}u 1.8)"
+                        ),
+                    ]
+                )
+                for part_idx in range(partition_count):
+                    deck_lines.extend(
+                        [
+                            f"VZRP_FOLD_{case_idx}_{part_idx} zrp_fold_src_{case_idx}_{part_idx} 0 {reset_ref_p:.5f}",
+                            f"VZRM_FOLD_{case_idx}_{part_idx} zrm_fold_src_{case_idx}_{part_idx} 0 {reset_ref_m:.5f}",
+                            f"RZRP_FOLD_{case_idx}_{part_idx} zrp_fold_src_{case_idx}_{part_idx} zrp_fold_{case_idx}_{part_idx} {source_ohm:g}",
+                            f"RZRM_FOLD_{case_idx}_{part_idx} zrm_fold_src_{case_idx}_{part_idx} zrm_fold_{case_idx}_{part_idx} {source_ohm:g}",
+                            f"CZRP_FOLD_{case_idx}_{part_idx} zrp_fold_{case_idx}_{part_idx} 0 {cap_pf:g}p IC=0",
+                            f"CZRM_FOLD_{case_idx}_{part_idx} zrm_fold_{case_idx}_{part_idx} 0 {cap_pf:g}p IC=0",
+                            (
+                                f"MPREPN_FOLD_{case_idx}_{part_idx} zrp_fold_{case_idx}_{part_idx} "
+                                f"pre_fold_{case_idx} zrp_fold_src_{case_idx}_{part_idx} 0 "
+                                f"NMOS L={{LCH}} W={wpren_u:g}u"
+                            ),
+                            (
+                                f"MPREMN_FOLD_{case_idx}_{part_idx} zrm_fold_{case_idx}_{part_idx} "
+                                f"pre_fold_{case_idx} zrm_fold_src_{case_idx}_{part_idx} 0 "
+                                f"NMOS L={{LCH}} W={wpren_u:g}u"
+                            ),
+                            (
+                                f"MPREPP_FOLD_{case_idx}_{part_idx} zrp_fold_{case_idx}_{part_idx} "
+                                f"pren_fold_{case_idx} zrp_fold_src_{case_idx}_{part_idx} vdd "
+                                f"PMOS L={{LCH}} W={wprep_u:g}u"
+                            ),
+                            (
+                                f"MPREMP_FOLD_{case_idx}_{part_idx} zrm_fold_{case_idx}_{part_idx} "
+                                f"pren_fold_{case_idx} zrm_fold_src_{case_idx}_{part_idx} vdd "
+                                f"PMOS L={{LCH}} W={wprep_u:g}u"
+                            ),
+                        ]
+                    )
+                for cycle_idx in range(3):
+                    reset_start_us = 2.50 + cycle_idx * gap_us
+                    reset_end_us = reset_start_us + 0.001 * reset_width_ns
+                    reset_fall_us = reset_end_us + 0.020
+                    deck_lines.extend(
+                        [
+                            (
+                                f"VRST_FOLD_{case_idx}_{cycle_idx} rst_fold_{case_idx}_{cycle_idx} 0 "
+                                f"PWL(0 0 {reset_start_us - 0.020:.3f}u 0 "
+                                f"{reset_start_us:.3f}u 1.8 {reset_end_us:.3f}u 1.8 "
+                                f"{reset_fall_us:.3f}u 0 {tran_stop_us:.3f}u 0)"
+                            ),
+                            (
+                                f"VRSTN_FOLD_{case_idx}_{cycle_idx} rstn_fold_{case_idx}_{cycle_idx} 0 "
+                                f"PWL(0 1.8 {reset_start_us - 0.020:.3f}u 1.8 "
+                                f"{reset_start_us:.3f}u 0 {reset_end_us:.3f}u 0 "
+                                f"{reset_fall_us:.3f}u 1.8 {tran_stop_us:.3f}u 1.8)"
+                            ),
+                        ]
+                    )
+                    for part_idx in range(partition_count):
+                        for load_idx in range(loads_per_partition):
+                            deck_lines.extend(
+                                [
+                                    (
+                                        f"CZPG_FOLD_{case_idx}_{cycle_idx}_{part_idx}_{load_idx} "
+                                        f"zpg_fold_{case_idx}_{cycle_idx}_{part_idx}_{load_idx} 0 "
+                                        f"{load_pf:g}p IC={reset_common_v:.5f}"
+                                    ),
+                                    (
+                                        f"CZMG_FOLD_{case_idx}_{cycle_idx}_{part_idx}_{load_idx} "
+                                        f"zmg_fold_{case_idx}_{cycle_idx}_{part_idx}_{load_idx} 0 "
+                                        f"{load_pf:g}p IC={reset_common_v:.5f}"
+                                    ),
+                                    (
+                                        f"MRZGPN_FOLD_{case_idx}_{cycle_idx}_{part_idx}_{load_idx} "
+                                        f"zpg_fold_{case_idx}_{cycle_idx}_{part_idx}_{load_idx} "
+                                        f"rst_fold_{case_idx}_{cycle_idx} zrp_fold_{case_idx}_{part_idx} 0 "
+                                        f"NMOS L={{LCH}} W={wresetn_u:g}u"
+                                    ),
+                                    (
+                                        f"MRZGMN_FOLD_{case_idx}_{cycle_idx}_{part_idx}_{load_idx} "
+                                        f"zmg_fold_{case_idx}_{cycle_idx}_{part_idx}_{load_idx} "
+                                        f"rst_fold_{case_idx}_{cycle_idx} zrm_fold_{case_idx}_{part_idx} 0 "
+                                        f"NMOS L={{LCH}} W={wresetn_u:g}u"
+                                    ),
+                                    (
+                                        f"MRZGPP_FOLD_{case_idx}_{cycle_idx}_{part_idx}_{load_idx} "
+                                        f"zpg_fold_{case_idx}_{cycle_idx}_{part_idx}_{load_idx} "
+                                        f"rstn_fold_{case_idx}_{cycle_idx} zrp_fold_{case_idx}_{part_idx} vdd "
+                                        f"PMOS L={{LCH}} W={wresetp_u:g}u"
+                                    ),
+                                    (
+                                        f"MRZGMP_FOLD_{case_idx}_{cycle_idx}_{part_idx}_{load_idx} "
+                                        f"zmg_fold_{case_idx}_{cycle_idx}_{part_idx}_{load_idx} "
+                                        f"rstn_fold_{case_idx}_{cycle_idx} zrm_fold_{case_idx}_{part_idx} vdd "
+                                        f"PMOS L={{LCH}} W={wresetp_u:g}u"
+                                    ),
+                                ]
+                            )
+                selected_part_indices = [0, partition_count - 1]
+                for part_idx in selected_part_indices:
+                    prints.extend(
+                        [
+                            f"v(zrp_fold_{case_idx}_{part_idx})",
+                            f"v(zrm_fold_{case_idx}_{part_idx})",
+                        ]
+                    )
+                    last_load_idx = loads_per_partition - 1
+                    for cycle_idx in range(3):
+                        prints.extend(
+                            [
+                                f"v(zpg_fold_{case_idx}_{cycle_idx}_{part_idx}_0)",
+                                f"v(zmg_fold_{case_idx}_{cycle_idx}_{part_idx}_0)",
+                                f"v(zpg_fold_{case_idx}_{cycle_idx}_{part_idx}_{last_load_idx})",
+                                f"v(zmg_fold_{case_idx}_{cycle_idx}_{part_idx}_{last_load_idx})",
+                            ]
+                        )
+                case_idx += 1
+        deck_lines.extend(
+            [
+                ".control",
+                "set noaskquit",
+                f"tran 5n {tran_stop_us:.3f}u uic",
+                f"wrdata {stem}.dat " + " ".join(prints),
+                "quit",
+                ".endc",
+                ".end",
+            ]
+        )
+        data = run_ngspice("\n".join(deck_lines), stem)
+        return load_wrdata(data, len(prints))
+
+    shift_refz_fast_load_trim_error = []
+    shift_refz_fast_load_common_error = []
+    shift_refz_fast_load_load_mismatch = []
+    shift_refz_fast_load_ref_diff = []
+    shift_refz_fast_load_traces = []
+    for branch_name, branch_label, _nfp_vto, _nfm_vto, reset_trim_v in shift_reset_branch_specs:
+        foldt, fast_load_cols = run_reset_ref_fast_load_case(branch_name, reset_trim_v)
+
+        def foldat(time_s: float, values: np.ndarray) -> float:
+            return float(values[np.argmin(np.abs(foldt - time_s))])
+
+        branch_trim_error = []
+        branch_common_error = []
+        branch_load_mismatch = []
+        branch_ref_diff = []
+        col_base = 0
+        for _config_name, config_label, partition_count, _source_ohm in shift_refz_fast_margin_configs:
+            config_trim_error = []
+            config_common_error = []
+            config_load_mismatch = []
+            config_ref_diff = []
+            selected_partition_count = 2
+            case_width = 14 * selected_partition_count
+            for _load_name, load_label, _load_pf in shift_refz_fast_load_cases:
+                load_trim_error = []
+                load_common_error = []
+                load_load_mismatch = []
+                load_ref_diff = []
+                for cycle_idx in range(3):
+                    cycle_trim_errors = []
+                    cycle_common_errors = []
+                    cycle_load_mismatches = []
+                    cycle_ref_diffs = []
+                    sample_time_s = (2.50 + cycle_idx * 1.0 + 0.200) * 1e-6
+                    for selected_part_idx in range(selected_partition_count):
+                        part_col_base = col_base + 14 * selected_part_idx
+                        ref_p = fast_load_cols[part_col_base]
+                        ref_m = fast_load_cols[part_col_base + 1]
+                        ref_diff = ref_p - ref_m
+                        gate_col_base = part_col_base + 2 + 4 * cycle_idx
+                        gate_p_first = fast_load_cols[gate_col_base]
+                        gate_m_first = fast_load_cols[gate_col_base + 1]
+                        gate_p_last = fast_load_cols[gate_col_base + 2]
+                        gate_m_last = fast_load_cols[gate_col_base + 3]
+                        gate_diff_first = gate_p_first - gate_m_first
+                        gate_diff_last = gate_p_last - gate_m_last
+                        gate_common_first = 0.5 * (gate_p_first + gate_m_first)
+                        cycle_trim_errors.append(abs(foldat(sample_time_s, gate_diff_first) - reset_trim_v))
+                        cycle_common_errors.append(
+                            abs(foldat(sample_time_s, gate_common_first) - shift_refz_precharge_tuned_common_v)
+                        )
+                        cycle_load_mismatches.append(abs(foldat(sample_time_s, gate_diff_first - gate_diff_last)))
+                        cycle_ref_diffs.append(foldat(sample_time_s, ref_diff))
+                    load_trim_error.append(max(cycle_trim_errors))
+                    load_common_error.append(max(cycle_common_errors))
+                    load_load_mismatch.append(max(cycle_load_mismatches))
+                    load_ref_diff.append(np.mean(cycle_ref_diffs))
+                config_trim_error.append(load_trim_error)
+                config_common_error.append(load_common_error)
+                config_load_mismatch.append(load_load_mismatch)
+                config_ref_diff.append(load_ref_diff)
+                if branch_name == "pos_trim" and (
+                    (config_label == "8 x 2 @ 3 kOhm" and load_label in {"5 pF", "7.5 pF", "10 pF"})
+                    or (config_label == "16 x 1 @ 10 kOhm" and load_label in {"5 pF", "7.5 pF", "10 pF"})
+                ):
+                    ref_p0 = fast_load_cols[col_base]
+                    ref_m0 = fast_load_cols[col_base + 1]
+                    shift_refz_fast_load_traces.append((f"{config_label}, {load_label}", foldt, ref_p0 - ref_m0))
+                col_base += case_width
+            branch_trim_error.append(config_trim_error)
+            branch_common_error.append(config_common_error)
+            branch_load_mismatch.append(config_load_mismatch)
+            branch_ref_diff.append(config_ref_diff)
+        shift_refz_fast_load_trim_error.append(branch_trim_error)
+        shift_refz_fast_load_common_error.append(branch_common_error)
+        shift_refz_fast_load_load_mismatch.append(branch_load_mismatch)
+        shift_refz_fast_load_ref_diff.append(branch_ref_diff)
+
+    shift_refz_fast_load_trim_error = np.array(shift_refz_fast_load_trim_error)
+    shift_refz_fast_load_common_error = np.array(shift_refz_fast_load_common_error)
+    shift_refz_fast_load_load_mismatch = np.array(shift_refz_fast_load_load_mismatch)
+    shift_refz_fast_load_ref_diff = np.array(shift_refz_fast_load_ref_diff)
+    fold_p8_idx = 0
+    fold_p16_idx = 1
+    fold_c5_idx = 1
+    fold_c625_idx = 2
+    fold_c75_idx = 3
+    fold_c10_idx = 4
+    require(
+        np.all(shift_refz_fast_load_trim_error[:, :, fold_c5_idx, for_cycle3_idx] < 0.006),
+        "nominal 5 pF shifted-gate loads should preserve the recovered fast reset configurations",
+    )
+    require(
+        np.all(
+            np.diff(shift_refz_fast_load_trim_error[:, :, :, for_cycle3_idx], axis=2)
+            > -1e-5
+        ),
+        "heavier shifted-gate loads should not improve cycle-3 trim delivery",
+    )
+    require(
+        shift_refz_fast_load_trim_error[1, fold_p8_idx, fold_c625_idx, for_cycle3_idx] < 0.006,
+        "8 x 2 @ 3 kOhm should tolerate 6.25 pF loads on the positive-trim branch",
+    )
+    require(
+        shift_refz_fast_load_trim_error[1, fold_p16_idx, fold_c75_idx, for_cycle3_idx] > 0.006,
+        "16 x 1 @ 10 kOhm should expose limited load-capacitance margin by 7.5 pF",
+    )
+    require(
+        np.all(shift_refz_fast_load_trim_error[:, :, fold_c10_idx, for_cycle3_idx] > 0.006),
+        "10 pF shifted-gate loads should visibly exceed the recovered fast reset margin",
+    )
+    require(
+        np.max(shift_refz_fast_load_common_error) < 0.010,
+        "fast shifted-gate load sweep should preserve reset common mode",
+    )
+    require(
+        np.max(shift_refz_fast_load_load_mismatch) < 1e-5,
+        "fast shifted-gate load sweep should keep first and last loads in each selected partition matched",
+    )
+
     tail_bias_forward_tail_line = "MNFT_HYR ftail_hyr vbias 0 0 NMOS L={LCH} W=48u"
     tail_bias_cases_v = [0.70, 0.80, 0.90, 0.95, 1.05, 1.15, 1.25]
     tail_bias_labels = []
@@ -20903,6 +21211,104 @@ quit
     save_plot(
         shift_refz_fast_reset_fig,
         "mos_hidden_writer_restored_gate_hybrid_update_forward_guard_forward_pair_96u_shifted_gate_reset_ref_fast_reset_ngspice",
+    )
+
+    shift_refz_fast_load_fig, shift_refz_fast_load_axes = plt.subplots(
+        3,
+        1,
+        figsize=(7.4, 7.4),
+        gridspec_kw={"height_ratios": [0.95, 0.9, 1.0]},
+    )
+    fold_load_pf = np.array([load_pf for _name, _label, load_pf in shift_refz_fast_load_cases])
+    fold_load_labels = [label for _name, label, _load_pf in shift_refz_fast_load_cases]
+    for config_idx, (_config_name, config_label, _partition_count, _source_ohm) in enumerate(
+        shift_refz_fast_margin_configs
+    ):
+        marker = "o-" if config_idx == fold_p8_idx else "s--"
+        shift_refz_fast_load_axes[0].plot(
+            fold_load_pf,
+            1e3 * np.max(shift_refz_fast_load_trim_error[:, config_idx, :, for_cycle3_idx], axis=0),
+            marker,
+            label=f"{config_label}, worst branch",
+        )
+        shift_refz_fast_load_axes[0].plot(
+            fold_load_pf,
+            1e3 * shift_refz_fast_load_trim_error[1, config_idx, :, for_cycle3_idx],
+            ":" if config_idx == fold_p8_idx else "-.",
+            alpha=0.72,
+            label=f"{config_label}, +65 mV branch",
+        )
+    shift_refz_fast_load_axes[0].axhline(
+        6,
+        color="0.4",
+        linestyle=":",
+        linewidth=0.9,
+        label="6 mV trim-error gate",
+    )
+    shift_refz_fast_load_axes[0].set_xticks(fold_load_pf)
+    shift_refz_fast_load_axes[0].set_xticklabels(fold_load_labels)
+    shift_refz_fast_load_axes[0].set_ylabel("cycle-3 trim error (mV)")
+    shift_refz_fast_load_axes[0].set_title("Fast reset margin is sensitive to shifted-gate load capacitance")
+    shift_refz_fast_load_axes[0].grid(True, axis="y", alpha=0.25)
+    shift_refz_fast_load_axes[0].text(
+        0.45,
+        0.18,
+        "8 x 2, 6.25 pF +branch = "
+        f"{1e3 * shift_refz_fast_load_trim_error[1, fold_p8_idx, fold_c625_idx, for_cycle3_idx]:.2f} mV / <6 mV\n"
+        "8 x 2, 7.5 pF +branch = "
+        f"{1e3 * shift_refz_fast_load_trim_error[1, fold_p8_idx, fold_c75_idx, for_cycle3_idx]:.2f} mV\n"
+        "16 x 1, 7.5 pF +branch = "
+        f"{1e3 * shift_refz_fast_load_trim_error[1, fold_p16_idx, fold_c75_idx, for_cycle3_idx]:.2f} mV / >6 mV\n"
+        "10 pF worst = "
+        f"{1e3 * np.max(shift_refz_fast_load_trim_error[:, :, fold_c10_idx, for_cycle3_idx]):.2f} mV / >6 mV",
+        transform=shift_refz_fast_load_axes[0].transAxes,
+        fontsize="x-small",
+        bbox={"facecolor": "white", "alpha": 0.82, "edgecolor": "0.8"},
+    )
+    shift_refz_fast_load_axes[0].legend(loc="upper left", ncol=2, fontsize="xx-small")
+    for config_idx, (_config_name, config_label, _partition_count, _source_ohm) in enumerate(
+        shift_refz_fast_margin_configs
+    ):
+        marker = "o-" if config_idx == fold_p8_idx else "s--"
+        shift_refz_fast_load_axes[1].plot(
+            [1, 2, 3],
+            1e3 * shift_refz_fast_load_trim_error[1, config_idx, fold_c5_idx, :],
+            marker,
+            alpha=0.72,
+            label=f"{config_label}, 5 pF",
+        )
+        shift_refz_fast_load_axes[1].plot(
+            [1, 2, 3],
+            1e3 * shift_refz_fast_load_trim_error[1, config_idx, fold_c75_idx, :],
+            "o:" if config_idx == fold_p8_idx else "s:",
+            label=f"{config_label}, 7.5 pF",
+        )
+    shift_refz_fast_load_axes[1].axhline(6, color="0.4", linestyle=":", linewidth=0.9)
+    shift_refz_fast_load_axes[1].set_xticks([1, 2, 3])
+    shift_refz_fast_load_axes[1].set_ylabel("+65 mV trim error (mV)")
+    shift_refz_fast_load_axes[1].set_title("Heavier load capacitance consumes repeated-cycle reservoir margin")
+    shift_refz_fast_load_axes[1].grid(True, axis="y", alpha=0.25)
+    shift_refz_fast_load_axes[1].legend(loc="upper left", ncol=2, fontsize="xx-small")
+    for label, foldt, ref_diff in shift_refz_fast_load_traces:
+        linestyle = ":" if "10 pF" in label else ("--" if "7.5 pF" in label else "-")
+        shift_refz_fast_load_axes[2].plot(
+            1e6 * foldt,
+            1e3 * ref_diff,
+            linestyle,
+            label=label,
+        )
+    shift_refz_fast_load_axes[2].axhline(65, color="0.4", linestyle=":", linewidth=0.9, label="target +65 mV")
+    shift_refz_fast_load_axes[2].axhline(0, color="0.4", linewidth=0.8)
+    shift_refz_fast_load_axes[2].set_xlim(2.3, 4.9)
+    shift_refz_fast_load_axes[2].set_xlabel("time (us)")
+    shift_refz_fast_load_axes[2].set_ylabel("partition trim (mV)")
+    shift_refz_fast_load_axes[2].set_title("Load capacitance pulls the local reservoir farther from the target")
+    shift_refz_fast_load_axes[2].grid(True, alpha=0.25)
+    shift_refz_fast_load_axes[2].legend(loc="lower right", ncol=2, fontsize="xx-small")
+    shift_refz_fast_load_fig.tight_layout()
+    save_plot(
+        shift_refz_fast_load_fig,
+        "mos_hidden_writer_restored_gate_hybrid_update_forward_guard_forward_pair_96u_shifted_gate_reset_ref_fast_load_ngspice",
     )
 
     tail_bias_fig, tail_bias_axes = plt.subplots(2, 1, figsize=(7.4, 6.4), gridspec_kw={"height_ratios": [1.0, 0.8]})

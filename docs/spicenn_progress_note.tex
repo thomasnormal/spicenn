@@ -2803,6 +2803,27 @@ must satisfy before it can replace the current behavioral prototype.
 
 \begin{figure}[H]
   \centering
+  \includegraphics[width=0.95\linewidth]{figures/mos_hidden_writer_restored_gate_hybrid_update_forward_guard_forward_pair_96u_shifted_gate_reset_ref_fast_load_ngspice.png}
+  \caption{Ngspice shifted-gate load-capacitance margin check for the two
+  recovered \(1\,\mu\mathrm{s}\) reset-reference configurations.  This fixture
+  keeps the finite local refresh paths, cold passive reservoirs, \(2\times\)
+  MOS startup precharge, \(120\) ns reset pulses, ordinary complementary reset
+  switches, and three fresh shifted-gate load banks fixed; only each shifted
+  gate load capacitance changes.  The nominal \(5\) pF load remains inside the
+  \(6\) mV trim-error gate for both configurations.  Heavier loads consume the
+  third-cycle reservoir margin monotonically: the \(8\times2\),
+  \(3\,\mathrm{k}\Omega\) option stays below the gate through \(7.5\) pF on
+  the \(+65\) mV branch (\(5.51\) mV) but fails at \(10\) pF (\(7.16\) mV),
+  while the \(16\times1\), \(10\,\mathrm{k}\Omega\) option is already at the
+  boundary near \(6.25\) pF (\(6.00\) mV) and fails by \(7.5\) pF
+  (\(7.08\) mV).  The repeated-bank fast-reset cell is therefore not just a
+  reset-switch problem: local reservoir capacitance, refresh impedance, and
+  shifted-gate load capacitance are coupled design margins.}
+  \label{fig:mos-hidden-writer-restored-gate-hybrid-update-forward-guard-forward-pair-96u-shifted-gate-reset-ref-fast-load-ngspice}
+\end{figure}
+
+\begin{figure}[H]
+  \centering
   \includegraphics[width=0.95\linewidth]{figures/mos_hidden_writer_restored_gate_hybrid_update_forward_guard_forward_pair_96u_shifted_gate_reset_ref_precharge_strength_ngspice.png}
   \caption{Ngspice startup-precharge strength-margin check for the same cold
   local trim-reference reservoir.  The \(250\) pF reservoirs, \(100\)

@@ -4969,6 +4969,13 @@ quit
     require(np.all(np.diff(hybrid_pos_net[hybrid_active]) >= -5e-4), "hybrid active signed write should not lose magnitude ordering")
     require(hybrid_pos_net[-1] > 0.004, "hybrid largest signed write should be useful")
     require(hybrid_pos_net[-1] < 0.080, "hybrid largest signed write should remain incremental")
+    hybrid_active_eps = np.array(hybrid_eps_values)[hybrid_active]
+    hybrid_min_active_eps = float(np.min(hybrid_active_eps))
+    hybrid_max_net = float(np.max(hybrid_pos_net))
+    hybrid_comp_max = float(np.max(hybrid_complement_step))
+    hybrid_symmetry_error = float(np.max(np.abs(hybrid_pos_net + hybrid_neg_net)))
+    hybrid_selected_gate_final = float(hybrid_selected_gate[-1])
+    hybrid_complement_gate_min = float(np.min(hybrid_complement_gate[1:]))
 
     hybrid_fig, hybrid_axes = plt.subplots(2, 1, figsize=(7.2, 5.8))
     hybrid_axes[0].plot(hybrid_eps_values, hybrid_hidden, "o-", label="stored $r^+$ hidden error")
@@ -4978,6 +4985,20 @@ quit
     hybrid_axes[0].set_ylabel("voltage (V)")
     hybrid_axes[0].set_title("Hybrid writer uses restoration for selectivity and analog rail for magnitude")
     hybrid_axes[0].grid(True, alpha=0.25)
+    hybrid_axes[0].text(
+        0.04,
+        0.13,
+        "\n".join(
+            [
+                f"first active eps {hybrid_min_active_eps:.2f} V",
+                f"selected gate @max {hybrid_selected_gate_final:.2f} V",
+                f"min complement gate {hybrid_complement_gate_min:.2f} V",
+            ]
+        ),
+        transform=hybrid_axes[0].transAxes,
+        fontsize="x-small",
+        bbox=callout_box,
+    )
     hybrid_axes[0].legend(loc="center right", fontsize="small")
     hybrid_axes[1].plot(hybrid_eps_values, hybrid_selected_step, "o-", label="selected rail step")
     hybrid_axes[1].plot(hybrid_eps_values, hybrid_complement_step, "s--", label="complement rail step")
@@ -4988,6 +5009,20 @@ quit
     hybrid_axes[1].set_ylabel("writer step (V)")
     hybrid_axes[1].set_title("Series analog error gate restores graded writes while complement remains off")
     hybrid_axes[1].grid(True, alpha=0.25)
+    hybrid_axes[1].text(
+        0.58,
+        0.13,
+        "\n".join(
+            [
+                f"max net {1e3 * hybrid_max_net:.1f} mV",
+                f"max complement {1e3 * hybrid_comp_max:.2f} mV",
+                f"symmetry error {1e3 * hybrid_symmetry_error:.2f} mV",
+            ]
+        ),
+        transform=hybrid_axes[1].transAxes,
+        fontsize="x-small",
+        bbox=callout_box,
+    )
     hybrid_axes[1].legend(loc="upper left", ncol=2, fontsize="small")
     hybrid_fig.tight_layout()
     save_plot(hybrid_fig, "mos_hidden_writer_restored_gate_hybrid_ngspice")
@@ -5204,6 +5239,11 @@ quit
     require(np.all(hym_pos_net < 0.090), "hybrid mismatch writes should stay incremental")
     require(hym_pos_net[3] < hym_pos_net[0], "weak writer PMOS should reduce update gain")
     require(hym_pos_net[4] > hym_pos_net[0], "strong writer PMOS should increase update gain")
+    hym_min_net = min(float(np.min(hym_pos_net)), float(np.min(np.abs(hym_neg_net))))
+    hym_max_net = max(float(np.max(hym_pos_net)), float(np.max(np.abs(hym_neg_net))))
+    hym_comp_max = float(np.max(hym_complement_step))
+    hym_symmetry_error = float(np.max(np.abs(hym_pos_net + hym_neg_net)))
+    hym_gate_separation_min = float(np.min(hym_complement_gate - hym_selected_gate))
 
     hym_fig, hym_axes = plt.subplots(2, 1, figsize=(7.2, 5.8))
     hym_x = np.arange(len(hybrid_mismatch_cases))
@@ -5216,6 +5256,19 @@ quit
     hym_axes[0].set_ylabel("gate voltage (V)")
     hym_axes[0].set_title("Hybrid restored gates keep selectivity across threshold corners")
     hym_axes[0].grid(True, alpha=0.25)
+    hym_axes[0].text(
+        0.04,
+        0.13,
+        "\n".join(
+            [
+                f"min gate separation {hym_gate_separation_min:.2f} V",
+                f"selected range {np.min(hym_selected_gate):.2f}-{np.max(hym_selected_gate):.2f} V",
+            ]
+        ),
+        transform=hym_axes[0].transAxes,
+        fontsize="x-small",
+        bbox=callout_box,
+    )
     hym_axes[0].legend(loc="center right")
     hym_axes[1].plot(hym_x, hym_selected_step, "o-", label="selected rail step")
     hym_axes[1].plot(hym_x, hym_complement_step, "s--", label="complement rail step")
@@ -5227,6 +5280,20 @@ quit
     hym_axes[1].set_ylabel("writer step (V)")
     hym_axes[1].set_title("Hybrid mismatch changes gain but preserves sign and complement suppression")
     hym_axes[1].grid(True, alpha=0.25)
+    hym_axes[1].text(
+        0.04,
+        0.13,
+        "\n".join(
+            [
+                f"net range {1e3 * hym_min_net:.1f}-{1e3 * hym_max_net:.1f} mV",
+                f"max complement {1e3 * hym_comp_max:.2f} mV",
+                f"symmetry error {1e3 * hym_symmetry_error:.2f} mV",
+            ]
+        ),
+        transform=hym_axes[1].transAxes,
+        fontsize="x-small",
+        bbox=callout_box,
+    )
     hym_axes[1].legend(loc="upper right", ncol=2)
     hym_fig.tight_layout()
     save_plot(hym_fig, "mos_hidden_writer_restored_gate_hybrid_mismatch_ngspice")
@@ -5346,6 +5413,14 @@ quit
     require(np.min(hyt_final[2:]) > 0.95 * hyt_final[-1], "hybrid writer pulses after storage starts should reach full update")
     require(np.max(hyt_final[2:]) - np.min(hyt_final[2:]) < 0.003, "hybrid full writer timings should agree")
     require(np.max(hyt_complement_steps[2:]) < 5e-4, "hybrid full timings should keep complement rail suppressed")
+    hyt_hidden_sample = hytat(1.35e-6, hyt_hidden)
+    hyt_selected_sample = hytat(1.45e-6, hyt_selected_gate)
+    hyt_complement_sample = hytat(1.45e-6, hyt_complement_gate)
+    hyt_pre_write = float(hyt_final[0])
+    hyt_early_write = float(hyt_final[1])
+    hyt_settled_write = float(hyt_final[-1])
+    hyt_full_spread = float(np.max(hyt_final[2:]) - np.min(hyt_final[2:]))
+    hyt_comp_max = float(np.max(hyt_complement_steps[2:]))
 
     hyt_fig, hyt_axes = plt.subplots(2, 1, figsize=(7.2, 5.8))
     hyt_axes[0].plot(1e6 * hytt, hyt_hidden, label="stored $r^+$ hidden error")
@@ -5356,6 +5431,20 @@ quit
     hyt_axes[0].set_ylabel("voltage (V)")
     hyt_axes[0].set_title("Hybrid writer select gates settle during the backward-store phase")
     hyt_axes[0].grid(True, alpha=0.25)
+    hyt_axes[0].text(
+        0.04,
+        0.13,
+        "\n".join(
+            [
+                f"hidden {1e3 * hyt_hidden_sample:.1f} mV",
+                f"selected gate {hyt_selected_sample:.2f} V",
+                f"complement gate {hyt_complement_sample:.2f} V",
+            ]
+        ),
+        transform=hyt_axes[0].transAxes,
+        fontsize="x-small",
+        bbox=callout_box,
+    )
     hyt_axes[0].legend(loc="center right", fontsize="small")
     for (_name, label, _start_us, _end_us), diff in zip(hybrid_timing_cases, hyt_diffs):
         hyt_axes[1].plot(1e6 * hytt, diff, label=label)
@@ -5364,6 +5453,22 @@ quit
     hyt_axes[1].set_ylabel("$W^+ - W^-$ (V)")
     hyt_axes[1].set_title("Hybrid pacc timing needs storage-edge separation for full write")
     hyt_axes[1].grid(True, alpha=0.25)
+    hyt_axes[1].text(
+        0.58,
+        0.13,
+        "\n".join(
+            [
+                f"pre {1e3 * hyt_pre_write:.2f} mV",
+                f"early {1e3 * hyt_early_write:.1f} mV",
+                f"settled {1e3 * hyt_settled_write:.1f} mV",
+                f"spread {1e3 * hyt_full_spread:.2f} mV",
+                f"comp max {1e3 * hyt_comp_max:.2f} mV",
+            ]
+        ),
+        transform=hyt_axes[1].transAxes,
+        fontsize="x-small",
+        bbox=callout_box,
+    )
     hyt_axes[1].legend(loc="upper left", ncol=2, fontsize="small")
     hyt_fig.tight_layout()
     save_plot(hyt_fig, "mos_hidden_writer_restored_gate_hybrid_timing_ngspice")
@@ -5722,6 +5827,11 @@ quit
     require(hyn_net[5] < hyn_net[4], "larger destructive differential disturbance should weaken the write further")
     require(hyn_net[5] < 0.0, "over-margin destructive differential disturbance should mark the sign boundary")
     require(np.max(np.abs(hyn_net[1:3] - hyn_net[0])) < 0.012, "common-mode disturbance should not dominate signed write gain")
+    hyn_common_delta_max = float(np.max(np.abs(hyn_net[1:3] - hyn_net[0])))
+    hyn_boost_gain = float(hyn_net[3] - hyn_net[0])
+    hyn_small_weaken_loss = float(hyn_net[0] - hyn_net[4])
+    hyn_wrong_sign = float(abs(hyn_net[5]))
+    hyn_post_min_nonflipped = float(np.min(hyn_post_hidden[:5]))
 
     hyn_fig, hyn_axes = plt.subplots(2, 1, figsize=(7.2, 5.8))
     hyn_labels = [label for _name, label, _d_cdp, _d_cdm in hybrid_noise_cases]
@@ -5736,6 +5846,19 @@ quit
     hyn_axes[0].set_ylabel("voltage (V)")
     hyn_axes[0].set_title("Hybrid writer keeps restored selectivity after hidden-error kicks")
     hyn_axes[0].grid(True, alpha=0.25)
+    hyn_axes[0].text(
+        0.04,
+        0.13,
+        "\n".join(
+            [
+                f"non-flipped hidden >= {1e3 * hyn_post_min_nonflipped:.1f} mV",
+                f"50 mV diff weaken flips gate",
+            ]
+        ),
+        transform=hyn_axes[0].transAxes,
+        fontsize="x-small",
+        bbox=callout_box,
+    )
     hyn_axes[0].legend(loc="center right", fontsize="small")
     hyn_axes[1].plot(hyn_x, hyn_selected_step, "o-", label="selected rail step")
     hyn_axes[1].plot(hyn_x, hyn_complement_step, "s--", label="complement rail step")
@@ -5746,6 +5869,21 @@ quit
     hyn_axes[1].set_ylabel("writer step (V)")
     hyn_axes[1].set_title("Small kicks change gain; over-margin differential kick flips sign")
     hyn_axes[1].grid(True, alpha=0.25)
+    hyn_axes[1].text(
+        0.04,
+        0.13,
+        "\n".join(
+            [
+                f"common-mode delta <= {1e3 * hyn_common_delta_max:.1f} mV",
+                f"diff boost +{1e3 * hyn_boost_gain:.1f} mV",
+                f"25 mV weaken -{1e3 * hyn_small_weaken_loss:.1f} mV",
+                f"wrong-sign residue {1e3 * hyn_wrong_sign:.2f} mV",
+            ]
+        ),
+        transform=hyn_axes[1].transAxes,
+        fontsize="x-small",
+        bbox=callout_box,
+    )
     hyn_axes[1].legend(loc="upper right", ncol=2, fontsize="small")
     hyn_fig.tight_layout()
     save_plot(hyn_fig, "mos_hidden_writer_restored_gate_hybrid_noise_ngspice")

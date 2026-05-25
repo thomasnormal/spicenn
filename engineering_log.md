@@ -2,6 +2,28 @@
 
 ## 2026-05-25
 
+- Clarified the core hybrid restored-enable/analog-error writer plots.  The
+  regenerated `mos_hidden_writer_restored_gate_hybrid_ngspice`,
+  `mos_hidden_writer_restored_gate_hybrid_mismatch_ngspice`,
+  `mos_hidden_writer_restored_gate_hybrid_timing_ngspice`, and
+  `mos_hidden_writer_restored_gate_hybrid_noise_ngspice` figures now show the
+  actual ngspice margins instead of leaving them to be inferred from curves.
+  The baseline hybrid writer becomes active at \(\epsilon=0.03\) V, keeps the
+  complement gate at least \(1.70\) V high, reaches a \(60.5\) mV signed write,
+  and shows no displayed complement motion or r+/r- symmetry error.  Across
+  the tested threshold corners, restored-gate separation stays at least
+  \(1.48\) V, selected gates remain in the \(0.20\)--\(0.23\) V range, signed
+  writes stay useful at \(37.3\)--\(75.7\) mV, and complement/symmetry errors
+  are below displayed precision.  The timing plot now calls out the phase
+  boundary directly: hidden-error storage reaches \(98.5\) mV, the selected
+  gate settles to \(0.20\) V while the complement gate stays at \(1.73\) V,
+  pre-store pacc is quiet, early overlap writes only \(2.3\) mV, and settled
+  writes reach \(27.0\) mV with \(0.60\) mV spread.  The deterministic
+  kick/noise plot now shows the margin shape: non-flipped cases keep at least
+  \(38.5\) mV hidden-error sign, common-mode kicks move the write by at most
+  \(8.9\) mV, a differential boost adds \(9.8\) mV, a \(25\) mV destructive
+  differential kick removes \(10.0\) mV, and the \(50\) mV destructive kick
+  crosses the sign boundary but leaves only a \(0.38\) mV wrong-sign residue.
 - Clarified the MOS hidden-writer mismatch, activation-gate bias, and
   restored-gate plots.  The regenerated `mos_hidden_writer_mismatch_ngspice`,
   `mos_hidden_writer_gate_bias_ngspice`,

@@ -8752,20 +8752,30 @@ quit
         forward_tail_model: str = "NMOS",
         reset_n_model: str = "NMOS",
         reset_p_model: str = "PMOS",
+        reset_ref_series_ohm: float = 0.0,
     ) -> str:
         def fmt_gate_ic(value: float) -> str:
             if abs(value - round(value, 2)) < 1e-12:
                 return f"{value:.2f}"
             return f"{value:.5f}"
 
+        def reset_ref_source(name: str, node: str, value: float) -> list[str]:
+            if reset_ref_series_ohm <= 0.0:
+                return [f"V{name}_HYR {node} 0 {fmt_gate_ic(value)}"]
+            source_node = f"{node}_src"
+            return [
+                f"V{name}_HYR {source_node} 0 {fmt_gate_ic(value)}",
+                f"R{name}_HYR {source_node} {node} {reset_ref_series_ohm:g}",
+            ]
+
         if abs(reset_ref_p - reset_ref_m) < 1e-12:
-            reset_ref_lines = [f"VZGCM_HYR zgcm_hyr 0 {fmt_gate_ic(reset_ref_p)}"]
+            reset_ref_lines = reset_ref_source("ZGCM", "zgcm_hyr", reset_ref_p)
             reset_ref_p_node = "zgcm_hyr"
             reset_ref_m_node = "zgcm_hyr"
         else:
             reset_ref_lines = [
-                f"VZGRP_HYR zgrp_hyr 0 {fmt_gate_ic(reset_ref_p)}",
-                f"VZGRM_HYR zgrm_hyr 0 {fmt_gate_ic(reset_ref_m)}",
+                *reset_ref_source("ZGRP", "zgrp_hyr", reset_ref_p),
+                *reset_ref_source("ZGRM", "zgrm_hyr", reset_ref_m),
             ]
             reset_ref_p_node = "zgrp_hyr"
             reset_ref_m_node = "zgrm_hyr"
@@ -10079,6 +10089,7 @@ quit
         family: str = "skewlaw",
         reset_n_vto: float | None = None,
         reset_p_vto: float | None = None,
+        reset_ref_series_ohm: float = 0.0,
     ) -> tuple[np.ndarray, list[np.ndarray]]:
         model_tag = name.upper()
         stem = (
@@ -10117,6 +10128,7 @@ quit
                 forward_m_model=f"NSHTRSLFM_{model_tag}",
                 reset_n_model=reset_n_model,
                 reset_p_model=reset_p_model,
+                reset_ref_series_ohm=reset_ref_series_ohm,
             ),
         )
         deck = replace_required(
@@ -10641,6 +10653,100 @@ quit
     require(
         np.max(shift_reset_corner_common_error) < 0.5 * np.max(np.abs([case[4] for case in shift_reset_branch_specs])),
         "reset switch threshold corner common-mode error should stay below the intentional split trim scale",
+    )
+
+    shift_refz_cases = [
+        ("r0", "0", 0.0),
+        ("r1k", "1k", 1e3),
+        ("r10k", "10k", 1e4),
+        ("r100k", "100k", 1e5),
+        ("r1m", "1M", 1e6),
+        ("r3m", "3M", 3e6),
+    ]
+    shift_refz_trim_error = []
+    shift_refz_common_error = []
+    shift_refz_h_mean = []
+    shift_refz_h_spread = []
+    shift_refz_traces = []
+    for branch_name, branch_label, nfp_vto, nfm_vto, reset_trim_v in shift_reset_branch_specs:
+        branch_trim_error = []
+        branch_common_error = []
+        branch_h_mean = []
+        branch_h_spread = []
+        for case_name, case_label, series_ohm in shift_refz_cases:
+            rt, rz_cols = run_trimmed_reuse_skew_law_case(
+                f"{branch_name}_{case_name}",
+                nfp_vto,
+                nfm_vto,
+                reset_trim_v,
+                family="refz",
+                reset_ref_series_ohm=series_ohm,
+            )
+
+            def rzat(time_s: float, values: np.ndarray) -> float:
+                return float(values[np.argmin(np.abs(rt - time_s))])
+
+            gate_diff = rz_cols[0] - rz_cols[1]
+            gate_common = 0.5 * (rz_cols[0] + rz_cols[1])
+            z = rz_cols[12] - rz_cols[11]
+            load = rz_cols[14] - rz_cols[13]
+            store = rz_cols[16] - rz_cols[15]
+            gate_samples = np.array([rzat(ts, gate_diff) for ts in shift_trimmed_reuse_reset_times])
+            common_samples = np.array([rzat(ts, gate_common) for ts in shift_trimmed_reuse_reset_times])
+            z_samples = np.array([rzat(ts, z) for ts in shift_reuse_z_times])
+            h_samples = np.array([rzat(ts, store) for ts in shift_reuse_h_times])
+            z_reset = np.array([abs(rzat(ts, z)) for ts in shift_trimmed_reuse_reset_times])
+            h_reset = np.array([abs(rzat(ts, store)) for ts in shift_trimmed_reuse_reset_times])
+            trim_error = float(np.max(np.abs(gate_samples - reset_trim_v)))
+            common_error = float(np.max(np.abs(common_samples - 0.90)))
+            h_mean = float(np.mean(h_samples))
+            h_spread = float(np.max(h_samples) - np.min(h_samples))
+            require(
+                np.max(z_reset) < 0.010 and np.max(h_reset) < 0.010,
+                f"{branch_label} {case_label} reset-reference source should still clear z/h during reset",
+            )
+            require(
+                np.all(z_samples > 0.035),
+                f"{branch_label} {case_label} reset-reference source should keep useful read preactivation",
+            )
+            branch_trim_error.append(trim_error)
+            branch_common_error.append(common_error)
+            branch_h_mean.append(h_mean)
+            branch_h_spread.append(h_spread)
+            if case_name in {"r0", "r100k", "r1m", "r3m"}:
+                shift_refz_traces.append((branch_label, case_label, rt, load, store))
+        shift_refz_trim_error.append(branch_trim_error)
+        shift_refz_common_error.append(branch_common_error)
+        shift_refz_h_mean.append(branch_h_mean)
+        shift_refz_h_spread.append(branch_h_spread)
+
+    shift_refz_trim_error = np.array(shift_refz_trim_error)
+    shift_refz_common_error = np.array(shift_refz_common_error)
+    shift_refz_h_mean = np.array(shift_refz_h_mean)
+    shift_refz_h_spread = np.array(shift_refz_h_spread)
+    require(
+        np.all(shift_refz_trim_error[:, :2] < 0.001),
+        "reset-reference source impedance up through 1k should preserve split trim",
+    )
+    require(
+        np.all((shift_refz_h_mean[:, :2] > 0.040) & (shift_refz_h_mean[:, :2] < 0.055)),
+        "reset-reference source impedance up through 1k should preserve calibrated activation",
+    )
+    require(
+        np.all(np.abs(shift_refz_h_mean[:, 2] - shift_refz_h_mean[:, 0]) > 0.015),
+        "10k reset-reference sources should already visibly move the stored activation with this reset pulse",
+    )
+    require(
+        np.all(np.diff(shift_refz_trim_error, axis=1) >= -0.002),
+        "reset-reference trim error should not improve as source impedance increases",
+    )
+    require(
+        np.all(shift_refz_trim_error[:, -1] > 0.020),
+        "megaohm reset-reference sources should visibly fail to deliver the calibrated split trim",
+    )
+    require(
+        np.all(np.abs(shift_refz_h_mean[:, -1] - shift_refz_h_mean[:, 0]) > 0.020),
+        "megaohm reset-reference sources should visibly move the stored activation",
     )
 
     tail_bias_forward_tail_line = "MNFT_HYR ftail_hyr vbias 0 0 NMOS L={LCH} W=48u"
@@ -12169,6 +12275,65 @@ quit
     save_plot(
         shift_reset_corner_fig,
         "mos_hidden_writer_restored_gate_hybrid_update_forward_guard_forward_pair_96u_shifted_gate_reset_switch_corner_ngspice",
+    )
+
+    shift_refz_fig, shift_refz_axes = plt.subplots(
+        3,
+        1,
+        figsize=(7.4, 7.4),
+        gridspec_kw={"height_ratios": [0.8, 0.9, 1.0]},
+    )
+    refz_x = np.arange(len(shift_refz_cases))
+    refz_labels = [label for _name, label, _series in shift_refz_cases]
+    for branch_idx, (_branch_name, branch_label, _nfp, _nfm, _trim) in enumerate(shift_reset_branch_specs):
+        marker = "o-" if branch_idx == 0 else "s--"
+        shift_refz_axes[0].plot(
+            refz_x,
+            1e3 * shift_refz_trim_error[branch_idx],
+            marker,
+            label=branch_label,
+        )
+    shift_refz_axes[0].axhline(6, color="0.4", linestyle=":", linewidth=0.9, label="6 mV trim-error gate")
+    shift_refz_axes[0].set_xticks(refz_x)
+    shift_refz_axes[0].set_xticklabels(refz_labels)
+    shift_refz_axes[0].set_ylabel("max trim error (mV)")
+    shift_refz_axes[0].set_title("Finite reset-reference impedance limits split-trim delivery")
+    shift_refz_axes[0].grid(True, axis="y", alpha=0.25)
+    shift_refz_axes[0].legend(loc="upper left", ncol=2, fontsize="x-small")
+    for branch_idx, (_branch_name, branch_label, _nfp, _nfm, _trim) in enumerate(shift_reset_branch_specs):
+        marker = "o-" if branch_idx == 0 else "s--"
+        shift_refz_axes[1].plot(
+            refz_x,
+            1e3 * shift_refz_h_mean[branch_idx],
+            marker,
+            label=branch_label,
+        )
+    shift_refz_axes[1].axhspan(40, 55, color="0.7", alpha=0.12, label="calibrated window")
+    shift_refz_axes[1].set_xticks(refz_x)
+    shift_refz_axes[1].set_xticklabels(refz_labels)
+    shift_refz_axes[1].set_ylabel("mean stored $h$ (mV)")
+    shift_refz_axes[1].set_title("Weak trim drivers eventually revert toward under-trimmed behavior")
+    shift_refz_axes[1].grid(True, axis="y", alpha=0.25)
+    shift_refz_axes[1].legend(loc="upper left", ncol=2, fontsize="x-small")
+    for branch_label, case_label, rzt, load, store in shift_refz_traces:
+        if case_label in {"100k"}:
+            continue
+        shift_refz_axes[2].plot(
+            1e6 * rzt,
+            1e3 * store,
+            label=f"{branch_label.split(', ')[1]}, {case_label} $h$",
+        )
+    shift_refz_axes[2].axhline(0, color="0.4", linewidth=0.8)
+    shift_refz_axes[2].set_xlim(2.35, 7.1)
+    shift_refz_axes[2].set_xlabel("time (us)")
+    shift_refz_axes[2].set_ylabel("stored $h$ (mV)")
+    shift_refz_axes[2].set_title("High source impedance leaves the shifted gate under-calibrated")
+    shift_refz_axes[2].grid(True, alpha=0.25)
+    shift_refz_axes[2].legend(loc="upper left", ncol=2, fontsize="xx-small")
+    shift_refz_fig.tight_layout()
+    save_plot(
+        shift_refz_fig,
+        "mos_hidden_writer_restored_gate_hybrid_update_forward_guard_forward_pair_96u_shifted_gate_reset_ref_impedance_ngspice",
     )
 
     tail_bias_fig, tail_bias_axes = plt.subplots(2, 1, figsize=(7.4, 6.4), gridspec_kw={"height_ratios": [1.0, 0.8]})

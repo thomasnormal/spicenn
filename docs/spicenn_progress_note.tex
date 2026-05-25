@@ -2233,6 +2233,30 @@ must satisfy before it can replace the current behavioral prototype.
 
 \begin{figure}[H]
   \centering
+  \includegraphics[width=0.95\linewidth]{figures/mos_hidden_writer_restored_gate_hybrid_update_forward_guard_forward_pair_96u_shifted_gate_reset_ref_impedance_ngspice.png}
+  \caption{Ngspice finite reset-reference source-impedance check for the same
+  shifted-gate split-reset primitive.  This deck keeps the reset switches
+  nominal but inserts series resistance between the ideal trim-reference
+  source and each split reset rail.  The two severe calibrated branches are
+  reused: \(+30\) mV forward-pair skew with \(-55\) mV trim and \(-30\) mV
+  skew with \(+65\) mV trim.  Source impedances of \(0\) and \(1\,\mathrm{k}\Omega\)
+  preserve the sampled trim to better than \(0.067\) mV and keep the stored
+  activation at about \(47\) mV.  At \(10\,\mathrm{k}\Omega\), however, the
+  first short pre-reset pulse is already too weak: the negative-trim branch
+  samples only \(-31.782\) mV on the first reset and stores
+  \(1.964,41.967,\) and \(44.688\) mV over the three cycles; the positive-trim
+  branch samples \(37.563\) mV on the first reset and stores
+  \(97.472,48.589,\) and \(45.160\) mV.  At \(100\,\mathrm{k}\Omega\) and
+  above, the latch is effectively under-trimmed and returns to the known
+  failure directions.  Thus the reset-switch devices themselves have corner
+  margin, but the trim-reference driver must be a low-impedance local rail or
+  the reset pulse must be lengthened before the split-reset calibration can be
+  trusted in an array.}
+  \label{fig:mos-hidden-writer-restored-gate-hybrid-update-forward-guard-forward-pair-96u-shifted-gate-reset-ref-impedance-ngspice}
+\end{figure}
+
+\begin{figure}[H]
+  \centering
   \includegraphics[width=0.88\linewidth]{figures/mos_hidden_writer_restored_gate_hybrid_update_forward_guard_forward_tail_bias_ngspice.png}
   \caption{Ngspice isolated forward-tail bias sweep for the same guarded MOS
   activation store.  The failed shared-bias experiment changed the read path

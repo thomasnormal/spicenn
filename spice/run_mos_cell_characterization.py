@@ -10055,11 +10055,12 @@ quit
         nfp_vto: float,
         nfm_vto: float,
         reset_trim_v: float,
+        family: str = "skewlaw",
     ) -> tuple[np.ndarray, list[np.ndarray]]:
         model_tag = name.upper()
         stem = (
             "mos_hidden_writer_restored_gate_hybrid_update_forward_guard_"
-            f"forward_pair_96u_zcm_0p75v_shift_trimmed_reuse_skewlaw_{name}"
+            f"forward_pair_96u_zcm_0p75v_shift_trimmed_reuse_{family}_{name}"
         )
         models = (
             f".model NSHTRSLFP_{model_tag} NMOS (LEVEL=1 VTO={nfp_vto:.3f} KP=220u LAMBDA=0.03)\n"
@@ -10201,6 +10202,114 @@ quit
         shift_skewlaw_h_mean[shift_skewlaw_index["d30_trim55"]]
         > shift_skewlaw_h_mean[shift_skewlaw_index["d30_under35"]] + 0.015,
         "severe skew should visibly need the stronger calibrated trim",
+    )
+
+    shift_signlaw_cases = [
+        ("pm10_neg15", "+10 mV skew, -15 mV trim", 0.560, 0.540, -0.015, True),
+        ("mp10_pos15", "-10 mV skew, +15 mV trim", 0.540, 0.560, 0.015, True),
+        ("pm20_neg35", "+20 mV skew, -35 mV trim", 0.570, 0.530, -0.035, True),
+        ("mp20_pos35", "-20 mV skew, +35 mV trim", 0.530, 0.570, 0.035, True),
+        ("pm30_neg55", "+30 mV skew, -55 mV trim", 0.580, 0.520, -0.055, True),
+        ("mp30_pos55", "-30 mV skew, +55 mV trim", 0.520, 0.580, 0.055, True),
+        ("pm30_under35", "+30 mV skew, -35 mV trim", 0.580, 0.520, -0.035, False),
+        ("mp30_under35", "-30 mV skew, +35 mV trim", 0.520, 0.580, 0.035, False),
+    ]
+    shift_signlaw_labels = []
+    shift_signlaw_skews_mv = []
+    shift_signlaw_trim_values = []
+    shift_signlaw_gate_samples = []
+    shift_signlaw_common_samples = []
+    shift_signlaw_z_samples = []
+    shift_signlaw_h_samples = []
+    shift_signlaw_calibrated = []
+    shift_signlaw_traces = []
+    for name, label, nfp_vto, nfm_vto, reset_trim_v, calibrated in shift_signlaw_cases:
+        st, signlaw_cols = run_trimmed_reuse_skew_law_case(
+            name,
+            nfp_vto,
+            nfm_vto,
+            reset_trim_v,
+            family="signlaw",
+        )
+
+        def sgnat(time_s: float, values: np.ndarray) -> float:
+            return float(values[np.argmin(np.abs(st - time_s))])
+
+        gate_diff = signlaw_cols[0] - signlaw_cols[1]
+        gate_common = 0.5 * (signlaw_cols[0] + signlaw_cols[1])
+        z = signlaw_cols[12] - signlaw_cols[11]
+        load = signlaw_cols[14] - signlaw_cols[13]
+        store = signlaw_cols[16] - signlaw_cols[15]
+        gate_samples = np.array([sgnat(ts, gate_diff) for ts in shift_trimmed_reuse_reset_times])
+        common_samples = np.array([sgnat(ts, gate_common) for ts in shift_trimmed_reuse_reset_times])
+        z_samples = np.array([sgnat(ts, z) for ts in shift_reuse_z_times])
+        h_samples = np.array([sgnat(ts, store) for ts in shift_reuse_h_times])
+        z_reset = np.array([abs(sgnat(ts, z)) for ts in shift_trimmed_reuse_reset_times])
+        h_reset = np.array([abs(sgnat(ts, store)) for ts in shift_trimmed_reuse_reset_times])
+        require(
+            np.max(np.abs(gate_samples - reset_trim_v)) < 0.006,
+            f"{label} should establish the requested signed split-reset trim",
+        )
+        require(
+            np.max(np.abs(common_samples - 0.90)) < 0.006,
+            f"{label} should preserve reset common mode",
+        )
+        require(
+            np.max(z_reset) < 0.001 and np.max(h_reset) < 0.001,
+            f"{label} should clear z/h state during reset",
+        )
+        require(
+            np.all(z_samples > 0.035),
+            f"{label} should keep useful read preactivation",
+        )
+        require(
+            np.all(h_samples < 0.130),
+            f"{label} should avoid forward-store overdrive",
+        )
+        if calibrated:
+            require(
+                np.all(h_samples > 0.025),
+                f"{label} should recover positive activation with signed skew-scaled trim",
+            )
+            require(
+                np.max(h_samples) - np.min(h_samples) < 0.035,
+                f"{label} should remain stable across repeated cycles",
+            )
+        shift_signlaw_labels.append(label)
+        shift_signlaw_skews_mv.append(500.0 * (nfp_vto - nfm_vto))
+        shift_signlaw_trim_values.append(reset_trim_v)
+        shift_signlaw_gate_samples.append(gate_samples)
+        shift_signlaw_common_samples.append(common_samples)
+        shift_signlaw_z_samples.append(z_samples)
+        shift_signlaw_h_samples.append(h_samples)
+        shift_signlaw_calibrated.append(calibrated)
+        if name in {"pm30_neg55", "mp30_pos55", "pm30_under35", "mp30_under35"}:
+            shift_signlaw_traces.append((label, st, load, store))
+
+    shift_signlaw_skews_mv = np.array(shift_signlaw_skews_mv)
+    shift_signlaw_trim_values = np.array(shift_signlaw_trim_values)
+    shift_signlaw_gate_samples = np.array(shift_signlaw_gate_samples)
+    shift_signlaw_common_samples = np.array(shift_signlaw_common_samples)
+    shift_signlaw_z_samples = np.array(shift_signlaw_z_samples)
+    shift_signlaw_h_samples = np.array(shift_signlaw_h_samples)
+    shift_signlaw_calibrated = np.array(shift_signlaw_calibrated, dtype=bool)
+    shift_signlaw_h_mean = np.mean(shift_signlaw_h_samples, axis=1)
+    shift_signlaw_index = {case[0]: idx for idx, case in enumerate(shift_signlaw_cases)}
+    require(
+        np.max(shift_signlaw_h_mean[shift_signlaw_calibrated])
+        - np.min(shift_signlaw_h_mean[shift_signlaw_calibrated])
+        < 0.080,
+        "signed skew-scaled split trims should keep both polarities in the same useful activation band",
+    )
+    require(
+        shift_signlaw_h_mean[shift_signlaw_index["pm30_neg55"]]
+        > shift_signlaw_h_mean[shift_signlaw_index["pm30_under35"]] + 0.010,
+        "negative trim for +30 mV skew should recover the under-trimmed low-activation case",
+    )
+    require(
+        shift_signlaw_h_mean[shift_signlaw_index["mp30_pos55"]]
+        < shift_signlaw_h_mean[shift_signlaw_index["mp30_under35"]] - 0.010,
+        "positive trim for -30 mV skew should reduce the under-trimmed over-activation case",
     )
 
     tail_bias_forward_tail_line = "MNFT_HYR ftail_hyr vbias 0 0 NMOS L={LCH} W=48u"
@@ -11485,6 +11594,91 @@ quit
     save_plot(
         shift_skewlaw_fig,
         "mos_hidden_writer_restored_gate_hybrid_update_forward_guard_forward_pair_96u_shifted_gate_skew_trim_law_ngspice",
+    )
+
+    shift_signlaw_fig, shift_signlaw_axes = plt.subplots(
+        3,
+        1,
+        figsize=(7.4, 7.5),
+        gridspec_kw={"height_ratios": [0.9, 1.0, 1.0]},
+    )
+    sign_cal_idx = np.flatnonzero(shift_signlaw_calibrated)
+    sign_under_idx = np.flatnonzero(~shift_signlaw_calibrated)
+    order = np.argsort(shift_signlaw_skews_mv[sign_cal_idx])
+    sign_cal_sorted = sign_cal_idx[order]
+    shift_signlaw_axes[0].plot(
+        shift_signlaw_skews_mv[sign_cal_sorted],
+        1e3 * shift_signlaw_trim_values[sign_cal_sorted],
+        "o-",
+        label="requested trim",
+    )
+    shift_signlaw_axes[0].errorbar(
+        shift_signlaw_skews_mv[sign_cal_sorted],
+        1e3 * np.mean(shift_signlaw_gate_samples[sign_cal_sorted], axis=1),
+        yerr=1e3
+        * np.vstack(
+            [
+                np.mean(shift_signlaw_gate_samples[sign_cal_sorted], axis=1)
+                - np.min(shift_signlaw_gate_samples[sign_cal_sorted], axis=1),
+                np.max(shift_signlaw_gate_samples[sign_cal_sorted], axis=1)
+                - np.mean(shift_signlaw_gate_samples[sign_cal_sorted], axis=1),
+            ]
+        ),
+        fmt="s--",
+        capsize=3,
+        label="sampled reset diff",
+    )
+    shift_signlaw_axes[0].scatter(
+        shift_signlaw_skews_mv[sign_under_idx],
+        1e3 * shift_signlaw_trim_values[sign_under_idx],
+        marker="x",
+        s=48,
+        label="under-trimmed 30 mV skew",
+    )
+    shift_signlaw_axes[0].axhline(0, color="0.4", linewidth=0.8)
+    shift_signlaw_axes[0].axvline(0, color="0.4", linewidth=0.8)
+    shift_signlaw_axes[0].set_ylabel("split trim (mV)")
+    shift_signlaw_axes[0].set_title("Split-reset trim law is signed across both skew polarities")
+    shift_signlaw_axes[0].grid(True, alpha=0.25)
+    shift_signlaw_axes[0].legend(loc="upper left", ncol=2, fontsize="small")
+    sign_x = np.arange(3)
+    for idx in sign_cal_sorted:
+        shift_signlaw_axes[1].plot(
+            sign_x,
+            1e3 * shift_signlaw_h_samples[idx],
+            marker="o",
+            label=shift_signlaw_labels[idx],
+        )
+    for idx in sign_under_idx:
+        shift_signlaw_axes[1].plot(
+            sign_x,
+            1e3 * shift_signlaw_h_samples[idx],
+            "x--",
+            linewidth=1.5,
+            label=shift_signlaw_labels[idx],
+        )
+    shift_signlaw_axes[1].axhspan(25, 125, color="0.7", alpha=0.12, label="accepted window")
+    shift_signlaw_axes[1].axhline(0, color="0.4", linewidth=0.8)
+    shift_signlaw_axes[1].set_xticks(sign_x)
+    shift_signlaw_axes[1].set_xticklabels(["cycle 1", "cycle 2", "cycle 3"])
+    shift_signlaw_axes[1].set_ylabel("stored $h$ (mV)")
+    shift_signlaw_axes[1].set_title("Both signed trims recover positive repeated captures")
+    shift_signlaw_axes[1].grid(True, axis="y", alpha=0.25)
+    shift_signlaw_axes[1].legend(loc="upper left", ncol=2, fontsize="x-small")
+    for label, spt, load, store in shift_signlaw_traces:
+        shift_signlaw_axes[2].plot(1e6 * spt, 1e3 * store, label=f"{label} $h$")
+        shift_signlaw_axes[2].plot(1e6 * spt, 1e3 * load, "--", alpha=0.55, label=f"{label} load")
+    shift_signlaw_axes[2].axhline(0, color="0.4", linewidth=0.8)
+    shift_signlaw_axes[2].set_xlim(2.35, 7.1)
+    shift_signlaw_axes[2].set_xlabel("time (us)")
+    shift_signlaw_axes[2].set_ylabel("differential (mV)")
+    shift_signlaw_axes[2].set_title("Severe under-trim leaves opposite low/high activation errors")
+    shift_signlaw_axes[2].grid(True, alpha=0.25)
+    shift_signlaw_axes[2].legend(loc="upper left", ncol=2, fontsize="x-small")
+    shift_signlaw_fig.tight_layout()
+    save_plot(
+        shift_signlaw_fig,
+        "mos_hidden_writer_restored_gate_hybrid_update_forward_guard_forward_pair_96u_shifted_gate_signed_skew_trim_law_ngspice",
     )
 
     tail_bias_fig, tail_bias_axes = plt.subplots(2, 1, figsize=(7.4, 6.4), gridspec_kw={"height_ratios": [1.0, 0.8]})

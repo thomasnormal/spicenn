@@ -2147,6 +2147,30 @@ must satisfy before it can replace the current behavioral prototype.
 
 \begin{figure}[H]
   \centering
+  \includegraphics[width=0.95\linewidth]{figures/mos_hidden_writer_restored_gate_hybrid_update_forward_guard_forward_pair_96u_shifted_gate_signed_skew_trim_law_ngspice.png}
+  \caption{Ngspice signed threshold-skew trim-law check for the shifted-gate
+  reuse fixture.  This family-completes
+  Fig.~\ref{fig:mos-hidden-writer-restored-gate-hybrid-update-forward-guard-forward-pair-96u-shifted-gate-skew-trim-law-ngspice}
+  by sweeping both forward-pair threshold-skew polarities.  The same physical
+  split-reset network applies negative trims for the \(V_{TO,+}>V_{TO,-}\)
+  polarity and positive trims for \(V_{TO,+}<V_{TO,-}\), with sampled shifted
+  gate differentials matching the requested
+  \(\pm 15,\pm 35,\) and \(\pm 55\) mV trims to the plotted precision and
+  common mode remaining near \(0.90\) V.  The calibrated negative-trim branch
+  stores about \(46.97\) mV for \(+10,+20,\) and \(+30\) mV skews; the
+  calibrated positive-trim branch stores about \(66.20\) mV for
+  \(-10,-20,\) and \(-30\) mV skews.  This is useful bidirectional signed
+  correction, but not a perfectly symmetric gain law.  The deliberately
+  under-trimmed severe cases show the opposite failure modes: \(+30\) mV skew
+  with only \(-35\) mV trim stores \(8.45\) mV, while \(-30\) mV skew with
+  only \(+35\) mV trim stores \(104.56\) mV.  The remaining physical-design
+  problem is therefore residual polarity-dependent gain/calibration, not the
+  existence of a signed hardware trim path.}
+  \label{fig:mos-hidden-writer-restored-gate-hybrid-update-forward-guard-forward-pair-96u-shifted-gate-signed-skew-trim-law-ngspice}
+\end{figure}
+
+\begin{figure}[H]
+  \centering
   \includegraphics[width=0.88\linewidth]{figures/mos_hidden_writer_restored_gate_hybrid_update_forward_guard_forward_tail_bias_ngspice.png}
   \caption{Ngspice isolated forward-tail bias sweep for the same guarded MOS
   activation store.  The failed shared-bias experiment changed the read path

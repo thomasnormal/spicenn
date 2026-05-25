@@ -2,6 +2,17 @@
 
 ## 2026-05-25
 
+- Clarified the shifted-gate reset-reference recharge plot.  The ngspice deck
+  models a \(100\)k reset-trim source feeding local reservoir capacitors and
+  already asserted that \(250\) pF keeps repeated trim error below \(6\) mV,
+  all repeated stored activations inside the useful band, cycle spread below
+  \(25\) mV, and first-cycle activation more than \(60\) mV better than no
+  local reservoir.  The regenerated
+  `mos_hidden_writer_restored_gate_hybrid_update_forward_guard_forward_pair_96u_shifted_gate_reset_ref_recharge_ngspice`
+  plot now labels the measured evidence directly: \(250\) pF max trim error
+  \(3.66\) mV, no-reservoir max trim error \(59.6\) mV, \(250\) pF stored
+  activation range \(40.9\)--\(53.9\) mV, max cycle spread \(0.8\) mV, and
+  first-cycle gain over no reservoir \(81.9\) mV.
 - Clarified the calibrated shifted-gate trimmed-reuse plot.  The ngspice deck
   already asserted that each physical split reset re-establishes the
   \(-35\) mV trim within \(3\) mV, preserves common mode within \(5\) mV,

@@ -14872,6 +14872,17 @@ quit
     shift_refz_recharge_axes[0].set_ylabel("max trim error (mV)")
     shift_refz_recharge_axes[0].set_title("Local trim-reference caps recharge through a 100k source")
     shift_refz_recharge_axes[0].grid(True, axis="y", alpha=0.25)
+    shift_refz_recharge_axes[0].text(
+        0.58,
+        0.58,
+        "250 pF max trim err = "
+        f"{1e3 * np.max(shift_refz_recharge_max_trim_error[:, -1]):.2f} mV / 6 mV\n"
+        "0 pF max trim err = "
+        f"{1e3 * np.max(shift_refz_recharge_max_trim_error[:, 0]):.1f} mV",
+        transform=shift_refz_recharge_axes[0].transAxes,
+        fontsize="x-small",
+        bbox={"facecolor": "white", "alpha": 0.82, "edgecolor": "0.8"},
+    )
     shift_refz_recharge_axes[0].legend(loc="upper right", ncol=2, fontsize="xx-small")
     cycle_x = np.arange(1, len(shift_reuse_h_times) + 1)
     for branch_idx, (_branch_name, branch_label, _nfp, _nfm, _trim) in enumerate(shift_reset_branch_specs):
@@ -14888,11 +14899,27 @@ quit
             alpha=0.65,
             label=f"{branch_label.split(', ')[1]}, 0 pF",
         )
-    shift_refz_recharge_axes[1].axhspan(40, 55, color="0.7", alpha=0.12, label="calibrated window")
+    shift_refz_recharge_axes[1].axhspan(20, 90, color="0.75", alpha=0.10, label="useful band")
+    shift_refz_recharge_axes[1].axhspan(40, 55, color="0.45", alpha=0.12, label="calibrated window")
     shift_refz_recharge_axes[1].set_xticks(cycle_x)
     shift_refz_recharge_axes[1].set_ylabel("stored $h$ (mV)")
     shift_refz_recharge_axes[1].set_title("The passive reservoir stays useful across repeated resets")
     shift_refz_recharge_axes[1].grid(True, axis="y", alpha=0.25)
+    shift_refz_recharge_250p_h = shift_refz_recharge_h_samples[:, -1, :]
+    shift_refz_recharge_0p_h = shift_refz_recharge_h_samples[:, 0, :]
+    shift_refz_recharge_axes[1].text(
+        0.03,
+        0.08,
+        "250 pF h range = "
+        f"{1e3 * np.min(shift_refz_recharge_250p_h):.1f}..{1e3 * np.max(shift_refz_recharge_250p_h):.1f} mV\n"
+        "max 250 pF spread = "
+        f"{1e3 * np.max(np.ptp(shift_refz_recharge_250p_h, axis=1)):.1f} mV / 25 mV\n"
+        "first-cycle gain over 0 pF = "
+        f"{1e3 * np.min(np.abs(shift_refz_recharge_250p_h[:, 0] - shift_refz_recharge_0p_h[:, 0])):.1f} mV",
+        transform=shift_refz_recharge_axes[1].transAxes,
+        fontsize="x-small",
+        bbox={"facecolor": "white", "alpha": 0.82, "edgecolor": "0.8"},
+    )
     shift_refz_recharge_axes[1].legend(loc="upper right", ncol=2, fontsize="xx-small")
     for branch_label, cap_label, rct, store in shift_refz_recharge_traces:
         linestyle = "-" if cap_label == "0 pF" else "--" if cap_label == "100 pF" else ":"

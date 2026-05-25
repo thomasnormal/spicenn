@@ -2045,6 +2045,34 @@ must satisfy before it can replace the current behavioral prototype.
 
 \begin{figure}[H]
   \centering
+  \includegraphics[width=0.95\linewidth]{figures/mos_hidden_writer_restored_gate_hybrid_update_forward_guard_forward_pair_96u_shifted_gate_trimmed_reuse_ngspice.png}
+  \caption{Ngspice calibrated repeated-reuse check for the skewed shifted-gate
+  forward pair.  This is the same low-common-mode \(V_{ZCM}=0.75\) V deck,
+  MOS-written weight/bias state, \(10\) pF shifted-gate coupling, and
+  \(+20/-20\) mV forward-pair threshold skew that required split-reset
+  calibration in
+  Fig.~\ref{fig:mos-hidden-writer-restored-gate-hybrid-update-forward-guard-forward-pair-96u-shifted-gate-balanced-trim-ngspice}.
+  The reset references are fixed at the calibrated \(-35\) mV split trim
+  (\(V_{\mathrm{reset},+}=0.8825\) V and
+  \(V_{\mathrm{reset},-}=0.9175\) V), and the cell is reused through three
+  read/reset/store cycles without changing the stored \(W/B\) state.  The
+  first read needs the same physical reset as later reads; otherwise it is
+  still an untrimmed initial condition.  With that pre-reset in place, the
+  reset samples re-establish shifted-gate differentials of
+  \(-34.9986,-34.9995,\) and \(-34.9995\) mV while the reset common mode is
+  \(0.899993,0.900003,\) and \(0.900003\) V.  Reset residue is small
+  (\(|z|<0.064\) mV and \(h=0\)).  The three read samples are
+  \(46.647,46.823,\) and \(46.582\) mV, and the stored activations are
+  \(46.985,46.967,\) and \(46.967\) mV.  Weight and bias drift over the
+  repeated use window are \(0.001\) and \(0.000\,\mu\mathrm{V}\).  This shows
+  that the split-reset trim can be reused as a physical offset-cancellation
+  operation in the Level-1 fixture; it does not yet solve how a larger array
+  calibrates those trims or how much mismatch/noise margin remains.}
+  \label{fig:mos-hidden-writer-restored-gate-hybrid-update-forward-guard-forward-pair-96u-shifted-gate-trimmed-reuse-ngspice}
+\end{figure}
+
+\begin{figure}[H]
+  \centering
   \includegraphics[width=0.88\linewidth]{figures/mos_hidden_writer_restored_gate_hybrid_update_forward_guard_forward_tail_bias_ngspice.png}
   \caption{Ngspice isolated forward-tail bias sweep for the same guarded MOS
   activation store.  The failed shared-bias experiment changed the read path

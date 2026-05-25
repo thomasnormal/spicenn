@@ -9602,6 +9602,132 @@ quit
         "untrimmed split reset should expose the opposite skew overdrive in the balance deck",
     )
 
+    shift_trimmed_reuse_stem = (
+        "mos_hidden_writer_restored_gate_hybrid_update_forward_guard_"
+        "forward_pair_96u_zcm_0p75v_shift_trimmed_reuse_skew_pm"
+    )
+    shift_trimmed_reuse_models = (
+        ".model NSHTRREUSEFP NMOS (LEVEL=1 VTO=0.57 KP=220u LAMBDA=0.03)\n"
+        ".model NSHTRREUSEFM NMOS (LEVEL=1 VTO=0.53 KP=220u LAMBDA=0.03)"
+    )
+    shift_trimmed_reuse_deck = replace_required(hybrid_forward_read_reuse_deck, zcm_source_line, "VZCM zcm 0 0.75")
+    shift_trimmed_reuse_deck = replace_required(
+        shift_trimmed_reuse_deck,
+        zcm_cap_p_line,
+        "CZP_HYR zp_hyr 0 {CSUM} IC=0.75",
+    )
+    shift_trimmed_reuse_deck = replace_required(
+        shift_trimmed_reuse_deck,
+        zcm_cap_m_line,
+        "CZM_HYR zm_hyr 0 {CSUM} IC=0.75",
+    )
+    shift_trimmed_reuse_deck = replace_required(
+        shift_trimmed_reuse_deck,
+        corner_param_line,
+        shift_trimmed_reuse_models + "\n" + corner_param_line,
+    )
+    shift_trimmed_reuse_deck = replace_required(
+        shift_trimmed_reuse_deck,
+        forward_pair_lines,
+        shifted_forward_pair_lines(
+            10.0,
+            reset_ref_p=0.90 - 0.0175,
+            reset_ref_m=0.90 + 0.0175,
+            forward_p_model="NSHTRREUSEFP",
+            forward_m_model="NSHTRREUSEFM",
+        ),
+    )
+    shift_trimmed_reuse_deck = replace_required(
+        shift_trimmed_reuse_deck,
+        "VRESET_HYR rst_hyr 0 PWL(0 0 3.58u 0 3.60u 1.8 4.00u 1.8 4.02u 0 "
+        "5.18u 0 5.20u 1.8 5.60u 1.8 5.62u 0 7.8u 0)",
+        "VRESET_HYR rst_hyr 0 PWL(0 0 2.48u 0 2.50u 1.8 2.62u 1.8 2.64u 0 "
+        "3.58u 0 3.60u 1.8 4.00u 1.8 4.02u 0 5.18u 0 5.20u 1.8 5.60u 1.8 "
+        "5.62u 0 7.8u 0)",
+    )
+    shift_trimmed_reuse_deck = replace_required(
+        shift_trimmed_reuse_deck,
+        "VRESETN_HYR rstn_hyr 0 PWL(0 1.8 3.58u 1.8 3.60u 0 4.00u 0 4.02u 1.8 "
+        "5.18u 1.8 5.20u 0 5.60u 0 5.62u 1.8 7.8u 1.8)",
+        "VRESETN_HYR rstn_hyr 0 PWL(0 1.8 2.48u 1.8 2.50u 0 2.62u 0 2.64u 1.8 "
+        "3.58u 1.8 3.60u 0 4.00u 0 4.02u 1.8 5.18u 1.8 5.20u 0 5.60u 0 "
+        "5.62u 1.8 7.8u 1.8)",
+    )
+    shift_trimmed_reuse_deck = replace_required(
+        shift_trimmed_reuse_deck,
+        "mos_hidden_writer_restored_gate_hybrid_update_forward_read_reuse.dat",
+        f"{shift_trimmed_reuse_stem}.dat",
+    )
+    shift_trimmed_reuse_deck = add_shifted_gate_probes(shift_trimmed_reuse_deck, shift_trimmed_reuse_stem)
+    shift_trimmed_reuse_data = run_ngspice(shift_trimmed_reuse_deck, shift_trimmed_reuse_stem)
+    strpt, shift_trimmed_reuse_cols = load_wrdata(shift_trimmed_reuse_data, 25)
+
+    def strpat(time_s: float, values: np.ndarray) -> float:
+        return float(values[np.argmin(np.abs(strpt - time_s))])
+
+    shift_trimmed_reuse_gate_diff = shift_trimmed_reuse_cols[0] - shift_trimmed_reuse_cols[1]
+    shift_trimmed_reuse_gate_common = 0.5 * (shift_trimmed_reuse_cols[0] + shift_trimmed_reuse_cols[1])
+    shift_trimmed_reuse_weight = shift_trimmed_reuse_cols[7] - shift_trimmed_reuse_cols[8]
+    shift_trimmed_reuse_bias = shift_trimmed_reuse_cols[9] - shift_trimmed_reuse_cols[10]
+    shift_trimmed_reuse_preact = shift_trimmed_reuse_cols[12] - shift_trimmed_reuse_cols[11]
+    shift_trimmed_reuse_load = shift_trimmed_reuse_cols[14] - shift_trimmed_reuse_cols[13]
+    shift_trimmed_reuse_store = shift_trimmed_reuse_cols[16] - shift_trimmed_reuse_cols[15]
+    shift_trimmed_reuse_z_samples = np.array([strpat(ts, shift_trimmed_reuse_preact) for ts in shift_reuse_z_times])
+    shift_trimmed_reuse_h_samples = np.array([strpat(ts, shift_trimmed_reuse_store) for ts in shift_reuse_h_times])
+    shift_trimmed_reuse_reset_times = np.array([2.70, 4.10, 5.70]) * 1e-6
+    shift_trimmed_reuse_gate_reset_diff = np.array(
+        [strpat(ts, shift_trimmed_reuse_gate_diff) for ts in shift_trimmed_reuse_reset_times]
+    )
+    shift_trimmed_reuse_gate_reset_common = np.array(
+        [strpat(ts, shift_trimmed_reuse_gate_common) for ts in shift_trimmed_reuse_reset_times]
+    )
+    shift_trimmed_reuse_z_reset = np.array(
+        [abs(strpat(ts, shift_trimmed_reuse_preact)) for ts in shift_trimmed_reuse_reset_times]
+    )
+    shift_trimmed_reuse_h_reset = np.array(
+        [abs(strpat(ts, shift_trimmed_reuse_store)) for ts in shift_trimmed_reuse_reset_times]
+    )
+    shift_trimmed_reuse_weight_after_write = strpat(2.55e-6, shift_trimmed_reuse_weight)
+    shift_trimmed_reuse_bias_after_write = strpat(2.55e-6, shift_trimmed_reuse_bias)
+    shift_trimmed_reuse_weight_drift = strpat(7.45e-6, shift_trimmed_reuse_weight) - shift_trimmed_reuse_weight_after_write
+    shift_trimmed_reuse_bias_drift = strpat(7.45e-6, shift_trimmed_reuse_bias) - shift_trimmed_reuse_bias_after_write
+    require(
+        np.all(shift_trimmed_reuse_z_samples > 0.040),
+        "trimmed split-reset reuse deck should repeatedly read useful low-common-mode preactivation",
+    )
+    require(
+        np.all(shift_trimmed_reuse_h_samples > 0.035),
+        "trimmed split-reset reuse deck should repeatedly store useful calibrated activation",
+    )
+    require(
+        np.max(shift_trimmed_reuse_h_samples) - np.min(shift_trimmed_reuse_h_samples) < 0.020,
+        "trimmed split-reset reuse stored activations should stay within a 20 mV cycle window",
+    )
+    require(
+        np.max(np.abs(shift_trimmed_reuse_gate_reset_diff + 0.035)) < 0.003,
+        "trimmed split-reset reuse should re-establish the calibrated gate differential between reads",
+    )
+    require(
+        np.max(np.abs(shift_trimmed_reuse_gate_reset_common - 0.90)) < 0.005,
+        "trimmed split-reset reuse should preserve shifted-gate common mode between reads",
+    )
+    require(
+        np.max(shift_trimmed_reuse_z_reset) < 0.001,
+        "trimmed split-reset reuse reset should clear preactivation between reads",
+    )
+    require(
+        np.max(shift_trimmed_reuse_h_reset) < 0.001,
+        "trimmed split-reset reuse reset should clear stored activation between reads",
+    )
+    require(
+        abs(shift_trimmed_reuse_weight_drift) < 1e-5,
+        "trimmed split-reset reuse should not disturb weight state",
+    )
+    require(
+        abs(shift_trimmed_reuse_bias_drift) < 1e-5,
+        "trimmed split-reset reuse should not disturb bias state",
+    )
+
     tail_bias_forward_tail_line = "MNFT_HYR ftail_hyr vbias 0 0 NMOS L={LCH} W=48u"
     tail_bias_cases_v = [0.70, 0.80, 0.90, 0.95, 1.05, 1.15, 1.25]
     tail_bias_labels = []
@@ -10571,6 +10697,95 @@ quit
     save_plot(
         shift_balance_fig,
         "mos_hidden_writer_restored_gate_hybrid_update_forward_guard_forward_pair_96u_shifted_gate_balanced_trim_ngspice",
+    )
+
+    shift_trimmed_reuse_fig, shift_trimmed_reuse_axes = plt.subplots(
+        3,
+        1,
+        figsize=(7.4, 7.4),
+        gridspec_kw={"height_ratios": [1.0, 1.0, 0.9]},
+    )
+    shift_trimmed_reuse_axes[0].plot(1e6 * strpt, 1e3 * shift_trimmed_reuse_gate_diff, label="shifted-gate diff")
+    shift_trimmed_reuse_reset_mask = shift_trimmed_reuse_cols[20] > 0.9
+    shift_trimmed_reuse_axes[0].plot(
+        1e6 * strpt,
+        1e3 * np.where(shift_trimmed_reuse_reset_mask, shift_trimmed_reuse_gate_common - 0.90, np.nan),
+        "--",
+        label="common error during reset",
+    )
+    shift_trimmed_reuse_axes[0].plot(
+        1e6 * strpt,
+        1e3 * shift_trimmed_reuse_cols[20] / 20.0,
+        color="0.45",
+        alpha=0.25,
+        label="$reset/20$",
+    )
+    shift_trimmed_reuse_axes[0].axhline(-35.0, color="0.2", linewidth=0.8, linestyle=":", label="trim target")
+    shift_trimmed_reuse_axes[0].scatter(
+        1e6 * shift_trimmed_reuse_reset_times,
+        1e3 * shift_trimmed_reuse_gate_reset_diff,
+        color="tab:blue",
+        s=20,
+        zorder=4,
+        label="reset samples",
+    )
+    for start_us, end_us, label in [(2.50, 2.62, "pre-reset"), (3.60, 4.00, "reset 1"), (5.20, 5.60, "reset 2")]:
+        shift_trimmed_reuse_axes[0].axvspan(start_us, end_us, color="0.75", alpha=0.16, label=label)
+    shift_trimmed_reuse_axes[0].axhline(0, color="0.4", linewidth=0.8)
+    shift_trimmed_reuse_axes[0].set_xlim(2.35, 7.1)
+    shift_trimmed_reuse_axes[0].set_ylim(-85, 105)
+    shift_trimmed_reuse_axes[0].set_ylabel("gate error (mV)")
+    shift_trimmed_reuse_axes[0].set_title("Trimmed split resets re-center the skewed shifted gate between reads")
+    shift_trimmed_reuse_axes[0].grid(True, alpha=0.25)
+    shift_trimmed_reuse_axes[0].legend(loc="lower left", ncol=2, fontsize="x-small")
+    shift_trimmed_reuse_axes[1].plot(1e6 * strpt, 1e3 * shift_trimmed_reuse_preact, label="$z^- - z^+$")
+    shift_trimmed_reuse_axes[1].plot(1e6 * strpt, 1e3 * shift_trimmed_reuse_load, label="forward load")
+    shift_trimmed_reuse_axes[1].plot(1e6 * strpt, 1e3 * shift_trimmed_reuse_store, label="stored activation")
+    shift_trimmed_reuse_axes[1].plot(
+        1e6 * strpt,
+        1e3 * shift_trimmed_reuse_cols[23] / 20.0,
+        color="0.35",
+        alpha=0.25,
+        label="$read/20$",
+    )
+    shift_trimmed_reuse_axes[1].plot(
+        1e6 * strpt,
+        1e3 * shift_trimmed_reuse_cols[24] / 20.0,
+        color="0.15",
+        alpha=0.25,
+        label="$pact/20$",
+    )
+    shift_trimmed_reuse_axes[1].axhline(0, color="0.4", linewidth=0.8)
+    shift_trimmed_reuse_axes[1].set_xlim(2.35, 7.1)
+    shift_trimmed_reuse_axes[1].set_ylabel("differential (mV)")
+    shift_trimmed_reuse_axes[1].set_title("Same skewed pair and MOS-written W/B state produce repeated useful captures")
+    shift_trimmed_reuse_axes[1].grid(True, alpha=0.25)
+    shift_trimmed_reuse_axes[1].legend(loc="upper left", ncol=2, fontsize="small")
+    shift_trimmed_reuse_x = np.arange(len(shift_trimmed_reuse_h_samples))
+    shift_trimmed_reuse_axes[2].bar(
+        shift_trimmed_reuse_x - 0.18,
+        1e3 * shift_trimmed_reuse_z_samples,
+        width=0.36,
+        label="$z$ sample",
+    )
+    shift_trimmed_reuse_axes[2].bar(
+        shift_trimmed_reuse_x + 0.18,
+        1e3 * shift_trimmed_reuse_h_samples,
+        width=0.36,
+        label="$h$ sample",
+    )
+    shift_trimmed_reuse_axes[2].axhline(0, color="0.4", linewidth=0.8)
+    shift_trimmed_reuse_axes[2].set_xticks(shift_trimmed_reuse_x)
+    shift_trimmed_reuse_axes[2].set_xticklabels(["cycle 1", "cycle 2", "cycle 3"])
+    shift_trimmed_reuse_axes[2].set_xlabel("read/reset/store cycle")
+    shift_trimmed_reuse_axes[2].set_ylabel("sampled differential (mV)")
+    shift_trimmed_reuse_axes[2].set_title("Calibrated reuse stays positive over repeated physical resets")
+    shift_trimmed_reuse_axes[2].grid(True, axis="y", alpha=0.25)
+    shift_trimmed_reuse_axes[2].legend(loc="upper right", fontsize="small")
+    shift_trimmed_reuse_fig.tight_layout()
+    save_plot(
+        shift_trimmed_reuse_fig,
+        "mos_hidden_writer_restored_gate_hybrid_update_forward_guard_forward_pair_96u_shifted_gate_trimmed_reuse_ngspice",
     )
 
     tail_bias_fig, tail_bias_axes = plt.subplots(2, 1, figsize=(7.4, 6.4), gridspec_kw={"height_ratios": [1.0, 0.8]})

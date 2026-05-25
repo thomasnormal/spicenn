@@ -2,6 +2,11 @@
 
 ## 2026-05-25
 
+- Tightened the forward-pair mismatch plot so the rendered ngspice evidence
+  carries the same margin as the assertion.  The MOS-only mismatch sweep still
+  measures zero-crossing shifts of about \(-20/0/+20\) mV for \(-20/0/+20\)
+  mV left-input VTO skew, and `mos_forward_mismatch_ngspice` now labels those
+  values directly while drawing the asserted \(\pm60\) mV Level-1 bound.
 - Clarified the weighted signed-synapse cancellation plot.  The underlying
   ngspice assertions already checked that shared \(z^+/z^-\) summing
   capacitors move monotonically as \(W^-\) dominates \(W^+\), cancel near zero

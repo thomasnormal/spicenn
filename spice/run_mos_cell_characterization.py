@@ -961,6 +961,21 @@ quit
     mismatch_axes[0].legend(loc="upper left")
     mismatch_axes[1].plot([case[3] for case in mismatch_cases], mismatch_offsets, "o-", label="zero crossing")
     mismatch_axes[1].axhline(0, color="0.4", linewidth=0.8)
+    mismatch_axes[1].axhline(0.06, color="0.4", linestyle=":", linewidth=1.0, label="60 mV offset bound")
+    mismatch_axes[1].axhline(-0.06, color="0.4", linestyle=":", linewidth=1.0)
+    mismatch_axes[1].set_ylim(-0.075, 0.075)
+    for x, offset in zip([case[3] for case in mismatch_cases], mismatch_offsets):
+        va = "bottom" if offset >= 0 else "top"
+        dy = 0.004 if offset >= 0 else -0.004
+        mismatch_axes[1].text(x, offset + dy, f"{1e3 * offset:+.0f}", ha="center", va=va, fontsize="x-small")
+    mismatch_axes[1].text(
+        0.62,
+        0.10,
+        "labels: zero-crossing mV",
+        transform=mismatch_axes[1].transAxes,
+        fontsize="small",
+        bbox={"facecolor": "white", "alpha": 0.8, "edgecolor": "0.8"},
+    )
     mismatch_axes[1].set_xlabel("input-pair threshold skew")
     mismatch_axes[1].set_ylabel("zero crossing $z^+ - z^-$ (V)")
     mismatch_axes[1].set_title("Offset is visible but bounded in the Level-1 mismatch sweep")

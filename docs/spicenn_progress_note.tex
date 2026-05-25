@@ -2342,6 +2342,29 @@ must satisfy before it can replace the current behavioral prototype.
 
 \begin{figure}[H]
   \centering
+  \includegraphics[width=0.95\linewidth]{figures/mos_hidden_writer_restored_gate_hybrid_update_forward_guard_forward_pair_96u_shifted_gate_reset_ref_precharge_ngspice.png}
+  \caption{Ngspice MOS startup-precharge recovery check for the cold passive
+  local trim-reference reservoir from
+  Fig.~\ref{fig:mos-hidden-writer-restored-gate-hybrid-update-forward-guard-forward-pair-96u-shifted-gate-reset-ref-startup-ngspice}.
+  The reservoir capacitors still start at \(0\) V and the normal
+  \(100\,\mathrm{k}\Omega\) trim sources remain connected, but a temporary
+  \(300/900\,\mu\mathrm{m}\) NMOS/PMOS transmission-gate path precharges the
+  local split rails before the ordinary MOS reset samples them into the
+  \(5\) pF shifted-gate capacitors.  With no startup pulse the \(-55/+65\) mV
+  trim branches reproduce the cold failure, leaving \(49.618/58.640\) mV
+  trim error and \(0.106\) V common mode.  A \(5\) ns pulse is still marginal
+  at \(8.161/9.652\) mV error.  A \(10\) ns pulse crosses the \(6\) mV
+  trim-error gate with \(2.774/3.309\) mV error at \(0.869\) V common mode,
+  and a \(20\) ns pulse reaches the initialized-reservoir regime with
+  \(1.147/1.356\) mV error at \(0.896\) V common mode.  The circuit-level rule
+  is therefore explicit: the passive reservoir fix is valid if startup
+  includes a short low-impedance MOS precharge phase before the first
+  calibrated reset.}
+  \label{fig:mos-hidden-writer-restored-gate-hybrid-update-forward-guard-forward-pair-96u-shifted-gate-reset-ref-precharge-ngspice}
+\end{figure}
+
+\begin{figure}[H]
+  \centering
   \includegraphics[width=0.88\linewidth]{figures/mos_hidden_writer_restored_gate_hybrid_update_forward_guard_forward_tail_bias_ngspice.png}
   \caption{Ngspice isolated forward-tail bias sweep for the same guarded MOS
   activation store.  The failed shared-bias experiment changed the read path

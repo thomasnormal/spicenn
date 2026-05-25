@@ -11193,6 +11193,161 @@ quit
         "initialized trim-reference reservoirs should match the earlier decoupling trim accuracy",
     )
 
+    shift_refz_precharge_cases = [
+        ("nopre", "none", 0.0),
+        ("pre2ns", "2 ns", 2.0),
+        ("pre5ns", "5 ns", 5.0),
+        ("pre10ns", "10 ns", 10.0),
+        ("pre20ns", "20 ns", 20.0),
+        ("pre40ns", "40 ns", 40.0),
+    ]
+
+    def run_reset_ref_precharge_case(
+        branch_name: str,
+        reset_trim_v: float,
+    ) -> tuple[np.ndarray, list[np.ndarray]]:
+        stem = (
+            "mos_hidden_writer_restored_gate_hybrid_update_forward_guard_"
+            f"forward_pair_96u_shifted_gate_reset_ref_precharge_{branch_name}"
+        )
+        reset_ref_p = 0.90 + 0.5 * reset_trim_v
+        reset_ref_m = 0.90 - 0.5 * reset_trim_v
+        deck_lines = [
+            "* MOS startup-precharge check for the local split-reset trim reservoir.",
+            "* Reservoir capacitors start cold. A temporary low-impedance TG path",
+            "* charges them before the ordinary reset pulse samples the rails.",
+            COMMON_MODELS,
+            ".param CREF=250p CGATE=5p WRESETN=60u WRESETP=180u WPREN=300u WPREP=900u",
+            "VDD vdd 0 1.8",
+            "VRST rst 0 PWL(0 0 2.48u 0 2.50u 1.8 2.62u 1.8 2.64u 0 3.0u 0)",
+            "VRSTN rstn 0 PWL(0 1.8 2.48u 1.8 2.50u 0 2.62u 0 2.64u 1.8 3.0u 1.8)",
+        ]
+        prints = []
+        for idx, (case_name, _case_label, width_ns) in enumerate(shift_refz_precharge_cases):
+            if width_ns <= 0.0:
+                pre_pwl = f"VPRE_{idx} pre_{idx} 0 0"
+                pren_pwl = f"VPREN_{idx} pren_{idx} 0 1.8"
+            else:
+                pre_end_us = 0.420 + 0.001 * width_ns
+                pre_fall_us = pre_end_us + 0.020
+                pre_pwl = (
+                    f"VPRE_{idx} pre_{idx} 0 PWL(0 0 0.400u 0 0.420u 1.8 "
+                    f"{pre_end_us:.3f}u 1.8 {pre_fall_us:.3f}u 0 3.0u 0)"
+                )
+                pren_pwl = (
+                    f"VPREN_{idx} pren_{idx} 0 PWL(0 1.8 0.400u 1.8 0.420u 0 "
+                    f"{pre_end_us:.3f}u 0 {pre_fall_us:.3f}u 1.8 3.0u 1.8)"
+                )
+            deck_lines.extend(
+                [
+                    f"* {case_name}: cold reservoir, startup precharge width {width_ns:g} ns.",
+                    pre_pwl,
+                    pren_pwl,
+                    f"VZRP_PRE_{idx} zrp_pre_src_{idx} 0 {reset_ref_p:.5f}",
+                    f"VZRM_PRE_{idx} zrm_pre_src_{idx} 0 {reset_ref_m:.5f}",
+                    f"RZRP_PRE_{idx} zrp_pre_src_{idx} zrp_pre_{idx} 100k",
+                    f"RZRM_PRE_{idx} zrm_pre_src_{idx} zrm_pre_{idx} 100k",
+                    f"CZRP_PRE_{idx} zrp_pre_{idx} 0 {{CREF}} IC=0",
+                    f"CZRM_PRE_{idx} zrm_pre_{idx} 0 {{CREF}} IC=0",
+                    f"MPREPN_{idx} zrp_pre_{idx} pre_{idx} zrp_pre_src_{idx} 0 NMOS L={{LCH}} W={{WPREN}}",
+                    f"MPREMN_{idx} zrm_pre_{idx} pre_{idx} zrm_pre_src_{idx} 0 NMOS L={{LCH}} W={{WPREN}}",
+                    f"MPREPP_{idx} zrp_pre_{idx} pren_{idx} zrp_pre_src_{idx} vdd PMOS L={{LCH}} W={{WPREP}}",
+                    f"MPREMP_{idx} zrm_pre_{idx} pren_{idx} zrm_pre_src_{idx} vdd PMOS L={{LCH}} W={{WPREP}}",
+                    f"CZPG_PRE_{idx} zpg_pre_{idx} 0 {{CGATE}} IC=0.90",
+                    f"CZMG_PRE_{idx} zmg_pre_{idx} 0 {{CGATE}} IC=0.90",
+                    f"MRZGPN_PRE_{idx} zpg_pre_{idx} rst zrp_pre_{idx} 0 NMOS L={{LCH}} W={{WRESETN}}",
+                    f"MRZGMN_PRE_{idx} zmg_pre_{idx} rst zrm_pre_{idx} 0 NMOS L={{LCH}} W={{WRESETN}}",
+                    f"MRZGPP_PRE_{idx} zpg_pre_{idx} rstn zrp_pre_{idx} vdd PMOS L={{LCH}} W={{WRESETP}}",
+                    f"MRZGMP_PRE_{idx} zmg_pre_{idx} rstn zrm_pre_{idx} vdd PMOS L={{LCH}} W={{WRESETP}}",
+                ]
+            )
+            prints.extend(
+                [
+                    f"v(zrp_pre_{idx})",
+                    f"v(zrm_pre_{idx})",
+                    f"v(zpg_pre_{idx})",
+                    f"v(zmg_pre_{idx})",
+                ]
+            )
+        deck_lines.extend(
+            [
+                ".control",
+                "set noaskquit",
+                "tran 1n 3.0u uic",
+                f"wrdata {stem}.dat " + " ".join(prints),
+                "quit",
+                ".endc",
+                ".end",
+            ]
+        )
+        data = run_ngspice("\n".join(deck_lines), stem)
+        return load_wrdata(data, len(prints))
+
+    shift_refz_precharge_trim_error = []
+    shift_refz_precharge_gate_common = []
+    shift_refz_precharge_gate_diff = []
+    shift_refz_precharge_traces = []
+    for branch_name, branch_label, _nfp_vto, _nfm_vto, reset_trim_v in shift_reset_branch_specs:
+        pct, precharge_cols = run_reset_ref_precharge_case(branch_name, reset_trim_v)
+
+        def pcat(time_s: float, values: np.ndarray) -> float:
+            return float(values[np.argmin(np.abs(pct - time_s))])
+
+        branch_trim_error = []
+        branch_gate_common = []
+        branch_gate_diff = []
+        for case_idx, (_case_name, case_label, _width_ns) in enumerate(shift_refz_precharge_cases):
+            ref_p = precharge_cols[4 * case_idx]
+            ref_m = precharge_cols[4 * case_idx + 1]
+            gate_p = precharge_cols[4 * case_idx + 2]
+            gate_m = precharge_cols[4 * case_idx + 3]
+            gate_diff = gate_p - gate_m
+            gate_common = 0.5 * (gate_p + gate_m)
+            sampled_diff = pcat(2.70e-6, gate_diff)
+            sampled_common = pcat(2.70e-6, gate_common)
+            branch_trim_error.append(abs(sampled_diff - reset_trim_v))
+            branch_gate_common.append(sampled_common)
+            branch_gate_diff.append(sampled_diff)
+            if case_label in {"none", "5 ns", "10 ns", "20 ns"}:
+                shift_refz_precharge_traces.append(
+                    (branch_label, case_label, pct, ref_p - ref_m, gate_diff, gate_common)
+                )
+        shift_refz_precharge_trim_error.append(branch_trim_error)
+        shift_refz_precharge_gate_common.append(branch_gate_common)
+        shift_refz_precharge_gate_diff.append(branch_gate_diff)
+
+    shift_refz_precharge_trim_error = np.array(shift_refz_precharge_trim_error)
+    shift_refz_precharge_gate_common = np.array(shift_refz_precharge_gate_common)
+    shift_refz_precharge_gate_diff = np.array(shift_refz_precharge_gate_diff)
+    pre_none_idx = 0
+    pre_5ns_idx = 2
+    pre_10ns_idx = 3
+    pre_20ns_idx = 4
+    require(
+        np.all(shift_refz_precharge_trim_error[:, pre_none_idx] > 0.040),
+        "cold reservoirs without startup precharge should reproduce the startup failure",
+    )
+    require(
+        np.all(np.diff(shift_refz_precharge_trim_error, axis=1) < 0.0),
+        "startup precharge trim error should improve monotonically with pulse width",
+    )
+    require(
+        np.all(shift_refz_precharge_trim_error[:, pre_5ns_idx] > 0.006),
+        "5 ns startup precharge should still be visibly marginal",
+    )
+    require(
+        np.all(shift_refz_precharge_trim_error[:, pre_10ns_idx] < 0.004),
+        "10 ns startup precharge should recover split-trim delivery below 4 mV",
+    )
+    require(
+        np.all(shift_refz_precharge_trim_error[:, pre_20ns_idx] < 0.0015),
+        "20 ns startup precharge should recover initialized-reservoir trim accuracy",
+    )
+    require(
+        np.all(shift_refz_precharge_gate_common[:, pre_20ns_idx] > 0.89),
+        "20 ns startup precharge should restore reset-reference common mode",
+    )
+
     tail_bias_forward_tail_line = "MNFT_HYR ftail_hyr vbias 0 0 NMOS L={LCH} W=48u"
     tail_bias_cases_v = [0.70, 0.80, 0.90, 0.95, 1.05, 1.15, 1.25]
     tail_bias_labels = []
@@ -13026,6 +13181,73 @@ quit
     save_plot(
         shift_refz_startup_fig,
         "mos_hidden_writer_restored_gate_hybrid_update_forward_guard_forward_pair_96u_shifted_gate_reset_ref_startup_ngspice",
+    )
+
+    shift_refz_precharge_fig, shift_refz_precharge_axes = plt.subplots(
+        3,
+        1,
+        figsize=(7.4, 7.4),
+        gridspec_kw={"height_ratios": [0.85, 0.85, 1.0]},
+    )
+    refz_precharge_x = np.array([width_ns for _name, _label, width_ns in shift_refz_precharge_cases])
+    for branch_idx, (_branch_name, branch_label, _nfp, _nfm, _trim) in enumerate(shift_reset_branch_specs):
+        marker = "o-" if branch_idx == 0 else "s--"
+        shift_refz_precharge_axes[0].plot(
+            refz_precharge_x,
+            1e3 * shift_refz_precharge_trim_error[branch_idx],
+            marker,
+            label=branch_label,
+        )
+    shift_refz_precharge_axes[0].axhline(6, color="0.4", linestyle=":", linewidth=0.9, label="6 mV trim-error gate")
+    shift_refz_precharge_axes[0].set_ylabel("trim error (mV)")
+    shift_refz_precharge_axes[0].set_title("A MOS startup-precharge path recovers cold trim reservoirs")
+    shift_refz_precharge_axes[0].grid(True, axis="y", alpha=0.25)
+    shift_refz_precharge_axes[0].legend(loc="upper right", ncol=2, fontsize="xx-small")
+    for branch_idx, (_branch_name, branch_label, _nfp, _nfm, _trim) in enumerate(shift_reset_branch_specs):
+        marker = "o-" if branch_idx == 0 else "s--"
+        shift_refz_precharge_axes[1].plot(
+            refz_precharge_x,
+            shift_refz_precharge_gate_common[branch_idx],
+            marker,
+            label=branch_label,
+        )
+    shift_refz_precharge_axes[1].axhline(0.90, color="0.35", linestyle="--", linewidth=0.9, label="target common")
+    shift_refz_precharge_axes[1].axhline(0.84, color="0.5", linestyle=":", linewidth=0.9, label="startup gate")
+    shift_refz_precharge_axes[1].set_ylabel("gate common (V)")
+    shift_refz_precharge_axes[1].set_title("The startup switch restores the reservoir common mode too")
+    shift_refz_precharge_axes[1].grid(True, axis="y", alpha=0.25)
+    shift_refz_precharge_axes[1].legend(loc="lower right", ncol=2, fontsize="xx-small")
+    for branch_label, case_label, pct, _ref_diff, gate_diff, _gate_common in shift_refz_precharge_traces:
+        if case_label == "none":
+            linestyle = ":"
+        elif case_label == "5 ns":
+            linestyle = "-."
+        elif case_label == "10 ns":
+            linestyle = "--"
+        else:
+            linestyle = "-"
+        shift_refz_precharge_axes[2].plot(
+            1e6 * pct,
+            1e3 * gate_diff,
+            linestyle,
+            label=f"{branch_label.split(', ')[1]}, {case_label}",
+        )
+    shift_refz_precharge_axes[2].axhline(0, color="0.4", linewidth=0.8)
+    shift_refz_precharge_axes[2].set_xlim(2.35, 2.85)
+    shift_refz_precharge_axes[2].set_xlabel("time (us)")
+    shift_refz_precharge_axes[2].set_ylabel("shifted-gate trim (mV)")
+    shift_refz_precharge_axes[2].set_title("First reset samples the startup-charged local reservoir")
+    shift_refz_precharge_axes[2].grid(True, alpha=0.25)
+    shift_refz_precharge_axes[2].legend(
+        loc="upper center",
+        bbox_to_anchor=(0.5, -0.23),
+        ncol=2,
+        fontsize="xx-small",
+    )
+    shift_refz_precharge_fig.tight_layout()
+    save_plot(
+        shift_refz_precharge_fig,
+        "mos_hidden_writer_restored_gate_hybrid_update_forward_guard_forward_pair_96u_shifted_gate_reset_ref_precharge_ngspice",
     )
 
     tail_bias_fig, tail_bias_axes = plt.subplots(2, 1, figsize=(7.4, 6.4), gridspec_kw={"height_ratios": [1.0, 0.8]})

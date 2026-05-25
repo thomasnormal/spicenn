@@ -21,6 +21,7 @@ def test_device_sequential_training_script_help_runs_from_repo_root() -> None:
     assert "--timeout" in proc.stdout
     assert "--tag" in proc.stdout
     assert "--hidden-credit-mode" in proc.stdout
+    assert "--assert-pass" in proc.stdout
 
 
 def test_device_sequential_training_netlist_uses_no_behavioral_sources() -> None:

@@ -378,6 +378,11 @@ def main() -> None:
             "exact_backprop multiplies output error by the current readout weight sign."
         ),
     )
+    ap.add_argument(
+        "--assert-pass",
+        action="store_true",
+        help="Exit nonzero unless the sequential transistor smoke passes all readout, output, and hidden polarity gates.",
+    )
     args = ap.parse_args()
 
     spice_bin, version = detect_spice(None)
@@ -469,6 +474,7 @@ def main() -> None:
     output_polarity_pass = bool(df["output_polarity_pass"].all())
     polarity_pass = bool(df["polarity_pass"].all())
     hidden_polarity_pass = bool(df["hidden_polarity_pass"].all())
+    device_training_smoke_pass = readout_weight_polarity_pass and output_polarity_pass and hidden_polarity_pass
     summary = {
         "simulator": version,
         "architecture": "device_level_repeated_sample_training_loop",
@@ -502,6 +508,7 @@ def main() -> None:
         "sequences": len(sequences),
         "samples_per_sequence": len(sequences[0]["samples"]),
         "rows": len(df),
+        "all_device_training_smoke_polarities_pass": device_training_smoke_pass,
         "all_error_readout_weight_polarities_pass": readout_weight_polarity_pass,
         "all_output_polarities_pass": output_polarity_pass,
         "all_error_readout_output_polarities_pass": polarity_pass,
@@ -522,6 +529,8 @@ def main() -> None:
     summary_path = results / f"{safe_tag}_summary.json"
     summary_path.write_text(json.dumps(summary, indent=2) + "\n")
     print(json.dumps(summary, indent=2))
+    if args.assert_pass and not device_training_smoke_pass:
+        raise SystemExit("sequential transistor training smoke failed polarity gates")
 
 
 if __name__ == "__main__":

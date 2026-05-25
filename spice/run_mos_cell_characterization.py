@@ -17158,10 +17158,16 @@ quit
     same_inactive = np.array([wm_pp_delta, wm_mm_delta])
     opp_selected = np.array([wm_pm_delta, wm_mp_delta])
     opp_inactive = np.array([wp_pm_delta, wp_mp_delta])
+    same_selected_min = float(np.min(same_selected))
+    same_selected_max = float(np.max(same_selected))
+    same_inactive_max = float(np.max(np.abs(same_inactive)))
+    opp_selected_min = float(np.min(opp_selected))
+    opp_selected_max = float(np.max(opp_selected))
+    opp_inactive_max = float(np.max(np.abs(opp_inactive)))
     require(np.all((same_selected > 0.05) & (same_selected < 0.25)), "both same-sign branches should make bounded W+ steps")
-    require(np.max(np.abs(same_inactive)) < 1e-3, "same-sign branches should leave W- quiet")
+    require(same_inactive_max < 1e-3, "same-sign branches should leave W- quiet")
     require(np.all((opp_selected > 0.05) & (opp_selected < 0.25)), "both opposite-sign branches should make bounded W- steps")
-    require(np.max(np.abs(opp_inactive)) < 1e-3, "opposite-sign branches should leave W+ quiet")
+    require(opp_inactive_max < 1e-3, "opposite-sign branches should leave W+ quiet")
 
     sweep_data = run_ngspice(sweep_deck, "mos_writer_width")
     _, sweep_cols = load_wrdata(sweep_data, 4 * len(widths_us))
@@ -17187,8 +17193,11 @@ quit
         ss_tot = float(np.sum((measured - np.mean(measured)) ** 2))
         return 1.0 - ss_res / ss_tot
 
-    require(r_squared(selected_wp_delta, predicted_wp) > 0.98, "W+ writer pulse-width response should be near-linear")
-    require(r_squared(selected_wm_delta, predicted_wm) > 0.98, "W- writer pulse-width response should be near-linear")
+    width_wp_r2 = r_squared(selected_wp_delta, predicted_wp)
+    width_wm_r2 = r_squared(selected_wm_delta, predicted_wm)
+    width_inactive_max = max(float(np.max(np.abs(inactive_wm_delta))), float(np.max(np.abs(inactive_wp_delta))))
+    require(width_wp_r2 > 0.98, "W+ writer pulse-width response should be near-linear")
+    require(width_wm_r2 > 0.98, "W- writer pulse-width response should be near-linear")
 
     analog_data = run_ngspice(analog_gate_deck, "mos_writer_analog_gate")
     atime_gate, analog_cols = load_wrdata(analog_data, 4 * len(analog_gate_levels) * 2 + 1)
@@ -17283,12 +17292,14 @@ quit
     final_pos = float(pos_read_contrib[final_idx])
     baseline_neg = float(neg_read_contrib[baseline_idx])
     final_neg = float(neg_read_contrib[final_idx])
+    pos_read_delta = final_pos - baseline_pos
+    neg_read_delta = final_neg - baseline_neg
     require(read_cols[0][-1] > 0.90, "writer readback should leave W+ in active positive-synapse range")
     require(abs(read_cols[1][-1] - 0.85) < 1e-3, "positive readback should leave inactive W- unchanged")
     require(abs(read_cols[4][-1] - 0.85) < 1e-3, "negative readback should leave inactive W+ unchanged")
     require(read_cols[5][-1] > 0.90, "writer readback should leave W- in active negative-synapse range")
-    require(final_pos > baseline_pos + 30e-6, "written W+ should increase positive synapse contribution")
-    require(final_neg < baseline_neg - 30e-6, "written W- should increase negative synapse contribution magnitude")
+    require(pos_read_delta > 30e-6, "written W+ should increase positive synapse contribution")
+    require(neg_read_delta < -30e-6, "written W- should increase negative synapse contribution magnitude")
 
     repeated_data = run_ngspice(repeated_deck, "mos_writer_repeated")
     rpt, repeated_cols = load_wrdata(repeated_data, 5)
@@ -17307,12 +17318,15 @@ quit
     wm_n_fit = np.polyfit(pulse_numbers, wm_n_steps, 1)
     wp_p_pred = np.polyval(wp_p_fit, pulse_numbers)
     wm_n_pred = np.polyval(wm_n_fit, pulse_numbers)
+    repeated_wp_r2 = r_squared(wp_p_steps, wp_p_pred)
+    repeated_wm_r2 = r_squared(wm_n_steps, wm_n_pred)
+    repeated_inactive_max = max(float(np.max(np.abs(wm_p_steps))), float(np.max(np.abs(wp_n_steps))))
     require(np.all(np.diff(wp_p_steps) > 0.004), "repeated W+ writer pulses should accumulate monotonically")
     require(np.all(np.diff(wm_n_steps) > 0.004), "repeated W- writer pulses should accumulate monotonically")
     require(np.max(np.abs(wm_p_steps)) < 1e-3, "inactive W- rail should stay quiet over repeated W+ pulses")
     require(np.max(np.abs(wp_n_steps)) < 1e-3, "inactive W+ rail should stay quiet over repeated W- pulses")
-    require(r_squared(wp_p_steps, wp_p_pred) > 0.995, "repeated W+ steps should be near-linear with pulse count")
-    require(r_squared(wm_n_steps, wm_n_pred) > 0.995, "repeated W- steps should be near-linear with pulse count")
+    require(repeated_wp_r2 > 0.995, "repeated W+ steps should be near-linear with pulse count")
+    require(repeated_wm_r2 > 0.995, "repeated W- steps should be near-linear with pulse count")
     require(wp_p_samples[-1] < 1.05, "repeated W+ pulses should remain in the incremental write range")
     require(wm_n_samples[-1] < 1.05, "repeated W- pulses should remain in the incremental write range")
 
@@ -17372,6 +17386,17 @@ quit
     axes[0].set_ylabel("cap voltage (V)")
     axes[0].set_title("Both same-sign coincidence branches make bounded W+ steps")
     axes[0].grid(True, alpha=0.25)
+    axes[0].text(
+        0.52,
+        0.18,
+        "selected W+ range = "
+        f"{1e3 * same_selected_min:.1f}-{1e3 * same_selected_max:.1f} mV / 50-250 mV\n"
+        "inactive W- max = "
+        f"{1e3 * same_inactive_max:.3f} mV / <1 mV",
+        transform=axes[0].transAxes,
+        fontsize="x-small",
+        bbox={"facecolor": "white", "alpha": 0.82, "edgecolor": "0.8"},
+    )
     axes[0].legend()
     axes[1].plot(1e6 * t, cols[5], label="$x^+\\delta^- \\to W^-$")
     axes[1].plot(1e6 * t, cols[7], label="$x^-\\delta^+ \\to W^-$")
@@ -17381,6 +17406,17 @@ quit
     axes[1].set_ylabel("cap voltage (V)")
     axes[1].set_title("Both opposite-sign coincidence branches make bounded W- steps")
     axes[1].grid(True, alpha=0.25)
+    axes[1].text(
+        0.52,
+        0.18,
+        "selected W- range = "
+        f"{1e3 * opp_selected_min:.1f}-{1e3 * opp_selected_max:.1f} mV / 50-250 mV\n"
+        "inactive W+ max = "
+        f"{1e3 * opp_inactive_max:.3f} mV / <1 mV",
+        transform=axes[1].transAxes,
+        fontsize="x-small",
+        bbox={"facecolor": "white", "alpha": 0.82, "edgecolor": "0.8"},
+    )
     axes[1].legend()
     axes[2].plot(widths_us, selected_wp_delta, "o-", label="selected $W^+$ step")
     axes[2].plot(widths_us, selected_wm_delta, "o-", label="selected $W^-$ step")
@@ -17393,6 +17429,19 @@ quit
     axes[2].set_ylabel("$\\Delta V_W$ (V)")
     axes[2].set_title("Incremental write magnitude follows pulse width")
     axes[2].grid(True, alpha=0.25)
+    axes[2].text(
+        0.05,
+        0.56,
+        "W+ width-fit R2 = "
+        f"{width_wp_r2:.4f} / >0.98\n"
+        "W- width-fit R2 = "
+        f"{width_wm_r2:.4f} / >0.98\n"
+        "inactive max = "
+        f"{1e3 * width_inactive_max:.3f} mV / <1 mV",
+        transform=axes[2].transAxes,
+        fontsize="x-small",
+        bbox={"facecolor": "white", "alpha": 0.82, "edgecolor": "0.8"},
+    )
     axes[2].legend()
     axes[3].plot(1e6 * rt, 1e6 * pos_read_contrib, label="$W^+$ read contribution")
     axes[3].plot(1e6 * rt, 1e6 * neg_read_contrib, label="$W^-$ read contribution")
@@ -17403,6 +17452,18 @@ quit
     axes[3].set_ylabel("current (uA) / scaled V")
     axes[3].set_title("Written W+ and W- voltages read back with opposite signs")
     axes[3].grid(True, alpha=0.25)
+    axes[3].text(
+        0.05,
+        0.14,
+        "W+ read delta = "
+        f"{1e6 * pos_read_delta:.1f} uA / >30 uA\n"
+        "W- read delta = "
+        f"{1e6 * neg_read_delta:.1f} uA / <-30 uA\n"
+        "inactive rails stay within 1 mV",
+        transform=axes[3].transAxes,
+        fontsize="x-small",
+        bbox={"facecolor": "white", "alpha": 0.82, "edgecolor": "0.8"},
+    )
     axes[3].legend()
     fig.tight_layout()
     writer_plot = save_plot(fig, "mos_writer_ngspice")
@@ -17421,6 +17482,19 @@ quit
     repeated_axes[0].set_ylabel("$\\Delta V_W$ (V)")
     repeated_axes[0].set_title("Repeated single-sample writer pulses accumulate")
     repeated_axes[0].grid(True, alpha=0.25)
+    repeated_axes[0].text(
+        0.50,
+        0.20,
+        "10-pulse W+ step = "
+        f"{1e3 * wp_p_steps[-1]:.1f} mV / <200 mV\n"
+        "10-pulse W- step = "
+        f"{1e3 * wm_n_steps[-1]:.1f} mV / <200 mV\n"
+        "inactive max = "
+        f"{1e3 * repeated_inactive_max:.3f} mV / <1 mV",
+        transform=repeated_axes[0].transAxes,
+        fontsize="x-small",
+        bbox={"facecolor": "white", "alpha": 0.82, "edgecolor": "0.8"},
+    )
     repeated_axes[0].legend(loc="upper left", ncol=2)
     repeated_axes[1].plot(pulse_numbers, wp_p_steps, "o-", label="$W^+$ after each pulse")
     repeated_axes[1].plot(pulse_numbers, wm_n_steps, "s--", label="$W^-$ after each pulse")
@@ -17431,6 +17505,21 @@ quit
     repeated_axes[1].set_ylabel("$\\Delta V_W$ (V)")
     repeated_axes[1].set_title("Stored update is near-linear over ten online writes")
     repeated_axes[1].grid(True, alpha=0.25)
+    repeated_axes[1].text(
+        0.50,
+        0.20,
+        "W+ pulse-count R2 = "
+        f"{repeated_wp_r2:.4f} / >0.995\n"
+        "W- pulse-count R2 = "
+        f"{repeated_wm_r2:.4f} / >0.995\n"
+        "min W+ increment = "
+        f"{1e3 * np.min(np.diff(wp_p_steps)):.2f} mV / >4 mV\n"
+        "min W- increment = "
+        f"{1e3 * np.min(np.diff(wm_n_steps)):.2f} mV / >4 mV",
+        transform=repeated_axes[1].transAxes,
+        fontsize="x-small",
+        bbox={"facecolor": "white", "alpha": 0.82, "edgecolor": "0.8"},
+    )
     repeated_axes[1].legend(loc="upper left", ncol=2)
     repeated_fig.tight_layout()
     save_plot(repeated_fig, "mos_writer_repeated_ngspice")

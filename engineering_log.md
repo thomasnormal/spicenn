@@ -2,6 +2,16 @@
 
 ## 2026-05-25
 
+- Clarified the low-level MOS writer primitive plots.  The writer decks already
+  asserted four-quadrant branch selection, inactive-rail quietness,
+  pulse-width linearity, readback sign, and repeated online accumulation.  The
+  regenerated `mos_writer_ngspice` and `mos_writer_repeated_ngspice` figures
+  now label those margins directly: same-sign and opposite-sign selected
+  branches each move \(71.7\) mV while inactive rails stay below the displayed
+  \(0.001\) mV resolution, pulse-width fits have \(R^2=1.0000\), readback
+  moves \(+62.8\,\mu\)A and \(-62.8\,\mu\)A for the two signs, and ten
+  repeated online pulses reach \(94.5\) mV per selected rail with
+  \(R^2=1.0000\) and \(9.24\) mV minimum per-pulse increments.
 - Clarified the core hybrid writer accumulation/readback plots.  The repeated,
   alternating, and readback ngspice decks already asserted hidden-error
   storage, restored-gate selectivity, monotone same-sign accumulation,

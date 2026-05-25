@@ -67,3 +67,12 @@ def test_binary_accuracy_uses_spice_output_threshold_against_positive_label() ->
     )
 
     assert mnist01.binary_accuracy(rows, threshold=0.05) == 0.5
+    assert mnist01.binary_accuracy(rows, threshold=0.05, output_positive_when="low") == 0.5
+
+    low_positive_rows = pd.DataFrame(
+        [
+            {"out_after": 0.0, "positive_label": 1.0},
+            {"out_after": 0.2, "positive_label": 0.0},
+        ]
+    )
+    assert mnist01.binary_accuracy(low_positive_rows, threshold=0.05, output_positive_when="low") == 1.0

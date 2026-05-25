@@ -2,7 +2,10 @@ from __future__ import annotations
 
 import subprocess
 import sys
+from types import SimpleNamespace
 from pathlib import Path
+
+import numpy as np
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -21,6 +24,7 @@ def test_device_mnist01_block_script_help_runs_from_repo_root() -> None:
     assert "--block-size" in proc.stdout
     assert "--stride" in proc.stdout
     assert "--channels" in proc.stdout
+    assert "--target-polarity" in proc.stdout
     assert "--input-rail-mode" in proc.stdout
     assert "--complement-rail-scale" in proc.stdout
     assert "--hidden-bias-positive-init" in proc.stdout
@@ -144,3 +148,60 @@ def test_block_netlist_rejects_missing_complement_rail_for_c2_default_mode() -> 
             channels=2,
             training_enabled=True,
         )
+
+
+def test_target_polarity_changes_only_label_voltage_convention(monkeypatch) -> None:
+    sys.path.insert(0, str(SPICE_DIR))
+    import run_device_mnist01_block_training as block
+
+    def fake_balanced_digit_indices(labels, count, *, seed, digits):
+        del labels, seed
+        if count == 0:
+            return np.zeros((0,), dtype=np.int64)
+        return np.array([0, 1], dtype=np.int64) if digits == (0, 1) else np.array([1, 0], dtype=np.int64)
+
+    class FakeDataset:
+        targets = np.array([0, 1], dtype=np.int64)
+
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def __getitem__(self, index):
+            import torch
+
+            return torch.zeros((1, 28, 28), dtype=torch.float32), int(index)
+
+    monkeypatch.setattr(block, "balanced_digit_indices", fake_balanced_digit_indices)
+    monkeypatch.setitem(
+        sys.modules,
+        "torchvision",
+        SimpleNamespace(datasets=SimpleNamespace(MNIST=FakeDataset), transforms=SimpleNamespace(ToTensor=lambda: None)),
+    )
+
+    active_high, _ = block.load_mnist01_block_records(
+        2,
+        0,
+        image_size=4,
+        seed=0,
+        positive_digit=0,
+        negative_digit=1,
+        complement_rail_scale=0.5,
+        target_polarity="active-high",
+        download=False,
+    )
+    active_low, _ = block.load_mnist01_block_records(
+        2,
+        0,
+        image_size=4,
+        seed=0,
+        positive_digit=0,
+        negative_digit=1,
+        complement_rail_scale=0.5,
+        target_polarity="active-low",
+        download=False,
+    )
+
+    assert [row["positive_label"] for row in active_high] == [1.0, 0.0]
+    assert [row["target"] for row in active_high] == [1.1, 0.0]
+    assert [row["positive_label"] for row in active_low] == [1.0, 0.0]
+    assert [row["target"] for row in active_low] == [0.0, 1.1]

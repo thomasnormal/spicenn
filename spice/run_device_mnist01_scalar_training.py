@@ -122,10 +122,15 @@ def final_weights_from_rows(rows: pd.DataFrame) -> dict[str, float]:
     }
 
 
-def binary_accuracy(rows: pd.DataFrame, *, threshold: float) -> float:
+def binary_accuracy(rows: pd.DataFrame, *, threshold: float, output_positive_when: str = "high") -> float:
     if rows.empty:
         return 0.0
-    predicted = rows["out_after"].to_numpy(dtype=float) > threshold
+    if output_positive_when == "high":
+        predicted = rows["out_after"].to_numpy(dtype=float) > threshold
+    elif output_positive_when == "low":
+        predicted = rows["out_after"].to_numpy(dtype=float) <= threshold
+    else:
+        raise ValueError("output_positive_when must be 'high' or 'low'")
     expected = rows["positive_label"].to_numpy(dtype=float) > 0.5
     return float(np.mean(predicted == expected))
 

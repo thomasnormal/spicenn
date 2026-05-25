@@ -18,6 +18,7 @@ from spicenn.timing import CYCLE_NS
 
 
 INPUT_RAIL_MODES = ("raw", "complement", "alternating-complement")
+TARGET_POLARITIES = ("active-high", "active-low")
 
 
 def block_topology(image_size: int, block_size: int, stride: int, channels: int) -> tuple[list[list[int]], int]:
@@ -411,6 +412,7 @@ def load_mnist01_block_records(
     positive_digit: int,
     negative_digit: int,
     complement_rail_scale: float,
+    target_polarity: str,
     download: bool,
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     from torchvision import datasets, transforms
@@ -420,6 +422,8 @@ def load_mnist01_block_records(
         raise ValueError("positive and negative digits must differ")
     if complement_rail_scale <= 0.0 or complement_rail_scale > 1.0:
         raise ValueError("complement_rail_scale must be in (0, 1]")
+    if target_polarity not in TARGET_POLARITIES:
+        raise ValueError(f"target_polarity must be one of {TARGET_POLARITIES}")
     digits = (positive_digit, negative_digit)
     ds_train = datasets.MNIST(root=str(ROOT / "data"), train=True, download=download, transform=transforms.ToTensor())
     ds_eval = datasets.MNIST(root=str(ROOT / "data"), train=False, download=download, transform=transforms.ToTensor())
@@ -435,11 +439,13 @@ def load_mnist01_block_records(
             resized = F.interpolate(image.unsqueeze(0), size=(image_size, image_size), mode="area").squeeze()
             pixels = np.asarray(resized.numpy(), dtype=np.float64).reshape(-1)
             digit_i = int(digit)
+            is_positive = digit_i == positive_digit
+            target_high = is_positive if target_polarity == "active-high" else not is_positive
             record: dict[str, Any] = {
-                "target": 1.1 if digit_i == positive_digit else 0.0,
+                "target": 1.1 if target_high else 0.0,
                 "digit": float(digit_i),
                 "mnist_index": float(index),
-                "positive_label": 1.0 if digit_i == positive_digit else 0.0,
+                "positive_label": 1.0 if is_positive else 0.0,
             }
             for pixel, value in enumerate(pixels):
                 pixel_value = float(value)
@@ -550,6 +556,7 @@ def main() -> None:
     ap.add_argument("--weight-seed", type=int, default=0)
     ap.add_argument("--positive-digit", type=int, default=0)
     ap.add_argument("--negative-digit", type=int, default=1)
+    ap.add_argument("--target-polarity", choices=TARGET_POLARITIES, default="active-high")
     ap.add_argument("--download", action="store_true")
     ap.add_argument("--timeout", type=float, default=120.0)
     ap.add_argument("--tag", default="device_mnist01_block")
@@ -589,6 +596,7 @@ def main() -> None:
         positive_digit=args.positive_digit,
         negative_digit=args.negative_digit,
         complement_rail_scale=args.complement_rail_scale,
+        target_polarity=args.target_polarity,
         download=args.download,
     )
     initial_weights = initial_block_weights(
@@ -646,8 +654,13 @@ def main() -> None:
     curve.to_csv(curve_path, index=False)
     curve.to_csv(table_curve_path, index=False)
 
-    initial_accuracy = binary_accuracy(initial_eval_rows, threshold=args.decision_threshold)
-    final_accuracy = binary_accuracy(final_eval_rows, threshold=args.decision_threshold)
+    output_positive_when = "high" if args.target_polarity == "active-high" else "low"
+    initial_accuracy = binary_accuracy(
+        initial_eval_rows, threshold=args.decision_threshold, output_positive_when=output_positive_when
+    )
+    final_accuracy = binary_accuracy(
+        final_eval_rows, threshold=args.decision_threshold, output_positive_when=output_positive_when
+    )
     initial_active_fraction = float(
         np.mean(np.abs(initial_eval_rows["out_after"].to_numpy(dtype=float)) > args.decision_threshold)
     )
@@ -664,6 +677,8 @@ def main() -> None:
         "dataset": f"MNIST01 raw-pixel block topology image{args.image_size}_b{args.block_size}_s{args.stride}_c{args.channels}",
         "positive_digit": args.positive_digit,
         "negative_digit": args.negative_digit,
+        "target_polarity": args.target_polarity,
+        "output_positive_when": output_positive_when,
         "image_size": args.image_size,
         "block_size": args.block_size,
         "stride": args.stride,

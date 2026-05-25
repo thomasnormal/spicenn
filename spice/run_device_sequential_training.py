@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import sys
 import time
 from pathlib import Path
 from typing import Any
@@ -12,14 +13,18 @@ from run_spice_sweep import ROOT, detect_spice, run_text_netlist, run_tiny_test
 from _util import MEAS_RE, parse_measures
 
 
-from spicenn.timing import CYCLE_NS
+try:
+    from spicenn.timing import CYCLE_NS
+except ModuleNotFoundError:
+    sys.path.insert(0, str(ROOT))
+    from spicenn.timing import CYCLE_NS
 
 
 def mos_models() -> str:
     return """
 .model NMOS NMOS LEVEL=1 VTO=0.35 KP=220u LAMBDA=0.03 GAMMA=0.20 PHI=0.60
 .model NREL NMOS LEVEL=1 VTO=0.12 KP=260u LAMBDA=0.03 GAMMA=0.10 PHI=0.60
-.model NSENSE NMOS LEVEL=1 VTO=0.03 KP=260u LAMBDA=0.03 GAMMA=0.05 PHI=0.60
+.model NSENSE NMOS LEVEL=1 VTO=0.02 KP=260u LAMBDA=0.03 GAMMA=0.05 PHI=0.60
 .model PMOS PMOS LEVEL=1 VTO=-0.35 KP=90u LAMBDA=0.03 GAMMA=0.20 PHI=0.60
 """.strip()
 
@@ -40,6 +45,24 @@ def pulse_wave(pulses: list[tuple[float, float]], stop_ns: float, high: float = 
         points.append((min(stop_ns, end + 0.05), 0.0))
     points.append((stop_ns, 0.0))
 
+    compact: list[tuple[float, float]] = []
+    for t, v in sorted(points):
+        if compact and abs(compact[-1][0] - t) < 1e-12:
+            compact[-1] = (t, v)
+        else:
+            compact.append((t, v))
+    return pwl(compact)
+
+
+def active_low_pulse_wave(pulses: list[tuple[float, float]], stop_ns: float, high: float = 1.2) -> str:
+    points: list[tuple[float, float]] = [(0.0, high)]
+    for start, end in pulses:
+        if start > 0.0:
+            points.append((max(0.0, start - 0.05), high))
+        points.append((start, 0.0))
+        points.append((end, 0.0))
+        points.append((min(stop_ns, end + 0.05), high))
+    points.append((stop_ns, high))
     compact: list[tuple[float, float]] = []
     for t, v in sorted(points):
         if compact and abs(compact[-1][0] - t) < 1e-12:
@@ -92,8 +115,45 @@ def repeated_phases(sample_count: int) -> str:
             f"Vbwd bwd 0 {pulse_wave(bwd, stop)}",
             f"Vacc acc 0 {pulse_wave(acc, stop)}",
             f"Vapply apply 0 {pulse_wave(apply, stop)}",
+            f"Vapplyn applyn 0 {active_low_pulse_wave(apply, stop)}",
         ]
     )
+
+
+def hidden_delta_block(hidden_credit_mode: str) -> str:
+    if hidden_credit_mode == "exact_backprop":
+        return """
+* Hidden delta: sign combinations of output delta, readout weight, and hidden activation.
+Mhdp_a0 vdd dp hdp_a0 0 NSENSE W=32u L=180n
+Mhdp_a1 hdp_a0 vwp hdp_a1 0 NMOS W=32u L=180n
+Mhdp_a2 hdp_a1 act hdp_a2 0 NREL W=32u L=180n
+Mhdp_a3 hdp_a2 bwd hdp 0 NMOS W=32u L=180n
+Mhdp_b0 vdd dn hdp_b0 0 NSENSE W=32u L=180n
+Mhdp_b1 hdp_b0 vwn hdp_b1 0 NMOS W=32u L=180n
+Mhdp_b2 hdp_b1 act hdp_b2 0 NREL W=32u L=180n
+Mhdp_b3 hdp_b2 bwd hdp 0 NMOS W=32u L=180n
+Mhdn_a0 vdd dn hdn_a0 0 NSENSE W=32u L=180n
+Mhdn_a1 hdn_a0 vwp hdn_a1 0 NMOS W=32u L=180n
+Mhdn_a2 hdn_a1 act hdn_a2 0 NREL W=32u L=180n
+Mhdn_a3 hdn_a2 bwd hdn 0 NMOS W=32u L=180n
+Mhdn_b0 vdd dp hdn_b0 0 NSENSE W=32u L=180n
+Mhdn_b1 hdn_b0 vwn hdn_b1 0 NMOS W=32u L=180n
+Mhdn_b2 hdn_b1 act hdn_b2 0 NREL W=32u L=180n
+Mhdn_b3 hdn_b2 bwd hdn 0 NMOS W=32u L=180n
+""".strip()
+    if hidden_credit_mode == "direct_feedback":
+        return """
+* Hidden delta: fixed direct feedback from output delta and hidden activation.
+* This is the transistor-only DFA-like path: it avoids using stale readout sign
+* as the hidden credit sign during rapid online recovery.
+Mhdp_d0 vdd dp hdp_d0 0 NSENSE W=32u L=180n
+Mhdp_d1 hdp_d0 act hdp_d1 0 NREL W=32u L=180n
+Mhdp_d2 hdp_d1 bwd hdp 0 NMOS W=32u L=180n
+Mhdn_d0 vdd dn hdn_d0 0 NSENSE W=32u L=180n
+Mhdn_d1 hdn_d0 act hdn_d1 0 NREL W=32u L=180n
+Mhdn_d2 hdn_d1 bwd hdn 0 NMOS W=32u L=180n
+""".strip()
+    raise ValueError(f"unknown hidden credit mode: {hidden_credit_mode}")
 
 
 def sequential_netlist(
@@ -102,6 +162,7 @@ def sequential_netlist(
     whn: float,
     vwp: float,
     vwn: float,
+    hidden_credit_mode: str = "direct_feedback",
 ) -> str:
     stop = len(samples) * CYCLE_NS
     measures: list[str] = []
@@ -176,10 +237,12 @@ Cdp dp 0 20f IC=0
 Cdn dn 0 20f IC=0
 Chdp hdp 0 12f IC=0
 Chdn hdn 0 12f IC=0
-Cgvp gvp 0 20f IC=0
-Cgvn gvn 0 20f IC=0
+Cgvp gvp 0 2f IC=0
+Cgvn gvn 0 2f IC=0
 Cghp ghp 0 10f IC=0
 Cghn ghn 0 10f IC=0
+Crgp rgp 0 4f IC=1.2
+Crgn rgn 0 4f IC=1.2
 Rpre pre 0 1G
 Ract act 0 1G
 Rscore score 0 1G
@@ -192,6 +255,8 @@ Rgvp gvp 0 1G
 Rgvn gvn 0 1G
 Rghp ghp 0 1G
 Rghn ghn 0 1G
+Rrgp rgp vdd 50k
+Rrgn rgn vdd 50k
 
 * Reset only nonpersistent state.
 Mreset_pre pre rstf 0 0 NMOS W=4u L=180n
@@ -235,23 +300,7 @@ Mdn_y1 dn_y err dn 0 NSENSE W=32u L=180n
 Mdn_t0 dn err dn_t 0 NSENSE W=24u L=180n
 Mdn_t1 dn_t target 0 0 NSENSE W=24u L=180n
 
-* Hidden delta: sign combinations of output delta, readout weight, and hidden activation.
-Mhdp_a0 vdd dp hdp_a0 0 NSENSE W=32u L=180n
-Mhdp_a1 hdp_a0 vwp hdp_a1 0 NMOS W=32u L=180n
-Mhdp_a2 hdp_a1 act hdp_a2 0 NREL W=32u L=180n
-Mhdp_a3 hdp_a2 bwd hdp 0 NMOS W=32u L=180n
-Mhdp_b0 vdd dn hdp_b0 0 NSENSE W=32u L=180n
-Mhdp_b1 hdp_b0 vwn hdp_b1 0 NMOS W=32u L=180n
-Mhdp_b2 hdp_b1 act hdp_b2 0 NREL W=32u L=180n
-Mhdp_b3 hdp_b2 bwd hdp 0 NMOS W=32u L=180n
-Mhdn_a0 vdd dn hdn_a0 0 NSENSE W=32u L=180n
-Mhdn_a1 hdn_a0 vwp hdn_a1 0 NMOS W=32u L=180n
-Mhdn_a2 hdn_a1 act hdn_a2 0 NREL W=32u L=180n
-Mhdn_a3 hdn_a2 bwd hdn 0 NMOS W=32u L=180n
-Mhdn_b0 vdd dp hdn_b0 0 NSENSE W=32u L=180n
-Mhdn_b1 hdn_b0 vwn hdn_b1 0 NMOS W=32u L=180n
-Mhdn_b2 hdn_b1 act hdn_b2 0 NREL W=32u L=180n
-Mhdn_b3 hdn_b2 bwd hdn 0 NMOS W=32u L=180n
+{hidden_delta_block(hidden_credit_mode)}
 
 * Readout gradient accumulators: hidden activation times output delta.
 Mgvp_a vdd act gvp_a 0 NREL W=24u L=180n
@@ -270,24 +319,26 @@ Mghn_d ghn_x hdn ghn_d 0 NSENSE W=48u L=180n
 Mghn_g ghn_d acc ghn 0 NMOS W=48u L=180n
 
 * Apply readout positive/negative gradients.
-Mvwp_up_g vdd gvp vwp_up 0 NSENSE W=8u L=180n
-Mvwp_up_a vwp_up apply vwp 0 NREL W=8u L=180n
-Mvwn_dn_a vwn apply vwn_dn 0 NREL W=8u L=180n
-Mvwn_dn_g vwn_dn gvp 0 0 NSENSE W=8u L=180n
-Mvwn_up_g vdd gvn vwn_up 0 NSENSE W=8u L=180n
-Mvwn_up_a vwn_up apply vwn 0 NREL W=8u L=180n
-Mvwp_dn_a vwp apply vwp_dn 0 NREL W=8u L=180n
-Mvwp_dn_g vwp_dn gvn 0 0 NSENSE W=8u L=180n
+Mrgp_pd rgp gvp 0 0 NSENSE W=16u L=180n
+Mrgn_pd rgn gvn 0 0 NSENSE W=16u L=180n
+Mvwp_up_p0 vdd rgp vwp_up vdd PMOS W=8u L=180n
+Mvwp_up_p1 vwp_up applyn vwp vdd PMOS W=8u L=180n
+Mvwn_dn_a vwn apply vwn_dn 0 NREL W=2u L=180n
+Mvwn_dn_g vwn_dn gvp 0 0 NSENSE W=2u L=180n
+Mvwn_up_p0 vdd rgn vwn_up vdd PMOS W=8u L=180n
+Mvwn_up_p1 vwn_up applyn vwn vdd PMOS W=8u L=180n
+Mvwp_dn_a vwp apply vwp_dn 0 NREL W=2u L=180n
+Mvwp_dn_g vwp_dn gvn 0 0 NSENSE W=2u L=180n
 
 * Apply hidden positive/negative gradients.
-Mwhp_up_g vdd ghp whp_up 0 NSENSE W=8u L=180n
-Mwhp_up_a whp_up apply whp 0 NREL W=8u L=180n
-Mwhn_dn_a whn apply whn_dn 0 NREL W=8u L=180n
-Mwhn_dn_g whn_dn ghp 0 0 NSENSE W=8u L=180n
-Mwhn_up_g vdd ghn whn_up 0 NSENSE W=8u L=180n
-Mwhn_up_a whn_up apply whn 0 NREL W=8u L=180n
-Mwhp_dn_a whp apply whp_dn 0 NREL W=8u L=180n
-Mwhp_dn_g whp_dn ghn 0 0 NSENSE W=8u L=180n
+Mwhp_up_g vdd ghp whp_up 0 NSENSE W=0.5u L=180n
+Mwhp_up_a whp_up apply whp 0 NREL W=0.5u L=180n
+Mwhn_dn_a whn apply whn_dn 0 NREL W=0.5u L=180n
+Mwhn_dn_g whn_dn ghp 0 0 NSENSE W=0.5u L=180n
+Mwhn_up_g vdd ghn whn_up 0 NSENSE W=0.5u L=180n
+Mwhn_up_a whn_up apply whn 0 NREL W=0.5u L=180n
+Mwhp_dn_a whp apply whp_dn 0 NREL W=0.5u L=180n
+Mwhp_dn_g whp_dn ghn 0 0 NSENSE W=0.5u L=180n
 
 .options method=gear maxord=2
 .tran 10p {stop:.2f}n uic
@@ -318,6 +369,15 @@ def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--timeout", type=float, default=30.0)
     ap.add_argument("--tag", default="device_sequential_training")
+    ap.add_argument(
+        "--hidden-credit-mode",
+        choices=["direct_feedback", "exact_backprop"],
+        default="direct_feedback",
+        help=(
+            "Hidden credit circuit. direct_feedback is a transistor-only fixed-feedback/DFA path; "
+            "exact_backprop multiplies output error by the current readout weight sign."
+        ),
+    )
     args = ap.parse_args()
 
     spice_bin, version = detect_spice(None)
@@ -356,6 +416,7 @@ def main() -> None:
                 float(initial["whn"]),
                 float(initial["vwp"]),
                 float(initial["vwn"]),
+                hidden_credit_mode=args.hidden_credit_mode,
             ),
             args.timeout,
         )
@@ -367,6 +428,16 @@ def main() -> None:
                 "vin": sample["vin"],
                 "target": sample["target"],
                 "expected_direction": "positive" if positive else "negative",
+                "readout_weight_polarity_pass": (
+                    measures[f"error_net_{sample_idx}"] > 0
+                    and measures[f"d_readout_signed_{sample_idx}"] > 0
+                    if positive
+                    else measures[f"error_net_{sample_idx}"] < 0
+                    and measures[f"d_readout_signed_{sample_idx}"] < 0
+                ),
+                "output_polarity_pass": (
+                    measures[f"d_out_{sample_idx}"] > 0 if positive else measures[f"d_out_{sample_idx}"] < 0
+                ),
                 "polarity_pass": (
                     measures[f"error_net_{sample_idx}"] > 0
                     and measures[f"d_readout_signed_{sample_idx}"] > 0
@@ -394,6 +465,8 @@ def main() -> None:
     df.to_csv(curve_path, index=False)
     df.to_csv(table_path, index=False)
 
+    readout_weight_polarity_pass = bool(df["readout_weight_polarity_pass"].all())
+    output_polarity_pass = bool(df["output_polarity_pass"].all())
     polarity_pass = bool(df["polarity_pass"].all())
     hidden_polarity_pass = bool(df["hidden_polarity_pass"].all())
     summary = {
@@ -401,20 +474,36 @@ def main() -> None:
         "architecture": "device_level_repeated_sample_training_loop",
         "status": "sequential_device_training_smoke",
         "model_level": "ngspice built-in LEVEL=1 MOS models; not a foundry PDK.",
+        "hidden_credit_mode": args.hidden_credit_mode,
+        "learning_device_implementation": "transistor_passive",
         "signal_path": (
             "A single SPICE transient repeats forward/error/backward/accumulate/apply guide phases. "
             "Hidden and readout weight capacitors persist inside the deck between samples; only temporary activation, "
             "error, delta, and gradient caps are reset."
         ),
+        "hidden_credit_interpretation": (
+            "The direct-feedback mode is a fixed physical feedback/DFA-style hidden credit path. "
+            "It is not exact backprop, but it avoids letting a stale wrong-sign readout rail invert the next hidden update."
+            if args.hidden_credit_mode == "direct_feedback"
+            else "The exact-backprop mode computes hidden credit through the current readout rail signs."
+        ),
         "no_behavioral_signal_math": True,
+        "no_behavioral_learning_devices": True,
+        "uses_behavioral_learning_devices": False,
+        "transistor_or_passive_learning_path": True,
         "uses_behavioral_tanh": False,
         "uses_behavioral_multipliers": False,
+        "single_training_transient": True,
+        "python_weight_updates_between_samples": False,
+        "python_checkpointing_between_samples": False,
         "weight_caps_persist_inside_single_spice_transient": True,
         "curve": str(curve_path),
         "table_curve": str(table_path),
         "sequences": len(sequences),
         "samples_per_sequence": len(sequences[0]["samples"]),
         "rows": len(df),
+        "all_error_readout_weight_polarities_pass": readout_weight_polarity_pass,
+        "all_output_polarities_pass": output_polarity_pass,
         "all_error_readout_output_polarities_pass": polarity_pass,
         "all_hidden_update_polarities_pass": hidden_polarity_pass,
         "high_then_low_final_readout_signed": float(

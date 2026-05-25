@@ -175,6 +175,7 @@ def test_phase_summary_row_keeps_execution_contract_and_backend_fields(tmp_path:
     assert row["train_order_window"] == 128
     assert row["train_order_pca_components"] == 2
     assert row["train_order_pca_bins_per_unit"] == 20.0
+    assert row["realistic_train_order"] is False
     assert row["lr"] == 0.1
     assert row["lr_schedule"] == "linear-decay"
     assert row["lr_final_scale"] == 0.25
@@ -206,6 +207,10 @@ def test_phase_summary_row_keeps_execution_contract_and_backend_fields(tmp_path:
     assert row["output_bias_update_scale"] == 0.25
     assert row["readout_update_scale"] == 0.5
     assert row["readout_class_centering"] == "mean"
+    assert row["learning_device_implementation"] == "behavioral_bsource"
+    assert row["no_behavioral_learning_devices"] is False
+    assert row["uses_behavioral_learning_devices"] is True
+    assert row["transistor_or_passive_learning_path"] is False
     assert row["eval_backend"] == "both"
     assert row["phase_dominant_pred_class"] == 3
     assert row["phase_dominant_pred_fraction"] == 0.4
@@ -229,6 +234,13 @@ def test_phase_summary_row_keeps_execution_contract_and_backend_fields(tmp_path:
     assert row["milestone_b_nontrivial_learning_met"] is True
     assert row["milestone_c_target_topology_met"] is True
     assert row["milestone_d_full_objective_met"] is False
+    assert row["full_objective_contract_issues"] == [
+        "full_eval_10k",
+        "full_objective_accuracy",
+        "realistic_train_order",
+        "no_behavioral_learning_devices",
+        "transistor_or_passive_learning_path",
+    ]
     assert row["transient_step_s"] == 2e-10
     assert row["final_measure_tail_s"] == 1e-9
     assert row["estimated_transient_points"] == 902
@@ -466,7 +478,9 @@ def test_strict_target_contract_rejects_zero_edge_sample_transitions() -> None:
     assert module.strict_target_contract_issues(row) == ["robust_sample_transitions"]
 
 
-def test_phase_summary_full_objective_requires_full_eval_accuracy_and_strict_contract(tmp_path: Path) -> None:
+def test_phase_summary_full_objective_requires_full_eval_accuracy_real_devices_and_realistic_order(
+    tmp_path: Path,
+) -> None:
     module = load_summary_module()
     strict_full_path = tmp_path / "spice_mnist_local_feature_phase_full_summary.json"
     strict_full_path.write_text(
@@ -487,6 +501,9 @@ def test_phase_summary_full_objective_requires_full_eval_accuracy_and_strict_con
                 "initial_weights_source": "random_init",
                 "python_weight_updates_between_samples": False,
                 "python_checkpointing_between_samples": False,
+                "learning_device_implementation": "transistor_passive",
+                "no_behavioral_learning_devices": True,
+                "transistor_or_passive_learning_path": True,
                 "phase_eval_accuracy": 0.91,
                 "phase_eval_improvement": 0.8,
             }
@@ -512,6 +529,9 @@ def test_phase_summary_full_objective_requires_full_eval_accuracy_and_strict_con
                 "initial_weights_source": "random_init",
                 "python_weight_updates_between_samples": False,
                 "python_checkpointing_between_samples": False,
+                "learning_device_implementation": "transistor_passive",
+                "no_behavioral_learning_devices": True,
+                "transistor_or_passive_learning_path": True,
                 "phase_eval_accuracy": 0.91,
                 "phase_eval_improvement": 0.8,
             }
@@ -537,7 +557,64 @@ def test_phase_summary_full_objective_requires_full_eval_accuracy_and_strict_con
                 "initial_weights_source": "random_init",
                 "python_weight_updates_between_samples": False,
                 "python_checkpointing_between_samples": False,
+                "learning_device_implementation": "transistor_passive",
+                "no_behavioral_learning_devices": True,
+                "transistor_or_passive_learning_path": True,
                 "phase_eval_accuracy": 0.89,
+                "phase_eval_improvement": 0.8,
+            }
+        )
+        + "\n"
+    )
+    behavioral_path = tmp_path / "spice_mnist_local_feature_phase_behavioral_summary.json"
+    behavioral_path.write_text(
+        json.dumps(
+            {
+                "status": "continuous_phase_train_no_reference",
+                "architecture": "phase_resolved_transient_local_feature_readout",
+                "image_size": 10,
+                "block_size": 4,
+                "stride": 2,
+                "channels": 2,
+                "batch_size": 1,
+                "eval_samples": 10000,
+                "reference_mode": "none",
+                "strict_fully_on_device_contract_met": True,
+                "strict_fully_on_device_requested": True,
+                "random_init_used": True,
+                "initial_weights_source": "random_init",
+                "python_weight_updates_between_samples": False,
+                "python_checkpointing_between_samples": False,
+                "phase_eval_accuracy": 0.91,
+                "phase_eval_improvement": 0.8,
+            }
+        )
+        + "\n"
+    )
+    local_pca_path = tmp_path / "spice_mnist_local_feature_phase_localpca_summary.json"
+    local_pca_path.write_text(
+        json.dumps(
+            {
+                "status": "continuous_phase_train_no_reference",
+                "architecture": "phase_resolved_transient_local_feature_readout",
+                "image_size": 10,
+                "block_size": 4,
+                "stride": 2,
+                "channels": 2,
+                "train_order": "local-pca",
+                "batch_size": 1,
+                "eval_samples": 10000,
+                "reference_mode": "none",
+                "strict_fully_on_device_contract_met": True,
+                "strict_fully_on_device_requested": True,
+                "random_init_used": True,
+                "initial_weights_source": "random_init",
+                "python_weight_updates_between_samples": False,
+                "python_checkpointing_between_samples": False,
+                "learning_device_implementation": "transistor_passive",
+                "no_behavioral_learning_devices": True,
+                "transistor_or_passive_learning_path": True,
+                "phase_eval_accuracy": 0.91,
                 "phase_eval_improvement": 0.8,
             }
         )
@@ -547,8 +624,11 @@ def test_phase_summary_full_objective_requires_full_eval_accuracy_and_strict_con
     strict_full = module.row_from_summary(strict_full_path)
     small_eval = module.row_from_summary(small_eval_path)
     weak_accuracy = module.row_from_summary(weak_accuracy_path)
+    behavioral = module.row_from_summary(behavioral_path)
+    local_pca = module.row_from_summary(local_pca_path)
 
     assert strict_full["milestone_d_full_objective_met"] is True
+    assert strict_full["full_objective_contract_issues"] == []
     assert strict_full["full_eval_10k_met"] is True
     assert strict_full["full_objective_accuracy_met"] is True
     assert strict_full["full_objective_accuracy_gap"] == 0.0
@@ -559,6 +639,13 @@ def test_phase_summary_full_objective_requires_full_eval_accuracy_and_strict_con
     assert weak_accuracy["full_eval_10k_met"] is True
     assert weak_accuracy["full_objective_accuracy_met"] is False
     assert weak_accuracy["full_objective_accuracy_gap"] == 0.010000000000000009
+    assert behavioral["milestone_d_full_objective_met"] is False
+    assert behavioral["learning_device_implementation"] == "behavioral_bsource"
+    assert "no_behavioral_learning_devices" in behavioral["full_objective_contract_issues"]
+    assert "transistor_or_passive_learning_path" in behavioral["full_objective_contract_issues"]
+    assert local_pca["milestone_d_full_objective_met"] is False
+    assert local_pca["realistic_train_order"] is False
+    assert local_pca["full_objective_contract_issues"] == ["realistic_train_order"]
 
 
 def test_accuracy_sort_ranks_phase_accuracy_then_updates() -> None:

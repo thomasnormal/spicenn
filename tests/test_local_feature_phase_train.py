@@ -3284,6 +3284,10 @@ def test_phase_transient_preflight_summary_has_no_artifact_paths() -> None:
     assert summary["lr_schedule"] == "linear-decay"
     assert summary["lr_final_scale"] == 0.25
     assert summary["input_quantization_levels"] == 8
+    assert summary["learning_device_implementation"] == "behavioral_bsource"
+    assert summary["no_behavioral_learning_devices"] is False
+    assert summary["uses_behavioral_learning_devices"] is True
+    assert summary["transistor_or_passive_learning_path"] is False
     assert summary["train_order"] == "local-pca"
     assert summary["train_order_window"] == 16
     assert summary["train_order_permutation_metadata"]["prefix"] == [1, 0]

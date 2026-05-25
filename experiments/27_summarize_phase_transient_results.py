@@ -45,6 +45,7 @@ FIELDS = [
     "train_order_window",
     "train_order_pca_components",
     "train_order_pca_bins_per_unit",
+    "realistic_train_order",
     "batch_size",
     "lr",
     "lr_schedule",
@@ -86,6 +87,11 @@ FIELDS = [
     "hidden_synapse_mode",
     "readout_synapse_mode",
     "readout_class_centering",
+    "learning_device_implementation",
+    "no_behavioral_learning_devices",
+    "uses_behavioral_learning_devices",
+    "transistor_or_passive_learning_path",
+    "full_objective_contract_issues",
     "fully_on_device_execution_contract_met",
     "strict_fully_on_device_contract_met",
     "strict_fully_on_device_requested",
@@ -346,6 +352,64 @@ def robust_sample_transitions(row: dict[str, Any]) -> bool:
     return edge is None or edge > 0.0
 
 
+REAL_LEARNING_DEVICE_IMPLEMENTATIONS = frozenset(
+    {
+        "transistor",
+        "transistor_level",
+        "mos_transistor",
+        "passive",
+        "transistor_passive",
+        "device_level",
+    }
+)
+
+
+def inferred_learning_device_implementation(data: dict[str, Any]) -> str:
+    value = data.get("learning_device_implementation")
+    if value is not None:
+        return str(value)
+    if data.get("transistor_or_passive_learning_path") is True:
+        return "transistor_passive"
+    if data.get("no_behavioral_signal_math") is True:
+        return "device_level"
+    if is_phase_architecture(data):
+        return "behavioral_bsource"
+    return "unknown"
+
+
+def inferred_no_behavioral_learning_devices(data: dict[str, Any], implementation: str) -> bool | None:
+    value = data.get("no_behavioral_learning_devices")
+    if value is not None:
+        return bool(value)
+    if data.get("uses_behavioral_learning_devices") is not None:
+        return not bool(data.get("uses_behavioral_learning_devices"))
+    if data.get("no_behavioral_signal_math") is True:
+        return True
+    if implementation in REAL_LEARNING_DEVICE_IMPLEMENTATIONS:
+        return True
+    if implementation in {"behavioral", "behavioral_bsource", "bsource_reference"}:
+        return False
+    if is_phase_architecture(data):
+        return False
+    return None
+
+
+def realistic_train_order(row: dict[str, Any]) -> bool:
+    return row.get("train_order", "stable") == "stable"
+
+
+def full_objective_contract_issues(row: dict[str, Any]) -> list[str]:
+    checks = [
+        ("strict_target_contract", row.get("strict_target_contract_met") is True),
+        ("full_eval_10k", row.get("full_eval_10k_met") is True),
+        ("full_objective_accuracy", row.get("full_objective_accuracy_met") is True),
+        ("realistic_train_order", row.get("realistic_train_order") is True),
+        ("no_behavioral_learning_devices", row.get("no_behavioral_learning_devices") is True),
+        ("transistor_or_passive_learning_path", row.get("transistor_or_passive_learning_path") is True),
+    ]
+    return [name for name, ok in checks if not ok]
+
+
 def full_objective_accuracy_gap(row: dict[str, Any], threshold: float = 0.9) -> float | None:
     accuracy = as_float_or_none(row.get("phase_eval_accuracy"))
     if accuracy is None:
@@ -356,6 +420,16 @@ def full_objective_accuracy_gap(row: dict[str, Any], threshold: float = 0.9) -> 
 def row_from_summary(path: Path) -> dict[str, Any]:
     data = json.loads(path.read_text())
     tag = path.name.removesuffix("_summary.json")
+    learning_device_implementation = inferred_learning_device_implementation(data)
+    no_behavioral_learning_devices = inferred_no_behavioral_learning_devices(data, learning_device_implementation)
+    transistor_or_passive_learning_path = (
+        data.get("transistor_or_passive_learning_path")
+        if data.get("transistor_or_passive_learning_path") is not None
+        else (
+            no_behavioral_learning_devices is True
+            and learning_device_implementation in REAL_LEARNING_DEVICE_IMPLEMENTATIONS
+        )
+    )
     row = {
         "tag": tag,
         "topology": topology_label(data),
@@ -427,6 +501,12 @@ def row_from_summary(path: Path) -> dict[str, Any]:
         "hidden_synapse_mode": data.get("hidden_synapse_mode"),
         "readout_synapse_mode": data.get("readout_synapse_mode"),
         "readout_class_centering": data.get("readout_class_centering"),
+        "learning_device_implementation": learning_device_implementation,
+        "no_behavioral_learning_devices": no_behavioral_learning_devices,
+        "uses_behavioral_learning_devices": (
+            None if no_behavioral_learning_devices is None else not no_behavioral_learning_devices
+        ),
+        "transistor_or_passive_learning_path": bool(transistor_or_passive_learning_path),
         "fully_on_device_execution_contract_met": inferred_fully_on_device_execution_contract_met(data),
         "strict_fully_on_device_contract_met": inferred_strict_fully_on_device_contract_met(data),
         "strict_fully_on_device_requested": inferred_strict_fully_on_device_requested(data),
@@ -507,6 +587,7 @@ def row_from_summary(path: Path) -> dict[str, Any]:
     }
     row["target_topology"] = same_target_topology(row)
     row["robust_sample_transitions"] = robust_sample_transitions(row)
+    row["realistic_train_order"] = realistic_train_order(row)
     issues = strict_target_contract_issues(row)
     row["strict_target_contract_met"] = not issues
     row["strict_target_contract_issues"] = issues
@@ -519,7 +600,8 @@ def row_from_summary(path: Path) -> dict[str, Any]:
     row["full_objective_accuracy_gap"] = full_objective_accuracy_gap(row)
     row["milestone_b_nontrivial_learning_met"] = row["strict_target_nontrivial_learning_met"]
     row["milestone_c_target_topology_met"] = row["strict_target_contract_met"]
-    row["milestone_d_full_objective_met"] = row["strict_target_contract_met"] and full_eval_10k and full_accuracy
+    row["full_objective_contract_issues"] = full_objective_contract_issues(row)
+    row["milestone_d_full_objective_met"] = not row["full_objective_contract_issues"]
     return row
 
 

@@ -1709,6 +1709,28 @@ must satisfy before it can replace the current behavioral prototype.
 
 \begin{figure}[H]
   \centering
+  \includegraphics[width=0.88\linewidth]{figures/mos_hidden_writer_restored_gate_hybrid_update_forward_guard_control_swing_ngspice.png}
+  \caption{Ngspice \(pact\)-and-guard control-swing sweep for the guarded MOS
+  activation store.  The read path, \(C_\mathrm{store}=10\) pF, and nominal
+  timing are fixed; only the two series transmission-gate control swings are
+  reduced together.  The complementary PMOS gate low level is raised by the
+  same amount that the NMOS gate high level is lowered, so a \(1.2\) V swing
+  means \(pact/guard\) high at \(1.2\) V and \(pact_n/guard_n\) low at
+  \(0.6\) V.  The read preactivation remains near \(52.066\) mV for every
+  case, but the stored activation is
+  \(51.355,51.336,51.782,58.088,0.000,\) and \(0.000\) mV for
+  \(1.8,1.6,1.4,1.2,1.0,\) and \(0.8\) V swing.  Thus the current guarded
+  store has comfortable margin down to roughly \(1.4\) V control swing; the
+  \(1.2\) V case is not a clean analog weakening but a marginal pass-stack
+  regime with feedthrough/settling overshoot, and \(1.0\) V no longer turns
+  the stack on enough to sample the activation.  The robust design rule is
+  that phase-driver headroom is a real circuit constraint, not merely a logic
+  convention.}
+  \label{fig:mos-hidden-writer-restored-gate-hybrid-update-forward-guard-control-swing-ngspice}
+\end{figure}
+
+\begin{figure}[H]
+  \centering
   \includegraphics[width=0.88\linewidth]{figures/mos_hidden_writer_restored_gate_hybrid_repeated_ngspice.png}
   \caption{Ngspice repeated-pulse accumulation characterization of the hybrid
   restored writer.  One stored \(r^+\) hidden-error rail drives one persistent

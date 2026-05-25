@@ -8205,6 +8205,100 @@ quit
         "larger activation store caps should monotonically reduce the sampled activation after nominal sizing",
     )
 
+    guard_control_swing_cases_v = [1.8, 1.6, 1.4, 1.2, 1.0, 0.8]
+    guard_control_swing_labels = []
+    guard_control_swing_store_samples = []
+    guard_control_swing_preact_samples = []
+    guard_control_swing_traces = []
+
+    def guard_phase_swing_lines(start_us: float, end_us: float, swing_v: float, edge_ns: float = 20.0) -> tuple[str, str]:
+        edge_us = edge_ns / 1000.0
+        rise_start_us = start_us - edge_us
+        fall_end_us = end_us + edge_us
+        comp_low_v = 1.8 - swing_v
+        guard_pwl = (
+            f"VGUARD_HYR guard_hyr 0 PWL(0 0 {rise_start_us:.3f}u 0 "
+            f"{start_us:.3f}u {swing_v:.3f} {end_us:.3f}u {swing_v:.3f} "
+            f"{fall_end_us:.3f}u 0 7.8u 0)"
+        )
+        guardn_pwl = (
+            f"VGUARDN_HYR guardn_hyr 0 PWL(0 1.8 {rise_start_us:.3f}u 1.8 "
+            f"{start_us:.3f}u {comp_low_v:.3f} {end_us:.3f}u {comp_low_v:.3f} "
+            f"{fall_end_us:.3f}u 1.8 7.8u 1.8)"
+        )
+        return guard_pwl, guardn_pwl
+
+    def pact_swing_lines(swing_v: float, rise_start_us: float = 3.16, fall_start_us: float = 3.50, edge_ns: float = 20.0) -> tuple[str, str]:
+        edge_us = edge_ns / 1000.0
+        rise_end_us = rise_start_us + edge_us
+        fall_end_us = fall_start_us + edge_us
+        comp_low_v = 1.8 - swing_v
+        pact_pwl = (
+            f"VPACT_HYR pact_hyr 0 PWL(0 0 {rise_start_us:.3f}u 0 "
+            f"{rise_end_us:.3f}u {swing_v:.3f} {fall_start_us:.3f}u {swing_v:.3f} "
+            f"{fall_end_us:.3f}u 0 7.8u 0)"
+        )
+        pactn_pwl = (
+            f"VPACTN_HYR pactn_hyr 0 PWL(0 1.8 {rise_start_us:.3f}u 1.8 "
+            f"{rise_end_us:.3f}u {comp_low_v:.3f} {fall_start_us:.3f}u {comp_low_v:.3f} "
+            f"{fall_end_us:.3f}u 1.8 7.8u 1.8)"
+        )
+        return pact_pwl, pactn_pwl
+
+    for swing_v in guard_control_swing_cases_v:
+        stem = (
+            "mos_hidden_writer_restored_gate_hybrid_update_forward_read_pact_"
+            f"guard_control_swing_{str(swing_v).replace('.', 'p')}v"
+        )
+        swing_pact_pwl, swing_pactn_pwl = pact_swing_lines(swing_v)
+        swing_guard_pwl, swing_guardn_pwl = guard_phase_swing_lines(3.18, 3.31, swing_v)
+        swing_deck = replace_required(hybrid_forward_read_reuse_deck, timing_read_pwl, timing_single_read_pwl)
+        swing_deck = replace_required(
+            swing_deck,
+            timing_base_pact_pwl,
+            swing_pact_pwl + "\n" + swing_pactn_pwl + "\n" + swing_guard_pwl + "\n" + swing_guardn_pwl,
+        )
+        swing_deck = replace_required(swing_deck, nmos_store_line_p, guard_store_line_p)
+        swing_deck = replace_required(swing_deck, nmos_store_line_m, guard_store_line_m)
+        swing_deck = replace_required(
+            swing_deck,
+            "mos_hidden_writer_restored_gate_hybrid_update_forward_read_reuse.dat",
+            f"{stem}.dat",
+        )
+        swing_data = run_ngspice(swing_deck, stem)
+        swt, swing_cols = load_wrdata(swing_data, 23)
+
+        def gcsat(time_s: float, values: np.ndarray) -> float:
+            return float(values[np.argmin(np.abs(swt - time_s))])
+
+        swing_preact = swing_cols[10] - swing_cols[9]
+        swing_store = swing_cols[14] - swing_cols[13]
+        guard_control_swing_labels.append(f"{swing_v:.1f} V")
+        guard_control_swing_preact_samples.append(gcsat(3.575e-6, swing_preact))
+        guard_control_swing_store_samples.append(gcsat(3.575e-6, swing_store))
+        guard_control_swing_traces.append((f"{swing_v:.1f} V", swt, swing_store))
+
+    guard_control_swing_preact_samples = np.array(guard_control_swing_preact_samples)
+    guard_control_swing_store_samples = np.array(guard_control_swing_store_samples)
+    nominal_control_swing_idx = guard_control_swing_cases_v.index(1.8)
+    require(np.min(guard_control_swing_preact_samples) > 0.048, "control-swing sweep should keep a valid read state")
+    require(
+        abs(guard_control_swing_store_samples[nominal_control_swing_idx] - guard_timing_samples[2]) < 0.002,
+        "full-swing control case should match the nominal timing sample",
+    )
+    require(
+        np.min(guard_control_swing_store_samples[:3]) > guard_control_swing_store_samples[nominal_control_swing_idx] - 0.004,
+        "1.4 V and stronger control swings should retain the nominal capture window",
+    )
+    require(
+        guard_control_swing_store_samples[3] > guard_control_swing_preact_samples[3] + 0.004,
+        "marginal 1.2 V control swing should expose pass-stack feedthrough overshoot",
+    )
+    require(
+        guard_control_swing_store_samples[-1] < guard_control_swing_store_samples[nominal_control_swing_idx] - 0.010,
+        "weak control swing should visibly undercharge the activation store",
+    )
+
     read_gated_fig, read_gated_axes = plt.subplots(2, 1, figsize=(7.4, 6.6), gridspec_kw={"height_ratios": [1.0, 0.9]})
     for label, rgt, store in guard_gated_traces:
         if label in {"40 ns", "120 ns", "240 ns", "320 ns"}:
@@ -8566,6 +8660,31 @@ quit
     guard_cstore_axes[1].legend(loc="lower left", ncol=2, fontsize="small")
     guard_cstore_fig.tight_layout()
     save_plot(guard_cstore_fig, "mos_hidden_writer_restored_gate_hybrid_update_forward_guard_cstore_ngspice")
+
+    guard_control_swing_fig, guard_control_swing_axes = plt.subplots(2, 1, figsize=(7.4, 6.4), gridspec_kw={"height_ratios": [1.0, 0.8]})
+    for label, swt, store in guard_control_swing_traces:
+        if label in {"1.8 V", "1.4 V", "1.2 V", "1.0 V"}:
+            guard_control_swing_axes[0].plot(1e6 * swt, 1e3 * store, label=label)
+    guard_control_swing_axes[0].axhline(0, color="0.4", linewidth=0.8)
+    guard_control_swing_axes[0].axvline(3.33, color="0.25", linestyle="--", linewidth=0.9, alpha=0.6, label="guard off")
+    guard_control_swing_axes[0].set_xlim(3.05, 3.65)
+    guard_control_swing_axes[0].set_ylabel("stored activation (mV)")
+    guard_control_swing_axes[0].set_title("Reduced pact/guard swing tests phase-driver headroom")
+    guard_control_swing_axes[0].grid(True, alpha=0.25)
+    guard_control_swing_axes[0].legend(loc="upper left", ncol=2, fontsize="small")
+    guard_control_swing_x = np.arange(len(guard_control_swing_labels))
+    guard_control_swing_axes[1].bar(guard_control_swing_x - 0.18, 1e3 * guard_control_swing_preact_samples, width=0.36, label="$z^- - z^+$")
+    guard_control_swing_axes[1].bar(guard_control_swing_x + 0.18, 1e3 * guard_control_swing_store_samples, width=0.36, label="stored $h^- - h^+$")
+    guard_control_swing_axes[1].axhline(0, color="0.4", linewidth=0.8)
+    guard_control_swing_axes[1].set_xticks(guard_control_swing_x)
+    guard_control_swing_axes[1].set_xticklabels(guard_control_swing_labels)
+    guard_control_swing_axes[1].set_xlabel("pact/guard control swing")
+    guard_control_swing_axes[1].set_ylabel("sampled differential (mV)")
+    guard_control_swing_axes[1].set_title("Moderate loss is tolerated; marginal swing exposes feedthrough/failure")
+    guard_control_swing_axes[1].grid(True, axis="y", alpha=0.25)
+    guard_control_swing_axes[1].legend(loc="lower left", ncol=2, fontsize="small")
+    guard_control_swing_fig.tight_layout()
+    save_plot(guard_control_swing_fig, "mos_hidden_writer_restored_gate_hybrid_update_forward_guard_control_swing_ngspice")
 
     hybrid_repeated_deck = f"""
 * Hybrid restored-enable/analog-error writer repeated-pulse accumulation check.

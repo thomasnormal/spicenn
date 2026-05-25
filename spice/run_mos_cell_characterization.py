@@ -13011,17 +13011,29 @@ quit
     signed_hold_axes[0].grid(True, alpha=0.25)
     signed_hold_axes[0].legend(loc="upper right", ncol=2, fontsize="small")
     signed_hold_x = np.arange(len(hold_sample_times))
-    signed_hold_axes[1].plot(signed_hold_x, 1e6 * hold_drift, "o-", label="+ drift")
-    signed_hold_axes[1].plot(signed_hold_x, 1e6 * negative_hold_drift, "s--", label="- drift")
+    signed_hold_axes[1].plot(signed_hold_x, 1e3 * hold_drift, "o-", label="+ drift")
+    signed_hold_axes[1].plot(signed_hold_x, 1e3 * negative_hold_drift, "s--", label="- drift")
     signed_hold_axes[1].plot(signed_hold_x, 1e3 * signed_hold_mirror_error, "d:", label="mirror error")
     signed_hold_axes[1].axhline(0, color="0.4", linewidth=0.8)
+    signed_hold_axes[1].axhline(0.2, color="0.4", linestyle=":", linewidth=1.0, label="0.2 mV mirror bound")
+    signed_hold_axes[1].axhline(-0.2, color="0.4", linestyle=":", linewidth=1.0)
+    signed_hold_axes[1].text(
+        0.03,
+        0.12,
+        f"max drift: +{1e6 * np.max(np.abs(hold_drift)):.2f}/"
+        f"-{1e6 * np.max(np.abs(negative_hold_drift)):.2f} uV\n"
+        f"max mirror error: {1e3 * np.max(np.abs(signed_hold_mirror_error)):.3f} mV",
+        transform=signed_hold_axes[1].transAxes,
+        fontsize="small",
+        bbox={"facecolor": "white", "alpha": 0.82, "edgecolor": "0.8"},
+    )
     signed_hold_axes[1].set_xticks(signed_hold_x)
     signed_hold_axes[1].set_xticklabels(hold_sample_labels)
     signed_hold_axes[1].set_xlabel("sample time (us)")
-    signed_hold_axes[1].set_ylabel("$\\mu$V / mV")
-    signed_hold_axes[1].set_title("Both signs hold; mirror error stays below the assertion bound")
+    signed_hold_axes[1].set_ylabel("drift / mirror error (mV)")
+    signed_hold_axes[1].set_title("Both signs hold; mirror error stays inside the asserted bound")
     signed_hold_axes[1].grid(True, axis="y", alpha=0.25)
-    signed_hold_axes[1].legend(loc="upper right", ncol=3, fontsize="small")
+    signed_hold_axes[1].legend(loc="upper right", ncol=2, fontsize="small")
     signed_hold_fig.tight_layout()
     save_plot(signed_hold_fig, "mos_hidden_writer_restored_gate_hybrid_update_forward_guard_signed_hold_ngspice")
 

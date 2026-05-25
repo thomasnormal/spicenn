@@ -2,6 +2,15 @@
 
 ## 2026-05-25
 
+- Fixed the guarded signed-hold plot's mixed-unit ambiguity.  The underlying
+  ngspice assertions require positive and negative guarded activation holds to
+  mirror within \(0.2\) mV and each held sign to drift less than \(0.2\) mV;
+  the rendered `mos_hidden_writer_restored_gate_hybrid_update_forward_guard_signed_hold_ngspice`
+  plot previously mixed \(\mu\)V drift and mV mirror error on one axis without
+  drawing the bound.  The regenerated plot now uses mV consistently, draws the
+  asserted \(\pm0.2\) mV mirror bound, and annotates the measured
+  \(+0.48/-0.48\,\mu\)V maximum drift with mirror error below the displayed
+  \(0.001\) mV resolution.
 - Clarified the restored-gate sizing and stored-error-swing margins.  The
   restored-gate strength and swing decks already asserted that the selected
   weak corner must recover a \(>20\) mV net write while complement leakage

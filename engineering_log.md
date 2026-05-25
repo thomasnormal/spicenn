@@ -2,6 +2,25 @@
 
 ## 2026-05-25
 
+- Clarified the direct MOS hidden-error-to-writer plots.  The ngspice decks
+  already asserted that stored hidden-error rails steer the PMOS writer with
+  the correct sign, all four activation/error quadrants choose the correct
+  W+/W- rail, writer magnitude grows with stored hidden-error magnitude, and
+  pacc sequencing suppresses writes before hidden-error storage while matching
+  settled writes afterward.  The regenerated `mos_hidden_writer_chain_ngspice`,
+  `mos_hidden_writer_quadrants_ngspice`,
+  `mos_hidden_writer_magnitude_ngspice`, and
+  `mos_hidden_writer_phase_timing_ngspice` figures now label those margins
+  directly: direct r+/r- hidden-error stores are \(+98.5\) mV and
+  \(-98.5\) mV, direct writes land at \(+13.4\) mV and \(-13.4\) mV with no
+  displayed hold error, and signed readback moves by \(+11.3\,\mu\)A and
+  \(-11.3\,\mu\)A.  The four-quadrant writer gives \(\pm13.4\) mV final
+  products with no displayed hold or symmetry error.  The magnitude sweep
+  stores up to \(+137.9\) mV hidden error with \(29.5\) mV minimum hidden
+  step and writes up to \(+18.5\) mV with \(4.0\) mV minimum writer step.
+  The pacc timing sweep shows a \(0.48\) mV pre-store write, a \(6.3\) mV
+  storage-edge write at \(97\%\) of settled, and no displayed settled timing
+  spread.
 - Clarified the MOS hidden-error primitive plots.  The ngspice decks already
   asserted nonnegative finite-difference derivative gain, active-window
   attenuation, signed hidden-error storage, retained sampled derivative

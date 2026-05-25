@@ -2752,8 +2752,19 @@ quit
         abs(at(3.25e-6, neg_weight) - at(2.75e-6, neg_weight)) < 5e-4,
         "r- written differential weight should hold after writer phase",
     )
+    hw_pos_hidden = at(1.35e-6, pos_hidden)
+    hw_neg_hidden = at(1.35e-6, neg_hidden)
+    hw_pos_weight = at(2.75e-6, pos_weight)
+    hw_neg_weight = at(2.75e-6, neg_weight)
+    hw_pos_read_delta_uA = 1e6 * (at(2.75e-6, pos_read) - at(1.45e-6, pos_read))
+    hw_neg_read_delta_uA = 1e6 * (at(2.75e-6, neg_read) - at(1.45e-6, neg_read))
+    hw_weight_hold_error = max(
+        abs(at(3.25e-6, pos_weight) - hw_pos_weight),
+        abs(at(3.25e-6, neg_weight) - hw_neg_weight),
+    )
 
     fig, axes = plt.subplots(3, 1, figsize=(7.2, 7.4))
+    callout_box = {"facecolor": "white", "alpha": 0.82, "edgecolor": "0.8"}
     axes[0].plot(1e6 * t, pos_hidden, label="$r^+$ stored $\\delta^+ - \\delta^-$")
     axes[0].plot(1e6 * t, neg_hidden, label="$r^-$ stored $\\delta^+ - \\delta^-$")
     axes[0].plot(1e6 * t, cols[16] / 20.0, color="0.5", alpha=0.35, label="$pbwd/20$")
@@ -2762,6 +2773,19 @@ quit
     axes[0].set_title("MOS hidden-error stores provide signed analog writer gates")
     axes[0].grid(True, alpha=0.25)
     axes[0].legend(loc="upper right")
+    axes[0].text(
+        0.05,
+        0.15,
+        "\n".join(
+            [
+                f"r+ hidden {1e3 * hw_pos_hidden:+.1f} mV",
+                f"r- hidden {1e3 * hw_neg_hidden:+.1f} mV",
+            ]
+        ),
+        transform=axes[0].transAxes,
+        fontsize="x-small",
+        bbox=callout_box,
+    )
 
     axes[1].plot(1e6 * t, pos_weight, label="$r^+$ result: $W^+ - W^-$")
     axes[1].plot(1e6 * t, neg_weight, label="$r^-$ result: $W^+ - W^-$")
@@ -2771,6 +2795,20 @@ quit
     axes[1].set_title("Stored error sign steers the four-quadrant writer")
     axes[1].grid(True, alpha=0.25)
     axes[1].legend(loc="upper right")
+    axes[1].text(
+        0.05,
+        0.15,
+        "\n".join(
+            [
+                f"r+ write {1e3 * hw_pos_weight:+.1f} mV",
+                f"r- write {1e3 * hw_neg_weight:+.1f} mV",
+                f"hold error {1e3 * hw_weight_hold_error:.2f} mV",
+            ]
+        ),
+        transform=axes[1].transAxes,
+        fontsize="x-small",
+        bbox=callout_box,
+    )
 
     axes[2].plot(1e6 * t, 1e6 * pos_read, label="$r^+$ signed readback")
     axes[2].plot(1e6 * t, 1e6 * neg_read, label="$r^-$ signed readback")
@@ -2780,6 +2818,19 @@ quit
     axes[2].set_title("Written rails read back with the corresponding synapse sign")
     axes[2].grid(True, alpha=0.25)
     axes[2].legend(loc="upper right")
+    axes[2].text(
+        0.05,
+        0.15,
+        "\n".join(
+            [
+                f"r+ read delta {hw_pos_read_delta_uA:+.1f} uA",
+                f"r- read delta {hw_neg_read_delta_uA:+.1f} uA",
+            ]
+        ),
+        transform=axes[2].transAxes,
+        fontsize="x-small",
+        bbox=callout_box,
+    )
     fig.tight_layout()
     hidden_writer_plot = save_plot(fig, "mos_hidden_writer_chain_ngspice")
 
@@ -2892,6 +2943,12 @@ quit
         require(abs(hold - final) < 5e-4, f"{_name} weight differential should hold after writer phase")
     qfinal = np.array([qat(2.75e-6, diff) for diff in qdiffs])
     require(qfinal[0] > 0 and qfinal[1] < 0 and qfinal[2] < 0 and qfinal[3] > 0, "all four update quadrants should have the expected signs")
+    q_pos_hidden_final = qat(1.35e-6, q_pos_hidden)
+    q_neg_hidden_final = qat(1.35e-6, q_neg_hidden)
+    qhold = np.array([qat(3.25e-6, diff) for diff in qdiffs])
+    q_hold_error = float(np.max(np.abs(qhold - qfinal)))
+    q_min_abs_final = float(np.min(np.abs(qfinal)))
+    q_symmetry_error = float(max(abs(qfinal[0] + qfinal[1]), abs(qfinal[2] + qfinal[3]), abs(qfinal[0] - qfinal[3])))
 
     quadrant_fig, quadrant_axes = plt.subplots(3, 1, figsize=(7.2, 7.4))
     quadrant_axes[0].plot(1e6 * qt, q_pos_hidden, label="$r^+$ stored $\\delta^+ - \\delta^-$")
@@ -2902,6 +2959,19 @@ quit
     quadrant_axes[0].set_title("One hidden-error store feeds all writer quadrants")
     quadrant_axes[0].grid(True, alpha=0.25)
     quadrant_axes[0].legend(loc="upper right")
+    quadrant_axes[0].text(
+        0.05,
+        0.15,
+        "\n".join(
+            [
+                f"r+ hidden {1e3 * q_pos_hidden_final:+.1f} mV",
+                f"r- hidden {1e3 * q_neg_hidden_final:+.1f} mV",
+            ]
+        ),
+        transform=quadrant_axes[0].transAxes,
+        fontsize="x-small",
+        bbox=callout_box,
+    )
     quadrant_colors = ["C0", "C1", "C2", "C3"]
     quadrant_styles = ["-", "--", ":", "-."]
     quadrant_labels = []
@@ -2917,6 +2987,20 @@ quit
     quadrant_axes[1].set_title("Activation/error sign products select W+ or W-")
     quadrant_axes[1].grid(True, alpha=0.25)
     quadrant_axes[1].legend(loc="upper right", ncol=2)
+    quadrant_axes[1].text(
+        0.05,
+        0.15,
+        "\n".join(
+            [
+                f"min |write| {1e3 * q_min_abs_final:.1f} mV",
+                f"hold error {1e3 * q_hold_error:.2f} mV",
+                f"symmetry error {1e3 * q_symmetry_error:.2f} mV",
+            ]
+        ),
+        transform=quadrant_axes[1].transAxes,
+        fontsize="x-small",
+        bbox=callout_box,
+    )
     final_mv = 1e3 * qfinal
     bars = quadrant_axes[2].bar(quadrant_labels, final_mv, color=quadrant_colors, alpha=0.85)
     quadrant_axes[2].axhline(0, color="0.4", linewidth=0.8)
@@ -2927,6 +3011,19 @@ quit
     quadrant_axes[2].set_ylabel("final $W^+ - W^-$ (mV)")
     quadrant_axes[2].set_title("All four final update products are separately checked")
     quadrant_axes[2].grid(True, axis="y", alpha=0.25)
+    quadrant_axes[2].text(
+        0.05,
+        0.12,
+        "\n".join(
+            [
+                f"min |final| {1e3 * q_min_abs_final:.1f} mV",
+                f"hold max {1e3 * q_hold_error:.2f} mV",
+            ]
+        ),
+        transform=quadrant_axes[2].transAxes,
+        fontsize="x-small",
+        bbox=callout_box,
+    )
     quadrant_fig.tight_layout()
     save_plot(quadrant_fig, "mos_hidden_writer_quadrants_ngspice")
 
@@ -3023,6 +3120,11 @@ quit
         np.max(np.abs(mag_weight_hold - mag_weight_final)) < 5e-4,
         "hidden-error magnitude writer steps should hold after pacc closes",
     )
+    mag_hidden_zero = abs(float(mag_hidden_final[0]))
+    mag_weight_zero = abs(float(mag_weight_final[0]))
+    mag_hidden_min_step = float(np.min(np.diff(mag_hidden_final)))
+    mag_weight_min_step = float(np.min(np.diff(mag_weight_final)))
+    mag_weight_hold_error = float(np.max(np.abs(mag_weight_hold - mag_weight_final)))
 
     magnitude_fig, magnitude_axes = plt.subplots(2, 1, figsize=(7.2, 5.8))
     for eps_mag, hseries, wseries in zip(magnitude_eps, mag_hidden, mag_weight):
@@ -3035,6 +3137,20 @@ quit
     magnitude_axes[0].set_title("Stored hidden-error magnitude is available before pacc")
     magnitude_axes[0].grid(True, alpha=0.25)
     magnitude_axes[0].legend(loc="upper right", ncol=2, fontsize="small")
+    magnitude_axes[0].text(
+        0.05,
+        0.15,
+        "\n".join(
+            [
+                f"zero residual {1e3 * mag_hidden_zero:.1f} mV",
+                f"max hidden {1e3 * mag_hidden_final[-1]:+.1f} mV",
+                f"min step {1e3 * mag_hidden_min_step:.1f} mV",
+            ]
+        ),
+        transform=magnitude_axes[0].transAxes,
+        fontsize="x-small",
+        bbox=callout_box,
+    )
     magnitude_axes[1].plot(1e6 * mt, mag_cols[-1] / 30.0, color="0.5", alpha=0.35, label="$\\overline{pacc}/30$")
     magnitude_axes[1].axhline(0, color="0.4", linewidth=0.8)
     magnitude_axes[1].set_xlabel("time (us)")
@@ -3042,6 +3158,21 @@ quit
     magnitude_axes[1].set_title("MOS writer step grows with stored hidden-error magnitude")
     magnitude_axes[1].grid(True, alpha=0.25)
     magnitude_axes[1].legend(loc="upper right", ncol=2, fontsize="small")
+    magnitude_axes[1].text(
+        0.05,
+        0.15,
+        "\n".join(
+            [
+                f"zero write {1e3 * mag_weight_zero:.2f} mV",
+                f"max write {1e3 * mag_weight_final[-1]:+.1f} mV",
+                f"min step {1e3 * mag_weight_min_step:.1f} mV",
+                f"hold error {1e3 * mag_weight_hold_error:.2f} mV",
+            ]
+        ),
+        transform=magnitude_axes[1].transAxes,
+        fontsize="x-small",
+        bbox=callout_box,
+    )
     magnitude_fig.tight_layout()
     save_plot(magnitude_fig, "mos_hidden_writer_magnitude_ngspice")
 
@@ -3142,6 +3273,12 @@ quit
     require(timing_final[1] < 0.99 * timing_final[-1], "storage-edge writer should be measurably below the settled update")
     require(np.min(timing_final[2:]) > 0.95 * timing_final[-1], "writer pulses after hidden-error settling should reach the full update")
     require(np.max(timing_final[2:]) - np.min(timing_final[2:]) < 2e-4, "settled writer timings should agree")
+    timing_hidden_sample = tat(1.35e-6, timing_hidden)
+    timing_pre_sample = float(timing_final[0])
+    timing_edge_sample = float(timing_final[1])
+    timing_settled_sample = float(timing_final[-1])
+    timing_settled_spread = float(np.max(timing_final[2:]) - np.min(timing_final[2:]))
+    timing_edge_fraction = timing_edge_sample / max(timing_settled_sample, 1e-30)
 
     timing_fig, timing_axes = plt.subplots(2, 1, figsize=(7.2, 5.8))
     timing_axes[0].plot(1e6 * tt, timing_hidden, label="stored $r^+$ hidden error")
@@ -3151,6 +3288,14 @@ quit
     timing_axes[0].set_title("Hidden-error storage settles quickly after pbwd starts")
     timing_axes[0].grid(True, alpha=0.25)
     timing_axes[0].legend(loc="upper right")
+    timing_axes[0].text(
+        0.05,
+        0.15,
+        f"hidden @1.35us {1e3 * timing_hidden_sample:+.1f} mV",
+        transform=timing_axes[0].transAxes,
+        fontsize="x-small",
+        bbox=callout_box,
+    )
     for (_name, label, _start_us), diff in zip(timing_cases, timing_diffs):
         timing_axes[1].plot(1e6 * tt, diff, label=label)
     timing_axes[1].axhline(0, color="0.4", linewidth=0.8)
@@ -3159,6 +3304,20 @@ quit
     timing_axes[1].set_title("pacc timing sweep exposes the storage/write margin")
     timing_axes[1].grid(True, alpha=0.25)
     timing_axes[1].legend(loc="upper left", ncol=2)
+    timing_axes[1].text(
+        0.56,
+        0.18,
+        "\n".join(
+            [
+                f"pre-store write {1e3 * timing_pre_sample:.2f} mV",
+                f"edge write {1e3 * timing_edge_sample:.1f} mV ({100 * timing_edge_fraction:.0f}%)",
+                f"settled spread {1e3 * timing_settled_spread:.2f} mV",
+            ]
+        ),
+        transform=timing_axes[1].transAxes,
+        fontsize="x-small",
+        bbox=callout_box,
+    )
     timing_fig.tight_layout()
     save_plot(timing_fig, "mos_hidden_writer_phase_timing_ngspice")
 

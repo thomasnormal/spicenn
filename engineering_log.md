@@ -9,7 +9,10 @@
   visually ambiguous: \(29/39/53/34/45\) mV post-reset residues looked large
   without the asserted \(80\) mV Level-1 reset budget.  The regenerated
   `mos_reset_mismatch_ngspice` figure now draws that margin and labels the bar
-  values directly, while keeping the circuit unchanged.
+  values directly, while keeping the circuit unchanged.  Family-completed the
+  same reset-plot issue by adding the \(50\) mV long-pulse target to
+  `mos_reset_width_ngspice` and mV bar labels to
+  `mos_reset_write_timing_ngspice`.
 - Family-completed the quadrant-plot readability fix for the integrated hybrid
   local-feature evidence.  The one-level hidden-writer quadrant plot already
   had an explicit final-value panel, but the deeper integrated

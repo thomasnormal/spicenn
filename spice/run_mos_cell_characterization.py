@@ -16043,6 +16043,7 @@ quit
     sweep_fig, sweep_axes = plt.subplots(2, 1, figsize=(7.2, 5.6))
     sweep_axes[0].semilogy(widths_us, nmos_residual, "o-", label="NMOS-only reset")
     sweep_axes[0].semilogy(widths_us, tg_residual, "s--", label="transmission-gate reset")
+    sweep_axes[0].axhline(0.05, color="0.4", linestyle=":", linewidth=1.0, label="50 mV long-pulse target")
     sweep_axes[0].set_ylabel("$|z^- - z^+|$ after reset (V)")
     sweep_axes[0].set_title("Complementary reset gives usable pulse-width margin")
     sweep_axes[0].grid(True, which="both", alpha=0.25)
@@ -16070,8 +16071,11 @@ quit
     labels = [label for _name, label, _start_us, _end_us in write_timing_cases]
     write_timing_axes[1].bar(labels, write_final)
     write_timing_axes[1].axhline(0, color="0.4", linewidth=0.8)
+    write_timing_axes[1].set_ylim(0.0, 1.20 * float(np.max(write_final)))
+    for x, final_value in enumerate(write_final):
+        write_timing_axes[1].text(x, final_value + 0.002, f"{1e3 * final_value:.0f}", ha="center", va="bottom", fontsize="x-small")
     write_timing_axes[1].set_ylabel("final $z^- - z^+$ (V)")
-    write_timing_axes[1].set_title("Clean post-reset writes agree; reset-edge writes are partial")
+    write_timing_axes[1].set_title("Clean post-reset writes agree; reset-edge writes are partial (mV labels)")
     write_timing_axes[1].grid(True, axis="y", alpha=0.25)
     write_timing_fig.tight_layout()
     save_plot(write_timing_fig, "mos_reset_write_timing_ngspice")

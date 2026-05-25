@@ -14818,6 +14818,17 @@ quit
     shift_refz_decap_axes[0].set_ylabel("trim error (mV)")
     shift_refz_decap_axes[0].set_title("Local trim-reference capacitance buffers a 100k source")
     shift_refz_decap_axes[0].grid(True, axis="y", alpha=0.25)
+    shift_refz_decap_axes[0].text(
+        0.57,
+        0.58,
+        "250 pF trim err = "
+        f"{1e3 * np.max(shift_refz_decap_trim_error[:, -1]):.2f} mV / 6 mV\n"
+        "0 pF trim err = "
+        f"{1e3 * np.max(shift_refz_decap_trim_error[:, 0]):.1f} mV",
+        transform=shift_refz_decap_axes[0].transAxes,
+        fontsize="x-small",
+        bbox={"facecolor": "white", "alpha": 0.82, "edgecolor": "0.8"},
+    )
     shift_refz_decap_axes[0].legend(loc="upper right", ncol=2, fontsize="xx-small")
     for branch_idx, (_branch_name, branch_label, _nfp, _nfm, _trim) in enumerate(shift_reset_branch_specs):
         marker = "o-" if branch_idx == 0 else "s--"
@@ -14827,10 +14838,23 @@ quit
             marker,
             label=branch_label,
         )
-    shift_refz_decap_axes[1].axhspan(40, 55, color="0.7", alpha=0.12, label="calibrated window")
+    shift_refz_decap_axes[1].axhspan(20, 90, color="0.75", alpha=0.10, label="useful band")
+    shift_refz_decap_axes[1].axhspan(40, 55, color="0.45", alpha=0.12, label="calibrated window")
     shift_refz_decap_axes[1].set_ylabel("first stored $h$ (mV)")
     shift_refz_decap_axes[1].set_title("Buffered trim rails recover first-cycle activation")
     shift_refz_decap_axes[1].grid(True, axis="y", alpha=0.25)
+    shift_refz_decap_axes[1].text(
+        0.03,
+        0.08,
+        "250 pF h range = "
+        f"{1e3 * np.min(shift_refz_decap_h_sample[:, -1]):.1f}.."
+        f"{1e3 * np.max(shift_refz_decap_h_sample[:, -1]):.1f} mV\n"
+        "first-cycle gain over 0 pF = "
+        f"{1e3 * np.min(np.abs(shift_refz_decap_h_sample[:, -1] - shift_refz_decap_h_sample[:, 0])):.1f} mV",
+        transform=shift_refz_decap_axes[1].transAxes,
+        fontsize="x-small",
+        bbox={"facecolor": "white", "alpha": 0.82, "edgecolor": "0.8"},
+    )
     shift_refz_decap_axes[1].legend(loc="upper right", ncol=2, fontsize="xx-small")
     for branch_label, cap_label, dct, store in shift_refz_decap_traces:
         linestyle = "-" if cap_label == "0 pF" else "--" if cap_label == "100 pF" else ":"

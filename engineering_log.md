@@ -2,6 +2,17 @@
 
 ## 2026-05-25
 
+- Family-completed the shifted-gate reset-reference decoupling plot.  The
+  ngspice deck models the first reset from a \(100\)k trim source with local
+  reservoir capacitance and already asserted monotonic trim-error improvement,
+  \(250\) pF trim delivery below \(6\) mV error, useful first-cycle activation,
+  and more than \(60\) mV first-cycle activation recovery versus no local
+  reservoir.  The regenerated
+  `mos_hidden_writer_restored_gate_hybrid_update_forward_guard_forward_pair_96u_shifted_gate_reset_ref_decap_ngspice`
+  plot now labels the measured evidence: \(250\) pF trim error \(3.66\) mV
+  versus the \(6\) mV gate, no-reservoir trim error \(59.6\) mV, \(250\) pF
+  first stored activation range \(40.9\)--\(53.9\) mV, and first-cycle gain
+  over no reservoir \(81.9\) mV.
 - Clarified the shifted-gate reset-reference recharge plot.  The ngspice deck
   models a \(100\)k reset-trim source feeding local reservoir capacitors and
   already asserted that \(250\) pF keeps repeated trim error below \(6\) mV,

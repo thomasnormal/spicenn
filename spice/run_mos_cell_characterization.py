@@ -17248,6 +17248,22 @@ quit
         np.max(np.abs(dgate_wp_steps - dgate_wm_steps)) < 0.0015,
         "analog hidden-error sweep should preserve W+/W- selected-step symmetry",
     )
+    analog_activation_range = min(
+        float(xgate_wp_steps[-1] - xgate_wp_steps[0]),
+        float(xgate_wm_steps[-1] - xgate_wm_steps[0]),
+    )
+    analog_error_range = min(
+        float(dgate_wp_steps[-1] - dgate_wp_steps[0]),
+        float(dgate_wm_steps[-1] - dgate_wm_steps[0]),
+    )
+    analog_inactive_max = max(
+        float(np.max(np.abs(xgate_wm_inactive))),
+        float(np.max(np.abs(xgate_wp_inactive))),
+        float(np.max(np.abs(dgate_wm_inactive))),
+        float(np.max(np.abs(dgate_wp_inactive))),
+    )
+    analog_activation_symmetry = float(np.max(np.abs(xgate_wp_steps - xgate_wm_steps)))
+    analog_error_symmetry = float(np.max(np.abs(dgate_wp_steps - dgate_wm_steps)))
 
     mismatch_data = run_ngspice(mismatch_deck, "mos_writer_mismatch")
     mt, mismatch_cols = load_wrdata(mismatch_data, 4 * len(mismatch_levels) + 1)
@@ -17279,8 +17295,11 @@ quit
         np.max(np.abs(mismatch_wp_selected - mismatch_wm_selected)) < 0.003,
         "matched threshold offsets should preserve W+/W- write symmetry",
     )
-    require(np.max(np.abs(mismatch_wm_inactive)) < 1e-3, "mismatched inactive W- branches should stay quiet")
-    require(np.max(np.abs(mismatch_wp_inactive)) < 1e-3, "mismatched inactive W+ branches should stay quiet")
+    mismatch_selected_min = min(float(np.min(mismatch_wp_selected)), float(np.min(mismatch_wm_selected)))
+    mismatch_selected_max = max(float(np.max(mismatch_wp_selected)), float(np.max(mismatch_wm_selected)))
+    mismatch_symmetry = float(np.max(np.abs(mismatch_wp_selected - mismatch_wm_selected)))
+    mismatch_inactive_max = max(float(np.max(np.abs(mismatch_wm_inactive))), float(np.max(np.abs(mismatch_wp_inactive))))
+    require(mismatch_inactive_max < 1e-3, "mismatched inactive writer branches should stay quiet")
 
     readback_data = run_ngspice(readback_deck, "mos_writer_readback")
     rt, read_cols = load_wrdata(readback_data, 9)
@@ -17343,13 +17362,15 @@ quit
     positive_net = alt_at(1.65e-6, alt_net_contrib)
     partial_net = alt_at(2.55e-6, alt_net_contrib)
     negative_net = alt_at(3.55e-6, alt_net_contrib)
+    final_wp_step = alt_at(3.55e-6, alternating_cols[0]) - alt_at(0.40e-6, alternating_cols[0])
+    final_wm_step = alt_at(3.55e-6, alternating_cols[1]) - alt_at(0.40e-6, alternating_cols[1])
     require(abs(baseline_net) < 1e-6, "equal initial W+ and W- rails should read near zero net contribution")
     require(positive_net > baseline_net + 15e-6, "W+ pulses should move same-weight readback positive")
     require(partial_net < positive_net - 8e-6, "later W- pulses should reduce the positive readback")
     require(partial_net > 0.0, "partial W- compensation should not overcorrect too early")
     require(negative_net < -5e-6, "enough W- pulses should push same-weight readback negative")
-    require(alt_at(3.55e-6, alternating_cols[0]) > alt_at(0.40e-6, alternating_cols[0]) + 0.02, "alternating deck should have written W+")
-    require(alt_at(3.55e-6, alternating_cols[1]) > alt_at(0.40e-6, alternating_cols[1]) + 0.03, "alternating deck should have written W-")
+    require(final_wp_step > 0.02, "alternating deck should have written W+")
+    require(final_wm_step > 0.03, "alternating deck should have written W-")
 
     retention_data = run_ngspice(retention_deck, "mos_writer_retention")
     ht, retention_cols = load_wrdata(retention_data, 9)
@@ -17549,6 +17570,21 @@ quit
     analog_axes[0].set_ylabel("$\\Delta V_W$ (V)")
     analog_axes[0].set_title("Both writer rails grow with analog gate strength")
     analog_axes[0].grid(True, alpha=0.25)
+    analog_axes[0].text(
+        0.48,
+        0.16,
+        "activation range = "
+        f"{1e3 * analog_activation_range:.1f} mV / >5 mV\n"
+        "error range = "
+        f"{1e3 * analog_error_range:.1f} mV / >5 mV\n"
+        "inactive max = "
+        f"{1e3 * analog_inactive_max:.3f} mV / <1 mV\n"
+        "symmetry max = "
+        f"{1e3 * max(analog_activation_symmetry, analog_error_symmetry):.2f} mV / <1.5 mV",
+        transform=analog_axes[0].transAxes,
+        fontsize="x-small",
+        bbox={"facecolor": "white", "alpha": 0.82, "edgecolor": "0.8"},
+    )
     analog_axes[0].legend(loc="upper left", ncol=2, fontsize="small")
     for idx, level in enumerate(analog_gate_levels):
         analog_axes[1].plot(
@@ -17568,6 +17604,17 @@ quit
     analog_axes[1].set_ylabel("selected $\\Delta W$ (V)")
     analog_axes[1].set_title("Activation-gate sweep produces matched W+ and W- steps")
     analog_axes[1].grid(True, alpha=0.25)
+    analog_axes[1].text(
+        0.47,
+        0.16,
+        "weak drive still writes = "
+        f"{1e3 * min(float(xgate_wp_steps[0]), float(xgate_wm_steps[0])):.2f} mV\n"
+        "strong drive max = "
+        f"{1e3 * max(float(xgate_wp_steps[-1]), float(xgate_wm_steps[-1])):.1f} mV / <250 mV",
+        transform=analog_axes[1].transAxes,
+        fontsize="x-small",
+        bbox={"facecolor": "white", "alpha": 0.82, "edgecolor": "0.8"},
+    )
     analog_axes[1].legend(loc="upper left", ncol=2, fontsize="small")
     analog_fig.tight_layout()
     save_plot(analog_fig, "mos_writer_analog_gate_ngspice")
@@ -17585,6 +17632,19 @@ quit
     mismatch_axes[0].set_ylabel("$\\Delta V_W$ (V)")
     mismatch_axes[0].set_title("PMOS threshold mismatch changes writer gain, not sign")
     mismatch_axes[0].grid(True, alpha=0.25)
+    mismatch_axes[0].text(
+        0.48,
+        0.16,
+        "selected range = "
+        f"{1e3 * mismatch_selected_min:.1f}-{1e3 * mismatch_selected_max:.1f} mV / 5.5-80 mV\n"
+        "W+/W- symmetry max = "
+        f"{1e3 * mismatch_symmetry:.2f} mV / <3 mV\n"
+        "inactive max = "
+        f"{1e3 * mismatch_inactive_max:.3f} mV / <1 mV",
+        transform=mismatch_axes[0].transAxes,
+        fontsize="x-small",
+        bbox={"facecolor": "white", "alpha": 0.82, "edgecolor": "0.8"},
+    )
     mismatch_axes[0].legend(loc="upper right", ncol=2)
     for idx, (label, _model, vto) in enumerate(mismatch_levels):
         linestyle = "-" if idx != 1 else "--"
@@ -17600,6 +17660,17 @@ quit
     mismatch_axes[1].set_ylabel("$\\Delta W^+$ (V)")
     mismatch_axes[1].set_title("Selected writer traces remain monotone and bounded")
     mismatch_axes[1].grid(True, alpha=0.25)
+    mismatch_axes[1].text(
+        0.48,
+        0.16,
+        "strong-to-weak gain drop = "
+        f"{1e3 * (mismatch_wp_selected[0] - mismatch_wp_selected[-1]):.1f} mV\n"
+        "weak-corner selected step = "
+        f"{1e3 * mismatch_wp_selected[-1]:.1f} mV / >5.5 mV",
+        transform=mismatch_axes[1].transAxes,
+        fontsize="x-small",
+        bbox={"facecolor": "white", "alpha": 0.82, "edgecolor": "0.8"},
+    )
     mismatch_axes[1].legend(loc="upper left")
     mismatch_fig.tight_layout()
     save_plot(mismatch_fig, "mos_writer_mismatch_ngspice")
@@ -17614,6 +17685,21 @@ quit
     alternating_axes[0].set_ylabel("read current (uA)")
     alternating_axes[0].set_title("Alternating W+ then W- writes reverse same-weight readback")
     alternating_axes[0].grid(True, alpha=0.25)
+    alternating_axes[0].text(
+        0.48,
+        0.16,
+        "baseline = "
+        f"{1e6 * baseline_net:.2f} uA / |base|<1 uA\n"
+        "after W+ = "
+        f"{1e6 * positive_net:.1f} uA / >15 uA\n"
+        "partial cancel = "
+        f"{1e6 * partial_net:.1f} uA / still >0\n"
+        "after W- = "
+        f"{1e6 * negative_net:.1f} uA / <-5 uA",
+        transform=alternating_axes[0].transAxes,
+        fontsize="x-small",
+        bbox={"facecolor": "white", "alpha": 0.82, "edgecolor": "0.8"},
+    )
     alternating_axes[0].legend(loc="upper right", ncol=2)
     alternating_axes[1].plot(1e6 * atime, alternating_cols[0] - alternating_cols[0][0], label="$\\Delta W^+$")
     alternating_axes[1].plot(1e6 * atime, alternating_cols[1] - alternating_cols[1][0], label="$\\Delta W^-$")
@@ -17622,6 +17708,17 @@ quit
     alternating_axes[1].set_ylabel("stored weight step (V)")
     alternating_axes[1].set_title("Both rails retain their writes; sign comes from differential readout")
     alternating_axes[1].grid(True, alpha=0.25)
+    alternating_axes[1].text(
+        0.48,
+        0.16,
+        "final W+ step = "
+        f"{1e3 * final_wp_step:.1f} mV / >20 mV\n"
+        "final W- step = "
+        f"{1e3 * final_wm_step:.1f} mV / >30 mV",
+        transform=alternating_axes[1].transAxes,
+        fontsize="x-small",
+        bbox={"facecolor": "white", "alpha": 0.82, "edgecolor": "0.8"},
+    )
     alternating_axes[1].legend()
     alternating_fig.tight_layout()
     save_plot(alternating_fig, "mos_writer_alternating_ngspice")
@@ -17636,12 +17733,14 @@ quit
     retention_axes[0].set_ylabel("weight cap voltage (V)")
     retention_axes[0].set_title("Written weight caps hold while used as synapse tail gates")
     retention_axes[0].text(
-        0.02,
-        0.88,
-        f"max hold drift = {1e6 * max_cap_hold_drift:.3f} uV",
+        0.04,
+        0.72,
+        "hold drift = "
+        f"{1e6 * max_cap_hold_drift:.3f} uV / <10 uV\n"
+        "inactive rails within 1 mV",
         transform=retention_axes[0].transAxes,
-        fontsize="small",
-        bbox={"facecolor": "white", "alpha": 0.8, "edgecolor": "0.8"},
+        fontsize="x-small",
+        bbox={"facecolor": "white", "alpha": 0.82, "edgecolor": "0.8"},
     )
     retention_axes[0].grid(True, alpha=0.25)
     retention_axes[0].legend(loc="lower right", ncol=2)
@@ -17653,13 +17752,13 @@ quit
     retention_axes[1].set_ylabel("read current (uA)")
     retention_axes[1].set_title("Continuous read current stays stable after write phase")
     retention_axes[1].text(
-        0.02,
-        0.88,
+        0.04,
+        0.72,
         f"hold read = {1e6 * pos_hold_read:+.1f}/{1e6 * neg_hold_read:+.1f} uA\n"
-        f"max drift = {1e6 * max_read_hold_drift:.3f} uA",
+        f"max drift = {1e6 * max_read_hold_drift:.3f} uA / <0.5 uA",
         transform=retention_axes[1].transAxes,
-        fontsize="small",
-        bbox={"facecolor": "white", "alpha": 0.8, "edgecolor": "0.8"},
+        fontsize="x-small",
+        bbox={"facecolor": "white", "alpha": 0.82, "edgecolor": "0.8"},
     )
     retention_axes[1].grid(True, alpha=0.25)
     retention_axes[1].legend(loc="upper right")

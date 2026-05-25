@@ -2,6 +2,20 @@
 
 ## 2026-05-25
 
+- Family-completed the remaining low-level MOS writer plots.  The analog-gate,
+  PMOS-mismatch, alternating-readback, and retention decks already asserted
+  analog gate monotonicity, W+/W- symmetry, inactive-rail quietness, mismatch
+  sign preservation, alternating readback sign reversal, and read-disturb
+  limits.  The regenerated `mos_writer_analog_gate_ngspice`,
+  `mos_writer_mismatch_ngspice`, `mos_writer_alternating_ngspice`, and
+  `mos_writer_retention_ngspice` figures now label those margins directly:
+  analog gate sweeps provide \(6.2\)--\(7.0\) mV dynamic range with
+  sub-display inactive/symmetry error, mismatch keeps selected steps in the
+  \(6.0\)--\(10.4\) mV useful range with zero visible inactive write,
+  alternating writes move readback from \(+24.1\,\mu\)A through partial
+  cancellation to \(-8.4\,\mu\)A, and continuous read holds the stored gates
+  within \(0.067\,\mu\)V while read-current drift remains below the displayed
+  \(0.001\,\mu\)A resolution.
 - Clarified the low-level MOS writer primitive plots.  The writer decks already
   asserted four-quadrant branch selection, inactive-rail quietness,
   pulse-width linearity, readback sign, and repeated online accumulation.  The

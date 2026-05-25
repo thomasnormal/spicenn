@@ -2365,6 +2365,29 @@ must satisfy before it can replace the current behavioral prototype.
 
 \begin{figure}[H]
   \centering
+  \includegraphics[width=0.95\linewidth]{figures/mos_hidden_writer_restored_gate_hybrid_update_forward_guard_forward_pair_96u_shifted_gate_reset_ref_precharge_strength_ngspice.png}
+  \caption{Ngspice startup-precharge strength-margin check for the same cold
+  local trim-reference reservoir.  The \(250\) pF reservoirs, \(100\)
+  \(\mathrm{k}\Omega\) trim sources, \(5\) pF shifted gates, and ordinary MOS
+  reset are unchanged from
+  Fig.~\ref{fig:mos-hidden-writer-restored-gate-hybrid-update-forward-guard-forward-pair-96u-shifted-gate-reset-ref-precharge-ngspice};
+  this sweep only scales the temporary precharge transmission gate around the
+  nominal \(300/900\,\mu\mathrm{m}\) NMOS/PMOS path.  With a \(20\) ns startup
+  pulse, \(0.125\times\) and \(0.25\times\) devices are visibly too weak:
+  trim error is \(29.045/34.325\) mV and \(15.368/18.164\) mV for the
+  \(-55/+65\) mV branches.  A \(0.5\times\) path crosses the \(6\) mV gate at
+  \(3.958/4.687\) mV error with \(0.845\) V common mode, and the nominal
+  \(1.0\times\) path reaches the initialized-reservoir floor at
+  \(1.146/1.355\) mV error with \(0.896\) V common mode.  Extending the
+  \(0.25\times\) path to \(40\) ns also passes at \(4.786/5.657\) mV.  The
+  startup-precharge requirement is therefore a concrete width--time product:
+  smaller startup switches are allowed, but they must be given longer
+  precharge time before the first calibrated reset.}
+  \label{fig:mos-hidden-writer-restored-gate-hybrid-update-forward-guard-forward-pair-96u-shifted-gate-reset-ref-precharge-strength-ngspice}
+\end{figure}
+
+\begin{figure}[H]
+  \centering
   \includegraphics[width=0.88\linewidth]{figures/mos_hidden_writer_restored_gate_hybrid_update_forward_guard_forward_tail_bias_ngspice.png}
   \caption{Ngspice isolated forward-tail bias sweep for the same guarded MOS
   activation store.  The failed shared-bias experiment changed the read path

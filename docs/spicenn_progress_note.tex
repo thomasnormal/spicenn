@@ -2622,6 +2622,29 @@ must satisfy before it can replace the current behavioral prototype.
 
 \begin{figure}[H]
   \centering
+  \includegraphics[width=0.95\linewidth]{figures/mos_hidden_writer_restored_gate_hybrid_update_forward_guard_forward_pair_96u_shifted_gate_reset_ref_fanout_precharge_ngspice.png}
+  \caption{Ngspice cold-start precharge sweep for the larger fanout reservoirs
+  from
+  Fig.~\ref{fig:mos-hidden-writer-restored-gate-hybrid-update-forward-guard-forward-pair-96u-shifted-gate-reset-ref-fanout-cap-ngspice}.
+  The deck keeps the \(0.80\) V tuned reset common mode, \(100\)
+  \(\mathrm{k}\Omega\) trim sources, real MOS startup-precharge transmission
+  gates, real reset switches, and \(5\) pF shifted-gate loads.  The local
+  reservoirs start cold; the plotted pulse width is the temporary MOS
+  precharge before reset.  The earlier \(250\) pF/four-load point remains
+  schedulable at \(20\) ns, with worst trim error \(5.09\) mV.  The \(500\)
+  pF/eight-load point needs about \(40\) ns to cross the \(6\) mV trim-error
+  gate, with worst error \(5.19\) mV.  The \(1\) nF/sixteen-load point is
+  still marginal at \(40\) ns (\(9.12/10.78\) mV for the \(-55/+65\) mV
+  branches) and recovers at \(80\) ns, with worst error \(5.24\) mV.  First
+  and last reset loads match to the displayed zero level, so the schedule
+  cost comes from charging the larger local reservoir, not fanout mismatch.
+  The fanout-capacitance fix is therefore circuit-realistic only with a
+  startup-precharge budget that scales with reservoir size.}
+  \label{fig:mos-hidden-writer-restored-gate-hybrid-update-forward-guard-forward-pair-96u-shifted-gate-reset-ref-fanout-precharge-ngspice}
+\end{figure}
+
+\begin{figure}[H]
+  \centering
   \includegraphics[width=0.95\linewidth]{figures/mos_hidden_writer_restored_gate_hybrid_update_forward_guard_forward_pair_96u_shifted_gate_reset_ref_precharge_strength_ngspice.png}
   \caption{Ngspice startup-precharge strength-margin check for the same cold
   local trim-reference reservoir.  The \(250\) pF reservoirs, \(100\)

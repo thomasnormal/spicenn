@@ -14686,6 +14686,228 @@ quit
         "larger-reservoir fanout sweep should keep reset common mode bounded",
     )
 
+    shift_refz_fanout_precharge_cases = [
+        ("c250_fo4", "250 pF, 4 loads", 250.0, 4),
+        ("c500_fo8", "500 pF, 8 loads", 500.0, 8),
+        ("c1n_fo16", "1 nF, 16 loads", 1000.0, 16),
+    ]
+    shift_refz_fanout_precharge_pulses = [
+        ("nopre", "none", 0.0),
+        ("pre10ns", "10 ns", 10.0),
+        ("pre20ns", "20 ns", 20.0),
+        ("pre40ns", "40 ns", 40.0),
+        ("pre80ns", "80 ns", 80.0),
+    ]
+
+    def run_reset_ref_fanout_precharge_case(
+        branch_name: str,
+        reset_trim_v: float,
+    ) -> tuple[np.ndarray, list[np.ndarray]]:
+        stem = (
+            "mos_hidden_writer_restored_gate_hybrid_update_forward_guard_"
+            f"forward_pair_96u_shifted_gate_reset_ref_fanout_precharge_{branch_name}"
+        )
+        reset_common_v = shift_refz_precharge_tuned_common_v
+        reset_ref_p = reset_common_v + 0.5 * reset_trim_v
+        reset_ref_m = reset_common_v - 0.5 * reset_trim_v
+        deck_lines = [
+            "* Cold-start precharge check for larger local trim reservoirs and fanout.",
+            "* Reservoirs start cold; a temporary MOS TG precharges each local rail",
+            "* before one reservoir pair resets many real shifted-gate loads.",
+            COMMON_MODELS,
+            ".param CGATE=5p WRESETN=60u WRESETP=180u WPREN=300u WPREP=900u",
+            "VDD vdd 0 1.8",
+            "VRST rst 0 PWL(0 0 2.48u 0 2.50u 1.8 2.62u 1.8 2.64u 0 3.0u 0)",
+            "VRSTN rstn 0 PWL(0 1.8 2.48u 1.8 2.50u 0 2.62u 0 2.64u 1.8 3.0u 1.8)",
+        ]
+        prints = []
+        case_idx = 0
+        for case_name, case_label, cref_pf, load_count in shift_refz_fanout_precharge_cases:
+            for pulse_name, pulse_label, pulse_width_ns in shift_refz_fanout_precharge_pulses:
+                if pulse_width_ns <= 0.0:
+                    pre_pwl = f"VPRE_FOP_{case_idx} pre_fop_{case_idx} 0 0"
+                    pren_pwl = f"VPREN_FOP_{case_idx} pren_fop_{case_idx} 0 1.8"
+                else:
+                    pre_end_us = 0.420 + 0.001 * pulse_width_ns
+                    pre_fall_us = pre_end_us + 0.020
+                    pre_pwl = (
+                        f"VPRE_FOP_{case_idx} pre_fop_{case_idx} 0 "
+                        f"PWL(0 0 0.400u 0 0.420u 1.8 {pre_end_us:.3f}u 1.8 "
+                        f"{pre_fall_us:.3f}u 0 3.0u 0)"
+                    )
+                    pren_pwl = (
+                        f"VPREN_FOP_{case_idx} pren_fop_{case_idx} 0 "
+                        f"PWL(0 1.8 0.400u 1.8 0.420u 0 {pre_end_us:.3f}u 0 "
+                        f"{pre_fall_us:.3f}u 1.8 3.0u 1.8)"
+                    )
+                deck_lines.extend(
+                    [
+                        (
+                            f"* {case_name}_{pulse_name}: cold {case_label} reservoir, "
+                            f"startup pulse {pulse_label}."
+                        ),
+                        pre_pwl,
+                        pren_pwl,
+                        f"VZRP_FOP_{case_idx} zrp_fop_src_{case_idx} 0 {reset_ref_p:.5f}",
+                        f"VZRM_FOP_{case_idx} zrm_fop_src_{case_idx} 0 {reset_ref_m:.5f}",
+                        f"RZRP_FOP_{case_idx} zrp_fop_src_{case_idx} zrp_fop_{case_idx} 100k",
+                        f"RZRM_FOP_{case_idx} zrm_fop_src_{case_idx} zrm_fop_{case_idx} 100k",
+                        f"CZRP_FOP_{case_idx} zrp_fop_{case_idx} 0 {cref_pf:g}p IC=0",
+                        f"CZRM_FOP_{case_idx} zrm_fop_{case_idx} 0 {cref_pf:g}p IC=0",
+                        (
+                            f"MPREPN_FOP_{case_idx} zrp_fop_{case_idx} pre_fop_{case_idx} "
+                            f"zrp_fop_src_{case_idx} 0 NMOS L={{LCH}} W={{WPREN}}"
+                        ),
+                        (
+                            f"MPREMN_FOP_{case_idx} zrm_fop_{case_idx} pre_fop_{case_idx} "
+                            f"zrm_fop_src_{case_idx} 0 NMOS L={{LCH}} W={{WPREN}}"
+                        ),
+                        (
+                            f"MPREPP_FOP_{case_idx} zrp_fop_{case_idx} pren_fop_{case_idx} "
+                            f"zrp_fop_src_{case_idx} vdd PMOS L={{LCH}} W={{WPREP}}"
+                        ),
+                        (
+                            f"MPREMP_FOP_{case_idx} zrm_fop_{case_idx} pren_fop_{case_idx} "
+                            f"zrm_fop_src_{case_idx} vdd PMOS L={{LCH}} W={{WPREP}}"
+                        ),
+                    ]
+                )
+                for load_idx in range(load_count):
+                    deck_lines.extend(
+                        [
+                            f"CZPG_FOP_{case_idx}_{load_idx} zpg_fop_{case_idx}_{load_idx} 0 {{CGATE}} IC={reset_common_v:.5f}",
+                            f"CZMG_FOP_{case_idx}_{load_idx} zmg_fop_{case_idx}_{load_idx} 0 {{CGATE}} IC={reset_common_v:.5f}",
+                            (
+                                f"MRZGPN_FOP_{case_idx}_{load_idx} zpg_fop_{case_idx}_{load_idx} rst "
+                                f"zrp_fop_{case_idx} 0 NMOS L={{LCH}} W={{WRESETN}}"
+                            ),
+                            (
+                                f"MRZGMN_FOP_{case_idx}_{load_idx} zmg_fop_{case_idx}_{load_idx} rst "
+                                f"zrm_fop_{case_idx} 0 NMOS L={{LCH}} W={{WRESETN}}"
+                            ),
+                            (
+                                f"MRZGPP_FOP_{case_idx}_{load_idx} zpg_fop_{case_idx}_{load_idx} rstn "
+                                f"zrp_fop_{case_idx} vdd PMOS L={{LCH}} W={{WRESETP}}"
+                            ),
+                            (
+                                f"MRZGMP_FOP_{case_idx}_{load_idx} zmg_fop_{case_idx}_{load_idx} rstn "
+                                f"zrm_fop_{case_idx} vdd PMOS L={{LCH}} W={{WRESETP}}"
+                            ),
+                        ]
+                    )
+                last_load_idx = load_count - 1
+                prints.extend(
+                    [
+                        f"v(zrp_fop_{case_idx})",
+                        f"v(zrm_fop_{case_idx})",
+                        f"v(zpg_fop_{case_idx}_0)",
+                        f"v(zmg_fop_{case_idx}_0)",
+                        f"v(zpg_fop_{case_idx}_{last_load_idx})",
+                        f"v(zmg_fop_{case_idx}_{last_load_idx})",
+                    ]
+                )
+                case_idx += 1
+        deck_lines.extend(
+            [
+                ".control",
+                "set noaskquit",
+                "tran 1n 3.0u uic",
+                f"wrdata {stem}.dat " + " ".join(prints),
+                "quit",
+                ".endc",
+                ".end",
+            ]
+        )
+        data = run_ngspice("\n".join(deck_lines), stem)
+        return load_wrdata(data, len(prints))
+
+    shift_refz_fanout_precharge_trim_error = []
+    shift_refz_fanout_precharge_common_error = []
+    shift_refz_fanout_precharge_load_mismatch = []
+    shift_refz_fanout_precharge_traces = []
+    for branch_name, branch_label, _nfp_vto, _nfm_vto, reset_trim_v in shift_reset_branch_specs:
+        fpt, fanout_precharge_cols = run_reset_ref_fanout_precharge_case(branch_name, reset_trim_v)
+
+        def fpat(time_s: float, values: np.ndarray) -> float:
+            return float(values[np.argmin(np.abs(fpt - time_s))])
+
+        branch_trim_error = []
+        branch_common_error = []
+        branch_load_mismatch = []
+        case_idx = 0
+        for _case_name, cap_load_label, _cref_pf, _load_count in shift_refz_fanout_precharge_cases:
+            pulse_trim_error = []
+            pulse_common_error = []
+            pulse_load_mismatch = []
+            for _pulse_name, pulse_label, _pulse_width_ns in shift_refz_fanout_precharge_pulses:
+                ref_p = fanout_precharge_cols[6 * case_idx]
+                ref_m = fanout_precharge_cols[6 * case_idx + 1]
+                gate_p_first = fanout_precharge_cols[6 * case_idx + 2]
+                gate_m_first = fanout_precharge_cols[6 * case_idx + 3]
+                gate_p_last = fanout_precharge_cols[6 * case_idx + 4]
+                gate_m_last = fanout_precharge_cols[6 * case_idx + 5]
+                ref_diff = ref_p - ref_m
+                gate_diff_first = gate_p_first - gate_m_first
+                gate_diff_last = gate_p_last - gate_m_last
+                gate_common_first = 0.5 * (gate_p_first + gate_m_first)
+                pulse_trim_error.append(abs(fpat(2.70e-6, gate_diff_first) - reset_trim_v))
+                pulse_common_error.append(abs(fpat(2.70e-6, gate_common_first) - shift_refz_precharge_tuned_common_v))
+                pulse_load_mismatch.append(abs(fpat(2.70e-6, gate_diff_first - gate_diff_last)))
+                if cap_load_label in {"500 pF, 8 loads", "1 nF, 16 loads"} and pulse_label in {"20 ns", "40 ns", "80 ns"}:
+                    shift_refz_fanout_precharge_traces.append(
+                        (branch_label, cap_load_label, pulse_label, fpt, ref_diff)
+                    )
+                case_idx += 1
+            branch_trim_error.append(pulse_trim_error)
+            branch_common_error.append(pulse_common_error)
+            branch_load_mismatch.append(pulse_load_mismatch)
+        shift_refz_fanout_precharge_trim_error.append(branch_trim_error)
+        shift_refz_fanout_precharge_common_error.append(branch_common_error)
+        shift_refz_fanout_precharge_load_mismatch.append(branch_load_mismatch)
+
+    shift_refz_fanout_precharge_trim_error = np.array(shift_refz_fanout_precharge_trim_error)
+    shift_refz_fanout_precharge_common_error = np.array(shift_refz_fanout_precharge_common_error)
+    shift_refz_fanout_precharge_load_mismatch = np.array(shift_refz_fanout_precharge_load_mismatch)
+    fop_cap250_fo4_idx = 0
+    fop_cap500_fo8_idx = 1
+    fop_cap1n_fo16_idx = 2
+    fop_none_idx = 0
+    fop_20ns_idx = 2
+    fop_40ns_idx = 3
+    fop_80ns_idx = 4
+    require(
+        np.all(np.diff(shift_refz_fanout_precharge_trim_error, axis=2) < 0.0),
+        "cold fanout-reservoir startup trim error should improve monotonically with precharge width",
+    )
+    require(
+        np.all(shift_refz_fanout_precharge_trim_error[:, :, fop_none_idx] > 0.040),
+        "cold fanout reservoirs without startup precharge should under-deliver split trim",
+    )
+    require(
+        np.all(shift_refz_fanout_precharge_trim_error[:, fop_cap250_fo4_idx, fop_20ns_idx] < 0.006),
+        "250 pF four-load reservoir should remain schedulable with nominal 20 ns startup precharge",
+    )
+    require(
+        np.all(shift_refz_fanout_precharge_trim_error[:, fop_cap500_fo8_idx, fop_40ns_idx] < 0.006),
+        "500 pF eight-load reservoir should recover below the 6 mV gate by 40 ns startup precharge",
+    )
+    require(
+        np.all(shift_refz_fanout_precharge_trim_error[:, fop_cap1n_fo16_idx, fop_40ns_idx] > 0.006),
+        "1 nF sixteen-load reservoir should remain marginal at 40 ns startup precharge",
+    )
+    require(
+        np.all(shift_refz_fanout_precharge_trim_error[:, fop_cap1n_fo16_idx, fop_80ns_idx] < 0.006),
+        "1 nF sixteen-load reservoir should recover below the 6 mV gate by 80 ns startup precharge",
+    )
+    require(
+        np.max(shift_refz_fanout_precharge_common_error[:, :, fop_80ns_idx]) < 0.010,
+        "longer fanout startup precharge should restore reset common mode",
+    )
+    require(
+        np.max(shift_refz_fanout_precharge_load_mismatch) < 1e-5,
+        "fanout startup reset loads should remain matched from first to last load",
+    )
+
     tail_bias_forward_tail_line = "MNFT_HYR ftail_hyr vbias 0 0 NMOS L={LCH} W=48u"
     tail_bias_cases_v = [0.70, 0.80, 0.90, 0.95, 1.05, 1.15, 1.25]
     tail_bias_labels = []
@@ -17882,6 +18104,83 @@ quit
     save_plot(
         shift_refz_fanout_cap_fig,
         "mos_hidden_writer_restored_gate_hybrid_update_forward_guard_forward_pair_96u_shifted_gate_reset_ref_fanout_cap_ngspice",
+    )
+
+    shift_refz_fanout_precharge_fig, shift_refz_fanout_precharge_axes = plt.subplots(
+        2,
+        1,
+        figsize=(7.4, 6.1),
+        gridspec_kw={"height_ratios": [1.0, 0.9]},
+    )
+    fop_x = np.array([pulse_width_ns for _name, _label, pulse_width_ns in shift_refz_fanout_precharge_pulses[1:]])
+    for case_idx, (_case_name, cap_load_label, _cref_pf, _load_count) in enumerate(shift_refz_fanout_precharge_cases):
+        marker = "o-" if case_idx == 0 else ("s--" if case_idx == 1 else "^-")
+        for branch_idx, (_branch_name, branch_label, _nfp, _nfm, _trim) in enumerate(shift_reset_branch_specs):
+            alpha = 1.0 if branch_idx == 0 else 0.72
+            shift_refz_fanout_precharge_axes[0].plot(
+                fop_x,
+                1e3 * shift_refz_fanout_precharge_trim_error[branch_idx, case_idx, 1:],
+                marker,
+                alpha=alpha,
+                label=f"{branch_label.split(', ')[1]}, {cap_load_label}",
+            )
+    shift_refz_fanout_precharge_axes[0].axhline(
+        6,
+        color="0.4",
+        linestyle=":",
+        linewidth=0.9,
+        label="6 mV trim-error gate",
+    )
+    shift_refz_fanout_precharge_axes[0].set_xscale("log", base=2)
+    shift_refz_fanout_precharge_axes[0].set_xticks(fop_x)
+    shift_refz_fanout_precharge_axes[0].set_xticklabels([label for _name, label, _width in shift_refz_fanout_precharge_pulses[1:]])
+    shift_refz_fanout_precharge_axes[0].set_ylabel("trim error (mV)")
+    shift_refz_fanout_precharge_axes[0].set_title("Larger fanout reservoirs need longer startup precharge")
+    shift_refz_fanout_precharge_axes[0].grid(True, axis="y", alpha=0.25)
+    shift_refz_fanout_precharge_axes[0].text(
+        0.45,
+        0.34,
+        "250 pF / 4 loads, 20 ns max err = "
+        f"{1e3 * np.max(shift_refz_fanout_precharge_trim_error[:, fop_cap250_fo4_idx, fop_20ns_idx]):.2f} mV\n"
+        "500 pF / 8 loads, 40 ns max err = "
+        f"{1e3 * np.max(shift_refz_fanout_precharge_trim_error[:, fop_cap500_fo8_idx, fop_40ns_idx]):.2f} mV\n"
+        "1 nF / 16 loads, 40 ns min err = "
+        f"{1e3 * np.min(shift_refz_fanout_precharge_trim_error[:, fop_cap1n_fo16_idx, fop_40ns_idx]):.2f} mV\n"
+        "1 nF / 16 loads, 80 ns max err = "
+        f"{1e3 * np.max(shift_refz_fanout_precharge_trim_error[:, fop_cap1n_fo16_idx, fop_80ns_idx]):.2f} mV",
+        transform=shift_refz_fanout_precharge_axes[0].transAxes,
+        fontsize="x-small",
+        bbox={"facecolor": "white", "alpha": 0.82, "edgecolor": "0.8"},
+    )
+    shift_refz_fanout_precharge_axes[0].legend(loc="upper right", ncol=2, fontsize="xx-small")
+    for branch_label, cap_load_label, pulse_label, fpt, ref_diff in shift_refz_fanout_precharge_traces:
+        if cap_load_label.startswith("500"):
+            linestyle = "-" if pulse_label == "20 ns" else ("--" if pulse_label == "40 ns" else "-.")
+        else:
+            linestyle = ":" if pulse_label == "20 ns" else ((0, (5, 2, 1, 2)) if pulse_label == "40 ns" else (0, (1, 1)))
+        shift_refz_fanout_precharge_axes[1].plot(
+            1e6 * fpt,
+            1e3 * ref_diff,
+            linestyle=linestyle,
+            label=f"{branch_label.split(', ')[1]}, {cap_load_label}, {pulse_label}",
+        )
+    shift_refz_fanout_precharge_axes[1].axhline(0, color="0.4", linewidth=0.8)
+    shift_refz_fanout_precharge_axes[1].axvline(0.42, color="0.25", linestyle="--", linewidth=0.9, alpha=0.55, label="precharge on")
+    shift_refz_fanout_precharge_axes[1].set_xlim(0.39, 0.53)
+    shift_refz_fanout_precharge_axes[1].set_xlabel("time (us)")
+    shift_refz_fanout_precharge_axes[1].set_ylabel("reservoir trim (mV)")
+    shift_refz_fanout_precharge_axes[1].set_title("MOS startup TG charges the local reservoir before reset")
+    shift_refz_fanout_precharge_axes[1].grid(True, alpha=0.25)
+    shift_refz_fanout_precharge_axes[1].legend(
+        loc="upper center",
+        bbox_to_anchor=(0.5, -0.23),
+        ncol=2,
+        fontsize="xx-small",
+    )
+    shift_refz_fanout_precharge_fig.tight_layout()
+    save_plot(
+        shift_refz_fanout_precharge_fig,
+        "mos_hidden_writer_restored_gate_hybrid_update_forward_guard_forward_pair_96u_shifted_gate_reset_ref_fanout_precharge_ngspice",
     )
 
     tail_bias_fig, tail_bias_axes = plt.subplots(2, 1, figsize=(7.4, 6.4), gridspec_kw={"height_ratios": [1.0, 0.8]})

@@ -16640,6 +16640,309 @@ quit
         "fast reset margin sweep should keep first and last loads in each selected partition matched",
     )
 
+    shift_refz_fast_reset_cases = [
+        ("w40_s1", "40 ns, 1x reset TG", 40.0, 1.0),
+        ("w80_s1", "80 ns, 1x reset TG", 80.0, 1.0),
+        ("w120_s05", "120 ns, 0.5x reset TG", 120.0, 0.5),
+        ("w120_s1", "120 ns, 1x reset TG", 120.0, 1.0),
+        ("w80_s2", "80 ns, 2x reset TG", 80.0, 2.0),
+        ("w120_s2", "120 ns, 2x reset TG", 120.0, 2.0),
+    ]
+
+    def run_reset_ref_fast_reset_case(
+        branch_name: str,
+        reset_trim_v: float,
+    ) -> tuple[np.ndarray, list[np.ndarray]]:
+        stem = (
+            "mos_hidden_writer_restored_gate_hybrid_update_forward_guard_"
+            f"forward_pair_96u_shifted_gate_reset_ref_fast_reset_{branch_name}"
+        )
+        reset_common_v = shift_refz_precharge_tuned_common_v
+        reset_ref_p = reset_common_v + 0.5 * reset_trim_v
+        reset_ref_m = reset_common_v - 0.5 * reset_trim_v
+        total_cref_pf = 1000.0
+        total_load_count = 16
+        startup_pulse_width_ns = 40.0
+        strength_scale = 2.0
+        gap_us = 1.0
+        pre_end_us = 0.420 + 0.001 * startup_pulse_width_ns
+        pre_fall_us = pre_end_us + 0.020
+        wpren_u = 300.0 * strength_scale
+        wprep_u = 900.0 * strength_scale
+        tran_stop_us = 2.95 + 2.0 * gap_us
+        deck_lines = [
+            "* Fast recovered reset-reference reset-pulse and reset-TG sizing sweep.",
+            "* The two passing 1 us configurations keep their local refresh path;",
+            "* only reset switch width and active reset pulse width are swept.",
+            COMMON_MODELS,
+            ".param CGATE=5p",
+            "VDD vdd 0 1.8",
+        ]
+        prints = []
+        case_idx = 0
+        for config_name, config_label, partition_count, source_ohm in shift_refz_fast_margin_configs:
+            cap_pf = total_cref_pf / partition_count
+            loads_per_partition = total_load_count // partition_count
+            for reset_name, reset_label, reset_width_ns, reset_scale in shift_refz_fast_reset_cases:
+                wresetn_u = 60.0 * reset_scale
+                wresetp_u = 180.0 * reset_scale
+                deck_lines.extend(
+                    [
+                        (
+                            f"* {config_name}_{reset_name}: {config_label}, {reset_label}, "
+                            f"Rrefresh={source_ohm:g}, 1 us cadence."
+                        ),
+                        (
+                            f"VPRE_FORST_{case_idx} pre_forst_{case_idx} 0 "
+                            f"PWL(0 0 0.400u 0 0.420u 1.8 {pre_end_us:.3f}u 1.8 "
+                            f"{pre_fall_us:.3f}u 0 {tran_stop_us:.3f}u 0)"
+                        ),
+                        (
+                            f"VPREN_FORST_{case_idx} pren_forst_{case_idx} 0 "
+                            f"PWL(0 1.8 0.400u 1.8 0.420u 0 {pre_end_us:.3f}u 0 "
+                            f"{pre_fall_us:.3f}u 1.8 {tran_stop_us:.3f}u 1.8)"
+                        ),
+                    ]
+                )
+                for part_idx in range(partition_count):
+                    deck_lines.extend(
+                        [
+                            f"VZRP_FORST_{case_idx}_{part_idx} zrp_forst_src_{case_idx}_{part_idx} 0 {reset_ref_p:.5f}",
+                            f"VZRM_FORST_{case_idx}_{part_idx} zrm_forst_src_{case_idx}_{part_idx} 0 {reset_ref_m:.5f}",
+                            f"RZRP_FORST_{case_idx}_{part_idx} zrp_forst_src_{case_idx}_{part_idx} zrp_forst_{case_idx}_{part_idx} {source_ohm:g}",
+                            f"RZRM_FORST_{case_idx}_{part_idx} zrm_forst_src_{case_idx}_{part_idx} zrm_forst_{case_idx}_{part_idx} {source_ohm:g}",
+                            f"CZRP_FORST_{case_idx}_{part_idx} zrp_forst_{case_idx}_{part_idx} 0 {cap_pf:g}p IC=0",
+                            f"CZRM_FORST_{case_idx}_{part_idx} zrm_forst_{case_idx}_{part_idx} 0 {cap_pf:g}p IC=0",
+                            (
+                                f"MPREPN_FORST_{case_idx}_{part_idx} zrp_forst_{case_idx}_{part_idx} "
+                                f"pre_forst_{case_idx} zrp_forst_src_{case_idx}_{part_idx} 0 "
+                                f"NMOS L={{LCH}} W={wpren_u:g}u"
+                            ),
+                            (
+                                f"MPREMN_FORST_{case_idx}_{part_idx} zrm_forst_{case_idx}_{part_idx} "
+                                f"pre_forst_{case_idx} zrm_forst_src_{case_idx}_{part_idx} 0 "
+                                f"NMOS L={{LCH}} W={wpren_u:g}u"
+                            ),
+                            (
+                                f"MPREPP_FORST_{case_idx}_{part_idx} zrp_forst_{case_idx}_{part_idx} "
+                                f"pren_forst_{case_idx} zrp_forst_src_{case_idx}_{part_idx} vdd "
+                                f"PMOS L={{LCH}} W={wprep_u:g}u"
+                            ),
+                            (
+                                f"MPREMP_FORST_{case_idx}_{part_idx} zrm_forst_{case_idx}_{part_idx} "
+                                f"pren_forst_{case_idx} zrm_forst_src_{case_idx}_{part_idx} vdd "
+                                f"PMOS L={{LCH}} W={wprep_u:g}u"
+                            ),
+                        ]
+                    )
+                for cycle_idx in range(3):
+                    reset_start_us = 2.50 + cycle_idx * gap_us
+                    reset_end_us = reset_start_us + 0.001 * reset_width_ns
+                    reset_fall_us = reset_end_us + 0.020
+                    deck_lines.extend(
+                        [
+                            (
+                                f"VRST_FORST_{case_idx}_{cycle_idx} rst_forst_{case_idx}_{cycle_idx} 0 "
+                                f"PWL(0 0 {reset_start_us - 0.020:.3f}u 0 "
+                                f"{reset_start_us:.3f}u 1.8 {reset_end_us:.3f}u 1.8 "
+                                f"{reset_fall_us:.3f}u 0 {tran_stop_us:.3f}u 0)"
+                            ),
+                            (
+                                f"VRSTN_FORST_{case_idx}_{cycle_idx} rstn_forst_{case_idx}_{cycle_idx} 0 "
+                                f"PWL(0 1.8 {reset_start_us - 0.020:.3f}u 1.8 "
+                                f"{reset_start_us:.3f}u 0 {reset_end_us:.3f}u 0 "
+                                f"{reset_fall_us:.3f}u 1.8 {tran_stop_us:.3f}u 1.8)"
+                            ),
+                        ]
+                    )
+                    for part_idx in range(partition_count):
+                        for load_idx in range(loads_per_partition):
+                            deck_lines.extend(
+                                [
+                                    (
+                                        f"CZPG_FORST_{case_idx}_{cycle_idx}_{part_idx}_{load_idx} "
+                                        f"zpg_forst_{case_idx}_{cycle_idx}_{part_idx}_{load_idx} 0 "
+                                        f"{{CGATE}} IC={reset_common_v:.5f}"
+                                    ),
+                                    (
+                                        f"CZMG_FORST_{case_idx}_{cycle_idx}_{part_idx}_{load_idx} "
+                                        f"zmg_forst_{case_idx}_{cycle_idx}_{part_idx}_{load_idx} 0 "
+                                        f"{{CGATE}} IC={reset_common_v:.5f}"
+                                    ),
+                                    (
+                                        f"MRZGPN_FORST_{case_idx}_{cycle_idx}_{part_idx}_{load_idx} "
+                                        f"zpg_forst_{case_idx}_{cycle_idx}_{part_idx}_{load_idx} "
+                                        f"rst_forst_{case_idx}_{cycle_idx} zrp_forst_{case_idx}_{part_idx} 0 "
+                                        f"NMOS L={{LCH}} W={wresetn_u:g}u"
+                                    ),
+                                    (
+                                        f"MRZGMN_FORST_{case_idx}_{cycle_idx}_{part_idx}_{load_idx} "
+                                        f"zmg_forst_{case_idx}_{cycle_idx}_{part_idx}_{load_idx} "
+                                        f"rst_forst_{case_idx}_{cycle_idx} zrm_forst_{case_idx}_{part_idx} 0 "
+                                        f"NMOS L={{LCH}} W={wresetn_u:g}u"
+                                    ),
+                                    (
+                                        f"MRZGPP_FORST_{case_idx}_{cycle_idx}_{part_idx}_{load_idx} "
+                                        f"zpg_forst_{case_idx}_{cycle_idx}_{part_idx}_{load_idx} "
+                                        f"rstn_forst_{case_idx}_{cycle_idx} zrp_forst_{case_idx}_{part_idx} vdd "
+                                        f"PMOS L={{LCH}} W={wresetp_u:g}u"
+                                    ),
+                                    (
+                                        f"MRZGMP_FORST_{case_idx}_{cycle_idx}_{part_idx}_{load_idx} "
+                                        f"zmg_forst_{case_idx}_{cycle_idx}_{part_idx}_{load_idx} "
+                                        f"rstn_forst_{case_idx}_{cycle_idx} zrm_forst_{case_idx}_{part_idx} vdd "
+                                        f"PMOS L={{LCH}} W={wresetp_u:g}u"
+                                    ),
+                                ]
+                            )
+                selected_part_indices = [0, partition_count - 1]
+                for part_idx in selected_part_indices:
+                    prints.extend(
+                        [
+                            f"v(zrp_forst_{case_idx}_{part_idx})",
+                            f"v(zrm_forst_{case_idx}_{part_idx})",
+                        ]
+                    )
+                    last_load_idx = loads_per_partition - 1
+                    for cycle_idx in range(3):
+                        prints.extend(
+                            [
+                                f"v(zpg_forst_{case_idx}_{cycle_idx}_{part_idx}_0)",
+                                f"v(zmg_forst_{case_idx}_{cycle_idx}_{part_idx}_0)",
+                                f"v(zpg_forst_{case_idx}_{cycle_idx}_{part_idx}_{last_load_idx})",
+                                f"v(zmg_forst_{case_idx}_{cycle_idx}_{part_idx}_{last_load_idx})",
+                            ]
+                        )
+                case_idx += 1
+        deck_lines.extend(
+            [
+                ".control",
+                "set noaskquit",
+                f"tran 5n {tran_stop_us:.3f}u uic",
+                f"wrdata {stem}.dat " + " ".join(prints),
+                "quit",
+                ".endc",
+                ".end",
+            ]
+        )
+        data = run_ngspice("\n".join(deck_lines), stem)
+        return load_wrdata(data, len(prints))
+
+    shift_refz_fast_reset_trim_error = []
+    shift_refz_fast_reset_common_error = []
+    shift_refz_fast_reset_load_mismatch = []
+    shift_refz_fast_reset_ref_diff = []
+    shift_refz_fast_reset_traces = []
+    for branch_name, branch_label, _nfp_vto, _nfm_vto, reset_trim_v in shift_reset_branch_specs:
+        forstt, fast_reset_cols = run_reset_ref_fast_reset_case(branch_name, reset_trim_v)
+
+        def forstat(time_s: float, values: np.ndarray) -> float:
+            return float(values[np.argmin(np.abs(forstt - time_s))])
+
+        branch_trim_error = []
+        branch_common_error = []
+        branch_load_mismatch = []
+        branch_ref_diff = []
+        col_base = 0
+        for _config_name, config_label, partition_count, _source_ohm in shift_refz_fast_margin_configs:
+            config_trim_error = []
+            config_common_error = []
+            config_load_mismatch = []
+            config_ref_diff = []
+            selected_partition_count = 2
+            case_width = 14 * selected_partition_count
+            for _reset_name, reset_label, _reset_width_ns, _reset_scale in shift_refz_fast_reset_cases:
+                reset_trim_error = []
+                reset_common_error = []
+                reset_load_mismatch = []
+                reset_ref_diff = []
+                for cycle_idx in range(3):
+                    cycle_trim_errors = []
+                    cycle_common_errors = []
+                    cycle_load_mismatches = []
+                    cycle_ref_diffs = []
+                    sample_time_s = (2.50 + cycle_idx * 1.0 + 0.200) * 1e-6
+                    for selected_part_idx in range(selected_partition_count):
+                        part_col_base = col_base + 14 * selected_part_idx
+                        ref_p = fast_reset_cols[part_col_base]
+                        ref_m = fast_reset_cols[part_col_base + 1]
+                        ref_diff = ref_p - ref_m
+                        gate_col_base = part_col_base + 2 + 4 * cycle_idx
+                        gate_p_first = fast_reset_cols[gate_col_base]
+                        gate_m_first = fast_reset_cols[gate_col_base + 1]
+                        gate_p_last = fast_reset_cols[gate_col_base + 2]
+                        gate_m_last = fast_reset_cols[gate_col_base + 3]
+                        gate_diff_first = gate_p_first - gate_m_first
+                        gate_diff_last = gate_p_last - gate_m_last
+                        gate_common_first = 0.5 * (gate_p_first + gate_m_first)
+                        cycle_trim_errors.append(abs(forstat(sample_time_s, gate_diff_first) - reset_trim_v))
+                        cycle_common_errors.append(
+                            abs(forstat(sample_time_s, gate_common_first) - shift_refz_precharge_tuned_common_v)
+                        )
+                        cycle_load_mismatches.append(abs(forstat(sample_time_s, gate_diff_first - gate_diff_last)))
+                        cycle_ref_diffs.append(forstat(sample_time_s, ref_diff))
+                    reset_trim_error.append(max(cycle_trim_errors))
+                    reset_common_error.append(max(cycle_common_errors))
+                    reset_load_mismatch.append(max(cycle_load_mismatches))
+                    reset_ref_diff.append(np.mean(cycle_ref_diffs))
+                config_trim_error.append(reset_trim_error)
+                config_common_error.append(reset_common_error)
+                config_load_mismatch.append(reset_load_mismatch)
+                config_ref_diff.append(reset_ref_diff)
+                if branch_name == "pos_trim" and (
+                    (config_label == "8 x 2 @ 3 kOhm" and reset_label in {"40 ns, 1x reset TG", "80 ns, 1x reset TG", "120 ns, 1x reset TG"})
+                    or (config_label == "16 x 1 @ 10 kOhm" and reset_label in {"80 ns, 1x reset TG", "120 ns, 1x reset TG"})
+                ):
+                    ref_p0 = fast_reset_cols[col_base]
+                    ref_m0 = fast_reset_cols[col_base + 1]
+                    shift_refz_fast_reset_traces.append((f"{config_label}, {reset_label}", forstt, ref_p0 - ref_m0))
+                col_base += case_width
+            branch_trim_error.append(config_trim_error)
+            branch_common_error.append(config_common_error)
+            branch_load_mismatch.append(config_load_mismatch)
+            branch_ref_diff.append(config_ref_diff)
+        shift_refz_fast_reset_trim_error.append(branch_trim_error)
+        shift_refz_fast_reset_common_error.append(branch_common_error)
+        shift_refz_fast_reset_load_mismatch.append(branch_load_mismatch)
+        shift_refz_fast_reset_ref_diff.append(branch_ref_diff)
+
+    shift_refz_fast_reset_trim_error = np.array(shift_refz_fast_reset_trim_error)
+    shift_refz_fast_reset_common_error = np.array(shift_refz_fast_reset_common_error)
+    shift_refz_fast_reset_load_mismatch = np.array(shift_refz_fast_reset_load_mismatch)
+    shift_refz_fast_reset_ref_diff = np.array(shift_refz_fast_reset_ref_diff)
+    forst_p8_idx = 0
+    forst_p16_idx = 1
+    forst_w40_s1_idx = 0
+    forst_w80_s1_idx = 1
+    forst_w120_s05_idx = 2
+    forst_w120_s1_idx = 3
+    forst_w80_s2_idx = 4
+    forst_w120_s2_idx = 5
+    require(
+        np.all(shift_refz_fast_reset_trim_error[:, :, forst_w120_s1_idx, for_cycle3_idx] < 0.006),
+        "nominal reset pulse/switch sizing should preserve the recovered fast reset configurations",
+    )
+    require(
+        np.all(
+            shift_refz_fast_reset_trim_error[:, :, forst_w120_s2_idx, for_cycle3_idx]
+            <= shift_refz_fast_reset_trim_error[:, :, forst_w120_s1_idx, for_cycle3_idx] + 5e-5
+        ),
+        "wider reset TG should not degrade cycle-3 trim delivery",
+    )
+    require(
+        shift_refz_fast_reset_trim_error[1, forst_p16_idx, forst_w80_s1_idx, for_cycle3_idx]
+        >= shift_refz_fast_reset_trim_error[1, forst_p16_idx, forst_w120_s1_idx, for_cycle3_idx],
+        "shorter reset pulse should not improve the positive branch of the tighter one-load configuration",
+    )
+    require(
+        np.max(shift_refz_fast_reset_common_error) < 0.010,
+        "fast reset pulse/width sweep should preserve reset common mode",
+    )
+    require(
+        np.max(shift_refz_fast_reset_load_mismatch) < 1e-5,
+        "fast reset pulse/width sweep should keep first and last loads in each selected partition matched",
+    )
+
     tail_bias_forward_tail_line = "MNFT_HYR ftail_hyr vbias 0 0 NMOS L={LCH} W=48u"
     tail_bias_cases_v = [0.70, 0.80, 0.90, 0.95, 1.05, 1.15, 1.25]
     tail_bias_labels = []
@@ -20508,6 +20811,98 @@ quit
     save_plot(
         shift_refz_fast_margin_fig,
         "mos_hidden_writer_restored_gate_hybrid_update_forward_guard_forward_pair_96u_shifted_gate_reset_ref_fast_margin_ngspice",
+    )
+
+    shift_refz_fast_reset_fig, shift_refz_fast_reset_axes = plt.subplots(
+        3,
+        1,
+        figsize=(7.4, 7.4),
+        gridspec_kw={"height_ratios": [0.95, 0.9, 1.0]},
+    )
+    forst_labels = [label for _name, label, _reset_width_ns, _reset_scale in shift_refz_fast_reset_cases]
+    forst_x = np.arange(len(forst_labels))
+    width = 0.36
+    for config_idx, (_config_name, config_label, _partition_count, _source_ohm) in enumerate(
+        shift_refz_fast_margin_configs
+    ):
+        offset = -0.5 * width if config_idx == 0 else 0.5 * width
+        shift_refz_fast_reset_axes[0].bar(
+            forst_x + offset,
+            1e3 * np.max(shift_refz_fast_reset_trim_error[:, config_idx, :, for_cycle3_idx], axis=0),
+            width=width,
+            label=config_label,
+        )
+    shift_refz_fast_reset_axes[0].axhline(
+        6,
+        color="0.4",
+        linestyle=":",
+        linewidth=0.9,
+        label="6 mV trim-error gate",
+    )
+    shift_refz_fast_reset_axes[0].set_xticks(forst_x)
+    shift_refz_fast_reset_axes[0].set_xticklabels(forst_labels, rotation=24, ha="right")
+    shift_refz_fast_reset_axes[0].set_ylabel("cycle-3 trim error (mV)")
+    shift_refz_fast_reset_axes[0].set_title("Fast reset reference also needs reset-pulse/switch margin")
+    shift_refz_fast_reset_axes[0].grid(True, axis="y", alpha=0.25)
+    shift_refz_fast_reset_axes[0].text(
+        0.42,
+        0.30,
+        "8 x 2, 40 ns 1x max = "
+        f"{1e3 * np.max(shift_refz_fast_reset_trim_error[:, forst_p8_idx, forst_w40_s1_idx, for_cycle3_idx]):.2f} mV\n"
+        "8 x 2, 80 ns 1x max = "
+        f"{1e3 * np.max(shift_refz_fast_reset_trim_error[:, forst_p8_idx, forst_w80_s1_idx, for_cycle3_idx]):.2f} mV\n"
+        "16 x 1, 80 ns 1x +branch = "
+        f"{1e3 * shift_refz_fast_reset_trim_error[1, forst_p16_idx, forst_w80_s1_idx, for_cycle3_idx]:.2f} mV\n"
+        "16 x 1, 120 ns 1x +branch = "
+        f"{1e3 * shift_refz_fast_reset_trim_error[1, forst_p16_idx, forst_w120_s1_idx, for_cycle3_idx]:.2f} mV",
+        transform=shift_refz_fast_reset_axes[0].transAxes,
+        fontsize="x-small",
+        bbox={"facecolor": "white", "alpha": 0.82, "edgecolor": "0.8"},
+    )
+    shift_refz_fast_reset_axes[0].legend(loc="upper left", ncol=2, fontsize="xx-small")
+    for config_idx, (_config_name, config_label, _partition_count, _source_ohm) in enumerate(
+        shift_refz_fast_margin_configs
+    ):
+        marker = "o-" if config_idx == forst_p8_idx else "s--"
+        shift_refz_fast_reset_axes[1].plot(
+            [1, 2, 3],
+            1e3 * shift_refz_fast_reset_trim_error[1, config_idx, forst_w80_s1_idx, :],
+            marker,
+            alpha=0.72,
+            label=f"{config_label}, 80 ns 1x",
+        )
+        shift_refz_fast_reset_axes[1].plot(
+            [1, 2, 3],
+            1e3 * shift_refz_fast_reset_trim_error[1, config_idx, forst_w120_s1_idx, :],
+            "o:" if config_idx == forst_p8_idx else "s:",
+            label=f"{config_label}, 120 ns 1x",
+        )
+    shift_refz_fast_reset_axes[1].axhline(6, color="0.4", linestyle=":", linewidth=0.9)
+    shift_refz_fast_reset_axes[1].set_xticks([1, 2, 3])
+    shift_refz_fast_reset_axes[1].set_ylabel("+65 mV trim error (mV)")
+    shift_refz_fast_reset_axes[1].set_title("Shorter reset pulses consume margin over repeated fresh banks")
+    shift_refz_fast_reset_axes[1].grid(True, axis="y", alpha=0.25)
+    shift_refz_fast_reset_axes[1].legend(loc="upper left", ncol=2, fontsize="xx-small")
+    for label, forstt, ref_diff in shift_refz_fast_reset_traces:
+        linestyle = ":" if "40 ns" in label else ("--" if "80 ns" in label else "-")
+        shift_refz_fast_reset_axes[2].plot(
+            1e6 * forstt,
+            1e3 * ref_diff,
+            linestyle,
+            label=label,
+        )
+    shift_refz_fast_reset_axes[2].axhline(65, color="0.4", linestyle=":", linewidth=0.9, label="target +65 mV")
+    shift_refz_fast_reset_axes[2].axhline(0, color="0.4", linewidth=0.8)
+    shift_refz_fast_reset_axes[2].set_xlim(2.3, 4.9)
+    shift_refz_fast_reset_axes[2].set_xlabel("time (us)")
+    shift_refz_fast_reset_axes[2].set_ylabel("partition trim (mV)")
+    shift_refz_fast_reset_axes[2].set_title("Reset-switch aperture changes how far the local reservoir is pulled down")
+    shift_refz_fast_reset_axes[2].grid(True, alpha=0.25)
+    shift_refz_fast_reset_axes[2].legend(loc="lower right", ncol=2, fontsize="xx-small")
+    shift_refz_fast_reset_fig.tight_layout()
+    save_plot(
+        shift_refz_fast_reset_fig,
+        "mos_hidden_writer_restored_gate_hybrid_update_forward_guard_forward_pair_96u_shifted_gate_reset_ref_fast_reset_ngspice",
     )
 
     tail_bias_fig, tail_bias_axes = plt.subplots(2, 1, figsize=(7.4, 6.4), gridspec_kw={"height_ratios": [1.0, 0.8]})

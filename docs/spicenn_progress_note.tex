@@ -2781,6 +2781,28 @@ must satisfy before it can replace the current behavioral prototype.
 
 \begin{figure}[H]
   \centering
+  \includegraphics[width=0.95\linewidth]{figures/mos_hidden_writer_restored_gate_hybrid_update_forward_guard_forward_pair_96u_shifted_gate_reset_ref_fast_reset_ngspice.png}
+  \caption{Ngspice reset-pulse and reset-switch margin check for the same two
+  recovered \(1\,\mu\mathrm{s}\) reset-reference configurations.  The local
+  refresh paths are fixed at their nominal recovered values:
+  \(8\times2\) partitions use \(3\,\mathrm{k}\Omega\), and \(16\times1\)
+  partitions use \(10\,\mathrm{k}\Omega\).  The sweep changes only the
+  complementary MOS reset transmission-gate sizing and active reset-pulse
+  width while keeping cold passive reservoirs, \(2\times\) startup precharge,
+  and three fresh shifted-gate load banks.  Unlike the refresh-resistance
+  sweep, this knob has comfortable margin: the \(8\times2\) option stays below
+  the \(6\) mV gate even with a \(40\) ns nominal-size reset pulse
+  (\(4.58\) mV worst error), and the \(16\times1\) option stays below the gate
+  at \(80\) ns nominal reset sizing (\(5.18\) mV on the \(+65\) mV branch).
+  Halving the reset switch at \(120\) ns is also acceptable
+  (\(3.78/4.90\) mV for the two options on the \(+65\) mV branch).  The
+  repeated-bank fast-reset limit is therefore dominated by local reservoir
+  recharge and refresh impedance, not by the tested reset-switch aperture.}
+  \label{fig:mos-hidden-writer-restored-gate-hybrid-update-forward-guard-forward-pair-96u-shifted-gate-reset-ref-fast-reset-ngspice}
+\end{figure}
+
+\begin{figure}[H]
+  \centering
   \includegraphics[width=0.95\linewidth]{figures/mos_hidden_writer_restored_gate_hybrid_update_forward_guard_forward_pair_96u_shifted_gate_reset_ref_precharge_strength_ngspice.png}
   \caption{Ngspice startup-precharge strength-margin check for the same cold
   local trim-reference reservoir.  The \(250\) pF reservoirs, \(100\)

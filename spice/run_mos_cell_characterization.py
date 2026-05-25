@@ -15059,6 +15059,19 @@ quit
     shift_refz_startup_axes[0].set_ylabel("trim error (mV)")
     shift_refz_startup_axes[0].set_title("Local trim reservoirs need startup precharge")
     shift_refz_startup_axes[0].grid(True, axis="y", alpha=0.25)
+    shift_refz_startup_axes[0].text(
+        0.46,
+        0.44,
+        "cold min trim err = "
+        f"{1e3 * np.min(shift_refz_startup_trim_error[:, cold_idx]):.1f} mV / >40 mV\n"
+        "3 tau max trim err = "
+        f"{1e3 * np.max(shift_refz_startup_trim_error[:, tau3_idx]):.2f} mV / 5 mV\n"
+        "initialized max err = "
+        f"{1e3 * np.max(shift_refz_startup_trim_error[:, initialized_idx]):.2f} mV / 1.5 mV",
+        transform=shift_refz_startup_axes[0].transAxes,
+        fontsize="x-small",
+        bbox={"facecolor": "white", "alpha": 0.82, "edgecolor": "0.8"},
+    )
     shift_refz_startup_axes[0].legend(loc="upper right", ncol=2, fontsize="xx-small")
     for branch_idx, (_branch_name, branch_label, _nfp, _nfm, _trim) in enumerate(shift_reset_branch_specs):
         marker = "o-" if branch_idx == 0 else "s--"
@@ -15075,6 +15088,17 @@ quit
     shift_refz_startup_axes[1].set_ylabel("gate common (V)")
     shift_refz_startup_axes[1].set_title("Common-mode recovery follows the same local RC reservoir")
     shift_refz_startup_axes[1].grid(True, axis="y", alpha=0.25)
+    shift_refz_startup_axes[1].text(
+        0.04,
+        0.14,
+        "3 tau min common = "
+        f"{np.min(shift_refz_startup_gate_common[:, tau3_idx]):.3f} V / >0.840 V\n"
+        "initialized common = "
+        f"{np.mean(shift_refz_startup_gate_common[:, initialized_idx]):.3f} V",
+        transform=shift_refz_startup_axes[1].transAxes,
+        fontsize="x-small",
+        bbox={"facecolor": "white", "alpha": 0.82, "edgecolor": "0.8"},
+    )
     shift_refz_startup_axes[1].legend(loc="lower right", ncol=2, fontsize="xx-small")
     for branch_label, case_label, srt, ref_diff, gate_diff, gate_common in shift_refz_startup_traces:
         if case_label == "cold":

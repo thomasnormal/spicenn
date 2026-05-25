@@ -2,6 +2,18 @@
 
 ## 2026-05-25
 
+- Clarified the shifted-gate reset-reference startup reservoir plot.  The
+  ngspice deck models cold \(250\) pF local trim-reference reservoirs behind
+  \(100\)k sources and already asserted that cold reservoirs visibly
+  under-deliver split trim, startup error improves monotonically with
+  reservoir precharge, three RC time constants recover trim below \(5\) mV
+  while restoring enough common mode, and initialized reservoirs recover the
+  earlier decoupled accuracy.  The regenerated
+  `mos_hidden_writer_restored_gate_hybrid_update_forward_guard_forward_pair_96u_shifted_gate_reset_ref_startup_ngspice`
+  plot now labels those measured margins: cold minimum trim error \(49.6\)
+  mV, three-tau maximum trim error \(4.14\) mV, initialized maximum trim error
+  \(1.27\) mV, three-tau minimum common mode \(0.860\) V, and initialized
+  common mode \(0.900\) V.
 - Clarified the shifted-gate first-reset width recovery plot.  The ngspice
   deck sweeps first-reset aperture for \(10\)k and \(100\)k trim-source
   impedances and already asserted monotonic \(10\)k trim-error improvement,

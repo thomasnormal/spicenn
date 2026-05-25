@@ -33,6 +33,7 @@ def test_device_mnist01_block_script_help_runs_from_repo_root() -> None:
     assert "--hidden-weight-write-width" in proc.stdout
     assert "--hidden-activation-width" in proc.stdout
     assert "--hidden-activation-model" in proc.stdout
+    assert "--hidden-polarity-init" in proc.stdout
     assert "--readout-forward-width" in proc.stdout
     assert "--phase-time-scale" in proc.stdout
     assert "--hidden-bias-positive-init" in proc.stdout
@@ -50,6 +51,22 @@ def test_block_topology_matches_target_10x10_b4_stride2_c2_shape() -> None:
     assert len(blocks[0]) == 16
     assert blocks[0] == [0, 1, 2, 3, 10, 11, 12, 13, 20, 21, 22, 23, 30, 31, 32, 33]
     assert blocks[-1] == [66, 67, 68, 69, 76, 77, 78, 79, 86, 87, 88, 89, 96, 97, 98, 99]
+
+
+def test_alternating_channel_hidden_polarity_initializes_absence_channels() -> None:
+    sys.path.insert(0, str(SPICE_DIR))
+    import run_device_mnist01_block_training as block
+
+    weights = block.initial_block_weights(4, 2, 2, 2, seed=0, hidden_polarity_init="alternating-channel")
+    whp = np.asarray(weights["whp"])
+    whn = np.asarray(weights["whn"])
+    bhp = np.asarray(weights["bhp"])
+    bhn = np.asarray(weights["bhn"])
+
+    assert np.all(whp[0::2] > whn[0::2])
+    assert np.all(whp[1::2] < whn[1::2])
+    assert np.all(bhp[0::2] > bhn[0::2])
+    assert np.all(bhp[1::2] > bhn[1::2])
 
 
 def test_block_netlist_emits_per_pixel_trainable_caps_and_no_behavioral_sources() -> None:

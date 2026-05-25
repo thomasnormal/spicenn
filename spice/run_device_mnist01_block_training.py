@@ -26,6 +26,7 @@ from spicenn.timing import CYCLE_NS
 INPUT_RAIL_MODES = ("raw", "complement", "alternating-complement")
 TARGET_POLARITIES = ("active-high", "active-low")
 HIDDEN_ACTIVATION_MODELS = ("nrel", "sense")
+HIDDEN_POLARITY_INITS = ("ink", "alternating-channel")
 
 
 def block_topology(image_size: int, block_size: int, stride: int, channels: int) -> tuple[list[list[int]], int]:
@@ -71,7 +72,10 @@ def initial_block_weights(
     seed: int = 0,
     hidden_bias_positive_init: float = 0.50,
     hidden_bias_negative_init: float = 0.20,
+    hidden_polarity_init: str = "ink",
 ) -> dict[str, Any]:
+    if hidden_polarity_init not in HIDDEN_POLARITY_INITS:
+        raise ValueError(f"hidden_polarity_init must be one of {HIDDEN_POLARITY_INITS}")
     blocks, feature_count = block_topology(image_size, block_size, stride, channels)
     block_len = len(blocks[0])
     rng = np.random.default_rng(seed)
@@ -81,6 +85,10 @@ def initial_block_weights(
     bhn = np.clip(hidden_bias_negative_init + rng.normal(0.0, 0.020, size=feature_count), 0.02, 1.10)
     vwp = np.clip(0.52 + rng.normal(0.0, 0.025, size=feature_count), 0.35, 0.75)
     vwn = np.clip(0.25 + rng.normal(0.0, 0.020, size=feature_count), 0.08, 0.45)
+    if hidden_polarity_init == "alternating-channel":
+        for feature in range(feature_count):
+            if feature % channels == 1:
+                whp[feature], whn[feature] = whn[feature].copy(), whp[feature].copy()
     return {
         "whp": whp.tolist(),
         "whn": whn.tolist(),
@@ -676,6 +684,7 @@ def main() -> None:
     ap.add_argument("--hidden-weight-write-width", type=float, default=0.25)
     ap.add_argument("--hidden-activation-width", type=float, default=24.0)
     ap.add_argument("--hidden-activation-model", choices=HIDDEN_ACTIVATION_MODELS, default="nrel")
+    ap.add_argument("--hidden-polarity-init", choices=HIDDEN_POLARITY_INITS, default="ink")
     ap.add_argument("--readout-forward-width", type=float, default=64.0)
     ap.add_argument("--phase-time-scale", type=float, default=1.0)
     ap.add_argument("--input-rail-mode", choices=INPUT_RAIL_MODES, default="alternating-complement")
@@ -722,6 +731,7 @@ def main() -> None:
         seed=args.weight_seed,
         hidden_bias_positive_init=args.hidden_bias_positive_init,
         hidden_bias_negative_init=args.hidden_bias_negative_init,
+        hidden_polarity_init=args.hidden_polarity_init,
     )
     common = {
         "image_size": args.image_size,
@@ -826,6 +836,7 @@ def main() -> None:
         "hidden_weight_write_width": args.hidden_weight_write_width,
         "hidden_activation_width": args.hidden_activation_width,
         "hidden_activation_model": args.hidden_activation_model,
+        "hidden_polarity_init": args.hidden_polarity_init,
         "readout_forward_width": args.readout_forward_width,
         "phase_time_scale": args.phase_time_scale,
         "hidden_bias_positive_init": args.hidden_bias_positive_init,

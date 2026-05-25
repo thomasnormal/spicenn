@@ -2,6 +2,13 @@
 
 ## 2026-05-25
 
+- Clarified the 96u high-gain guarded-hold robustness drift plot.  The ngspice
+  assertions allow \(300\,\mu\)V drift for the positive and negative hold
+  fixtures and \(1000\,\mu\)V for later off-state stress, while the measured
+  drifts are only about \(0.70/0.70/0.71\,\mu\)V.  The regenerated
+  `mos_hidden_writer_restored_gate_hybrid_update_forward_guard_forward_pair_96u_robustness_ngspice`
+  plot now labels those measured bar values, draws a \(1\,\mu\)V visual guide,
+  and prints the much larger assertion budgets directly on the plot.
 - Family-completed the guarded hold drift display for the positive hold and
   off-isolation cases.  The `guard_hold` assertion budget is \(200\,\mu\)V and
   the `guard_off_isolation` budget is \(500\,\mu\)V, but the rendered plots

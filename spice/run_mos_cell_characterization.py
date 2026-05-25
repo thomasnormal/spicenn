@@ -13257,14 +13257,36 @@ quit
             np.max(np.abs(high_gain_guard_off_drift)),
         ]
     )
+    high_gain_drift_budgets = np.array([0.0003, 0.0003, 0.0010])
     high_gain_x = np.arange(len(high_gain_drift_labels))
     high_gain_axes[1].bar(high_gain_x, 1e6 * high_gain_drift_values)
+    high_gain_axes[1].axhline(1.0, color="0.4", linestyle=":", linewidth=1.0, label="1 uV visual guide")
+    for x, drift in zip(high_gain_x, high_gain_drift_values):
+        high_gain_axes[1].text(
+            x,
+            1e6 * drift + 0.035,
+            f"{1e6 * drift:.2f}",
+            ha="center",
+            va="bottom",
+            fontsize="x-small",
+        )
+    high_gain_axes[1].text(
+        0.03,
+        0.74,
+        "assertion budgets:\n"
+        f"+/- hold <= {1e6 * high_gain_drift_budgets[0]:.0f} uV\n"
+        f"off stress <= {1e6 * high_gain_drift_budgets[2]:.0f} uV",
+        transform=high_gain_axes[1].transAxes,
+        fontsize="small",
+        bbox={"facecolor": "white", "alpha": 0.82, "edgecolor": "0.8"},
+    )
     high_gain_axes[1].set_xticks(high_gain_x)
     high_gain_axes[1].set_xticklabels(high_gain_drift_labels)
     high_gain_axes[1].set_ylabel("max held-value drift ($\\mu$V)")
-    high_gain_axes[1].set_ylim(0.0, max(1.0, 1.25 * 1e6 * float(np.max(high_gain_drift_values))))
-    high_gain_axes[1].set_title("Sign symmetry and later control activity stay at sub-microvolt drift")
+    high_gain_axes[1].set_ylim(0.0, max(1.15, 1.35 * 1e6 * float(np.max(high_gain_drift_values))))
+    high_gain_axes[1].set_title("High-gain hold drift stays far below the assertion budgets")
     high_gain_axes[1].grid(True, axis="y", alpha=0.25)
+    high_gain_axes[1].legend(loc="upper right", fontsize="small")
     high_gain_fig.tight_layout()
     save_plot(high_gain_fig, "mos_hidden_writer_restored_gate_hybrid_update_forward_guard_forward_pair_96u_robustness_ngspice")
 

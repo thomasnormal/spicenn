@@ -2191,6 +2191,28 @@ must satisfy before it can replace the current behavioral prototype.
 
 \begin{figure}[H]
   \centering
+  \includegraphics[width=0.98\linewidth]{figures/mos_hidden_writer_restored_gate_hybrid_update_forward_guard_forward_pair_96u_shifted_gate_trim_sensitivity_ngspice.png}
+  \caption{Ngspice fine trim-code sensitivity check around the calibrated
+  severe-polarity shifted-gate trims.  This fixture reuses the same MOS
+  split-reset network, \(zcm=0.75\) V read common mode, \(96\,\mu\mathrm{m}\)
+  shifted-gate forward pair, and repeated read/reset/store schedule as
+  Fig.~\ref{fig:mos-hidden-writer-restored-gate-hybrid-update-forward-guard-forward-pair-96u-shifted-gate-polarity-calibration-ngspice},
+  but offsets the two calibrated trim codes by \(\pm5\) mV.  The \(+30\) mV
+  threshold-skew branch stores \(37.348,46.972,\) and \(56.589\) mV for
+  \(-5,0,\) and \(+5\) mV trim-code error around the \(-55\) mV code.  The
+  \(-30\) mV threshold-skew branch stores \(56.596,46.978,\) and
+  \(37.355\) mV for \(-5,0,\) and \(+5\) mV error around the \(+65\) mV
+  code.  The fitted slopes are \(+1.924\) and \(-1.924\) mV activation per
+  mV trim-code error, respectively.  The reset network still samples the
+  requested gate differential to about \(0.003\) mV and holds common mode
+  near \(0.90\) V, so this plot is not a reset-switch failure; it is the
+  expected analog calibration precision requirement for the trimmed
+  forward-pair offset.}
+  \label{fig:mos-hidden-writer-restored-gate-hybrid-update-forward-guard-forward-pair-96u-shifted-gate-trim-sensitivity-ngspice}
+\end{figure}
+
+\begin{figure}[H]
+  \centering
   \includegraphics[width=0.95\linewidth]{figures/mos_hidden_writer_restored_gate_hybrid_update_forward_guard_forward_pair_96u_shifted_gate_positive_refpert_ngspice.png}
   \caption{Ngspice reset-reference perturbation check for the positive
   shifted-gate trim code from

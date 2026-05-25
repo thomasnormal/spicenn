@@ -10507,6 +10507,140 @@ quit
         "positive-trim offset calibration should improve the old +55 mV case",
     )
 
+    shift_polsens_cases = [
+        ("pm30_neg50", "+30 mV skew, -50 mV trim", 0.580, 0.520, -0.050, "positive skew", -5.0),
+        ("pm30_neg55", "+30 mV skew, -55 mV trim", 0.580, 0.520, -0.055, "positive skew", 0.0),
+        ("pm30_neg60", "+30 mV skew, -60 mV trim", 0.580, 0.520, -0.060, "positive skew", 5.0),
+        ("mp30_pos60", "-30 mV skew, +60 mV trim", 0.520, 0.580, 0.060, "negative skew", -5.0),
+        ("mp30_pos65", "-30 mV skew, +65 mV trim", 0.520, 0.580, 0.065, "negative skew", 0.0),
+        ("mp30_pos70", "-30 mV skew, +70 mV trim", 0.520, 0.580, 0.070, "negative skew", 5.0),
+    ]
+    shift_polsens_trim_error_mv = []
+    shift_polsens_h_samples = []
+    shift_polsens_traces = []
+    for name, label, nfp_vto, nfm_vto, reset_trim_v, group, trim_error_mv in shift_polsens_cases:
+        pst, polsens_cols = run_trimmed_reuse_skew_law_case(
+            name,
+            nfp_vto,
+            nfm_vto,
+            reset_trim_v,
+            family="polsens",
+        )
+
+        def psat(time_s: float, values: np.ndarray) -> float:
+            return float(values[np.argmin(np.abs(pst - time_s))])
+
+        gate_diff = polsens_cols[0] - polsens_cols[1]
+        gate_common = 0.5 * (polsens_cols[0] + polsens_cols[1])
+        z = polsens_cols[12] - polsens_cols[11]
+        load = polsens_cols[14] - polsens_cols[13]
+        store = polsens_cols[16] - polsens_cols[15]
+        gate_samples = np.array([psat(ts, gate_diff) for ts in shift_trimmed_reuse_reset_times])
+        common_samples = np.array([psat(ts, gate_common) for ts in shift_trimmed_reuse_reset_times])
+        z_samples = np.array([psat(ts, z) for ts in shift_reuse_z_times])
+        h_samples = np.array([psat(ts, store) for ts in shift_reuse_h_times])
+        z_reset = np.array([abs(psat(ts, z)) for ts in shift_trimmed_reuse_reset_times])
+        h_reset = np.array([abs(psat(ts, store)) for ts in shift_trimmed_reuse_reset_times])
+        require(
+            np.max(np.abs(gate_samples - reset_trim_v)) < 0.006,
+            f"{label} should establish the requested fine trim code",
+        )
+        require(
+            np.max(np.abs(common_samples - 0.90)) < 0.006,
+            f"{label} should preserve reset common mode during fine trim sensitivity",
+        )
+        require(
+            np.max(z_reset) < 0.001 and np.max(h_reset) < 0.001,
+            f"{label} should clear z/h state during fine trim sensitivity reset",
+        )
+        require(
+            np.all(z_samples > 0.035),
+            f"{label} should keep useful read preactivation during fine trim sensitivity",
+        )
+        require(
+            np.all((h_samples > 0.020) & (h_samples < 0.075)),
+            f"{label} should stay inside the local trim-sensitivity range",
+        )
+        require(
+            np.max(h_samples) - np.min(h_samples) < 0.025,
+            f"{label} should remain repeatable across fine-trim cycles",
+        )
+        shift_polsens_trim_error_mv.append(trim_error_mv)
+        shift_polsens_h_samples.append(h_samples)
+        if trim_error_mv in {-5.0, 0.0, 5.0}:
+            shift_polsens_traces.append((group, trim_error_mv, pst, load, store))
+
+    shift_polsens_trim_error_mv = np.array(shift_polsens_trim_error_mv)
+    shift_polsens_h_samples = np.array(shift_polsens_h_samples)
+    shift_polsens_h_mean = np.mean(shift_polsens_h_samples, axis=1)
+    shift_polsens_index = {case[0]: idx for idx, case in enumerate(shift_polsens_cases)}
+    pm_sens_order = [shift_polsens_index[name] for name in ["pm30_neg50", "pm30_neg55", "pm30_neg60"]]
+    mp_sens_order = [shift_polsens_index[name] for name in ["mp30_pos60", "mp30_pos65", "mp30_pos70"]]
+    pm_slope = float(
+        np.polyfit(
+            shift_polsens_trim_error_mv[pm_sens_order],
+            1e3 * shift_polsens_h_mean[pm_sens_order],
+            1,
+        )[0]
+    )
+    mp_slope = float(
+        np.polyfit(
+            shift_polsens_trim_error_mv[mp_sens_order],
+            1e3 * shift_polsens_h_mean[mp_sens_order],
+            1,
+        )[0]
+    )
+    require(
+        np.all(np.diff(shift_polsens_h_mean[pm_sens_order]) > 0.006),
+        "fine negative-trim increase should monotonically raise +30 mV skew activation",
+    )
+    require(
+        np.all(np.diff(shift_polsens_h_mean[mp_sens_order]) < -0.006),
+        "fine positive-trim increase should monotonically lower -30 mV skew activation",
+    )
+    require(
+        1.4 < pm_slope < 2.4,
+        "positive-skew fine trim sensitivity should be a visible but bounded gain",
+    )
+    require(
+        -2.4 < mp_slope < -1.4,
+        "negative-skew fine trim sensitivity should be a visible but bounded gain",
+    )
+    require(
+        abs(
+            shift_polsens_h_mean[shift_polsens_index["pm30_neg55"]]
+            - shift_polsens_h_mean[shift_polsens_index["mp30_pos65"]]
+        )
+        < 0.006,
+        "fine trim sensitivity baseline should preserve the calibrated polarity alignment",
+    )
+    require(
+        np.max(
+            np.abs(
+                1e3
+                * (
+                    shift_polsens_h_mean[[shift_polsens_index["pm30_neg50"], shift_polsens_index["pm30_neg60"]]]
+                    - shift_polsens_h_mean[shift_polsens_index["pm30_neg55"]]
+                )
+            )
+        )
+        > 7.0,
+        "+/-5 mV trim-code errors should be visibly resolvable on the +30 mV skew branch",
+    )
+    require(
+        np.max(
+            np.abs(
+                1e3
+                * (
+                    shift_polsens_h_mean[[shift_polsens_index["mp30_pos60"], shift_polsens_index["mp30_pos70"]]]
+                    - shift_polsens_h_mean[shift_polsens_index["mp30_pos65"]]
+                )
+            )
+        )
+        > 7.0,
+        "+/-5 mV trim-code errors should be visibly resolvable on the -30 mV skew branch",
+    )
+
     shift_polref_cases = [
         ("clean_pos65", "clean +65 mV", (0.065, 0.065, 0.065), (0.90, 0.90, 0.90)),
         ("common_jitter_pos65", "common jitter", (0.065, 0.065, 0.065), (0.88, 0.92, 0.89)),
@@ -12954,6 +13088,55 @@ quit
     save_plot(
         shift_polcal_fig,
         "mos_hidden_writer_restored_gate_hybrid_update_forward_guard_forward_pair_96u_shifted_gate_polarity_calibration_ngspice",
+    )
+
+    shift_polsens_fig, shift_polsens_axes = plt.subplots(
+        2,
+        1,
+        figsize=(7.4, 6.0),
+        gridspec_kw={"height_ratios": [0.95, 1.05]},
+    )
+    shift_polsens_axes[0].plot(
+        shift_polsens_trim_error_mv[pm_sens_order],
+        1e3 * shift_polsens_h_mean[pm_sens_order],
+        "o-",
+        label=f"+30 mV skew, slope {pm_slope:.2f} mV/mV",
+    )
+    shift_polsens_axes[0].plot(
+        shift_polsens_trim_error_mv[mp_sens_order],
+        1e3 * shift_polsens_h_mean[mp_sens_order],
+        "s--",
+        label=f"-30 mV skew, slope {mp_slope:.2f} mV/mV",
+    )
+    shift_polsens_axes[0].axvline(0, color="0.4", linewidth=0.8)
+    shift_polsens_axes[0].axhline(
+        1e3 * shift_polsens_h_mean[shift_polsens_index["pm30_neg55"]],
+        color="0.25",
+        linestyle=":",
+        linewidth=1.0,
+        label="calibrated target",
+    )
+    shift_polsens_axes[0].set_xlabel("trim-code error from calibrated value (mV)")
+    shift_polsens_axes[0].set_ylabel("mean stored $h$ (mV)")
+    shift_polsens_axes[0].set_title("Fine trim-code error maps directly into activation error")
+    shift_polsens_axes[0].grid(True, alpha=0.25)
+    shift_polsens_axes[0].legend(loc="upper right", fontsize="small")
+    for group, trim_error_mv, pst, load, store in shift_polsens_traces:
+        if trim_error_mv != 0.0:
+            continue
+        shift_polsens_axes[1].plot(1e6 * pst, 1e3 * store, label=f"{group}, calibrated $h$")
+        shift_polsens_axes[1].plot(1e6 * pst, 1e3 * load, "--", alpha=0.55, label=f"{group}, load")
+    shift_polsens_axes[1].axhline(0, color="0.4", linewidth=0.8)
+    shift_polsens_axes[1].set_xlim(2.35, 7.1)
+    shift_polsens_axes[1].set_xlabel("time (us)")
+    shift_polsens_axes[1].set_ylabel("differential (mV)")
+    shift_polsens_axes[1].set_title("Calibrated fine-sensitivity baselines remain aligned over repeated cycles")
+    shift_polsens_axes[1].grid(True, alpha=0.25)
+    shift_polsens_axes[1].legend(loc="upper left", ncol=2, fontsize="x-small")
+    shift_polsens_fig.tight_layout()
+    save_plot(
+        shift_polsens_fig,
+        "mos_hidden_writer_restored_gate_hybrid_update_forward_guard_forward_pair_96u_shifted_gate_trim_sensitivity_ngspice",
     )
 
     shift_polref_fig, shift_polref_axes = plt.subplots(

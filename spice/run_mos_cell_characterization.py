@@ -8146,6 +8146,65 @@ quit
         "guard TG sizing should not be the dominant capture limiter above 0.125x",
     )
 
+    guard_cstore_cases_pf = [2, 5, 10, 20, 50, 100]
+    guard_cstore_labels = []
+    guard_cstore_store_samples = []
+    guard_cstore_preact_samples = []
+    guard_cstore_traces = []
+    for cstore_pf in guard_cstore_cases_pf:
+        stem = (
+            "mos_hidden_writer_restored_gate_hybrid_update_forward_read_pact_"
+            f"guard_cstore_{cstore_pf}p"
+        )
+        cstore_deck = replace_required(hybrid_forward_read_reuse_deck, timing_read_pwl, timing_single_read_pwl)
+        cstore_deck = replace_required(
+            cstore_deck,
+            timing_base_pact_pwl,
+            long_pact_pwl + "\n" + long_pactn_pwl + "\n" + corner_guard_pwl + "\n" + corner_guardn_pwl,
+        )
+        cstore_deck = replace_required(cstore_deck, corner_param_line, corner_param_line.replace("CSTORE=10p", f"CSTORE={cstore_pf}p"))
+        cstore_deck = replace_required(cstore_deck, nmos_store_line_p, guard_store_line_p)
+        cstore_deck = replace_required(cstore_deck, nmos_store_line_m, guard_store_line_m)
+        cstore_deck = replace_required(
+            cstore_deck,
+            "mos_hidden_writer_restored_gate_hybrid_update_forward_read_reuse.dat",
+            f"{stem}.dat",
+        )
+        cstore_data = run_ngspice(cstore_deck, stem)
+        cst, cstore_cols = load_wrdata(cstore_data, 23)
+
+        def gcstat(time_s: float, values: np.ndarray) -> float:
+            return float(values[np.argmin(np.abs(cst - time_s))])
+
+        cstore_preact = cstore_cols[10] - cstore_cols[9]
+        cstore_store = cstore_cols[14] - cstore_cols[13]
+        guard_cstore_labels.append(f"{cstore_pf} pF")
+        guard_cstore_preact_samples.append(gcstat(3.575e-6, cstore_preact))
+        guard_cstore_store_samples.append(gcstat(3.575e-6, cstore_store))
+        guard_cstore_traces.append((f"{cstore_pf} pF", cst, cstore_store))
+
+    guard_cstore_preact_samples = np.array(guard_cstore_preact_samples)
+    guard_cstore_store_samples = np.array(guard_cstore_store_samples)
+    nominal_cstore_idx = guard_cstore_cases_pf.index(10)
+    require(np.min(guard_cstore_preact_samples) > 0.048, "CSTORE sweep should keep a valid read state")
+    require(
+        abs(guard_cstore_store_samples[nominal_cstore_idx] - guard_timing_samples[2]) < 0.002,
+        "10 pF guarded store should match the nominal timing sample",
+    )
+    require(guard_cstore_store_samples[0] > 0.050, "small activation store cap should capture a full signed activation")
+    require(
+        guard_cstore_store_samples[0] > guard_cstore_preact_samples[0] + 0.005,
+        "very small activation store cap should expose switch-feedthrough overshoot",
+    )
+    require(
+        guard_cstore_store_samples[-1] < guard_cstore_store_samples[nominal_cstore_idx] - 0.010,
+        "large activation store cap should visibly undercharge in the fixed guard window",
+    )
+    require(
+        np.all(np.diff(guard_cstore_store_samples[2:]) < -0.001),
+        "larger activation store caps should monotonically reduce the sampled activation after nominal sizing",
+    )
+
     read_gated_fig, read_gated_axes = plt.subplots(2, 1, figsize=(7.4, 6.6), gridspec_kw={"height_ratios": [1.0, 0.9]})
     for label, rgt, store in guard_gated_traces:
         if label in {"40 ns", "120 ns", "240 ns", "320 ns"}:
@@ -8482,6 +8541,31 @@ quit
     guard_size_axes[1].legend(loc="lower right", ncol=2, fontsize="small")
     guard_size_fig.tight_layout()
     save_plot(guard_size_fig, "mos_hidden_writer_restored_gate_hybrid_update_forward_guard_size_ngspice")
+
+    guard_cstore_fig, guard_cstore_axes = plt.subplots(2, 1, figsize=(7.4, 6.4), gridspec_kw={"height_ratios": [1.0, 0.8]})
+    for label, cst, store in guard_cstore_traces:
+        if label in {"2 pF", "10 pF", "50 pF", "100 pF"}:
+            guard_cstore_axes[0].plot(1e6 * cst, 1e3 * store, label=label)
+    guard_cstore_axes[0].axhline(0, color="0.4", linewidth=0.8)
+    guard_cstore_axes[0].axvline(3.33, color="0.25", linestyle="--", linewidth=0.9, alpha=0.6, label="guard off")
+    guard_cstore_axes[0].set_xlim(3.05, 3.65)
+    guard_cstore_axes[0].set_ylabel("stored activation (mV)")
+    guard_cstore_axes[0].set_title("Small caps overshoot; large caps undercharge in the fixed guard window")
+    guard_cstore_axes[0].grid(True, alpha=0.25)
+    guard_cstore_axes[0].legend(loc="upper left", ncol=2, fontsize="small")
+    guard_cstore_x = np.arange(len(guard_cstore_labels))
+    guard_cstore_axes[1].bar(guard_cstore_x - 0.18, 1e3 * guard_cstore_preact_samples, width=0.36, label="$z^- - z^+$")
+    guard_cstore_axes[1].bar(guard_cstore_x + 0.18, 1e3 * guard_cstore_store_samples, width=0.36, label="stored $h^- - h^+$")
+    guard_cstore_axes[1].axhline(0, color="0.4", linewidth=0.8)
+    guard_cstore_axes[1].set_xticks(guard_cstore_x)
+    guard_cstore_axes[1].set_xticklabels(guard_cstore_labels)
+    guard_cstore_axes[1].set_xlabel("activation store capacitance")
+    guard_cstore_axes[1].set_ylabel("sampled differential (mV)")
+    guard_cstore_axes[1].set_title("Store capacitance sets both feedthrough sensitivity and charge time")
+    guard_cstore_axes[1].grid(True, axis="y", alpha=0.25)
+    guard_cstore_axes[1].legend(loc="lower left", ncol=2, fontsize="small")
+    guard_cstore_fig.tight_layout()
+    save_plot(guard_cstore_fig, "mos_hidden_writer_restored_gate_hybrid_update_forward_guard_cstore_ngspice")
 
     hybrid_repeated_deck = f"""
 * Hybrid restored-enable/analog-error writer repeated-pulse accumulation check.

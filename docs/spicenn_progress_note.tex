@@ -1691,6 +1691,24 @@ must satisfy before it can replace the current behavioral prototype.
 
 \begin{figure}[H]
   \centering
+  \includegraphics[width=0.88\linewidth]{figures/mos_hidden_writer_restored_gate_hybrid_update_forward_guard_cstore_ngspice.png}
+  \caption{Ngspice activation-store capacitance sweep for the guarded MOS
+  store.  The read, \(pact\), and guard timings are fixed at the nominal
+  guarded-store setting, and only \(C_\mathrm{store}\) changes:
+  \(2,5,10,20,50,\) and \(100\) pF.  The read preactivation stays near
+  \(52.066\) mV, while the stored activation is
+  \(61.070,56.111,51.355,43.865,30.215,\) and \(20.513\) mV.  The tradeoff
+  is two-sided.  Very small activation capacitors charge quickly but expose
+  clock/switch feedthrough as an overshoot above the read preactivation; very
+  large capacitors suppress that feedthrough but undercharge in the fixed
+  \(130\) ns guard window.  The nominal \(10\) pF choice sits near the useful
+  middle for this Level-1 sizing, so capacitance is a real part of the
+  timing/noise budget rather than a free hold knob.}
+  \label{fig:mos-hidden-writer-restored-gate-hybrid-update-forward-guard-cstore-ngspice}
+\end{figure}
+
+\begin{figure}[H]
+  \centering
   \includegraphics[width=0.88\linewidth]{figures/mos_hidden_writer_restored_gate_hybrid_repeated_ngspice.png}
   \caption{Ngspice repeated-pulse accumulation characterization of the hybrid
   restored writer.  One stored \(r^+\) hidden-error rail drives one persistent

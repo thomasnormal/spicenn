@@ -1518,6 +1518,22 @@ must satisfy before it can replace the current behavioral prototype.
 
 \begin{figure}[H]
   \centering
+  \includegraphics[width=0.88\linewidth]{figures/mos_hidden_writer_restored_gate_hybrid_update_forward_guard_edge_ngspice.png}
+  \caption{Ngspice guard-edge slew sweep for the integrated MOS activation
+  store.  The \(pact\) aperture is held long at \(320\) ns, the guard-valid
+  plateau remains \(3.18\)--\(3.31\,\mu\mathrm{s}\), and only the linear
+  guard rise/fall time changes: \(5,10,20,40,80,\) or \(120\) ns.  The read
+  preactivation remains \(52.066\) mV, while the stored activation is
+  \(51.536,52.415,51.355,50.611,49.346,\) and \(46.358\) mV.  This sweep
+  shows that ordinary tens-of-ns control slew is not the main failure mode;
+  loss appears only when the falling edge becomes so slow that the partially
+  enabled guard samples into the read-path collapse.  The clock design rule is
+  therefore about absolute valid-window placement first, and edge rate second.}
+  \label{fig:mos-hidden-writer-restored-gate-hybrid-update-forward-guard-edge-ngspice}
+\end{figure}
+
+\begin{figure}[H]
+  \centering
   \includegraphics[width=0.88\linewidth]{figures/mos_hidden_writer_restored_gate_hybrid_update_forward_guard_hold_ngspice.png}
   \caption{Ngspice no-reset hold check for the guarded MOS activation store.
   The same nominal guard window and long \(pact\) aperture are used, but the

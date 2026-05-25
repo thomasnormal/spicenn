@@ -7429,6 +7429,21 @@ quit
         f"VPACTN_HYR pactn_hyr 0 PWL(0 1.8 {aperture_start_us - 0.02:.2f}u 1.8 "
         f"{aperture_start_us:.2f}u 0 {long_pact_end_us:.2f}u 0 {long_pact_off_us:.2f}u 1.8 7.8u 1.8)"
     )
+
+    def guard_phase_lines(start_us: float, end_us: float, edge_ns: float = 20.0) -> tuple[str, str]:
+        edge_us = edge_ns / 1000.0
+        rise_start_us = start_us - edge_us
+        fall_end_us = end_us + edge_us
+        guard_pwl = (
+            f"VGUARD_HYR guard_hyr 0 PWL(0 0 {rise_start_us:.3f}u 0 "
+            f"{start_us:.3f}u 1.8 {end_us:.3f}u 1.8 {fall_end_us:.3f}u 0 7.8u 0)"
+        )
+        guardn_pwl = (
+            f"VGUARDN_HYR guardn_hyr 0 PWL(0 1.8 {rise_start_us:.3f}u 1.8 "
+            f"{start_us:.3f}u 0 {end_us:.3f}u 0 {fall_end_us:.3f}u 1.8 7.8u 1.8)"
+        )
+        return guard_pwl, guardn_pwl
+
     for guard_end_us in guard_end_cases_us:
         guard_off_us = guard_end_us + 0.02
         label = f"{int(round((guard_end_us - aperture_start_us) * 1000))} ns"
@@ -7562,6 +7577,57 @@ quit
     require(
         guard_skew_store_samples[-1] < guard_skew_store_samples[nominal_skew_idx] - 0.010,
         "large late guard skew should track read-path droop",
+    )
+
+    guard_edge_cases_ns = [5, 10, 20, 40, 80, 120]
+    guard_edge_labels = []
+    guard_edge_store_samples = []
+    guard_edge_preact_samples = []
+    guard_edge_traces = []
+    for edge_ns in guard_edge_cases_ns:
+        guard_pwl, guardn_pwl = guard_phase_lines(3.18, 3.31, edge_ns)
+        stem = (
+            "mos_hidden_writer_restored_gate_hybrid_update_forward_read_pact_"
+            f"guard_edge_{edge_ns}ns"
+        )
+        edge_guard_deck = replace_required(hybrid_forward_read_reuse_deck, timing_read_pwl, timing_single_read_pwl)
+        edge_guard_deck = replace_required(
+            edge_guard_deck,
+            timing_base_pact_pwl,
+            long_pact_pwl + "\n" + long_pactn_pwl + "\n" + guard_pwl + "\n" + guardn_pwl,
+        )
+        edge_guard_deck = replace_required(edge_guard_deck, nmos_store_line_p, guard_store_line_p)
+        edge_guard_deck = replace_required(edge_guard_deck, nmos_store_line_m, guard_store_line_m)
+        edge_guard_deck = replace_required(
+            edge_guard_deck,
+            "mos_hidden_writer_restored_gate_hybrid_update_forward_read_reuse.dat",
+            f"{stem}.dat",
+        )
+        edge_guard_data = run_ngspice(edge_guard_deck, stem)
+        get, guard_edge_cols = load_wrdata(edge_guard_data, 23)
+
+        def geat(time_s: float, values: np.ndarray) -> float:
+            return float(values[np.argmin(np.abs(get - time_s))])
+
+        guard_edge_preact = guard_edge_cols[10] - guard_edge_cols[9]
+        guard_edge_store = guard_edge_cols[14] - guard_edge_cols[13]
+        guard_edge_labels.append(f"{edge_ns} ns")
+        guard_edge_preact_samples.append(geat(3.575e-6, guard_edge_preact))
+        guard_edge_store_samples.append(geat(3.575e-6, guard_edge_store))
+        guard_edge_traces.append((f"{edge_ns} ns", get, guard_edge_store))
+
+    guard_edge_store_samples = np.array(guard_edge_store_samples)
+    guard_edge_preact_samples = np.array(guard_edge_preact_samples)
+    nominal_edge_idx = guard_edge_cases_ns.index(20)
+    require(np.min(guard_edge_preact_samples) > 0.048, "guard edge sweep should keep a valid read state")
+    require(guard_edge_store_samples[0] > 0.050, "fast guard edge should capture a full activation")
+    require(
+        abs(guard_edge_store_samples[nominal_edge_idx] - guard_timing_samples[2]) < 0.002,
+        "20 ns guard edge should match the nominal timing sample",
+    )
+    require(
+        guard_edge_store_samples[-1] < guard_edge_store_samples[nominal_edge_idx] - 0.004,
+        "slow guard edge should begin tracking the read-path collapse",
     )
 
     hold_reset_line = (
@@ -7803,6 +7869,32 @@ quit
     guard_skew_axes[1].legend(loc="upper right", fontsize="small")
     guard_skew_fig.tight_layout()
     save_plot(guard_skew_fig, "mos_hidden_writer_restored_gate_hybrid_update_forward_guard_skew_ngspice")
+
+    guard_edge_fig, guard_edge_axes = plt.subplots(2, 1, figsize=(7.4, 6.4), gridspec_kw={"height_ratios": [1.0, 0.8]})
+    for label, get, store in guard_edge_traces:
+        if label in {"5 ns", "20 ns", "40 ns", "80 ns", "120 ns"}:
+            guard_edge_axes[0].plot(1e6 * get, 1e3 * store, label=f"edge {label}")
+    guard_edge_axes[0].axhline(0, color="0.4", linewidth=0.8)
+    guard_edge_axes[0].axvline(3.31, color="0.25", linestyle="--", linewidth=0.9, alpha=0.6, label="fall starts")
+    guard_edge_axes[0].axvline(3.38, color="0.5", linestyle=":", linewidth=0.9, alpha=0.6, label="read off")
+    guard_edge_axes[0].set_xlim(3.15, 3.48)
+    guard_edge_axes[0].set_ylabel("stored activation (mV)")
+    guard_edge_axes[0].set_title("Slow guard fall edges extend the effective capture window")
+    guard_edge_axes[0].grid(True, alpha=0.25)
+    guard_edge_axes[0].legend(loc="upper left", ncol=2, fontsize="small")
+    guard_edge_x = np.arange(len(guard_edge_labels))
+    guard_edge_axes[1].bar(guard_edge_x - 0.18, 1e3 * guard_edge_preact_samples, width=0.36, label="$z^- - z^+$")
+    guard_edge_axes[1].bar(guard_edge_x + 0.18, 1e3 * guard_edge_store_samples, width=0.36, label="stored $h^- - h^+$")
+    guard_edge_axes[1].axhline(0, color="0.4", linewidth=0.8)
+    guard_edge_axes[1].set_xticks(guard_edge_x)
+    guard_edge_axes[1].set_xticklabels(guard_edge_labels)
+    guard_edge_axes[1].set_xlabel("guard rise/fall edge")
+    guard_edge_axes[1].set_ylabel("sampled differential (mV)")
+    guard_edge_axes[1].set_title("The tested edge slew costs about 5 mV only at 120 ns")
+    guard_edge_axes[1].grid(True, axis="y", alpha=0.25)
+    guard_edge_axes[1].legend(loc="lower right", ncol=2, fontsize="small")
+    guard_edge_fig.tight_layout()
+    save_plot(guard_edge_fig, "mos_hidden_writer_restored_gate_hybrid_update_forward_guard_edge_ngspice")
 
     hold_fig, hold_axes = plt.subplots(2, 1, figsize=(7.4, 6.2), gridspec_kw={"height_ratios": [1.0, 0.8]})
     hold_axes[0].plot(1e6 * ht, 1e3 * hold_preact, label="$z^- - z^+$")

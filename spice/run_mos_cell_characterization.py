@@ -14722,6 +14722,19 @@ quit
     shift_refz_axes[0].set_ylabel("max trim error (mV)")
     shift_refz_axes[0].set_title("Finite reset-reference impedance limits split-trim delivery")
     shift_refz_axes[0].grid(True, axis="y", alpha=0.25)
+    shift_refz_axes[0].text(
+        0.45,
+        0.10,
+        "<=1k max trim err = "
+        f"{1e3 * np.max(shift_refz_trim_error[:, :2]):.2f} mV / 1 mV\n"
+        "10k max trim err = "
+        f"{1e3 * np.max(shift_refz_trim_error[:, 2]):.1f} mV\n"
+        "3M min trim err = "
+        f"{1e3 * np.min(shift_refz_trim_error[:, -1]):.1f} mV / >20 mV",
+        transform=shift_refz_axes[0].transAxes,
+        fontsize="x-small",
+        bbox={"facecolor": "white", "alpha": 0.82, "edgecolor": "0.8"},
+    )
     shift_refz_axes[0].legend(loc="upper left", ncol=2, fontsize="x-small")
     for branch_idx, (_branch_name, branch_label, _nfp, _nfm, _trim) in enumerate(shift_reset_branch_specs):
         marker = "o-" if branch_idx == 0 else "s--"
@@ -14737,6 +14750,19 @@ quit
     shift_refz_axes[1].set_ylabel("mean stored $h$ (mV)")
     shift_refz_axes[1].set_title("Weak trim drivers eventually revert toward under-trimmed behavior")
     shift_refz_axes[1].grid(True, axis="y", alpha=0.25)
+    shift_refz_axes[1].text(
+        0.04,
+        0.08,
+        "0-1k h range = "
+        f"{1e3 * np.min(shift_refz_h_mean[:, :2]):.1f}..{1e3 * np.max(shift_refz_h_mean[:, :2]):.1f} mV\n"
+        "10k h shift from ideal = "
+        f"{1e3 * np.min(np.abs(shift_refz_h_mean[:, 2] - shift_refz_h_mean[:, 0])):.1f} mV\n"
+        "3M h shift from ideal = "
+        f"{1e3 * np.min(np.abs(shift_refz_h_mean[:, -1] - shift_refz_h_mean[:, 0])):.1f} mV",
+        transform=shift_refz_axes[1].transAxes,
+        fontsize="x-small",
+        bbox={"facecolor": "white", "alpha": 0.82, "edgecolor": "0.8"},
+    )
     shift_refz_axes[1].legend(loc="upper left", ncol=2, fontsize="x-small")
     for branch_label, case_label, rzt, load, store in shift_refz_traces:
         if case_label in {"100k"}:

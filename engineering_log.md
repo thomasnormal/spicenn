@@ -2,6 +2,18 @@
 
 ## 2026-05-25
 
+- Clarified the shifted-gate reset-reference source-impedance limit plot.  The
+  ngspice deck sweeps ideal through \(3\)M trim-reference source impedance
+  and already asserted that \(0\)--\(1\)k preserves split trim below \(1\) mV
+  error and calibrated activation, \(10\)k visibly perturbs first-cycle
+  activation, and megaohm sources visibly fail to deliver the trim.  The
+  regenerated
+  `mos_hidden_writer_restored_gate_hybrid_update_forward_guard_forward_pair_96u_shifted_gate_reset_ref_impedance_ngspice`
+  plot now labels those measured limits: \(0\)--\(1\)k max trim error
+  \(0.07\) mV, \(10\)k max trim error \(27.4\) mV, \(3\)M minimum trim error
+  \(54.8\) mV, calibrated \(0\)--\(1\)k activation range \(46.9\)--\(47.0\)
+  mV, \(10\)k activation shift \(16.8\) mV, and \(3\)M activation shift
+  \(86.6\) mV.
 - Fixed the shifted-gate reset-switch-corner plot's unit readability.  The
   ngspice deck sweeps reset transmission-gate threshold corners and already
   asserted calibrated split-trim error below \(8\) mV, shifted-gate common

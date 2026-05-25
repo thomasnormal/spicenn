@@ -9877,18 +9877,29 @@ quit
         name: str,
         reset_trims_v: tuple[float, float, float],
         reset_common_v: tuple[float, float, float],
+        nfp_vto: float = 0.570,
+        nfm_vto: float = 0.530,
+        nominal_reset_trim_v: float = -0.035,
+        family: str = "refpert",
     ) -> tuple[np.ndarray, list[np.ndarray]]:
         model_tag = name.upper()
         stem = (
             "mos_hidden_writer_restored_gate_hybrid_update_forward_guard_"
-            f"forward_pair_96u_zcm_0p75v_shift_trimmed_reuse_refpert_{name}"
+            f"forward_pair_96u_zcm_0p75v_shift_trimmed_reuse_{family}_{name}"
         )
         models = (
-            f".model NSHTRPFP_{model_tag} NMOS (LEVEL=1 VTO=0.57 KP=220u LAMBDA=0.03)\n"
-            f".model NSHTRPFM_{model_tag} NMOS (LEVEL=1 VTO=0.53 KP=220u LAMBDA=0.03)"
+            f".model NSHTRPFP_{model_tag} NMOS (LEVEL=1 VTO={nfp_vto:.3f} KP=220u LAMBDA=0.03)\n"
+            f".model NSHTRPFM_{model_tag} NMOS (LEVEL=1 VTO={nfm_vto:.3f} KP=220u LAMBDA=0.03)"
         )
         ref_p_values = [common + 0.5 * trim for common, trim in zip(reset_common_v, reset_trims_v)]
         ref_m_values = [common - 0.5 * trim for common, trim in zip(reset_common_v, reset_trims_v)]
+        nominal_ref_p = 0.90 + 0.5 * nominal_reset_trim_v
+        nominal_ref_m = 0.90 - 0.5 * nominal_reset_trim_v
+
+        def fmt_reset_ref(value: float) -> str:
+            if abs(value - round(value, 2)) < 1e-12:
+                return f"{value:.2f}"
+            return f"{value:.5f}"
 
         def ref_pwl(node: str, values: list[float]) -> str:
             return (
@@ -9905,14 +9916,22 @@ quit
             forward_pair_lines,
             shifted_forward_pair_lines(
                 10.0,
-                reset_ref_p=0.90 - 0.0175,
-                reset_ref_m=0.90 + 0.0175,
+                reset_ref_p=nominal_ref_p,
+                reset_ref_m=nominal_ref_m,
                 forward_p_model=f"NSHTRPFP_{model_tag}",
                 forward_m_model=f"NSHTRPFM_{model_tag}",
             ),
         )
-        deck = replace_required(deck, "VZGRP_HYR zgrp_hyr 0 0.88250", ref_pwl("zgrp", ref_p_values))
-        deck = replace_required(deck, "VZGRM_HYR zgrm_hyr 0 0.91750", ref_pwl("zgrm", ref_m_values))
+        deck = replace_required(
+            deck,
+            f"VZGRP_HYR zgrp_hyr 0 {fmt_reset_ref(nominal_ref_p)}",
+            ref_pwl("zgrp", ref_p_values),
+        )
+        deck = replace_required(
+            deck,
+            f"VZGRM_HYR zgrm_hyr 0 {fmt_reset_ref(nominal_ref_m)}",
+            ref_pwl("zgrm", ref_m_values),
+        )
         deck = replace_required(
             deck,
             "VRESET_HYR rst_hyr 0 PWL(0 0 3.58u 0 3.60u 1.8 4.00u 1.8 4.02u 0 "
@@ -10402,6 +10421,109 @@ quit
         shift_polcal_h_mean[shift_polcal_index["mp30_pos65"]]
         < shift_polcal_h_mean[shift_polcal_index["mp30_pos55"]] - 0.010,
         "positive-trim offset calibration should improve the old +55 mV case",
+    )
+
+    shift_polref_cases = [
+        ("clean_pos65", "clean +65 mV", (0.065, 0.065, 0.065), (0.90, 0.90, 0.90)),
+        ("common_jitter_pos65", "common jitter", (0.065, 0.065, 0.065), (0.88, 0.92, 0.89)),
+        ("diff_jitter5_pos65", "diff jitter +/-5 mV", (0.060, 0.065, 0.070), (0.90, 0.90, 0.90)),
+        ("diff_jitter10_pos65", "diff jitter +/-10 mV", (0.055, 0.065, 0.075), (0.90, 0.90, 0.90)),
+        ("mixed_jitter_pos65", "mixed jitter", (0.060, 0.070, 0.065), (0.885, 0.915, 0.900)),
+    ]
+    shift_polref_labels = []
+    shift_polref_gate_samples = []
+    shift_polref_common_samples = []
+    shift_polref_h_samples = []
+    shift_polref_traces = []
+    for name, label, reset_trims_v, reset_common_v in shift_polref_cases:
+        prt, polref_cols = run_trimmed_reuse_reference_perturb_case(
+            name,
+            reset_trims_v,
+            reset_common_v,
+            nfp_vto=0.520,
+            nfm_vto=0.580,
+            nominal_reset_trim_v=0.065,
+            family="polrefpert",
+        )
+
+        def prlat(time_s: float, values: np.ndarray) -> float:
+            return float(values[np.argmin(np.abs(prt - time_s))])
+
+        gate_diff = polref_cols[0] - polref_cols[1]
+        gate_common = 0.5 * (polref_cols[0] + polref_cols[1])
+        z = polref_cols[12] - polref_cols[11]
+        load = polref_cols[14] - polref_cols[13]
+        store = polref_cols[16] - polref_cols[15]
+        gate_samples = np.array([prlat(ts, gate_diff) for ts in shift_trimmed_reuse_reset_times])
+        common_samples = np.array([prlat(ts, gate_common) for ts in shift_trimmed_reuse_reset_times])
+        z_samples = np.array([prlat(ts, z) for ts in shift_reuse_z_times])
+        h_samples = np.array([prlat(ts, store) for ts in shift_reuse_h_times])
+        z_reset = np.array([abs(prlat(ts, z)) for ts in shift_trimmed_reuse_reset_times])
+        h_reset = np.array([abs(prlat(ts, store)) for ts in shift_trimmed_reuse_reset_times])
+        expected_trims = np.array(reset_trims_v)
+        expected_common = np.array(reset_common_v)
+        if np.max(expected_trims) - np.min(expected_trims) < 1e-12:
+            require(
+                np.max(np.abs(gate_samples - expected_trims)) < 0.006,
+                f"{label} should preserve the calibrated positive reset differential",
+            )
+        else:
+            require(
+                np.all((gate_samples > 0.050) & (gate_samples < 0.080)),
+                f"{label} should keep sampled positive trim inside the calibrated trim window",
+            )
+        if np.max(expected_common) - np.min(expected_common) < 1e-12:
+            require(
+                np.max(np.abs(common_samples - expected_common)) < 0.006,
+                f"{label} should preserve positive-branch reset common mode",
+            )
+        else:
+            require(
+                np.all((common_samples > 0.86) & (common_samples < 0.93)),
+                f"{label} should keep positive-branch reset common mode bounded",
+            )
+        require(
+            np.max(z_reset) < 0.001 and np.max(h_reset) < 0.001,
+            f"{label} should still clear z/h state for the positive calibrated branch",
+        )
+        require(
+            np.all(z_samples > 0.035),
+            f"{label} should keep useful read preactivation for the positive calibrated branch",
+        )
+        require(
+            np.all((h_samples > 0.020) & (h_samples < 0.085)),
+            f"{label} should keep the positive calibrated branch non-railed under reset perturbation",
+        )
+        if name == "common_jitter_pos65":
+            require(
+                np.max(h_samples) - np.min(h_samples) < 0.006,
+                "positive calibrated branch should be weakly sensitive to common-mode reference jitter",
+            )
+        if name in {"diff_jitter5_pos65", "diff_jitter10_pos65"}:
+            require(
+                np.all(np.diff(h_samples) < -0.004),
+                f"{label} should order stored activation by stronger positive trim each cycle",
+            )
+        shift_polref_labels.append(label)
+        shift_polref_gate_samples.append(gate_samples)
+        shift_polref_common_samples.append(common_samples)
+        shift_polref_h_samples.append(h_samples)
+        if name in {"common_jitter_pos65", "diff_jitter10_pos65", "mixed_jitter_pos65"}:
+            shift_polref_traces.append((label, prt, load, store))
+
+    shift_polref_gate_samples = np.array(shift_polref_gate_samples)
+    shift_polref_common_samples = np.array(shift_polref_common_samples)
+    shift_polref_h_samples = np.array(shift_polref_h_samples)
+    shift_polref_index = {case[0]: idx for idx, case in enumerate(shift_polref_cases)}
+    require(
+        np.max(shift_polref_h_samples[shift_polref_index["common_jitter_pos65"]])
+        - np.min(shift_polref_h_samples[shift_polref_index["common_jitter_pos65"]])
+        < 0.25
+        * (
+            np.max(shift_polref_h_samples[shift_polref_index["diff_jitter10_pos65"]])
+            - np.min(shift_polref_h_samples[shift_polref_index["diff_jitter10_pos65"]])
+        ),
+        "positive calibrated common-mode jitter should remain secondary to differential trim jitter",
     )
 
     tail_bias_forward_tail_line = "MNFT_HYR ftail_hyr vbias 0 0 NMOS L={LCH} W=48u"
@@ -11824,6 +11946,49 @@ quit
     save_plot(
         shift_polcal_fig,
         "mos_hidden_writer_restored_gate_hybrid_update_forward_guard_forward_pair_96u_shifted_gate_polarity_calibration_ngspice",
+    )
+
+    shift_polref_fig, shift_polref_axes = plt.subplots(
+        3,
+        1,
+        figsize=(7.4, 7.2),
+        gridspec_kw={"height_ratios": [0.8, 0.9, 1.0]},
+    )
+    polref_x = np.arange(3)
+    for idx, label in enumerate(shift_polref_labels):
+        style = "o-" if idx in {0, 1} else "s--"
+        shift_polref_axes[0].plot(polref_x, 1e3 * shift_polref_gate_samples[idx], style, label=label)
+    shift_polref_axes[0].axhline(65, color="0.25", linestyle=":", linewidth=1.0, label="+65 mV target")
+    shift_polref_axes[0].set_xticks(polref_x)
+    shift_polref_axes[0].set_xticklabels(["cycle 1", "cycle 2", "cycle 3"])
+    shift_polref_axes[0].set_ylabel("sampled trim (mV)")
+    shift_polref_axes[0].set_title("Positive calibrated split reset tracks cycle-varying trim commands")
+    shift_polref_axes[0].grid(True, axis="y", alpha=0.25)
+    shift_polref_axes[0].legend(loc="upper left", ncol=2, fontsize="x-small")
+    for idx, label in enumerate(shift_polref_labels):
+        style = "o-" if idx in {0, 1} else "s--"
+        shift_polref_axes[1].plot(polref_x, 1e3 * shift_polref_h_samples[idx], style, label=label)
+    shift_polref_axes[1].axhspan(25, 70, color="0.7", alpha=0.12, label="useful window")
+    shift_polref_axes[1].set_xticks(polref_x)
+    shift_polref_axes[1].set_xticklabels(["cycle 1", "cycle 2", "cycle 3"])
+    shift_polref_axes[1].set_ylabel("stored $h$ (mV)")
+    shift_polref_axes[1].set_title("Differential trim jitter dominates over common-mode reference jitter")
+    shift_polref_axes[1].grid(True, axis="y", alpha=0.25)
+    shift_polref_axes[1].legend(loc="upper left", ncol=2, fontsize="x-small")
+    for label, prt, load, store in shift_polref_traces:
+        shift_polref_axes[2].plot(1e6 * prt, 1e3 * store, label=f"{label} $h$")
+        shift_polref_axes[2].plot(1e6 * prt, 1e3 * load, "--", alpha=0.55, label=f"{label} load")
+    shift_polref_axes[2].axhline(0, color="0.4", linewidth=0.8)
+    shift_polref_axes[2].set_xlim(2.35, 7.1)
+    shift_polref_axes[2].set_xlabel("time (us)")
+    shift_polref_axes[2].set_ylabel("differential (mV)")
+    shift_polref_axes[2].set_title("Positive calibrated branch remains bounded under reset-reference perturbation")
+    shift_polref_axes[2].grid(True, alpha=0.25)
+    shift_polref_axes[2].legend(loc="upper left", ncol=2, fontsize="x-small")
+    shift_polref_fig.tight_layout()
+    save_plot(
+        shift_polref_fig,
+        "mos_hidden_writer_restored_gate_hybrid_update_forward_guard_forward_pair_96u_shifted_gate_positive_refpert_ngspice",
     )
 
     tail_bias_fig, tail_bias_axes = plt.subplots(2, 1, figsize=(7.4, 6.4), gridspec_kw={"height_ratios": [1.0, 0.8]})

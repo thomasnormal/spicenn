@@ -2191,6 +2191,27 @@ must satisfy before it can replace the current behavioral prototype.
 
 \begin{figure}[H]
   \centering
+  \includegraphics[width=0.95\linewidth]{figures/mos_hidden_writer_restored_gate_hybrid_update_forward_guard_forward_pair_96u_shifted_gate_positive_refpert_ngspice.png}
+  \caption{Ngspice reset-reference perturbation check for the positive
+  shifted-gate trim code from
+  Fig.~\ref{fig:mos-hidden-writer-restored-gate-hybrid-update-forward-guard-forward-pair-96u-shifted-gate-polarity-calibration-ngspice}.
+  The fixture keeps the \(-30\) mV forward-pair threshold skew and uses the
+  calibrated \(+65\) mV split reset.  Clean reset samples establish
+  \(64.998,65.000,\) and \(65.000\) mV gate differentials and store
+  \(46.999,46.967,\) and \(46.967\) mV.  Common-mode reset-reference commands
+  of \(0.88,0.92,\) and \(0.89\) V settle imperfectly to
+  \(0.909527,0.911544,\) and \(0.890003\) V, but the stored activation remains
+  tight at \(47.128,47.130,\) and \(46.797\) mV.  Differential trim jitter is
+  the sensitive rail: sampled \(62.381,67.820,\) and \(75.000\) mV trims store
+  \(52.032,41.542,\) and \(27.716\) mV.  Thus the positive calibrated branch
+  has the same practical rule as the earlier negative-trim branch: common-mode
+  reset delivery has margin, but differential trim delivery must stay inside
+  the calibrated window.}
+  \label{fig:mos-hidden-writer-restored-gate-hybrid-update-forward-guard-forward-pair-96u-shifted-gate-positive-refpert-ngspice}
+\end{figure}
+
+\begin{figure}[H]
+  \centering
   \includegraphics[width=0.88\linewidth]{figures/mos_hidden_writer_restored_gate_hybrid_update_forward_guard_forward_tail_bias_ngspice.png}
   \caption{Ngspice isolated forward-tail bias sweep for the same guarded MOS
   activation store.  The failed shared-bias experiment changed the read path

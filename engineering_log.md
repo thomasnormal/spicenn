@@ -2,6 +2,19 @@
 
 ## 2026-05-25
 
+- Fixed the shifted-gate reset-switch-corner plot's unit readability.  The
+  ngspice deck sweeps reset transmission-gate threshold corners and already
+  asserted calibrated split-trim error below \(8\) mV, shifted-gate common
+  error below \(10\) mV, reset residue below \(2\) mV, useful stored
+  activations, and repeated-cycle spread below \(25\) mV.  The rendered
+  trim-error axis was labeled in mV even though the measured errors are only
+  a few microvolts.  The regenerated
+  `mos_hidden_writer_restored_gate_hybrid_update_forward_guard_forward_pair_96u_shifted_gate_reset_switch_corner_ngspice`
+  plot now uses a \(\mu\)V trim-error axis and labels the measured maxima:
+  \(3.6\,\mu\)V trim error versus an \(8000\,\mu\)V budget, \(0.01\) mV
+  common error versus a \(10\) mV budget, corner-to-corner stored-activation
+  spread below the displayed \(0.01\) mV resolution, and max repeated-cycle
+  spread \(0.03\) mV.
 - Family-completed the shifted-gate reset-reference decoupling plot.  The
   ngspice deck models the first reset from a \(100\)k trim source with local
   reservoir capacitance and already asserted monotonic trim-error improvement,

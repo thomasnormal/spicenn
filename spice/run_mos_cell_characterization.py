@@ -14627,15 +14627,26 @@ quit
         marker = "o-" if branch_idx == 0 else "s--"
         shift_reset_corner_axes[0].plot(
             reset_corner_x,
-            1e3 * shift_reset_corner_trim_error[branch_idx],
+            1e6 * shift_reset_corner_trim_error[branch_idx],
             marker,
             label=branch_label,
         )
     shift_reset_corner_axes[0].set_xticks(reset_corner_x)
     shift_reset_corner_axes[0].set_xticklabels(reset_corner_labels, rotation=15, ha="right")
-    shift_reset_corner_axes[0].set_ylabel("max trim error (mV)")
+    shift_reset_corner_axes[0].set_ylabel("max trim error ($\\mu$V)")
     shift_reset_corner_axes[0].set_title("Reset TG threshold corners preserve calibrated split trim")
     shift_reset_corner_axes[0].grid(True, axis="y", alpha=0.25)
+    shift_reset_corner_axes[0].text(
+        0.55,
+        0.12,
+        "max trim err = "
+        f"{1e6 * np.max(shift_reset_corner_trim_error):.1f} uV / 8000 uV\n"
+        "max common err = "
+        f"{1e3 * np.max(shift_reset_corner_common_error):.2f} mV / 10 mV",
+        transform=shift_reset_corner_axes[0].transAxes,
+        fontsize="x-small",
+        bbox={"facecolor": "white", "alpha": 0.82, "edgecolor": "0.8"},
+    )
     shift_reset_corner_axes[0].legend(loc="upper left", fontsize="x-small")
     for branch_idx, (_branch_name, branch_label, _nfp, _nfm, _trim) in enumerate(shift_reset_branch_specs):
         marker = "o-" if branch_idx == 0 else "s--"
@@ -14651,6 +14662,17 @@ quit
     shift_reset_corner_axes[1].set_ylabel("mean stored $h$ (mV)")
     shift_reset_corner_axes[1].set_title("Stored activation is dominated by calibration code, not reset TG corner")
     shift_reset_corner_axes[1].grid(True, axis="y", alpha=0.25)
+    shift_reset_corner_axes[1].text(
+        0.55,
+        0.14,
+        "corner-to-corner h spread = "
+        f"{1e3 * np.max(np.ptp(shift_reset_corner_h_mean, axis=1)):.2f} mV / 12 mV\n"
+        "max cycle spread = "
+        f"{1e3 * np.max(shift_reset_corner_h_spread):.2f} mV / 25 mV",
+        transform=shift_reset_corner_axes[1].transAxes,
+        fontsize="x-small",
+        bbox={"facecolor": "white", "alpha": 0.82, "edgecolor": "0.8"},
+    )
     shift_reset_corner_axes[1].legend(loc="upper left", fontsize="x-small")
     for branch_label, corner_label, rst, load, store in shift_reset_corner_traces:
         if ("+30" in branch_label and corner_label == "nweak_pstrong") or (

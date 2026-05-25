@@ -9728,6 +9728,151 @@ quit
         "trimmed split-reset reuse should not disturb bias state",
     )
 
+    def run_trimmed_reuse_margin_case(
+        name: str,
+        reset_trim_v: float,
+    ) -> tuple[np.ndarray, list[np.ndarray]]:
+        model_tag = name.upper()
+        stem = (
+            "mos_hidden_writer_restored_gate_hybrid_update_forward_guard_"
+            f"forward_pair_96u_zcm_0p75v_shift_trimmed_reuse_margin_{name}"
+        )
+        models = (
+            f".model NSHTRMFP_{model_tag} NMOS (LEVEL=1 VTO=0.57 KP=220u LAMBDA=0.03)\n"
+            f".model NSHTRMFM_{model_tag} NMOS (LEVEL=1 VTO=0.53 KP=220u LAMBDA=0.03)"
+        )
+        deck = replace_required(hybrid_forward_read_reuse_deck, zcm_source_line, "VZCM zcm 0 0.75")
+        deck = replace_required(deck, zcm_cap_p_line, "CZP_HYR zp_hyr 0 {CSUM} IC=0.75")
+        deck = replace_required(deck, zcm_cap_m_line, "CZM_HYR zm_hyr 0 {CSUM} IC=0.75")
+        deck = replace_required(deck, corner_param_line, models + "\n" + corner_param_line)
+        deck = replace_required(
+            deck,
+            forward_pair_lines,
+            shifted_forward_pair_lines(
+                10.0,
+                reset_ref_p=0.90 + 0.5 * reset_trim_v,
+                reset_ref_m=0.90 - 0.5 * reset_trim_v,
+                forward_p_model=f"NSHTRMFP_{model_tag}",
+                forward_m_model=f"NSHTRMFM_{model_tag}",
+            ),
+        )
+        deck = replace_required(
+            deck,
+            "VRESET_HYR rst_hyr 0 PWL(0 0 3.58u 0 3.60u 1.8 4.00u 1.8 4.02u 0 "
+            "5.18u 0 5.20u 1.8 5.60u 1.8 5.62u 0 7.8u 0)",
+            "VRESET_HYR rst_hyr 0 PWL(0 0 2.48u 0 2.50u 1.8 2.62u 1.8 2.64u 0 "
+            "3.58u 0 3.60u 1.8 4.00u 1.8 4.02u 0 5.18u 0 5.20u 1.8 5.60u 1.8 "
+            "5.62u 0 7.8u 0)",
+        )
+        deck = replace_required(
+            deck,
+            "VRESETN_HYR rstn_hyr 0 PWL(0 1.8 3.58u 1.8 3.60u 0 4.00u 0 4.02u 1.8 "
+            "5.18u 1.8 5.20u 0 5.60u 0 5.62u 1.8 7.8u 1.8)",
+            "VRESETN_HYR rstn_hyr 0 PWL(0 1.8 2.48u 1.8 2.50u 0 2.62u 0 2.64u 1.8 "
+            "3.58u 1.8 3.60u 0 4.00u 0 4.02u 1.8 5.18u 1.8 5.20u 0 5.60u 0 "
+            "5.62u 1.8 7.8u 1.8)",
+        )
+        deck = replace_required(
+            deck,
+            "mos_hidden_writer_restored_gate_hybrid_update_forward_read_reuse.dat",
+            f"{stem}.dat",
+        )
+        deck = add_shifted_gate_probes(deck, stem)
+        data = run_ngspice(deck, stem)
+        return load_wrdata(data, 25)
+
+    shift_trimmed_margin_cases = [
+        ("trim25mv", "-25 mV", -0.025),
+        ("trim30mv", "-30 mV", -0.030),
+        ("trim35mv", "-35 mV", -0.035),
+        ("trim40mv", "-40 mV", -0.040),
+        ("trim45mv", "-45 mV", -0.045),
+    ]
+    shift_trimmed_margin_labels = []
+    shift_trimmed_margin_trim_values = []
+    shift_trimmed_margin_gate_samples = []
+    shift_trimmed_margin_common_samples = []
+    shift_trimmed_margin_z_samples = []
+    shift_trimmed_margin_h_samples = []
+    shift_trimmed_margin_traces = []
+    for name, label, reset_trim_v in shift_trimmed_margin_cases:
+        if abs(reset_trim_v + 0.035) < 1e-12:
+            mt, margin_cols = strpt, shift_trimmed_reuse_cols
+        else:
+            mt, margin_cols = run_trimmed_reuse_margin_case(name, reset_trim_v)
+
+        def smat(time_s: float, values: np.ndarray) -> float:
+            return float(values[np.argmin(np.abs(mt - time_s))])
+
+        gate_diff = margin_cols[0] - margin_cols[1]
+        gate_common = 0.5 * (margin_cols[0] + margin_cols[1])
+        z = margin_cols[12] - margin_cols[11]
+        load = margin_cols[14] - margin_cols[13]
+        store = margin_cols[16] - margin_cols[15]
+        gate_samples = np.array([smat(ts, gate_diff) for ts in shift_trimmed_reuse_reset_times])
+        common_samples = np.array([smat(ts, gate_common) for ts in shift_trimmed_reuse_reset_times])
+        z_samples = np.array([smat(ts, z) for ts in shift_reuse_z_times])
+        h_samples = np.array([smat(ts, store) for ts in shift_reuse_h_times])
+        z_reset = np.array([abs(smat(ts, z)) for ts in shift_trimmed_reuse_reset_times])
+        h_reset = np.array([abs(smat(ts, store)) for ts in shift_trimmed_reuse_reset_times])
+        require(
+            np.max(np.abs(gate_samples - reset_trim_v)) < 0.003,
+            f"{label} trimmed reuse margin case should establish requested split-reset differential",
+        )
+        require(
+            np.max(np.abs(common_samples - 0.90)) < 0.006,
+            f"{label} trimmed reuse margin case should preserve reset common mode",
+        )
+        require(
+            np.max(z_reset) < 0.001,
+            f"{label} trimmed reuse margin case should clear preactivation during reset",
+        )
+        require(
+            np.max(h_reset) < 0.001,
+            f"{label} trimmed reuse margin case should clear stored activation during reset",
+        )
+        require(
+            np.all(z_samples > 0.035),
+            f"{label} trimmed reuse margin case should keep useful read preactivation",
+        )
+        require(
+            np.all(h_samples > 0.020),
+            f"{label} trimmed reuse margin case should keep positive stored activation",
+        )
+        require(
+            np.max(h_samples) < 0.085,
+            f"{label} trimmed reuse margin case should avoid overdriving the stored activation",
+        )
+        require(
+            np.max(h_samples) - np.min(h_samples) < 0.025,
+            f"{label} trimmed reuse margin case should remain stable across repeated cycles",
+        )
+        shift_trimmed_margin_labels.append(label)
+        shift_trimmed_margin_trim_values.append(reset_trim_v)
+        shift_trimmed_margin_gate_samples.append(gate_samples)
+        shift_trimmed_margin_common_samples.append(common_samples)
+        shift_trimmed_margin_z_samples.append(z_samples)
+        shift_trimmed_margin_h_samples.append(h_samples)
+        if name in {"trim25mv", "trim35mv", "trim45mv"}:
+            shift_trimmed_margin_traces.append((label, mt, load, store))
+
+    shift_trimmed_margin_trim_values = np.array(shift_trimmed_margin_trim_values)
+    shift_trimmed_margin_gate_samples = np.array(shift_trimmed_margin_gate_samples)
+    shift_trimmed_margin_common_samples = np.array(shift_trimmed_margin_common_samples)
+    shift_trimmed_margin_z_samples = np.array(shift_trimmed_margin_z_samples)
+    shift_trimmed_margin_h_samples = np.array(shift_trimmed_margin_h_samples)
+    shift_trimmed_margin_h_mean = np.mean(shift_trimmed_margin_h_samples, axis=1)
+    shift_trimmed_margin_h_min = np.min(shift_trimmed_margin_h_samples, axis=1)
+    shift_trimmed_margin_h_max = np.max(shift_trimmed_margin_h_samples, axis=1)
+    require(
+        np.all(np.diff(shift_trimmed_margin_h_mean) > 0.004),
+        "trimmed reuse margin should respond monotonically to stronger helpful reset trim",
+    )
+    require(
+        shift_trimmed_margin_h_min[0] > 0.020 and shift_trimmed_margin_h_max[-1] < 0.085,
+        "trimmed reuse margin sweep should bracket a useful non-overdriven calibration window",
+    )
+
     tail_bias_forward_tail_line = "MNFT_HYR ftail_hyr vbias 0 0 NMOS L={LCH} W=48u"
     tail_bias_cases_v = [0.70, 0.80, 0.90, 0.95, 1.05, 1.15, 1.25]
     tail_bias_labels = []
@@ -10786,6 +10931,89 @@ quit
     save_plot(
         shift_trimmed_reuse_fig,
         "mos_hidden_writer_restored_gate_hybrid_update_forward_guard_forward_pair_96u_shifted_gate_trimmed_reuse_ngspice",
+    )
+
+    shift_trimmed_margin_fig, shift_trimmed_margin_axes = plt.subplots(
+        3,
+        1,
+        figsize=(7.4, 7.2),
+        gridspec_kw={"height_ratios": [0.9, 1.0, 1.0]},
+    )
+    shift_trimmed_margin_x = np.arange(len(shift_trimmed_margin_labels))
+    shift_trimmed_margin_axes[0].errorbar(
+        1e3 * shift_trimmed_margin_trim_values,
+        1e3 * np.mean(shift_trimmed_margin_gate_samples, axis=1),
+        yerr=1e3
+        * np.vstack(
+            [
+                np.mean(shift_trimmed_margin_gate_samples, axis=1) - np.min(shift_trimmed_margin_gate_samples, axis=1),
+                np.max(shift_trimmed_margin_gate_samples, axis=1) - np.mean(shift_trimmed_margin_gate_samples, axis=1),
+            ]
+        ),
+        marker="o",
+        capsize=3,
+        label="measured reset diff",
+    )
+    shift_trimmed_margin_axes[0].plot(
+        1e3 * shift_trimmed_margin_trim_values,
+        1e3 * shift_trimmed_margin_trim_values,
+        ":",
+        color="0.25",
+        label="commanded trim",
+    )
+    shift_trimmed_margin_axes[0].plot(
+        1e3 * shift_trimmed_margin_trim_values,
+        1e3 * (np.mean(shift_trimmed_margin_common_samples, axis=1) - 0.90),
+        "--",
+        label="common error",
+    )
+    shift_trimmed_margin_axes[0].axhline(0, color="0.4", linewidth=0.8)
+    shift_trimmed_margin_axes[0].set_ylabel("reset sample (mV)")
+    shift_trimmed_margin_axes[0].set_title("Physical split reset tracks trim command across a local calibration window")
+    shift_trimmed_margin_axes[0].grid(True, alpha=0.25)
+    shift_trimmed_margin_axes[0].legend(loc="upper left", fontsize="small")
+    shift_trimmed_margin_axes[1].errorbar(
+        shift_trimmed_margin_x - 0.08,
+        1e3 * shift_trimmed_margin_h_mean,
+        yerr=1e3
+        * np.vstack(
+            [
+                shift_trimmed_margin_h_mean - shift_trimmed_margin_h_min,
+                shift_trimmed_margin_h_max - shift_trimmed_margin_h_mean,
+            ]
+        ),
+        fmt="o",
+        capsize=4,
+        label="$h$ cycles",
+    )
+    shift_trimmed_margin_axes[1].plot(
+        shift_trimmed_margin_x + 0.08,
+        1e3 * np.mean(shift_trimmed_margin_z_samples, axis=1),
+        "s",
+        label="$z$ cycles",
+    )
+    shift_trimmed_margin_axes[1].axhspan(20, 85, color="0.7", alpha=0.12, label="accepted window")
+    shift_trimmed_margin_axes[1].axhline(0, color="0.4", linewidth=0.8)
+    shift_trimmed_margin_axes[1].set_xticks(shift_trimmed_margin_x)
+    shift_trimmed_margin_axes[1].set_xticklabels(shift_trimmed_margin_labels)
+    shift_trimmed_margin_axes[1].set_ylabel("cycle samples (mV)")
+    shift_trimmed_margin_axes[1].set_title("Stored activation stays positive and bounded for +/-10 mV trim error")
+    shift_trimmed_margin_axes[1].grid(True, axis="y", alpha=0.25)
+    shift_trimmed_margin_axes[1].legend(loc="upper left", fontsize="small")
+    for label, tmt, load, store in shift_trimmed_margin_traces:
+        shift_trimmed_margin_axes[2].plot(1e6 * tmt, 1e3 * store, label=f"{label} $h$")
+        shift_trimmed_margin_axes[2].plot(1e6 * tmt, 1e3 * load, "--", alpha=0.65, label=f"{label} load")
+    shift_trimmed_margin_axes[2].axhline(0, color="0.4", linewidth=0.8)
+    shift_trimmed_margin_axes[2].set_xlim(2.35, 7.1)
+    shift_trimmed_margin_axes[2].set_xlabel("time (us)")
+    shift_trimmed_margin_axes[2].set_ylabel("differential (mV)")
+    shift_trimmed_margin_axes[2].set_title("Repeated captures remain ordered across weak/nominal/strong trims")
+    shift_trimmed_margin_axes[2].grid(True, alpha=0.25)
+    shift_trimmed_margin_axes[2].legend(loc="upper left", ncol=2, fontsize="x-small")
+    shift_trimmed_margin_fig.tight_layout()
+    save_plot(
+        shift_trimmed_margin_fig,
+        "mos_hidden_writer_restored_gate_hybrid_update_forward_guard_forward_pair_96u_shifted_gate_trimmed_margin_ngspice",
     )
 
     tail_bias_fig, tail_bias_axes = plt.subplots(2, 1, figsize=(7.4, 6.4), gridspec_kw={"height_ratios": [1.0, 0.8]})

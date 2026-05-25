@@ -2073,6 +2073,31 @@ must satisfy before it can replace the current behavioral prototype.
 
 \begin{figure}[H]
   \centering
+  \includegraphics[width=0.95\linewidth]{figures/mos_hidden_writer_restored_gate_hybrid_update_forward_guard_forward_pair_96u_shifted_gate_trimmed_margin_ngspice.png}
+  \caption{Ngspice trim-margin sweep for the calibrated shifted-gate reuse
+  fixture.  This uses the same \(+20/-20\) mV forward-pair threshold skew and
+  repeated read/reset/store schedule as
+  Fig.~\ref{fig:mos-hidden-writer-restored-gate-hybrid-update-forward-guard-forward-pair-96u-shifted-gate-trimmed-reuse-ngspice},
+  but sweeps the physical split-reset command around the selected \(-35\) mV
+  point.  The reset switch network tracks the requested
+  \(-25,-30,-35,-40,\) and \(-45\) mV differentials to within about
+  \(0.002\) mV, while the reset common-mode samples remain at
+  \(0.899993,0.900003,\) and \(0.900003\) V over the three cycles.  The read
+  preactivation is almost unchanged (\(\approx 46.6\)--\(46.8\) mV) because
+  this trim corrects the shifted forward-pair gate offset rather than the
+  upstream summing node.  Stored activation is monotone and bounded over the
+  window: the cycle means are
+  \(27.722,37.349,46.973,56.590,\) and \(66.201\) mV, with per-trim cycle
+  spread only \(0.0165\)--\(0.0197\) mV.  For this Level-1 fixture, the
+  calibrated split-reset point therefore has roughly \(\pm 10\) mV of local
+  trim margin before sign loss or overdrive.  This does not solve the
+  array-level problem of discovering and distributing per-cell trims, but it
+  rules out an immediately brittle single-point calibration.}
+  \label{fig:mos-hidden-writer-restored-gate-hybrid-update-forward-guard-forward-pair-96u-shifted-gate-trimmed-margin-ngspice}
+\end{figure}
+
+\begin{figure}[H]
+  \centering
   \includegraphics[width=0.88\linewidth]{figures/mos_hidden_writer_restored_gate_hybrid_update_forward_guard_forward_tail_bias_ngspice.png}
   \caption{Ngspice isolated forward-tail bias sweep for the same guarded MOS
   activation store.  The failed shared-bias experiment changed the read path

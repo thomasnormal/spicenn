@@ -23,22 +23,29 @@ from spicenn.timing import CYCLE_NS
 
 
 FEATURE_COUNT = 4
+DEFAULT_GRID_ROWS = 2
+DEFAULT_GRID_COLS = 2
 
 
-def quad_features_from_image(image: np.ndarray) -> np.ndarray:
+def grid_feature_count(grid_rows: int, grid_cols: int) -> int:
+    if grid_rows <= 0 or grid_cols <= 0:
+        raise ValueError("grid dimensions must be positive")
+    return grid_rows * grid_cols
+
+
+def grid_features_from_image(image: np.ndarray, grid_rows: int, grid_cols: int) -> np.ndarray:
+    grid_feature_count(grid_rows, grid_cols)
     pixels = np.clip(np.asarray(image, dtype=np.float64), 0.0, 1.0)
     if pixels.ndim != 2:
         raise ValueError("image must be 2-D")
-    hmid = pixels.shape[0] // 2
-    wmid = pixels.shape[1] // 2
-    quadrants = (
-        pixels[:hmid, :wmid],
-        pixels[:hmid, wmid:],
-        pixels[hmid:, :wmid],
-        pixels[hmid:, wmid:],
-    )
-    inks = np.asarray([float(np.mean(q)) for q in quadrants], dtype=np.float64)
+    row_tiles = np.array_split(pixels, grid_rows, axis=0)
+    tiles = [tile for row_tile in row_tiles for tile in np.array_split(row_tile, grid_cols, axis=1)]
+    inks = np.asarray([float(np.mean(tile)) for tile in tiles], dtype=np.float64)
     return np.clip(0.55 + 0.55 * inks / 0.35, 0.05, 1.1)
+
+
+def quad_features_from_image(image: np.ndarray) -> np.ndarray:
+    return grid_features_from_image(image, DEFAULT_GRID_ROWS, DEFAULT_GRID_COLS)
 
 
 def sample_wave(samples: list[dict[str, Any]], key: str, stop_ns: float) -> str:
@@ -90,13 +97,29 @@ def repeated_phases(sample_count: int, *, training_enabled: bool) -> str:
     )
 
 
-def initial_quad_weights() -> dict[str, list[float]]:
+def initial_quad_weights(feature_count: int = FEATURE_COUNT) -> dict[str, list[float]]:
+    if feature_count <= 0:
+        raise ValueError("feature_count must be positive")
     return {
-        "whp": [0.85] * FEATURE_COUNT,
-        "whn": [0.25] * FEATURE_COUNT,
-        "vwp": [0.55] * FEATURE_COUNT,
-        "vwn": [0.25] * FEATURE_COUNT,
+        "whp": [0.85] * feature_count,
+        "whn": [0.25] * feature_count,
+        "vwp": [0.55] * feature_count,
+        "vwn": [0.25] * feature_count,
     }
+
+
+def feature_count_from_weights(weights: dict[str, list[float]]) -> int:
+    required = ("whp", "whn", "vwp", "vwn")
+    missing = [key for key in required if key not in weights]
+    if missing:
+        raise ValueError(f"missing weight rails: {', '.join(missing)}")
+    lengths = {key: len(weights[key]) for key in required}
+    feature_count = lengths["whp"]
+    if feature_count <= 0:
+        raise ValueError("weights must contain at least one feature")
+    if any(length != feature_count for length in lengths.values()):
+        raise ValueError(f"weight rail lengths must match: {lengths}")
+    return feature_count
 
 
 def quad_netlist(
@@ -109,6 +132,13 @@ def quad_netlist(
 ) -> str:
     if readout_apply_scale <= 0.0:
         raise ValueError("readout_apply_scale must be positive")
+    if not samples:
+        raise ValueError("samples must not be empty")
+    feature_count = feature_count_from_weights(weights)
+    for idx, sample in enumerate(samples):
+        missing = [f"x{q}" for q in range(feature_count) if f"x{q}" not in sample]
+        if missing:
+            raise ValueError(f"sample {idx} missing feature rails: {', '.join(missing)}")
     readout_pmos_w = 8.0 * readout_apply_scale
     readout_nmos_w = 2.0 * readout_apply_scale
     stop = len(samples) * CYCLE_NS
@@ -126,7 +156,7 @@ def quad_netlist(
             f".meas tran d_out_{idx} PARAM='out_after_{idx}-out_before_{idx}'",
             f".meas tran error_net_{idx} PARAM='dp_after_{idx}-dn_after_{idx}'",
         ]
-        for q in range(FEATURE_COUNT):
+        for q in range(feature_count):
             measures += [
                 f".meas tran act{q}_before_{idx} FIND V(act{q}) AT={base + 2.95:.2f}n",
                 f".meas tran act{q}_after_{idx} FIND V(act{q}) AT={base + 15.50:.2f}n",
@@ -155,13 +185,13 @@ def quad_netlist(
         prints.append(f"print out_before_{idx} out_after_{idx} error_net_{idx}")
 
     lines = [
-        "* Quad-feature MNIST01 device-level training smoke.",
-        "* Four MOS/passive hidden/update slices share one output score/error node.",
+        "* Grid-feature MNIST01 device-level training smoke.",
+        f"* {feature_count} MOS/passive hidden/update slices share one output score/error node.",
         ".param VDD=1.2",
         mos_models(),
         "Vdd vdd 0 {VDD}",
     ]
-    for q in range(FEATURE_COUNT):
+    for q in range(feature_count):
         lines.append(f"Vx{q} x{q} 0 {sample_wave(samples, f'x{q}', stop)}")
     lines += [
         f"Vtarget target 0 {sample_wave(samples, 'target', stop)}",
@@ -169,7 +199,7 @@ def quad_netlist(
         "",
         "* Persistent signed hidden and readout weights.",
     ]
-    for q in range(FEATURE_COUNT):
+    for q in range(feature_count):
         lines += [
             f"Cwhp{q} whp{q} 0 20f IC={weights['whp'][q]:.12g}",
             f"Cwhn{q} whn{q} 0 20f IC={weights['whn'][q]:.12g}",
@@ -192,7 +222,7 @@ def quad_netlist(
         "Rdp dp 0 1G",
         "Rdn dn 0 1G",
     ]
-    for q in range(FEATURE_COUNT):
+    for q in range(feature_count):
         lines += [
             f"Cpre{q} pre{q} 0 10f IC=0",
             f"Cact{q} act{q} 0 20f IC=0",
@@ -224,7 +254,7 @@ def quad_netlist(
         "Mreset_dp dp rstg 0 0 NMOS W=4u L=180n",
         "Mreset_dn dn rstg 0 0 NMOS W=4u L=180n",
     ]
-    for q in range(FEATURE_COUNT):
+    for q in range(feature_count):
         lines += [
             f"Mreset_pre{q} pre{q} rstf 0 0 NMOS W=4u L=180n",
             f"Mreset_act{q} act{q} rstf 0 0 NMOS W=4u L=180n",
@@ -236,7 +266,7 @@ def quad_netlist(
             f"Mreset_ghn{q} ghn{q} rstg 0 0 NMOS W=4u L=180n",
         ]
 
-    for q in range(FEATURE_COUNT):
+    for q in range(feature_count):
         lines += [
             "",
             f"* Feature {q}: hidden forward, output contribution, direct feedback, and local writes.",
@@ -323,6 +353,8 @@ def load_mnist01_quad_records(
     eval_samples: int,
     *,
     image_size: int,
+    grid_rows: int,
+    grid_cols: int,
     seed: int,
     positive_digit: int,
     negative_digit: int,
@@ -333,6 +365,7 @@ def load_mnist01_quad_records(
 
     if positive_digit == negative_digit:
         raise ValueError("positive and negative digits must differ")
+    grid_feature_count(grid_rows, grid_cols)
     digits = (positive_digit, negative_digit)
     ds_train = datasets.MNIST(root=str(ROOT / "data"), train=True, download=download, transform=transforms.ToTensor())
     ds_eval = datasets.MNIST(root=str(ROOT / "data"), train=False, download=download, transform=transforms.ToTensor())
@@ -346,7 +379,7 @@ def load_mnist01_quad_records(
         for index in indices:
             image, digit = ds[int(index)]
             resized = F.interpolate(image.unsqueeze(0), size=(image_size, image_size), mode="area").squeeze()
-            features = quad_features_from_image(resized.numpy())
+            features = grid_features_from_image(resized.numpy(), grid_rows, grid_cols)
             digit_i = int(digit)
             record: dict[str, Any] = {
                 "target": 1.1 if digit_i == positive_digit else 0.0,
@@ -362,7 +395,9 @@ def load_mnist01_quad_records(
     return extract(ds_train, train_indices), extract(ds_eval, eval_indices)
 
 
-def rows_from_measures(samples: list[dict[str, Any]], measures: dict[str, float], *, sequence: str) -> pd.DataFrame:
+def rows_from_measures(
+    samples: list[dict[str, Any]], measures: dict[str, float], *, sequence: str, feature_count: int
+) -> pd.DataFrame:
     rows: list[dict[str, Any]] = []
     for sample_idx, sample in enumerate(samples):
         positive = expected_positive(float(sample["target"]))
@@ -375,7 +410,7 @@ def rows_from_measures(samples: list[dict[str, Any]], measures: dict[str, float]
             "positive_label": sample.get("positive_label"),
             "expected_direction": "positive" if positive else "negative",
         }
-        for q in range(FEATURE_COUNT):
+        for q in range(feature_count):
             row[f"x{q}"] = sample[f"x{q}"]
         for key, value in measures.items():
             suffix = f"_{sample_idx}"
@@ -385,15 +420,15 @@ def rows_from_measures(samples: list[dict[str, Any]], measures: dict[str, float]
     return pd.DataFrame(rows)
 
 
-def final_weights_from_rows(rows: pd.DataFrame) -> dict[str, list[float]]:
+def final_weights_from_rows(rows: pd.DataFrame, *, feature_count: int = FEATURE_COUNT) -> dict[str, list[float]]:
     if rows.empty:
         raise ValueError("cannot extract final weights from empty rows")
     final = rows.iloc[-1]
     return {
-        "whp": [float(final[f"whp{q}_after_apply"]) for q in range(FEATURE_COUNT)],
-        "whn": [float(final[f"whn{q}_after_apply"]) for q in range(FEATURE_COUNT)],
-        "vwp": [float(final[f"vwp{q}_after_apply"]) for q in range(FEATURE_COUNT)],
-        "vwn": [float(final[f"vwn{q}_after_apply"]) for q in range(FEATURE_COUNT)],
+        "whp": [float(final[f"whp{q}_after_apply"]) for q in range(feature_count)],
+        "whn": [float(final[f"whn{q}_after_apply"]) for q in range(feature_count)],
+        "vwp": [float(final[f"vwp{q}_after_apply"]) for q in range(feature_count)],
+        "vwn": [float(final[f"vwn{q}_after_apply"]) for q in range(feature_count)],
     }
 
 
@@ -409,6 +444,7 @@ def run_device_sequence(
     output_driver_model: str,
     readout_apply_scale: float,
 ) -> pd.DataFrame:
+    feature_count = feature_count_from_weights(weights)
     netlist = quad_netlist(
         samples,
         weights,
@@ -417,9 +453,9 @@ def run_device_sequence(
         readout_apply_scale=readout_apply_scale,
     )
     if "\nB" in netlist:
-        raise ValueError("quad-feature device runner generated a behavioral source")
+        raise ValueError("grid-feature device runner generated a behavioral source")
     measures = run_netlist(spice_bin, path, netlist, timeout)
-    return rows_from_measures(samples, measures, sequence=sequence)
+    return rows_from_measures(samples, measures, sequence=sequence, feature_count=feature_count)
 
 
 def main() -> None:
@@ -427,6 +463,8 @@ def main() -> None:
     ap.add_argument("--train-samples", type=int, default=8)
     ap.add_argument("--eval-samples", type=int, default=8)
     ap.add_argument("--image-size", type=int, default=8)
+    ap.add_argument("--grid-rows", type=int, default=DEFAULT_GRID_ROWS)
+    ap.add_argument("--grid-cols", type=int, default=DEFAULT_GRID_COLS)
     ap.add_argument("--seed", type=int, default=0)
     ap.add_argument("--positive-digit", type=int, default=0)
     ap.add_argument("--negative-digit", type=int, default=1)
@@ -443,6 +481,7 @@ def main() -> None:
         raise ValueError("train-samples must be positive for a training smoke")
     if args.eval_samples <= 0:
         raise ValueError("eval-samples must be positive")
+    feature_count = grid_feature_count(args.grid_rows, args.grid_cols)
 
     generated = ROOT / "spice/generated"
     results = ROOT / "spice/results"
@@ -458,12 +497,14 @@ def main() -> None:
         args.train_samples,
         args.eval_samples,
         image_size=args.image_size,
+        grid_rows=args.grid_rows,
+        grid_cols=args.grid_cols,
         seed=args.seed,
         positive_digit=args.positive_digit,
         negative_digit=args.negative_digit,
         download=args.download,
     )
-    initial_weights = initial_quad_weights()
+    initial_weights = initial_quad_weights(feature_count)
     initial_eval_rows = run_device_sequence(
         spice_bin,
         generated / f"{safe_tag}_initial_eval.cir",
@@ -486,7 +527,7 @@ def main() -> None:
         output_driver_model=args.output_driver_model,
         readout_apply_scale=args.readout_apply_scale,
     )
-    final_weights = final_weights_from_rows(train_rows)
+    final_weights = final_weights_from_rows(train_rows, feature_count=feature_count)
     final_eval_rows = run_device_sequence(
         spice_bin,
         generated / f"{safe_tag}_final_eval.cir",
@@ -516,15 +557,19 @@ def main() -> None:
     nontrivial_learning_met = final_accuracy > max(initial_accuracy, 0.5)
     summary = {
         "simulator": version,
-        "architecture": "device_level_mnist01_quad_feature_sequential_training",
-        "status": "mnist01_quad_feature_device_training_smoke",
+        "architecture": "device_level_mnist01_grid_feature_sequential_training",
+        "status": "mnist01_grid_feature_device_training_smoke",
         "model_level": "ngspice built-in LEVEL=1 MOS models; not a foundry PDK.",
-        "dataset": "MNIST01 four-quadrant feature smoke",
+        "dataset": f"MNIST01 {args.grid_rows}x{args.grid_cols} mean-ink grid feature smoke",
         "positive_digit": args.positive_digit,
         "negative_digit": args.negative_digit,
         "image_size": args.image_size,
-        "feature_count": FEATURE_COUNT,
-        "feature_encoding": "four quadrant mean-ink rails, each 0.55 + 0.55 * quadrant_ink / 0.35 clipped to [0.05, 1.1]",
+        "grid_rows": args.grid_rows,
+        "grid_cols": args.grid_cols,
+        "feature_count": feature_count,
+        "feature_encoding": (
+            "row-major grid mean-ink rails, each 0.55 + 0.55 * tile_ink / 0.35 clipped to [0.05, 1.1]"
+        ),
         "hidden_credit_mode": "direct_feedback",
         "output_driver_model": args.output_driver_model,
         "readout_apply_scale": args.readout_apply_scale,
@@ -566,12 +611,12 @@ def main() -> None:
         "wall_time_s": time.perf_counter() - t0,
         "full_objective_contract_issues": [
             "binary MNIST01 smoke, not multiclass MNIST",
-            "four quadrant features, not 10x10 b4 stride2 c2",
+            f"{args.grid_rows}x{args.grid_cols} mean-ink grid features, not 10x10 b4 stride2 c2",
             "does not yet demonstrate nontrivial learning" if not nontrivial_learning_met else "",
         ],
         "interpretation": (
-            "This is the first multi-feature transistor/passive MNIST data-stream smoke. "
-            "Four independent hidden/update slices share one output node and one error rail; training weights change only "
+            "This is a multi-feature transistor/passive MNIST data-stream smoke. "
+            f"{feature_count} independent hidden/update slices share one output node and one error rail; training weights change only "
             "inside the uninterrupted training transient."
         ),
     }

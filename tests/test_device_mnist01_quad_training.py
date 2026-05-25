@@ -22,6 +22,8 @@ def test_device_mnist01_quad_script_help_runs_from_repo_root() -> None:
 
     assert "--train-samples" in proc.stdout
     assert "--eval-samples" in proc.stdout
+    assert "--grid-rows" in proc.stdout
+    assert "--grid-cols" in proc.stdout
     assert "--output-driver-model" in proc.stdout
     assert "--readout-apply-scale" in proc.stdout
     assert "--assert-nonbehavioral" in proc.stdout
@@ -41,6 +43,22 @@ def test_quad_features_are_four_positive_bounded_quadrant_rails() -> None:
     assert np.all(features <= 1.1)
     assert features[0] > features[1]
     assert features[3] > features[0]
+
+
+def test_grid_features_generalize_quadrants_row_major() -> None:
+    sys.path.insert(0, str(SPICE_DIR))
+    import run_device_mnist01_quad_training as quad
+
+    image = np.zeros((6, 9), dtype=np.float64)
+    image[:, 3:6] = 0.2
+    image[:, 6:] = 0.7
+    features = quad.grid_features_from_image(image, 2, 3)
+
+    assert features.shape == (6,)
+    assert np.all(features > 0.0)
+    assert np.all(features <= 1.1)
+    assert np.allclose(features[:3], features[3:])
+    assert features[0] < features[1] < features[2]
 
 
 def test_quad_netlist_uses_four_transistor_feature_slices_and_no_behavioral_sources() -> None:
@@ -63,6 +81,26 @@ def test_quad_netlist_uses_four_transistor_feature_slices_and_no_behavioral_sour
     assert "Mrelu_o vdd score out 0 NSENSE" in netlist
 
 
+def test_quad_netlist_supports_larger_grid_feature_count_without_behavioral_sources() -> None:
+    sys.path.insert(0, str(SPICE_DIR))
+    import run_device_mnist01_quad_training as quad
+
+    feature_count = quad.grid_feature_count(3, 3)
+    samples = [{f"x{q}": 0.65 + 0.02 * q for q in range(feature_count)} | {"target": 1.1}]
+    netlist = quad.quad_netlist(
+        samples,
+        quad.initial_quad_weights(feature_count),
+        training_enabled=True,
+        readout_apply_scale=0.5,
+    )
+
+    assert "\nB" not in netlist
+    assert netlist.count("Cwhp") == feature_count
+    assert "Vx8 x8 0 PWL" in netlist
+    assert "Movpos8_f op8_1 fwd score 0 NREL" in netlist
+    assert "Vx9 x9 0 PWL" not in netlist
+
+
 def test_quad_netlist_rejects_nonpositive_readout_apply_scale() -> None:
     sys.path.insert(0, str(SPICE_DIR))
     import pytest
@@ -74,4 +112,17 @@ def test_quad_netlist_rejects_nonpositive_readout_apply_scale() -> None:
             quad.initial_quad_weights(),
             training_enabled=True,
             readout_apply_scale=0.0,
+        )
+
+
+def test_quad_netlist_rejects_missing_grid_feature_rail() -> None:
+    sys.path.insert(0, str(SPICE_DIR))
+    import pytest
+    import run_device_mnist01_quad_training as quad
+
+    with pytest.raises(ValueError, match="sample 0 missing feature rails: x4"):
+        quad.quad_netlist(
+            [{"x0": 0.7, "x1": 0.8, "x2": 0.9, "x3": 1.0, "target": 1.1}],
+            quad.initial_quad_weights(5),
+            training_enabled=True,
         )

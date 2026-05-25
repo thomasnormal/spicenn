@@ -7962,6 +7962,19 @@ quit
     require(hyvat(4.45e-6, hyv_forward_store) > 0.040, "stored forward activation should hold after pact")
     require(abs(hyvat(4.45e-6, hyv_weight) - hyvat(2.55e-6, hyv_weight)) < 5e-4, "read/forward phases should not disturb weight state")
     require(abs(hyvat(4.45e-6, hyv_bias) - hyvat(2.55e-6, hyv_bias)) < 5e-4, "read/forward phases should not disturb bias state")
+    hyv_hidden_sample = hyvat(1.35e-6, hyv_hidden)
+    hyv_selected_gate_sample = hyvat(1.45e-6, hyv_selected_gate)
+    hyv_complement_gate_sample = hyvat(1.45e-6, hyv_complement_gate)
+    hyv_hcap_sample = hyvat(1.90e-6, hyv_hcap)
+    hyv_weight_sample = hyvat(2.55e-6, hyv_weight)
+    hyv_bias_sample = hyvat(2.55e-6, hyv_bias)
+    hyv_preact_before_read = abs(hyvat(2.60e-6, hyv_preact))
+    hyv_preact_sample = hyvat(3.35e-6, hyv_preact)
+    hyv_forward_load_sample = hyvat(3.35e-6, hyv_forward_load)
+    hyv_forward_store_sample = hyvat(3.50e-6, hyv_forward_store)
+    hyv_forward_store_hold = hyvat(4.45e-6, hyv_forward_store)
+    hyv_weight_read_disturb = abs(hyvat(4.45e-6, hyv_weight) - hyv_weight_sample)
+    hyv_bias_read_disturb = abs(hyvat(4.45e-6, hyv_bias) - hyv_bias_sample)
 
     hyv_fig, hyv_axes = plt.subplots(3, 1, figsize=(7.2, 7.4), gridspec_kw={"height_ratios": [1.0, 1.0, 1.0]})
     hyv_axes[0].plot(1e6 * hyvt, hyv_hidden, label="stored $e^+$")
@@ -7971,6 +7984,19 @@ quit
     hyv_axes[0].set_ylabel("voltage (V)")
     hyv_axes[0].set_title("Update-forward deck stores error and activation")
     hyv_axes[0].grid(True, alpha=0.25)
+    hyv_axes[0].text(
+        0.05,
+        0.13,
+        "error store = "
+        f"{1e3 * hyv_hidden_sample:.1f} mV / >70 mV\n"
+        "selected/complement = "
+        f"{hyv_selected_gate_sample:.2f}/{hyv_complement_gate_sample:.2f} V\n"
+        "activation sample = "
+        f"{hyv_hcap_sample:.3f} V / 0.92+/-0.012 V",
+        transform=hyv_axes[0].transAxes,
+        fontsize="x-small",
+        bbox=callout_box,
+    )
     hyv_axes[0].legend(loc="center right", ncol=2, fontsize="small")
     hyv_axes[1].plot(1e6 * hyvt, 1e3 * hyv_weight, label="$W^+ - W^-$")
     hyv_axes[1].plot(1e6 * hyvt, 1e3 * hyv_bias, label="$B^+ - B^-$")
@@ -7980,6 +8006,21 @@ quit
     hyv_axes[1].set_ylabel("mV")
     hyv_axes[1].set_title("Written W/B capacitors drive one shared summing node")
     hyv_axes[1].grid(True, alpha=0.25)
+    hyv_axes[1].text(
+        0.52,
+        0.13,
+        "W/B writes = "
+        f"{1e3 * hyv_weight_sample:.1f}/{1e3 * hyv_bias_sample:.1f} mV\n"
+        "pre-read z = "
+        f"{1e3 * hyv_preact_before_read:.2f} mV / <3 mV\n"
+        "read z = "
+        f"{1e3 * hyv_preact_sample:.1f} mV / >50 mV\n"
+        "read disturb W/B = "
+        f"{1e3 * hyv_weight_read_disturb:.3f}/{1e3 * hyv_bias_read_disturb:.3f} mV",
+        transform=hyv_axes[1].transAxes,
+        fontsize="x-small",
+        bbox=callout_box,
+    )
     hyv_axes[1].legend(loc="upper left", ncol=3, fontsize="small")
     hyv_axes[2].plot(1e6 * hyvt, 1e3 * hyv_forward_load, label="forward-pair load")
     hyv_axes[2].plot(1e6 * hyvt, 1e3 * hyv_forward_store, label="stored activation")
@@ -7989,6 +8030,19 @@ quit
     hyv_axes[2].set_ylabel("activation differential (mV)")
     hyv_axes[2].set_title("Crossed MOS forward pair stores the summed activation")
     hyv_axes[2].grid(True, alpha=0.25)
+    hyv_axes[2].text(
+        0.52,
+        0.13,
+        "forward load = "
+        f"{1e3 * hyv_forward_load_sample:.1f} mV / >40 mV\n"
+        "stored h = "
+        f"{1e3 * hyv_forward_store_sample:.1f} mV / >40 mV\n"
+        "held h = "
+        f"{1e3 * hyv_forward_store_hold:.1f} mV",
+        transform=hyv_axes[2].transAxes,
+        fontsize="x-small",
+        bbox=callout_box,
+    )
     hyv_axes[2].legend(loc="upper left", fontsize="small")
     hyv_fig.tight_layout()
     save_plot(hyv_fig, "mos_hidden_writer_restored_gate_hybrid_update_forward_ngspice")
@@ -8473,6 +8527,19 @@ quit
     require(abs(hyrat(6.35e-6, hyr_bias)) < 0.004, "reuse second opposite update should cancel bias differential")
     require(abs(hyrat(7.15e-6, hyr_preact)) < 0.001, "reuse cancelled W/B state should read near-zero preactivation")
     require(abs(hyrat(7.45e-6, hyr_forward_store)) < 0.001, "reuse cancelled state should store near-zero activation")
+    hyr_first_hidden = hyrat(1.35e-6, hyr_hidden)
+    hyr_second_hidden = hyrat(5.15e-6, hyr_hidden)
+    hyr_reset_hidden = abs(hyrat(4.10e-6, hyr_hidden))
+    hyr_reset_hcap = abs(hyrat(4.10e-6, hyr_hcap) - 1.45)
+    hyr_first_weight = hyrat(2.55e-6, hyr_weight)
+    hyr_first_bias = hyrat(2.55e-6, hyr_bias)
+    hyr_cancel_weight = abs(hyrat(6.35e-6, hyr_weight))
+    hyr_cancel_bias = abs(hyrat(6.35e-6, hyr_bias))
+    hyr_first_preact = hyrat(3.35e-6, hyr_preact)
+    hyr_reset_preact = abs(hyrat(4.10e-6, hyr_preact))
+    hyr_cancel_preact = abs(hyrat(7.15e-6, hyr_preact))
+    hyr_reset_forward_store = abs(hyrat(4.10e-6, hyr_forward_store))
+    hyr_cancel_forward_store = abs(hyrat(7.45e-6, hyr_forward_store))
 
     hyr_fig, hyr_axes = plt.subplots(3, 1, figsize=(7.4, 7.4), gridspec_kw={"height_ratios": [1.0, 1.0, 1.0]})
     hyr_axes[0].plot(1e6 * hyrt, hyr_hidden, label="stored error differential")
@@ -8483,6 +8550,19 @@ quit
     hyr_axes[0].set_ylabel("voltage (V)")
     hyr_axes[0].set_title("MOS reset reuses the same error and activation storage")
     hyr_axes[0].grid(True, alpha=0.25)
+    hyr_axes[0].text(
+        0.05,
+        0.13,
+        "e1/e2 stores = "
+        f"{1e3 * hyr_first_hidden:.1f}/{1e3 * hyr_second_hidden:.1f} mV\n"
+        "reset error residue = "
+        f"{1e3 * hyr_reset_hidden:.2f} mV / <4 mV\n"
+        "activation reset error = "
+        f"{1e3 * hyr_reset_hcap:.2f} mV / <15 mV",
+        transform=hyr_axes[0].transAxes,
+        fontsize="x-small",
+        bbox=callout_box,
+    )
     hyr_axes[0].legend(loc="center right", ncol=2, fontsize="small")
     hyr_axes[1].plot(1e6 * hyrt, 1e3 * hyr_weight, label="$W^+ - W^-$")
     hyr_axes[1].plot(1e6 * hyrt, 1e3 * hyr_bias, label="$B^+ - B^-$")
@@ -8493,6 +8573,19 @@ quit
     hyr_axes[1].set_ylabel("mV")
     hyr_axes[1].set_title("Opposite second sample cancels persistent W/B differentials")
     hyr_axes[1].grid(True, alpha=0.25)
+    hyr_axes[1].text(
+        0.52,
+        0.13,
+        "first W/B = "
+        f"{1e3 * hyr_first_weight:.1f}/{1e3 * hyr_first_bias:.1f} mV\n"
+        "cancel residue W/B = "
+        f"{1e3 * hyr_cancel_weight:.2f}/{1e3 * hyr_cancel_bias:.2f} mV\n"
+        "read before/cancel z = "
+        f"{1e3 * hyr_first_preact:.1f}/{1e3 * hyr_cancel_preact:.2f} mV",
+        transform=hyr_axes[1].transAxes,
+        fontsize="x-small",
+        bbox=callout_box,
+    )
     hyr_axes[1].legend(loc="upper left", ncol=3, fontsize="small")
     hyr_axes[2].plot(1e6 * hyrt, 1e3 * hyr_forward_load, label="forward load")
     hyr_axes[2].plot(1e6 * hyrt, 1e3 * hyr_forward_store, label="stored activation")
@@ -8502,6 +8595,17 @@ quit
     hyr_axes[2].set_ylabel("activation differential (mV)")
     hyr_axes[2].set_title("Forward store resets, then stays near zero after cancellation")
     hyr_axes[2].grid(True, alpha=0.25)
+    hyr_axes[2].text(
+        0.52,
+        0.13,
+        "reset z/h residue = "
+        f"{1e3 * hyr_reset_preact:.2f}/{1e3 * hyr_reset_forward_store:.2f} mV\n"
+        "cancelled h = "
+        f"{1e3 * hyr_cancel_forward_store:.2f} mV / <1 mV",
+        transform=hyr_axes[2].transAxes,
+        fontsize="x-small",
+        bbox=callout_box,
+    )
     hyr_axes[2].legend(loc="upper left", fontsize="small")
     hyr_fig.tight_layout()
     save_plot(hyr_fig, "mos_hidden_writer_restored_gate_hybrid_update_forward_reuse_ngspice")

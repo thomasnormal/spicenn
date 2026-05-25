@@ -1502,6 +1502,22 @@ must satisfy before it can replace the current behavioral prototype.
 
 \begin{figure}[H]
   \centering
+  \includegraphics[width=0.88\linewidth]{figures/mos_hidden_writer_restored_gate_hybrid_update_forward_guard_skew_ngspice.png}
+  \caption{Ngspice guard-clock skew sweep for the integrated MOS activation
+  store.  The \(pact\) aperture is held long at \(320\) ns, and the
+  guard-valid pulse width is fixed at \(130\) ns.  Shifting that guard window
+  by \(-120,-80,-40,0,+40,+80,+120\) ns stores
+  \(32.260,48.780,52.517,51.355,42.401,32.238,\) and \(28.899\) mV while the
+  read preactivation remains near \(52.066\) mV.  The skew window is
+  asymmetric: early guard skew is acceptable until the overlap with \(pact\)
+  becomes too short, but late guard skew samples the forward-load droop almost
+  immediately.  The clocking rule for this store is therefore to bias the
+  valid window early and close it before the read path collapses.}
+  \label{fig:mos-hidden-writer-restored-gate-hybrid-update-forward-guard-skew-ngspice}
+\end{figure}
+
+\begin{figure}[H]
+  \centering
   \includegraphics[width=0.88\linewidth]{figures/mos_hidden_writer_restored_gate_hybrid_update_forward_guard_corner_ngspice.png}
   \caption{Ngspice guard pass-gate threshold-corner sweep for the same
   integrated MOS activation store.  The \(pact\) aperture is held long at

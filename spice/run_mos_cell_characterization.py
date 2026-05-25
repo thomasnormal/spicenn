@@ -7461,6 +7461,83 @@ quit
         "late guard-off should start tracking post-valid forward-load droop",
     )
 
+    guard_skew_cases_ns = [-120, -80, -40, 0, 40, 80, 120]
+    guard_skew_labels = []
+    guard_skew_store_samples = []
+    guard_skew_preact_samples = []
+    guard_skew_traces = []
+    nominal_guard_start_us = aperture_start_us
+    guard_width_us = 130 / 1000.0
+    for skew_ns in guard_skew_cases_ns:
+        guard_start_us = nominal_guard_start_us + skew_ns / 1000.0
+        guard_rise_us = guard_start_us - 0.02
+        guard_end_us = guard_start_us + guard_width_us
+        guard_off_us = guard_end_us + 0.02
+        label = f"{skew_ns:+d} ns"
+        stem = (
+            "mos_hidden_writer_restored_gate_hybrid_update_forward_read_pact_"
+            f"guard_skew_{skew_ns:+d}ns".replace("+", "p").replace("-", "m")
+        )
+        guard_pwl = (
+            f"VGUARD_HYR guard_hyr 0 PWL(0 0 {guard_rise_us:.2f}u 0 "
+            f"{guard_start_us:.2f}u 1.8 {guard_end_us:.2f}u 1.8 {guard_off_us:.2f}u 0 7.8u 0)"
+        )
+        guardn_pwl = (
+            f"VGUARDN_HYR guardn_hyr 0 PWL(0 1.8 {guard_rise_us:.2f}u 1.8 "
+            f"{guard_start_us:.2f}u 0 {guard_end_us:.2f}u 0 {guard_off_us:.2f}u 1.8 7.8u 1.8)"
+        )
+        skew_guard_deck = replace_required(hybrid_forward_read_reuse_deck, timing_read_pwl, timing_single_read_pwl)
+        skew_guard_deck = replace_required(
+            skew_guard_deck,
+            timing_base_pact_pwl,
+            long_pact_pwl + "\n" + long_pactn_pwl + "\n" + guard_pwl + "\n" + guardn_pwl,
+        )
+        skew_guard_deck = replace_required(skew_guard_deck, nmos_store_line_p, guard_store_line_p)
+        skew_guard_deck = replace_required(skew_guard_deck, nmos_store_line_m, guard_store_line_m)
+        skew_guard_deck = replace_required(
+            skew_guard_deck,
+            "mos_hidden_writer_restored_gate_hybrid_update_forward_read_reuse.dat",
+            f"{stem}.dat",
+        )
+        skew_guard_data = run_ngspice(skew_guard_deck, stem)
+        gst, guard_skew_cols = load_wrdata(skew_guard_data, 23)
+
+        def gsat(time_s: float, values: np.ndarray) -> float:
+            return float(values[np.argmin(np.abs(gst - time_s))])
+
+        guard_skew_preact = guard_skew_cols[10] - guard_skew_cols[9]
+        guard_skew_store = guard_skew_cols[14] - guard_skew_cols[13]
+        guard_skew_labels.append(label)
+        guard_skew_preact_samples.append(gsat(3.575e-6, guard_skew_preact))
+        guard_skew_store_samples.append(gsat(3.575e-6, guard_skew_store))
+        guard_skew_traces.append((label, gst, guard_skew_store))
+
+    guard_skew_store_samples = np.array(guard_skew_store_samples)
+    guard_skew_preact_samples = np.array(guard_skew_preact_samples)
+    nominal_skew_idx = guard_skew_cases_ns.index(0)
+    require(np.min(guard_skew_preact_samples) > 0.048, "guard skew sweep should keep a valid read state")
+    require(
+        abs(guard_skew_store_samples[nominal_skew_idx] - guard_timing_samples[2]) < 0.002,
+        "nominal guard skew sample should match the nominal timing sample",
+    )
+    require(guard_skew_store_samples[nominal_skew_idx] > 0.050, "nominal guard skew case should capture a full activation")
+    require(
+        guard_skew_store_samples[0] < guard_skew_store_samples[nominal_skew_idx] - 0.015,
+        "large early guard skew should undercharge the activation store",
+    )
+    require(
+        guard_skew_store_samples[2] > guard_skew_store_samples[nominal_skew_idx] - 0.002,
+        "small early guard skew should remain in the useful capture plateau",
+    )
+    require(
+        guard_skew_store_samples[4] < guard_skew_store_samples[nominal_skew_idx] - 0.006,
+        "small late guard skew should already begin tracking read-load droop",
+    )
+    require(
+        guard_skew_store_samples[-1] < guard_skew_store_samples[nominal_skew_idx] - 0.010,
+        "large late guard skew should track read-path droop",
+    )
+
     guard_corner_cases = [
         ("strong", 0.50, -0.50, "strong"),
         ("nominal", 0.55, -0.55, "nominal"),
@@ -7575,6 +7652,32 @@ quit
     guard_timing_axes[1].legend(loc="upper right", fontsize="small")
     guard_timing_fig.tight_layout()
     save_plot(guard_timing_fig, "mos_hidden_writer_restored_gate_hybrid_update_forward_guard_timing_ngspice")
+
+    guard_skew_fig, guard_skew_axes = plt.subplots(2, 1, figsize=(7.4, 6.4), gridspec_kw={"height_ratios": [1.0, 0.8]})
+    for label, gst, store in guard_skew_traces:
+        if label in {"-120 ns", "-40 ns", "+0 ns", "+80 ns", "+120 ns"}:
+            guard_skew_axes[0].plot(1e6 * gst, 1e3 * store, label=f"skew {label}")
+    guard_skew_axes[0].axhline(0, color="0.4", linewidth=0.8)
+    guard_skew_axes[0].axvline(3.18, color="0.25", linestyle="--", linewidth=0.9, alpha=0.6, label="nominal start")
+    guard_skew_axes[0].axvline(3.33, color="0.5", linestyle=":", linewidth=0.9, alpha=0.6, label="nominal off")
+    guard_skew_axes[0].set_xlim(3.05, 3.65)
+    guard_skew_axes[0].set_ylabel("stored activation (mV)")
+    guard_skew_axes[0].set_title("Guard clock skew trades undercharge against late droop")
+    guard_skew_axes[0].grid(True, alpha=0.25)
+    guard_skew_axes[0].legend(loc="upper left", ncol=2, fontsize="small")
+    guard_skew_x = np.arange(len(guard_skew_labels))
+    guard_skew_axes[1].bar(guard_skew_x - 0.18, 1e3 * guard_skew_preact_samples, width=0.36, label="$z^- - z^+$")
+    guard_skew_axes[1].bar(guard_skew_x + 0.18, 1e3 * guard_skew_store_samples, width=0.36, label="stored $h^- - h^+$")
+    guard_skew_axes[1].axhline(0, color="0.4", linewidth=0.8)
+    guard_skew_axes[1].set_xticks(guard_skew_x)
+    guard_skew_axes[1].set_xticklabels(guard_skew_labels)
+    guard_skew_axes[1].set_xlabel("guard-window shift")
+    guard_skew_axes[1].set_ylabel("sampled differential (mV)")
+    guard_skew_axes[1].set_title("The usable skew window is asymmetric around the nominal guard")
+    guard_skew_axes[1].grid(True, axis="y", alpha=0.25)
+    guard_skew_axes[1].legend(loc="upper right", fontsize="small")
+    guard_skew_fig.tight_layout()
+    save_plot(guard_skew_fig, "mos_hidden_writer_restored_gate_hybrid_update_forward_guard_skew_ngspice")
 
     guard_corner_fig, guard_corner_axes = plt.subplots(2, 1, figsize=(7.4, 6.2), gridspec_kw={"height_ratios": [1.0, 0.8]})
     for label, ct, store in guard_corner_traces:

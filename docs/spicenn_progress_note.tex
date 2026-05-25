@@ -2758,6 +2758,29 @@ must satisfy before it can replace the current behavioral prototype.
 
 \begin{figure}[H]
   \centering
+  \includegraphics[width=0.95\linewidth]{figures/mos_hidden_writer_restored_gate_hybrid_update_forward_guard_forward_pair_96u_shifted_gate_reset_ref_fast_margin_ngspice.png}
+  \caption{Ngspice refresh-resistance margin check for the two recovered
+  \(1\,\mu\mathrm{s}\) reset-reference configurations from
+  Fig.~\ref{fig:mos-hidden-writer-restored-gate-hybrid-update-forward-guard-forward-pair-96u-shifted-gate-reset-ref-partition-refresh-ngspice}.
+  The decks keep the same cold passive reservoirs, \(2\times\) MOS startup
+  precharge, ordinary complementary reset switches, and three fresh shifted-gate
+  load banks.  Only the finite local refresh resistors are scaled or skewed
+  between the positive and negative reset rails.  The \(16\times1\) one-load
+  design with nominal \(10\,\mathrm{k}\Omega\) refresh passes at \(4.89\) mV
+  and still passes at \(1.25\times\) resistance (\(5.50\) mV), but the
+  \(+65\) mV branch crosses the \(6\) mV gate at \(1.5\times\) resistance
+  (\(6.05\) mV) and fails clearly at \(2\times\) (\(6.99\) mV).  The
+  \(8\times2\) design with nominal \(3\,\mathrm{k}\Omega\) refresh has a wider
+  margin: even \(2\times\) matched resistance stays below the gate
+  (\(5.38\) mV).  The tested \(1.25/0.75\) P/M refresh-resistance skew remains
+  below \(4.85\) mV.  Thus the one-load partition option is area-local but
+  resistance-sensitive, while the two-load \(3\,\mathrm{k}\Omega\) option is a
+  more robust fast-reset component point.}
+  \label{fig:mos-hidden-writer-restored-gate-hybrid-update-forward-guard-forward-pair-96u-shifted-gate-reset-ref-fast-margin-ngspice}
+\end{figure}
+
+\begin{figure}[H]
+  \centering
   \includegraphics[width=0.95\linewidth]{figures/mos_hidden_writer_restored_gate_hybrid_update_forward_guard_forward_pair_96u_shifted_gate_reset_ref_precharge_strength_ngspice.png}
   \caption{Ngspice startup-precharge strength-margin check for the same cold
   local trim-reference reservoir.  The \(250\) pF reservoirs, \(100\)

@@ -16310,6 +16310,336 @@ quit
         "partition/source refresh sweep should keep first and last loads in each partition matched",
     )
 
+    shift_refz_fast_margin_configs = [
+        ("p8_r3k", "8 x 2 @ 3 kOhm", 8, 3_000.0),
+        ("p16_r10k", "16 x 1 @ 10 kOhm", 16, 10_000.0),
+    ]
+    shift_refz_fast_margin_source_cases = [
+        ("s075", "0.75x matched", 0.75, 0.75),
+        ("s100", "1.00x matched", 1.00, 1.00),
+        ("s125", "1.25x matched", 1.25, 1.25),
+        ("s150", "1.50x matched", 1.50, 1.50),
+        ("s200", "2.00x matched", 2.00, 2.00),
+        ("pskew", "P weak / M strong", 1.25, 0.75),
+        ("mskew", "P strong / M weak", 0.75, 1.25),
+    ]
+
+    def run_reset_ref_fast_margin_case(
+        branch_name: str,
+        reset_trim_v: float,
+    ) -> tuple[np.ndarray, list[np.ndarray]]:
+        stem = (
+            "mos_hidden_writer_restored_gate_hybrid_update_forward_guard_"
+            f"forward_pair_96u_shifted_gate_reset_ref_fast_margin_{branch_name}"
+        )
+        reset_common_v = shift_refz_precharge_tuned_common_v
+        reset_ref_p = reset_common_v + 0.5 * reset_trim_v
+        reset_ref_m = reset_common_v - 0.5 * reset_trim_v
+        total_cref_pf = 1000.0
+        total_load_count = 16
+        pulse_width_ns = 40.0
+        strength_scale = 2.0
+        gap_us = 1.0
+        pre_end_us = 0.420 + 0.001 * pulse_width_ns
+        pre_fall_us = pre_end_us + 0.020
+        wpren_u = 300.0 * strength_scale
+        wprep_u = 900.0 * strength_scale
+        tran_stop_us = 2.95 + 2.0 * gap_us
+        deck_lines = [
+            "* Fast recovered reset-reference margin sweep.",
+            "* The two passing 1 us configurations are stressed by matched",
+            "* refresh resistance scaling and P/M rail resistance skew.",
+            COMMON_MODELS,
+            ".param CGATE=5p WRESETN=60u WRESETP=180u",
+            "VDD vdd 0 1.8",
+        ]
+        prints = []
+        case_idx = 0
+        for config_name, config_label, partition_count, base_source_ohm in shift_refz_fast_margin_configs:
+            cap_pf = total_cref_pf / partition_count
+            loads_per_partition = total_load_count // partition_count
+            for source_name, source_label, rp_scale, rm_scale in shift_refz_fast_margin_source_cases:
+                rp_ohm = base_source_ohm * rp_scale
+                rm_ohm = base_source_ohm * rm_scale
+                deck_lines.extend(
+                    [
+                        (
+                            f"* {config_name}_{source_name}: {config_label}, "
+                            f"Rp={rp_ohm:g}, Rm={rm_ohm:g}, 1 us cadence."
+                        ),
+                        (
+                            f"VPRE_FOMARG_{case_idx} pre_fomarg_{case_idx} 0 "
+                            f"PWL(0 0 0.400u 0 0.420u 1.8 {pre_end_us:.3f}u 1.8 "
+                            f"{pre_fall_us:.3f}u 0 {tran_stop_us:.3f}u 0)"
+                        ),
+                        (
+                            f"VPREN_FOMARG_{case_idx} pren_fomarg_{case_idx} 0 "
+                            f"PWL(0 1.8 0.400u 1.8 0.420u 0 {pre_end_us:.3f}u 0 "
+                            f"{pre_fall_us:.3f}u 1.8 {tran_stop_us:.3f}u 1.8)"
+                        ),
+                    ]
+                )
+                for part_idx in range(partition_count):
+                    deck_lines.extend(
+                        [
+                            f"VZRP_FOMARG_{case_idx}_{part_idx} zrp_fomarg_src_{case_idx}_{part_idx} 0 {reset_ref_p:.5f}",
+                            f"VZRM_FOMARG_{case_idx}_{part_idx} zrm_fomarg_src_{case_idx}_{part_idx} 0 {reset_ref_m:.5f}",
+                            f"RZRP_FOMARG_{case_idx}_{part_idx} zrp_fomarg_src_{case_idx}_{part_idx} zrp_fomarg_{case_idx}_{part_idx} {rp_ohm:g}",
+                            f"RZRM_FOMARG_{case_idx}_{part_idx} zrm_fomarg_src_{case_idx}_{part_idx} zrm_fomarg_{case_idx}_{part_idx} {rm_ohm:g}",
+                            f"CZRP_FOMARG_{case_idx}_{part_idx} zrp_fomarg_{case_idx}_{part_idx} 0 {cap_pf:g}p IC=0",
+                            f"CZRM_FOMARG_{case_idx}_{part_idx} zrm_fomarg_{case_idx}_{part_idx} 0 {cap_pf:g}p IC=0",
+                            (
+                                f"MPREPN_FOMARG_{case_idx}_{part_idx} zrp_fomarg_{case_idx}_{part_idx} "
+                                f"pre_fomarg_{case_idx} zrp_fomarg_src_{case_idx}_{part_idx} 0 "
+                                f"NMOS L={{LCH}} W={wpren_u:g}u"
+                            ),
+                            (
+                                f"MPREMN_FOMARG_{case_idx}_{part_idx} zrm_fomarg_{case_idx}_{part_idx} "
+                                f"pre_fomarg_{case_idx} zrm_fomarg_src_{case_idx}_{part_idx} 0 "
+                                f"NMOS L={{LCH}} W={wpren_u:g}u"
+                            ),
+                            (
+                                f"MPREPP_FOMARG_{case_idx}_{part_idx} zrp_fomarg_{case_idx}_{part_idx} "
+                                f"pren_fomarg_{case_idx} zrp_fomarg_src_{case_idx}_{part_idx} vdd "
+                                f"PMOS L={{LCH}} W={wprep_u:g}u"
+                            ),
+                            (
+                                f"MPREMP_FOMARG_{case_idx}_{part_idx} zrm_fomarg_{case_idx}_{part_idx} "
+                                f"pren_fomarg_{case_idx} zrm_fomarg_src_{case_idx}_{part_idx} vdd "
+                                f"PMOS L={{LCH}} W={wprep_u:g}u"
+                            ),
+                        ]
+                    )
+                for cycle_idx in range(3):
+                    reset_start_us = 2.50 + cycle_idx * gap_us
+                    reset_end_us = reset_start_us + 0.120
+                    reset_fall_us = reset_end_us + 0.020
+                    deck_lines.extend(
+                        [
+                            (
+                                f"VRST_FOMARG_{case_idx}_{cycle_idx} rst_fomarg_{case_idx}_{cycle_idx} 0 "
+                                f"PWL(0 0 {reset_start_us - 0.020:.3f}u 0 "
+                                f"{reset_start_us:.3f}u 1.8 {reset_end_us:.3f}u 1.8 "
+                                f"{reset_fall_us:.3f}u 0 {tran_stop_us:.3f}u 0)"
+                            ),
+                            (
+                                f"VRSTN_FOMARG_{case_idx}_{cycle_idx} rstn_fomarg_{case_idx}_{cycle_idx} 0 "
+                                f"PWL(0 1.8 {reset_start_us - 0.020:.3f}u 1.8 "
+                                f"{reset_start_us:.3f}u 0 {reset_end_us:.3f}u 0 "
+                                f"{reset_fall_us:.3f}u 1.8 {tran_stop_us:.3f}u 1.8)"
+                            ),
+                        ]
+                    )
+                    for part_idx in range(partition_count):
+                        for load_idx in range(loads_per_partition):
+                            deck_lines.extend(
+                                [
+                                    (
+                                        f"CZPG_FOMARG_{case_idx}_{cycle_idx}_{part_idx}_{load_idx} "
+                                        f"zpg_fomarg_{case_idx}_{cycle_idx}_{part_idx}_{load_idx} 0 "
+                                        f"{{CGATE}} IC={reset_common_v:.5f}"
+                                    ),
+                                    (
+                                        f"CZMG_FOMARG_{case_idx}_{cycle_idx}_{part_idx}_{load_idx} "
+                                        f"zmg_fomarg_{case_idx}_{cycle_idx}_{part_idx}_{load_idx} 0 "
+                                        f"{{CGATE}} IC={reset_common_v:.5f}"
+                                    ),
+                                    (
+                                        f"MRZGPN_FOMARG_{case_idx}_{cycle_idx}_{part_idx}_{load_idx} "
+                                        f"zpg_fomarg_{case_idx}_{cycle_idx}_{part_idx}_{load_idx} "
+                                        f"rst_fomarg_{case_idx}_{cycle_idx} zrp_fomarg_{case_idx}_{part_idx} 0 "
+                                        f"NMOS L={{LCH}} W={{WRESETN}}"
+                                    ),
+                                    (
+                                        f"MRZGMN_FOMARG_{case_idx}_{cycle_idx}_{part_idx}_{load_idx} "
+                                        f"zmg_fomarg_{case_idx}_{cycle_idx}_{part_idx}_{load_idx} "
+                                        f"rst_fomarg_{case_idx}_{cycle_idx} zrm_fomarg_{case_idx}_{part_idx} 0 "
+                                        f"NMOS L={{LCH}} W={{WRESETN}}"
+                                    ),
+                                    (
+                                        f"MRZGPP_FOMARG_{case_idx}_{cycle_idx}_{part_idx}_{load_idx} "
+                                        f"zpg_fomarg_{case_idx}_{cycle_idx}_{part_idx}_{load_idx} "
+                                        f"rstn_fomarg_{case_idx}_{cycle_idx} zrp_fomarg_{case_idx}_{part_idx} vdd "
+                                        f"PMOS L={{LCH}} W={{WRESETP}}"
+                                    ),
+                                    (
+                                        f"MRZGMP_FOMARG_{case_idx}_{cycle_idx}_{part_idx}_{load_idx} "
+                                        f"zmg_fomarg_{case_idx}_{cycle_idx}_{part_idx}_{load_idx} "
+                                        f"rstn_fomarg_{case_idx}_{cycle_idx} zrm_fomarg_{case_idx}_{part_idx} vdd "
+                                        f"PMOS L={{LCH}} W={{WRESETP}}"
+                                    ),
+                                ]
+                            )
+                selected_part_indices = [0, partition_count - 1]
+                for part_idx in selected_part_indices:
+                    prints.extend(
+                        [
+                            f"v(zrp_fomarg_{case_idx}_{part_idx})",
+                            f"v(zrm_fomarg_{case_idx}_{part_idx})",
+                        ]
+                    )
+                    last_load_idx = loads_per_partition - 1
+                    for cycle_idx in range(3):
+                        prints.extend(
+                            [
+                                f"v(zpg_fomarg_{case_idx}_{cycle_idx}_{part_idx}_0)",
+                                f"v(zmg_fomarg_{case_idx}_{cycle_idx}_{part_idx}_0)",
+                                f"v(zpg_fomarg_{case_idx}_{cycle_idx}_{part_idx}_{last_load_idx})",
+                                f"v(zmg_fomarg_{case_idx}_{cycle_idx}_{part_idx}_{last_load_idx})",
+                            ]
+                        )
+                case_idx += 1
+        deck_lines.extend(
+            [
+                ".control",
+                "set noaskquit",
+                f"tran 5n {tran_stop_us:.3f}u uic",
+                f"wrdata {stem}.dat " + " ".join(prints),
+                "quit",
+                ".endc",
+                ".end",
+            ]
+        )
+        data = run_ngspice("\n".join(deck_lines), stem)
+        return load_wrdata(data, len(prints))
+
+    shift_refz_fast_margin_trim_error = []
+    shift_refz_fast_margin_common_error = []
+    shift_refz_fast_margin_load_mismatch = []
+    shift_refz_fast_margin_ref_diff = []
+    shift_refz_fast_margin_traces = []
+    for branch_name, branch_label, _nfp_vto, _nfm_vto, reset_trim_v in shift_reset_branch_specs:
+        fomargt, fast_margin_cols = run_reset_ref_fast_margin_case(branch_name, reset_trim_v)
+
+        def fomargat(time_s: float, values: np.ndarray) -> float:
+            return float(values[np.argmin(np.abs(fomargt - time_s))])
+
+        branch_trim_error = []
+        branch_common_error = []
+        branch_load_mismatch = []
+        branch_ref_diff = []
+        col_base = 0
+        for _config_name, config_label, partition_count, _base_source_ohm in shift_refz_fast_margin_configs:
+            config_trim_error = []
+            config_common_error = []
+            config_load_mismatch = []
+            config_ref_diff = []
+            selected_partition_count = 2
+            case_width = 14 * selected_partition_count
+            for _source_name, source_label, _rp_scale, _rm_scale in shift_refz_fast_margin_source_cases:
+                source_trim_error = []
+                source_common_error = []
+                source_load_mismatch = []
+                source_ref_diff = []
+                for cycle_idx in range(3):
+                    cycle_trim_errors = []
+                    cycle_common_errors = []
+                    cycle_load_mismatches = []
+                    cycle_ref_diffs = []
+                    sample_time_s = (2.50 + cycle_idx * 1.0 + 0.200) * 1e-6
+                    for selected_part_idx in range(selected_partition_count):
+                        part_col_base = col_base + 14 * selected_part_idx
+                        ref_p = fast_margin_cols[part_col_base]
+                        ref_m = fast_margin_cols[part_col_base + 1]
+                        ref_diff = ref_p - ref_m
+                        gate_col_base = part_col_base + 2 + 4 * cycle_idx
+                        gate_p_first = fast_margin_cols[gate_col_base]
+                        gate_m_first = fast_margin_cols[gate_col_base + 1]
+                        gate_p_last = fast_margin_cols[gate_col_base + 2]
+                        gate_m_last = fast_margin_cols[gate_col_base + 3]
+                        gate_diff_first = gate_p_first - gate_m_first
+                        gate_diff_last = gate_p_last - gate_m_last
+                        gate_common_first = 0.5 * (gate_p_first + gate_m_first)
+                        cycle_trim_errors.append(abs(fomargat(sample_time_s, gate_diff_first) - reset_trim_v))
+                        cycle_common_errors.append(
+                            abs(fomargat(sample_time_s, gate_common_first) - shift_refz_precharge_tuned_common_v)
+                        )
+                        cycle_load_mismatches.append(abs(fomargat(sample_time_s, gate_diff_first - gate_diff_last)))
+                        cycle_ref_diffs.append(fomargat(sample_time_s, ref_diff))
+                    source_trim_error.append(max(cycle_trim_errors))
+                    source_common_error.append(max(cycle_common_errors))
+                    source_load_mismatch.append(max(cycle_load_mismatches))
+                    source_ref_diff.append(np.mean(cycle_ref_diffs))
+                config_trim_error.append(source_trim_error)
+                config_common_error.append(source_common_error)
+                config_load_mismatch.append(source_load_mismatch)
+                config_ref_diff.append(source_ref_diff)
+                if branch_name == "pos_trim" and (
+                    (config_label == "16 x 1 @ 10 kOhm" and source_label in {"1.00x matched", "1.50x matched"})
+                    or (config_label == "8 x 2 @ 3 kOhm" and source_label in {"1.00x matched", "2.00x matched"})
+                ):
+                    ref_p0 = fast_margin_cols[col_base]
+                    ref_m0 = fast_margin_cols[col_base + 1]
+                    shift_refz_fast_margin_traces.append((f"{config_label}, {source_label}", fomargt, ref_p0 - ref_m0))
+                col_base += case_width
+            branch_trim_error.append(config_trim_error)
+            branch_common_error.append(config_common_error)
+            branch_load_mismatch.append(config_load_mismatch)
+            branch_ref_diff.append(config_ref_diff)
+        shift_refz_fast_margin_trim_error.append(branch_trim_error)
+        shift_refz_fast_margin_common_error.append(branch_common_error)
+        shift_refz_fast_margin_load_mismatch.append(branch_load_mismatch)
+        shift_refz_fast_margin_ref_diff.append(branch_ref_diff)
+
+    shift_refz_fast_margin_trim_error = np.array(shift_refz_fast_margin_trim_error)
+    shift_refz_fast_margin_common_error = np.array(shift_refz_fast_margin_common_error)
+    shift_refz_fast_margin_load_mismatch = np.array(shift_refz_fast_margin_load_mismatch)
+    shift_refz_fast_margin_ref_diff = np.array(shift_refz_fast_margin_ref_diff)
+    fomarg_p8_idx = 0
+    fomarg_p16_idx = 1
+    fomarg_s075_idx = 0
+    fomarg_s100_idx = 1
+    fomarg_s125_idx = 2
+    fomarg_s150_idx = 3
+    fomarg_s200_idx = 4
+    fomarg_pskew_idx = 5
+    fomarg_mskew_idx = 6
+    require(
+        np.all(shift_refz_fast_margin_trim_error[:, :, fomarg_s100_idx, for_cycle3_idx] < 0.006),
+        "nominal recovered fast reset configurations should pass the 1 us cycle-3 trim gate",
+    )
+    require(
+        np.all(
+            shift_refz_fast_margin_trim_error[:, :, fomarg_s075_idx, for_cycle3_idx]
+            < shift_refz_fast_margin_trim_error[:, :, fomarg_s100_idx, for_cycle3_idx]
+        ),
+        "stronger matched refresh should improve the recovered fast reset margin",
+    )
+    require(
+        np.all(
+            shift_refz_fast_margin_trim_error[:, :, fomarg_s200_idx, for_cycle3_idx]
+            > shift_refz_fast_margin_trim_error[:, :, fomarg_s100_idx, for_cycle3_idx]
+        ),
+        "weaker matched refresh should reduce the recovered fast reset margin",
+    )
+    require(
+        shift_refz_fast_margin_trim_error[1, fomarg_p16_idx, fomarg_s125_idx, for_cycle3_idx] < 0.006,
+        "16 one-load partitions should tolerate 1.25x matched refresh resistance on the positive-trim branch",
+    )
+    require(
+        shift_refz_fast_margin_trim_error[1, fomarg_p16_idx, fomarg_s150_idx, for_cycle3_idx] > 0.006,
+        "16 one-load partitions should expose a narrow positive-trim margin at 1.5x matched refresh resistance",
+    )
+    require(
+        shift_refz_fast_margin_trim_error[1, fomarg_p8_idx, fomarg_s200_idx, for_cycle3_idx] < 0.006,
+        "8 two-load partitions at the 3 kOhm point should tolerate 2x matched refresh resistance on the positive-trim branch",
+    )
+    require(
+        np.all(
+            shift_refz_fast_margin_trim_error[:, :, [fomarg_pskew_idx, fomarg_mskew_idx], for_cycle3_idx]
+            < 0.006
+        ),
+        "recovered fast reset configurations should tolerate the tested P/M refresh-resistance skew",
+    )
+    require(
+        np.max(shift_refz_fast_margin_common_error) < 0.010,
+        "fast reset margin sweep should preserve reset common mode",
+    )
+    require(
+        np.max(shift_refz_fast_margin_load_mismatch) < 1e-5,
+        "fast reset margin sweep should keep first and last loads in each selected partition matched",
+    )
+
     tail_bias_forward_tail_line = "MNFT_HYR ftail_hyr vbias 0 0 NMOS L={LCH} W=48u"
     tail_bias_cases_v = [0.70, 0.80, 0.90, 0.95, 1.05, 1.15, 1.25]
     tail_bias_labels = []
@@ -20085,6 +20415,99 @@ quit
     save_plot(
         shift_refz_fanout_partition_refresh_fig,
         "mos_hidden_writer_restored_gate_hybrid_update_forward_guard_forward_pair_96u_shifted_gate_reset_ref_partition_refresh_ngspice",
+    )
+
+    shift_refz_fast_margin_fig, shift_refz_fast_margin_axes = plt.subplots(
+        3,
+        1,
+        figsize=(7.4, 7.4),
+        gridspec_kw={"height_ratios": [0.95, 0.9, 1.0]},
+    )
+    fomarg_labels = [label for _name, label, _rp_scale, _rm_scale in shift_refz_fast_margin_source_cases]
+    fomarg_x = np.arange(len(fomarg_labels))
+    matched_indices = [fomarg_s075_idx, fomarg_s100_idx, 2, fomarg_s150_idx, fomarg_s200_idx]
+    matched_x = np.array([0.75, 1.00, 1.25, 1.50, 2.00])
+    for config_idx, (_config_name, config_label, _partition_count, _base_source_ohm) in enumerate(
+        shift_refz_fast_margin_configs
+    ):
+        marker = "o-" if config_label.startswith("8 x 2") else "s--"
+        shift_refz_fast_margin_axes[0].plot(
+            matched_x,
+            1e3
+            * np.max(
+                shift_refz_fast_margin_trim_error[:, config_idx, matched_indices, for_cycle3_idx],
+                axis=0,
+            ),
+            marker,
+            label=f"{config_label}, matched",
+        )
+    shift_refz_fast_margin_axes[0].axhline(
+        6,
+        color="0.4",
+        linestyle=":",
+        linewidth=0.9,
+        label="6 mV trim-error gate",
+    )
+    shift_refz_fast_margin_axes[0].set_xlabel("matched refresh-resistance scale")
+    shift_refz_fast_margin_axes[0].set_ylabel("cycle-3 trim error (mV)")
+    shift_refz_fast_margin_axes[0].set_title("Recovered 1 us reset points need refresh-resistance margin")
+    shift_refz_fast_margin_axes[0].grid(True, axis="y", alpha=0.25)
+    shift_refz_fast_margin_axes[0].text(
+        0.43,
+        0.28,
+        "8 x 2 @ 3 kOhm, 2.0x max = "
+        f"{1e3 * np.max(shift_refz_fast_margin_trim_error[:, fomarg_p8_idx, fomarg_s200_idx, for_cycle3_idx]):.2f} mV\n"
+        "16 x 1 @ 10 kOhm, 1.25x +branch = "
+        f"{1e3 * shift_refz_fast_margin_trim_error[1, fomarg_p16_idx, fomarg_s125_idx, for_cycle3_idx]:.2f} mV\n"
+        "16 x 1 @ 10 kOhm, 1.5x +branch = "
+        f"{1e3 * shift_refz_fast_margin_trim_error[1, fomarg_p16_idx, fomarg_s150_idx, for_cycle3_idx]:.2f} mV\n"
+        "16 x 1 @ 10 kOhm, 2.0x max = "
+        f"{1e3 * np.max(shift_refz_fast_margin_trim_error[:, fomarg_p16_idx, fomarg_s200_idx, for_cycle3_idx]):.2f} mV\n"
+        "tested P/M skew max = "
+        f"{1e3 * np.max(shift_refz_fast_margin_trim_error[:, :, [fomarg_pskew_idx, fomarg_mskew_idx], for_cycle3_idx]):.2f} mV",
+        transform=shift_refz_fast_margin_axes[0].transAxes,
+        fontsize="x-small",
+        bbox={"facecolor": "white", "alpha": 0.82, "edgecolor": "0.8"},
+    )
+    shift_refz_fast_margin_axes[0].legend(loc="upper left", ncol=2, fontsize="xx-small")
+    width = 0.36
+    for config_idx, (_config_name, config_label, _partition_count, _base_source_ohm) in enumerate(
+        shift_refz_fast_margin_configs
+    ):
+        offset = -0.5 * width if config_idx == 0 else 0.5 * width
+        shift_refz_fast_margin_axes[1].bar(
+            fomarg_x + offset,
+            1e3 * shift_refz_fast_margin_trim_error[1, config_idx, :, for_cycle3_idx],
+            width=width,
+            label=f"{config_label}, +65 mV",
+        )
+    shift_refz_fast_margin_axes[1].axhline(6, color="0.4", linestyle=":", linewidth=0.9)
+    shift_refz_fast_margin_axes[1].set_xticks(fomarg_x)
+    shift_refz_fast_margin_axes[1].set_xticklabels(fomarg_labels, rotation=24, ha="right")
+    shift_refz_fast_margin_axes[1].set_ylabel("+65 mV cycle-3 error (mV)")
+    shift_refz_fast_margin_axes[1].set_title("Positive-trim margin under matched and skewed local refresh paths")
+    shift_refz_fast_margin_axes[1].grid(True, axis="y", alpha=0.25)
+    shift_refz_fast_margin_axes[1].legend(loc="upper left", fontsize="xx-small")
+    for label, fomargt, ref_diff in shift_refz_fast_margin_traces:
+        linestyle = ":" if "2.00x" in label else ("--" if "1.50x" in label else "-")
+        shift_refz_fast_margin_axes[2].plot(
+            1e6 * fomargt,
+            1e3 * ref_diff,
+            linestyle,
+            label=label,
+        )
+    shift_refz_fast_margin_axes[2].axhline(65, color="0.4", linestyle=":", linewidth=0.9, label="target +65 mV")
+    shift_refz_fast_margin_axes[2].axhline(0, color="0.4", linewidth=0.8)
+    shift_refz_fast_margin_axes[2].set_xlim(2.3, 4.9)
+    shift_refz_fast_margin_axes[2].set_xlabel("time (us)")
+    shift_refz_fast_margin_axes[2].set_ylabel("partition trim (mV)")
+    shift_refz_fast_margin_axes[2].set_title("Refresh-resistance margin shows up as third-cycle reservoir sag")
+    shift_refz_fast_margin_axes[2].grid(True, alpha=0.25)
+    shift_refz_fast_margin_axes[2].legend(loc="lower right", ncol=2, fontsize="xx-small")
+    shift_refz_fast_margin_fig.tight_layout()
+    save_plot(
+        shift_refz_fast_margin_fig,
+        "mos_hidden_writer_restored_gate_hybrid_update_forward_guard_forward_pair_96u_shifted_gate_reset_ref_fast_margin_ngspice",
     )
 
     tail_bias_fig, tail_bias_axes = plt.subplots(2, 1, figsize=(7.4, 6.4), gridspec_kw={"height_ratios": [1.0, 0.8]})

@@ -1745,7 +1745,7 @@ must satisfy before it can replace the current behavioral prototype.
   earlier because the read tail current cannot build enough preactivation
   before the guard closes.  Increasing read drive above the nominal \(1.15\) V
   gives additional stored activation, but the benefit saturates near the
-  mid-\(50\) mV range as the forward/store path becomes the limiter.}
+  mid-\(50\) mV range under the nominal forward-pair gain.}
   \label{fig:mos-hidden-writer-restored-gate-hybrid-update-forward-guard-read-drive-ngspice}
 \end{figure}
 
@@ -1794,6 +1794,28 @@ must satisfy before it can replace the current behavioral prototype.
   forward-pair/tail sizing or bias, followed by renewed mismatch, noise, and
   common-mode checks at the chosen gain.}
   \label{fig:mos-hidden-writer-restored-gate-hybrid-update-forward-guard-forward-pair-ngspice}
+\end{figure}
+
+\begin{figure}[H]
+  \centering
+  \includegraphics[width=0.88\linewidth]{figures/mos_hidden_writer_restored_gate_hybrid_update_forward_guard_forward_tail_bias_ngspice.png}
+  \caption{Ngspice isolated forward-tail bias sweep for the same guarded MOS
+  activation store.  The failed shared-bias experiment changed the read path
+  too, so this test keeps the original global \(V_\mathrm{bias}=0.95\) V for
+  the writer/read machinery and gives only the crossed forward pair tail NMOS
+  its own bias source.  The read preactivation remains fixed at
+  \(52.066\) mV for every case.  For isolated forward-tail biases of
+  \(0.70,0.80,0.90,0.95,1.05,1.15,\) and \(1.25\) V, the immediate
+  forward-load differentials are
+  \(49.248,50.524,50.994,51.130,51.309,51.422,\) and \(51.544\) mV, and the
+  guarded stored activations are
+  \(49.657,50.752,51.221,51.355,51.653,51.756,\) and \(51.813\) mV.  The
+  monotonic direction is correct, but the full sweep changes the stored value
+  by only about \(2.16\) mV.  In this sizing, the useful activation-gain knob
+  is therefore forward-pair/tail width, not tail-bias overdrive; a separate
+  forward-tail bias rail is still useful for fine trim and bias isolation, but
+  it should not be counted on for the large swing increase.}
+  \label{fig:mos-hidden-writer-restored-gate-hybrid-update-forward-guard-forward-tail-bias-ngspice}
 \end{figure}
 
 \begin{figure}[H]

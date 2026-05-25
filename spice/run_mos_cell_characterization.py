@@ -8503,6 +8503,78 @@ quit
         "large forward pair should expose activation gain headroom beyond nominal sizing",
     )
 
+    tail_bias_forward_tail_line = "MNFT_HYR ftail_hyr vbias 0 0 NMOS L={LCH} W=48u"
+    tail_bias_cases_v = [0.70, 0.80, 0.90, 0.95, 1.05, 1.15, 1.25]
+    tail_bias_labels = []
+    tail_bias_preact_samples = []
+    tail_bias_load_samples = []
+    tail_bias_store_samples = []
+    tail_bias_traces = []
+    for tail_bias_v in tail_bias_cases_v:
+        stem = (
+            "mos_hidden_writer_restored_gate_hybrid_update_forward_read_pact_"
+            f"guard_forward_tail_bias_{str(tail_bias_v).replace('.', 'p')}v"
+        )
+        tail_bias_deck = replace_required(hybrid_forward_read_reuse_deck, timing_read_pwl, timing_single_read_pwl)
+        tail_bias_deck = replace_required(
+            tail_bias_deck,
+            timing_base_pact_pwl,
+            long_pact_pwl + "\n" + long_pactn_pwl + "\n" + corner_guard_pwl + "\n" + corner_guardn_pwl,
+        )
+        tail_bias_deck = replace_required(tail_bias_deck, nmos_store_line_p, guard_store_line_p)
+        tail_bias_deck = replace_required(tail_bias_deck, nmos_store_line_m, guard_store_line_m)
+        tail_bias_deck = replace_required(
+            tail_bias_deck,
+            tail_bias_forward_tail_line,
+            f"VFBIAS_HYR vfbias_hyr 0 {tail_bias_v:.2f}\n"
+            "MNFT_HYR ftail_hyr vfbias_hyr 0 0 NMOS L={LCH} W=48u",
+        )
+        tail_bias_deck = replace_required(
+            tail_bias_deck,
+            "mos_hidden_writer_restored_gate_hybrid_update_forward_read_reuse.dat",
+            f"{stem}.dat",
+        )
+        tail_bias_data = run_ngspice(tail_bias_deck, stem)
+        tbt, tail_bias_cols = load_wrdata(tail_bias_data, 23)
+
+        def tbat(time_s: float, values: np.ndarray) -> float:
+            return float(values[np.argmin(np.abs(tbt - time_s))])
+
+        tail_bias_preact = tail_bias_cols[10] - tail_bias_cols[9]
+        tail_bias_load = tail_bias_cols[12] - tail_bias_cols[11]
+        tail_bias_store = tail_bias_cols[14] - tail_bias_cols[13]
+        tail_bias_labels.append(f"{tail_bias_v:.2f} V")
+        tail_bias_preact_samples.append(tbat(3.575e-6, tail_bias_preact))
+        tail_bias_load_samples.append(tbat(3.315e-6, tail_bias_load))
+        tail_bias_store_samples.append(tbat(3.575e-6, tail_bias_store))
+        tail_bias_traces.append((f"{tail_bias_v:.2f} V", tbt, tail_bias_load, tail_bias_store))
+
+    tail_bias_preact_samples = np.array(tail_bias_preact_samples)
+    tail_bias_load_samples = np.array(tail_bias_load_samples)
+    tail_bias_store_samples = np.array(tail_bias_store_samples)
+    nominal_tail_bias_idx = tail_bias_cases_v.index(0.95)
+    require(np.min(tail_bias_preact_samples) > 0.048, "tail-bias sweep should keep a valid read state")
+    require(
+        np.max(tail_bias_preact_samples) - np.min(tail_bias_preact_samples) < 0.001,
+        "tail-bias sweep should not perturb the stored preactivation",
+    )
+    require(
+        abs(tail_bias_store_samples[nominal_tail_bias_idx] - guard_timing_samples[2]) < 0.002,
+        "nominal tail bias should match the nominal guard timing sample",
+    )
+    require(
+        tail_bias_store_samples[0] < tail_bias_store_samples[nominal_tail_bias_idx],
+        "weak isolated tail bias should slightly reduce the activation store",
+    )
+    require(
+        np.all(np.diff(tail_bias_store_samples) > 0),
+        "stored activation should increase monotonically with isolated forward tail bias",
+    )
+    require(
+        tail_bias_store_samples[-1] - tail_bias_store_samples[0] < 0.003,
+        "isolated forward tail bias should act as a fine trim, not a large gain knob in this sizing",
+    )
+
     read_gated_fig, read_gated_axes = plt.subplots(2, 1, figsize=(7.4, 6.6), gridspec_kw={"height_ratios": [1.0, 0.9]})
     for label, rgt, store in guard_gated_traces:
         if label in {"40 ns", "120 ns", "240 ns", "320 ns"}:
@@ -8967,6 +9039,33 @@ quit
     forward_pair_axes[1].legend(loc="upper left", ncol=2, fontsize="small")
     forward_pair_fig.tight_layout()
     save_plot(forward_pair_fig, "mos_hidden_writer_restored_gate_hybrid_update_forward_guard_forward_pair_ngspice")
+
+    tail_bias_fig, tail_bias_axes = plt.subplots(2, 1, figsize=(7.4, 6.4), gridspec_kw={"height_ratios": [1.0, 0.8]})
+    for label, tbt, load, store in tail_bias_traces:
+        if label in {"0.70 V", "0.90 V", "0.95 V", "1.15 V", "1.25 V"}:
+            tail_bias_axes[0].plot(1e6 * tbt, 1e3 * load, label=f"{label} load")
+            tail_bias_axes[0].plot(1e6 * tbt, 1e3 * store, "--", label=f"{label} store")
+    tail_bias_axes[0].axhline(0, color="0.4", linewidth=0.8)
+    tail_bias_axes[0].axvline(3.33, color="0.25", linestyle="--", linewidth=0.9, alpha=0.6, label="guard off")
+    tail_bias_axes[0].set_xlim(3.05, 3.65)
+    tail_bias_axes[0].set_ylabel("activation differential (mV)")
+    tail_bias_axes[0].set_title("Isolated forward tail bias is only a small trim in this sizing")
+    tail_bias_axes[0].grid(True, alpha=0.25)
+    tail_bias_axes[0].legend(loc="upper left", ncol=2, fontsize="small")
+    tail_bias_x = np.arange(len(tail_bias_labels))
+    tail_bias_axes[1].bar(tail_bias_x - 0.24, 1e3 * tail_bias_preact_samples, width=0.24, label="$z^- - z^+$")
+    tail_bias_axes[1].bar(tail_bias_x, 1e3 * tail_bias_load_samples, width=0.24, label="forward load")
+    tail_bias_axes[1].bar(tail_bias_x + 0.24, 1e3 * tail_bias_store_samples, width=0.24, label="stored $h^- - h^+$")
+    tail_bias_axes[1].axhline(0, color="0.4", linewidth=0.8)
+    tail_bias_axes[1].set_xticks(tail_bias_x)
+    tail_bias_axes[1].set_xticklabels(tail_bias_labels)
+    tail_bias_axes[1].set_xlabel("forward-pair tail bias")
+    tail_bias_axes[1].set_ylabel("sampled differential (mV)")
+    tail_bias_axes[1].set_title("Width, not tail-bias overdrive, provides the large gain range")
+    tail_bias_axes[1].grid(True, axis="y", alpha=0.25)
+    tail_bias_axes[1].legend(loc="lower right", ncol=3, fontsize="small")
+    tail_bias_fig.tight_layout()
+    save_plot(tail_bias_fig, "mos_hidden_writer_restored_gate_hybrid_update_forward_guard_forward_tail_bias_ngspice")
 
     hybrid_repeated_deck = f"""
 * Hybrid restored-enable/analog-error writer repeated-pulse accumulation check.

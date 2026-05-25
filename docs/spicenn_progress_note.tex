@@ -1596,6 +1596,26 @@ must satisfy before it can replace the current behavioral prototype.
 
 \begin{figure}[H]
   \centering
+  \includegraphics[width=0.88\linewidth]{figures/mos_hidden_writer_restored_gate_hybrid_update_forward_guard_signed_hold_ngspice.png}
+  \caption{Ngspice signed hold check for the guarded MOS activation store.
+  The positive deck writes the usual \(W^+/B^+\) state, while the negative
+  deck uses the existing gate-swapped update path to write \(W^-/B^-\).  Both
+  are then routed through the same \(pact\)-and-guard transmission-gate stack,
+  with reset disabled after capture.  The preactivation samples are exact
+  mirrors to the reported precision:
+  \(+52.065847,+52.065845,+52.065842,+52.065840,+52.065838\) mV and the
+  corresponding negatives.  The stored activations are likewise mirrored:
+  \(+51.354550,+51.354440,+51.354310,+51.354190,+51.354070\) mV and
+  \(-51.354550,-51.354440,-51.354310,-51.354190,-51.354070\) mV at
+  \(3.575,4.50,5.50,6.50,\) and \(7.45\,\mu\mathrm{s}\).  The mirror error
+  is \(0\) mV in the saved samples.  This separates sign correctness from the
+  previous positive-only guard timing checks: the guard stack does not create
+  a one-sided activation-store artifact in this Level-1 differential model.}
+  \label{fig:mos-hidden-writer-restored-gate-hybrid-update-forward-guard-signed-hold-ngspice}
+\end{figure}
+
+\begin{figure}[H]
+  \centering
   \includegraphics[width=0.88\linewidth]{figures/mos_hidden_writer_restored_gate_hybrid_update_forward_guard_off_isolation_ngspice.png}
   \caption{Ngspice off-isolation stress for the guarded MOS activation store.
   After one nominal capture, reset is disabled and the deck deliberately

@@ -7912,6 +7912,47 @@ quit
         "off-state control/read toggles should not disturb guarded activation store by more than 0.5 mV",
     )
 
+    negative_hold_deck = replace_required(hybrid_forward_negative_read_reuse_deck, timing_read_pwl, timing_single_read_pwl)
+    negative_hold_deck = replace_required(
+        negative_hold_deck,
+        timing_base_pact_pwl,
+        long_pact_pwl + "\n" + long_pactn_pwl + "\n" + hold_guard_pwl + "\n" + hold_guardn_pwl,
+    )
+    negative_hold_deck = replace_required(negative_hold_deck, hold_reset_line, "VRESET_HYR rst_hyr 0 0")
+    negative_hold_deck = replace_required(negative_hold_deck, hold_resetn_line, "VRESETN_HYR rstn_hyr 0 1.8")
+    negative_hold_deck = replace_required(negative_hold_deck, nmos_store_line_p, guard_store_line_p)
+    negative_hold_deck = replace_required(negative_hold_deck, nmos_store_line_m, guard_store_line_m)
+    negative_hold_deck = replace_required(
+        negative_hold_deck,
+        "mos_hidden_writer_restored_gate_hybrid_update_forward_negative_read_reuse.dat",
+        "mos_hidden_writer_restored_gate_hybrid_update_forward_guard_signed_hold_negative.dat",
+    )
+    negative_hold_data = run_ngspice(
+        negative_hold_deck,
+        "mos_hidden_writer_restored_gate_hybrid_update_forward_guard_signed_hold_negative",
+    )
+    nght, negative_hold_cols = load_wrdata(negative_hold_data, 23)
+
+    def nghat(time_s: float, values: np.ndarray) -> float:
+        return float(values[np.argmin(np.abs(nght - time_s))])
+
+    negative_hold_preact = negative_hold_cols[10] - negative_hold_cols[9]
+    negative_hold_store = negative_hold_cols[14] - negative_hold_cols[13]
+    negative_hold_store_samples = np.array([nghat(ts, negative_hold_store) for ts in hold_sample_times])
+    negative_hold_preact_samples = np.array([nghat(ts, negative_hold_preact) for ts in hold_sample_times])
+    negative_hold_drift = negative_hold_store_samples - negative_hold_store_samples[0]
+    signed_hold_mirror_error = hold_store_samples + negative_hold_store_samples
+    require(negative_hold_store_samples[0] < -0.050, "negative guarded hold deck should capture a full negative activation")
+    require(np.max(np.abs(signed_hold_mirror_error)) < 0.0002, "positive and negative guarded holds should mirror within 0.2 mV")
+    require(
+        np.max(np.abs(negative_hold_drift)) < 0.0002,
+        "negative guarded activation store should hold within 0.2 mV over the no-reset interval",
+    )
+    require(
+        np.max(np.abs(hold_preact_samples + negative_hold_preact_samples)) < 0.002,
+        "positive and negative guarded hold preactivations should mirror",
+    )
+
     guard_corner_cases = [
         ("strong", 0.50, -0.50, "strong"),
         ("nominal", 0.55, -0.55, "nominal"),
@@ -8265,6 +8306,34 @@ quit
     guard_off_axes[1].legend(loc="lower right", fontsize="small")
     guard_off_fig.tight_layout()
     save_plot(guard_off_fig, "mos_hidden_writer_restored_gate_hybrid_update_forward_guard_off_isolation_ngspice")
+
+    signed_hold_fig, signed_hold_axes = plt.subplots(2, 1, figsize=(7.4, 6.4), gridspec_kw={"height_ratios": [1.0, 0.8]})
+    signed_hold_axes[0].plot(1e6 * ht, 1e3 * hold_store, label="+ stored $h^- - h^+$")
+    signed_hold_axes[0].plot(1e6 * nght, 1e3 * negative_hold_store, "--", label="- stored $h^- - h^+$")
+    signed_hold_axes[0].plot(1e6 * ht, 1e3 * hold_preact, color="0.35", alpha=0.35, label="+ $z^- - z^+$")
+    signed_hold_axes[0].plot(1e6 * nght, 1e3 * negative_hold_preact, "--", color="0.55", alpha=0.45, label="- $z^- - z^+$")
+    signed_hold_axes[0].plot(1e6 * ht, hold_cols[22] / 20.0, color="0.20", alpha=0.20, label="$pact/20$")
+    signed_hold_axes[0].axhline(0, color="0.4", linewidth=0.8)
+    signed_hold_axes[0].axvline(3.33, color="0.25", linestyle="--", linewidth=0.9, alpha=0.6, label="guard off")
+    signed_hold_axes[0].set_xlim(3.05, 7.55)
+    signed_hold_axes[0].set_ylabel("differential (mV)")
+    signed_hold_axes[0].set_title("Guarded activation store mirrors positive and negative signed states")
+    signed_hold_axes[0].grid(True, alpha=0.25)
+    signed_hold_axes[0].legend(loc="upper right", ncol=2, fontsize="small")
+    signed_hold_x = np.arange(len(hold_sample_times))
+    signed_hold_axes[1].plot(signed_hold_x, 1e6 * hold_drift, "o-", label="+ drift")
+    signed_hold_axes[1].plot(signed_hold_x, 1e6 * negative_hold_drift, "s--", label="- drift")
+    signed_hold_axes[1].plot(signed_hold_x, 1e3 * signed_hold_mirror_error, "d:", label="mirror error")
+    signed_hold_axes[1].axhline(0, color="0.4", linewidth=0.8)
+    signed_hold_axes[1].set_xticks(signed_hold_x)
+    signed_hold_axes[1].set_xticklabels(hold_sample_labels)
+    signed_hold_axes[1].set_xlabel("sample time (us)")
+    signed_hold_axes[1].set_ylabel("$\\mu$V / mV")
+    signed_hold_axes[1].set_title("Both signs hold; mirror error stays below the assertion bound")
+    signed_hold_axes[1].grid(True, axis="y", alpha=0.25)
+    signed_hold_axes[1].legend(loc="upper right", ncol=3, fontsize="small")
+    signed_hold_fig.tight_layout()
+    save_plot(signed_hold_fig, "mos_hidden_writer_restored_gate_hybrid_update_forward_guard_signed_hold_ngspice")
 
     guard_corner_fig, guard_corner_axes = plt.subplots(2, 1, figsize=(7.4, 6.2), gridspec_kw={"height_ratios": [1.0, 0.8]})
     for label, ct, store in guard_corner_traces:

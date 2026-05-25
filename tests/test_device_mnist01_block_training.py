@@ -34,6 +34,8 @@ def test_device_mnist01_block_script_help_runs_from_repo_root() -> None:
     assert "--hidden-activation-width" in proc.stdout
     assert "--hidden-activation-model" in proc.stdout
     assert "--hidden-polarity-init" in proc.stdout
+    assert "--readout-forward-model" in proc.stdout
+    assert "--score-mode" in proc.stdout
     assert "--readout-forward-width" in proc.stdout
     assert "--phase-time-scale" in proc.stdout
     assert "--hidden-bias-positive-init" in proc.stdout
@@ -116,6 +118,63 @@ def test_block_netlist_emits_per_pixel_trainable_caps_and_no_behavioral_sources(
     assert ".meas tran score_before_0 FIND V(score) AT=5.90n" in netlist
     assert ".tran 10p 32.00n uic" in netlist
     assert "Mrelu_o vdd score out 0 NSENSE" in netlist
+
+
+def test_block_netlist_can_emit_differential_score_path_without_behavioral_sources() -> None:
+    sys.path.insert(0, str(SPICE_DIR))
+    import run_device_mnist01_block_training as block
+
+    image_size = 4
+    weights = block.initial_block_weights(image_size, 2, 2, 1, seed=1)
+    sample = {f"x{i}": 0.2 + 0.01 * i for i in range(image_size * image_size)}
+    sample["target"] = 1.1
+    netlist = block.block_netlist(
+        [sample],
+        weights,
+        image_size=image_size,
+        block_size=2,
+        stride=2,
+        channels=1,
+        training_enabled=True,
+        score_mode="differential",
+    )
+
+    assert "\nB" not in netlist
+    assert "Cscoren scoren 0 10f IC=0" in netlist
+    assert "Mreset_scoren scoren rstf 0 0 NMOS" in netlist
+    assert "Movneg3_f on3_1 fwd scoren 0 NREL" in netlist
+    assert "Moutp vdd score out 0 NSENSE" in netlist
+    assert "Moutn out scoren 0 0 NSENSE" in netlist
+    assert "Mdp_sn0 vdd scoren dp_sn 0 NSENSE" in netlist
+    assert "Mdn_sn1 dn_sn scoren 0 0 NSENSE" in netlist
+    assert ".meas tran score_net_0 PARAM='score_before_0-scoren_before_0'" in netlist
+
+
+def test_block_netlist_can_emit_low_threshold_readout_score_stack() -> None:
+    sys.path.insert(0, str(SPICE_DIR))
+    import run_device_mnist01_block_training as block
+
+    image_size = 4
+    weights = block.initial_block_weights(image_size, 2, 2, 1, seed=1)
+    sample = {f"x{i}": 0.2 + 0.01 * i for i in range(image_size * image_size)}
+    sample["target"] = 1.1
+    netlist = block.block_netlist(
+        [sample],
+        weights,
+        image_size=image_size,
+        block_size=2,
+        stride=2,
+        channels=1,
+        training_enabled=True,
+        readout_forward_model="sense",
+        score_mode="differential",
+    )
+
+    assert "\nB" not in netlist
+    assert "Movpos3_a vdd act3 op3_0 0 NSENSE W=64u" in netlist
+    assert "Movpos3_w op3_0 vwp3 op3_1 0 NSENSE W=64u" in netlist
+    assert "Movneg3_a vdd act3 on3_0 0 NSENSE W=48u" in netlist
+    assert "Movneg3_f on3_1 fwd scoren 0 NSENSE W=48u" in netlist
 
 
 def test_block_netlist_can_emit_target_topology_without_behavioral_sources() -> None:

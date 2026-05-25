@@ -26,7 +26,9 @@ from spicenn.timing import CYCLE_NS
 INPUT_RAIL_MODES = ("raw", "complement", "alternating-complement")
 TARGET_POLARITIES = ("active-high", "active-low")
 HIDDEN_ACTIVATION_MODELS = ("nrel", "sense")
+READOUT_FORWARD_MODELS = ("nrel", "sense")
 HIDDEN_POLARITY_INITS = ("ink", "alternating-channel")
+SCORE_MODES = ("single-ended", "differential")
 
 
 def block_topology(image_size: int, block_size: int, stride: int, channels: int) -> tuple[list[list[int]], int]:
@@ -191,6 +193,14 @@ def hidden_activation_device_model(model: str) -> str:
     raise ValueError(f"hidden_activation_model must be one of {HIDDEN_ACTIVATION_MODELS}")
 
 
+def readout_forward_device_model(model: str) -> str:
+    if model == "nrel":
+        return "NREL"
+    if model == "sense":
+        return "NSENSE"
+    raise ValueError(f"readout_forward_model must be one of {READOUT_FORWARD_MODELS}")
+
+
 def block_netlist(
     samples: list[dict[str, Any]],
     weights: dict[str, Any],
@@ -210,7 +220,9 @@ def block_netlist(
     hidden_activation_width: float = 24.0,
     hidden_activation_model: str = "nrel",
     readout_forward_width: float = 64.0,
+    readout_forward_model: str = "nrel",
     phase_time_scale: float = 1.0,
+    score_mode: str = "single-ended",
     input_rail_mode: str = "alternating-complement",
 ) -> str:
     if readout_apply_scale <= 0.0:
@@ -231,7 +243,10 @@ def block_netlist(
         raise ValueError("readout_forward_width must be positive")
     if phase_time_scale <= 0.0:
         raise ValueError("phase_time_scale must be positive")
+    if score_mode not in SCORE_MODES:
+        raise ValueError(f"score_mode must be one of {SCORE_MODES}")
     activation_model = hidden_activation_device_model(hidden_activation_model)
+    readout_model = readout_forward_device_model(readout_forward_model)
     if input_rail_mode not in INPUT_RAIL_MODES:
         raise ValueError(f"input_rail_mode must be one of {INPUT_RAIL_MODES}")
     blocks, expected_features = block_topology(image_size, block_size, stride, channels)
@@ -258,6 +273,8 @@ def block_netlist(
         scale = phase_time_scale
         measures += [
             f".meas tran score_before_{idx} FIND V(score) AT={base + 2.95 * scale:.2f}n",
+            f".meas tran scoren_before_{idx} FIND V(scoren) AT={base + 2.95 * scale:.2f}n",
+            f".meas tran score_net_{idx} PARAM='score_before_{idx}-scoren_before_{idx}'",
             f".meas tran out_before_{idx} FIND V(out) AT={base + 2.95 * scale:.2f}n",
             f".meas tran score_error_{idx} FIND V(score) AT={base + 4.25 * scale:.2f}n",
             f".meas tran dp_after_{idx} FIND V(dp) AT={base + 5.10 * scale:.2f}n",
@@ -335,10 +352,12 @@ def block_netlist(
         "",
         "* Shared output/error state.",
         "Cscore score 0 10f IC=0",
+        "Cscoren scoren 0 10f IC=0",
         "Cout out 0 20f IC=0",
         "Cdp dp 0 20f IC=0",
         "Cdn dn 0 20f IC=0",
         "Rscore score 0 1G",
+        "Rscoren scoren 0 1G",
         "Rout out 0 1G",
         "Rdp dp 0 1G",
         "Rdn dn 0 1G",
@@ -378,6 +397,7 @@ def block_netlist(
         "",
         "* Reset shared nonpersistent state.",
         "Mreset_score score rstf 0 0 NMOS W=4u L=180n",
+        "Mreset_scoren scoren rstf 0 0 NMOS W=4u L=180n",
         "Mreset_out out rstf 0 0 NMOS W=4u L=180n",
         "Mreset_dp dp rstg 0 0 NMOS W=4u L=180n",
         "Mreset_dn dn rstg 0 0 NMOS W=4u L=180n",
@@ -433,12 +453,22 @@ def block_netlist(
                 f"Mhbneg{feature}_f pre{feature} fwd hbn{feature}_0 0 NMOS W={hidden_neg_width:.6g}u L=180n",
                 f"Mhbneg{feature}_b hbn{feature}_0 bhn{feature} 0 0 NMOS W={hidden_neg_width:.6g}u L=180n",
                 f"Mrelu_h{feature} vdd pre{feature} act{feature} 0 {activation_model} W={hidden_activation_width:.6g}u L=180n",
-                f"Movpos{feature}_a vdd act{feature} op{feature}_0 0 NREL W={readout_forward_width:.6g}u L=180n",
-                f"Movpos{feature}_w op{feature}_0 vwp{feature} op{feature}_1 0 NREL W={readout_forward_width:.6g}u L=180n",
-                f"Movpos{feature}_f op{feature}_1 fwd score 0 NREL W={readout_forward_width:.6g}u L=180n",
-                f"Movneg{feature}_f score fwd on{feature}_0 0 NREL W={readout_negative_forward_width:.6g}u L=180n",
-                f"Movneg{feature}_a on{feature}_0 act{feature} on{feature}_1 0 NREL W={readout_negative_forward_width:.6g}u L=180n",
-                f"Movneg{feature}_w on{feature}_1 vwn{feature} 0 0 NREL W={readout_negative_forward_width:.6g}u L=180n",
+                f"Movpos{feature}_a vdd act{feature} op{feature}_0 0 {readout_model} W={readout_forward_width:.6g}u L=180n",
+                f"Movpos{feature}_w op{feature}_0 vwp{feature} op{feature}_1 0 {readout_model} W={readout_forward_width:.6g}u L=180n",
+                f"Movpos{feature}_f op{feature}_1 fwd score 0 {readout_model} W={readout_forward_width:.6g}u L=180n",
+                *(
+                    [
+                        f"Movneg{feature}_a vdd act{feature} on{feature}_0 0 {readout_model} W={readout_negative_forward_width:.6g}u L=180n",
+                        f"Movneg{feature}_w on{feature}_0 vwn{feature} on{feature}_1 0 {readout_model} W={readout_negative_forward_width:.6g}u L=180n",
+                        f"Movneg{feature}_f on{feature}_1 fwd scoren 0 {readout_model} W={readout_negative_forward_width:.6g}u L=180n",
+                    ]
+                    if score_mode == "differential"
+                    else [
+                        f"Movneg{feature}_f score fwd on{feature}_0 0 {readout_model} W={readout_negative_forward_width:.6g}u L=180n",
+                        f"Movneg{feature}_a on{feature}_0 act{feature} on{feature}_1 0 {readout_model} W={readout_negative_forward_width:.6g}u L=180n",
+                        f"Movneg{feature}_w on{feature}_1 vwn{feature} 0 0 {readout_model} W={readout_negative_forward_width:.6g}u L=180n",
+                    ]
+                ),
                 f"Mhdp{feature}_d0 vdd dp hdp{feature}_d0 0 NSENSE W={hidden_error_width:.6g}u L=180n",
                 f"Mhdp{feature}_d1 hdp{feature}_d0 act{feature} hdp{feature}_d1 0 NREL W={hidden_error_width:.6g}u L=180n",
                 f"Mhdp{feature}_d2 hdp{feature}_d1 bwd hdp{feature} 0 NMOS W={hidden_error_width:.6g}u L=180n",
@@ -477,15 +507,40 @@ def block_netlist(
 
     lines += [
         "",
-        output_driver_line(output_driver_model),
+        (
+            "\n".join(
+                [
+                    "Moutp vdd score out 0 NSENSE W=24u L=180n",
+                    "Moutn out scoren 0 0 NSENSE W=24u L=180n",
+                ]
+            )
+            if score_mode == "differential"
+            else output_driver_line(output_driver_model)
+        ),
         "",
         "* Shared output error from target/raw-score conductance competition.",
         "Mdp_t0 vdd target dp_t 0 NSENSE W=32u L=180n",
         "Mdp_t1 dp_t err dp 0 NSENSE W=32u L=180n",
+        *(
+            [
+                "Mdp_sn0 vdd scoren dp_sn 0 NSENSE W=24u L=180n",
+                "Mdp_sn1 dp_sn err dp 0 NSENSE W=24u L=180n",
+            ]
+            if score_mode == "differential"
+            else []
+        ),
         "Mdp_y0 dp err dp_y 0 NSENSE W=24u L=180n",
         "Mdp_y1 dp_y score 0 0 NSENSE W=24u L=180n",
         "Mdn_y0 vdd score dn_y 0 NSENSE W=32u L=180n",
         "Mdn_y1 dn_y err dn 0 NSENSE W=32u L=180n",
+        *(
+            [
+                "Mdn_sn0 dn err dn_sn 0 NSENSE W=24u L=180n",
+                "Mdn_sn1 dn_sn scoren 0 0 NSENSE W=24u L=180n",
+            ]
+            if score_mode == "differential"
+            else []
+        ),
         "Mdn_t0 dn err dn_t 0 NSENSE W=24u L=180n",
         "Mdn_t1 dn_t target 0 0 NSENSE W=24u L=180n",
         "",
@@ -628,7 +683,9 @@ def run_device_sequence(
     hidden_activation_width: float,
     hidden_activation_model: str,
     readout_forward_width: float,
+    readout_forward_model: str,
     phase_time_scale: float,
+    score_mode: str,
     input_rail_mode: str,
 ) -> pd.DataFrame:
     netlist = block_netlist(
@@ -649,7 +706,9 @@ def run_device_sequence(
         hidden_activation_width=hidden_activation_width,
         hidden_activation_model=hidden_activation_model,
         readout_forward_width=readout_forward_width,
+        readout_forward_model=readout_forward_model,
         phase_time_scale=phase_time_scale,
+        score_mode=score_mode,
         input_rail_mode=input_rail_mode,
     )
     if "\nB" in netlist:
@@ -686,7 +745,9 @@ def main() -> None:
     ap.add_argument("--hidden-activation-model", choices=HIDDEN_ACTIVATION_MODELS, default="nrel")
     ap.add_argument("--hidden-polarity-init", choices=HIDDEN_POLARITY_INITS, default="ink")
     ap.add_argument("--readout-forward-width", type=float, default=64.0)
+    ap.add_argument("--readout-forward-model", choices=READOUT_FORWARD_MODELS, default="nrel")
     ap.add_argument("--phase-time-scale", type=float, default=1.0)
+    ap.add_argument("--score-mode", choices=SCORE_MODES, default="single-ended")
     ap.add_argument("--input-rail-mode", choices=INPUT_RAIL_MODES, default="alternating-complement")
     ap.add_argument("--complement-rail-scale", type=float, default=0.5)
     ap.add_argument("--hidden-bias-positive-init", type=float, default=0.50)
@@ -749,7 +810,9 @@ def main() -> None:
         "hidden_activation_width": args.hidden_activation_width,
         "hidden_activation_model": args.hidden_activation_model,
         "readout_forward_width": args.readout_forward_width,
+        "readout_forward_model": args.readout_forward_model,
         "phase_time_scale": args.phase_time_scale,
+        "score_mode": args.score_mode,
         "input_rail_mode": args.input_rail_mode,
     }
     initial_eval_rows = run_device_sequence(
@@ -838,7 +901,9 @@ def main() -> None:
         "hidden_activation_model": args.hidden_activation_model,
         "hidden_polarity_init": args.hidden_polarity_init,
         "readout_forward_width": args.readout_forward_width,
+        "readout_forward_model": args.readout_forward_model,
         "phase_time_scale": args.phase_time_scale,
+        "score_mode": args.score_mode,
         "hidden_bias_positive_init": args.hidden_bias_positive_init,
         "hidden_bias_negative_init": args.hidden_bias_negative_init,
         "learning_device_implementation": "transistor_passive",

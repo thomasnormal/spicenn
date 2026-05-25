@@ -2,6 +2,17 @@
 
 ## 2026-05-25
 
+- Clarified the calibrated shifted-gate trimmed-reuse plot.  The ngspice deck
+  already asserted that each physical split reset re-establishes the
+  \(-35\) mV trim within \(3\) mV, preserves common mode within \(5\) mV,
+  clears \(z/h\) residuals below \(1\) mV, keeps all three stored activations
+  above \(35\) mV, and holds the cycle spread below \(20\) mV without
+  disturbing the MOS-written weight/bias caps.  The regenerated
+  `mos_hidden_writer_restored_gate_hybrid_update_forward_guard_forward_pair_96u_shifted_gate_trimmed_reuse_ngspice`
+  plot now draws those budget bands and labels the measured margins
+  directly: max trim error \(0.00\) mV, max common error \(0.01\) mV, max
+  reset residue \(0.06\) mV, minimum stored activation \(47.0\) mV, and
+  displayed cycle spread \(0.0\) mV.
 - Clarified the shifted-gate off-isolation stress plot.  The ngspice assertion
   permits up to \(1000\,\mu\)V stored-activation drift after pact-only,
   guard-only, and read stress pulses, while the measured maximum drift is only

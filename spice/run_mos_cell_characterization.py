@@ -13990,6 +13990,20 @@ quit
         alpha=0.25,
         label="$reset/20$",
     )
+    shift_trimmed_reuse_axes[0].axhspan(
+        -38.0,
+        -32.0,
+        color="tab:blue",
+        alpha=0.08,
+        label="trim target +/-3 mV",
+    )
+    shift_trimmed_reuse_axes[0].axhspan(
+        -5.0,
+        5.0,
+        color="tab:orange",
+        alpha=0.08,
+        label="common +/-5 mV",
+    )
     shift_trimmed_reuse_axes[0].axhline(-35.0, color="0.2", linewidth=0.8, linestyle=":", label="trim target")
     shift_trimmed_reuse_axes[0].scatter(
         1e6 * shift_trimmed_reuse_reset_times,
@@ -14007,7 +14021,18 @@ quit
     shift_trimmed_reuse_axes[0].set_ylabel("gate error (mV)")
     shift_trimmed_reuse_axes[0].set_title("Trimmed split resets re-center the skewed shifted gate between reads")
     shift_trimmed_reuse_axes[0].grid(True, alpha=0.25)
-    shift_trimmed_reuse_axes[0].legend(loc="lower left", ncol=2, fontsize="x-small")
+    shift_trimmed_reuse_axes[0].text(
+        0.72,
+        0.14,
+        "max trim err = "
+        f"{1e3 * np.max(np.abs(shift_trimmed_reuse_gate_reset_diff + 0.035)):.2f} mV / 3 mV\n"
+        "max common err = "
+        f"{1e3 * np.max(np.abs(shift_trimmed_reuse_gate_reset_common - 0.90)):.2f} mV / 5 mV",
+        transform=shift_trimmed_reuse_axes[0].transAxes,
+        fontsize="x-small",
+        bbox={"facecolor": "white", "alpha": 0.82, "edgecolor": "0.8"},
+    )
+    shift_trimmed_reuse_axes[0].legend(loc="lower left", ncol=3, fontsize="xx-small")
     shift_trimmed_reuse_axes[1].plot(1e6 * strpt, 1e3 * shift_trimmed_reuse_preact, label="$z^- - z^+$")
     shift_trimmed_reuse_axes[1].plot(1e6 * strpt, 1e3 * shift_trimmed_reuse_load, label="forward load")
     shift_trimmed_reuse_axes[1].plot(1e6 * strpt, 1e3 * shift_trimmed_reuse_store, label="stored activation")
@@ -14025,12 +14050,24 @@ quit
         alpha=0.25,
         label="$pact/20$",
     )
+    shift_trimmed_reuse_axes[1].axhspan(-1.0, 1.0, color="tab:red", alpha=0.08, label="reset clear +/-1 mV")
     shift_trimmed_reuse_axes[1].axhline(0, color="0.4", linewidth=0.8)
     shift_trimmed_reuse_axes[1].set_xlim(2.35, 7.1)
     shift_trimmed_reuse_axes[1].set_ylabel("differential (mV)")
     shift_trimmed_reuse_axes[1].set_title("Same skewed pair and MOS-written W/B state produce repeated useful captures")
     shift_trimmed_reuse_axes[1].grid(True, alpha=0.25)
-    shift_trimmed_reuse_axes[1].legend(loc="upper left", ncol=2, fontsize="small")
+    shift_trimmed_reuse_axes[1].text(
+        0.64,
+        0.10,
+        "max reset residue = "
+        f"{1e3 * max(np.max(shift_trimmed_reuse_z_reset), np.max(shift_trimmed_reuse_h_reset)):.2f} mV / 1 mV\n"
+        f"W drift = {1e6 * shift_trimmed_reuse_weight_drift:.2f} uV, "
+        f"B drift = {1e6 * shift_trimmed_reuse_bias_drift:.2f} uV",
+        transform=shift_trimmed_reuse_axes[1].transAxes,
+        fontsize="x-small",
+        bbox={"facecolor": "white", "alpha": 0.82, "edgecolor": "0.8"},
+    )
+    shift_trimmed_reuse_axes[1].legend(loc="upper left", ncol=3, fontsize="x-small")
     shift_trimmed_reuse_x = np.arange(len(shift_trimmed_reuse_h_samples))
     shift_trimmed_reuse_axes[2].bar(
         shift_trimmed_reuse_x - 0.18,
@@ -14044,14 +14081,25 @@ quit
         width=0.36,
         label="$h$ sample",
     )
+    shift_trimmed_reuse_axes[2].axhspan(35.0, 65.0, color="0.7", alpha=0.12, label=">35 mV, <20 mV spread")
     shift_trimmed_reuse_axes[2].axhline(0, color="0.4", linewidth=0.8)
+    shift_trimmed_reuse_axes[2].axhline(35.0, color="0.25", linestyle=":", linewidth=0.9)
     shift_trimmed_reuse_axes[2].set_xticks(shift_trimmed_reuse_x)
     shift_trimmed_reuse_axes[2].set_xticklabels(["cycle 1", "cycle 2", "cycle 3"])
     shift_trimmed_reuse_axes[2].set_xlabel("read/reset/store cycle")
     shift_trimmed_reuse_axes[2].set_ylabel("sampled differential (mV)")
     shift_trimmed_reuse_axes[2].set_title("Calibrated reuse stays positive over repeated physical resets")
     shift_trimmed_reuse_axes[2].grid(True, axis="y", alpha=0.25)
-    shift_trimmed_reuse_axes[2].legend(loc="upper right", fontsize="small")
+    shift_trimmed_reuse_axes[2].text(
+        0.03,
+        0.77,
+        f"min h = {1e3 * np.min(shift_trimmed_reuse_h_samples):.1f} mV / 35 mV\n"
+        f"h spread = {1e3 * (np.max(shift_trimmed_reuse_h_samples) - np.min(shift_trimmed_reuse_h_samples)):.1f} mV / 20 mV",
+        transform=shift_trimmed_reuse_axes[2].transAxes,
+        fontsize="x-small",
+        bbox={"facecolor": "white", "alpha": 0.82, "edgecolor": "0.8"},
+    )
+    shift_trimmed_reuse_axes[2].legend(loc="upper right", fontsize="x-small")
     shift_trimmed_reuse_fig.tight_layout()
     save_plot(
         shift_trimmed_reuse_fig,

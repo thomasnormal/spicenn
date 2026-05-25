@@ -8301,6 +8301,16 @@ quit
     require(np.all(np.abs(hyf_bias) > 0.030), "update-forward quadrant biases should have useful magnitude")
     require(np.all(np.abs(hyf_preact) > 0.045), "update-forward quadrant preactivations should have useful magnitude")
     require(np.all(np.abs(hyf_forward_store) > 0.030), "update-forward quadrant stored activations should have useful magnitude")
+    hyf_hidden_symmetry_error = abs(hyfat(1.35e-6, hyf_hidden_pos + hyf_hidden_neg))
+    hyf_selected_max = max(hyfat(1.45e-6, hyf_rp_selected_gate), hyfat(1.45e-6, hyf_rm_selected_gate))
+    hyf_complement_min = min(hyfat(1.45e-6, hyf_rp_complement_gate), hyfat(1.45e-6, hyf_rm_complement_gate))
+    hyf_weight_mag_min = float(np.min(np.abs(hyf_weight)))
+    hyf_weight_mag_spread = float(np.max(np.abs(hyf_weight)) - hyf_weight_mag_min)
+    hyf_bias_mag_min = float(np.min(np.abs(hyf_bias)))
+    hyf_bias_mag_spread = float(np.max(np.abs(hyf_bias)) - hyf_bias_mag_min)
+    hyf_preact_mag_min = float(np.min(np.abs(hyf_preact)))
+    hyf_store_mag_min = float(np.min(np.abs(hyf_forward_store)))
+    hyf_store_mag_spread = float(np.max(np.abs(hyf_forward_store)) - hyf_store_mag_min)
 
     hyf_x = np.arange(len(hybrid_product_cases))
     hyf_labels = [label for _name, label, *_rest in hybrid_product_cases]
@@ -8315,6 +8325,19 @@ quit
     hyf_axes[0].set_ylabel("voltage (V)")
     hyf_axes[0].set_title("Four matched copies store both error signs once")
     hyf_axes[0].grid(True, alpha=0.25)
+    hyf_axes[0].text(
+        0.05,
+        0.13,
+        "e+/e- stores = "
+        f"{1e3 * hyfat(1.35e-6, hyf_hidden_pos):.1f}/{1e3 * hyfat(1.35e-6, hyf_hidden_neg):.1f} mV\n"
+        "symmetry error = "
+        f"{1e3 * hyf_hidden_symmetry_error:.2f} mV / <3 mV\n"
+        "selected max = "
+        f"{hyf_selected_max:.2f} V, complement min = {hyf_complement_min:.2f} V",
+        transform=hyf_axes[0].transAxes,
+        fontsize="x-small",
+        bbox=callout_box,
+    )
     hyf_axes[0].legend(loc="center right", ncol=2, fontsize="small")
     hyf_weight_bars = hyf_axes[1].bar(hyf_x - 0.18, 1e3 * hyf_weight, width=0.36, label="$W^+ - W^-$")
     hyf_bias_bars = hyf_axes[1].bar(hyf_x + 0.18, 1e3 * hyf_bias, width=0.36, label="$B^+ - B^-$")
@@ -8324,11 +8347,26 @@ quit
     hyf_axes[1].set_ylabel("state step (mV)")
     hyf_axes[1].set_title("local update writes signed W/B capacitor states")
     hyf_state_max = max(1.0, float(1e3 * np.max(np.abs(np.concatenate([hyf_weight, hyf_bias])))))
-    hyf_axes[1].set_ylim(-1.35 * hyf_state_max, 1.35 * hyf_state_max)
+    hyf_axes[1].set_ylim(-1.55 * hyf_state_max, 2.70 * hyf_state_max)
     hyf_axes[1].bar_label(hyf_weight_bars, labels=[f"{value:+.1f}" for value in 1e3 * hyf_weight], padding=2, fontsize="x-small")
     hyf_axes[1].bar_label(hyf_bias_bars, labels=[f"{value:+.1f}" for value in 1e3 * hyf_bias], padding=2, fontsize="x-small")
     hyf_axes[1].grid(True, axis="y", alpha=0.25)
-    hyf_axes[1].legend(loc="center left", bbox_to_anchor=(1.01, 0.5), fontsize="small")
+    hyf_axes[1].text(
+        0.04,
+        0.62,
+        "min |W| = "
+        f"{1e3 * hyf_weight_mag_min:.1f} mV / >18 mV\n"
+        "|W| spread = "
+        f"{1e3 * hyf_weight_mag_spread:.2f} mV\n"
+        "min |B| = "
+        f"{1e3 * hyf_bias_mag_min:.1f} mV / >30 mV\n"
+        "|B| spread = "
+        f"{1e3 * hyf_bias_mag_spread:.2f} mV",
+        transform=hyf_axes[1].transAxes,
+        fontsize="x-small",
+        bbox=callout_box,
+    )
+    hyf_axes[1].legend(loc="upper right", ncol=2, fontsize="small")
     hyf_preact_bars = hyf_axes[2].bar(hyf_x - 0.24, 1e3 * hyf_preact, width=0.24, label="$z^- - z^+$")
     hyf_load_bars = hyf_axes[2].bar(hyf_x, 1e3 * hyf_forward_load, width=0.24, label="forward load")
     hyf_store_bars = hyf_axes[2].bar(hyf_x + 0.24, 1e3 * hyf_forward_store, width=0.24, label="stored activation")
@@ -8339,12 +8377,26 @@ quit
     hyf_axes[2].set_ylabel("differential (mV)")
     hyf_axes[2].set_title("read, forward pair, and activation store follow the error sign")
     hyf_forward_max = max(1.0, float(1e3 * np.max(np.abs(np.concatenate([hyf_preact, hyf_forward_load, hyf_forward_store])))))
-    hyf_axes[2].set_ylim(-1.35 * hyf_forward_max, 1.35 * hyf_forward_max)
+    hyf_axes[2].set_ylim(-1.55 * hyf_forward_max, 2.70 * hyf_forward_max)
     hyf_axes[2].bar_label(hyf_preact_bars, labels=[f"{value:+.1f}" for value in 1e3 * hyf_preact], padding=2, fontsize="x-small")
     hyf_axes[2].bar_label(hyf_load_bars, labels=[f"{value:+.1f}" for value in 1e3 * hyf_forward_load], padding=2, fontsize="x-small")
     hyf_axes[2].bar_label(hyf_store_bars, labels=[f"{value:+.1f}" for value in 1e3 * hyf_forward_store], padding=2, fontsize="x-small")
     hyf_axes[2].grid(True, axis="y", alpha=0.25)
-    hyf_axes[2].legend(loc="center left", bbox_to_anchor=(1.01, 0.5), fontsize="small")
+    hyf_axes[2].text(
+        0.04,
+        0.58,
+        "min |z| = "
+        f"{1e3 * hyf_preact_mag_min:.1f} mV / >45 mV\n"
+        "min |stored h| = "
+        f"{1e3 * hyf_store_mag_min:.1f} mV / >30 mV\n"
+        "stored-h spread = "
+        f"{1e3 * hyf_store_mag_spread:.2f} mV\n"
+        "all signs match expected rails",
+        transform=hyf_axes[2].transAxes,
+        fontsize="x-small",
+        bbox=callout_box,
+    )
+    hyf_axes[2].legend(loc="upper right", ncol=3, fontsize="small")
     hyf_fig.tight_layout()
     save_plot(hyf_fig, "mos_hidden_writer_restored_gate_hybrid_update_forward_quadrants_ngspice")
 
@@ -8758,6 +8810,11 @@ quit
     require(np.max(hyrr_h_reset) < 0.001, "read-reuse reset should clear stored activation between reads")
     require(abs(hyrr_weight_drift) < 1e-5, "repeated read/reset cycles should not disturb weight state")
     require(abs(hyrr_bias_drift) < 1e-5, "repeated read/reset cycles should not disturb bias state")
+    hyrr_z_spread = float(np.max(hyrr_z_samples) - np.min(hyrr_z_samples))
+    hyrr_h_spread = float(np.max(hyrr_h_samples) - np.min(hyrr_h_samples))
+    hyrr_z_reset_max = float(np.max(hyrr_z_reset))
+    hyrr_h_reset_max = float(np.max(hyrr_h_reset))
+    hyrr_state_drift_max = max(abs(hyrr_weight_drift), abs(hyrr_bias_drift))
 
     hyrr_fig, hyrr_axes = plt.subplots(3, 1, figsize=(7.4, 7.4), gridspec_kw={"height_ratios": [1.0, 1.0, 1.0]})
     hyrr_axes[0].plot(1e6 * hyrrt, 1e3 * hyrr_weight, label="$W^+ - W^-$")
@@ -8766,6 +8823,17 @@ quit
     hyrr_axes[0].set_ylabel("state differential (mV)")
     hyrr_axes[0].set_title("One local update is reused by repeated forward reads")
     hyrr_axes[0].grid(True, alpha=0.25)
+    hyrr_axes[0].text(
+        0.52,
+        0.13,
+        "W/B state = "
+        f"{1e3 * hyrr_weight_after_write:.1f}/{1e3 * hyrr_bias_after_write:.1f} mV\n"
+        "max read/reset drift = "
+        f"{1e3 * hyrr_state_drift_max:.4f} mV / <0.01 mV",
+        transform=hyrr_axes[0].transAxes,
+        fontsize="x-small",
+        bbox=callout_box,
+    )
     hyrr_axes[0].legend(loc="upper left", ncol=3, fontsize="small")
     hyrr_axes[1].plot(1e6 * hyrrt, 1e3 * hyrr_preact, label="$z^- - z^+$")
     hyrr_axes[1].plot(1e6 * hyrrt, hyrr_cols[21] / 20.0, color="0.25", alpha=0.25, label="$read/20$")
@@ -8775,6 +8843,19 @@ quit
     hyrr_axes[1].set_ylabel("preactivation (mV)")
     hyrr_axes[1].set_title("MOS reset/read cycles reproduce the same summing result")
     hyrr_axes[1].grid(True, alpha=0.25)
+    hyrr_axes[1].text(
+        0.52,
+        0.13,
+        "read z range = "
+        f"{1e3 * np.min(hyrr_z_samples):.1f}--{1e3 * np.max(hyrr_z_samples):.1f} mV\n"
+        "cycle spread = "
+        f"{1e3 * hyrr_z_spread:.3f} mV / <1 mV\n"
+        "reset max = "
+        f"{1e3 * hyrr_z_reset_max:.3f} mV / <1 mV",
+        transform=hyrr_axes[1].transAxes,
+        fontsize="x-small",
+        bbox=callout_box,
+    )
     hyrr_axes[1].legend(loc="upper left", ncol=2, fontsize="small")
     hyrr_axes[2].plot(1e6 * hyrrt, 1e3 * hyrr_forward_store, label="stored activation")
     hyrr_axes[2].plot(1e6 * hyrrt, hyrr_cols[22] / 20.0, color="0.35", alpha=0.25, label="$pact/20$")
@@ -8784,6 +8865,19 @@ quit
     hyrr_axes[2].set_ylabel("activation differential (mV)")
     hyrr_axes[2].set_title("Repeated forward-store pulses agree without disturbing W/B")
     hyrr_axes[2].grid(True, alpha=0.25)
+    hyrr_axes[2].text(
+        0.52,
+        0.13,
+        "stored h range = "
+        f"{1e3 * np.min(hyrr_h_samples):.1f}--{1e3 * np.max(hyrr_h_samples):.1f} mV\n"
+        "cycle spread = "
+        f"{1e3 * hyrr_h_spread:.3f} mV / <1 mV\n"
+        "reset max = "
+        f"{1e3 * hyrr_h_reset_max:.3f} mV / <1 mV",
+        transform=hyrr_axes[2].transAxes,
+        fontsize="x-small",
+        bbox=callout_box,
+    )
     hyrr_axes[2].legend(loc="upper left", fontsize="small")
     hyrr_fig.tight_layout()
     save_plot(hyrr_fig, "mos_hidden_writer_restored_gate_hybrid_update_forward_read_reuse_ngspice")
@@ -8835,6 +8929,12 @@ quit
     require(abs(hynr_bias_drift) < 1e-5, "negative repeated read/reset cycles should not disturb bias state")
     require(np.max(np.abs(hyrr_z_samples + hynr_z_samples)) < 0.001, "positive and negative read-reuse preactivations should mirror")
     require(np.max(np.abs(hyrr_h_samples + hynr_h_samples)) < 0.001, "positive and negative read-reuse activations should mirror")
+    hynr_z_spread = float(np.max(hynr_z_samples) - np.min(hynr_z_samples))
+    hynr_h_spread = float(np.max(hynr_h_samples) - np.min(hynr_h_samples))
+    hyrr_hynr_z_mirror = float(np.max(np.abs(hyrr_z_samples + hynr_z_samples)))
+    hyrr_hynr_h_mirror = float(np.max(np.abs(hyrr_h_samples + hynr_h_samples)))
+    hynr_state_drift_max = max(abs(hyrr_weight_drift), abs(hyrr_bias_drift), abs(hynr_weight_drift), abs(hynr_bias_drift))
+    hynr_reset_max = max(float(np.max(hyrr_z_reset)), float(np.max(hyrr_h_reset)), float(np.max(hynr_z_reset)), float(np.max(hynr_h_reset)))
 
     hynr_fig, hynr_axes = plt.subplots(3, 1, figsize=(7.4, 7.4), gridspec_kw={"height_ratios": [1.0, 1.0, 1.0]})
     hynr_axes[0].plot(1e6 * hyrrt, 1e3 * hyrr_weight, label="$+W$ state")
@@ -8846,6 +8946,19 @@ quit
     hynr_axes[0].set_ylabel("state differential (mV)")
     hynr_axes[0].set_title("Positive and negative local updates both survive repeated reads")
     hynr_axes[0].grid(True, alpha=0.25)
+    hynr_axes[0].text(
+        0.50,
+        0.13,
+        "+/- W states = "
+        f"{1e3 * hyrr_weight_after_write:.1f}/{1e3 * hynr_weight_after_write:.1f} mV\n"
+        "+/- B states = "
+        f"{1e3 * hyrr_bias_after_write:.1f}/{1e3 * hynr_bias_after_write:.1f} mV\n"
+        "max read/reset drift = "
+        f"{1e3 * hynr_state_drift_max:.4f} mV",
+        transform=hynr_axes[0].transAxes,
+        fontsize="x-small",
+        bbox=callout_box,
+    )
     hynr_axes[0].legend(loc="upper left", ncol=3, fontsize="small")
     hynr_axes[1].plot(1e6 * hyrrt, 1e3 * hyrr_preact, label="+ update reads")
     hynr_axes[1].plot(1e6 * hynrt, 1e3 * hynr_preact, "--", label="- update reads")
@@ -8857,6 +8970,19 @@ quit
     hynr_axes[1].set_ylabel("preactivation (mV)")
     hynr_axes[1].set_title("Read/reset cycles preserve the sign and magnitude of the summing result")
     hynr_axes[1].grid(True, alpha=0.25)
+    hynr_axes[1].text(
+        0.50,
+        0.13,
+        "+/- z spread = "
+        f"{1e3 * hyrr_z_spread:.3f}/{1e3 * hynr_z_spread:.3f} mV\n"
+        "mirror error = "
+        f"{1e3 * hyrr_hynr_z_mirror:.3f} mV / <1 mV\n"
+        "reset max = "
+        f"{1e3 * hynr_reset_max:.3f} mV / <1 mV",
+        transform=hynr_axes[1].transAxes,
+        fontsize="x-small",
+        bbox=callout_box,
+    )
     hynr_axes[1].legend(loc="upper left", ncol=2, fontsize="small")
     hynr_axes[2].plot(1e6 * hyrrt, 1e3 * hyrr_forward_store, label="+ stored activation")
     hynr_axes[2].plot(1e6 * hynrt, 1e3 * hynr_forward_store, "--", label="- stored activation")
@@ -8868,6 +8994,17 @@ quit
     hynr_axes[2].set_ylabel("activation differential (mV)")
     hynr_axes[2].set_title("Forward-store reuse mirrors for both trainable-state signs")
     hynr_axes[2].grid(True, alpha=0.25)
+    hynr_axes[2].text(
+        0.50,
+        0.13,
+        "+/- h spread = "
+        f"{1e3 * hyrr_h_spread:.3f}/{1e3 * hynr_h_spread:.3f} mV\n"
+        "mirror error = "
+        f"{1e3 * hyrr_hynr_h_mirror:.3f} mV / <1 mV",
+        transform=hynr_axes[2].transAxes,
+        fontsize="x-small",
+        bbox=callout_box,
+    )
     hynr_axes[2].legend(loc="upper left", ncol=2, fontsize="small")
     hynr_fig.tight_layout()
     save_plot(hynr_fig, "mos_hidden_writer_restored_gate_hybrid_update_forward_signed_read_reuse_ngspice")

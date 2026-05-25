@@ -14447,25 +14447,31 @@ quit
         branch_name: str,
         reset_trim_v: float,
         reset_common_v: float = shift_refz_precharge_tuned_common_v,
+        cref_pf: float = 250.0,
+        fanout_cases: list[tuple[str, str, int]] | None = None,
+        stem_suffix: str = "",
     ) -> tuple[np.ndarray, list[np.ndarray]]:
+        if fanout_cases is None:
+            fanout_cases = shift_refz_fanout_cases
+        cap_tag = f"_c{int(round(cref_pf))}p" if abs(cref_pf - 250.0) > 1e-12 else ""
         stem = (
             "mos_hidden_writer_restored_gate_hybrid_update_forward_guard_"
-            f"forward_pair_96u_shifted_gate_reset_ref_fanout_{branch_name}"
+            f"forward_pair_96u_shifted_gate_reset_ref_fanout{cap_tag}{stem_suffix}_{branch_name}"
         )
         reset_ref_p = reset_common_v + 0.5 * reset_trim_v
         reset_ref_m = reset_common_v - 0.5 * reset_trim_v
         deck_lines = [
             "* MOS trim-reference reservoir fanout check for shifted-gate reset loads.",
-            "* The local 250 pF reservoirs start initialized; fanout sweeps how many",
+            f"* The local {cref_pf:g} pF reservoirs start initialized; fanout sweeps how many",
             "* real complementary reset switches and 5 pF shifted-gate loads share them.",
             COMMON_MODELS,
-            ".param CREF=250p CGATE=5p WRESETN=60u WRESETP=180u",
+            f".param CREF={cref_pf:g}p CGATE=5p WRESETN=60u WRESETP=180u",
             "VDD vdd 0 1.8",
             "VRST rst 0 PWL(0 0 2.48u 0 2.50u 1.8 2.62u 1.8 2.64u 0 3.0u 0)",
             "VRSTN rstn 0 PWL(0 1.8 2.48u 1.8 2.50u 0 2.62u 0 2.64u 1.8 3.0u 1.8)",
         ]
         prints = []
-        for case_idx, (case_name, _case_label, load_count) in enumerate(shift_refz_fanout_cases):
+        for case_idx, (case_name, _case_label, load_count) in enumerate(fanout_cases):
             deck_lines.extend(
                 [
                     f"* {case_name}: one initialized reservoir drives {load_count} shifted-gate reset load(s).",
@@ -14599,6 +14605,85 @@ quit
     require(
         np.max(shift_refz_fanout_end_mismatch) < 0.0005,
         "matched loads on one trim reservoir should sample the same shifted-gate differential",
+    )
+
+    shift_refz_fanout_cap_cases = [
+        ("c250p", "250 pF", 250.0),
+        ("c500p", "500 pF", 500.0),
+        ("c1n", "1 nF", 1000.0),
+    ]
+    shift_refz_fanout_cap_load_cases = [
+        ("fo4", "4 loads", 4),
+        ("fo8", "8 loads", 8),
+        ("fo16", "16 loads", 16),
+    ]
+    shift_refz_fanout_cap_trim_error = []
+    shift_refz_fanout_cap_common_error = []
+    shift_refz_fanout_cap_traces = []
+    for branch_name, branch_label, _nfp_vto, _nfm_vto, reset_trim_v in shift_reset_branch_specs:
+        branch_trim_error = []
+        branch_common_error = []
+        for cap_name, cap_label, cref_pf in shift_refz_fanout_cap_cases:
+            fct, fanout_cap_cols = run_reset_ref_fanout_case(
+                branch_name,
+                reset_trim_v,
+                cref_pf=cref_pf,
+                fanout_cases=shift_refz_fanout_cap_load_cases,
+                stem_suffix="_cap",
+            )
+
+            def fcat(time_s: float, values: np.ndarray) -> float:
+                return float(values[np.argmin(np.abs(fct - time_s))])
+
+            cap_trim_error = []
+            cap_common_error = []
+            for load_idx, (_load_name, load_label, _load_count) in enumerate(shift_refz_fanout_cap_load_cases):
+                gate_p = fanout_cap_cols[6 * load_idx + 2]
+                gate_m = fanout_cap_cols[6 * load_idx + 3]
+                gate_diff = gate_p - gate_m
+                gate_common = 0.5 * (gate_p + gate_m)
+                cap_trim_error.append(abs(fcat(2.70e-6, gate_diff) - reset_trim_v))
+                cap_common_error.append(abs(fcat(2.70e-6, gate_common) - shift_refz_precharge_tuned_common_v))
+                if cap_name in {"c250p", "c500p", "c1n"} and load_label in {"8 loads", "16 loads"}:
+                    shift_refz_fanout_cap_traces.append(
+                        (branch_label, cap_label, load_label, fct, gate_diff)
+                    )
+            branch_trim_error.append(cap_trim_error)
+            branch_common_error.append(cap_common_error)
+        shift_refz_fanout_cap_trim_error.append(branch_trim_error)
+        shift_refz_fanout_cap_common_error.append(branch_common_error)
+
+    shift_refz_fanout_cap_trim_error = np.array(shift_refz_fanout_cap_trim_error)
+    shift_refz_fanout_cap_common_error = np.array(shift_refz_fanout_cap_common_error)
+    fanout_cap_250_idx = 0
+    fanout_cap_500_idx = 1
+    fanout_cap_1n_idx = 2
+    fanout_cap_4load_idx = 0
+    fanout_cap_8load_idx = 1
+    fanout_cap_16load_idx = 2
+    require(
+        np.all(np.diff(shift_refz_fanout_cap_trim_error, axis=1) < 0.0),
+        "larger trim-reference reservoirs should reduce fanout trim error for each tested load count",
+    )
+    require(
+        np.all(shift_refz_fanout_cap_trim_error[:, fanout_cap_250_idx, fanout_cap_8load_idx] > 0.006),
+        "250 pF reservoir should reproduce the eight-load fanout failure",
+    )
+    require(
+        np.all(shift_refz_fanout_cap_trim_error[:, fanout_cap_500_idx, fanout_cap_8load_idx] < 0.006),
+        "500 pF reservoir should recover eight-load trim delivery below the 6 mV gate",
+    )
+    require(
+        np.all(shift_refz_fanout_cap_trim_error[:, fanout_cap_500_idx, fanout_cap_16load_idx] > 0.006),
+        "500 pF reservoir should still be marginal for sixteen shifted-gate loads",
+    )
+    require(
+        np.all(shift_refz_fanout_cap_trim_error[:, fanout_cap_1n_idx, fanout_cap_16load_idx] < 0.006),
+        "1 nF reservoir should recover sixteen-load trim delivery below the 6 mV gate",
+    )
+    require(
+        np.max(shift_refz_fanout_cap_common_error) < 0.006,
+        "larger-reservoir fanout sweep should keep reset common mode bounded",
     )
 
     tail_bias_forward_tail_line = "MNFT_HYR ftail_hyr vbias 0 0 NMOS L={LCH} W=48u"
@@ -17720,6 +17805,83 @@ quit
     save_plot(
         shift_refz_fanout_fig,
         "mos_hidden_writer_restored_gate_hybrid_update_forward_guard_forward_pair_96u_shifted_gate_reset_ref_fanout_ngspice",
+    )
+
+    shift_refz_fanout_cap_fig, shift_refz_fanout_cap_axes = plt.subplots(
+        2,
+        1,
+        figsize=(7.4, 5.9),
+        gridspec_kw={"height_ratios": [1.0, 0.9]},
+    )
+    fanout_cap_x = np.array([cref_pf for _name, _label, cref_pf in shift_refz_fanout_cap_cases])
+    fanout_cap_labels = [label for _name, label, _cref_pf in shift_refz_fanout_cap_cases]
+    for load_idx, (_load_name, load_label, _load_count) in enumerate(shift_refz_fanout_cap_load_cases):
+        marker = "o-" if load_idx == 0 else ("s--" if load_idx == 1 else "^-")
+        for branch_idx, (_branch_name, branch_label, _nfp, _nfm, _trim) in enumerate(shift_reset_branch_specs):
+            alpha = 1.0 if branch_idx == 0 else 0.72
+            shift_refz_fanout_cap_axes[0].plot(
+                fanout_cap_x,
+                1e3 * shift_refz_fanout_cap_trim_error[branch_idx, :, load_idx],
+                marker,
+                alpha=alpha,
+                label=f"{branch_label.split(', ')[1]}, {load_label}",
+            )
+    shift_refz_fanout_cap_axes[0].axhline(
+        6,
+        color="0.4",
+        linestyle=":",
+        linewidth=0.9,
+        label="6 mV trim-error gate",
+    )
+    shift_refz_fanout_cap_axes[0].set_xscale("log", base=2)
+    shift_refz_fanout_cap_axes[0].set_xticks(fanout_cap_x)
+    shift_refz_fanout_cap_axes[0].set_xticklabels(fanout_cap_labels)
+    shift_refz_fanout_cap_axes[0].set_ylabel("trim error (mV)")
+    shift_refz_fanout_cap_axes[0].set_title("Reservoir capacitance buys back shifted-gate fanout")
+    shift_refz_fanout_cap_axes[0].grid(True, axis="y", alpha=0.25)
+    shift_refz_fanout_cap_axes[0].text(
+        0.46,
+        0.34,
+        "250 pF 8-load min err = "
+        f"{1e3 * np.min(shift_refz_fanout_cap_trim_error[:, fanout_cap_250_idx, fanout_cap_8load_idx]):.2f} mV / >6 mV\n"
+        "500 pF 8-load max err = "
+        f"{1e3 * np.max(shift_refz_fanout_cap_trim_error[:, fanout_cap_500_idx, fanout_cap_8load_idx]):.2f} mV / 6 mV\n"
+        "500 pF 16-load min err = "
+        f"{1e3 * np.min(shift_refz_fanout_cap_trim_error[:, fanout_cap_500_idx, fanout_cap_16load_idx]):.2f} mV / >6 mV\n"
+        "1 nF 16-load max err = "
+        f"{1e3 * np.max(shift_refz_fanout_cap_trim_error[:, fanout_cap_1n_idx, fanout_cap_16load_idx]):.2f} mV / 6 mV",
+        transform=shift_refz_fanout_cap_axes[0].transAxes,
+        fontsize="x-small",
+        bbox={"facecolor": "white", "alpha": 0.82, "edgecolor": "0.8"},
+    )
+    shift_refz_fanout_cap_axes[0].legend(loc="upper right", ncol=2, fontsize="xx-small")
+    for branch_label, cap_label, load_label, fct, gate_diff in shift_refz_fanout_cap_traces:
+        if load_label == "8 loads":
+            linestyle = "-" if cap_label == "250 pF" else ("--" if cap_label == "500 pF" else "-.")
+        else:
+            linestyle = ":" if cap_label == "250 pF" else ((0, (5, 2, 1, 2)) if cap_label == "500 pF" else (0, (1, 1)))
+        shift_refz_fanout_cap_axes[1].plot(
+            1e6 * fct,
+            1e3 * gate_diff,
+            linestyle=linestyle,
+            label=f"{branch_label.split(', ')[1]}, {cap_label}, {load_label}",
+        )
+    shift_refz_fanout_cap_axes[1].axhline(0, color="0.4", linewidth=0.8)
+    shift_refz_fanout_cap_axes[1].set_xlim(2.45, 2.82)
+    shift_refz_fanout_cap_axes[1].set_xlabel("time (us)")
+    shift_refz_fanout_cap_axes[1].set_ylabel("sampled gate trim (mV)")
+    shift_refz_fanout_cap_axes[1].set_title("More capacitance reduces reset-pulse differential droop")
+    shift_refz_fanout_cap_axes[1].grid(True, alpha=0.25)
+    shift_refz_fanout_cap_axes[1].legend(
+        loc="upper center",
+        bbox_to_anchor=(0.5, -0.23),
+        ncol=2,
+        fontsize="xx-small",
+    )
+    shift_refz_fanout_cap_fig.tight_layout()
+    save_plot(
+        shift_refz_fanout_cap_fig,
+        "mos_hidden_writer_restored_gate_hybrid_update_forward_guard_forward_pair_96u_shifted_gate_reset_ref_fanout_cap_ngspice",
     )
 
     tail_bias_fig, tail_bias_axes = plt.subplots(2, 1, figsize=(7.4, 6.4), gridspec_kw={"height_ratios": [1.0, 0.8]})

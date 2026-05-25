@@ -2602,6 +2602,26 @@ must satisfy before it can replace the current behavioral prototype.
 
 \begin{figure}[H]
   \centering
+  \includegraphics[width=0.95\linewidth]{figures/mos_hidden_writer_restored_gate_hybrid_update_forward_guard_forward_pair_96u_shifted_gate_reset_ref_fanout_cap_ngspice.png}
+  \caption{Ngspice capacitance sweep for the same shifted-gate reset-reference
+  fanout fixture.  The circuit is unchanged except for the local split-trim
+  reservoir capacitance, swept from \(250\) pF to \(500\) pF and \(1\) nF,
+  while one reservoir drives \(4/8/16\) real shifted-gate reset loads.  The
+  \(250\) pF case reproduces the eight-load failure: trim error is at least
+  \(7.55\) mV for the \(-55\) mV branch and \(8.93\) mV for the \(+65\) mV
+  branch.  Doubling the reservoir to \(500\) pF recovers eight loads
+  (\(\le 4.80\) mV), but remains outside the \(6\) mV gate for sixteen loads
+  (\(7.57/8.95\) mV).  A \(1\) nF reservoir recovers the sixteen-load case
+  (\(\le 4.81\) mV), with common-mode error still at the displayed zero
+  level.  The measured design rule is therefore roughly linear in load
+  capacitance for this fixture: \(250\) pF is a four-load local trim source,
+  \(500\) pF is an eight-load source, and \(1\) nF is the tested sixteen-load
+  source.}
+  \label{fig:mos-hidden-writer-restored-gate-hybrid-update-forward-guard-forward-pair-96u-shifted-gate-reset-ref-fanout-cap-ngspice}
+\end{figure}
+
+\begin{figure}[H]
+  \centering
   \includegraphics[width=0.95\linewidth]{figures/mos_hidden_writer_restored_gate_hybrid_update_forward_guard_forward_pair_96u_shifted_gate_reset_ref_precharge_strength_ngspice.png}
   \caption{Ngspice startup-precharge strength-margin check for the same cold
   local trim-reference reservoir.  The \(250\) pF reservoirs, \(100\)

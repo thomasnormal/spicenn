@@ -2124,6 +2124,29 @@ must satisfy before it can replace the current behavioral prototype.
 
 \begin{figure}[H]
   \centering
+  \includegraphics[width=0.95\linewidth]{figures/mos_hidden_writer_restored_gate_hybrid_update_forward_guard_forward_pair_96u_shifted_gate_skew_trim_law_ngspice.png}
+  \caption{Ngspice threshold-skew versus split-trim calibration-law check for
+  the same shifted-gate reuse fixture.  The forward pair is swept through
+  opposite threshold skews of \(10,15,20,25,\) and \(30\) mV by setting
+  \(V_{TO,+}=0.55+\Delta\) V and \(V_{TO,-}=0.55-\Delta\) V, while the
+  physical reset trim is scaled as
+  \(-15,-25,-35,-45,\) and \(-55\) mV.  The reset switch network samples those
+  split trims directly on the shifted-gate capacitors:
+  \(-14.999,-24.999,-34.999,-44.998,\) and \(-54.998\) mV on the first reset,
+  with common mode held at about \(0.899993\) V.  The calibrated repeated
+  captures are essentially flat: mean stored activations are
+  \(46.974,46.973,46.973,46.972,\) and \(46.972\) mV across the five skew
+  magnitudes.  A deliberately under-trimmed \(30\) mV skew case using only the
+  old \(-35\) mV trim stores \(8.467,8.448,\) and \(8.448\) mV, so the plot
+  also shows the failure mode: the reset trim is not generic gain, it is a
+  per-cell offset-cancellation code.  This does not provide the array-level
+  calibration algorithm, but it demonstrates that the transistor-level reset
+  primitive can express the needed trim law once the code is known.}
+  \label{fig:mos-hidden-writer-restored-gate-hybrid-update-forward-guard-forward-pair-96u-shifted-gate-skew-trim-law-ngspice}
+\end{figure}
+
+\begin{figure}[H]
+  \centering
   \includegraphics[width=0.88\linewidth]{figures/mos_hidden_writer_restored_gate_hybrid_update_forward_guard_forward_tail_bias_ngspice.png}
   \caption{Ngspice isolated forward-tail bias sweep for the same guarded MOS
   activation store.  The failed shared-bias experiment changed the read path

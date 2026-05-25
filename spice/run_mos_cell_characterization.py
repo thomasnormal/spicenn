@@ -10050,6 +10050,159 @@ quit
         "common-mode reference perturbation deck should expose finite reset-settling/feedthrough rather than ideal tracking",
     )
 
+    def run_trimmed_reuse_skew_law_case(
+        name: str,
+        nfp_vto: float,
+        nfm_vto: float,
+        reset_trim_v: float,
+    ) -> tuple[np.ndarray, list[np.ndarray]]:
+        model_tag = name.upper()
+        stem = (
+            "mos_hidden_writer_restored_gate_hybrid_update_forward_guard_"
+            f"forward_pair_96u_zcm_0p75v_shift_trimmed_reuse_skewlaw_{name}"
+        )
+        models = (
+            f".model NSHTRSLFP_{model_tag} NMOS (LEVEL=1 VTO={nfp_vto:.3f} KP=220u LAMBDA=0.03)\n"
+            f".model NSHTRSLFM_{model_tag} NMOS (LEVEL=1 VTO={nfm_vto:.3f} KP=220u LAMBDA=0.03)"
+        )
+        deck = replace_required(hybrid_forward_read_reuse_deck, zcm_source_line, "VZCM zcm 0 0.75")
+        deck = replace_required(deck, zcm_cap_p_line, "CZP_HYR zp_hyr 0 {CSUM} IC=0.75")
+        deck = replace_required(deck, zcm_cap_m_line, "CZM_HYR zm_hyr 0 {CSUM} IC=0.75")
+        deck = replace_required(deck, corner_param_line, models + "\n" + corner_param_line)
+        deck = replace_required(
+            deck,
+            forward_pair_lines,
+            shifted_forward_pair_lines(
+                10.0,
+                reset_ref_p=0.90 + 0.5 * reset_trim_v,
+                reset_ref_m=0.90 - 0.5 * reset_trim_v,
+                forward_p_model=f"NSHTRSLFP_{model_tag}",
+                forward_m_model=f"NSHTRSLFM_{model_tag}",
+            ),
+        )
+        deck = replace_required(
+            deck,
+            "VRESET_HYR rst_hyr 0 PWL(0 0 3.58u 0 3.60u 1.8 4.00u 1.8 4.02u 0 "
+            "5.18u 0 5.20u 1.8 5.60u 1.8 5.62u 0 7.8u 0)",
+            "VRESET_HYR rst_hyr 0 PWL(0 0 2.48u 0 2.50u 1.8 2.62u 1.8 2.64u 0 "
+            "3.58u 0 3.60u 1.8 4.00u 1.8 4.02u 0 5.18u 0 5.20u 1.8 5.60u 1.8 "
+            "5.62u 0 7.8u 0)",
+        )
+        deck = replace_required(
+            deck,
+            "VRESETN_HYR rstn_hyr 0 PWL(0 1.8 3.58u 1.8 3.60u 0 4.00u 0 4.02u 1.8 "
+            "5.18u 1.8 5.20u 0 5.60u 0 5.62u 1.8 7.8u 1.8)",
+            "VRESETN_HYR rstn_hyr 0 PWL(0 1.8 2.48u 1.8 2.50u 0 2.62u 0 2.64u 1.8 "
+            "3.58u 1.8 3.60u 0 4.00u 0 4.02u 1.8 5.18u 1.8 5.20u 0 5.60u 0 "
+            "5.62u 1.8 7.8u 1.8)",
+        )
+        deck = replace_required(
+            deck,
+            "mos_hidden_writer_restored_gate_hybrid_update_forward_read_reuse.dat",
+            f"{stem}.dat",
+        )
+        deck = add_shifted_gate_probes(deck, stem)
+        data = run_ngspice(deck, stem)
+        return load_wrdata(data, 25)
+
+    shift_skewlaw_cases = [
+        ("d10_trim15", "10 mV skew, trim -15", 0.560, 0.540, -0.015, True),
+        ("d15_trim25", "15 mV skew, trim -25", 0.565, 0.535, -0.025, True),
+        ("d20_trim35", "20 mV skew, trim -35", 0.570, 0.530, -0.035, True),
+        ("d25_trim45", "25 mV skew, trim -45", 0.575, 0.525, -0.045, True),
+        ("d30_trim55", "30 mV skew, trim -55", 0.580, 0.520, -0.055, True),
+        ("d30_under35", "30 mV skew, trim -35", 0.580, 0.520, -0.035, False),
+    ]
+    shift_skewlaw_labels = []
+    shift_skewlaw_skews_mv = []
+    shift_skewlaw_trim_values = []
+    shift_skewlaw_gate_samples = []
+    shift_skewlaw_common_samples = []
+    shift_skewlaw_z_samples = []
+    shift_skewlaw_h_samples = []
+    shift_skewlaw_calibrated = []
+    shift_skewlaw_traces = []
+    for name, label, nfp_vto, nfm_vto, reset_trim_v, calibrated in shift_skewlaw_cases:
+        if name == "d20_trim35":
+            kt, skewlaw_cols = strpt, shift_trimmed_reuse_cols
+        else:
+            kt, skewlaw_cols = run_trimmed_reuse_skew_law_case(name, nfp_vto, nfm_vto, reset_trim_v)
+
+        def sklat(time_s: float, values: np.ndarray) -> float:
+            return float(values[np.argmin(np.abs(kt - time_s))])
+
+        gate_diff = skewlaw_cols[0] - skewlaw_cols[1]
+        gate_common = 0.5 * (skewlaw_cols[0] + skewlaw_cols[1])
+        z = skewlaw_cols[12] - skewlaw_cols[11]
+        load = skewlaw_cols[14] - skewlaw_cols[13]
+        store = skewlaw_cols[16] - skewlaw_cols[15]
+        gate_samples = np.array([sklat(ts, gate_diff) for ts in shift_trimmed_reuse_reset_times])
+        common_samples = np.array([sklat(ts, gate_common) for ts in shift_trimmed_reuse_reset_times])
+        z_samples = np.array([sklat(ts, z) for ts in shift_reuse_z_times])
+        h_samples = np.array([sklat(ts, store) for ts in shift_reuse_h_times])
+        z_reset = np.array([abs(sklat(ts, z)) for ts in shift_trimmed_reuse_reset_times])
+        h_reset = np.array([abs(sklat(ts, store)) for ts in shift_trimmed_reuse_reset_times])
+        require(
+            np.max(np.abs(gate_samples - reset_trim_v)) < 0.006,
+            f"{label} should establish the requested split-reset trim",
+        )
+        require(
+            np.max(np.abs(common_samples - 0.90)) < 0.006,
+            f"{label} should preserve reset common mode",
+        )
+        require(
+            np.max(z_reset) < 0.001 and np.max(h_reset) < 0.001,
+            f"{label} should still clear z/h state during reset",
+        )
+        require(
+            np.all(z_samples > 0.035),
+            f"{label} should keep useful read preactivation",
+        )
+        require(
+            np.all(h_samples < 0.120),
+            f"{label} should avoid forward-store overdrive",
+        )
+        if calibrated:
+            require(
+                np.all(h_samples > 0.025),
+                f"{label} should recover positive activation with the skew-scaled trim",
+            )
+            require(
+                np.max(h_samples) - np.min(h_samples) < 0.030,
+                f"{label} should remain stable across repeated cycles",
+            )
+        shift_skewlaw_labels.append(label)
+        shift_skewlaw_skews_mv.append(500.0 * (nfp_vto - nfm_vto))
+        shift_skewlaw_trim_values.append(reset_trim_v)
+        shift_skewlaw_gate_samples.append(gate_samples)
+        shift_skewlaw_common_samples.append(common_samples)
+        shift_skewlaw_z_samples.append(z_samples)
+        shift_skewlaw_h_samples.append(h_samples)
+        shift_skewlaw_calibrated.append(calibrated)
+        if name in {"d10_trim15", "d20_trim35", "d30_trim55", "d30_under35"}:
+            shift_skewlaw_traces.append((label, kt, load, store))
+
+    shift_skewlaw_skews_mv = np.array(shift_skewlaw_skews_mv)
+    shift_skewlaw_trim_values = np.array(shift_skewlaw_trim_values)
+    shift_skewlaw_gate_samples = np.array(shift_skewlaw_gate_samples)
+    shift_skewlaw_common_samples = np.array(shift_skewlaw_common_samples)
+    shift_skewlaw_z_samples = np.array(shift_skewlaw_z_samples)
+    shift_skewlaw_h_samples = np.array(shift_skewlaw_h_samples)
+    shift_skewlaw_calibrated = np.array(shift_skewlaw_calibrated, dtype=bool)
+    shift_skewlaw_h_mean = np.mean(shift_skewlaw_h_samples, axis=1)
+    shift_skewlaw_index = {case[0]: idx for idx, case in enumerate(shift_skewlaw_cases)}
+    require(
+        np.max(shift_skewlaw_h_mean[shift_skewlaw_calibrated])
+        - np.min(shift_skewlaw_h_mean[shift_skewlaw_calibrated])
+        < 0.070,
+        "skew-scaled split trims should keep calibrated activations in the same useful band",
+    )
+    require(
+        shift_skewlaw_h_mean[shift_skewlaw_index["d30_trim55"]]
+        > shift_skewlaw_h_mean[shift_skewlaw_index["d30_under35"]] + 0.015,
+        "severe skew should visibly need the stronger calibrated trim",
+    )
+
     tail_bias_forward_tail_line = "MNFT_HYR ftail_hyr vbias 0 0 NMOS L={LCH} W=48u"
     tail_bias_cases_v = [0.70, 0.80, 0.90, 0.95, 1.05, 1.15, 1.25]
     tail_bias_labels = []
@@ -11249,6 +11402,89 @@ quit
     save_plot(
         shift_refpert_fig,
         "mos_hidden_writer_restored_gate_hybrid_update_forward_guard_forward_pair_96u_shifted_gate_reset_refpert_ngspice",
+    )
+
+    shift_skewlaw_fig, shift_skewlaw_axes = plt.subplots(
+        3,
+        1,
+        figsize=(7.4, 7.5),
+        gridspec_kw={"height_ratios": [0.9, 1.0, 1.0]},
+    )
+    calibrated_idx = np.flatnonzero(shift_skewlaw_calibrated)
+    under_idx = np.flatnonzero(~shift_skewlaw_calibrated)
+    shift_skewlaw_axes[0].plot(
+        shift_skewlaw_skews_mv[calibrated_idx],
+        1e3 * shift_skewlaw_trim_values[calibrated_idx],
+        "o-",
+        label="requested trim",
+    )
+    shift_skewlaw_axes[0].errorbar(
+        shift_skewlaw_skews_mv[calibrated_idx],
+        1e3 * np.mean(shift_skewlaw_gate_samples[calibrated_idx], axis=1),
+        yerr=1e3
+        * np.vstack(
+            [
+                np.mean(shift_skewlaw_gate_samples[calibrated_idx], axis=1)
+                - np.min(shift_skewlaw_gate_samples[calibrated_idx], axis=1),
+                np.max(shift_skewlaw_gate_samples[calibrated_idx], axis=1)
+                - np.mean(shift_skewlaw_gate_samples[calibrated_idx], axis=1),
+            ]
+        ),
+        fmt="s--",
+        capsize=3,
+        label="sampled reset diff",
+    )
+    if len(under_idx):
+        shift_skewlaw_axes[0].scatter(
+            shift_skewlaw_skews_mv[under_idx],
+            1e3 * shift_skewlaw_trim_values[under_idx],
+            marker="x",
+            s=48,
+            label="under-trimmed severe skew",
+        )
+    shift_skewlaw_axes[0].set_ylabel("split trim (mV)")
+    shift_skewlaw_axes[0].set_title("Physical split reset can encode a skew-scaled trim law")
+    shift_skewlaw_axes[0].grid(True, alpha=0.25)
+    shift_skewlaw_axes[0].legend(loc="lower left", ncol=2, fontsize="small")
+    shift_skewlaw_x = np.arange(3)
+    for idx in calibrated_idx:
+        shift_skewlaw_axes[1].plot(
+            shift_skewlaw_x,
+            1e3 * shift_skewlaw_h_samples[idx],
+            marker="o",
+            label=shift_skewlaw_labels[idx],
+        )
+    if len(under_idx):
+        for idx in under_idx:
+            shift_skewlaw_axes[1].plot(
+                shift_skewlaw_x,
+                1e3 * shift_skewlaw_h_samples[idx],
+                "x--",
+                linewidth=1.5,
+                label=shift_skewlaw_labels[idx],
+            )
+    shift_skewlaw_axes[1].axhspan(25, 115, color="0.7", alpha=0.12, label="accepted window")
+    shift_skewlaw_axes[1].axhline(0, color="0.4", linewidth=0.8)
+    shift_skewlaw_axes[1].set_xticks(shift_skewlaw_x)
+    shift_skewlaw_axes[1].set_xticklabels(["cycle 1", "cycle 2", "cycle 3"])
+    shift_skewlaw_axes[1].set_ylabel("stored $h$ (mV)")
+    shift_skewlaw_axes[1].set_title("Calibrated trims keep repeated captures positive across skew magnitudes")
+    shift_skewlaw_axes[1].grid(True, axis="y", alpha=0.25)
+    shift_skewlaw_axes[1].legend(loc="upper left", ncol=2, fontsize="x-small")
+    for label, kpt, load, store in shift_skewlaw_traces:
+        shift_skewlaw_axes[2].plot(1e6 * kpt, 1e3 * store, label=f"{label} $h$")
+        shift_skewlaw_axes[2].plot(1e6 * kpt, 1e3 * load, "--", alpha=0.55, label=f"{label} load")
+    shift_skewlaw_axes[2].axhline(0, color="0.4", linewidth=0.8)
+    shift_skewlaw_axes[2].set_xlim(2.35, 7.1)
+    shift_skewlaw_axes[2].set_xlabel("time (us)")
+    shift_skewlaw_axes[2].set_ylabel("differential (mV)")
+    shift_skewlaw_axes[2].set_title("Under-trimmed severe skew is visibly weaker than the calibrated case")
+    shift_skewlaw_axes[2].grid(True, alpha=0.25)
+    shift_skewlaw_axes[2].legend(loc="upper left", ncol=2, fontsize="x-small")
+    shift_skewlaw_fig.tight_layout()
+    save_plot(
+        shift_skewlaw_fig,
+        "mos_hidden_writer_restored_gate_hybrid_update_forward_guard_forward_pair_96u_shifted_gate_skew_trim_law_ngspice",
     )
 
     tail_bias_fig, tail_bias_axes = plt.subplots(2, 1, figsize=(7.4, 6.4), gridspec_kw={"height_ratios": [1.0, 0.8]})

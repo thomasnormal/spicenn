@@ -81,3 +81,24 @@ def test_exact_backprop_hidden_credit_keeps_transistor_readout_weight_gates() ->
     assert "\nB" not in hidden_delta_block
     assert "Mhdp_a1 hdp_a0 vwp hdp_a1 0 NMOS" in hidden_delta_block
     assert "Mhdp_b1 hdp_b0 vwn hdp_b1 0 NMOS" in hidden_delta_block
+
+
+def test_eval_mode_disables_training_phase_pulses_without_removing_forward_path() -> None:
+    sys.path.insert(0, str(SPICE_DIR))
+    import run_device_sequential_training as seq
+
+    netlist = seq.sequential_netlist(
+        [{"vin": 0.8, "target": 1.1}, {"vin": 0.4, "target": 0.0}],
+        whp=0.85,
+        whn=0.25,
+        vwp=0.55,
+        vwn=0.25,
+        training_enabled=False,
+    )
+
+    assert "\nB" not in netlist
+    assert "Vfwd fwd 0 PWL" in netlist
+    assert "Verr err 0 PWL(0n 0 32n 0)" in netlist
+    assert "Vacc acc 0 PWL(0n 0 32n 0)" in netlist
+    assert "Vapply apply 0 PWL(0n 0 32n 0)" in netlist
+    assert "Vapplyn applyn 0 PWL(0n 1.2 32n 1.2)" in netlist

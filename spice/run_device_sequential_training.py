@@ -88,7 +88,7 @@ def sample_wave(samples: list[dict[str, float]], key: str, stop_ns: float) -> st
     return pwl(points)
 
 
-def repeated_phases(sample_count: int) -> str:
+def repeated_phases(sample_count: int, *, training_enabled: bool = True) -> str:
     stop = sample_count * CYCLE_NS
     rstf: list[tuple[float, float]] = []
     rstg: list[tuple[float, float]] = []
@@ -102,10 +102,11 @@ def repeated_phases(sample_count: int) -> str:
         rstf += [(base + 0.00, base + 0.50), (base + 12.05, base + 12.55)]
         rstg += [(base + 0.00, base + 0.50)]
         fwd += [(base + 0.75, base + 3.00), (base + 12.80, base + 15.60)]
-        err.append((base + 3.25, base + 5.00))
-        bwd.append((base + 5.25, base + 7.00))
-        acc.append((base + 7.25, base + 9.00))
-        apply.append((base + 9.25, base + 11.20))
+        if training_enabled:
+            err.append((base + 3.25, base + 5.00))
+            bwd.append((base + 5.25, base + 7.00))
+            acc.append((base + 7.25, base + 9.00))
+            apply.append((base + 9.25, base + 11.20))
     return "\n".join(
         [
             f"Vrstf rstf 0 {pulse_wave(rstf, stop)}",
@@ -163,6 +164,7 @@ def sequential_netlist(
     vwp: float,
     vwn: float,
     hidden_credit_mode: str = "direct_feedback",
+    training_enabled: bool = True,
 ) -> str:
     stop = len(samples) * CYCLE_NS
     measures: list[str] = []
@@ -216,7 +218,7 @@ def sequential_netlist(
 Vdd vdd 0 {{VDD}}
 Vin x 0 {sample_wave(samples, "vin", stop)}
 Vtarget target 0 {sample_wave(samples, "target", stop)}
-{repeated_phases(len(samples))}
+{repeated_phases(len(samples), training_enabled=training_enabled)}
 
 * Persistent hidden and readout signed weights.
 Cwhp whp 0 20f IC={whp:.12g}

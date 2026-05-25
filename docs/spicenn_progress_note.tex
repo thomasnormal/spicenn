@@ -2713,6 +2713,29 @@ must satisfy before it can replace the current behavioral prototype.
 
 \begin{figure}[H]
   \centering
+  \includegraphics[width=0.95\linewidth]{figures/mos_hidden_writer_restored_gate_hybrid_update_forward_guard_forward_pair_96u_shifted_gate_reset_ref_fanout_partition_ngspice.png}
+  \caption{Ngspice local-partitioning sweep for the same repeated
+  fresh-fanout reset-reference problem.  The total shifted-gate load remains
+  sixteen \(5\) pF gates and the total split-trim reservoir remains \(1\) nF,
+  but the reservoir is divided into \(1,2,4,8,\) or \(16\) local partitions.
+  Each partition has its own real \(100\,\mathrm{k}\Omega\) refresh path,
+  \(2\times\) MOS startup precharge, passive reservoir capacitors, and real
+  complementary reset switches.  The single \(1\times16\) reservoir reproduces
+  the \(20\,\mu\mathrm{s}\) repeated-fanout failure from
+  Fig.~\ref{fig:mos-hidden-writer-restored-gate-hybrid-update-forward-guard-forward-pair-96u-shifted-gate-reset-ref-fanout-refresh-impedance-ngspice}:
+  the best third-cycle trim polarity is still \(9.63\) mV from target.  Four
+  \(4\)-load partitions help but do not close the positive-trim branch
+  (\(7.62\) mV).  Eight \(2\)-load partitions recover the \(20\,\mu\mathrm{s}\)
+  cadence below the \(6\) mV gate, with worst third-cycle error \(5.83\) mV.
+  Even sixteen one-load partitions do not make a \(1\,\mu\mathrm{s}\) cadence
+  pass: worst third-cycle error remains \(11.41\) mV.  Thus partitioning is a
+  real hardware knob for area/locality tradeoff, but the fastest repeated
+  reset still needs lower refresh impedance or more recharge time.}
+  \label{fig:mos-hidden-writer-restored-gate-hybrid-update-forward-guard-forward-pair-96u-shifted-gate-reset-ref-fanout-partition-ngspice}
+\end{figure}
+
+\begin{figure}[H]
+  \centering
   \includegraphics[width=0.95\linewidth]{figures/mos_hidden_writer_restored_gate_hybrid_update_forward_guard_forward_pair_96u_shifted_gate_reset_ref_precharge_strength_ngspice.png}
   \caption{Ngspice startup-precharge strength-margin check for the same cold
   local trim-reference reservoir.  The \(250\) pF reservoirs, \(100\)

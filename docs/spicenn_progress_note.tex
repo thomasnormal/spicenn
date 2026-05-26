@@ -420,6 +420,54 @@ devices.  The result should be treated as a score-latch-centering rung, not as
 the final architecture: it is binary MNIST01, not multiclass MNIST, and it is
 not yet the \(10\times10\), block-4, stride-2, 2-channel target topology.
 
+The present device-level branch has since moved away from tuning the old
+stacked hidden path.  The preferred forward primitive is now
+\[
+  \code{input\_waveform\_mode=row-pulsed},\qquad
+  \code{hidden\_forward\_topology=split-rail},
+\]
+where the row waveform carries both input value and forward phase, and
+capacitor-held \(W^+/W^-\) gates are used as prototype conductance controls
+onto separate \(pre^+\) and \(pre^-\) accumulation rails.  This is still a
+capacitor-state SPICE prototype, but the intended abstraction is a signed
+conductance pair \(G^+-G^-\), not a capacitor voltage buried inside a
+three-device high-side NMOS stack.  In strict \(4\times4\) MNIST01 diagnostics,
+this row-pulsed split-rail path increased hidden-activation and restored
+eligibility participation from a few features to most of the eight feature
+rows, so it is the better base for future scaling.
+
+The newest readout experiments add a transistor/passive shared-shunt
+normalizer for readout-gradient storage:
+\[
+  \code{readout\_gradient\_normalization=shared-shunt}.
+\]
+Active restored eligibility gates charge a shared \(gnorm\) capacitor during
+the gradient-accumulation phase; \(gnorm\) then weakly shunts each local
+\(gvp/gvn\) gradient capacitor.  Low-level ngspice tests prove the intended
+local behavior: one active feature still writes, while many simultaneously
+active features have their total readout update suppressed and common-mode
+motion bounded.  The integrated result is more sobering.  A strict
+\(4\times4\) split-rail MNIST01 smoke with restored eligibility,
+bounded-reference writes, shared-shunt normalization, and the
+\code{score-diff-window-latched} decision stage still stayed at chance, with
+only about \(0.5\) mV of final decision-time \(s^+-s^-\) class margin.  A
+compact full diagnostic showed that feature participation was no longer the
+main issue: hidden activations, restored eligibility, and readout gradients
+were broad, but the readout updates created mostly same-polarity evidence.
+Thus the current blocker is upstream score-polarity/evidence normalization,
+not the final comparator threshold.
+
+The score-window decision stage also has a stage-specific reference
+interpretation.  Ordinary output/reference latches use a high reference near
+\(1.09\) V, but \code{score-diff-window-latched} treats the reference as a
+small dead-zone offset between \(s^+\) and \(s^-\).  The runner now defaults
+that stage to \(50\) mV unless overridden.  Re-running the compact diagnostic
+with the corrected default did not recover learning: \(s^+-s^-\) was positive
+for both held-out classes.  This rules out the stale high reference as the
+main failure and further supports the next direction: contrast or normalize
+feature/readout evidence before score regeneration, rather than adding more
+final-stage latch ratios.
+
 
 \section{State And Update Equations}
 

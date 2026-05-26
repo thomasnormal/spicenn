@@ -27,7 +27,7 @@ from spicenn.timing import CYCLE_NS
 INPUT_RAIL_MODES = ("raw", "complement", "alternating-complement")
 TARGET_POLARITIES = ("active-high", "active-low")
 HIDDEN_ACTIVATION_MODELS = ("nrel", "sense")
-HIDDEN_FORWARD_TOPOLOGIES = ("per-pixel-phase", "shared-phase")
+HIDDEN_FORWARD_TOPOLOGIES = ("per-pixel-phase", "shared-phase", "always-on")
 READOUT_FORWARD_MODELS = ("nrel", "sense")
 LEARNING_ACTIVATION_GATE_MODELS = ("nrel", "sense")
 HIDDEN_POLARITY_INITS = ("ink", "alternating-channel", "random-pixel")
@@ -916,6 +916,17 @@ def block_netlist(
                         f"hp{feature}_{pix}_0",
                         f"hn{feature}_{pix}_0",
                     ]
+                elif hidden_forward_topology == "always-on":
+                    hidden_forward_lines = [
+                        f"Mhpos{feature}_{pix}_x vdd {input_node} hp{feature}_{pix}_0 0 NMOS W={hidden_forward_width:.6g}u L=180n",
+                        f"Mhpos{feature}_{pix}_w hp{feature}_{pix}_0 whp{feature}_{pix} pre{feature} 0 NMOS W={hidden_forward_width:.6g}u L=180n",
+                        f"Mhneg{feature}_{pix}_x pre{feature} {input_node} hn{feature}_{pix}_0 0 NMOS W={hidden_neg_width:.6g}u L=180n",
+                        f"Mhneg{feature}_{pix}_w hn{feature}_{pix}_0 whn{feature}_{pix} 0 0 NMOS W={hidden_neg_width:.6g}u L=180n",
+                    ]
+                    hidden_stack_nodes = [
+                        f"hp{feature}_{pix}_0",
+                        f"hn{feature}_{pix}_0",
+                    ]
                 else:
                     hidden_forward_lines = [
                         f"Mhpos{feature}_{pix}_x vdd {input_node} hp{feature}_{pix}_0 0 NMOS W={hidden_forward_width:.6g}u L=180n",
@@ -964,11 +975,20 @@ def block_netlist(
                     f"Mwhp{feature}_{pix}_dn_a whp{feature}_{pix} apply whp{feature}_{pix}_dn 0 NREL W={hidden_weight_write_width:.6g}u L=180n",
                     f"Mwhp{feature}_{pix}_dn_g whp{feature}_{pix}_dn ghn{feature}_{pix} 0 0 NSENSE W={hidden_weight_write_width:.6g}u L=180n",
                 ]
+            if hidden_forward_topology == "always-on":
+                hidden_bias_lines = [
+                    f"Mhbpos{feature}_b vdd bhp{feature} pre{feature} 0 NMOS W={hidden_forward_width:.6g}u L=180n",
+                    f"Mhbneg{feature}_b pre{feature} bhn{feature} 0 0 NMOS W={hidden_neg_width:.6g}u L=180n",
+                ]
+            else:
+                hidden_bias_lines = [
+                    f"Mhbpos{feature}_b vdd bhp{feature} hbp{feature}_0 0 NMOS W={hidden_forward_width:.6g}u L=180n",
+                    f"Mhbpos{feature}_f hbp{feature}_0 fwd pre{feature} 0 NMOS W={hidden_forward_width:.6g}u L=180n",
+                    f"Mhbneg{feature}_f pre{feature} fwd hbn{feature}_0 0 NMOS W={hidden_neg_width:.6g}u L=180n",
+                    f"Mhbneg{feature}_b hbn{feature}_0 bhn{feature} 0 0 NMOS W={hidden_neg_width:.6g}u L=180n",
+                ]
             lines += [
-                f"Mhbpos{feature}_b vdd bhp{feature} hbp{feature}_0 0 NMOS W={hidden_forward_width:.6g}u L=180n",
-                f"Mhbpos{feature}_f hbp{feature}_0 fwd pre{feature} 0 NMOS W={hidden_forward_width:.6g}u L=180n",
-                f"Mhbneg{feature}_f pre{feature} fwd hbn{feature}_0 0 NMOS W={hidden_neg_width:.6g}u L=180n",
-                f"Mhbneg{feature}_b hbn{feature}_0 bhn{feature} 0 0 NMOS W={hidden_neg_width:.6g}u L=180n",
+                *hidden_bias_lines,
                 f"Mrelu_h{feature} vdd pre{feature} act{feature} 0 {activation_model} W={hidden_activation_width:.6g}u L=180n",
                 *(
                     [

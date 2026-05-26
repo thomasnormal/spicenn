@@ -253,6 +253,7 @@ def block_netlist(
     readout_weight_positive_ref: float = 0.52,
     readout_weight_negative_ref: float = 0.25,
     activation_competition_width: float = 0.0,
+    score_activity_inhibition_width: float = 0.0,
     output_bias_enabled: bool = False,
     output_bias_apply_scale: float = 1.0,
     output_bias_positive_init: float = 0.52,
@@ -286,6 +287,10 @@ def block_netlist(
         raise ValueError("readout_weight_leak_resistance must be nonnegative")
     if activation_competition_width < 0.0:
         raise ValueError("activation_competition_width must be nonnegative")
+    if score_activity_inhibition_width < 0.0:
+        raise ValueError("score_activity_inhibition_width must be nonnegative")
+    if score_activity_inhibition_width > 0.0 and activation_competition_width <= 0.0:
+        raise ValueError("score_activity_inhibition_width requires activation_competition_width")
     if output_bias_apply_scale <= 0.0:
         raise ValueError("output_bias_apply_scale must be positive")
     if output_bias_leak_resistance < 0.0:
@@ -684,6 +689,23 @@ def block_netlist(
             f"Mobp_dn_g obp_dn gon 0 0 NSENSE W={output_bias_nmos_w:.6g}u L=180n",
         ]
 
+    if score_activity_inhibition_width > 0.0:
+        lines += [
+            "",
+            "* Score-level common-mode inhibition from the activation competition rail.",
+            *(
+                [
+                    f"Mscoreinh_a vdd actinh scoreinh_a 0 NSENSE W={score_activity_inhibition_width:.6g}u L=180n",
+                    f"Mscoreinh_f scoreinh_a fwd scoren 0 NMOS W={score_activity_inhibition_width:.6g}u L=180n",
+                ]
+                if score_mode == "differential"
+                else [
+                    f"Mscoreinh_i score actinh scoreinh_i 0 NSENSE W={score_activity_inhibition_width:.6g}u L=180n",
+                    f"Mscoreinh_f scoreinh_i fwd 0 0 NMOS W={score_activity_inhibition_width:.6g}u L=180n",
+                ]
+            ),
+        ]
+
     lines += [
         "",
         (
@@ -926,6 +948,7 @@ def run_device_sequence(
     readout_weight_positive_ref: float,
     readout_weight_negative_ref: float,
     activation_competition_width: float,
+    score_activity_inhibition_width: float,
     output_bias_enabled: bool,
     output_bias_apply_scale: float,
     output_bias_positive_init: float,
@@ -962,6 +985,7 @@ def run_device_sequence(
         readout_weight_positive_ref=readout_weight_positive_ref,
         readout_weight_negative_ref=readout_weight_negative_ref,
         activation_competition_width=activation_competition_width,
+        score_activity_inhibition_width=score_activity_inhibition_width,
         output_bias_enabled=output_bias_enabled,
         output_bias_apply_scale=output_bias_apply_scale,
         output_bias_positive_init=output_bias_positive_init,
@@ -1014,6 +1038,7 @@ def main() -> None:
     ap.add_argument("--readout-weight-positive-ref", type=float, default=0.52)
     ap.add_argument("--readout-weight-negative-ref", type=float, default=0.25)
     ap.add_argument("--activation-competition-width", type=float, default=0.0)
+    ap.add_argument("--score-activity-inhibition-width", type=float, default=0.0)
     ap.add_argument("--output-bias", action="store_true")
     ap.add_argument("--output-bias-apply-scale", type=float, default=1.0)
     ap.add_argument("--output-bias-positive-init", type=float, default=0.52)
@@ -1094,6 +1119,7 @@ def main() -> None:
         "readout_weight_positive_ref": args.readout_weight_positive_ref,
         "readout_weight_negative_ref": args.readout_weight_negative_ref,
         "activation_competition_width": args.activation_competition_width,
+        "score_activity_inhibition_width": args.score_activity_inhibition_width,
         "output_bias_enabled": args.output_bias,
         "output_bias_apply_scale": args.output_bias_apply_scale,
         "output_bias_positive_init": args.output_bias_positive_init,
@@ -1204,6 +1230,7 @@ def main() -> None:
         "readout_weight_positive_ref": args.readout_weight_positive_ref,
         "readout_weight_negative_ref": args.readout_weight_negative_ref,
         "activation_competition_width": args.activation_competition_width,
+        "score_activity_inhibition_width": args.score_activity_inhibition_width,
         "output_bias_enabled": args.output_bias,
         "output_bias_apply_scale": args.output_bias_apply_scale,
         "output_bias_positive_init": args.output_bias_positive_init,

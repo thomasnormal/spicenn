@@ -40,6 +40,7 @@ def test_device_mnist01_block_script_help_runs_from_repo_root() -> None:
     assert "--learning-activation-gate-model" in proc.stdout
     assert "--readout-weight-leak-resistance" in proc.stdout
     assert "--activation-competition-width" in proc.stdout
+    assert "--score-activity-inhibition-width" in proc.stdout
     assert "--output-bias" in proc.stdout
     assert "--output-bias-apply-scale" in proc.stdout
     assert "--output-bias-leak-resistance" in proc.stdout
@@ -385,6 +386,54 @@ def test_block_netlist_can_emit_input_dependent_activation_residual() -> None:
     assert "Mhres0_0_f hres0_0_0 fwd act0 0 NMOS W=1.5u" in netlist
     assert "Mhres3_3_x vdd x15 hres3_3_0 0 NSENSE W=1.5u" in netlist
     assert "Mhres3_3_f hres3_3_0 fwd act3 0 NMOS W=1.5u" in netlist
+
+
+def test_block_netlist_can_emit_score_activity_inhibition() -> None:
+    sys.path.insert(0, str(SPICE_DIR))
+    import run_device_mnist01_block_training as block
+
+    image_size = 4
+    weights = block.initial_block_weights(image_size, 2, 2, 1, seed=1)
+    sample = {f"x{i}": 0.2 + 0.01 * i for i in range(image_size * image_size)}
+    sample["target"] = 1.1
+    netlist = block.block_netlist(
+        [sample],
+        weights,
+        image_size=image_size,
+        block_size=2,
+        stride=2,
+        channels=1,
+        training_enabled=True,
+        activation_competition_width=2.0,
+        score_activity_inhibition_width=3.0,
+        score_mode="differential",
+    )
+
+    assert "\nB" not in netlist
+    assert "Mscoreinh_a vdd actinh scoreinh_a 0 NSENSE W=3u" in netlist
+    assert "Mscoreinh_f scoreinh_a fwd scoren 0 NMOS W=3u" in netlist
+
+
+def test_score_activity_inhibition_requires_activation_competition() -> None:
+    sys.path.insert(0, str(SPICE_DIR))
+    import pytest
+    import run_device_mnist01_block_training as block
+
+    image_size = 4
+    weights = block.initial_block_weights(image_size, 2, 2, 1, seed=1)
+    sample = {f"x{i}": 0.2 + 0.01 * i for i in range(image_size * image_size)}
+    sample["target"] = 1.1
+    with pytest.raises(ValueError, match="requires activation_competition_width"):
+        block.block_netlist(
+            [sample],
+            weights,
+            image_size=image_size,
+            block_size=2,
+            stride=2,
+            channels=1,
+            training_enabled=True,
+            score_activity_inhibition_width=3.0,
+        )
 
 
 def test_block_netlist_can_emit_trainable_output_bias() -> None:

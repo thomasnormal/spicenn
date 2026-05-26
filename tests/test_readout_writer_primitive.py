@@ -78,6 +78,28 @@ def test_readout_writer_distribution_primitive_emits_shared_activity_shunt_norma
     assert ".meas tran gnorm_before_apply FIND V(gnorm) AT=3.5n" in netlist
 
 
+def test_readout_writer_distribution_primitive_emits_shared_gate_shunt_normalizer() -> None:
+    netlist = writer.generate_distribution_netlist(
+        update_mode="positive",
+        gradient_gate_topology="restored",
+        gate_restore_width=4.0,
+        gate_amplitudes=(1.2, 1.2, 1.2, 1.2),
+        gradient_normalization="shared-gate-shunt",
+        normalization_width=5.0,
+        normalization_capacitance_f=100.0,
+        normalization_shunt_width=50.0,
+    )
+
+    assert "\nB" not in netlist
+    assert "Cgnorm gnorm 0 100f IC=0" in netlist
+    assert "Megon0_p act0 egate0 vdd vdd PMOS W=4u" in netlist
+    assert "Mgnorm0_a vdd act0 gnorm0_a 0 NSENSE W=5u" in netlist
+    assert "Mgnorm0_g gnorm0_a acc gnorm 0 NREL W=5u" in netlist
+    assert "Mgate0_norm act0 gnorm 0 0 NSENSE W=50u" in netlist
+    assert "Mgate3_norm act3 gnorm 0 0 NSENSE W=50u" in netlist
+    assert "Mgvp0_norm gvp0 gnorm 0 0 NSENSE" not in netlist
+
+
 def test_readout_writer_primitive_keeps_legacy_rail_writer_available() -> None:
     netlist = writer.generate_netlist(update_mode="negative", topology="rail", update_scale=0.1)
 
@@ -332,4 +354,65 @@ def test_readout_writer_distribution_ngspice_shared_shunt_limits_many_active_upd
     assert norm_total < 0.65 * plain_total
     for idx in range(4):
         assert float(many_active_norm[f"signed_delta{idx}"]) > 0.0
+        assert abs(float(many_active_norm[f"common_delta{idx}"])) < 0.05
+
+
+def test_readout_writer_distribution_ngspice_shared_gate_shunt_suppresses_common_activity_before_gradient(
+    tmp_path: Path,
+    ngspice_path: str,
+) -> None:
+    single_active = run_netlist(
+        ngspice_path,
+        tmp_path / "readout_writer_gate_norm_single.cir",
+        writer.generate_distribution_netlist(
+            update_mode="positive",
+            gradient_gate_topology="restored",
+            gate_restore_width=4.0,
+            gate_amplitudes=(1.2, 0.0, 0.0, 0.0),
+            gradient_normalization="shared-gate-shunt",
+            normalization_width=5.0,
+            normalization_capacitance_f=100.0,
+            normalization_shunt_width=50.0,
+        ),
+        timeout=20.0,
+    )
+    many_active_plain = run_netlist(
+        ngspice_path,
+        tmp_path / "readout_writer_gate_norm_many_plain.cir",
+        writer.generate_distribution_netlist(
+            update_mode="positive",
+            gradient_gate_topology="restored",
+            gate_amplitudes=(1.2, 1.2, 1.2, 1.2),
+            gradient_normalization="none",
+        ),
+        timeout=20.0,
+    )
+    many_active_norm = run_netlist(
+        ngspice_path,
+        tmp_path / "readout_writer_gate_norm_many.cir",
+        writer.generate_distribution_netlist(
+            update_mode="positive",
+            gradient_gate_topology="restored",
+            gate_restore_width=4.0,
+            gate_amplitudes=(1.2, 1.2, 1.2, 1.2),
+            gradient_normalization="shared-gate-shunt",
+            normalization_width=5.0,
+            normalization_capacitance_f=100.0,
+            normalization_shunt_width=50.0,
+        ),
+        timeout=20.0,
+    )
+
+    single_delta = float(single_active["signed_delta0"])
+    plain_total = sum(float(many_active_plain[f"signed_delta{i}"]) for i in range(4))
+    norm_total = sum(float(many_active_norm[f"signed_delta{i}"]) for i in range(4))
+
+    assert float(single_active["gnorm_before_apply"]) > 0.02
+    assert single_delta > 0.025
+    assert float(many_active_norm["gnorm_before_apply"]) > float(single_active["gnorm_before_apply"])
+    assert abs(norm_total) < 1e-3
+    assert abs(norm_total) < 0.01 * plain_total
+    for idx in range(4):
+        assert float(many_active_norm[f"gate{idx}_before_apply"]) < float(single_active["gate0_before_apply"])
+        assert abs(float(many_active_norm[f"signed_delta{idx}"])) < 1e-3
         assert abs(float(many_active_norm[f"common_delta{idx}"])) < 0.05

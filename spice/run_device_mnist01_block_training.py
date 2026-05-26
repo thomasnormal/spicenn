@@ -35,7 +35,7 @@ READOUT_FORWARD_MODELS = ("nrel", "sense")
 READOUT_FORWARD_TOPOLOGIES = ("stacked", "conductance-row", "conductance-row-isolated")
 READOUT_WEIGHT_GATE_MODELS = ("same", "nrel", "sense", "switch")
 READOUT_GRADIENT_SOURCES = ("act", "pre", "eligibility", "eligibility-restored")
-READOUT_GRADIENT_NORMALIZATIONS = ("none", "shared-shunt")
+READOUT_GRADIENT_NORMALIZATIONS = ("none", "shared-shunt", "shared-gate-shunt")
 READOUT_WEIGHT_UPDATE_TOPOLOGIES = ("rail", "bounded-ref")
 OUTPUT_BIAS_FORWARD_TOPOLOGIES = ("stacked", "conductance-row")
 LEARNING_ACTIVATION_GATE_MODELS = ("nrel", "sense")
@@ -1168,7 +1168,7 @@ def block_netlist(
                 f".meas tran actinh_before_{idx} FIND V(actinh) AT={base + 2.95 * scale:.2f}n",
                 f".meas tran actinh_after_{idx} FIND V(actinh) AT={base + 15.50 * scale:.2f}n",
             ]
-        if readout_gradient_normalization == "shared-shunt":
+        if readout_gradient_normalization in {"shared-shunt", "shared-gate-shunt"}:
             measures += [
                 f".meas tran gnorm_after_grad_{idx} FIND V(gnorm) AT={base + 8.50 * scale:.2f}n",
                 f".meas tran gnorm_after_apply_{idx} FIND V(gnorm) AT={base + 11.50 * scale:.2f}n",
@@ -1458,7 +1458,7 @@ def block_netlist(
             "Cactinh actinh 0 10f IC=0",
             "Ractinh actinh 0 1G",
         ]
-    if readout_gradient_normalization == "shared-shunt":
+    if readout_gradient_normalization in {"shared-shunt", "shared-gate-shunt"}:
         lines += [
             f"Cgnorm gnorm 0 {spice_capacitance(readout_gradient_normalization_capacitance)} IC=0",
             "Rgnorm gnorm 0 1G",
@@ -1573,7 +1573,7 @@ def block_netlist(
             "Mreset_gop gop rstg 0 0 NMOS W=4u L=180n",
             "Mreset_gon gon rstg 0 0 NMOS W=4u L=180n",
         ]
-    if readout_gradient_normalization == "shared-shunt":
+    if readout_gradient_normalization in {"shared-shunt", "shared-gate-shunt"}:
         lines.append("Mreset_gnorm gnorm rstg 0 0 NMOS W=4u L=180n")
     if output_differential_stage == "latched":
         lines.append("Mreset_outn outn rstf 0 0 NMOS W=4u L=180n")
@@ -1921,10 +1921,23 @@ def block_netlist(
                     [
                         f"Mgnorm{feature}_a vdd {readout_gradient_gate_node} gnorm{feature}_a 0 {learning_activation_model} W={readout_gradient_normalization_width:.6g}u L=180n",
                         f"Mgnorm{feature}_g gnorm{feature}_a acc gnorm 0 NREL W={readout_gradient_normalization_width:.6g}u L=180n",
+                    ]
+                    if readout_gradient_normalization in {"shared-shunt", "shared-gate-shunt"}
+                    else []
+                ),
+                *(
+                    [
                         f"Mgvp{feature}_norm gvp{feature} gnorm 0 0 NSENSE W={readout_gradient_normalization_shunt_width:.6g}u L=180n",
                         f"Mgvn{feature}_norm gvn{feature} gnorm 0 0 NSENSE W={readout_gradient_normalization_shunt_width:.6g}u L=180n",
                     ]
                     if readout_gradient_normalization == "shared-shunt"
+                    else []
+                ),
+                *(
+                    [
+                        f"Mgate{feature}_norm {readout_gradient_gate_node} gnorm 0 0 NSENSE W={readout_gradient_normalization_shunt_width:.6g}u L=180n",
+                    ]
+                    if readout_gradient_normalization == "shared-gate-shunt"
                     else []
                 ),
                 f"Mgbp{feature}_d vdd hdp{feature} gbp{feature}_d 0 NSENSE W={hidden_update_width:.6g}u L=180n",

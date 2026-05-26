@@ -15,7 +15,7 @@ from run_spice_sweep import ROOT, detect_spice
 UPDATE_MODES = ("none", "positive", "negative")
 READOUT_WRITER_TOPOLOGIES = ("rail", "bounded-ref")
 GRADIENT_GATE_TOPOLOGIES = ("direct", "restored")
-GRADIENT_NORMALIZATIONS = ("none", "shared-shunt")
+GRADIENT_NORMALIZATIONS = ("none", "shared-shunt", "shared-gate-shunt")
 
 
 def update_rails(mode: str, *, amplitude: float) -> tuple[float, float]:
@@ -232,7 +232,7 @@ def generate_distribution_netlist(
             f"Vvwhi_ref vwhi_ref 0 {high_ref:.12g}",
             f"Vvwlo_ref vwlo_ref 0 {low_ref:.12g}",
         ]
-    if gradient_normalization == "shared-shunt":
+    if gradient_normalization in {"shared-shunt", "shared-gate-shunt"}:
         lines += [
             f"Cgnorm gnorm 0 {normalization_capacitance_f:.6g}f IC=0",
             "Rgnorm gnorm 0 1G",
@@ -280,10 +280,23 @@ def generate_distribution_netlist(
                 [
                     f"Mgnorm{feature}_a vdd {gradient_gate_node} gnorm{feature}_a 0 NSENSE W={normalization_width:.6g}u L=180n",
                     f"Mgnorm{feature}_g gnorm{feature}_a acc gnorm 0 NREL W={normalization_width:.6g}u L=180n",
+                ]
+                if gradient_normalization in {"shared-shunt", "shared-gate-shunt"}
+                else []
+            ),
+            *(
+                [
                     f"Mgvp{feature}_norm gvp{feature} gnorm 0 0 NSENSE W={normalization_shunt_width:.6g}u L=180n",
                     f"Mgvn{feature}_norm gvn{feature} gnorm 0 0 NSENSE W={normalization_shunt_width:.6g}u L=180n",
                 ]
                 if gradient_normalization == "shared-shunt"
+                else []
+            ),
+            *(
+                [
+                    f"Mgate{feature}_norm {gradient_gate_node} gnorm 0 0 NSENSE W={normalization_shunt_width:.6g}u L=180n",
+                ]
+                if gradient_normalization == "shared-gate-shunt"
                 else []
             ),
             *readout_weight_update_lines(
@@ -307,7 +320,7 @@ def generate_distribution_netlist(
             f".meas tran common_after{feature} PARAM='0.5*(vwp{feature}_after+vwn{feature}_after)'",
             f".meas tran common_delta{feature} PARAM='common_after{feature}-common_before{feature}'",
         ]
-    if gradient_normalization == "shared-shunt":
+    if gradient_normalization in {"shared-shunt", "shared-gate-shunt"}:
         lines.append(".meas tran gnorm_before_apply FIND V(gnorm) AT=3.5n")
     lines += [
         ".tran 5p 12n uic",

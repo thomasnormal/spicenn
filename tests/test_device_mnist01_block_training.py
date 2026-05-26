@@ -3249,6 +3249,41 @@ def test_block_netlist_can_emit_readout_gradient_shared_shunt_normalization() ->
         )
 
 
+def test_block_netlist_can_emit_readout_gradient_shared_gate_shunt_normalization() -> None:
+    sys.path.insert(0, str(SPICE_DIR))
+    import run_device_mnist01_block_training as block
+
+    image_size = 4
+    weights = block.initial_block_weights(image_size, 2, 2, 1, seed=1)
+    sample = {f"x{i}": 0.2 + 0.01 * i for i in range(image_size * image_size)}
+    sample["target"] = 1.1
+    netlist = block.block_netlist(
+        [sample],
+        weights,
+        image_size=image_size,
+        block_size=2,
+        stride=2,
+        channels=1,
+        training_enabled=True,
+        readout_gradient_normalization="shared-gate-shunt",
+        readout_gradient_normalization_width=5.0,
+        readout_gradient_normalization_shunt_width=50.0,
+        readout_gradient_normalization_capacitance=100e-15,
+        readout_gradient_source="eligibility-restored",
+        readout_eligibility_restore_width=4.0,
+    )
+
+    assert "\nB" not in netlist
+    assert "Cgnorm gnorm 0 100f IC=0" in netlist
+    assert "Megon0_p egon0 egate0 vdd vdd PMOS W=4u" in netlist
+    assert "Mgnorm0_a vdd egon0 gnorm0_a 0 NREL W=5u" in netlist
+    assert "Mgnorm0_g gnorm0_a acc gnorm 0 NREL W=5u" in netlist
+    assert "Mgate0_norm egon0 gnorm 0 0 NSENSE W=50u" in netlist
+    assert "Mgate3_norm egon3 gnorm 0 0 NSENSE W=50u" in netlist
+    assert "Mgvp0_norm gvp0 gnorm 0 0 NSENSE" not in netlist
+    assert ".meas tran gnorm_after_grad_0 FIND V(gnorm) AT=8.50n" in netlist
+
+
 def test_score_activity_inhibition_requires_activation_competition() -> None:
     sys.path.insert(0, str(SPICE_DIR))
     import pytest

@@ -36,8 +36,12 @@ def test_device_mnist01_block_script_help_runs_from_repo_root() -> None:
     assert "--error-restore-width" in proc.stdout
     assert "--hidden-update-width" in proc.stdout
     assert "--hidden-weight-write-width" in proc.stdout
+    assert "--hidden-weight-leak-resistance" in proc.stdout
+    assert "--hidden-weight-positive-ref" in proc.stdout
+    assert "--hidden-weight-negative-ref" in proc.stdout
     assert "--hidden-activation-width" in proc.stdout
     assert "--hidden-input-residual-width" in proc.stdout
+    assert "--hidden-stack-shunt-resistance" in proc.stdout
     assert "--hidden-stack-parasitic-capacitance" in proc.stdout
     assert "--hidden-activation-model" in proc.stdout
     assert "--hidden-polarity-init" in proc.stdout
@@ -1224,6 +1228,36 @@ def test_block_netlist_can_emit_passive_readout_weight_leak() -> None:
     assert "Rvwn3_leak vwn3 vwn_ref 5e+06" in netlist
 
 
+def test_block_netlist_can_emit_passive_hidden_weight_and_bias_leak() -> None:
+    sys.path.insert(0, str(SPICE_DIR))
+    import run_device_mnist01_block_training as block
+
+    image_size = 4
+    weights = block.initial_block_weights(image_size, 2, 2, 1, seed=1)
+    sample = {f"x{i}": 0.2 + 0.01 * i for i in range(image_size * image_size)}
+    sample["target"] = 1.1
+    netlist = block.block_netlist(
+        [sample],
+        weights,
+        image_size=image_size,
+        block_size=2,
+        stride=2,
+        channels=1,
+        training_enabled=True,
+        hidden_weight_leak_resistance=4e6,
+        hidden_weight_positive_ref=0.49,
+        hidden_weight_negative_ref=0.21,
+    )
+
+    assert "\nB" not in netlist
+    assert "Vwhp_ref whp_ref 0 0.49" in netlist
+    assert "Vwhn_ref whn_ref 0 0.21" in netlist
+    assert "Rwhp0_0_leak whp0_0 whp_ref 4e+06" in netlist
+    assert "Rwhn3_3_leak whn3_3 whn_ref 4e+06" in netlist
+    assert "Rbhp0_leak bhp0 whp_ref 4e+06" in netlist
+    assert "Rbhn3_leak bhn3 whn_ref 4e+06" in netlist
+
+
 def test_block_netlist_can_emit_passive_readout_stack_shunts() -> None:
     sys.path.insert(0, str(SPICE_DIR))
     import run_device_mnist01_block_training as block
@@ -1355,6 +1389,32 @@ def test_block_netlist_can_emit_passive_hidden_stack_parasitic_caps() -> None:
     assert "Chread_hp3_3_1 hp3_3_1 0 1e-16" in netlist
     assert "Chread_hn3_3_0 hn3_3_0 0 1e-16" in netlist
     assert "Chread_hn3_3_1 hn3_3_1 0 1e-16" in netlist
+
+
+def test_block_netlist_can_emit_passive_hidden_stack_shunts() -> None:
+    sys.path.insert(0, str(SPICE_DIR))
+    import run_device_mnist01_block_training as block
+
+    image_size = 4
+    weights = block.initial_block_weights(image_size, 2, 2, 1, seed=1)
+    sample = {f"x{i}": 0.2 + 0.01 * i for i in range(image_size * image_size)}
+    sample["target"] = 1.1
+    netlist = block.block_netlist(
+        [sample],
+        weights,
+        image_size=image_size,
+        block_size=2,
+        stride=2,
+        channels=1,
+        training_enabled=True,
+        hidden_stack_shunt_resistance=1e12,
+    )
+
+    assert "\nB" not in netlist
+    assert "Rhread_hp3_3_0 hp3_3_0 0 1e+12" in netlist
+    assert "Rhread_hp3_3_1 hp3_3_1 0 1e+12" in netlist
+    assert "Rhread_hn3_3_0 hn3_3_0 0 1e+12" in netlist
+    assert "Rhread_hn3_3_1 hn3_3_1 0 1e+12" in netlist
 
 
 def test_block_netlist_can_emit_score_activity_inhibition() -> None:

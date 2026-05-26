@@ -358,8 +358,12 @@ def block_netlist(
     error_restore_width: float = 4.0,
     hidden_update_width: float = 12.0,
     hidden_weight_write_width: float = 0.25,
+    hidden_weight_leak_resistance: float = 0.0,
+    hidden_weight_positive_ref: float = 0.50,
+    hidden_weight_negative_ref: float = 0.20,
     hidden_activation_width: float = 24.0,
     hidden_input_residual_width: float = 0.0,
+    hidden_stack_shunt_resistance: float = 0.0,
     hidden_stack_parasitic_capacitance: float = 0.0,
     hidden_activation_model: str = "nrel",
     readout_forward_width: float = 64.0,
@@ -444,10 +448,14 @@ def block_netlist(
         raise ValueError("hidden_update_width must be positive")
     if hidden_weight_write_width <= 0.0:
         raise ValueError("hidden_weight_write_width must be positive")
+    if hidden_weight_leak_resistance < 0.0:
+        raise ValueError("hidden_weight_leak_resistance must be nonnegative")
     if hidden_activation_width <= 0.0:
         raise ValueError("hidden_activation_width must be positive")
     if hidden_input_residual_width < 0.0:
         raise ValueError("hidden_input_residual_width must be nonnegative")
+    if hidden_stack_shunt_resistance < 0.0:
+        raise ValueError("hidden_stack_shunt_resistance must be nonnegative")
     if hidden_stack_parasitic_capacitance < 0.0:
         raise ValueError("hidden_stack_parasitic_capacitance must be nonnegative")
     if readout_forward_width <= 0.0:
@@ -620,6 +628,11 @@ def block_netlist(
             f"Vvwp_ref vwp_ref 0 {readout_weight_positive_ref:.12g}",
             f"Vvwn_ref vwn_ref 0 {readout_weight_negative_ref:.12g}",
         ]
+    if hidden_weight_leak_resistance > 0.0:
+        lines += [
+            f"Vwhp_ref whp_ref 0 {hidden_weight_positive_ref:.12g}",
+            f"Vwhn_ref whn_ref 0 {hidden_weight_negative_ref:.12g}",
+        ]
     if output_bias_enabled and output_bias_leak_resistance > 0.0:
         lines += [
             f"Vobp_ref obp_ref 0 {output_bias_positive_ref:.12g}",
@@ -664,6 +677,11 @@ def block_netlist(
                 f"Rwhp{feature}_{pix} whp{feature}_{pix} 0 1e15",
                 f"Rwhn{feature}_{pix} whn{feature}_{pix} 0 1e15",
             ]
+            if hidden_weight_leak_resistance > 0.0:
+                lines += [
+                    f"Rwhp{feature}_{pix}_leak whp{feature}_{pix} whp_ref {hidden_weight_leak_resistance:.6g}",
+                    f"Rwhn{feature}_{pix}_leak whn{feature}_{pix} whn_ref {hidden_weight_leak_resistance:.6g}",
+                ]
         lines += [
             f"Cbhp{feature} bhp{feature} 0 20f IC={float(weights['bhp'][feature]):.12g}",
             f"Cbhn{feature} bhn{feature} 0 20f IC={float(weights['bhn'][feature]):.12g}",
@@ -674,6 +692,11 @@ def block_netlist(
             f"Rvwp{feature} vwp{feature} 0 1e15",
             f"Rvwn{feature} vwn{feature} 0 1e15",
         ]
+        if hidden_weight_leak_resistance > 0.0:
+            lines += [
+                f"Rbhp{feature}_leak bhp{feature} whp_ref {hidden_weight_leak_resistance:.6g}",
+                f"Rbhn{feature}_leak bhn{feature} whn_ref {hidden_weight_leak_resistance:.6g}",
+            ]
         if readout_weight_leak_resistance > 0.0:
             lines += [
                 f"Rvwp{feature}_leak vwp{feature} vwp_ref {readout_weight_leak_resistance:.6g}",
@@ -875,6 +898,16 @@ def block_netlist(
                     f"Mhneg{feature}_{pix}_f pre{feature} fwd hn{feature}_{pix}_0 0 NMOS W={hidden_neg_width:.6g}u L=180n",
                     f"Mhneg{feature}_{pix}_x hn{feature}_{pix}_0 {input_node} hn{feature}_{pix}_1 0 NMOS W={hidden_neg_width:.6g}u L=180n",
                     f"Mhneg{feature}_{pix}_w hn{feature}_{pix}_1 whn{feature}_{pix} 0 0 NMOS W={hidden_neg_width:.6g}u L=180n",
+                    *(
+                        [
+                            f"Rhread_hp{feature}_{pix}_0 hp{feature}_{pix}_0 0 {hidden_stack_shunt_resistance:.12g}",
+                            f"Rhread_hp{feature}_{pix}_1 hp{feature}_{pix}_1 0 {hidden_stack_shunt_resistance:.12g}",
+                            f"Rhread_hn{feature}_{pix}_0 hn{feature}_{pix}_0 0 {hidden_stack_shunt_resistance:.12g}",
+                            f"Rhread_hn{feature}_{pix}_1 hn{feature}_{pix}_1 0 {hidden_stack_shunt_resistance:.12g}",
+                        ]
+                        if hidden_stack_shunt_resistance > 0.0
+                        else []
+                    ),
                     *(
                         [
                             f"Chread_hp{feature}_{pix}_0 hp{feature}_{pix}_0 0 {hidden_stack_parasitic_capacitance:.12g}",
@@ -1559,8 +1592,12 @@ def run_device_sequence(
     error_restore_width: float,
     hidden_update_width: float,
     hidden_weight_write_width: float,
+    hidden_weight_leak_resistance: float,
+    hidden_weight_positive_ref: float,
+    hidden_weight_negative_ref: float,
     hidden_activation_width: float,
     hidden_input_residual_width: float,
+    hidden_stack_shunt_resistance: float,
     hidden_stack_parasitic_capacitance: float,
     hidden_activation_model: str,
     readout_forward_width: float,
@@ -1616,8 +1653,12 @@ def run_device_sequence(
         error_restore_width=error_restore_width,
         hidden_update_width=hidden_update_width,
         hidden_weight_write_width=hidden_weight_write_width,
+        hidden_weight_leak_resistance=hidden_weight_leak_resistance,
+        hidden_weight_positive_ref=hidden_weight_positive_ref,
+        hidden_weight_negative_ref=hidden_weight_negative_ref,
         hidden_activation_width=hidden_activation_width,
         hidden_input_residual_width=hidden_input_residual_width,
+        hidden_stack_shunt_resistance=hidden_stack_shunt_resistance,
         hidden_stack_parasitic_capacitance=hidden_stack_parasitic_capacitance,
         hidden_activation_model=hidden_activation_model,
         readout_forward_width=readout_forward_width,
@@ -1689,8 +1730,12 @@ def main() -> None:
     ap.add_argument("--error-restore-width", type=float, default=4.0)
     ap.add_argument("--hidden-update-width", type=float, default=12.0)
     ap.add_argument("--hidden-weight-write-width", type=float, default=0.25)
+    ap.add_argument("--hidden-weight-leak-resistance", type=float, default=0.0)
+    ap.add_argument("--hidden-weight-positive-ref", type=float, default=0.50)
+    ap.add_argument("--hidden-weight-negative-ref", type=float, default=0.20)
     ap.add_argument("--hidden-activation-width", type=float, default=24.0)
     ap.add_argument("--hidden-input-residual-width", type=float, default=0.0)
+    ap.add_argument("--hidden-stack-shunt-resistance", type=float, default=0.0)
     ap.add_argument("--hidden-stack-parasitic-capacitance", type=float, default=0.0)
     ap.add_argument("--hidden-activation-model", choices=HIDDEN_ACTIVATION_MODELS, default="nrel")
     ap.add_argument("--hidden-polarity-init", choices=HIDDEN_POLARITY_INITS, default="ink")
@@ -1815,8 +1860,12 @@ def main() -> None:
         "error_restore_width": args.error_restore_width,
         "hidden_update_width": args.hidden_update_width,
         "hidden_weight_write_width": args.hidden_weight_write_width,
+        "hidden_weight_leak_resistance": args.hidden_weight_leak_resistance,
+        "hidden_weight_positive_ref": args.hidden_weight_positive_ref,
+        "hidden_weight_negative_ref": args.hidden_weight_negative_ref,
         "hidden_activation_width": args.hidden_activation_width,
         "hidden_input_residual_width": args.hidden_input_residual_width,
+        "hidden_stack_shunt_resistance": args.hidden_stack_shunt_resistance,
         "hidden_stack_parasitic_capacitance": args.hidden_stack_parasitic_capacitance,
         "hidden_activation_model": args.hidden_activation_model,
         "readout_forward_width": args.readout_forward_width,
@@ -2005,8 +2054,12 @@ def main() -> None:
         "hidden_error_width": args.hidden_error_width,
         "hidden_update_width": args.hidden_update_width,
         "hidden_weight_write_width": args.hidden_weight_write_width,
+        "hidden_weight_leak_resistance": args.hidden_weight_leak_resistance,
+        "hidden_weight_positive_ref": args.hidden_weight_positive_ref,
+        "hidden_weight_negative_ref": args.hidden_weight_negative_ref,
         "hidden_activation_width": args.hidden_activation_width,
         "hidden_input_residual_width": args.hidden_input_residual_width,
+        "hidden_stack_shunt_resistance": args.hidden_stack_shunt_resistance,
         "hidden_stack_parasitic_capacitance": args.hidden_stack_parasitic_capacitance,
         "hidden_activation_model": args.hidden_activation_model,
         "hidden_polarity_init": args.hidden_polarity_init,

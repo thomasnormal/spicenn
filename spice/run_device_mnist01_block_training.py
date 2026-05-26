@@ -49,6 +49,8 @@ OUTPUT_DECISION_STAGES = (
     "shift-inverter",
 )
 MEASUREMENT_DETAILS = ("full", "outputs")
+FORWARD_PHASE_MODES = ("single", "split-hidden-output")
+ACCURACY_SIGNALS = ("auto", "out_after", "out_diff", "decision_after", "decision_diff")
 VDD_VALUE = 1.2
 
 
@@ -401,15 +403,20 @@ def block_repeated_phases(
     phase_time_scale: float,
     phase_jitter_sigma_ns: float = 0.0,
     phase_jitter_seed: int = 0,
+    forward_phase_mode: str = "single",
 ) -> str:
     if phase_jitter_sigma_ns < 0.0:
         raise ValueError("phase_jitter_sigma_ns must be nonnegative")
+    if forward_phase_mode not in FORWARD_PHASE_MODES:
+        raise ValueError(f"forward_phase_mode must be one of {FORWARD_PHASE_MODES}")
     training_schedule = expand_training_schedule(sample_count, training_enabled)
     cycle_ns = CYCLE_NS * phase_time_scale
     stop = sample_count * cycle_ns
     rstf: list[tuple[float, float]] = []
     rstg: list[tuple[float, float]] = []
     fwd: list[tuple[float, float]] = []
+    fwdh: list[tuple[float, float]] = []
+    fwdo: list[tuple[float, float]] = []
     err: list[tuple[float, float]] = []
     bwd: list[tuple[float, float]] = []
     acc: list[tuple[float, float]] = []
@@ -437,10 +444,20 @@ def block_repeated_phases(
             window("rstf1", base + 12.05 * scale, base + 12.55 * scale),
         ]
         rstg += [window("rstg", base + 0.00 * scale, base + 0.50 * scale)]
-        fwd += [
+        fwd_windows = [
             window("fwd0", base + 0.75 * scale, base + 3.00 * scale),
             window("fwd1", base + 12.80 * scale, base + 15.60 * scale),
         ]
+        fwd += fwd_windows
+        if forward_phase_mode == "split-hidden-output":
+            for fwd_idx, (start, end) in enumerate(fwd_windows):
+                split = start + 0.62 * (end - start)
+                gap = min(0.10 * scale, max(0.0, (end - split) * 0.25))
+                fwdh.append((start, split))
+                fwdo.append((min(end, split + gap), end))
+        else:
+            fwdh += fwd_windows
+            fwdo += fwd_windows
         dec.append(window("dec", base + 15.00 * scale, base + 15.55 * scale))
         if training_schedule[idx]:
             err.append(window("err", base + 3.25 * scale, base + 5.00 * scale))
@@ -454,6 +471,8 @@ def block_repeated_phases(
             f"Vrstg rstg 0 {pulse_wave(rstg, stop)}",
             f"Vrstgn rstgn 0 {active_low_pulse_wave(rstg, stop)}",
             f"Vfwd fwd 0 {pulse_wave(fwd, stop)}",
+            f"Vfwdh fwdh 0 {pulse_wave(fwdh, stop)}",
+            f"Vfwdo fwdo 0 {pulse_wave(fwdo, stop)}",
             f"Verr err 0 {pulse_wave(err, stop)}",
             f"Vbwd bwd 0 {pulse_wave(bwd, stop)}",
             f"Vacc acc 0 {pulse_wave(acc, stop)}",
@@ -593,6 +612,7 @@ def block_netlist(
     phase_jitter_seed: int = 0,
     passive_mismatch_sigma: float = 0.0,
     passive_mismatch_seed: int = 0,
+    forward_phase_mode: str = "single",
     score_mode: str = "single-ended",
     input_rail_mode: str = "alternating-complement",
     measurement_detail: str = "full",
@@ -694,6 +714,8 @@ def block_netlist(
         raise ValueError("phase_jitter_sigma_ns must be nonnegative")
     if passive_mismatch_sigma < 0.0:
         raise ValueError("passive_mismatch_sigma must be nonnegative")
+    if forward_phase_mode not in FORWARD_PHASE_MODES:
+        raise ValueError(f"forward_phase_mode must be one of {FORWARD_PHASE_MODES}")
     if score_mode not in SCORE_MODES:
         raise ValueError(f"score_mode must be one of {SCORE_MODES}")
     if output_differential_stage not in OUTPUT_DIFFERENTIAL_STAGES:
@@ -727,6 +749,8 @@ def block_netlist(
     hidden_negative_error_node = "edn" if restore_error_enabled else "dn"
     readout_positive_error_node = "edp" if error_signal_mode == "restored" else "dp"
     readout_negative_error_node = "edn" if error_signal_mode == "restored" else "dn"
+    hidden_forward_clock = "fwdh" if forward_phase_mode == "split-hidden-output" else "fwd"
+    readout_forward_clock = "fwdo" if forward_phase_mode == "split-hidden-output" else "fwd"
     hidden_neg_width = max(0.5, hidden_forward_width * 0.75)
     hidden_forward_phase_width = max(hidden_forward_width, hidden_forward_width * block_len)
     readout_negative_forward_width = max(0.5, readout_forward_width * 0.75)
@@ -893,6 +917,7 @@ def block_netlist(
             phase_time_scale=phase_time_scale,
             phase_jitter_sigma_ns=phase_jitter_sigma_ns,
             phase_jitter_seed=phase_jitter_seed,
+            forward_phase_mode=forward_phase_mode,
         ),
         "",
         "* Persistent signed hidden and readout weights.",
@@ -1132,8 +1157,8 @@ def block_netlist(
             lines += ["", f"* Feature {feature}: block {block_idx}, channel {channel}."]
             if hidden_forward_topology == "shared-phase":
                 lines += [
-                    f"Mhfpos{feature}_phase hfp{feature}_rail fwd pre{feature} 0 NMOS W={hidden_forward_phase_width:.6g}u L=180n",
-                    f"Mhfneg{feature}_phase pre{feature} fwd hfn{feature}_rail 0 NMOS W={hidden_forward_phase_width:.6g}u L=180n",
+                    f"Mhfpos{feature}_phase hfp{feature}_rail {hidden_forward_clock} pre{feature} 0 NMOS W={hidden_forward_phase_width:.6g}u L=180n",
+                    f"Mhfneg{feature}_phase pre{feature} {hidden_forward_clock} hfn{feature}_rail 0 NMOS W={hidden_forward_phase_width:.6g}u L=180n",
                     f"Chfp{feature}_rail hfp{feature}_rail 0 0.1f IC=0",
                     f"Chfn{feature}_rail hfn{feature}_rail 0 0.1f IC=0",
                     f"Rhfp{feature}_rail hfp{feature}_rail 0 1G",
@@ -1181,8 +1206,8 @@ def block_netlist(
                     hidden_forward_lines = [
                         f"Mhpos{feature}_{pix}_x vdd {input_node} hp{feature}_{pix}_0 0 NMOS W={hidden_forward_width:.6g}u L=180n",
                         f"Mhpos{feature}_{pix}_w hp{feature}_{pix}_0 whp{feature}_{pix} hp{feature}_{pix}_1 0 NMOS W={hidden_forward_width:.6g}u L=180n",
-                        f"Mhpos{feature}_{pix}_f hp{feature}_{pix}_1 fwd pre{feature} 0 NMOS W={hidden_forward_width:.6g}u L=180n",
-                        f"Mhneg{feature}_{pix}_f pre{feature} fwd hn{feature}_{pix}_0 0 NMOS W={hidden_neg_width:.6g}u L=180n",
+                        f"Mhpos{feature}_{pix}_f hp{feature}_{pix}_1 {hidden_forward_clock} pre{feature} 0 NMOS W={hidden_forward_width:.6g}u L=180n",
+                        f"Mhneg{feature}_{pix}_f pre{feature} {hidden_forward_clock} hn{feature}_{pix}_0 0 NMOS W={hidden_neg_width:.6g}u L=180n",
                         f"Mhneg{feature}_{pix}_x hn{feature}_{pix}_0 {input_node} hn{feature}_{pix}_1 0 NMOS W={hidden_neg_width:.6g}u L=180n",
                         f"Mhneg{feature}_{pix}_w hn{feature}_{pix}_1 whn{feature}_{pix} 0 0 NMOS W={hidden_neg_width:.6g}u L=180n",
                     ]
@@ -1245,8 +1270,8 @@ def block_netlist(
             else:
                 hidden_bias_lines = [
                     f"Mhbpos{feature}_b vdd bhp{feature} hbp{feature}_0 0 NMOS W={hidden_forward_width:.6g}u L=180n",
-                    f"Mhbpos{feature}_f hbp{feature}_0 fwd pre{feature} 0 NMOS W={hidden_forward_width:.6g}u L=180n",
-                    f"Mhbneg{feature}_f pre{feature} fwd hbn{feature}_0 0 NMOS W={hidden_neg_width:.6g}u L=180n",
+                    f"Mhbpos{feature}_f hbp{feature}_0 {hidden_forward_clock} pre{feature} 0 NMOS W={hidden_forward_width:.6g}u L=180n",
+                    f"Mhbneg{feature}_f pre{feature} {hidden_forward_clock} hbn{feature}_0 0 NMOS W={hidden_neg_width:.6g}u L=180n",
                     f"Mhbneg{feature}_b hbn{feature}_0 bhn{feature} 0 0 NMOS W={hidden_neg_width:.6g}u L=180n",
                 ]
             if hidden_forward_topology == "split-rail":
@@ -1274,7 +1299,7 @@ def block_netlist(
                         for input_node in [input_rail_name(pixel_node, channel, input_rail_mode)]
                         for line in [
                             f"Mhres{feature}_{pix}_x vdd {input_node} hres{feature}_{pix}_0 0 NSENSE W={hidden_input_residual_width:.6g}u L=180n",
-                            f"Mhres{feature}_{pix}_f hres{feature}_{pix}_0 fwd act{feature} 0 NMOS W={hidden_input_residual_width:.6g}u L=180n",
+                            f"Mhres{feature}_{pix}_f hres{feature}_{pix}_0 {hidden_forward_clock} act{feature} 0 NMOS W={hidden_input_residual_width:.6g}u L=180n",
                         ]
                     ]
                     if hidden_input_residual_width > 0.0
@@ -1283,25 +1308,25 @@ def block_netlist(
                 *(
                     [
                         f"Mactinh_src{feature}_a vdd act{feature} actinh_src{feature}_a 0 NSENSE W={activation_competition_width:.6g}u L=180n",
-                        f"Mactinh_src{feature}_f actinh_src{feature}_a fwd actinh 0 NMOS W={activation_competition_width:.6g}u L=180n",
+                        f"Mactinh_src{feature}_f actinh_src{feature}_a {readout_forward_clock} actinh 0 NMOS W={activation_competition_width:.6g}u L=180n",
                         f"Mactinh_sink{feature}_i act{feature} actinh actinh_sink{feature}_i 0 NSENSE W={activation_competition_width:.6g}u L=180n",
-                        f"Mactinh_sink{feature}_f actinh_sink{feature}_i fwd 0 0 NMOS W={activation_competition_width:.6g}u L=180n",
+                        f"Mactinh_sink{feature}_f actinh_sink{feature}_i {readout_forward_clock} 0 0 NMOS W={activation_competition_width:.6g}u L=180n",
                     ]
                     if activation_competition_width > 0.0
                     else []
                 ),
                 f"Movpos{feature}_a vdd act{feature} op{feature}_0 0 {readout_model} W={readout_forward_width:.6g}u L=180n",
                 f"Movpos{feature}_w op{feature}_0 vwp{feature} op{feature}_1 0 {readout_model} W={readout_forward_width:.6g}u L=180n",
-                f"Movpos{feature}_f op{feature}_1 fwd score 0 {readout_model} W={readout_forward_width:.6g}u L=180n",
+                f"Movpos{feature}_f op{feature}_1 {readout_forward_clock} score 0 {readout_model} W={readout_forward_width:.6g}u L=180n",
                 *(
                     [
                         f"Movneg{feature}_a vdd act{feature} on{feature}_0 0 {readout_model} W={readout_negative_forward_width:.6g}u L=180n",
                         f"Movneg{feature}_w on{feature}_0 vwn{feature} on{feature}_1 0 {readout_model} W={readout_negative_forward_width:.6g}u L=180n",
-                        f"Movneg{feature}_f on{feature}_1 fwd scoren 0 {readout_model} W={readout_negative_forward_width:.6g}u L=180n",
+                        f"Movneg{feature}_f on{feature}_1 {readout_forward_clock} scoren 0 {readout_model} W={readout_negative_forward_width:.6g}u L=180n",
                     ]
                     if score_mode == "differential"
                     else [
-                        f"Movneg{feature}_f score fwd on{feature}_0 0 {readout_model} W={readout_negative_forward_width:.6g}u L=180n",
+                        f"Movneg{feature}_f score {readout_forward_clock} on{feature}_0 0 {readout_model} W={readout_negative_forward_width:.6g}u L=180n",
                         f"Movneg{feature}_a on{feature}_0 act{feature} on{feature}_1 0 {readout_model} W={readout_negative_forward_width:.6g}u L=180n",
                         f"Movneg{feature}_w on{feature}_1 vwn{feature} 0 0 {readout_model} W={readout_negative_forward_width:.6g}u L=180n",
                     ]
@@ -1380,15 +1405,15 @@ def block_netlist(
             "",
             "* Trainable signed output bias contribution and local error-driven writer.",
             f"Mobpos_w vdd obp obp_f0 0 {readout_model} W={readout_forward_width:.6g}u L=180n",
-            f"Mobpos_f obp_f0 fwd score 0 {readout_model} W={readout_forward_width:.6g}u L=180n",
+            f"Mobpos_f obp_f0 {readout_forward_clock} score 0 {readout_model} W={readout_forward_width:.6g}u L=180n",
             *(
                 [
                     f"Mobneg_w vdd obn obn_f0 0 {readout_model} W={readout_negative_forward_width:.6g}u L=180n",
-                    f"Mobneg_f obn_f0 fwd scoren 0 {readout_model} W={readout_negative_forward_width:.6g}u L=180n",
+                    f"Mobneg_f obn_f0 {readout_forward_clock} scoren 0 {readout_model} W={readout_negative_forward_width:.6g}u L=180n",
                 ]
                 if score_mode == "differential"
                 else [
-                    f"Mobneg_f score fwd obn_f0 0 {readout_model} W={readout_negative_forward_width:.6g}u L=180n",
+                    f"Mobneg_f score {readout_forward_clock} obn_f0 0 {readout_model} W={readout_negative_forward_width:.6g}u L=180n",
                     f"Mobneg_w obn_f0 obn 0 0 {readout_model} W={readout_negative_forward_width:.6g}u L=180n",
                 ]
             ),
@@ -1427,12 +1452,12 @@ def block_netlist(
             *(
                 [
                     f"Mscoreinh_a vdd actinh scoreinh_a 0 NSENSE W={score_activity_inhibition_width:.6g}u L=180n",
-                    f"Mscoreinh_f scoreinh_a fwd scoren 0 NMOS W={score_activity_inhibition_width:.6g}u L=180n",
+                    f"Mscoreinh_f scoreinh_a {readout_forward_clock} scoren 0 NMOS W={score_activity_inhibition_width:.6g}u L=180n",
                 ]
                 if score_mode == "differential"
                 else [
                     f"Mscoreinh_i score actinh scoreinh_i 0 NSENSE W={score_activity_inhibition_width:.6g}u L=180n",
-                    f"Mscoreinh_f scoreinh_i fwd 0 0 NMOS W={score_activity_inhibition_width:.6g}u L=180n",
+                    f"Mscoreinh_f scoreinh_i {readout_forward_clock} 0 0 NMOS W={score_activity_inhibition_width:.6g}u L=180n",
                 ]
             ),
         ]
@@ -1445,7 +1470,7 @@ def block_netlist(
                 f"Moutlat_p_outn outn out vdd vdd PMOS W={output_score_pullup_width:.6g}u L=180n",
                 f"Moutlat_n_out out scoren outlat_src 0 NSENSE W={output_scoren_pulldown_width:.6g}u L=180n",
                 f"Moutlat_n_outn outn score outlat_src 0 NSENSE W={output_scoren_pulldown_width:.6g}u L=180n",
-                f"Moutlat_tail outlat_src fwd 0 0 NMOS W={output_scoren_pulldown_width:.6g}u L=180n",
+                f"Moutlat_tail outlat_src {readout_forward_clock} 0 0 NMOS W={output_scoren_pulldown_width:.6g}u L=180n",
             ]
         )
     elif score_mode == "differential" and output_differential_stage == "score-gated":
@@ -1886,6 +1911,29 @@ def binary_accuracy_for_signal(
     return float(np.mean(predicted == expected))
 
 
+def resolve_accuracy_signal_and_threshold(
+    *,
+    requested_signal: str,
+    output_decision_stage: str,
+    decision_threshold: float,
+    output_decision_threshold: float,
+    requested_threshold: float | None = None,
+) -> tuple[str, float]:
+    if requested_signal not in ACCURACY_SIGNALS:
+        raise ValueError(f"accuracy_signal must be one of {ACCURACY_SIGNALS}")
+    if requested_signal == "auto":
+        signal = "decision_after" if output_decision_stage != "none" else "out_after"
+    else:
+        signal = requested_signal
+    if requested_threshold is not None:
+        return signal, requested_threshold
+    if signal in {"out_diff", "decision_diff"}:
+        return signal, 0.0
+    if signal == "decision_after":
+        return signal, output_decision_threshold
+    return signal, decision_threshold
+
+
 def threshold_window_diagnostics(
     rows: pd.DataFrame,
     *,
@@ -2005,6 +2053,7 @@ def run_device_sequence(
     phase_jitter_seed: int,
     passive_mismatch_sigma: float,
     passive_mismatch_seed: int,
+    forward_phase_mode: str,
     score_mode: str,
     input_rail_mode: str,
     measurement_detail: str,
@@ -2071,6 +2120,7 @@ def run_device_sequence(
         phase_jitter_seed=phase_jitter_seed,
         passive_mismatch_sigma=passive_mismatch_sigma,
         passive_mismatch_seed=passive_mismatch_seed,
+        forward_phase_mode=forward_phase_mode,
         score_mode=score_mode,
         input_rail_mode=input_rail_mode,
         measurement_detail=measurement_detail,
@@ -2112,6 +2162,21 @@ def main() -> None:
     ap.add_argument("--output-decision-pullup-width", type=float, default=48.0)
     ap.add_argument("--output-decision-pulldown-width", type=float, default=96.0)
     ap.add_argument("--output-decision-threshold", type=float, default=0.6)
+    ap.add_argument(
+        "--accuracy-signal",
+        choices=ACCURACY_SIGNALS,
+        default="auto",
+        help=(
+            "Signal used for headline accuracy. auto preserves historical behavior; out_diff and "
+            "decision_diff default to a zero differential threshold."
+        ),
+    )
+    ap.add_argument(
+        "--accuracy-threshold",
+        type=float,
+        default=None,
+        help="Override the threshold used with --accuracy-signal.",
+    )
     ap.add_argument("--readout-apply-scale", type=float, default=0.35)
     ap.add_argument("--hidden-forward-width", type=float, default=3.0)
     ap.add_argument("--hidden-forward-topology", choices=HIDDEN_FORWARD_TOPOLOGIES, default="per-pixel-phase")
@@ -2150,6 +2215,7 @@ def main() -> None:
     ap.add_argument("--output-bias-positive-ref", type=float, default=0.25)
     ap.add_argument("--output-bias-negative-ref", type=float, default=0.25)
     ap.add_argument("--phase-time-scale", type=float, default=1.0)
+    ap.add_argument("--forward-phase-mode", choices=FORWARD_PHASE_MODES, default="single")
     ap.add_argument(
         "--input-voltage-jitter-sigma",
         type=float,
@@ -2337,6 +2403,7 @@ def main() -> None:
         "phase_jitter_seed": stable_seed(args.perturbation_seed, "phase-jitter"),
         "passive_mismatch_sigma": args.passive_mismatch_sigma,
         "passive_mismatch_seed": stable_seed(args.perturbation_seed, "passive-mismatch"),
+        "forward_phase_mode": args.forward_phase_mode,
         "score_mode": args.score_mode,
         "input_rail_mode": args.input_rail_mode,
         "measurement_detail": args.measurement_detail,
@@ -2401,8 +2468,13 @@ def main() -> None:
     curve.to_csv(table_curve_path, index=False)
 
     output_positive_when = "high" if args.target_polarity == "active-high" else "low"
-    accuracy_signal = "decision_after" if args.output_decision_stage != "none" else "out_after"
-    accuracy_threshold = args.output_decision_threshold if args.output_decision_stage != "none" else args.decision_threshold
+    accuracy_signal, accuracy_threshold = resolve_accuracy_signal_and_threshold(
+        requested_signal=args.accuracy_signal,
+        output_decision_stage=args.output_decision_stage,
+        decision_threshold=args.decision_threshold,
+        output_decision_threshold=args.output_decision_threshold,
+        requested_threshold=args.accuracy_threshold,
+    )
     initial_accuracy = (
         None
         if initial_eval_rows.empty
@@ -2539,6 +2611,7 @@ def main() -> None:
         "output_bias_positive_ref": args.output_bias_positive_ref,
         "output_bias_negative_ref": args.output_bias_negative_ref,
         "phase_time_scale": args.phase_time_scale,
+        "forward_phase_mode": args.forward_phase_mode,
         "input_voltage_jitter_sigma": args.input_voltage_jitter_sigma,
         "phase_jitter_sigma_ns": args.phase_jitter_sigma_ns,
         "passive_mismatch_sigma": args.passive_mismatch_sigma,
@@ -2577,8 +2650,10 @@ def main() -> None:
         "eval_samples": args.eval_samples,
         "mnist_index_order": "stable_balanced_random_digit01",
         "decision_threshold": args.decision_threshold,
+        "requested_accuracy_signal": args.accuracy_signal,
         "accuracy_signal": accuracy_signal,
         "accuracy_threshold": accuracy_threshold,
+        "accuracy_threshold_source": "explicit" if args.accuracy_threshold is not None else "default",
         "output_decision_threshold": args.output_decision_threshold,
         "initial_eval_skipped": args.skip_initial_eval,
         "initial_eval_accuracy": initial_accuracy,

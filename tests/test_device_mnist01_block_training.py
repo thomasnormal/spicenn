@@ -59,6 +59,7 @@ def test_device_mnist01_block_script_help_runs_from_repo_root() -> None:
     assert "--measurement-detail" in proc.stdout
     assert "--readout-forward-width" in proc.stdout
     assert "--phase-time-scale" in proc.stdout
+    assert "--forward-phase-mode" in proc.stdout
     assert "--input-voltage-jitter-sigma" in proc.stdout
     assert "--phase-jitter-sigma-ns" in proc.stdout
     assert "--passive-mismatch-sigma" in proc.stdout
@@ -79,6 +80,8 @@ def test_device_mnist01_block_script_help_runs_from_repo_root() -> None:
     assert "--output-decision-pullup-width" in proc.stdout
     assert "--output-decision-pulldown-width" in proc.stdout
     assert "--output-decision-threshold" in proc.stdout
+    assert "--accuracy-signal" in proc.stdout
+    assert "--accuracy-threshold" in proc.stdout
     assert "--continuous-final-eval" in proc.stdout
     assert "--skip-initial-eval" in proc.stdout
     assert "--hidden-forward-topology" in proc.stdout
@@ -108,10 +111,39 @@ def test_block_training_schedule_can_disable_writes_for_eval_tail() -> None:
     assert "35.25n" in phases
     assert "19.25n" not in phases
     assert "Vfwd fwd 0 PWL" in phases
+    assert "Vfwdh fwdh 0 PWL" in phases
+    assert "Vfwdo fwdo 0 PWL" in phases
     assert "15n" in phases
     assert "31n" in phases
     with pytest.raises(ValueError, match="training schedule length"):
         block.block_repeated_phases(2, training_enabled=[True], phase_time_scale=1.0)
+
+
+def test_block_training_schedule_can_split_hidden_and_output_forward_phases() -> None:
+    sys.path.insert(0, str(SPICE_DIR))
+    import pytest
+    import run_device_mnist01_block_training as block
+
+    phases = block.block_repeated_phases(
+        1,
+        training_enabled=True,
+        phase_time_scale=1.0,
+        forward_phase_mode="split-hidden-output",
+    )
+
+    assert "Vfwd fwd 0 PWL" in phases
+    assert "Vfwdh fwdh 0 PWL(0n 0" in phases
+    assert "0.75n 1.2" in phases
+    assert "2.145n 1.2" in phases
+    assert "12.8n 1.2" in phases
+    assert "14.536n 1.2" in phases
+    with pytest.raises(ValueError, match="forward_phase_mode"):
+        block.block_repeated_phases(
+            1,
+            training_enabled=True,
+            phase_time_scale=1.0,
+            forward_phase_mode="bad",
+        )
 
 
 def test_block_training_phase_jitter_is_deterministic_and_changes_edges() -> None:
@@ -414,6 +446,61 @@ def test_binary_accuracy_for_signal_can_use_circuit_decision_rail() -> None:
     ) == 0.25
 
 
+def test_binary_accuracy_for_signal_can_use_differential_decision_sign() -> None:
+    sys.path.insert(0, str(SPICE_DIR))
+    import run_device_mnist01_block_training as block
+
+    rows = pd.DataFrame(
+        [
+            {"positive_label": 1.0, "decision_diff": 0.04},
+            {"positive_label": 0.0, "decision_diff": -0.01},
+            {"positive_label": 1.0, "decision_diff": 0.002},
+            {"positive_label": 0.0, "decision_diff": 0.003},
+        ]
+    )
+
+    assert block.binary_accuracy_for_signal(rows, signal="decision_diff", threshold=0.0) == 0.75
+
+
+def test_accuracy_signal_resolution_preserves_auto_and_defaults_differential_to_zero() -> None:
+    sys.path.insert(0, str(SPICE_DIR))
+    import pytest
+    import run_device_mnist01_block_training as block
+
+    assert block.resolve_accuracy_signal_and_threshold(
+        requested_signal="auto",
+        output_decision_stage="ref-precharged-latched",
+        decision_threshold=0.1,
+        output_decision_threshold=0.6,
+    ) == ("decision_after", 0.6)
+    assert block.resolve_accuracy_signal_and_threshold(
+        requested_signal="auto",
+        output_decision_stage="none",
+        decision_threshold=0.1,
+        output_decision_threshold=0.6,
+    ) == ("out_after", 0.1)
+    assert block.resolve_accuracy_signal_and_threshold(
+        requested_signal="decision_diff",
+        output_decision_stage="diff-precharged-latched",
+        decision_threshold=0.1,
+        output_decision_threshold=0.6,
+    ) == ("decision_diff", 0.0)
+    assert block.resolve_accuracy_signal_and_threshold(
+        requested_signal="decision_diff",
+        output_decision_stage="diff-precharged-latched",
+        decision_threshold=0.1,
+        output_decision_threshold=0.6,
+        requested_threshold=0.02,
+    ) == ("decision_diff", 0.02)
+    with pytest.raises(ValueError, match="accuracy_signal"):
+        block.resolve_accuracy_signal_and_threshold(
+            requested_signal="bad",
+            output_decision_stage="none",
+            decision_threshold=0.1,
+            output_decision_threshold=0.6,
+        )
+
+
 def test_nontrivial_learning_requires_initial_eval_baseline() -> None:
     sys.path.insert(0, str(SPICE_DIR))
     import run_device_mnist01_block_training as block
@@ -523,6 +610,37 @@ def test_block_netlist_default_hidden_forward_uses_per_pixel_phase_stack() -> No
     assert "Mhneg3_3_f pre3 fwd hn3_3_0 0 NMOS" in netlist
     assert "Mhneg3_3_x hn3_3_0 x15 hn3_3_1 0 NMOS" in netlist
     assert "Mhneg3_3_w hn3_3_1 whn3_3 0 0 NMOS" in netlist
+
+
+def test_block_netlist_split_forward_phase_separates_hidden_and_readout_clocks() -> None:
+    sys.path.insert(0, str(SPICE_DIR))
+    import run_device_mnist01_block_training as block
+
+    image_size = 4
+    weights = block.initial_block_weights(image_size, 2, 2, 1, seed=1)
+    sample = {f"x{i}": 0.2 + 0.01 * i for i in range(image_size * image_size)}
+    sample["target"] = 1.1
+    netlist = block.block_netlist(
+        [sample],
+        weights,
+        image_size=image_size,
+        block_size=2,
+        stride=2,
+        channels=1,
+        training_enabled=True,
+        score_mode="differential",
+        output_differential_stage="latched",
+        forward_phase_mode="split-hidden-output",
+    )
+
+    assert "\nB" not in netlist
+    assert "Vfwdh fwdh 0 PWL" in netlist
+    assert "Vfwdo fwdo 0 PWL" in netlist
+    assert "Mhpos3_3_f hp3_3_1 fwdh pre3 0 NMOS" in netlist
+    assert "Mhneg3_3_f pre3 fwdh hn3_3_0 0 NMOS" in netlist
+    assert "Movpos3_f op3_1 fwdo score 0 NREL" in netlist
+    assert "Movneg3_f on3_1 fwdo scoren 0 NREL" in netlist
+    assert "Moutlat_tail outlat_src fwdo 0 0 NMOS" in netlist
 
 
 def test_block_netlist_can_emit_shared_phase_hidden_forward_topology() -> None:

@@ -473,3 +473,37 @@ def test_score_decision_primitive_ngspice_low_gain_ref_recenters_shifted_margin(
     assert float(below_ref["decision_diff"]) < -0.05
     assert float(negative["score_gain_diff"]) < -0.004
     assert float(negative["decision_diff"]) < -0.05
+
+
+def test_score_decision_primitive_ngspice_low_gain_ref_centers_target_scale_unipolar_scores(
+    tmp_path: Path,
+    ngspice_path: str,
+) -> None:
+    positive = run_netlist(
+        ngspice_path,
+        tmp_path / "score_decision_low_gain_ref_target_positive.cir",
+        decision.generate_netlist(
+            score_case="neutral",
+            score=0.05523149,
+            scoren=0.0,
+            decision_topology="score-diff-low-gain-ref",
+            reject_ref=0.25,
+        ),
+        timeout=20.0,
+    )
+    negative = run_netlist(
+        ngspice_path,
+        tmp_path / "score_decision_low_gain_ref_target_negative.cir",
+        decision.generate_netlist(
+            score_case="neutral",
+            score=0.02633636,
+            scoren=0.0,
+            decision_topology="score-diff-low-gain-ref",
+            reject_ref=0.25,
+        ),
+        timeout=20.0,
+    )
+
+    assert float(positive["score_gain_diff"]) > float(negative["score_gain_diff"])
+    assert float(positive["decision_diff"]) > 0.05
+    assert float(negative["decision_diff"]) < -0.05

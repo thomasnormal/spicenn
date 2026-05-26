@@ -60,6 +60,8 @@ def test_device_mnist01_block_script_help_runs_from_repo_root() -> None:
     assert "--output-decision-pullup-width" in proc.stdout
     assert "--output-decision-pulldown-width" in proc.stdout
     assert "--output-decision-threshold" in proc.stdout
+    assert "--continuous-final-eval" in proc.stdout
+    assert "--skip-initial-eval" in proc.stdout
 
 
 def test_block_topology_matches_target_10x10_b4_stride2_c2_shape() -> None:
@@ -73,6 +75,43 @@ def test_block_topology_matches_target_10x10_b4_stride2_c2_shape() -> None:
     assert len(blocks[0]) == 16
     assert blocks[0] == [0, 1, 2, 3, 10, 11, 12, 13, 20, 21, 22, 23, 30, 31, 32, 33]
     assert blocks[-1] == [66, 67, 68, 69, 76, 77, 78, 79, 86, 87, 88, 89, 96, 97, 98, 99]
+
+
+def test_block_training_schedule_can_disable_writes_for_eval_tail() -> None:
+    sys.path.insert(0, str(SPICE_DIR))
+    import pytest
+    import run_device_mnist01_block_training as block
+
+    phases = block.block_repeated_phases(3, training_enabled=[True, False, True], phase_time_scale=1.0)
+
+    assert "3.25n" in phases
+    assert "35.25n" in phases
+    assert "19.25n" not in phases
+    assert "Vfwd fwd 0 PWL" in phases
+    assert "15n" in phases
+    assert "31n" in phases
+    with pytest.raises(ValueError, match="training schedule length"):
+        block.block_repeated_phases(2, training_enabled=[True], phase_time_scale=1.0)
+
+
+def test_rows_from_measures_can_label_train_and_eval_segments() -> None:
+    sys.path.insert(0, str(SPICE_DIR))
+    import run_device_mnist01_block_training as block
+
+    samples = [
+        {"target": 1.1, "positive_label": 1.0, "x0": 0.5},
+        {"target": 0.0, "positive_label": 0.0, "x0": 0.4},
+    ]
+    rows = block.rows_from_measures(
+        samples,
+        {"out_after_0": 0.8, "out_after_1": 0.1},
+        sequence=["train", "final_eval"],
+        required_rails=["x0"],
+    )
+
+    assert rows["sequence"].tolist() == ["train", "final_eval"]
+    assert rows["sample_idx"].tolist() == [0, 1]
+    assert rows["out_after"].tolist() == [0.8, 0.1]
 
 
 def test_alternating_channel_hidden_polarity_initializes_absence_channels() -> None:

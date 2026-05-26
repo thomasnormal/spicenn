@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import json
 import time
+from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
 
@@ -170,7 +171,22 @@ def block_sample_wave(samples: list[dict[str, Any]], key: str, stop_ns: float, *
     return "PWL(" + " ".join(f"{t:.12g}n {v:.12g}" for t, v in points) + ")"
 
 
-def block_repeated_phases(sample_count: int, *, training_enabled: bool, phase_time_scale: float) -> str:
+def expand_training_schedule(sample_count: int, training_enabled: bool | Sequence[bool]) -> list[bool]:
+    if isinstance(training_enabled, bool):
+        return [training_enabled] * sample_count
+    schedule = [bool(enabled) for enabled in training_enabled]
+    if len(schedule) != sample_count:
+        raise ValueError("training schedule length must match sample count")
+    return schedule
+
+
+def block_repeated_phases(
+    sample_count: int,
+    *,
+    training_enabled: bool | Sequence[bool],
+    phase_time_scale: float,
+) -> str:
+    training_schedule = expand_training_schedule(sample_count, training_enabled)
     cycle_ns = CYCLE_NS * phase_time_scale
     stop = sample_count * cycle_ns
     rstf: list[tuple[float, float]] = []
@@ -188,7 +204,7 @@ def block_repeated_phases(sample_count: int, *, training_enabled: bool, phase_ti
         rstg += [(base + 0.00 * scale, base + 0.50 * scale)]
         fwd += [(base + 0.75 * scale, base + 3.00 * scale), (base + 12.80 * scale, base + 15.60 * scale)]
         dec.append((base + 15.00 * scale, base + 15.55 * scale))
-        if training_enabled:
+        if training_schedule[idx]:
             err.append((base + 3.25 * scale, base + 5.00 * scale))
             bwd.append((base + 5.25 * scale, base + 7.00 * scale))
             acc.append((base + 7.25 * scale, base + 9.00 * scale))
@@ -240,7 +256,7 @@ def block_netlist(
     block_size: int,
     stride: int,
     channels: int,
-    training_enabled: bool,
+    training_enabled: bool | Sequence[bool],
     output_driver_model: str = "sense",
     output_differential_stage: str = "simple",
     output_score_pullup_width: float = 24.0,
@@ -989,14 +1005,20 @@ def rows_from_measures(
     samples: list[dict[str, Any]],
     measures: dict[str, float],
     *,
-    sequence: str,
+    sequence: str | Sequence[str],
     required_rails: list[str],
 ) -> pd.DataFrame:
+    if isinstance(sequence, str):
+        sequence_labels = [sequence] * len(samples)
+    else:
+        sequence_labels = list(sequence)
+        if len(sequence_labels) != len(samples):
+            raise ValueError("sequence label count must match sample count")
     rows: list[dict[str, Any]] = []
     for sample_idx, sample in enumerate(samples):
         positive = expected_positive(float(sample["target"]))
         row: dict[str, Any] = {
-            "sequence": sequence,
+            "sequence": sequence_labels[sample_idx],
             "sample_idx": sample_idx,
             "target": sample["target"],
             "digit": sample.get("digit"),
@@ -1159,9 +1181,9 @@ def run_device_sequence(
     block_size: int,
     stride: int,
     channels: int,
-    training_enabled: bool,
+    training_enabled: bool | Sequence[bool],
     timeout: float,
-    sequence: str,
+    sequence: str | Sequence[str],
     output_driver_model: str,
     output_differential_stage: str,
     output_score_pullup_width: float,
@@ -1315,6 +1337,19 @@ def main() -> None:
     ap.add_argument("--hidden-bias-positive-init", type=float, default=0.50)
     ap.add_argument("--hidden-bias-negative-init", type=float, default=0.20)
     ap.add_argument("--decision-threshold", type=float, default=0.10)
+    ap.add_argument(
+        "--continuous-final-eval",
+        action="store_true",
+        help=(
+            "Run training samples and final-eval samples in one SPICE transient, with write clocks disabled "
+            "for the final-eval segment. This avoids using Python-extracted final weights to seed eval."
+        ),
+    )
+    ap.add_argument(
+        "--skip-initial-eval",
+        action="store_true",
+        help="Skip the separate initial-eval deck for faster convergence/preflight runs.",
+    )
     ap.add_argument("--assert-nonbehavioral", action="store_true")
     args = ap.parse_args()
 
@@ -1403,34 +1438,54 @@ def main() -> None:
         "score_mode": args.score_mode,
         "input_rail_mode": args.input_rail_mode,
     }
-    initial_eval_rows = run_device_sequence(
-        spice_bin,
-        generated / f"{safe_tag}_initial_eval.cir",
-        eval_samples,
-        initial_weights,
-        training_enabled=False,
-        sequence="initial_eval",
-        **common,
-    )
-    train_rows = run_device_sequence(
-        spice_bin,
-        generated / f"{safe_tag}_train.cir",
-        train_samples,
-        initial_weights,
-        training_enabled=True,
-        sequence="train",
-        **common,
-    )
+    if args.skip_initial_eval:
+        initial_eval_rows = pd.DataFrame()
+    else:
+        initial_eval_rows = run_device_sequence(
+            spice_bin,
+            generated / f"{safe_tag}_initial_eval.cir",
+            eval_samples,
+            initial_weights,
+            training_enabled=False,
+            sequence="initial_eval",
+            **common,
+        )
+    if args.continuous_final_eval:
+        combined_samples = [*train_samples, *eval_samples]
+        combined_schedule = [True] * len(train_samples) + [False] * len(eval_samples)
+        combined_sequence = ["train"] * len(train_samples) + ["final_eval"] * len(eval_samples)
+        combined_rows = run_device_sequence(
+            spice_bin,
+            generated / f"{safe_tag}_train_final_eval.cir",
+            combined_samples,
+            initial_weights,
+            training_enabled=combined_schedule,
+            sequence=combined_sequence,
+            **common,
+        )
+        train_rows = combined_rows.loc[combined_rows["sequence"] == "train"].reset_index(drop=True)
+        final_eval_rows = combined_rows.loc[combined_rows["sequence"] == "final_eval"].reset_index(drop=True)
+    else:
+        train_rows = run_device_sequence(
+            spice_bin,
+            generated / f"{safe_tag}_train.cir",
+            train_samples,
+            initial_weights,
+            training_enabled=True,
+            sequence="train",
+            **common,
+        )
+        final_weights_for_eval = final_weights_from_rows(train_rows, feature_count=feature_count, block_len=block_len)
+        final_eval_rows = run_device_sequence(
+            spice_bin,
+            generated / f"{safe_tag}_final_eval.cir",
+            eval_samples,
+            final_weights_for_eval,
+            training_enabled=False,
+            sequence="final_eval",
+            **common,
+        )
     final_weights = final_weights_from_rows(train_rows, feature_count=feature_count, block_len=block_len)
-    final_eval_rows = run_device_sequence(
-        spice_bin,
-        generated / f"{safe_tag}_final_eval.cir",
-        eval_samples,
-        final_weights,
-        training_enabled=False,
-        sequence="final_eval",
-        **common,
-    )
 
     curve = pd.concat([initial_eval_rows, train_rows, final_eval_rows], ignore_index=True)
     curve_path = results / f"{safe_tag}.csv"
@@ -1441,11 +1496,15 @@ def main() -> None:
     output_positive_when = "high" if args.target_polarity == "active-high" else "low"
     accuracy_signal = "decision_after" if args.output_decision_stage != "none" else "out_after"
     accuracy_threshold = args.output_decision_threshold if args.output_decision_stage != "none" else args.decision_threshold
-    initial_accuracy = binary_accuracy_for_signal(
-        initial_eval_rows,
-        signal=accuracy_signal,
-        threshold=accuracy_threshold,
-        output_positive_when=output_positive_when,
+    initial_accuracy = (
+        None
+        if initial_eval_rows.empty
+        else binary_accuracy_for_signal(
+            initial_eval_rows,
+            signal=accuracy_signal,
+            threshold=accuracy_threshold,
+            output_positive_when=output_positive_when,
+        )
     )
     final_accuracy = binary_accuracy_for_signal(
         final_eval_rows,
@@ -1453,13 +1512,16 @@ def main() -> None:
         threshold=accuracy_threshold,
         output_positive_when=output_positive_when,
     )
-    initial_active_fraction = float(
-        np.mean(np.abs(initial_eval_rows[accuracy_signal].to_numpy(dtype=float)) > accuracy_threshold)
+    initial_active_fraction = (
+        None
+        if initial_eval_rows.empty
+        else float(np.mean(np.abs(initial_eval_rows[accuracy_signal].to_numpy(dtype=float)) > accuracy_threshold))
     )
     final_active_fraction = float(
         np.mean(np.abs(final_eval_rows[accuracy_signal].to_numpy(dtype=float)) > accuracy_threshold)
     )
-    nontrivial_learning_met = final_accuracy > max(initial_accuracy, 0.5)
+    baseline_accuracy = initial_accuracy if initial_accuracy is not None else 0.5
+    nontrivial_learning_met = final_accuracy > max(baseline_accuracy, 0.5)
     target_topology = args.image_size == 10 and args.block_size == 4 and args.stride == 2 and args.channels == 2
     output_bias_summary = output_bias_diagnostics(
         train_rows,
@@ -1539,12 +1601,16 @@ def main() -> None:
         "uses_behavioral_learning_devices": False,
         "transistor_or_passive_learning_path": True,
         "single_training_transient": True,
+        "continuous_final_eval_transient": args.continuous_final_eval,
+        "final_eval_same_transient_as_training": args.continuous_final_eval,
         "continuous_transient_contract_met": True,
-        "strict_fully_on_device_contract_met": True,
+        "strict_fully_on_device_contract_met": args.continuous_final_eval,
         "strict_fully_on_device_requested": True,
         "batch_size": 1,
         "python_weight_updates_between_samples": False,
         "python_checkpointing_between_samples": False,
+        "python_weight_transfer_to_final_eval": not args.continuous_final_eval,
+        "final_weights_used_to_seed_eval": not args.continuous_final_eval,
         "python_hidden_state_intervention": False,
         "training_eval_uses_spice_forward_path": True,
         "uses_local_pca": False,
@@ -1556,9 +1622,10 @@ def main() -> None:
         "accuracy_signal": accuracy_signal,
         "accuracy_threshold": accuracy_threshold,
         "output_decision_threshold": args.output_decision_threshold,
+        "initial_eval_skipped": args.skip_initial_eval,
         "initial_eval_accuracy": initial_accuracy,
         "final_eval_accuracy": final_accuracy,
-        "eval_accuracy_delta": final_accuracy - initial_accuracy,
+        "eval_accuracy_delta": None if initial_accuracy is None else final_accuracy - initial_accuracy,
         "initial_eval_output_active_fraction": initial_active_fraction,
         "final_eval_output_active_fraction": final_active_fraction,
         "nontrivial_learning_met": nontrivial_learning_met,
@@ -1569,14 +1636,23 @@ def main() -> None:
         "curve": str(curve_path),
         "table_curve": str(table_curve_path),
         "netlists": {
-            "initial_eval": str(generated / f"{safe_tag}_initial_eval.cir"),
-            "train": str(generated / f"{safe_tag}_train.cir"),
-            "final_eval": str(generated / f"{safe_tag}_final_eval.cir"),
+            "initial_eval": None if args.skip_initial_eval else str(generated / f"{safe_tag}_initial_eval.cir"),
+            "train": (
+                str(generated / f"{safe_tag}_train_final_eval.cir")
+                if args.continuous_final_eval
+                else str(generated / f"{safe_tag}_train.cir")
+            ),
+            "final_eval": (
+                str(generated / f"{safe_tag}_train_final_eval.cir")
+                if args.continuous_final_eval
+                else str(generated / f"{safe_tag}_final_eval.cir")
+            ),
         },
         "wall_time_s": time.perf_counter() - t0,
         "full_objective_contract_issues": [
             "binary MNIST01 smoke, not multiclass MNIST",
             "" if target_topology else "not yet the 10x10 b4 stride2 c2 target topology",
+            "" if args.continuous_final_eval else "final eval is seeded from Python-extracted train weights",
             "does not yet demonstrate nontrivial learning" if not nontrivial_learning_met else "",
         ],
         "interpretation": (

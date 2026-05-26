@@ -65,6 +65,14 @@ MEASUREMENT_DETAILS = ("full", "outputs")
 FORWARD_PHASE_MODES = ("single", "split-hidden-output")
 ACCURACY_SIGNALS = ("auto", "out_after", "out_diff", "decision_after", "decisionn_after", "decision_diff")
 VDD_VALUE = 1.2
+DEFAULT_OUTPUT_DECISION_REF = 1.09
+DEFAULT_SCORE_WINDOW_DECISION_REF = 0.05
+
+
+def default_output_decision_ref(output_decision_stage: str) -> float:
+    if output_decision_stage == "score-diff-window-latched":
+        return DEFAULT_SCORE_WINDOW_DECISION_REF
+    return DEFAULT_OUTPUT_DECISION_REF
 
 
 def stable_seed(seed: int, name: str) -> int:
@@ -774,7 +782,7 @@ def block_netlist(
     output_scoren_pulldown_width: float = 24.0,
     output_latch_capacitance: float = 20e-15,
     output_decision_stage: str = "none",
-    output_decision_ref: float = 1.09,
+    output_decision_ref: float | None = None,
     output_decision_ref_source: str = "voltage",
     output_decision_ref_resistance: float = 1e6,
     output_decision_ref_capacitance: float = 20e-15,
@@ -862,6 +870,8 @@ def block_netlist(
         raise ValueError("output_latch_capacitance must be positive")
     if output_decision_stage not in OUTPUT_DECISION_STAGES:
         raise ValueError(f"output_decision_stage must be one of {OUTPUT_DECISION_STAGES}")
+    if output_decision_ref is None:
+        output_decision_ref = default_output_decision_ref(output_decision_stage)
     if output_decision_ref_source not in OUTPUT_DECISION_REF_SOURCES:
         raise ValueError(f"output_decision_ref_source must be one of {OUTPUT_DECISION_REF_SOURCES}")
     if output_decision_ref_source in {"divider", "adaptive", "track"} and output_decision_ref_resistance < 0.0:
@@ -3113,7 +3123,15 @@ def main() -> None:
     ap.add_argument("--output-scoren-pulldown-width", type=float, default=24.0)
     ap.add_argument("--output-latch-capacitance", type=float, default=20e-15)
     ap.add_argument("--output-decision-stage", choices=OUTPUT_DECISION_STAGES, default="none")
-    ap.add_argument("--output-decision-ref", type=float, default=1.09)
+    ap.add_argument(
+        "--output-decision-ref",
+        type=float,
+        default=None,
+        help=(
+            "Decision reference voltage. Defaults to 1.09 V for ordinary output/reference stages and "
+            "50 mV for score-diff-window-latched, where it acts as a score-difference dead-zone offset."
+        ),
+    )
     ap.add_argument("--output-decision-ref-source", choices=OUTPUT_DECISION_REF_SOURCES, default="voltage")
     ap.add_argument("--output-decision-ref-resistance", type=float, default=1e6)
     ap.add_argument("--output-decision-ref-capacitance", type=float, default=20e-15)
@@ -3359,6 +3377,8 @@ def main() -> None:
     )
     ap.add_argument("--assert-nonbehavioral", action="store_true")
     args = ap.parse_args()
+    if args.output_decision_ref is None:
+        args.output_decision_ref = default_output_decision_ref(args.output_decision_stage)
 
     if args.train_samples <= 0:
         raise ValueError("train-samples must be positive for a training smoke")

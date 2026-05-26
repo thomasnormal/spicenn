@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import shutil
 import sys
 from pathlib import Path
 
@@ -10,6 +11,7 @@ SPICE_DIR = Path(__file__).resolve().parents[1] / "spice"
 sys.path.insert(0, str(SPICE_DIR))
 
 import run_readout_writer_primitive as writer  # noqa: E402
+from run_device_sequential_training import run_netlist  # noqa: E402
 
 
 def test_readout_writer_primitive_emits_bounded_reference_writer() -> None:
@@ -52,3 +54,38 @@ def test_readout_writer_primitive_validation() -> None:
         writer.generate_netlist(update_mode="positive", topology="bounded-ref", negative_ref=0.05, update_span=0.10)
     with pytest.raises(ValueError, match="timeout"):
         writer.main_for_test(["--timeout", "0"])
+
+
+@pytest.mark.parametrize(
+    ("mode", "expected_sign"),
+    [
+        ("positive", 1.0),
+        ("negative", -1.0),
+        ("none", 0.0),
+    ],
+)
+def test_readout_writer_primitive_ngspice_sign_and_common_mode(
+    tmp_path: Path,
+    mode: str,
+    expected_sign: float,
+) -> None:
+    ngspice = shutil.which("ngspice")
+    if ngspice is None:
+        pytest.skip("ngspice is not installed")
+
+    measures = run_netlist(
+        ngspice,
+        tmp_path / f"readout_writer_{mode}.cir",
+        writer.generate_netlist(update_mode=mode, topology="bounded-ref", update_scale=0.10),
+        timeout=20.0,
+    )
+
+    signed_delta = float(measures["signed_delta"])
+    common_delta = abs(float(measures["common_delta"]))
+    if expected_sign > 0.0:
+        assert signed_delta > 0.05
+    elif expected_sign < 0.0:
+        assert signed_delta < -0.05
+    else:
+        assert abs(signed_delta) < 1e-3
+    assert common_delta < 0.05

@@ -1970,6 +1970,53 @@ def test_block_netlist_can_emit_precharged_differential_latched_decision_stage()
     assert ".meas tran decision_diff_0 PARAM='decision_after_0-decisionn_after_0'" in netlist
 
 
+def test_block_netlist_can_emit_precharged_score_differential_decision_stage() -> None:
+    sys.path.insert(0, str(SPICE_DIR))
+    import pytest
+    import run_device_mnist01_block_training as block
+
+    image_size = 4
+    weights = block.initial_block_weights(image_size, 2, 2, 1, seed=1)
+    sample = {f"x{i}": 0.2 + 0.01 * i for i in range(image_size * image_size)}
+    sample["target"] = 1.1
+    netlist = block.block_netlist(
+        [sample],
+        weights,
+        image_size=image_size,
+        block_size=2,
+        stride=2,
+        channels=1,
+        training_enabled=True,
+        score_mode="differential",
+        output_differential_stage="simple",
+        output_decision_stage="score-diff-precharged-latched",
+        output_decision_pullup_width=8.0,
+        output_decision_pulldown_width=12.0,
+    )
+
+    assert "\nB" not in netlist
+    assert "Coutn outn" not in netlist
+    assert "Mreset_decision decision rstf 0 0 NMOS" not in netlist
+    assert "Mprecharge_decision decision rstfn vdd vdd PMOS W=4u" in netlist
+    assert "Mprecharge_decisionn decisionn rstfn vdd vdd PMOS W=4u" in netlist
+    assert "Mdec_scorepc_n decision scoren dec_src 0 NSENSE W=12u" in netlist
+    assert "Mdecn_scorepc_n decisionn score dec_src 0 NSENSE W=12u" in netlist
+    assert "Mdec_scorepc_tail dec_src dec 0 0 NMOS W=12u" in netlist
+    assert ".meas tran decision_diff_0 PARAM='decision_after_0-decisionn_after_0'" in netlist
+    with pytest.raises(ValueError, match="requires differential score_mode"):
+        block.block_netlist(
+            [sample],
+            weights,
+            image_size=image_size,
+            block_size=2,
+            stride=2,
+            channels=1,
+            training_enabled=True,
+            score_mode="single-ended",
+            output_decision_stage="score-diff-precharged-latched",
+        )
+
+
 def test_generated_pmos_pullups_do_not_use_vdd_as_drain() -> None:
     sys.path.insert(0, str(SPICE_DIR))
     import run_device_mnist01_block_training as block

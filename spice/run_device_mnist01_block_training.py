@@ -51,6 +51,7 @@ OUTPUT_DECISION_STAGES = (
     "ref-precharged-preamp-latched",
     "diff-latched",
     "diff-precharged-latched",
+    "score-diff-precharged-latched",
     "ratio-inverter",
     "stacked-inverter",
     "shift-inverter",
@@ -853,6 +854,8 @@ def block_netlist(
         and output_differential_stage != "latched"
     ):
         raise ValueError("output_decision_stage requires latched output_differential_stage")
+    if output_decision_stage == "score-diff-precharged-latched" and score_mode != "differential":
+        raise ValueError("score-diff-precharged-latched output_decision_stage requires differential score_mode")
     if output_decision_ref_source in {"adaptive", "track"} and output_decision_stage not in {
         "ref-latched",
         "ref-precharged-latched",
@@ -1440,12 +1443,18 @@ def block_netlist(
         "ref-precharged-latched",
         "ref-precharged-preamp-latched",
         "diff-precharged-latched",
+        "score-diff-precharged-latched",
     }:
         lines += [
             "Mreset_decision decision rstf 0 0 NMOS W=4u L=180n",
             "Mreset_decisionn decisionn rstf 0 0 NMOS W=4u L=180n",
         ]
-    if output_decision_stage in {"ref-precharged-latched", "ref-precharged-preamp-latched", "diff-precharged-latched"}:
+    if output_decision_stage in {
+        "ref-precharged-latched",
+        "ref-precharged-preamp-latched",
+        "diff-precharged-latched",
+        "score-diff-precharged-latched",
+    }:
         lines += [
             "Mprecharge_decision decision rstfn vdd vdd PMOS W=4u L=180n",
             "Mprecharge_decisionn decisionn rstfn vdd vdd PMOS W=4u L=180n",
@@ -1944,6 +1953,17 @@ def block_netlist(
                 f"Mdec_diffpc_n decision outn dec_src 0 NSENSE W={output_decision_pulldown_width:.6g}u L=180n",
                 f"Mdecn_diffpc_n decisionn out dec_src 0 NSENSE W={output_decision_pulldown_width:.6g}u L=180n",
                 f"Mdec_diffpc_tail dec_src dec 0 0 NMOS W={output_decision_pulldown_width:.6g}u L=180n",
+            ]
+        )
+    elif output_decision_stage == "score-diff-precharged-latched":
+        decision_stage = "\n".join(
+            [
+                "* Precharged score differential latch: reset precharges both decision rails high, dec discharges directly from score/scoren.",
+                f"Mdec_scorepc_p decision decisionn vdd vdd PMOS W={output_decision_pullup_width:.6g}u L=180n",
+                f"Mdecn_scorepc_p decisionn decision vdd vdd PMOS W={output_decision_pullup_width:.6g}u L=180n",
+                f"Mdec_scorepc_n decision scoren dec_src 0 NSENSE W={output_decision_pulldown_width:.6g}u L=180n",
+                f"Mdecn_scorepc_n decisionn score dec_src 0 NSENSE W={output_decision_pulldown_width:.6g}u L=180n",
+                f"Mdec_scorepc_tail dec_src dec 0 0 NMOS W={output_decision_pulldown_width:.6g}u L=180n",
             ]
         )
     elif output_decision_stage == "ratio-inverter":

@@ -49,6 +49,8 @@ def test_device_mnist01_block_script_help_runs_from_repo_root() -> None:
     assert "--phase-time-scale" in proc.stdout
     assert "--hidden-bias-positive-init" in proc.stdout
     assert "--assert-nonbehavioral" in proc.stdout
+    assert "--output-score-pullup-width" in proc.stdout
+    assert "--output-scoren-pulldown-width" in proc.stdout
 
 
 def test_block_topology_matches_target_10x10_b4_stride2_c2_shape() -> None:
@@ -171,6 +173,33 @@ def test_output_bias_diagnostics_are_empty_when_bias_disabled() -> None:
     assert diagnostics["output_bias_state_drift_warning"] is False
 
 
+def test_score_net_diagnostics_report_class_margin() -> None:
+    sys.path.insert(0, str(SPICE_DIR))
+    import run_device_mnist01_block_training as block
+
+    diagnostics = block.score_net_diagnostics(
+        pd.DataFrame(
+            [
+                {"positive_label": 1.0, "score_net": 0.001},
+                {"positive_label": 0.0, "score_net": 0.003},
+            ]
+        ),
+        pd.DataFrame(
+            [
+                {"positive_label": 1.0, "score_net": 0.014},
+                {"positive_label": 1.0, "score_net": 0.012},
+                {"positive_label": 0.0, "score_net": 0.011},
+                {"positive_label": 0.0, "score_net": 0.005},
+            ]
+        ),
+    )
+
+    assert np.isclose(diagnostics["initial_eval_score_net_margin"], -0.002)
+    assert np.isclose(diagnostics["final_eval_score_net_positive_mean"], 0.013)
+    assert np.isclose(diagnostics["final_eval_score_net_negative_mean"], 0.008)
+    assert np.isclose(diagnostics["final_eval_score_net_margin"], 0.005)
+
+
 def test_block_netlist_emits_per_pixel_trainable_caps_and_no_behavioral_sources() -> None:
     sys.path.insert(0, str(SPICE_DIR))
     import run_device_mnist01_block_training as block
@@ -250,6 +279,32 @@ def test_block_netlist_can_emit_differential_score_path_without_behavioral_sourc
     assert "Mdp_sn0 vdd scoren dp_sn 0 NSENSE" in netlist
     assert "Mdn_sn1 dn_sn scoren 0 0 NSENSE" in netlist
     assert ".meas tran score_net_0 PARAM='score_before_0-scoren_before_0'" in netlist
+
+
+def test_block_netlist_can_tune_differential_output_sense_widths() -> None:
+    sys.path.insert(0, str(SPICE_DIR))
+    import run_device_mnist01_block_training as block
+
+    image_size = 4
+    weights = block.initial_block_weights(image_size, 2, 2, 1, seed=1)
+    sample = {f"x{i}": 0.2 + 0.01 * i for i in range(image_size * image_size)}
+    sample["target"] = 1.1
+    netlist = block.block_netlist(
+        [sample],
+        weights,
+        image_size=image_size,
+        block_size=2,
+        stride=2,
+        channels=1,
+        training_enabled=True,
+        score_mode="differential",
+        output_score_pullup_width=48.0,
+        output_scoren_pulldown_width=96.0,
+    )
+
+    assert "\nB" not in netlist
+    assert "Moutp vdd score out 0 NSENSE W=48u" in netlist
+    assert "Moutn out scoren 0 0 NSENSE W=96u" in netlist
 
 
 def test_block_netlist_can_emit_low_threshold_readout_score_stack() -> None:

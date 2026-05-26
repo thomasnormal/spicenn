@@ -237,6 +237,8 @@ def block_netlist(
     channels: int,
     training_enabled: bool,
     output_driver_model: str = "sense",
+    output_score_pullup_width: float = 24.0,
+    output_scoren_pulldown_width: float = 24.0,
     readout_apply_scale: float = 0.35,
     hidden_forward_width: float = 3.0,
     readout_gradient_width: float = 24.0,
@@ -267,6 +269,10 @@ def block_netlist(
 ) -> str:
     if readout_apply_scale <= 0.0:
         raise ValueError("readout_apply_scale must be positive")
+    if output_score_pullup_width <= 0.0:
+        raise ValueError("output_score_pullup_width must be positive")
+    if output_scoren_pulldown_width <= 0.0:
+        raise ValueError("output_scoren_pulldown_width must be positive")
     if hidden_forward_width <= 0.0:
         raise ValueError("hidden_forward_width must be positive")
     if readout_gradient_width <= 0.0:
@@ -711,8 +717,8 @@ def block_netlist(
         (
             "\n".join(
                 [
-                    "Moutp vdd score out 0 NSENSE W=24u L=180n",
-                    "Moutn out scoren 0 0 NSENSE W=24u L=180n",
+                    f"Moutp vdd score out 0 NSENSE W={output_score_pullup_width:.6g}u L=180n",
+                    f"Moutn out scoren 0 0 NSENSE W={output_scoren_pulldown_width:.6g}u L=180n",
                 ]
             )
             if score_mode == "differential"
@@ -918,6 +924,33 @@ def output_bias_diagnostics(
     }
 
 
+def score_net_diagnostics(initial_eval_rows: pd.DataFrame, final_eval_rows: pd.DataFrame) -> dict[str, float | None]:
+    def metrics(prefix: str, rows: pd.DataFrame) -> dict[str, float | None]:
+        empty = {
+            f"{prefix}_score_net_positive_mean": None,
+            f"{prefix}_score_net_negative_mean": None,
+            f"{prefix}_score_net_margin": None,
+        }
+        if "score_net" not in rows.columns or "positive_label" not in rows.columns:
+            return empty
+        positives = rows.loc[rows["positive_label"] > 0.5, "score_net"].dropna().to_numpy(dtype=float)
+        negatives = rows.loc[rows["positive_label"] <= 0.5, "score_net"].dropna().to_numpy(dtype=float)
+        if positives.size == 0 or negatives.size == 0:
+            return empty
+        positive_mean = float(np.mean(positives))
+        negative_mean = float(np.mean(negatives))
+        return {
+            f"{prefix}_score_net_positive_mean": positive_mean,
+            f"{prefix}_score_net_negative_mean": negative_mean,
+            f"{prefix}_score_net_margin": positive_mean - negative_mean,
+        }
+
+    return {
+        **metrics("initial_eval", initial_eval_rows),
+        **metrics("final_eval", final_eval_rows),
+    }
+
+
 def run_device_sequence(
     spice_bin: str,
     path: Path,
@@ -932,6 +965,8 @@ def run_device_sequence(
     timeout: float,
     sequence: str,
     output_driver_model: str,
+    output_score_pullup_width: float,
+    output_scoren_pulldown_width: float,
     readout_apply_scale: float,
     hidden_forward_width: float,
     readout_gradient_width: float,
@@ -969,6 +1004,8 @@ def run_device_sequence(
         channels=channels,
         training_enabled=training_enabled,
         output_driver_model=output_driver_model,
+        output_score_pullup_width=output_score_pullup_width,
+        output_scoren_pulldown_width=output_scoren_pulldown_width,
         readout_apply_scale=readout_apply_scale,
         hidden_forward_width=hidden_forward_width,
         readout_gradient_width=readout_gradient_width,
@@ -1021,6 +1058,8 @@ def main() -> None:
     ap.add_argument("--timeout", type=float, default=120.0)
     ap.add_argument("--tag", default="device_mnist01_block")
     ap.add_argument("--output-driver-model", choices=["sense", "nrel"], default="sense")
+    ap.add_argument("--output-score-pullup-width", type=float, default=24.0)
+    ap.add_argument("--output-scoren-pulldown-width", type=float, default=24.0)
     ap.add_argument("--readout-apply-scale", type=float, default=0.35)
     ap.add_argument("--hidden-forward-width", type=float, default=3.0)
     ap.add_argument("--readout-gradient-width", type=float, default=24.0)
@@ -1103,6 +1142,8 @@ def main() -> None:
         "channels": args.channels,
         "timeout": args.timeout,
         "output_driver_model": args.output_driver_model,
+        "output_score_pullup_width": args.output_score_pullup_width,
+        "output_scoren_pulldown_width": args.output_scoren_pulldown_width,
         "readout_apply_scale": args.readout_apply_scale,
         "hidden_forward_width": args.hidden_forward_width,
         "readout_gradient_width": args.readout_gradient_width,
@@ -1187,6 +1228,7 @@ def main() -> None:
         enabled=args.output_bias,
         decision_threshold=args.decision_threshold,
     )
+    score_net_summary = score_net_diagnostics(initial_eval_rows, final_eval_rows)
     summary = {
         "simulator": version,
         "architecture": "device_level_mnist01_block_stride_channel_training",
@@ -1213,6 +1255,8 @@ def main() -> None:
         "hidden_bias_state": "persistent signed bhp/bhn capacitors with MOS/passive local bias writers",
         "hidden_credit_mode": "direct_feedback",
         "output_driver_model": args.output_driver_model,
+        "output_score_pullup_width": args.output_score_pullup_width,
+        "output_scoren_pulldown_width": args.output_scoren_pulldown_width,
         "readout_apply_scale": args.readout_apply_scale,
         "hidden_forward_width": args.hidden_forward_width,
         "readout_gradient_width": args.readout_gradient_width,
@@ -1268,6 +1312,7 @@ def main() -> None:
         "initial_eval_output_active_fraction": initial_active_fraction,
         "final_eval_output_active_fraction": final_active_fraction,
         "nontrivial_learning_met": nontrivial_learning_met,
+        **score_net_summary,
         **output_bias_summary,
         "initial_weights": initial_weights,
         "final_weights": final_weights,

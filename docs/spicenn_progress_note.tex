@@ -519,6 +519,61 @@ direction is therefore physical score/readout gain and centering before
 regeneration, not more final-stage threshold interpretation and not more
 common-activity shunting alone.
 
+\subsection{Current Centered Target-Shape Rung}
+
+The current best device-level path keeps the row-pulsed split-rail hidden
+primitive, but moves the output side to a centered low-common-mode score
+decision.  The promoted command family uses
+\[
+  \code{score\_mode=differential},\qquad
+  \code{error\_topology=label-descent},
+\]
+\[
+  \code{readout\_forward\_topology=conductance-row-isolated},\qquad
+  \code{output\_decision\_stage=score-diff-low-gain-ref-latched}.
+\]
+Readout weights are still persistent differential capacitor states.  The
+bounded-reference readout writer now uses a small physical span,
+\(\code{readout\_weight\_update\_span}=0.06\), with a low-side floor near
+\(0.20\) V.  This avoids the earlier last-label domination seen with larger
+bounded writes.  The decision reference is a passive divider at about
+\(0.25\) V, chosen because the target-shape score rails sit at low
+common-mode; a low-level ngspice fixture verifies the mechanism by resolving a
+larger unipolar score rail positive and a smaller one negative through the
+same transistor/passive stage.
+
+This is the first branch that has shown nontrivial learning on the target
+device-level topology without Python weight writes.  On the \(10\times10\),
+block-4, stride-2, 2-channel MNIST01 binary slice, the strict continuous
+8-train/8-eval diagnostic improved fixed-threshold hardware accuracy from
+\(0.5\) to \(1.0\).  The run preserved the fully on-device contract: Python
+supplied only samples, labels, clocks/control rails, and diagnostics; the
+train/final-eval segment was one continuous transient; readout state changed
+through MOS/passive write paths; and no behavioral learning devices or Python
+checkpoint transfer were used.  The final decision margin stayed physically
+centered: the score-net-at-decision margin was about \(37.4\) mV, the
+\(\code{decision\_diff}\) class means were approximately \(+39.6\) mV and
+\(-106.5\) mV, and the worst fixed-threshold margin was about \(11.8\) mV.
+
+A correlated 16-train/16-eval screen with the same target topology, centered
+reference, and \(25\) ps transient print step also reached final hardware
+accuracy \(1.0\), with about \(37.3\) mV score-net-at-decision margin and a
+worst fixed-threshold margin near \(5.75\) mV.  That screen intentionally
+skipped initial evaluation, so it is scale evidence rather than a nontrivial
+learning proof.  A full 16/16 promotion is therefore the next active
+diagnostic: it tests whether the same centered path keeps the \(0.5\rightarrow
+1.0\) learning claim when the baseline is measured, while also stressing
+ngspice runtime and saved-vector memory.
+
+The main conclusion has changed.  The immediate blocker is no longer the
+existence of a transistor/passive learning path for the binary target-shape
+rung; that path now exists at 8/8 and screens well at 16/16.  The next
+engineering bottlenecks are (1) simulator throughput and memory for longer
+continuous diagnostics, (2) seed/order/reference robustness at target shape,
+and then (3) extending the same circuit discipline from binary MNIST01 toward
+multiclass MNIST without reintroducing behavioral update buckets or unrealistic
+sample ordering.
+
 
 \section{State And Update Equations}
 

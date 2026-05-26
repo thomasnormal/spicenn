@@ -1646,6 +1646,49 @@ def output_bias_diagnostics(
     }
 
 
+def adaptive_reference_diagnostics(
+    train_rows: pd.DataFrame,
+    final_eval_rows: pd.DataFrame,
+    *,
+    enabled: bool,
+    nominal_ref: float,
+) -> dict[str, float | None]:
+    empty = {
+        "outref_final_train": None,
+        "outref_final_train_error": None,
+        "outref_final_eval_first": None,
+        "outref_final_eval_last": None,
+        "outref_final_eval_drift": None,
+        "outref_final_eval_drift_abs": None,
+        "outref_final_eval_min": None,
+        "outref_final_eval_max": None,
+        "outref_final_eval_max_abs_error": None,
+    }
+    if not enabled or "outref_after_apply" not in train_rows.columns or "outref_before" not in final_eval_rows.columns:
+        return empty
+
+    train_ref = train_rows["outref_after_apply"].dropna().to_numpy(dtype=float)
+    eval_ref = final_eval_rows["outref_before"].dropna().to_numpy(dtype=float)
+    if train_ref.size == 0 or eval_ref.size == 0:
+        return empty
+
+    final_train = float(train_ref[-1])
+    first_eval = float(eval_ref[0])
+    last_eval = float(eval_ref[-1])
+    drift = last_eval - first_eval
+    return {
+        "outref_final_train": final_train,
+        "outref_final_train_error": final_train - nominal_ref,
+        "outref_final_eval_first": first_eval,
+        "outref_final_eval_last": last_eval,
+        "outref_final_eval_drift": drift,
+        "outref_final_eval_drift_abs": abs(drift),
+        "outref_final_eval_min": float(np.min(eval_ref)),
+        "outref_final_eval_max": float(np.max(eval_ref)),
+        "outref_final_eval_max_abs_error": float(np.max(np.abs(eval_ref - nominal_ref))),
+    }
+
+
 def score_net_diagnostics(initial_eval_rows: pd.DataFrame, final_eval_rows: pd.DataFrame) -> dict[str, float | None]:
     def metrics(prefix: str, rows: pd.DataFrame, signal: str) -> dict[str, float | None]:
         empty = {
@@ -2188,6 +2231,12 @@ def main() -> None:
         enabled=args.output_bias,
         decision_threshold=args.decision_threshold,
     )
+    adaptive_reference_summary = adaptive_reference_diagnostics(
+        train_rows,
+        final_eval_rows,
+        enabled=args.output_decision_ref_source == "adaptive",
+        nominal_ref=args.output_decision_ref,
+    )
     score_net_summary = score_net_diagnostics(initial_eval_rows, final_eval_rows)
     threshold_window_summary = {
         **threshold_window_diagnostics(
@@ -2328,6 +2377,7 @@ def main() -> None:
         **score_net_summary,
         **threshold_window_summary,
         **output_bias_summary,
+        **adaptive_reference_summary,
         "initial_weights": initial_weights,
         "final_weights": final_weights,
         "curve": str(curve_path),

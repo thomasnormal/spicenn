@@ -266,6 +266,44 @@ def test_output_bias_diagnostics_are_empty_when_bias_disabled() -> None:
     assert diagnostics["output_bias_state_drift_warning"] is False
 
 
+def test_adaptive_reference_diagnostics_report_state_drift() -> None:
+    sys.path.insert(0, str(SPICE_DIR))
+    import run_device_mnist01_block_training as block
+
+    diagnostics = block.adaptive_reference_diagnostics(
+        pd.DataFrame([{"outref_after_apply": 1.12}, {"outref_after_apply": 1.16}]),
+        pd.DataFrame(
+            [
+                {"outref_before": 1.15},
+                {"outref_before": 1.13},
+                {"outref_before": 1.125},
+            ]
+        ),
+        enabled=True,
+        nominal_ref=1.13,
+    )
+
+    assert np.isclose(diagnostics["outref_final_train"], 1.16)
+    assert np.isclose(diagnostics["outref_final_train_error"], 0.03)
+    assert np.isclose(diagnostics["outref_final_eval_drift"], -0.025)
+    assert np.isclose(diagnostics["outref_final_eval_max_abs_error"], 0.02)
+
+
+def test_adaptive_reference_diagnostics_are_empty_when_disabled() -> None:
+    sys.path.insert(0, str(SPICE_DIR))
+    import run_device_mnist01_block_training as block
+
+    diagnostics = block.adaptive_reference_diagnostics(
+        pd.DataFrame([{"outref_after_apply": 1.16}]),
+        pd.DataFrame([{"outref_before": 1.15}]),
+        enabled=False,
+        nominal_ref=1.13,
+    )
+
+    assert diagnostics["outref_final_train"] is None
+    assert diagnostics["outref_final_eval_max_abs_error"] is None
+
+
 def test_score_net_diagnostics_report_class_margin() -> None:
     sys.path.insert(0, str(SPICE_DIR))
     import run_device_mnist01_block_training as block

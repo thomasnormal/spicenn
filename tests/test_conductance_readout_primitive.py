@@ -36,6 +36,8 @@ def test_conductance_readout_primitive_validation() -> None:
         readout.generate_netlist(readout_case="positive", readout_width=0.0)
     with pytest.raises(ValueError, match="decision_pullup_width"):
         readout.generate_sum_netlist(sum_case="single_positive", include_decision=True, decision_pullup_width=0.0)
+    with pytest.raises(ValueError, match="bias_width"):
+        readout.generate_sum_netlist(sum_case="single_positive", include_score_bias=True, bias_width=0.0)
     with pytest.raises(ValueError, match="timeout"):
         readout.main_for_test(["--timeout", "0"])
 
@@ -198,3 +200,38 @@ def test_conductance_readout_sum_primitive_ngspice_mid_load_drives_score_latch(
         assert abs(float(measures["score_margin"])) < 2e-3
         # The regenerative decision latch is not a neutral dead-zone detector.
         assert abs(decision_diff) > 0.05
+
+
+def test_conductance_readout_sum_primitive_ngspice_conductance_bias_shifts_score_without_erasing_delta(
+    tmp_path: Path,
+) -> None:
+    unbiased_mixed = _run_sum_case(tmp_path, "mixed_cancel", isolation="diode", score_load_resistance=3e4)
+    biased_mixed = _run_sum_case_with_bias(tmp_path, "mixed_cancel")
+    biased_single = _run_sum_case_with_bias(tmp_path, "single_positive")
+
+    bias_shift = float(biased_mixed["score_margin"]) - float(unbiased_mixed["score_margin"])
+    biased_increment = float(biased_single["score_margin"]) - float(biased_mixed["score_margin"])
+    assert bias_shift > 0.015
+    assert biased_increment > 0.025
+
+
+def _run_sum_case_with_bias(tmp_path: Path, case: str) -> dict[str, float]:
+    ngspice = shutil.which("ngspice")
+    if ngspice is None:
+        pytest.skip("ngspice is not installed")
+    return run_netlist(
+        ngspice,
+        tmp_path / f"conductance_readout_sum_{case}_biased.cir",
+        readout.generate_sum_netlist(
+            sum_case=case,
+            positive_weight=0.50,
+            negative_weight=0.34,
+            isolation="diode",
+            score_load_resistance=3e4,
+            include_score_bias=True,
+            bias_positive_weight=0.45,
+            bias_negative_weight=0.34,
+            bias_width=8.0,
+        ),
+        timeout=20.0,
+    )

@@ -56,6 +56,8 @@ def test_device_mnist01_block_script_help_runs_from_repo_root() -> None:
     assert "--score-activity-inhibition-width" in proc.stdout
     assert "--output-bias" in proc.stdout
     assert "--output-bias-apply-scale" in proc.stdout
+    assert "--output-bias-forward-topology" in proc.stdout
+    assert "--output-bias-forward-width" in proc.stdout
     assert "--output-bias-leak-resistance" in proc.stdout
     assert "--score-mode" in proc.stdout
     assert "--measurement-detail" in proc.stdout
@@ -2795,6 +2797,73 @@ def test_block_netlist_can_emit_trainable_output_bias() -> None:
     assert "Mobn_up_p0 obn_up ron vdd vdd PMOS" in netlist
     assert "Mobn_up_p1 obn applyn obn_up vdd PMOS" in netlist
     assert ".meas tran output_bias_signed_after_0 PARAM='obp_after_apply_0-obn_after_apply_0'" in netlist
+
+
+def test_block_netlist_can_emit_conductance_row_output_bias() -> None:
+    sys.path.insert(0, str(SPICE_DIR))
+    import pytest
+    import run_device_mnist01_block_training as block
+
+    image_size = 4
+    weights = block.initial_block_weights(
+        image_size,
+        2,
+        2,
+        1,
+        seed=1,
+        output_bias_positive_init=0.45,
+        output_bias_negative_init=0.34,
+    )
+    sample = {f"x{i}": 0.2 + 0.01 * i for i in range(image_size * image_size)}
+    sample["target"] = 1.1
+    netlist = block.block_netlist(
+        [sample],
+        weights,
+        image_size=image_size,
+        block_size=2,
+        stride=2,
+        channels=1,
+        training_enabled=True,
+        output_bias_enabled=True,
+        output_bias_forward_topology="conductance-row",
+        output_bias_forward_width=8.0,
+        score_mode="differential",
+        forward_phase_mode="split-hidden-output",
+    )
+
+    assert "\nB" not in netlist
+    assert "Xob obp obn signed_store Cp=20f Icp=0.45 Icn=0.34 Rleak=1e15" in netlist
+    assert "Mbiasrow_n biasrow fwdo bias_act 0 NMOS W=2u L=180n" in netlist
+    assert "Mbiasrow_p biasrow fwdon bias_act vdd PMOS W=4u L=180n" in netlist
+    assert "Vbias_act bias_act 0 0.85" in netlist
+    assert "Mobpos_cond biasrow obp score 0 NREL W=8u L=180n" in netlist
+    assert "Mobneg_cond biasrow obn scoren 0 NREL W=8u L=180n" in netlist
+    assert "Mobpos_w vdd obp obp_f0" not in netlist
+    assert "Mgop_d vdd dp gop_d 0 NSENSE W=24u" in netlist
+    with pytest.raises(ValueError, match="output_bias_forward_width"):
+        block.block_netlist(
+            [sample],
+            weights,
+            image_size=image_size,
+            block_size=2,
+            stride=2,
+            channels=1,
+            training_enabled=True,
+            output_bias_forward_width=-1.0,
+        )
+    with pytest.raises(ValueError, match="conductance-row output_bias_forward_topology"):
+        block.block_netlist(
+            [sample],
+            weights,
+            image_size=image_size,
+            block_size=2,
+            stride=2,
+            channels=1,
+            training_enabled=True,
+            output_bias_enabled=True,
+            output_bias_forward_topology="conductance-row",
+            score_mode="single-ended",
+        )
 
 
 def test_output_bias_does_not_inherit_readout_weight_leak() -> None:

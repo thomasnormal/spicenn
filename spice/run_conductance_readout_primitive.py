@@ -112,6 +112,10 @@ def generate_sum_netlist(
     include_decision: bool = False,
     decision_pullup_width: float = 8.0,
     decision_pulldown_width: float = 12.0,
+    include_score_bias: bool = False,
+    bias_positive_weight: float = 0.38,
+    bias_negative_weight: float = 0.34,
+    bias_width: float = 8.0,
 ) -> str:
     if sum_case not in SUM_CASES:
         raise ValueError(f"sum_case must be one of {SUM_CASES}")
@@ -123,6 +127,7 @@ def generate_sum_netlist(
         "score_load_resistance": score_load_resistance,
         "decision_pullup_width": decision_pullup_width,
         "decision_pulldown_width": decision_pulldown_width,
+        "bias_width": bias_width,
     }.items():
         if value <= 0.0:
             raise ValueError(f"{name} must be positive")
@@ -143,6 +148,21 @@ def generate_sum_netlist(
         f"Rscore score 0 {score_load_resistance:.12g}",
         f"Rscoren scoren 0 {score_load_resistance:.12g}",
     ]
+    if include_score_bias:
+        lines += [
+            f"Cobp obp 0 20f IC={bias_positive_weight:.12g}",
+            f"Cobn obn 0 20f IC={bias_negative_weight:.12g}",
+            "Robp obp 0 1e15",
+            "Robn obn 0 1e15",
+            "Vbias_act bias_act 0 0.85",
+            "Cbiasrow biasrow 0 1f IC=0",
+            "Rbiasrow biasrow 0 1e12",
+            f"Mbiasrow_n biasrow fwd bias_act 0 NMOS W={max(1.0, bias_width / 4.0):.6g}u L=180n",
+            f"Mbiasrow_p biasrow fwdn bias_act vdd PMOS W={max(2.0, bias_width / 2.0):.6g}u L=180n",
+            "Mbiasrow_rst biasrow rst 0 0 NMOS W=4u L=180n",
+            f"Mbiasp_cond biasrow obp score 0 NMOS W={bias_width:.6g}u L=180n",
+            f"Mbiasn_cond biasrow obn scoren 0 NMOS W={bias_width:.6g}u L=180n",
+        ]
     if include_decision:
         lines += [
             "Vrstdec_n rstdec_n 0 PULSE(0 1.2 3.0n 10p 10p 10n 20n)",

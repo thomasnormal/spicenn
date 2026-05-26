@@ -36,6 +36,7 @@ READOUT_FORWARD_TOPOLOGIES = ("stacked", "conductance-row", "conductance-row-iso
 READOUT_WEIGHT_GATE_MODELS = ("same", "nrel", "sense", "switch")
 READOUT_GRADIENT_SOURCES = ("act", "pre", "eligibility", "eligibility-restored")
 READOUT_WEIGHT_UPDATE_TOPOLOGIES = ("rail", "bounded-ref")
+OUTPUT_BIAS_FORWARD_TOPOLOGIES = ("stacked", "conductance-row")
 LEARNING_ACTIVATION_GATE_MODELS = ("nrel", "sense")
 HIDDEN_POLARITY_INITS = ("ink", "alternating-channel", "random-pixel")
 HIDDEN_CREDIT_MODES = ("direct-feedback", "readout-weighted", "readout-restored", "readout-restored-hardgate")
@@ -798,6 +799,8 @@ def block_netlist(
     score_activity_inhibition_width: float = 0.0,
     output_bias_enabled: bool = False,
     output_bias_apply_scale: float = 1.0,
+    output_bias_forward_topology: str = "stacked",
+    output_bias_forward_width: float = 0.0,
     output_bias_positive_init: float = 0.52,
     output_bias_negative_init: float = 0.25,
     output_bias_leak_resistance: float = 0.0,
@@ -938,6 +941,12 @@ def block_netlist(
         raise ValueError("score_activity_inhibition_width requires activation_competition_width")
     if output_bias_apply_scale <= 0.0:
         raise ValueError("output_bias_apply_scale must be positive")
+    if output_bias_forward_topology not in OUTPUT_BIAS_FORWARD_TOPOLOGIES:
+        raise ValueError(f"output_bias_forward_topology must be one of {OUTPUT_BIAS_FORWARD_TOPOLOGIES}")
+    if output_bias_forward_topology == "conductance-row" and score_mode != "differential":
+        raise ValueError("conductance-row output_bias_forward_topology requires differential score_mode")
+    if output_bias_forward_width < 0.0:
+        raise ValueError("output_bias_forward_width must be nonnegative")
     if output_bias_leak_resistance < 0.0:
         raise ValueError("output_bias_leak_resistance must be nonnegative")
     if phase_time_scale <= 0.0:
@@ -989,6 +998,9 @@ def block_netlist(
     readout_nmos_w = 2.0 * readout_apply_scale
     output_bias_pmos_w = readout_pmos_w * output_bias_apply_scale
     output_bias_nmos_w = readout_nmos_w * output_bias_apply_scale
+    effective_output_bias_forward_width = (
+        readout_forward_width if output_bias_forward_width <= 0.0 else output_bias_forward_width
+    )
     restore_error_enabled = error_signal_mode in {"restored", "restored-hidden"}
     hidden_positive_error_node = "edp" if restore_error_enabled else "dp"
     hidden_negative_error_node = "edn" if restore_error_enabled else "dn"
@@ -1801,22 +1813,37 @@ def block_netlist(
             ]
 
     if output_bias_enabled:
+        if output_bias_forward_topology == "conductance-row":
+            output_bias_forward_lines = [
+                f"Mbiasrow_n biasrow {readout_forward_clock} bias_act 0 NMOS W={max(1.0, effective_output_bias_forward_width / 4.0):.6g}u L=180n",
+                f"Mbiasrow_p biasrow fwdon bias_act vdd PMOS W={max(2.0, effective_output_bias_forward_width / 2.0):.6g}u L=180n",
+                "Mbiasrow_rst biasrow rstf 0 0 NMOS W=4u L=180n",
+                "Vbias_act bias_act 0 0.85",
+                "Cbiasrow biasrow 0 1f IC=0",
+                "Rbiasrow biasrow 0 1e12",
+                f"Mobpos_cond biasrow obp score 0 {readout_weight_model} W={effective_output_bias_forward_width:.6g}u L=180n",
+                f"Mobneg_cond biasrow obn scoren 0 {readout_weight_model} W={effective_output_bias_forward_width:.6g}u L=180n",
+            ]
+        else:
+            output_bias_forward_lines = [
+                f"Mobpos_w vdd obp obp_f0 0 {readout_weight_model} W={readout_forward_width:.6g}u L=180n",
+                f"Mobpos_f obp_f0 {readout_forward_clock} score 0 {readout_model} W={readout_forward_width:.6g}u L=180n",
+                *(
+                    [
+                        f"Mobneg_w vdd obn obn_f0 0 {readout_weight_model} W={readout_negative_forward_width:.6g}u L=180n",
+                        f"Mobneg_f obn_f0 {readout_forward_clock} scoren 0 {readout_model} W={readout_negative_forward_width:.6g}u L=180n",
+                    ]
+                    if score_mode == "differential"
+                    else [
+                        f"Mobneg_f score {readout_forward_clock} obn_f0 0 {readout_model} W={readout_negative_forward_width:.6g}u L=180n",
+                        f"Mobneg_w obn_f0 obn 0 0 {readout_weight_model} W={readout_negative_forward_width:.6g}u L=180n",
+                    ]
+                ),
+            ]
         lines += [
             "",
             "* Trainable signed output bias contribution and local error-driven writer.",
-            f"Mobpos_w vdd obp obp_f0 0 {readout_weight_model} W={readout_forward_width:.6g}u L=180n",
-            f"Mobpos_f obp_f0 {readout_forward_clock} score 0 {readout_model} W={readout_forward_width:.6g}u L=180n",
-            *(
-                [
-                    f"Mobneg_w vdd obn obn_f0 0 {readout_weight_model} W={readout_negative_forward_width:.6g}u L=180n",
-                    f"Mobneg_f obn_f0 {readout_forward_clock} scoren 0 {readout_model} W={readout_negative_forward_width:.6g}u L=180n",
-                ]
-                if score_mode == "differential"
-                else [
-                    f"Mobneg_f score {readout_forward_clock} obn_f0 0 {readout_model} W={readout_negative_forward_width:.6g}u L=180n",
-                    f"Mobneg_w obn_f0 obn 0 0 {readout_weight_model} W={readout_negative_forward_width:.6g}u L=180n",
-                ]
-            ),
+            *output_bias_forward_lines,
             f"Mgop_d vdd {readout_positive_error_node} gop_d 0 NSENSE W={readout_gradient_width:.6g}u L=180n",
             f"Mgop_g gop_d acc gop 0 NREL W={readout_gradient_width:.6g}u L=180n",
             f"Mgon_d vdd {readout_negative_error_node} gon_d 0 NSENSE W={readout_gradient_width:.6g}u L=180n",
@@ -2533,6 +2560,8 @@ def run_device_sequence(
     score_activity_inhibition_width: float,
     output_bias_enabled: bool,
     output_bias_apply_scale: float,
+    output_bias_forward_topology: str,
+    output_bias_forward_width: float,
     output_bias_positive_init: float,
     output_bias_negative_init: float,
     output_bias_leak_resistance: float,
@@ -2615,6 +2644,8 @@ def run_device_sequence(
         score_activity_inhibition_width=score_activity_inhibition_width,
         output_bias_enabled=output_bias_enabled,
         output_bias_apply_scale=output_bias_apply_scale,
+        output_bias_forward_topology=output_bias_forward_topology,
+        output_bias_forward_width=output_bias_forward_width,
         output_bias_positive_init=output_bias_positive_init,
         output_bias_negative_init=output_bias_negative_init,
         output_bias_leak_resistance=output_bias_leak_resistance,
@@ -2789,6 +2820,13 @@ def main() -> None:
     ap.add_argument("--score-activity-inhibition-width", type=float, default=0.0)
     ap.add_argument("--output-bias", action="store_true")
     ap.add_argument("--output-bias-apply-scale", type=float, default=1.0)
+    ap.add_argument("--output-bias-forward-topology", choices=OUTPUT_BIAS_FORWARD_TOPOLOGIES, default="stacked")
+    ap.add_argument(
+        "--output-bias-forward-width",
+        type=float,
+        default=0.0,
+        help="Output-bias forward device width in um; 0 reuses --readout-forward-width.",
+    )
     ap.add_argument("--output-bias-positive-init", type=float, default=0.52)
     ap.add_argument("--output-bias-negative-init", type=float, default=0.25)
     ap.add_argument("--output-bias-leak-resistance", type=float, default=0.0)
@@ -3040,6 +3078,8 @@ def main() -> None:
         "score_activity_inhibition_width": args.score_activity_inhibition_width,
         "output_bias_enabled": args.output_bias,
         "output_bias_apply_scale": args.output_bias_apply_scale,
+        "output_bias_forward_topology": args.output_bias_forward_topology,
+        "output_bias_forward_width": args.output_bias_forward_width,
         "output_bias_positive_init": args.output_bias_positive_init,
         "output_bias_negative_init": args.output_bias_negative_init,
         "output_bias_leak_resistance": args.output_bias_leak_resistance,
@@ -3273,6 +3313,8 @@ def main() -> None:
         "score_activity_inhibition_width": args.score_activity_inhibition_width,
         "output_bias_enabled": args.output_bias,
         "output_bias_apply_scale": args.output_bias_apply_scale,
+        "output_bias_forward_topology": args.output_bias_forward_topology,
+        "output_bias_forward_width": args.output_bias_forward_width,
         "output_bias_positive_init": args.output_bias_positive_init,
         "output_bias_negative_init": args.output_bias_negative_init,
         "output_bias_leak_resistance": args.output_bias_leak_resistance,

@@ -31,6 +31,7 @@ HIDDEN_ACTIVATION_MODELS = ("nrel", "sense")
 HIDDEN_FORWARD_TOPOLOGIES = ("per-pixel-phase", "shared-phase", "always-on", "split-rail")
 READOUT_FORWARD_MODELS = ("nrel", "sense")
 READOUT_WEIGHT_GATE_MODELS = ("same", "nrel", "sense", "switch")
+READOUT_GRADIENT_SOURCES = ("act", "pre")
 LEARNING_ACTIVATION_GATE_MODELS = ("nrel", "sense")
 HIDDEN_POLARITY_INITS = ("ink", "alternating-channel", "random-pixel")
 HIDDEN_CREDIT_MODES = ("direct-feedback", "readout-weighted", "readout-restored", "readout-restored-hardgate")
@@ -621,6 +622,7 @@ def block_netlist(
     readout_forward_width: float = 64.0,
     readout_forward_model: str = "nrel",
     readout_weight_gate_model: str = "same",
+    readout_gradient_source: str = "act",
     learning_activation_gate_model: str = "nrel",
     readout_weight_leak_resistance: float = 0.0,
     readout_stack_shunt_resistance: float = 0.0,
@@ -731,6 +733,8 @@ def block_netlist(
         raise ValueError("readout_forward_width must be positive")
     if readout_weight_gate_model not in READOUT_WEIGHT_GATE_MODELS:
         raise ValueError(f"readout_weight_gate_model must be one of {READOUT_WEIGHT_GATE_MODELS}")
+    if readout_gradient_source not in READOUT_GRADIENT_SOURCES:
+        raise ValueError(f"readout_gradient_source must be one of {READOUT_GRADIENT_SOURCES}")
     if readout_weight_leak_resistance < 0.0:
         raise ValueError("readout_weight_leak_resistance must be nonnegative")
     if readout_stack_shunt_resistance < 0.0:
@@ -1347,6 +1351,7 @@ def block_netlist(
                 hidden_activation_lines = [
                     f"Mrelu_h{feature} vdd pre{feature} act{feature} 0 {activation_model} W={hidden_activation_width:.6g}u L=180n",
                 ]
+            readout_gradient_gate_node = f"pre{feature}" if readout_gradient_source == "pre" else f"act{feature}"
             lines += [
                 *hidden_bias_lines,
                 *hidden_activation_lines,
@@ -1408,10 +1413,10 @@ def block_netlist(
                     hidden_error_width=hidden_error_width,
                     learning_activation_model=learning_activation_model,
                 ),
-                f"Mgvp{feature}_a vdd act{feature} gvp{feature}_a 0 {learning_activation_model} W={readout_gradient_width:.6g}u L=180n",
+                f"Mgvp{feature}_a vdd {readout_gradient_gate_node} gvp{feature}_a 0 {learning_activation_model} W={readout_gradient_width:.6g}u L=180n",
                 f"Mgvp{feature}_d gvp{feature}_a {readout_positive_error_node} gvp{feature}_d 0 NSENSE W={readout_gradient_width:.6g}u L=180n",
                 f"Mgvp{feature}_g gvp{feature}_d acc gvp{feature} 0 NREL W={readout_gradient_width:.6g}u L=180n",
-                f"Mgvn{feature}_a vdd act{feature} gvn{feature}_a 0 {learning_activation_model} W={readout_gradient_width:.6g}u L=180n",
+                f"Mgvn{feature}_a vdd {readout_gradient_gate_node} gvn{feature}_a 0 {learning_activation_model} W={readout_gradient_width:.6g}u L=180n",
                 f"Mgvn{feature}_d gvn{feature}_a {readout_negative_error_node} gvn{feature}_d 0 NSENSE W={readout_gradient_width:.6g}u L=180n",
                 f"Mgvn{feature}_g gvn{feature}_d acc gvn{feature} 0 NREL W={readout_gradient_width:.6g}u L=180n",
                 f"Mgbp{feature}_d vdd hdp{feature} gbp{feature}_d 0 NSENSE W={hidden_update_width:.6g}u L=180n",
@@ -1889,6 +1894,40 @@ def output_bias_diagnostics(
     }
 
 
+def readout_update_diagnostics(
+    initial_weights: dict[str, Any],
+    final_weights: dict[str, Any] | None,
+    *,
+    update_threshold: float = 10e-3,
+) -> dict[str, float | int | None]:
+    empty = {
+        "readout_signed_initial_mean": None,
+        "readout_signed_final_mean": None,
+        "readout_signed_delta_mean": None,
+        "readout_signed_delta_max_abs": None,
+        "readout_signed_delta_l1": None,
+        "readout_signed_updated_features_10mv": None,
+        "readout_signed_update_participation": None,
+    }
+    if final_weights is None:
+        return empty
+    initial_signed = np.asarray(initial_weights["vwp"], dtype=float) - np.asarray(initial_weights["vwn"], dtype=float)
+    final_signed = np.asarray(final_weights["vwp"], dtype=float) - np.asarray(final_weights["vwn"], dtype=float)
+    if initial_signed.shape != final_signed.shape or initial_signed.size == 0:
+        return empty
+    delta = final_signed - initial_signed
+    updated = int(np.sum(np.abs(delta) >= update_threshold))
+    return {
+        "readout_signed_initial_mean": float(np.mean(initial_signed)),
+        "readout_signed_final_mean": float(np.mean(final_signed)),
+        "readout_signed_delta_mean": float(np.mean(delta)),
+        "readout_signed_delta_max_abs": float(np.max(np.abs(delta))),
+        "readout_signed_delta_l1": float(np.sum(np.abs(delta))),
+        "readout_signed_updated_features_10mv": updated,
+        "readout_signed_update_participation": float(updated / delta.size),
+    }
+
+
 def adaptive_reference_diagnostics(
     train_rows: pd.DataFrame,
     final_eval_rows: pd.DataFrame,
@@ -2113,6 +2152,7 @@ def run_device_sequence(
     readout_forward_width: float,
     readout_forward_model: str,
     readout_weight_gate_model: str,
+    readout_gradient_source: str,
     learning_activation_gate_model: str,
     readout_weight_leak_resistance: float,
     readout_stack_shunt_resistance: float,
@@ -2181,6 +2221,7 @@ def run_device_sequence(
         readout_forward_width=readout_forward_width,
         readout_forward_model=readout_forward_model,
         readout_weight_gate_model=readout_weight_gate_model,
+        readout_gradient_source=readout_gradient_source,
         learning_activation_gate_model=learning_activation_gate_model,
         readout_weight_leak_resistance=readout_weight_leak_resistance,
         readout_stack_shunt_resistance=readout_stack_shunt_resistance,
@@ -2288,6 +2329,12 @@ def main() -> None:
             "Device model for the stored readout-weight gate in the forward score stack. "
             "'same' follows --readout-forward-model; 'switch' uses the nominal NMOS threshold as a hard gate."
         ),
+    )
+    ap.add_argument(
+        "--readout-gradient-source",
+        choices=READOUT_GRADIENT_SOURCES,
+        default="act",
+        help="Local state node that gates readout gradient storage: stored activation or preactivation capacitor.",
     )
     ap.add_argument("--learning-activation-gate-model", choices=LEARNING_ACTIVATION_GATE_MODELS, default="nrel")
     ap.add_argument("--readout-weight-leak-resistance", type=float, default=0.0)
@@ -2482,6 +2529,7 @@ def main() -> None:
         "readout_forward_width": args.readout_forward_width,
         "readout_forward_model": args.readout_forward_model,
         "readout_weight_gate_model": args.readout_weight_gate_model,
+        "readout_gradient_source": args.readout_gradient_source,
         "learning_activation_gate_model": args.learning_activation_gate_model,
         "readout_weight_leak_resistance": args.readout_weight_leak_resistance,
         "readout_stack_shunt_resistance": args.readout_stack_shunt_resistance,
@@ -2606,6 +2654,7 @@ def main() -> None:
         enabled=args.output_bias,
         decision_threshold=args.decision_threshold,
     )
+    readout_update_summary = readout_update_diagnostics(initial_weights, final_weights)
     adaptive_reference_summary = adaptive_reference_diagnostics(
         train_rows,
         final_eval_rows,
@@ -2695,6 +2744,7 @@ def main() -> None:
         "readout_forward_width": args.readout_forward_width,
         "readout_forward_model": args.readout_forward_model,
         "readout_weight_gate_model": args.readout_weight_gate_model,
+        "readout_gradient_source": args.readout_gradient_source,
         "learning_activation_gate_model": args.learning_activation_gate_model,
         "readout_weight_leak_resistance": args.readout_weight_leak_resistance,
         "readout_stack_shunt_resistance": args.readout_stack_shunt_resistance,
@@ -2768,6 +2818,7 @@ def main() -> None:
         **score_net_summary,
         **threshold_window_summary,
         **output_bias_summary,
+        **readout_update_summary,
         **adaptive_reference_summary,
         "initial_weights": initial_weights,
         "final_weights": final_weights,

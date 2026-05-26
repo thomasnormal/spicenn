@@ -376,6 +376,31 @@ def test_output_bias_diagnostics_are_empty_when_bias_disabled() -> None:
     assert diagnostics["output_bias_state_drift_warning"] is False
 
 
+def test_readout_update_diagnostics_report_feature_participation() -> None:
+    sys.path.insert(0, str(SPICE_DIR))
+    import run_device_mnist01_block_training as block
+
+    diagnostics = block.readout_update_diagnostics(
+        {"vwp": [0.36, 0.36, 0.36], "vwn": [0.34, 0.34, 0.34]},
+        {"vwp": [0.88, 0.361, 0.36], "vwn": [0.23, 0.34, 0.31]},
+    )
+
+    assert np.isclose(diagnostics["readout_signed_initial_mean"], 0.02)
+    assert np.isclose(diagnostics["readout_signed_delta_max_abs"], 0.63)
+    assert diagnostics["readout_signed_updated_features_10mv"] == 2
+    assert np.isclose(diagnostics["readout_signed_update_participation"], 2 / 3)
+
+
+def test_readout_update_diagnostics_are_empty_without_measured_final_weights() -> None:
+    sys.path.insert(0, str(SPICE_DIR))
+    import run_device_mnist01_block_training as block
+
+    diagnostics = block.readout_update_diagnostics({"vwp": [0.36], "vwn": [0.34]}, None)
+
+    assert diagnostics["readout_signed_delta_max_abs"] is None
+    assert diagnostics["readout_signed_updated_features_10mv"] is None
+
+
 def test_adaptive_reference_diagnostics_report_state_drift() -> None:
     sys.path.insert(0, str(SPICE_DIR))
     import run_device_mnist01_block_training as block
@@ -1937,6 +1962,32 @@ def test_block_netlist_can_emit_low_threshold_learning_activation_gates() -> Non
     assert "Mhdn3_d1 hdn3_d0 act3 hdn3_d1 0 NSENSE W=32u" in netlist
     assert "Mgvp3_a vdd act3 gvp3_a 0 NSENSE W=24u" in netlist
     assert "Mgvn3_a vdd act3 gvn3_a 0 NSENSE W=24u" in netlist
+
+
+def test_block_netlist_can_gate_readout_gradient_from_preactivation_state() -> None:
+    sys.path.insert(0, str(SPICE_DIR))
+    import run_device_mnist01_block_training as block
+
+    image_size = 4
+    weights = block.initial_block_weights(image_size, 2, 2, 1, seed=1)
+    sample = {f"x{i}": 0.2 + 0.01 * i for i in range(image_size * image_size)}
+    sample["target"] = 1.1
+    netlist = block.block_netlist(
+        [sample],
+        weights,
+        image_size=image_size,
+        block_size=2,
+        stride=2,
+        channels=1,
+        training_enabled=True,
+        readout_gradient_source="pre",
+    )
+
+    assert "\nB" not in netlist
+    assert "Mgvp3_a vdd pre3 gvp3_a 0 NREL W=24u" in netlist
+    assert "Mgvn3_a vdd pre3 gvn3_a 0 NREL W=24u" in netlist
+    assert "Mhdp3_d1 hdp3_d0 act3 hdp3_d1 0 NREL W=32u" in netlist
+    assert "Mgvp3_a vdd act3 gvp3_a" not in netlist
 
 
 def test_block_netlist_can_emit_passive_readout_weight_leak() -> None:

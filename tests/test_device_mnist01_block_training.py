@@ -59,6 +59,7 @@ def test_device_mnist01_block_script_help_runs_from_repo_root() -> None:
     assert "--measurement-detail" in proc.stdout
     assert "--readout-forward-width" in proc.stdout
     assert "--readout-eligibility-width" in proc.stdout
+    assert "--readout-eligibility-restore-width" in proc.stdout
     assert "--phase-time-scale" in proc.stdout
     assert "--forward-phase-mode" in proc.stdout
     assert "--input-voltage-jitter-sigma" in proc.stdout
@@ -1012,6 +1013,8 @@ def test_block_netlist_can_emit_readout_weighted_hidden_credit() -> None:
     )
 
     assert "\nB" not in netlist
+    assert "rvwp3" not in netlist
+    assert "rvwn3" not in netlist
     assert "Mhdp3_d0 vdd dp hdp3_d0 0 NSENSE" not in netlist
     assert "Mhdn3_d0 vdd dn hdn3_d0 0 NSENSE" not in netlist
     assert "Mhdp3_pv_e vdd dp hdp3_pv_e 0 NSENSE W=40u" in netlist
@@ -2090,6 +2093,41 @@ def test_block_netlist_can_store_forward_eligibility_for_readout_gradient() -> N
     assert "Mgvn3_a vdd eg3 gvn3_a 0 NREL W=24u" in netlist
     assert ".meas tran eg3_after_fwd_0 FIND V(eg3)" in netlist
     assert "Mhdp3_d1 hdp3_d0 act3 hdp3_d1 0 NREL W=32u" in netlist
+
+
+def test_block_netlist_can_restore_eligibility_for_readout_gradient() -> None:
+    sys.path.insert(0, str(SPICE_DIR))
+    import run_device_mnist01_block_training as block
+
+    image_size = 4
+    weights = block.initial_block_weights(image_size, 2, 2, 1, seed=1)
+    sample = {f"x{i}": 0.2 + 0.01 * i for i in range(image_size * image_size)}
+    sample["target"] = 1.1
+    netlist = block.block_netlist(
+        [sample],
+        weights,
+        image_size=image_size,
+        block_size=2,
+        stride=2,
+        channels=1,
+        training_enabled=True,
+        readout_gradient_source="eligibility-restored",
+        readout_eligibility_width=18.0,
+        readout_eligibility_restore_width=7.0,
+    )
+
+    assert "\nB" not in netlist
+    assert "Ceg3 eg3 0 10f IC=0" in netlist
+    assert "Cegon3 egon3 0 10f IC=0" in netlist
+    assert "Cegate3 egate3 0 4f IC=1.2" in netlist
+    assert "Regate3 egate3 vdd 50k" in netlist
+    assert "Mreset_egon3 egon3 rstg 0 0 NMOS W=4u" in netlist
+    assert "Meg3_s vdd pre3 eg3_s 0 NREL W=18u" in netlist
+    assert "Megate3_pd egate3 eg3 0 0 NSENSE W=7u" in netlist
+    assert "Megon3_p egon3 egate3 vdd vdd PMOS W=7u" in netlist
+    assert "Mgvp3_a vdd egon3 gvp3_a 0 NREL W=24u" in netlist
+    assert "Mgvn3_a vdd egon3 gvn3_a 0 NREL W=24u" in netlist
+    assert ".meas tran egon3_after_fwd_0 FIND V(egon3)" in netlist
 
 
 def test_block_netlist_can_emit_passive_readout_weight_leak() -> None:

@@ -31,7 +31,7 @@ HIDDEN_ACTIVATION_MODELS = ("nrel", "sense")
 HIDDEN_FORWARD_TOPOLOGIES = ("per-pixel-phase", "shared-phase", "always-on", "split-rail")
 READOUT_FORWARD_MODELS = ("nrel", "sense")
 READOUT_WEIGHT_GATE_MODELS = ("same", "nrel", "sense", "switch")
-READOUT_GRADIENT_SOURCES = ("act", "pre", "eligibility")
+READOUT_GRADIENT_SOURCES = ("act", "pre", "eligibility", "eligibility-restored")
 LEARNING_ACTIVATION_GATE_MODELS = ("nrel", "sense")
 HIDDEN_POLARITY_INITS = ("ink", "alternating-channel", "random-pixel")
 HIDDEN_CREDIT_MODES = ("direct-feedback", "readout-weighted", "readout-restored", "readout-restored-hardgate")
@@ -663,6 +663,7 @@ def block_netlist(
     readout_weight_gate_model: str = "same",
     readout_gradient_source: str = "act",
     readout_eligibility_width: float = 24.0,
+    readout_eligibility_restore_width: float = 8.0,
     learning_activation_gate_model: str = "nrel",
     readout_weight_leak_resistance: float = 0.0,
     readout_stack_shunt_resistance: float = 0.0,
@@ -781,6 +782,8 @@ def block_netlist(
         raise ValueError(f"readout_gradient_source must be one of {READOUT_GRADIENT_SOURCES}")
     if readout_eligibility_width <= 0.0:
         raise ValueError("readout_eligibility_width must be positive")
+    if readout_eligibility_restore_width <= 0.0:
+        raise ValueError("readout_eligibility_restore_width must be positive")
     if readout_weight_leak_resistance < 0.0:
         raise ValueError("readout_weight_leak_resistance must be nonnegative")
     if readout_stack_shunt_resistance < 0.0:
@@ -927,6 +930,7 @@ def block_netlist(
                 f".meas tran hdp{feature}_after_{idx} FIND V(hdp{feature}) AT={base + 7.10 * scale:.2f}n",
                 f".meas tran hdn{feature}_after_{idx} FIND V(hdn{feature}) AT={base + 7.10 * scale:.2f}n",
                 f".meas tran eg{feature}_after_fwd_{idx} FIND V(eg{feature}) AT={base + 2.95 * scale:.2f}n",
+                f".meas tran egon{feature}_after_fwd_{idx} FIND V(egon{feature}) AT={base + 2.95 * scale:.2f}n",
                 f".meas tran gvp{feature}_after_{idx} FIND V(gvp{feature}) AT={base + 9.10 * scale:.2f}n",
                 f".meas tran gvn{feature}_after_{idx} FIND V(gvn{feature}) AT={base + 9.10 * scale:.2f}n",
                 f".meas tran gbp{feature}_after_{idx} FIND V(gbp{feature}) AT={base + 9.10 * scale:.2f}n",
@@ -1183,6 +1187,8 @@ def block_netlist(
             f"Cgvp{feature} gvp{feature} 0 2f IC=0",
             f"Cgvn{feature} gvn{feature} 0 2f IC=0",
             f"Ceg{feature} eg{feature} 0 10f IC=0",
+            f"Cegon{feature} egon{feature} 0 10f IC=0",
+            f"Cegate{feature} egate{feature} 0 4f IC=1.2",
             f"Cgbp{feature} gbp{feature} 0 10f IC=0",
             f"Cgbn{feature} gbn{feature} 0 10f IC=0",
             f"Crgp{feature} rgp{feature} 0 4f IC=1.2",
@@ -1194,6 +1200,8 @@ def block_netlist(
             f"Rgvp{feature} gvp{feature} 0 1G",
             f"Rgvn{feature} gvn{feature} 0 1G",
             f"Reg{feature} eg{feature} 0 1G",
+            f"Regon{feature} egon{feature} 0 1G",
+            f"Regate{feature} egate{feature} vdd 50k",
             f"Rgbp{feature} gbp{feature} 0 1G",
             f"Rgbn{feature} gbn{feature} 0 1G",
             f"Rrgp{feature} rgp{feature} vdd 50k",
@@ -1278,6 +1286,7 @@ def block_netlist(
             f"Mreset_gvp{feature} gvp{feature} rstg 0 0 NMOS W=4u L=180n",
             f"Mreset_gvn{feature} gvn{feature} rstg 0 0 NMOS W=4u L=180n",
             f"Mreset_eg{feature} eg{feature} rstg 0 0 NMOS W=4u L=180n",
+            f"Mreset_egon{feature} egon{feature} rstg 0 0 NMOS W=4u L=180n",
             f"Mreset_gbp{feature} gbp{feature} rstg 0 0 NMOS W=4u L=180n",
             f"Mreset_gbn{feature} gbn{feature} rstg 0 0 NMOS W=4u L=180n",
         ]
@@ -1436,6 +1445,8 @@ def block_netlist(
                 readout_gradient_gate_node = f"pre{feature}"
             elif readout_gradient_source == "eligibility":
                 readout_gradient_gate_node = f"eg{feature}"
+            elif readout_gradient_source == "eligibility-restored":
+                readout_gradient_gate_node = f"egon{feature}"
             else:
                 readout_gradient_gate_node = f"act{feature}"
             lines += [
@@ -1447,7 +1458,15 @@ def block_netlist(
                         f"Meg{feature}_f eg{feature}_s {hidden_forward_clock} eg{feature} 0 NMOS W={readout_eligibility_width:.6g}u L=180n",
                         f"Reg{feature}_s eg{feature}_s 0 1G",
                     ]
-                    if readout_gradient_source == "eligibility"
+                    if readout_gradient_source in {"eligibility", "eligibility-restored"}
+                    else []
+                ),
+                *(
+                    [
+                        f"Megate{feature}_pd egate{feature} eg{feature} 0 0 NSENSE W={readout_eligibility_restore_width:.6g}u L=180n",
+                        f"Megon{feature}_p egon{feature} egate{feature} vdd vdd PMOS W={readout_eligibility_restore_width:.6g}u L=180n",
+                    ]
+                    if readout_gradient_source == "eligibility-restored"
                     else []
                 ),
                 *(
@@ -2249,6 +2268,7 @@ def run_device_sequence(
     readout_weight_gate_model: str,
     readout_gradient_source: str,
     readout_eligibility_width: float,
+    readout_eligibility_restore_width: float,
     learning_activation_gate_model: str,
     readout_weight_leak_resistance: float,
     readout_stack_shunt_resistance: float,
@@ -2323,6 +2343,7 @@ def run_device_sequence(
         readout_weight_gate_model=readout_weight_gate_model,
         readout_gradient_source=readout_gradient_source,
         readout_eligibility_width=readout_eligibility_width,
+        readout_eligibility_restore_width=readout_eligibility_restore_width,
         learning_activation_gate_model=learning_activation_gate_model,
         readout_weight_leak_resistance=readout_weight_leak_resistance,
         readout_stack_shunt_resistance=readout_stack_shunt_resistance,
@@ -2441,10 +2462,11 @@ def main() -> None:
         default="act",
         help=(
             "Local state node that gates readout gradient storage: stored activation, preactivation, "
-            "or a forward-sampled eligibility capacitor."
+            "a forward-sampled eligibility capacitor, or a restored eligibility rail."
         ),
     )
     ap.add_argument("--readout-eligibility-width", type=float, default=24.0)
+    ap.add_argument("--readout-eligibility-restore-width", type=float, default=8.0)
     ap.add_argument("--learning-activation-gate-model", choices=LEARNING_ACTIVATION_GATE_MODELS, default="nrel")
     ap.add_argument("--readout-weight-leak-resistance", type=float, default=0.0)
     ap.add_argument("--readout-stack-shunt-resistance", type=float, default=0.0)
@@ -2575,6 +2597,8 @@ def main() -> None:
         raise ValueError("readout-weight-init-sigma must be nonnegative")
     if args.readout_eligibility_width <= 0.0:
         raise ValueError("readout-eligibility-width must be positive")
+    if args.readout_eligibility_restore_width <= 0.0:
+        raise ValueError("readout-eligibility-restore-width must be positive")
     if args.measurement_detail != "full" and not args.continuous_final_eval:
         raise ValueError("--measurement-detail outputs requires --continuous-final-eval")
     blocks, feature_count = block_topology(args.image_size, args.block_size, args.stride, args.channels)
@@ -2674,6 +2698,7 @@ def main() -> None:
         "readout_weight_gate_model": args.readout_weight_gate_model,
         "readout_gradient_source": args.readout_gradient_source,
         "readout_eligibility_width": args.readout_eligibility_width,
+        "readout_eligibility_restore_width": args.readout_eligibility_restore_width,
         "learning_activation_gate_model": args.learning_activation_gate_model,
         "readout_weight_leak_resistance": args.readout_weight_leak_resistance,
         "readout_stack_shunt_resistance": args.readout_stack_shunt_resistance,
@@ -2894,6 +2919,7 @@ def main() -> None:
         "readout_weight_gate_model": args.readout_weight_gate_model,
         "readout_gradient_source": args.readout_gradient_source,
         "readout_eligibility_width": args.readout_eligibility_width,
+        "readout_eligibility_restore_width": args.readout_eligibility_restore_width,
         "learning_activation_gate_model": args.learning_activation_gate_model,
         "readout_weight_leak_resistance": args.readout_weight_leak_resistance,
         "readout_stack_shunt_resistance": args.readout_stack_shunt_resistance,

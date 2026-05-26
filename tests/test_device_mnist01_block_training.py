@@ -46,6 +46,7 @@ def test_device_mnist01_block_script_help_runs_from_repo_root() -> None:
     assert "--hidden-activation-model" in proc.stdout
     assert "--hidden-polarity-init" in proc.stdout
     assert "--readout-forward-model" in proc.stdout
+    assert "--readout-forward-topology" in proc.stdout
     assert "--learning-activation-gate-model" in proc.stdout
     assert "--readout-weight-leak-resistance" in proc.stdout
     assert "--readout-stack-shunt-resistance" in proc.stdout
@@ -142,6 +143,7 @@ def test_block_training_schedule_can_split_hidden_and_output_forward_phases() ->
     assert "Vfwd fwd 0 PWL" in phases
     assert "Vfwdh fwdh 0 PWL(0n 0" in phases
     assert "Vfwdhn fwdhn 0 PWL(0n 1.2" in phases
+    assert "Vfwdon fwdon 0 PWL(0n 1.2" in phases
     assert "0.75n 1.2" in phases
     assert "2.145n 1.2" in phases
     assert "12.8n 1.2" in phases
@@ -1025,6 +1027,63 @@ def test_block_netlist_can_pulse_input_rows_for_split_rail_topology() -> None:
             training_enabled=True,
             input_waveform_mode="row-pulsed",
             input_row_drive_width=0.0,
+        )
+
+
+def test_block_netlist_can_emit_conductance_row_readout_topology() -> None:
+    sys.path.insert(0, str(SPICE_DIR))
+    import pytest
+    import run_device_mnist01_block_training as block
+
+    image_size = 4
+    weights = block.initial_block_weights(image_size, 2, 2, 1, seed=1)
+    sample = {f"x{i}": 0.2 + 0.01 * i for i in range(image_size * image_size)}
+    sample["target"] = 1.1
+    netlist = block.block_netlist(
+        [sample],
+        weights,
+        image_size=image_size,
+        block_size=2,
+        stride=2,
+        channels=1,
+        training_enabled=True,
+        score_mode="differential",
+        forward_phase_mode="split-hidden-output",
+        readout_forward_topology="conductance-row",
+        readout_weight_gate_model="switch",
+    )
+
+    assert "\nB" not in netlist
+    assert "Vfwdon fwdon 0 PWL" in netlist
+    assert "Mactrow3_n actrow3 fwdo act3 0 NMOS W=16u L=180n" in netlist
+    assert "Mactrow3_p actrow3 fwdon act3 vdd PMOS W=32u L=180n" in netlist
+    assert "Mactrow3_rst actrow3 rstf 0 0 NMOS W=4u L=180n" in netlist
+    assert "Movpos3_cond actrow3 vwp3 score 0 NMOS W=64u L=180n" in netlist
+    assert "Movneg3_cond actrow3 vwn3 scoren 0 NMOS W=48u L=180n" in netlist
+    assert "Movpos3_a vdd act3 op3_0" not in netlist
+    assert "Movpos3_f op3_1 fwdo score" not in netlist
+    with pytest.raises(ValueError, match="readout_forward_topology"):
+        block.block_netlist(
+            [sample],
+            weights,
+            image_size=image_size,
+            block_size=2,
+            stride=2,
+            channels=1,
+            training_enabled=True,
+            readout_forward_topology="bad",
+        )
+    with pytest.raises(ValueError, match="conductance-row"):
+        block.block_netlist(
+            [sample],
+            weights,
+            image_size=image_size,
+            block_size=2,
+            stride=2,
+            channels=1,
+            training_enabled=True,
+            score_mode="single-ended",
+            readout_forward_topology="conductance-row",
         )
 
 

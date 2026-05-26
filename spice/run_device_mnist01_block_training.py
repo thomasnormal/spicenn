@@ -32,6 +32,7 @@ TARGET_POLARITIES = ("active-high", "active-low")
 HIDDEN_ACTIVATION_MODELS = ("nrel", "sense")
 HIDDEN_FORWARD_TOPOLOGIES = ("per-pixel-phase", "shared-phase", "always-on", "split-rail")
 READOUT_FORWARD_MODELS = ("nrel", "sense")
+READOUT_FORWARD_TOPOLOGIES = ("stacked", "conductance-row")
 READOUT_WEIGHT_GATE_MODELS = ("same", "nrel", "sense", "switch")
 READOUT_GRADIENT_SOURCES = ("act", "pre", "eligibility", "eligibility-restored")
 LEARNING_ACTIVATION_GATE_MODELS = ("nrel", "sense")
@@ -603,6 +604,7 @@ def block_repeated_phases(
         ("Vfwdh", "fwdh", pulse_wave(windows["fwdh"], schedule.stop_ns)),
         ("Vfwdhn", "fwdhn", active_low_pulse_wave(windows["fwdh"], schedule.stop_ns)),
         ("Vfwdo", "fwdo", pulse_wave(windows["fwdo"], schedule.stop_ns)),
+        ("Vfwdon", "fwdon", active_low_pulse_wave(windows["fwdo"], schedule.stop_ns)),
         ("Verr", "err", pulse_wave(windows["err"], schedule.stop_ns)),
         ("Vbwd", "bwd", pulse_wave(windows["bwd"], schedule.stop_ns)),
         ("Vacc", "acc", pulse_wave(windows["acc"], schedule.stop_ns)),
@@ -743,6 +745,7 @@ def block_netlist(
     hidden_activation_model: str = "nrel",
     readout_forward_width: float = 64.0,
     readout_forward_model: str = "nrel",
+    readout_forward_topology: str = "stacked",
     readout_weight_gate_model: str = "same",
     readout_gradient_source: str = "act",
     readout_eligibility_width: float = 24.0,
@@ -861,6 +864,10 @@ def block_netlist(
         raise ValueError("hidden_stack_parasitic_capacitance must be nonnegative")
     if readout_forward_width <= 0.0:
         raise ValueError("readout_forward_width must be positive")
+    if readout_forward_topology not in READOUT_FORWARD_TOPOLOGIES:
+        raise ValueError(f"readout_forward_topology must be one of {READOUT_FORWARD_TOPOLOGIES}")
+    if readout_forward_topology == "conductance-row" and score_mode != "differential":
+        raise ValueError("conductance-row readout_forward_topology requires differential score_mode")
     if readout_weight_gate_model not in READOUT_WEIGHT_GATE_MODELS:
         raise ValueError(f"readout_weight_gate_model must be one of {READOUT_WEIGHT_GATE_MODELS}")
     if readout_gradient_source not in READOUT_GRADIENT_SOURCES:
@@ -1570,6 +1577,34 @@ def block_netlist(
                 readout_gradient_gate_node = f"egon{feature}"
             else:
                 readout_gradient_gate_node = f"act{feature}"
+            if readout_forward_topology == "conductance-row":
+                readout_forward_lines = [
+                    f"Mactrow{feature}_n actrow{feature} {readout_forward_clock} act{feature} 0 NMOS W={max(1.0, readout_forward_width / 4.0):.6g}u L=180n",
+                    f"Mactrow{feature}_p actrow{feature} fwdon act{feature} vdd PMOS W={max(2.0, readout_forward_width / 2.0):.6g}u L=180n",
+                    f"Mactrow{feature}_rst actrow{feature} rstf 0 0 NMOS W=4u L=180n",
+                    f"Ractrow{feature} actrow{feature} 0 1e12",
+                    f"Movpos{feature}_cond actrow{feature} vwp{feature} score 0 {readout_weight_model} W={readout_forward_width:.6g}u L=180n",
+                    f"Movneg{feature}_cond actrow{feature} vwn{feature} scoren 0 {readout_weight_model} W={readout_negative_forward_width:.6g}u L=180n",
+                ]
+            else:
+                readout_forward_lines = [
+                    f"Movpos{feature}_a vdd act{feature} op{feature}_0 0 {readout_model} W={readout_forward_width:.6g}u L=180n",
+                    f"Movpos{feature}_w op{feature}_0 vwp{feature} op{feature}_1 0 {readout_weight_model} W={readout_forward_width:.6g}u L=180n",
+                    f"Movpos{feature}_f op{feature}_1 {readout_forward_clock} score 0 {readout_model} W={readout_forward_width:.6g}u L=180n",
+                    *(
+                        [
+                            f"Movneg{feature}_a vdd act{feature} on{feature}_0 0 {readout_model} W={readout_negative_forward_width:.6g}u L=180n",
+                            f"Movneg{feature}_w on{feature}_0 vwn{feature} on{feature}_1 0 {readout_weight_model} W={readout_negative_forward_width:.6g}u L=180n",
+                            f"Movneg{feature}_f on{feature}_1 {readout_forward_clock} scoren 0 {readout_model} W={readout_negative_forward_width:.6g}u L=180n",
+                        ]
+                        if score_mode == "differential"
+                        else [
+                            f"Movneg{feature}_f score {readout_forward_clock} on{feature}_0 0 {readout_model} W={readout_negative_forward_width:.6g}u L=180n",
+                            f"Movneg{feature}_a on{feature}_0 act{feature} on{feature}_1 0 {readout_model} W={readout_negative_forward_width:.6g}u L=180n",
+                            f"Movneg{feature}_w on{feature}_1 vwn{feature} 0 0 {readout_weight_model} W={readout_negative_forward_width:.6g}u L=180n",
+                        ]
+                    ),
+                ]
             lines += [
                 *hidden_bias_lines,
                 *hidden_activation_lines,
@@ -1613,22 +1648,7 @@ def block_netlist(
                     if activation_competition_width > 0.0
                     else []
                 ),
-                f"Movpos{feature}_a vdd act{feature} op{feature}_0 0 {readout_model} W={readout_forward_width:.6g}u L=180n",
-                f"Movpos{feature}_w op{feature}_0 vwp{feature} op{feature}_1 0 {readout_weight_model} W={readout_forward_width:.6g}u L=180n",
-                f"Movpos{feature}_f op{feature}_1 {readout_forward_clock} score 0 {readout_model} W={readout_forward_width:.6g}u L=180n",
-                *(
-                    [
-                        f"Movneg{feature}_a vdd act{feature} on{feature}_0 0 {readout_model} W={readout_negative_forward_width:.6g}u L=180n",
-                        f"Movneg{feature}_w on{feature}_0 vwn{feature} on{feature}_1 0 {readout_weight_model} W={readout_negative_forward_width:.6g}u L=180n",
-                        f"Movneg{feature}_f on{feature}_1 {readout_forward_clock} scoren 0 {readout_model} W={readout_negative_forward_width:.6g}u L=180n",
-                    ]
-                    if score_mode == "differential"
-                    else [
-                        f"Movneg{feature}_f score {readout_forward_clock} on{feature}_0 0 {readout_model} W={readout_negative_forward_width:.6g}u L=180n",
-                        f"Movneg{feature}_a on{feature}_0 act{feature} on{feature}_1 0 {readout_model} W={readout_negative_forward_width:.6g}u L=180n",
-                        f"Movneg{feature}_w on{feature}_1 vwn{feature} 0 0 {readout_weight_model} W={readout_negative_forward_width:.6g}u L=180n",
-                    ]
-                ),
+                *readout_forward_lines,
                 *(
                     [
                         f"Mrvwp{feature}_p rvwp{feature} rvwn{feature} vdd vdd PMOS W={readout_feedback_restore_width:.6g}u L=180n",
@@ -2386,6 +2406,7 @@ def run_device_sequence(
     hidden_activation_model: str,
     readout_forward_width: float,
     readout_forward_model: str,
+    readout_forward_topology: str,
     readout_weight_gate_model: str,
     readout_gradient_source: str,
     readout_eligibility_width: float,
@@ -2463,6 +2484,7 @@ def run_device_sequence(
         hidden_activation_model=hidden_activation_model,
         readout_forward_width=readout_forward_width,
         readout_forward_model=readout_forward_model,
+        readout_forward_topology=readout_forward_topology,
         readout_weight_gate_model=readout_weight_gate_model,
         readout_gradient_source=readout_gradient_source,
         readout_eligibility_width=readout_eligibility_width,
@@ -2572,6 +2594,15 @@ def main() -> None:
     ap.add_argument("--hidden-polarity-init", choices=HIDDEN_POLARITY_INITS, default="ink")
     ap.add_argument("--readout-forward-width", type=float, default=64.0)
     ap.add_argument("--readout-forward-model", choices=READOUT_FORWARD_MODELS, default="nrel")
+    ap.add_argument(
+        "--readout-forward-topology",
+        choices=READOUT_FORWARD_TOPOLOGIES,
+        default="stacked",
+        help=(
+            "stacked uses the historical act/weight/phase MOS stack; conductance-row pulses act through "
+            "a row driver and lets stored readout weights act as conductances into score/scoren."
+        ),
+    )
     ap.add_argument(
         "--readout-weight-gate-model",
         choices=READOUT_WEIGHT_GATE_MODELS,
@@ -2835,6 +2866,7 @@ def main() -> None:
         "hidden_activation_model": args.hidden_activation_model,
         "readout_forward_width": args.readout_forward_width,
         "readout_forward_model": args.readout_forward_model,
+        "readout_forward_topology": args.readout_forward_topology,
         "readout_weight_gate_model": args.readout_weight_gate_model,
         "readout_gradient_source": args.readout_gradient_source,
         "readout_eligibility_width": args.readout_eligibility_width,
@@ -3060,6 +3092,7 @@ def main() -> None:
         "hidden_polarity_init": args.hidden_polarity_init,
         "readout_forward_width": args.readout_forward_width,
         "readout_forward_model": args.readout_forward_model,
+        "readout_forward_topology": args.readout_forward_topology,
         "readout_weight_gate_model": args.readout_weight_gate_model,
         "readout_gradient_source": args.readout_gradient_source,
         "readout_eligibility_width": args.readout_eligibility_width,

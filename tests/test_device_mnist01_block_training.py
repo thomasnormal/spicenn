@@ -76,6 +76,7 @@ def test_device_mnist01_block_script_help_runs_from_repo_root() -> None:
     assert "--input-transient-noise-sigma" in proc.stdout
     assert "--phase-transient-noise-sigma" in proc.stdout
     assert "--transient-noise-timestep" in proc.stdout
+    assert "--tran-step-ps" in proc.stdout
     assert "--passive-mismatch-sigma" in proc.stdout
     assert "--state-ic-mismatch-sigma" in proc.stdout
     assert "--perturbation-seed" in proc.stdout
@@ -936,6 +937,41 @@ def test_block_netlist_emits_per_pixel_trainable_caps_and_no_behavioral_sources(
     assert ".meas tran gvn3_after_0 FIND V(gvn3) AT=18.20n" in netlist
     assert ".tran 10p 32.00n uic" in netlist
     assert "Mrelu_o vdd score out 0 NSENSE" in netlist
+
+
+def test_block_netlist_can_emit_custom_transient_step_for_runtime_screens() -> None:
+    sys.path.insert(0, str(SPICE_DIR))
+    import pytest
+    import run_device_mnist01_block_training as block
+
+    image_size = 4
+    weights = block.initial_block_weights(image_size, 2, 2, 1, seed=1)
+    sample = {f"x{i}": 0.2 + 0.01 * i for i in range(image_size * image_size)}
+    sample["target"] = 1.1
+    netlist = block.block_netlist(
+        [sample],
+        weights,
+        image_size=image_size,
+        block_size=2,
+        stride=2,
+        channels=1,
+        training_enabled=True,
+        tran_step_ps=25.0,
+    )
+
+    assert "\nB" not in netlist
+    assert ".tran 25p 16.00n uic" in netlist
+    with pytest.raises(ValueError, match="tran_step_ps"):
+        block.block_netlist(
+            [sample],
+            weights,
+            image_size=image_size,
+            block_size=2,
+            stride=2,
+            channels=1,
+            training_enabled=True,
+            tran_step_ps=0.0,
+        )
 
 
 def test_block_netlist_can_wrap_supply_input_and_phase_sources_with_trnoise() -> None:

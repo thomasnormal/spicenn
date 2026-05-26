@@ -867,6 +867,7 @@ def block_netlist(
     input_waveform_mode: str = "held",
     input_row_drive_width: float = 12.0,
     measurement_detail: str = "full",
+    tran_step_ps: float = 10.0,
 ) -> str:
     if readout_apply_scale <= 0.0:
         raise ValueError("readout_apply_scale must be positive")
@@ -1062,6 +1063,8 @@ def block_netlist(
         raise ValueError("input_row_drive_width must be positive")
     if measurement_detail not in MEASUREMENT_DETAILS:
         raise ValueError(f"measurement_detail must be one of {MEASUREMENT_DETAILS}")
+    if tran_step_ps <= 0.0:
+        raise ValueError("tran_step_ps must be positive")
     blocks, expected_features = block_topology(image_size, block_size, stride, channels)
     feature_count, block_len = block_weight_shape(weights)
     if feature_count != expected_features or block_len != len(blocks[0]):
@@ -2454,7 +2457,7 @@ def block_netlist(
         ),
         "",
         ".options method=gear maxord=2",
-        f".tran 10p {stop:.2f}n uic",
+        f".tran {tran_step_ps:.12g}p {stop:.2f}n uic",
         *measures,
         ".control",
         "run",
@@ -3176,6 +3179,7 @@ def run_device_sequence(
     input_waveform_mode: str,
     input_row_drive_width: float,
     measurement_detail: str,
+    tran_step_ps: float,
 ) -> pd.DataFrame:
     netlist = block_netlist(
         samples,
@@ -3269,6 +3273,7 @@ def run_device_sequence(
         input_waveform_mode=input_waveform_mode,
         input_row_drive_width=input_row_drive_width,
         measurement_detail=measurement_detail,
+        tran_step_ps=tran_step_ps,
     )
     if "\nB" in netlist:
         raise ValueError("block-stride device runner generated a behavioral source")
@@ -3544,6 +3549,15 @@ def main() -> None:
     ap.add_argument("--complement-rail-scale", type=float, default=0.5)
     ap.add_argument("--hidden-bias-positive-init", type=float, default=0.50)
     ap.add_argument("--hidden-bias-negative-init", type=float, default=0.20)
+    ap.add_argument(
+        "--tran-step-ps",
+        type=float,
+        default=10.0,
+        help=(
+            "Transient print step in ps. This does not change circuit timing; larger values are useful "
+            "for fast screening after correlation against the default 10 ps setting."
+        ),
+    )
     ap.add_argument("--decision-threshold", type=float, default=0.10)
     ap.add_argument(
         "--continuous-final-eval",
@@ -3579,6 +3593,8 @@ def main() -> None:
         raise ValueError("phase-transient-noise-sigma must be nonnegative")
     if args.transient_noise_timestep <= 0.0:
         raise ValueError("transient-noise-timestep must be positive")
+    if args.tran_step_ps <= 0.0:
+        raise ValueError("tran-step-ps must be positive")
     if args.passive_mismatch_sigma < 0.0:
         raise ValueError("passive-mismatch-sigma must be nonnegative")
     if args.state_ic_mismatch_sigma < 0.0:
@@ -3749,6 +3765,7 @@ def main() -> None:
         "input_waveform_mode": args.input_waveform_mode,
         "input_row_drive_width": args.input_row_drive_width,
         "measurement_detail": args.measurement_detail,
+        "tran_step_ps": args.tran_step_ps,
     }
     if args.skip_initial_eval:
         initial_eval_rows = pd.DataFrame()
@@ -4011,6 +4028,7 @@ def main() -> None:
         ),
         "score_mode": args.score_mode,
         "measurement_detail": args.measurement_detail,
+        "tran_step_ps": args.tran_step_ps,
         "hidden_bias_positive_init": args.hidden_bias_positive_init,
         "hidden_bias_negative_init": args.hidden_bias_negative_init,
         "learning_device_implementation": "transistor_passive",

@@ -42,7 +42,7 @@ LEARNING_ACTIVATION_GATE_MODELS = ("nrel", "sense")
 HIDDEN_POLARITY_INITS = ("ink", "alternating-channel", "random-pixel")
 HIDDEN_CREDIT_MODES = ("direct-feedback", "readout-weighted", "readout-restored", "readout-restored-hardgate")
 ERROR_SIGNAL_MODES = ("raw", "restored", "restored-hidden")
-ERROR_TOPOLOGIES = ("competition", "binary-descent")
+ERROR_TOPOLOGIES = ("competition", "binary-descent", "label-descent")
 SCORE_MODES = ("single-ended", "differential")
 OUTPUT_DIFFERENTIAL_STAGES = ("simple", "score-gated", "latched")
 OUTPUT_DECISION_REF_SOURCES = ("voltage", "divider", "adaptive", "track")
@@ -2344,15 +2344,25 @@ def block_netlist(
                 "Mdn_t1 dn_t target 0 0 NSENSE W=24u L=180n",
             ]
             if error_topology == "competition"
-            else [
-                "* Binary descent output error: dp ~= targetp*scoren, dn ~= targetn*score.",
-                "Mdp_bd_t vdd targetp dp_bd_t 0 NSENSE W=48u L=180n",
-                "Mdp_bd_s dp_bd_t scoren dp_bd_s 0 NSENSE W=48u L=180n",
-                "Mdp_bd_e dp_bd_s err dp 0 NSENSE W=48u L=180n",
-                "Mdn_bd_t vdd targetn dn_bd_t 0 NSENSE W=48u L=180n",
-                "Mdn_bd_s dn_bd_t score dn_bd_s 0 NSENSE W=48u L=180n",
-                "Mdn_bd_e dn_bd_s err dn 0 NSENSE W=48u L=180n",
-            ]
+            else (
+                [
+                    "* Binary descent output error: dp ~= targetp*scoren, dn ~= targetn*score.",
+                    "Mdp_bd_t vdd targetp dp_bd_t 0 NSENSE W=48u L=180n",
+                    "Mdp_bd_s dp_bd_t scoren dp_bd_s 0 NSENSE W=48u L=180n",
+                    "Mdp_bd_e dp_bd_s err dp 0 NSENSE W=48u L=180n",
+                    "Mdn_bd_t vdd targetn dn_bd_t 0 NSENSE W=48u L=180n",
+                    "Mdn_bd_s dn_bd_t score dn_bd_s 0 NSENSE W=48u L=180n",
+                    "Mdn_bd_e dn_bd_s err dn 0 NSENSE W=48u L=180n",
+                ]
+                if error_topology == "binary-descent"
+                else [
+                    "* Label descent output error: dp ~= targetp, dn ~= targetn during err.",
+                    "Mdp_ld_t vdd targetp dp_ld_t 0 NSENSE W=48u L=180n",
+                    "Mdp_ld_e dp_ld_t err dp 0 NSENSE W=48u L=180n",
+                    "Mdn_ld_t vdd targetn dn_ld_t 0 NSENSE W=48u L=180n",
+                    "Mdn_ld_e dn_ld_t err dn 0 NSENSE W=48u L=180n",
+                ]
+            )
         ),
         *(
             [

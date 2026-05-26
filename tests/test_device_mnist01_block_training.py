@@ -1666,6 +1666,41 @@ def test_block_netlist_can_emit_binary_descent_error_topology() -> None:
         )
 
 
+def test_block_netlist_can_emit_label_descent_error_topology() -> None:
+    sys.path.insert(0, str(SPICE_DIR))
+    import run_device_mnist01_block_training as block
+
+    image_size = 4
+    weights = block.initial_block_weights(image_size, 2, 2, 1, seed=1)
+    sample = {f"x{i}": 0.2 + 0.01 * i for i in range(image_size * image_size)}
+    sample["target"] = 0.0
+    sample["positive_label"] = 0.0
+    netlist = block.block_netlist(
+        [sample],
+        weights,
+        image_size=image_size,
+        block_size=2,
+        stride=2,
+        channels=1,
+        training_enabled=True,
+        score_mode="differential",
+        error_topology="label-descent",
+    )
+
+    assert "\nB" not in netlist
+    assert "Vtargetp targetp 0 PWL(0n 0" in netlist
+    assert "Vtargetn targetn 0 PWL(0n 1.1" in netlist
+    assert "* Label descent output error: dp ~= targetp, dn ~= targetn during err." in netlist
+    assert "Mdp_ld_t vdd targetp dp_ld_t 0 NSENSE W=48u L=180n" in netlist
+    assert "Mdp_ld_e dp_ld_t err dp 0 NSENSE W=48u L=180n" in netlist
+    assert "Mdn_ld_t vdd targetn dn_ld_t 0 NSENSE W=48u L=180n" in netlist
+    assert "Mdn_ld_e dn_ld_t err dn 0 NSENSE W=48u L=180n" in netlist
+    assert "Mdp_bd_t" not in netlist
+    assert "Mdn_bd_t" not in netlist
+    assert "Mdp_sn0" not in netlist
+    assert "Mdn_t0" not in netlist
+
+
 def test_block_netlist_can_resize_readout_gradient_restore() -> None:
     sys.path.insert(0, str(SPICE_DIR))
     import run_device_mnist01_block_training as block

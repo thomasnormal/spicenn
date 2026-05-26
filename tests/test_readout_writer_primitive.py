@@ -100,6 +100,20 @@ def test_readout_writer_distribution_primitive_emits_shared_gate_shunt_normalize
     assert "Mgvp0_norm gvp0 gnorm 0 0 NSENSE" not in netlist
 
 
+def test_readout_writer_alternating_primitive_emits_two_sample_schedule() -> None:
+    netlist = writer.generate_alternating_netlist(update_span=0.34, update_low_floor=0.20)
+
+    assert "\nB" not in netlist
+    assert "Vdp dp 0 PWL" in netlist
+    assert "Vdn dn 0 PWL" in netlist
+    assert "Vrstg rstg 0 PWL" in netlist
+    assert "Mreset_gvp gvp0 rstg 0 0 NMOS W=4u" in netlist
+    assert "Vvwhi_ref vwhi_ref 0 0.7" in netlist
+    assert "Vvwlo_ref vwlo_ref 0 0.2" in netlist
+    assert ".meas tran signed_after_positive PARAM='vwp_after_positive-vwn_after_positive'" in netlist
+    assert ".meas tran reversal_signed_delta PARAM='signed_after_negative-signed_after_positive'" in netlist
+
+
 def test_readout_writer_primitive_keeps_legacy_rail_writer_available() -> None:
     netlist = writer.generate_netlist(update_mode="negative", topology="rail", update_scale=0.1)
 
@@ -295,6 +309,26 @@ def test_readout_writer_primitive_ngspice_low_floor_prevents_opposite_rail_erasu
     assert float(floored["vwn_after"]) > 0.18
     assert float(floored["signed_delta"]) > 0.25
     assert abs(float(floored["common_delta"])) < 0.15
+
+
+def test_readout_writer_alternating_ngspice_opposite_errors_reverse_same_weight_pair(
+    tmp_path: Path,
+    ngspice_path: str,
+) -> None:
+    measures = run_netlist(
+        ngspice_path,
+        tmp_path / "readout_writer_alternating.cir",
+        writer.generate_alternating_netlist(update_span=0.34, update_low_floor=0.20),
+        timeout=20.0,
+    )
+
+    assert float(measures["positive_signed_delta"]) > 0.25
+    assert float(measures["signed_after_positive"]) > 0.25
+    assert float(measures["reversal_signed_delta"]) < -0.50
+    assert float(measures["signed_after_negative"]) < -0.20
+    assert float(measures["vwp_after_negative"]) > 0.18
+    assert float(measures["vwn_after_positive"]) > 0.18
+    assert 0.20 < float(measures["common_after_negative"]) < 0.60
 
 
 def test_readout_writer_distribution_ngspice_direct_gate_starves_weak_feature(

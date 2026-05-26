@@ -18,7 +18,7 @@ ERROR_CASES = (
     "target_negative_score_negative",
     "neutral",
 )
-ERROR_TOPOLOGIES = ("competition", "binary-descent")
+ERROR_TOPOLOGIES = ("competition", "binary-descent", "label-descent")
 
 
 def case_values(case: str, *, score_center: float, score_delta: float) -> tuple[float, float, float]:
@@ -120,7 +120,7 @@ def generate_netlist(
             "Mdn_t0 dn err dn_t 0 NSENSE W=24u L=180n",
             "Mdn_t1 dn_t target 0 0 NSENSE W=24u L=180n",
         ]
-    else:
+    elif error_topology == "binary-descent":
         lines += [
             "",
             "* Binary descent output error: dp ~= targetp*scoren, dn ~= targetn*score.",
@@ -130,6 +130,15 @@ def generate_netlist(
             "Mdn_bd_t vdd targetn dn_bd_t 0 NSENSE W=48u L=180n",
             "Mdn_bd_s dn_bd_t score dn_bd_s 0 NSENSE W=48u L=180n",
             "Mdn_bd_e dn_bd_s err dn 0 NSENSE W=48u L=180n",
+        ]
+    else:
+        lines += [
+            "",
+            "* Label descent output error: dp ~= targetp, dn ~= targetn during err.",
+            "Mdp_ld_t vdd targetp dp_ld_t 0 NSENSE W=48u L=180n",
+            "Mdp_ld_e dp_ld_t err dp 0 NSENSE W=48u L=180n",
+            "Mdn_ld_t vdd targetn dn_ld_t 0 NSENSE W=48u L=180n",
+            "Mdn_ld_e dn_ld_t err dn 0 NSENSE W=48u L=180n",
         ]
     if restore_error:
         lines += [
@@ -180,6 +189,14 @@ def expected_binary_descent_sign(case: str) -> float:
     return 0.0
 
 
+def expected_label_descent_sign(case: str) -> float:
+    if case in {"target_positive_score_negative", "target_positive_score_positive"}:
+        return 1.0
+    if case in {"target_negative_score_positive", "target_negative_score_negative"}:
+        return -1.0
+    return 0.0
+
+
 def classify_sign(actual: float, expected: float, *, min_abs_margin: float) -> str:
     if abs(expected) < 1e-15:
         return "dead_zone" if abs(actual) < min_abs_margin else "biased"
@@ -193,11 +210,13 @@ def classify_sign(actual: float, expected: float, *, min_abs_margin: float) -> s
 
 
 def classify_row(row: dict[str, Any], *, min_abs_margin: float) -> dict[str, str]:
-    expected = (
-        expected_binary_descent_sign(str(row["error_case"]))
-        if str(row.get("error_topology", "competition")) == "binary-descent"
-        else expected_raw_sign(str(row["error_case"]))
-    )
+    topology = str(row.get("error_topology", "competition"))
+    if topology == "binary-descent":
+        expected = expected_binary_descent_sign(str(row["error_case"]))
+    elif topology == "label-descent":
+        expected = expected_label_descent_sign(str(row["error_case"]))
+    else:
+        expected = expected_raw_sign(str(row["error_case"]))
     classifications = {
         "raw_error_classification": classify_sign(
             float(row["raw_error_diff"]),

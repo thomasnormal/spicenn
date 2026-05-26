@@ -207,3 +207,58 @@ def test_score_error_primitive_ngspice_binary_descent_neutral_stays_small(
     measures = _run_ngspice_case(tmp_path, ngspice_path, "neutral", restore_error=False, error_topology="binary-descent")
 
     assert abs(float(measures["raw_error_diff"])) < 0.025
+
+
+def test_score_error_primitive_emits_label_descent_error_motif() -> None:
+    netlist = error.generate_netlist(
+        error_case="target_negative_score_positive",
+        error_topology="label-descent",
+    )
+
+    assert "\nB" not in netlist
+    assert "Vtargetp targetp 0 0" in netlist
+    assert "Vtargetn targetn 0 1.2" in netlist
+    assert "* Label descent output error: dp ~= targetp, dn ~= targetn during err." in netlist
+    assert "Mdp_ld_t vdd targetp dp_ld_t 0 NSENSE W=48u L=180n" in netlist
+    assert "Mdp_ld_e dp_ld_t err dp 0 NSENSE W=48u L=180n" in netlist
+    assert "Mdn_ld_t vdd targetn dn_ld_t 0 NSENSE W=48u L=180n" in netlist
+    assert "Mdn_ld_e dn_ld_t err dn 0 NSENSE W=48u L=180n" in netlist
+    assert "Mdp_bd_t" not in netlist
+    assert "Mdn_bd_t" not in netlist
+    assert "Mdp_sn0" not in netlist
+    assert "Mdn_t0" not in netlist
+
+
+@pytest.mark.parametrize(
+    ("case", "expected"),
+    [
+        ("target_positive_score_negative", 1.0),
+        ("target_negative_score_positive", -1.0),
+        ("target_positive_score_positive", 1.0),
+        ("target_negative_score_negative", -1.0),
+    ],
+)
+def test_score_error_primitive_ngspice_label_descent_raw_error_polarity(
+    tmp_path: Path,
+    ngspice_path: str,
+    case: str,
+    expected: float,
+) -> None:
+    measures = _run_ngspice_case(tmp_path, ngspice_path, case, restore_error=False, error_topology="label-descent")
+
+    margin = float(measures["raw_error_diff"])
+    if expected > 0.0:
+        assert margin > 0.025
+        assert float(measures["dp_after"]) > float(measures["dn_after"])
+    else:
+        assert margin < -0.025
+        assert float(measures["dn_after"]) > float(measures["dp_after"])
+
+
+def test_score_error_primitive_ngspice_label_descent_neutral_stays_small(
+    tmp_path: Path,
+    ngspice_path: str,
+) -> None:
+    measures = _run_ngspice_case(tmp_path, ngspice_path, "neutral", restore_error=False, error_topology="label-descent")
+
+    assert abs(float(measures["raw_error_diff"])) < 0.025

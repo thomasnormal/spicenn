@@ -261,7 +261,7 @@ capacitor state, not a shared software kernel broadcast over many positions.
   \label{fig:working-architecture}
 \end{figure}
 
-\subsection{Current Differential Score And Binary-Descent Error Path}
+\subsection{Current Differential Score And Label-Descent Error Paths}
 
 The newer transistor/passive MNIST01 block runner is not the same circuit as
 the high-accuracy behavioral run above.  It is a smaller device-level rung used
@@ -313,6 +313,23 @@ latch-free by transporting error through the readout conductance pair:
 This preserves magnitude better than restoring only the sign of the readout
 weight, but it also means weak readout weights create weak hidden credit.
 
+A more direct diagnostic variant,
+\code{error\_topology=label-descent}, removes the score-dependent gates from
+the output-error generator:
+\[
+  d^+ \leftarrow t^+,\qquad d^- \leftarrow t^- .
+\]
+This is not intended as a final softmax-equivalent learning rule.  It is a
+class-contrastive stress test for the rest of the hardware path: if this branch
+cannot move the readout state and produce class-separated score evidence, then
+the blocker is downstream of the output-error formula.  The primitive is still
+MOS/passive only,
+\[
+  V_{\mathrm{DD}}\rightarrow t^+\rightarrow \code{err}\rightarrow d^+,
+  \qquad
+  V_{\mathrm{DD}}\rightarrow t^-\rightarrow \code{err}\rightarrow d^- .
+\]
+
 \begin{figure}[H]
   \centering
   \resizebox{0.98\linewidth}{!}{%
@@ -360,8 +377,10 @@ weight, but it also means weak readout weights create weak hidden credit.
   \caption{Current tested device-level score/error path.  Differential score
   mode keeps separate \(s^+\) and \(s^-\) dynamic rails.  Binary-descent error
   uses label rails to form \(d^+\approx t^+s^-\) and \(d^-\approx t^-s^+\)
-  with MOS stacks.  This is a circuit primitive under test, not the
-  softmax-like behavioral error used in the high-accuracy reference run.}
+  with MOS stacks.  The label-descent diagnostic removes the score gates and
+  drives \(d^+\approx t^+\), \(d^-\approx t^-\).  These are circuit primitives
+  under test, not the softmax-like behavioral error used in the high-accuracy
+  reference run.}
   \label{fig:binary-descent-error-path}
 \end{figure}
 
@@ -372,6 +391,15 @@ pressure when \(t^-=1\) and \(s^-\) is high.  The binary-descent path removes
 that specific sign error, but the integrated MNIST01 block runner still has not
 shown robust learning at larger scale; recent strict \(4\times4\) binary
 smokes remain sequence-sensitive and can fail to move the readout weights.
+The label-descent primitive now has the same ngspice polarity and no-label
+dead-zone coverage.  In the integrated split-rail/conductance-row block, it
+does remove the binary-descent starvation mode: seven of eight readout features
+updated in the compact \(4\times4\) probe.  The full-strength write was too
+blunt and flipped the final score margin negative.  A smaller bounded-reference
+write kept the final \(s^+-s^-\) margin positive but only at millivolt scale;
+the dynamic score-gain/window stage saw nearly identical precharged amp rails.
+Thus the current blocker is low-score sensing and class-evidence centering
+before regeneration, not merely final threshold choice.
 
 A second primitive now tests the final score decision separately from the
 score/error generator.  The \code{score-diff-precharged-latched} stage

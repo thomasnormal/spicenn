@@ -339,6 +339,114 @@ def generate_distribution_netlist(
     return "\n".join(lines) + "\n"
 
 
+def generate_alternating_netlist(
+    *,
+    topology: str = "bounded-ref",
+    vwp: float = 0.36,
+    vwn: float = 0.34,
+    positive_ref: float = 0.36,
+    negative_ref: float = 0.34,
+    update_span: float = 0.34,
+    update_low_floor: float = 0.20,
+    gradient_width: float = 24.0,
+    gradient_restore_width: float = 32.0,
+    update_scale: float = 0.10,
+    error_amplitude: float = 1.2,
+) -> str:
+    if topology not in READOUT_WRITER_TOPOLOGIES:
+        raise ValueError(f"topology must be one of {READOUT_WRITER_TOPOLOGIES}")
+    for name, value in {
+        "gradient_width": gradient_width,
+        "gradient_restore_width": gradient_restore_width,
+        "update_scale": update_scale,
+        "error_amplitude": error_amplitude,
+    }.items():
+        if value <= 0.0:
+            raise ValueError(f"{name} must be positive")
+    if error_amplitude > 1.2:
+        raise ValueError("error_amplitude must not exceed VDD")
+    if update_span < 0.0:
+        raise ValueError("update_span must be nonnegative")
+    if update_low_floor < 0.0 or update_low_floor > 1.2:
+        raise ValueError("update_low_floor must stay within supply rails")
+    high_ref = positive_ref + update_span
+    low_ref = max(negative_ref - update_span, update_low_floor)
+    if topology == "bounded-ref" and (high_ref > 1.2 or low_ref < 0.0):
+        raise ValueError("bounded-ref update references must stay within supply rails")
+    readout_pmos_w = 8.0 * update_scale
+    readout_nmos_w = 2.0 * update_scale
+    lines = [
+        "* Alternating readout writer primitive smoke.",
+        "* Tests that one stored differential readout pair moves in opposite directions for opposite errors.",
+        "* No behavioral sources or Python-updated state.",
+        ".param VDD=1.2",
+        mos_models(),
+        ".options method=gear reltol=1e-3 abstol=1e-12 vntol=1e-6",
+        "Vdd vdd 0 {VDD}",
+        f"Vdp dp 0 PWL(0n 0 1n 0 1.01n {error_amplitude:.12g} 3n {error_amplitude:.12g} 3.01n 0 30n 0)",
+        f"Vdn dn 0 PWL(0n 0 11n 0 11.01n {error_amplitude:.12g} 13n {error_amplitude:.12g} 13.01n 0 30n 0)",
+        "Vacc acc 0 PWL(0n 0 1n 0 1.01n 1.2 3n 1.2 3.01n 0 11n 0 11.01n 1.2 13n 1.2 13.01n 0 30n 0)",
+        "Vapply apply 0 PWL(0n 0 4n 0 4.01n 1.2 8n 1.2 8.01n 0 14n 0 14.01n 1.2 18n 1.2 18.01n 0 30n 0)",
+        "Vapplyn applyn 0 PWL(0n 1.2 4n 1.2 4.01n 0 8n 0 8.01n 1.2 14n 1.2 14.01n 0 18n 0 18.01n 1.2 30n 1.2)",
+        "Vrstg rstg 0 PWL(0n 0 0.1n 1.2 0.7n 1.2 0.71n 0 10n 0 10.01n 1.2 10.7n 1.2 10.71n 0 30n 0)",
+        f"Cvwp vwp0 0 20f IC={vwp:.12g}",
+        f"Cvwn vwn0 0 20f IC={vwn:.12g}",
+        "Cgvp gvp0 0 2f IC=0",
+        "Cgvn gvn0 0 2f IC=0",
+        "Crgp rgp0 0 4f IC=1.2",
+        "Crgn rgn0 0 4f IC=1.2",
+        "Rvwp vwp0 0 1e15",
+        "Rvwn vwn0 0 1e15",
+        "Rgvp gvp0 0 1G",
+        "Rgvn gvn0 0 1G",
+        "Rrgp rgp0 vdd 50k",
+        "Rrgn rgn0 vdd 50k",
+        "Mreset_gvp gvp0 rstg 0 0 NMOS W=4u L=180n",
+        "Mreset_gvn gvn0 rstg 0 0 NMOS W=4u L=180n",
+        "Vact act 0 1.2",
+    ]
+    if topology == "bounded-ref":
+        lines += [
+            f"Vvwhi_ref vwhi_ref 0 {high_ref:.12g}",
+            f"Vvwlo_ref vwlo_ref 0 {low_ref:.12g}",
+        ]
+    lines += [
+        f"Mgvp0_a vdd act gvp0_a 0 NSENSE W={gradient_width:.6g}u L=180n",
+        f"Mgvp0_d gvp0_a dp gvp0_d 0 NSENSE W={gradient_width:.6g}u L=180n",
+        f"Mgvp0_g gvp0_d acc gvp0 0 NREL W={gradient_width:.6g}u L=180n",
+        f"Mgvn0_a vdd act gvn0_a 0 NSENSE W={gradient_width:.6g}u L=180n",
+        f"Mgvn0_d gvn0_a dn gvn0_d 0 NSENSE W={gradient_width:.6g}u L=180n",
+        f"Mgvn0_g gvn0_d acc gvn0 0 NREL W={gradient_width:.6g}u L=180n",
+        f"Mrgp0_pd rgp0 gvp0 0 0 NSENSE W={gradient_restore_width:.6g}u L=180n",
+        f"Mrgn0_pd rgn0 gvn0 0 0 NSENSE W={gradient_restore_width:.6g}u L=180n",
+        *readout_weight_update_lines(
+            0,
+            topology=topology,
+            readout_pmos_w=readout_pmos_w,
+            readout_nmos_w=readout_nmos_w,
+        ),
+        ".meas tran vwp_initial FIND V(vwp0) AT=0.9n",
+        ".meas tran vwn_initial FIND V(vwn0) AT=0.9n",
+        ".meas tran vwp_after_positive FIND V(vwp0) AT=9.5n",
+        ".meas tran vwn_after_positive FIND V(vwn0) AT=9.5n",
+        ".meas tran vwp_after_negative FIND V(vwp0) AT=19.5n",
+        ".meas tran vwn_after_negative FIND V(vwn0) AT=19.5n",
+        ".meas tran signed_initial PARAM='vwp_initial-vwn_initial'",
+        ".meas tran signed_after_positive PARAM='vwp_after_positive-vwn_after_positive'",
+        ".meas tran signed_after_negative PARAM='vwp_after_negative-vwn_after_negative'",
+        ".meas tran positive_signed_delta PARAM='signed_after_positive-signed_initial'",
+        ".meas tran reversal_signed_delta PARAM='signed_after_negative-signed_after_positive'",
+        ".meas tran common_after_negative PARAM='0.5*(vwp_after_negative+vwn_after_negative)'",
+        ".tran 5p 22n uic",
+        ".control",
+        "run",
+        "quit",
+        ".endc",
+        ".end",
+    ]
+    return "\n".join(lines) + "\n"
+
+
 def classify_sign(actual: float, expected: float, *, min_abs_delta: float) -> str:
     if abs(expected) < 1e-15:
         return "dead_zone" if abs(actual) < min_abs_delta else "biased"

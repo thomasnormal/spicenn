@@ -101,6 +101,24 @@ def test_score_decision_primitive_emits_gain_before_window_stage() -> None:
     assert ".meas tran score_gain_diff PARAM='scoren_amp_after-score_amp_after'" in netlist
 
 
+def test_score_decision_primitive_emits_low_common_mode_gain_stage() -> None:
+    netlist = decision.generate_netlist(
+        score_case="neutral",
+        score=0.005,
+        scoren=0.0,
+        decision_topology="score-diff-low-gain",
+    )
+
+    assert "\nB" not in netlist
+    assert "Vscore score 0 0.005" in netlist
+    assert "Vscoren scoren 0 0" in netlist
+    assert "Mscoreamp_score_p score_amp score scoreamp_score_i vdd PMOS W=1u" in netlist
+    assert "Mscoreamp_scoren_p scoren_amp scoren scoreamp_scoren_i vdd PMOS W=1u" in netlist
+    assert "Mdec_low_gain_n decision scoren_amp dec_src 0 NSENSE W=12u" in netlist
+    assert "Mdecn_low_gain_n decisionn score_amp dec_src 0 NSENSE W=12u" in netlist
+    assert ".meas tran score_gain_diff PARAM='score_amp_after-scoren_amp_after'" in netlist
+
+
 @pytest.mark.parametrize(
     ("case", "expected"),
     [
@@ -339,3 +357,51 @@ def test_score_decision_primitive_ngspice_gain_window_amplifies_tiny_margins_and
     assert float(tiny_neutral["positive_window_diff"]) < -0.05
     assert float(tiny_neutral["negative_window_diff"]) < -0.05
     assert abs(float(tiny_neutral["decision_diff"])) < 0.05
+
+
+def test_score_decision_primitive_ngspice_low_gain_resolves_low_common_mode_scores(
+    tmp_path: Path,
+    ngspice_path: str,
+) -> None:
+    low_positive = run_netlist(
+        ngspice_path,
+        tmp_path / "score_decision_low_gain_positive.cir",
+        decision.generate_netlist(
+            score_case="neutral",
+            score=0.00587,
+            scoren=0.0,
+            decision_topology="score-diff-low-gain",
+        ),
+        timeout=20.0,
+    )
+    low_negative = run_netlist(
+        ngspice_path,
+        tmp_path / "score_decision_low_gain_negative.cir",
+        decision.generate_netlist(
+            score_case="neutral",
+            score=0.0,
+            scoren=0.00587,
+            decision_topology="score-diff-low-gain",
+        ),
+        timeout=20.0,
+    )
+    old_gain_positive = run_netlist(
+        ngspice_path,
+        tmp_path / "score_decision_nmos_gain_low_positive.cir",
+        decision.generate_netlist(
+            score_case="neutral",
+            score=0.00587,
+            scoren=0.0,
+            decision_topology="score-diff-gain-window",
+            reject_ref=0.05,
+        ),
+        timeout=20.0,
+    )
+
+    assert abs(float(old_gain_positive["score_gain_diff"])) < 1e-3
+    assert abs(float(old_gain_positive["decision_diff"])) < 0.05
+
+    assert float(low_positive["score_gain_diff"]) > 0.004
+    assert float(low_positive["decision_diff"]) > 0.05
+    assert float(low_negative["score_gain_diff"]) < -0.004
+    assert float(low_negative["decision_diff"]) < -0.05

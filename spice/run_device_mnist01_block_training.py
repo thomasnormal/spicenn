@@ -58,6 +58,7 @@ OUTPUT_DECISION_STAGES = (
     "score-diff-reject-ref-latched",
     "score-diff-window-latched",
     "score-diff-gain-window-latched",
+    "score-diff-low-gain-latched",
     "ratio-inverter",
     "stacked-inverter",
     "shift-inverter",
@@ -470,7 +471,7 @@ def block_phase_schedule(
         windows["fwdo"].extend(output_windows)
         hidden_forward_by_sample.append(hidden_windows)
         windows["dec"].append(window("dec", base + 15.00 * scale, base + 15.55 * scale))
-        windows["dec2"].append(window("dec2", base + 15.65 * scale, base + 16.20 * scale))
+        windows["dec2"].append(window("dec2", base + 15.60 * scale, base + 15.95 * scale))
         if training_schedule[idx]:
             windows["err"].append(window("err", base + 3.25 * scale, base + 5.00 * scale))
             windows["bwd"].append(window("bwd", base + 5.25 * scale, base + 7.00 * scale))
@@ -905,6 +906,7 @@ def block_netlist(
         "score-diff-reject-ref-latched",
         "score-diff-window-latched",
         "score-diff-gain-window-latched",
+        "score-diff-low-gain-latched",
     } and score_mode != "differential":
         raise ValueError(f"{output_decision_stage} output_decision_stage requires differential score_mode")
     if output_decision_ref_source in {"adaptive", "track"} and output_decision_stage not in {
@@ -1107,8 +1109,9 @@ def block_netlist(
         base = idx * cycle_ns
         scale = phase_time_scale
         decision_measure_offset = (
-            16.50
-            if output_decision_stage in {"score-diff-reject-ref-latched", "score-diff-gain-window-latched"}
+            15.97
+            if output_decision_stage
+            in {"score-diff-reject-ref-latched", "score-diff-gain-window-latched", "score-diff-low-gain-latched"}
             else 15.50
         )
         measures += [
@@ -1163,6 +1166,12 @@ def block_netlist(
                     f".meas tran score_amp_after_{idx} FIND V(score_amp) AT={base + 15.60 * scale:.2f}n",
                     f".meas tran scoren_amp_after_{idx} FIND V(scoren_amp) AT={base + 15.60 * scale:.2f}n",
                     f".meas tran score_gain_diff_{idx} PARAM='scoren_amp_after_{idx}-score_amp_after_{idx}'",
+                ]
+            if output_decision_stage == "score-diff-low-gain-latched":
+                measures += [
+                    f".meas tran score_amp_after_{idx} FIND V(score_amp) AT={base + 15.60 * scale:.2f}n",
+                    f".meas tran scoren_amp_after_{idx} FIND V(scoren_amp) AT={base + 15.60 * scale:.2f}n",
+                    f".meas tran score_gain_diff_{idx} PARAM='score_amp_after_{idx}-scoren_amp_after_{idx}'",
                 ]
         if output_decision_ref_source in {"adaptive", "track"}:
             measures += [
@@ -1513,12 +1522,15 @@ def block_netlist(
             "Rdecision_posn decision_posn 0 1G",
             "Rdecision_negn decision_negn 0 1G",
         ]
-    if output_decision_stage == "score-diff-gain-window-latched":
+    if output_decision_stage in {"score-diff-gain-window-latched", "score-diff-low-gain-latched"}:
         lines += [
             "Cscore_amp score_amp 0 8f IC=1.2",
             "Cscoren_amp scoren_amp 0 8f IC=1.2",
             "Rscore_amp score_amp 0 1G",
             "Rscoren_amp scoren_amp 0 1G",
+        ]
+    if output_decision_stage == "score-diff-gain-window-latched":
+        lines += [
             "Cdecision_posn decision_posn 0 10f IC=0",
             "Cdecision_negn decision_negn 0 10f IC=0",
             "Rdecision_posn decision_posn 0 1G",
@@ -1616,6 +1628,7 @@ def block_netlist(
         "score-diff-reject-ref-latched",
         "score-diff-window-latched",
         "score-diff-gain-window-latched",
+        "score-diff-low-gain-latched",
     }:
         lines += [
             "Mreset_decision decision rstf 0 0 NMOS W=4u L=180n",
@@ -1629,6 +1642,7 @@ def block_netlist(
         "score-diff-reject-ref-latched",
         "score-diff-window-latched",
         "score-diff-gain-window-latched",
+        "score-diff-low-gain-latched",
     }:
         lines += [
             "Mprecharge_decision decision rstfn vdd vdd PMOS W=4u L=180n",
@@ -1655,7 +1669,7 @@ def block_netlist(
             "Mprecharge_decision_posn decision_posn rstfn vdd vdd PMOS W=4u L=180n",
             "Mprecharge_decision_negn decision_negn rstfn vdd vdd PMOS W=4u L=180n",
         ]
-    if output_decision_stage == "score-diff-gain-window-latched":
+    if output_decision_stage in {"score-diff-gain-window-latched", "score-diff-low-gain-latched"}:
         lines += [
             "Mprecharge_score_amp score_amp rstfn vdd vdd PMOS W=4u L=180n",
             "Mprecharge_scoren_amp scoren_amp rstfn vdd vdd PMOS W=4u L=180n",
@@ -2272,6 +2286,21 @@ def block_netlist(
                 f"Mdec_gain_win_neg_ref decisionn outref neg_src 0 NSENSE W={output_decision_pulldown_width:.6g}u L=180n",
                 f"Mdecn_gain_win_neg_scoreamp decision_negn score_amp neg_src 0 NSENSE W={output_decision_pulldown_width:.6g}u L=180n",
                 f"Mdec_gain_win_neg_tail neg_src dec2 0 0 NMOS W={output_decision_pulldown_width:.6g}u L=180n",
+            ]
+        )
+    elif output_decision_stage == "score-diff-low-gain-latched":
+        decision_stage = "\n".join(
+            [
+                "* Low-common-mode PMOS-input score preamp followed by a regenerative differential latch.",
+                "Mscoreamp_score_p score_amp score scoreamp_score_i vdd PMOS W=1u L=180n",
+                "Mscoreamp_score_tail scoreamp_score_i dec 0 0 NMOS W=8u L=180n",
+                "Mscoreamp_scoren_p scoren_amp scoren scoreamp_scoren_i vdd PMOS W=1u L=180n",
+                "Mscoreamp_scoren_tail scoreamp_scoren_i dec 0 0 NMOS W=8u L=180n",
+                f"Mdec_low_gain_p decision decisionn vdd vdd PMOS W={output_decision_pullup_width:.6g}u L=180n",
+                f"Mdecn_low_gain_p decisionn decision vdd vdd PMOS W={output_decision_pullup_width:.6g}u L=180n",
+                f"Mdec_low_gain_n decision scoren_amp dec_src 0 NSENSE W={output_decision_pulldown_width:.6g}u L=180n",
+                f"Mdecn_low_gain_n decisionn score_amp dec_src 0 NSENSE W={output_decision_pulldown_width:.6g}u L=180n",
+                f"Mdec_low_gain_tail dec_src dec2 0 0 NMOS W={output_decision_pulldown_width:.6g}u L=180n",
             ]
         )
     elif output_decision_stage == "ratio-inverter":

@@ -2456,7 +2456,7 @@ def test_block_netlist_can_emit_two_phase_score_reject_reference_decision_stage(
     assert "Mdec_reject_n decision decisionn_pre dec2_src 0 NSENSE W=12u" in netlist
     assert "Mdecn_reject_n decisionn outref dec2_src 0 NSENSE W=12u" in netlist
     assert "Mdec_reject_tail dec2_src dec2 0 0 NMOS W=12u" in netlist
-    assert ".meas tran decision_after_0 FIND V(decision) AT=16.50n" in netlist
+    assert ".meas tran decision_after_0 FIND V(decision) AT=15.97n" in netlist
     assert ".meas tran decisionn_pre_after_0 FIND V(decisionn_pre) AT=15.50n" in netlist
     with pytest.raises(ValueError, match="requires differential score_mode"):
         block.block_netlist(
@@ -2608,6 +2608,67 @@ def test_block_netlist_can_emit_score_gain_window_decision_stage() -> None:
             score_mode="single-ended",
             output_decision_stage="score-diff-gain-window-latched",
         )
+
+
+def test_block_netlist_can_emit_low_common_mode_score_gain_decision_stage() -> None:
+    sys.path.insert(0, str(SPICE_DIR))
+    import pytest
+    import run_device_mnist01_block_training as block
+
+    image_size = 4
+    weights = block.initial_block_weights(image_size, 2, 2, 1, seed=1)
+    sample = {f"x{i}": 0.2 + 0.01 * i for i in range(image_size * image_size)}
+    sample["target"] = 1.1
+
+    netlist = block.block_netlist(
+        [sample],
+        weights,
+        image_size=image_size,
+        block_size=2,
+        stride=2,
+        channels=1,
+        training_enabled=True,
+        score_mode="differential",
+        output_differential_stage="simple",
+        output_decision_stage="score-diff-low-gain-latched",
+        output_decision_pullup_width=8.0,
+        output_decision_pulldown_width=12.0,
+    )
+
+    assert "\nB" not in netlist
+    assert "Cscore_amp score_amp 0 8f IC=1.2" in netlist
+    assert "Mprecharge_score_amp score_amp rstfn vdd vdd PMOS W=4u" in netlist
+    assert "Mscoreamp_score_p score_amp score scoreamp_score_i vdd PMOS W=1u" in netlist
+    assert "Mscoreamp_scoren_p scoren_amp scoren scoreamp_scoren_i vdd PMOS W=1u" in netlist
+    assert "Mdec_low_gain_n decision scoren_amp dec_src 0 NSENSE W=12u" in netlist
+    assert "Mdecn_low_gain_n decisionn score_amp dec_src 0 NSENSE W=12u" in netlist
+    assert ".meas tran score_gain_diff_0 PARAM='score_amp_after_0-scoren_amp_after_0'" in netlist
+    with pytest.raises(ValueError, match="requires differential score_mode"):
+        block.block_netlist(
+            [sample],
+            weights,
+            image_size=image_size,
+            block_size=2,
+            stride=2,
+            channels=1,
+            training_enabled=True,
+            score_mode="single-ended",
+            output_decision_stage="score-diff-low-gain-latched",
+        )
+
+
+def test_second_decision_phase_finishes_before_next_cycle_reset() -> None:
+    sys.path.insert(0, str(SPICE_DIR))
+    import pytest
+    import run_device_mnist01_block_training as block
+
+    schedule = block.block_phase_schedule(2, training_enabled=False, phase_time_scale=1.0)
+    first_dec2 = schedule.windows["dec2"][0]
+    next_reset = schedule.windows["rstf"][2]
+
+    assert first_dec2[1] < next_reset[0]
+    assert first_dec2 == pytest.approx((15.60, 15.95))
+    assert next_reset[0] == pytest.approx(16.00)
 
 
 def test_generated_pmos_pullups_do_not_use_vdd_as_drain() -> None:

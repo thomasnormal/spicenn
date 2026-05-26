@@ -2399,6 +2399,78 @@ def readout_update_diagnostics(
     }
 
 
+def readout_feature_signal_diagnostics(
+    train_rows: pd.DataFrame,
+    *,
+    feature_count: int,
+    eligibility_threshold: float = 0.5,
+    gradient_threshold: float = 25e-3,
+) -> dict[str, float | int | str | None]:
+    empty: dict[str, float | int | str | None] = {
+        "readout_eligibility_signal": None,
+        "readout_eligibility_measured_features": 0,
+        "readout_eligibility_max": None,
+        "readout_eligibility_active_features_0p5v": None,
+        "readout_eligibility_active_participation": None,
+        "readout_gradient_measured_features": 0,
+        "readout_gradient_net_max_abs": None,
+        "readout_gradient_net_l1_feature_max": None,
+        "readout_gradient_active_features_25mv": None,
+        "readout_gradient_active_participation": None,
+    }
+    if train_rows.empty or feature_count <= 0:
+        return empty
+
+    eligibility_signal = "egon" if any(f"egon{feature}_after_fwd" in train_rows.columns for feature in range(feature_count)) else "eg"
+    eligibility_maxima: list[float] = []
+    for feature in range(feature_count):
+        column = f"{eligibility_signal}{feature}_after_fwd"
+        if column not in train_rows.columns:
+            continue
+        values = train_rows[column].dropna().to_numpy(dtype=float)
+        if values.size:
+            eligibility_maxima.append(float(np.max(values)))
+
+    gradient_maxima: list[float] = []
+    for feature in range(feature_count):
+        positive_column = f"gvp{feature}_after"
+        negative_column = f"gvn{feature}_after"
+        if positive_column not in train_rows.columns or negative_column not in train_rows.columns:
+            continue
+        net = (
+            train_rows[positive_column].to_numpy(dtype=float)
+            - train_rows[negative_column].to_numpy(dtype=float)
+        )
+        net = net[np.isfinite(net)]
+        if net.size:
+            gradient_maxima.append(float(np.max(np.abs(net))))
+
+    diagnostics = dict(empty)
+    if eligibility_maxima:
+        active = int(np.sum(np.asarray(eligibility_maxima) >= eligibility_threshold))
+        diagnostics.update(
+            {
+                "readout_eligibility_signal": eligibility_signal,
+                "readout_eligibility_measured_features": len(eligibility_maxima),
+                "readout_eligibility_max": float(np.max(eligibility_maxima)),
+                "readout_eligibility_active_features_0p5v": active,
+                "readout_eligibility_active_participation": float(active / len(eligibility_maxima)),
+            }
+        )
+    if gradient_maxima:
+        active = int(np.sum(np.asarray(gradient_maxima) >= gradient_threshold))
+        diagnostics.update(
+            {
+                "readout_gradient_measured_features": len(gradient_maxima),
+                "readout_gradient_net_max_abs": float(np.max(gradient_maxima)),
+                "readout_gradient_net_l1_feature_max": float(np.sum(gradient_maxima)),
+                "readout_gradient_active_features_25mv": active,
+                "readout_gradient_active_participation": float(active / len(gradient_maxima)),
+            }
+        )
+    return diagnostics
+
+
 def adaptive_reference_diagnostics(
     train_rows: pd.DataFrame,
     final_eval_rows: pd.DataFrame,
@@ -3368,6 +3440,7 @@ def main() -> None:
         decision_threshold=args.decision_threshold,
     )
     readout_update_summary = readout_update_diagnostics(initial_weights, final_weights)
+    readout_feature_signal_summary = readout_feature_signal_diagnostics(train_rows, feature_count=feature_count)
     adaptive_reference_summary = adaptive_reference_diagnostics(
         train_rows,
         final_eval_rows,
@@ -3562,6 +3635,7 @@ def main() -> None:
         **accuracy_centering_summary,
         **output_bias_summary,
         **readout_update_summary,
+        **readout_feature_signal_summary,
         **adaptive_reference_summary,
         "initial_weights": initial_weights,
         "final_weights": final_weights,

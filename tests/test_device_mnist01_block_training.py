@@ -492,6 +492,57 @@ def test_readout_update_diagnostics_are_empty_without_measured_final_weights() -
     assert diagnostics["readout_common_delta_max_abs"] is None
 
 
+def test_readout_feature_signal_diagnostics_report_eligibility_and_gradient_participation() -> None:
+    sys.path.insert(0, str(SPICE_DIR))
+    import run_device_mnist01_block_training as block
+
+    rows = pd.DataFrame(
+        [
+            {
+                "egon0_after_fwd": 1.2,
+                "egon1_after_fwd": 0.04,
+                "gvp0_after": 0.10,
+                "gvn0_after": 0.01,
+                "gvp1_after": 0.02,
+                "gvn1_after": 0.01,
+            },
+            {
+                "egon0_after_fwd": 0.7,
+                "egon1_after_fwd": 0.8,
+                "gvp0_after": 0.03,
+                "gvn0_after": 0.01,
+                "gvp1_after": 0.01,
+                "gvn1_after": 0.06,
+            },
+        ]
+    )
+
+    diagnostics = block.readout_feature_signal_diagnostics(rows, feature_count=2)
+
+    assert diagnostics["readout_eligibility_signal"] == "egon"
+    assert diagnostics["readout_eligibility_measured_features"] == 2
+    assert diagnostics["readout_eligibility_active_features_0p5v"] == 2
+    assert np.isclose(diagnostics["readout_eligibility_active_participation"], 1.0)
+    assert diagnostics["readout_gradient_measured_features"] == 2
+    assert np.isclose(diagnostics["readout_gradient_net_max_abs"], 0.09)
+    assert np.isclose(diagnostics["readout_gradient_net_l1_feature_max"], 0.14)
+    assert diagnostics["readout_gradient_active_features_25mv"] == 2
+    assert np.isclose(diagnostics["readout_gradient_active_participation"], 1.0)
+
+
+def test_readout_feature_signal_diagnostics_are_empty_without_full_measurements() -> None:
+    sys.path.insert(0, str(SPICE_DIR))
+    import run_device_mnist01_block_training as block
+
+    diagnostics = block.readout_feature_signal_diagnostics(pd.DataFrame([{"out_after": 1.0}]), feature_count=2)
+
+    assert diagnostics["readout_eligibility_signal"] is None
+    assert diagnostics["readout_eligibility_measured_features"] == 0
+    assert diagnostics["readout_eligibility_active_features_0p5v"] is None
+    assert diagnostics["readout_gradient_measured_features"] == 0
+    assert diagnostics["readout_gradient_active_features_25mv"] is None
+
+
 def test_adaptive_reference_diagnostics_report_state_drift() -> None:
     sys.path.insert(0, str(SPICE_DIR))
     import run_device_mnist01_block_training as block

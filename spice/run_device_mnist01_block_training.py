@@ -35,6 +35,7 @@ READOUT_FORWARD_MODELS = ("nrel", "sense")
 READOUT_FORWARD_TOPOLOGIES = ("stacked", "conductance-row")
 READOUT_WEIGHT_GATE_MODELS = ("same", "nrel", "sense", "switch")
 READOUT_GRADIENT_SOURCES = ("act", "pre", "eligibility", "eligibility-restored")
+READOUT_WEIGHT_UPDATE_TOPOLOGIES = ("rail", "bounded-ref")
 LEARNING_ACTIVATION_GATE_MODELS = ("nrel", "sense")
 HIDDEN_POLARITY_INITS = ("ink", "alternating-channel", "random-pixel")
 HIDDEN_CREDIT_MODES = ("direct-feedback", "readout-weighted", "readout-restored", "readout-restored-hardgate")
@@ -658,6 +659,38 @@ def learning_activation_gate_device_model(model: str) -> str:
     raise ValueError(f"learning_activation_gate_model must be one of {LEARNING_ACTIVATION_GATE_MODELS}")
 
 
+def readout_weight_update_lines(
+    feature: int,
+    *,
+    topology: str,
+    readout_pmos_w: float,
+    readout_nmos_w: float,
+) -> list[str]:
+    if topology == "rail":
+        return [
+            f"Mvwp{feature}_up_p0 vwp{feature}_up rgp{feature} vdd vdd PMOS W={readout_pmos_w:.6g}u L=180n",
+            f"Mvwp{feature}_up_p1 vwp{feature} applyn vwp{feature}_up vdd PMOS W={readout_pmos_w:.6g}u L=180n",
+            f"Mvwn{feature}_dn_a vwn{feature} apply vwn{feature}_dn 0 NREL W={readout_nmos_w:.6g}u L=180n",
+            f"Mvwn{feature}_dn_g vwn{feature}_dn gvp{feature} 0 0 NSENSE W={readout_nmos_w:.6g}u L=180n",
+            f"Mvwn{feature}_up_p0 vwn{feature}_up rgn{feature} vdd vdd PMOS W={readout_pmos_w:.6g}u L=180n",
+            f"Mvwn{feature}_up_p1 vwn{feature} applyn vwn{feature}_up vdd PMOS W={readout_pmos_w:.6g}u L=180n",
+            f"Mvwp{feature}_dn_a vwp{feature} apply vwp{feature}_dn 0 NREL W={readout_nmos_w:.6g}u L=180n",
+            f"Mvwp{feature}_dn_g vwp{feature}_dn gvn{feature} 0 0 NSENSE W={readout_nmos_w:.6g}u L=180n",
+        ]
+    if topology == "bounded-ref":
+        return [
+            f"Mvwp{feature}_up_p0 vwp{feature}_up rgp{feature} vwhi_ref vdd PMOS W={readout_pmos_w:.6g}u L=180n",
+            f"Mvwp{feature}_up_p1 vwp{feature} applyn vwp{feature}_up vdd PMOS W={readout_pmos_w:.6g}u L=180n",
+            f"Mvwn{feature}_dn_a vwn{feature} apply vwn{feature}_dn 0 NREL W={readout_nmos_w:.6g}u L=180n",
+            f"Mvwn{feature}_dn_g vwn{feature}_dn gvp{feature} vwlo_ref 0 NSENSE W={readout_nmos_w:.6g}u L=180n",
+            f"Mvwn{feature}_up_p0 vwn{feature}_up rgn{feature} vwhi_ref vdd PMOS W={readout_pmos_w:.6g}u L=180n",
+            f"Mvwn{feature}_up_p1 vwn{feature} applyn vwn{feature}_up vdd PMOS W={readout_pmos_w:.6g}u L=180n",
+            f"Mvwp{feature}_dn_a vwp{feature} apply vwp{feature}_dn 0 NREL W={readout_nmos_w:.6g}u L=180n",
+            f"Mvwp{feature}_dn_g vwp{feature}_dn gvn{feature} vwlo_ref 0 NSENSE W={readout_nmos_w:.6g}u L=180n",
+        ]
+    raise ValueError(f"readout_weight_update_topology must be one of {READOUT_WEIGHT_UPDATE_TOPOLOGIES}")
+
+
 def hidden_credit_device_lines(
     feature: int,
     *,
@@ -748,6 +781,8 @@ def block_netlist(
     readout_forward_topology: str = "stacked",
     readout_weight_gate_model: str = "same",
     readout_gradient_source: str = "act",
+    readout_weight_update_topology: str = "rail",
+    readout_weight_update_span: float = 0.15,
     readout_eligibility_width: float = 24.0,
     readout_eligibility_restore_width: float = 8.0,
     learning_activation_gate_model: str = "nrel",
@@ -873,6 +908,10 @@ def block_netlist(
         raise ValueError(f"readout_weight_gate_model must be one of {READOUT_WEIGHT_GATE_MODELS}")
     if readout_gradient_source not in READOUT_GRADIENT_SOURCES:
         raise ValueError(f"readout_gradient_source must be one of {READOUT_GRADIENT_SOURCES}")
+    if readout_weight_update_topology not in READOUT_WEIGHT_UPDATE_TOPOLOGIES:
+        raise ValueError(f"readout_weight_update_topology must be one of {READOUT_WEIGHT_UPDATE_TOPOLOGIES}")
+    if readout_weight_update_span < 0.0:
+        raise ValueError("readout_weight_update_span must be nonnegative")
     if readout_eligibility_width <= 0.0:
         raise ValueError("readout_eligibility_width must be positive")
     if readout_eligibility_restore_width <= 0.0:
@@ -949,6 +988,12 @@ def block_netlist(
     hidden_negative_error_node = "edn" if restore_error_enabled else "dn"
     readout_positive_error_node = "edp" if error_signal_mode == "restored" else "dp"
     readout_negative_error_node = "edn" if error_signal_mode == "restored" else "dn"
+    readout_weight_update_high_ref = readout_weight_positive_ref + readout_weight_update_span
+    readout_weight_update_low_ref = readout_weight_negative_ref - readout_weight_update_span
+    if readout_weight_update_topology == "bounded-ref" and (
+        readout_weight_update_high_ref > VDD_VALUE or readout_weight_update_low_ref < 0.0
+    ):
+        raise ValueError("bounded-ref readout weight update references must stay within supply rails")
     hidden_forward_clock = "fwdh" if forward_phase_mode == "split-hidden-output" else "fwd"
     readout_forward_clock = "fwdo" if forward_phase_mode == "split-hidden-output" else "fwd"
     hidden_neg_width = max(0.5, hidden_forward_width * 0.75)
@@ -1086,6 +1131,11 @@ def block_netlist(
         lines += [
             f"Vvwp_ref vwp_ref 0 {readout_weight_positive_ref:.12g}",
             f"Vvwn_ref vwn_ref 0 {readout_weight_negative_ref:.12g}",
+        ]
+    if readout_weight_update_topology == "bounded-ref":
+        lines += [
+            f"Vvwhi_ref vwhi_ref 0 {readout_weight_update_high_ref:.12g}",
+            f"Vvwlo_ref vwlo_ref 0 {readout_weight_update_low_ref:.12g}",
         ]
     if hidden_weight_leak_resistance > 0.0:
         lines += [
@@ -1696,14 +1746,12 @@ def block_netlist(
                 f"Mbhn{feature}_up_a bhn{feature}_up apply bhn{feature} 0 NREL W={hidden_weight_write_width:.6g}u L=180n",
                 f"Mbhp{feature}_dn_a bhp{feature} apply bhp{feature}_dn 0 NREL W={hidden_weight_write_width:.6g}u L=180n",
                 f"Mbhp{feature}_dn_g bhp{feature}_dn gbn{feature} 0 0 NSENSE W={hidden_weight_write_width:.6g}u L=180n",
-                f"Mvwp{feature}_up_p0 vwp{feature}_up rgp{feature} vdd vdd PMOS W={readout_pmos_w:.6g}u L=180n",
-                f"Mvwp{feature}_up_p1 vwp{feature} applyn vwp{feature}_up vdd PMOS W={readout_pmos_w:.6g}u L=180n",
-                f"Mvwn{feature}_dn_a vwn{feature} apply vwn{feature}_dn 0 NREL W={readout_nmos_w:.6g}u L=180n",
-                f"Mvwn{feature}_dn_g vwn{feature}_dn gvp{feature} 0 0 NSENSE W={readout_nmos_w:.6g}u L=180n",
-                f"Mvwn{feature}_up_p0 vwn{feature}_up rgn{feature} vdd vdd PMOS W={readout_pmos_w:.6g}u L=180n",
-                f"Mvwn{feature}_up_p1 vwn{feature} applyn vwn{feature}_up vdd PMOS W={readout_pmos_w:.6g}u L=180n",
-                f"Mvwp{feature}_dn_a vwp{feature} apply vwp{feature}_dn 0 NREL W={readout_nmos_w:.6g}u L=180n",
-                f"Mvwp{feature}_dn_g vwp{feature}_dn gvn{feature} 0 0 NSENSE W={readout_nmos_w:.6g}u L=180n",
+                *readout_weight_update_lines(
+                    feature,
+                    topology=readout_weight_update_topology,
+                    readout_pmos_w=readout_pmos_w,
+                    readout_nmos_w=readout_nmos_w,
+                ),
                 *(
                     [
                         f"Rread_op{feature}_0 op{feature}_0 0 {readout_stack_shunt_resistance:.12g}",
@@ -2432,6 +2480,8 @@ def run_device_sequence(
     readout_forward_topology: str,
     readout_weight_gate_model: str,
     readout_gradient_source: str,
+    readout_weight_update_topology: str,
+    readout_weight_update_span: float,
     readout_eligibility_width: float,
     readout_eligibility_restore_width: float,
     learning_activation_gate_model: str,
@@ -2511,6 +2561,8 @@ def run_device_sequence(
         readout_forward_topology=readout_forward_topology,
         readout_weight_gate_model=readout_weight_gate_model,
         readout_gradient_source=readout_gradient_source,
+        readout_weight_update_topology=readout_weight_update_topology,
+        readout_weight_update_span=readout_weight_update_span,
         readout_eligibility_width=readout_eligibility_width,
         readout_eligibility_restore_width=readout_eligibility_restore_width,
         learning_activation_gate_model=learning_activation_gate_model,
@@ -2644,6 +2696,24 @@ def main() -> None:
         help=(
             "Local state node that gates readout gradient storage: stored activation, preactivation, "
             "a forward-sampled eligibility capacitor, or a restored eligibility rail."
+        ),
+    )
+    ap.add_argument(
+        "--readout-weight-update-topology",
+        choices=READOUT_WEIGHT_UPDATE_TOPOLOGIES,
+        default="rail",
+        help=(
+            "rail uses the historical supply/ground readout writer; bounded-ref pulls the signed rails "
+            "toward finite high/low references around the configured neutral common-mode."
+        ),
+    )
+    ap.add_argument(
+        "--readout-weight-update-span",
+        type=float,
+        default=0.15,
+        help=(
+            "Voltage offset used by bounded-ref readout writes: high_ref=positive_ref+span and "
+            "low_ref=negative_ref-span."
         ),
     )
     ap.add_argument("--readout-eligibility-width", type=float, default=24.0)
@@ -2903,6 +2973,8 @@ def main() -> None:
         "readout_forward_topology": args.readout_forward_topology,
         "readout_weight_gate_model": args.readout_weight_gate_model,
         "readout_gradient_source": args.readout_gradient_source,
+        "readout_weight_update_topology": args.readout_weight_update_topology,
+        "readout_weight_update_span": args.readout_weight_update_span,
         "readout_eligibility_width": args.readout_eligibility_width,
         "readout_eligibility_restore_width": args.readout_eligibility_restore_width,
         "learning_activation_gate_model": args.learning_activation_gate_model,
@@ -3130,6 +3202,8 @@ def main() -> None:
         "readout_forward_topology": args.readout_forward_topology,
         "readout_weight_gate_model": args.readout_weight_gate_model,
         "readout_gradient_source": args.readout_gradient_source,
+        "readout_weight_update_topology": args.readout_weight_update_topology,
+        "readout_weight_update_span": args.readout_weight_update_span,
         "readout_eligibility_width": args.readout_eligibility_width,
         "readout_eligibility_restore_width": args.readout_eligibility_restore_width,
         "learning_activation_gate_model": args.learning_activation_gate_model,

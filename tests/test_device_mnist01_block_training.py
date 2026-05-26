@@ -61,6 +61,7 @@ def test_device_mnist01_block_script_help_runs_from_repo_root() -> None:
     assert "--readout-forward-width" in proc.stdout
     assert "--readout-eligibility-width" in proc.stdout
     assert "--readout-eligibility-restore-width" in proc.stdout
+    assert "--readout-weight-update-topology" in proc.stdout
     assert "--readout-weight-apply-clamp-width" in proc.stdout
     assert "--phase-time-scale" in proc.stdout
     assert "--forward-phase-mode" in proc.stdout
@@ -2356,6 +2357,63 @@ def test_block_netlist_can_emit_apply_phase_readout_weight_clamp() -> None:
             channels=1,
             training_enabled=True,
             readout_weight_apply_clamp_width=-0.1,
+        )
+
+
+def test_block_netlist_can_emit_bounded_reference_readout_writer() -> None:
+    sys.path.insert(0, str(SPICE_DIR))
+    import pytest
+    import run_device_mnist01_block_training as block
+
+    image_size = 4
+    weights = block.initial_block_weights(image_size, 2, 2, 1, seed=1)
+    sample = {f"x{i}": 0.2 + 0.01 * i for i in range(image_size * image_size)}
+    sample["target"] = 1.1
+    netlist = block.block_netlist(
+        [sample],
+        weights,
+        image_size=image_size,
+        block_size=2,
+        stride=2,
+        channels=1,
+        training_enabled=True,
+        readout_weight_update_topology="bounded-ref",
+        readout_weight_update_span=0.12,
+        readout_weight_positive_ref=0.36,
+        readout_weight_negative_ref=0.34,
+    )
+
+    assert "\nB" not in netlist
+    assert "Vvwhi_ref vwhi_ref 0 0.48" in netlist
+    assert "Vvwlo_ref vwlo_ref 0 0.22" in netlist
+    assert "Mvwp0_up_p0 vwp0_up rgp0 vwhi_ref vdd PMOS" in netlist
+    assert "Mvwn0_dn_g vwn0_dn gvp0 vwlo_ref 0 NSENSE" in netlist
+    assert "Mvwn3_up_p0 vwn3_up rgn3 vwhi_ref vdd PMOS" in netlist
+    assert "Mvwp3_dn_g vwp3_dn gvn3 vwlo_ref 0 NSENSE" in netlist
+    assert "Mvwp0_up_p0 vwp0_up rgp0 vdd vdd PMOS" not in netlist
+    with pytest.raises(ValueError, match="readout_weight_update_span"):
+        block.block_netlist(
+            [sample],
+            weights,
+            image_size=image_size,
+            block_size=2,
+            stride=2,
+            channels=1,
+            training_enabled=True,
+            readout_weight_update_span=-0.1,
+        )
+    with pytest.raises(ValueError, match="bounded-ref readout weight update references"):
+        block.block_netlist(
+            [sample],
+            weights,
+            image_size=image_size,
+            block_size=2,
+            stride=2,
+            channels=1,
+            training_enabled=True,
+            readout_weight_update_topology="bounded-ref",
+            readout_weight_negative_ref=0.05,
+            readout_weight_update_span=0.10,
         )
 
 

@@ -43,6 +43,24 @@ def test_readout_writer_primitive_can_restore_weak_gradient_gate() -> None:
     assert "Mgvp0_a vdd act gvp0_a 0 NSENSE W=24u L=180n" in netlist
 
 
+def test_readout_writer_distribution_primitive_emits_two_independent_features() -> None:
+    netlist = writer.generate_distribution_netlist(
+        update_mode="positive",
+        gradient_gate_topology="restored",
+        gate_amplitudes=(1.2, 0.04),
+    )
+
+    assert "\nB" not in netlist
+    assert "Velig0 elig0 0 PULSE(0 1.2 0.5n 10p 10p 3.0n 30n)" in netlist
+    assert "Velig1 elig1 0 PULSE(0 0.04 0.5n 10p 10p 3.0n 30n)" in netlist
+    assert "Megate1_pd egate1 elig1 0 0 NSENSE W=32u L=180n" in netlist
+    assert "Mgvp0_a vdd act0 gvp0_a 0 NSENSE W=24u L=180n" in netlist
+    assert "Mgvp1_a vdd act1 gvp1_a 0 NSENSE W=24u L=180n" in netlist
+    assert "Mvwp1_up_p0 vwp1_up rgp1 vwhi_ref vdd PMOS W=0.4u L=180n" in netlist
+    assert ".meas tran signed_delta0 PARAM='signed_after0-signed_before0'" in netlist
+    assert ".meas tran signed_delta1 PARAM='signed_after1-signed_before1'" in netlist
+
+
 def test_readout_writer_primitive_keeps_legacy_rail_writer_available() -> None:
     netlist = writer.generate_netlist(update_mode="negative", topology="rail", update_scale=0.1)
 
@@ -199,3 +217,50 @@ def test_readout_writer_primitive_ngspice_restored_gate_uses_weak_eligibility(
     assert float(restored["gradient_margin"]) > 0.025
     assert float(restored["signed_delta"]) > 0.05
     assert abs(float(restored["common_delta"])) < 0.05
+
+
+def test_readout_writer_distribution_ngspice_direct_gate_starves_weak_feature(
+    tmp_path: Path,
+    ngspice_path: str,
+) -> None:
+    measures = run_netlist(
+        ngspice_path,
+        tmp_path / "readout_writer_distribution_direct.cir",
+        writer.generate_distribution_netlist(
+            update_mode="positive",
+            gradient_gate_topology="direct",
+            gate_amplitudes=(1.2, 0.04),
+        ),
+        timeout=20.0,
+    )
+
+    assert float(measures["gradient_margin0"]) > 0.025
+    assert float(measures["signed_delta0"]) > 0.05
+    assert float(measures["gradient_margin1"]) < 0.025
+    assert abs(float(measures["signed_delta1"])) < 1e-3
+
+
+def test_readout_writer_distribution_ngspice_restored_gate_updates_weak_feature(
+    tmp_path: Path,
+    ngspice_path: str,
+) -> None:
+    measures = run_netlist(
+        ngspice_path,
+        tmp_path / "readout_writer_distribution_restored.cir",
+        writer.generate_distribution_netlist(
+            update_mode="positive",
+            gradient_gate_topology="restored",
+            gate_amplitudes=(1.2, 0.04),
+        ),
+        timeout=20.0,
+    )
+
+    strong_delta = float(measures["signed_delta0"])
+    weak_delta = float(measures["signed_delta1"])
+    assert float(measures["gate0_before_apply"]) > 0.5
+    assert float(measures["gate1_before_apply"]) > 0.5
+    assert strong_delta > 0.05
+    assert weak_delta > 0.05
+    assert weak_delta > 0.5 * strong_delta
+    assert abs(float(measures["common_delta0"])) < 0.05
+    assert abs(float(measures["common_delta1"])) < 0.05

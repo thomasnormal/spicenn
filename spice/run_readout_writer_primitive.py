@@ -158,6 +158,141 @@ def generate_netlist(
     return "\n".join(lines) + "\n"
 
 
+def generate_distribution_netlist(
+    *,
+    update_mode: str,
+    topology: str = "bounded-ref",
+    gate_amplitudes: tuple[float, ...] = (1.2, 0.04),
+    vwp: float = 0.36,
+    vwn: float = 0.34,
+    positive_ref: float = 0.36,
+    negative_ref: float = 0.34,
+    update_span: float = 0.15,
+    gradient_width: float = 24.0,
+    gradient_restore_width: float = 32.0,
+    gradient_gate_topology: str = "restored",
+    gate_restore_width: float = 32.0,
+    update_scale: float = 0.05,
+    error_amplitude: float = 0.08,
+) -> str:
+    if update_mode not in UPDATE_MODES:
+        raise ValueError(f"update_mode must be one of {UPDATE_MODES}")
+    if topology not in READOUT_WRITER_TOPOLOGIES:
+        raise ValueError(f"topology must be one of {READOUT_WRITER_TOPOLOGIES}")
+    if gradient_gate_topology not in GRADIENT_GATE_TOPOLOGIES:
+        raise ValueError(f"gradient_gate_topology must be one of {GRADIENT_GATE_TOPOLOGIES}")
+    if not gate_amplitudes:
+        raise ValueError("gate_amplitudes must not be empty")
+    for name, value in {
+        "gradient_width": gradient_width,
+        "gradient_restore_width": gradient_restore_width,
+        "gate_restore_width": gate_restore_width,
+        "update_scale": update_scale,
+        "error_amplitude": error_amplitude,
+    }.items():
+        if value <= 0.0:
+            raise ValueError(f"{name} must be positive")
+    if any(amplitude < 0.0 or amplitude > 1.2 for amplitude in gate_amplitudes):
+        raise ValueError("gate amplitudes must stay within supply rails")
+    if error_amplitude > 1.2:
+        raise ValueError("error_amplitude must not exceed VDD")
+    if update_span < 0.0:
+        raise ValueError("update_span must be nonnegative")
+    high_ref = positive_ref + update_span
+    low_ref = negative_ref - update_span
+    if topology == "bounded-ref" and (high_ref > 1.2 or low_ref < 0.0):
+        raise ValueError("bounded-ref update references must stay within supply rails")
+    dp, dn = update_rails(update_mode, amplitude=error_amplitude)
+    lines = [
+        "* Multi-feature readout writer distribution primitive smoke.",
+        "* Tests whether weak-but-present eligibility can participate in the same physical writer.",
+        "* No behavioral sources or Python-updated state.",
+        ".param VDD=1.2",
+        mos_models(),
+        ".options method=gear reltol=1e-3 abstol=1e-12 vntol=1e-6",
+        "Vdd vdd 0 {VDD}",
+        f"Vdp dp 0 PULSE(0 {dp:.12g} 1.0n 10p 10p 2.0n 30n)",
+        f"Vdn dn 0 PULSE(0 {dn:.12g} 1.0n 10p 10p 2.0n 30n)",
+        "Vacc acc 0 PULSE(0 1.2 1.0n 10p 10p 2.0n 30n)",
+        "Vapply apply 0 PULSE(0 1.2 4.0n 10p 10p 4.0n 30n)",
+        "Vapplyn applyn 0 PULSE(1.2 0 4.0n 10p 10p 4.0n 30n)",
+    ]
+    if topology == "bounded-ref":
+        lines += [
+            f"Vvwhi_ref vwhi_ref 0 {high_ref:.12g}",
+            f"Vvwlo_ref vwlo_ref 0 {low_ref:.12g}",
+        ]
+    readout_pmos_w = 8.0 * update_scale
+    readout_nmos_w = 2.0 * update_scale
+    for feature, gate_amplitude in enumerate(gate_amplitudes):
+        gradient_gate_node = f"act{feature}"
+        lines += [
+            f"Cvwp{feature} vwp{feature} 0 20f IC={vwp:.12g}",
+            f"Cvwn{feature} vwn{feature} 0 20f IC={vwn:.12g}",
+            f"Cgvp{feature} gvp{feature} 0 2f IC=0",
+            f"Cgvn{feature} gvn{feature} 0 2f IC=0",
+            f"Crgp{feature} rgp{feature} 0 4f IC=1.2",
+            f"Crgn{feature} rgn{feature} 0 4f IC=1.2",
+            f"Rvwp{feature} vwp{feature} 0 1e15",
+            f"Rvwn{feature} vwn{feature} 0 1e15",
+            f"Rgvp{feature} gvp{feature} 0 1G",
+            f"Rgvn{feature} gvn{feature} 0 1G",
+            f"Rrgp{feature} rgp{feature} vdd 50k",
+            f"Rrgn{feature} rgn{feature} vdd 50k",
+        ]
+        if gradient_gate_topology == "direct":
+            lines.append(f"Vact{feature} act{feature} 0 PULSE(0 {gate_amplitude:.12g} 1.0n 10p 10p 2.0n 30n)")
+        else:
+            lines += [
+                f"Velig{feature} elig{feature} 0 PULSE(0 {gate_amplitude:.12g} 0.5n 10p 10p 3.0n 30n)",
+                f"Cegon{feature} act{feature} 0 10f IC=0",
+                f"Cegate{feature} egate{feature} 0 4f IC=1.2",
+                f"Regon{feature} act{feature} 0 1G",
+                f"Regate{feature} egate{feature} vdd 50k",
+                f"Megate{feature}_pd egate{feature} elig{feature} 0 0 NSENSE W={gate_restore_width:.6g}u L=180n",
+                f"Megon{feature}_p act{feature} egate{feature} vdd vdd PMOS W={gate_restore_width:.6g}u L=180n",
+            ]
+        lines += [
+            f"Mgvp{feature}_a vdd {gradient_gate_node} gvp{feature}_a 0 NSENSE W={gradient_width:.6g}u L=180n",
+            f"Mgvp{feature}_d gvp{feature}_a dp gvp{feature}_d 0 NSENSE W={gradient_width:.6g}u L=180n",
+            f"Mgvp{feature}_g gvp{feature}_d acc gvp{feature} 0 NREL W={gradient_width:.6g}u L=180n",
+            f"Mgvn{feature}_a vdd {gradient_gate_node} gvn{feature}_a 0 NSENSE W={gradient_width:.6g}u L=180n",
+            f"Mgvn{feature}_d gvn{feature}_a dn gvn{feature}_d 0 NSENSE W={gradient_width:.6g}u L=180n",
+            f"Mgvn{feature}_g gvn{feature}_d acc gvn{feature} 0 NREL W={gradient_width:.6g}u L=180n",
+            f"Mrgp{feature}_pd rgp{feature} gvp{feature} 0 0 NSENSE W={gradient_restore_width:.6g}u L=180n",
+            f"Mrgn{feature}_pd rgn{feature} gvn{feature} 0 0 NSENSE W={gradient_restore_width:.6g}u L=180n",
+            *readout_weight_update_lines(
+                feature,
+                topology=topology,
+                readout_pmos_w=readout_pmos_w,
+                readout_nmos_w=readout_nmos_w,
+            ),
+            f".meas tran vwp{feature}_before FIND V(vwp{feature}) AT=3.5n",
+            f".meas tran vwn{feature}_before FIND V(vwn{feature}) AT=3.5n",
+            f".meas tran gate{feature}_before_apply FIND V(act{feature}) AT=3.5n",
+            f".meas tran gvp{feature}_before_apply FIND V(gvp{feature}) AT=3.5n",
+            f".meas tran gvn{feature}_before_apply FIND V(gvn{feature}) AT=3.5n",
+            f".meas tran gradient_margin{feature} PARAM='gvp{feature}_before_apply-gvn{feature}_before_apply'",
+            f".meas tran vwp{feature}_after FIND V(vwp{feature}) AT=9.0n",
+            f".meas tran vwn{feature}_after FIND V(vwn{feature}) AT=9.0n",
+            f".meas tran signed_before{feature} PARAM='vwp{feature}_before-vwn{feature}_before'",
+            f".meas tran signed_after{feature} PARAM='vwp{feature}_after-vwn{feature}_after'",
+            f".meas tran signed_delta{feature} PARAM='signed_after{feature}-signed_before{feature}'",
+            f".meas tran common_before{feature} PARAM='0.5*(vwp{feature}_before+vwn{feature}_before)'",
+            f".meas tran common_after{feature} PARAM='0.5*(vwp{feature}_after+vwn{feature}_after)'",
+            f".meas tran common_delta{feature} PARAM='common_after{feature}-common_before{feature}'",
+        ]
+    lines += [
+        ".tran 5p 12n uic",
+        ".control",
+        "run",
+        "quit",
+        ".endc",
+        ".end",
+    ]
+    return "\n".join(lines) + "\n"
+
+
 def classify_sign(actual: float, expected: float, *, min_abs_delta: float) -> str:
     if abs(expected) < 1e-15:
         return "dead_zone" if abs(actual) < min_abs_delta else "biased"

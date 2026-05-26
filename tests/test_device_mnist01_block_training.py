@@ -61,6 +61,7 @@ def test_device_mnist01_block_script_help_runs_from_repo_root() -> None:
     assert "--readout-forward-width" in proc.stdout
     assert "--readout-eligibility-width" in proc.stdout
     assert "--readout-eligibility-restore-width" in proc.stdout
+    assert "--readout-weight-apply-clamp-width" in proc.stdout
     assert "--phase-time-scale" in proc.stdout
     assert "--forward-phase-mode" in proc.stdout
     assert "--input-voltage-jitter-sigma" in proc.stdout
@@ -468,6 +469,9 @@ def test_readout_update_diagnostics_report_feature_participation() -> None:
     assert np.isclose(diagnostics["readout_signed_delta_max_abs"], 0.63)
     assert diagnostics["readout_signed_updated_features_10mv"] == 2
     assert np.isclose(diagnostics["readout_signed_update_participation"], 2 / 3)
+    assert np.isclose(diagnostics["readout_common_initial_mean"], 0.35)
+    assert np.isclose(diagnostics["readout_common_final_mean"], np.mean([0.555, 0.3505, 0.335]))
+    assert np.isclose(diagnostics["readout_common_delta_max_abs"], 0.20500000000000002)
 
 
 def test_readout_update_diagnostics_are_empty_without_measured_final_weights() -> None:
@@ -478,6 +482,7 @@ def test_readout_update_diagnostics_are_empty_without_measured_final_weights() -
 
     assert diagnostics["readout_signed_delta_max_abs"] is None
     assert diagnostics["readout_signed_updated_features_10mv"] is None
+    assert diagnostics["readout_common_delta_max_abs"] is None
 
 
 def test_adaptive_reference_diagnostics_report_state_drift() -> None:
@@ -2311,6 +2316,47 @@ def test_block_netlist_can_emit_passive_readout_weight_leak() -> None:
     assert "Vvwn_ref vwn_ref 0 0.25" in netlist
     assert "Rvwp0_leak vwp0 vwp_ref 5e+06" in netlist
     assert "Rvwn3_leak vwn3 vwn_ref 5e+06" in netlist
+
+
+def test_block_netlist_can_emit_apply_phase_readout_weight_clamp() -> None:
+    sys.path.insert(0, str(SPICE_DIR))
+    import pytest
+    import run_device_mnist01_block_training as block
+
+    image_size = 4
+    weights = block.initial_block_weights(image_size, 2, 2, 1, seed=1)
+    sample = {f"x{i}": 0.2 + 0.01 * i for i in range(image_size * image_size)}
+    sample["target"] = 1.1
+    netlist = block.block_netlist(
+        [sample],
+        weights,
+        image_size=image_size,
+        block_size=2,
+        stride=2,
+        channels=1,
+        training_enabled=True,
+        readout_weight_apply_clamp_width=0.5,
+        readout_weight_positive_ref=0.36,
+        readout_weight_negative_ref=0.34,
+    )
+
+    assert "\nB" not in netlist
+    assert "Vvwp_ref vwp_ref 0 0.36" in netlist
+    assert "Vvwn_ref vwn_ref 0 0.34" in netlist
+    assert "Mvwp0_clamp_n vwp0 apply vwp_ref 0 NMOS W=0.5u L=180n" in netlist
+    assert "Mvwn3_clamp_n vwn3 apply vwn_ref 0 NMOS W=0.5u L=180n" in netlist
+    assert "Rvwp0_leak" not in netlist
+    with pytest.raises(ValueError, match="readout_weight_apply_clamp_width"):
+        block.block_netlist(
+            [sample],
+            weights,
+            image_size=image_size,
+            block_size=2,
+            stride=2,
+            channels=1,
+            training_enabled=True,
+            readout_weight_apply_clamp_width=-0.1,
+        )
 
 
 def test_block_netlist_can_emit_passive_hidden_weight_and_bias_leak() -> None:

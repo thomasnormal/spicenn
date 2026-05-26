@@ -752,6 +752,7 @@ def block_netlist(
     readout_eligibility_restore_width: float = 8.0,
     learning_activation_gate_model: str = "nrel",
     readout_weight_leak_resistance: float = 0.0,
+    readout_weight_apply_clamp_width: float = 0.0,
     readout_stack_shunt_resistance: float = 0.0,
     readout_stack_parasitic_capacitance: float = 0.0,
     readout_weight_positive_ref: float = 0.52,
@@ -878,6 +879,8 @@ def block_netlist(
         raise ValueError("readout_eligibility_restore_width must be positive")
     if readout_weight_leak_resistance < 0.0:
         raise ValueError("readout_weight_leak_resistance must be nonnegative")
+    if readout_weight_apply_clamp_width < 0.0:
+        raise ValueError("readout_weight_apply_clamp_width must be nonnegative")
     if readout_stack_shunt_resistance < 0.0:
         raise ValueError("readout_stack_shunt_resistance must be nonnegative")
     if readout_stack_parasitic_capacitance < 0.0:
@@ -1079,7 +1082,7 @@ def block_netlist(
         transient_noise_sigma=supply_transient_noise_sigma,
         transient_noise_timestep=transient_noise_timestep,
     )
-    if readout_weight_leak_resistance > 0.0:
+    if readout_weight_leak_resistance > 0.0 or readout_weight_apply_clamp_width > 0.0:
         lines += [
             f"Vvwp_ref vwp_ref 0 {readout_weight_positive_ref:.12g}",
             f"Vvwn_ref vwn_ref 0 {readout_weight_negative_ref:.12g}",
@@ -1225,6 +1228,11 @@ def block_netlist(
             lines += [
                 f"Rvwp{feature}_leak vwp{feature} vwp_ref {readout_weight_leak_resistance:.6g}",
                 f"Rvwn{feature}_leak vwn{feature} vwn_ref {readout_weight_leak_resistance:.6g}",
+            ]
+        if readout_weight_apply_clamp_width > 0.0:
+            lines += [
+                f"Mvwp{feature}_clamp_n vwp{feature} apply vwp_ref 0 NMOS W={readout_weight_apply_clamp_width:.6g}u L=180n",
+                f"Mvwn{feature}_clamp_n vwn{feature} apply vwn_ref 0 NMOS W={readout_weight_apply_clamp_width:.6g}u L=180n",
             ]
 
     if output_bias_enabled:
@@ -2163,14 +2171,25 @@ def readout_update_diagnostics(
         "readout_signed_delta_l1": None,
         "readout_signed_updated_features_10mv": None,
         "readout_signed_update_participation": None,
+        "readout_common_initial_mean": None,
+        "readout_common_final_mean": None,
+        "readout_common_delta_mean": None,
+        "readout_common_delta_max_abs": None,
     }
     if final_weights is None:
         return empty
-    initial_signed = np.asarray(initial_weights["vwp"], dtype=float) - np.asarray(initial_weights["vwn"], dtype=float)
-    final_signed = np.asarray(final_weights["vwp"], dtype=float) - np.asarray(final_weights["vwn"], dtype=float)
+    initial_vwp = np.asarray(initial_weights["vwp"], dtype=float)
+    initial_vwn = np.asarray(initial_weights["vwn"], dtype=float)
+    final_vwp = np.asarray(final_weights["vwp"], dtype=float)
+    final_vwn = np.asarray(final_weights["vwn"], dtype=float)
+    initial_signed = initial_vwp - initial_vwn
+    final_signed = final_vwp - final_vwn
     if initial_signed.shape != final_signed.shape or initial_signed.size == 0:
         return empty
+    initial_common = 0.5 * (initial_vwp + initial_vwn)
+    final_common = 0.5 * (final_vwp + final_vwn)
     delta = final_signed - initial_signed
+    common_delta = final_common - initial_common
     updated = int(np.sum(np.abs(delta) >= update_threshold))
     return {
         "readout_signed_initial_mean": float(np.mean(initial_signed)),
@@ -2180,6 +2199,10 @@ def readout_update_diagnostics(
         "readout_signed_delta_l1": float(np.sum(np.abs(delta))),
         "readout_signed_updated_features_10mv": updated,
         "readout_signed_update_participation": float(updated / delta.size),
+        "readout_common_initial_mean": float(np.mean(initial_common)),
+        "readout_common_final_mean": float(np.mean(final_common)),
+        "readout_common_delta_mean": float(np.mean(common_delta)),
+        "readout_common_delta_max_abs": float(np.max(np.abs(common_delta))),
     }
 
 
@@ -2413,6 +2436,7 @@ def run_device_sequence(
     readout_eligibility_restore_width: float,
     learning_activation_gate_model: str,
     readout_weight_leak_resistance: float,
+    readout_weight_apply_clamp_width: float,
     readout_stack_shunt_resistance: float,
     readout_stack_parasitic_capacitance: float,
     readout_weight_positive_ref: float,
@@ -2491,6 +2515,7 @@ def run_device_sequence(
         readout_eligibility_restore_width=readout_eligibility_restore_width,
         learning_activation_gate_model=learning_activation_gate_model,
         readout_weight_leak_resistance=readout_weight_leak_resistance,
+        readout_weight_apply_clamp_width=readout_weight_apply_clamp_width,
         readout_stack_shunt_resistance=readout_stack_shunt_resistance,
         readout_stack_parasitic_capacitance=readout_stack_parasitic_capacitance,
         readout_weight_positive_ref=readout_weight_positive_ref,
@@ -2625,6 +2650,15 @@ def main() -> None:
     ap.add_argument("--readout-eligibility-restore-width", type=float, default=8.0)
     ap.add_argument("--learning-activation-gate-model", choices=LEARNING_ACTIVATION_GATE_MODELS, default="nrel")
     ap.add_argument("--readout-weight-leak-resistance", type=float, default=0.0)
+    ap.add_argument(
+        "--readout-weight-apply-clamp-width",
+        type=float,
+        default=0.0,
+        help=(
+            "NMOS width, in um, for apply-phase clamps that pull stored readout rails toward "
+            "--readout-weight-positive-ref/--readout-weight-negative-ref."
+        ),
+    )
     ap.add_argument("--readout-stack-shunt-resistance", type=float, default=0.0)
     ap.add_argument("--readout-stack-parasitic-capacitance", type=float, default=0.0)
     ap.add_argument("--readout-weight-positive-init", type=float, default=0.52)
@@ -2873,6 +2907,7 @@ def main() -> None:
         "readout_eligibility_restore_width": args.readout_eligibility_restore_width,
         "learning_activation_gate_model": args.learning_activation_gate_model,
         "readout_weight_leak_resistance": args.readout_weight_leak_resistance,
+        "readout_weight_apply_clamp_width": args.readout_weight_apply_clamp_width,
         "readout_stack_shunt_resistance": args.readout_stack_shunt_resistance,
         "readout_stack_parasitic_capacitance": args.readout_stack_parasitic_capacitance,
         "readout_weight_positive_ref": args.readout_weight_positive_ref,
@@ -3099,6 +3134,7 @@ def main() -> None:
         "readout_eligibility_restore_width": args.readout_eligibility_restore_width,
         "learning_activation_gate_model": args.learning_activation_gate_model,
         "readout_weight_leak_resistance": args.readout_weight_leak_resistance,
+        "readout_weight_apply_clamp_width": args.readout_weight_apply_clamp_width,
         "readout_stack_shunt_resistance": args.readout_stack_shunt_resistance,
         "readout_stack_parasitic_capacitance": args.readout_stack_parasitic_capacitance,
         "readout_weight_positive_init": args.readout_weight_positive_init,

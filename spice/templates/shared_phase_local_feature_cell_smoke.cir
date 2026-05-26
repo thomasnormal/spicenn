@@ -1,0 +1,114 @@
+Runnable shared-phase local feature cell smoke
+.model NM NMOS LEVEL=1 VTO=0.35 KP=220u LAMBDA=0.03 GAMMA=0.20 PHI=0.60
+.model NR NMOS LEVEL=1 VTO=0.12 KP=260u LAMBDA=0.03 GAMMA=0.10 PHI=0.60
+.model NS NMOS LEVEL=1 VTO=0.03 KP=260u LAMBDA=0.03 GAMMA=0.05 PHI=0.60
+.model PM PMOS LEVEL=1 VTO=-0.35 KP=90u LAMBDA=0.03 GAMMA=0.20 PHI=0.60
+
+Vdd vdd 0 1.2
+Vx x 0 0.85
+Vfwd fwd 0 PULSE(0 1.2 1n 10p 10p 4n 20n)
+Verr err 0 PULSE(0 1.2 6n 10p 10p 2n 20n)
+Vbwd bwd 0 PULSE(0 1.2 8.5n 10p 10p 2n 20n)
+Vedp edp 0 PULSE(0 1.2 6n 10p 10p 4n 20n)
+Vedn edn 0 0
+
+* Persistent signed pixel weight state.
+Cwhp whp 0 20f IC=0.7
+Cwhn whn 0 20f IC=0.2
+Rwhp whp 0 1e15
+Rwhn whn 0 1e15
+
+* Persistent signed feature bias.
+Cbhp bhp 0 20f IC=0.5
+Cbhn bhn 0 20f IC=0.2
+Rbhp bhp 0 1e15
+Rbhn bhn 0 1e15
+
+* Persistent signed readout state.
+Cvwp vwp 0 20f IC=0.52
+Cvwn vwn 0 20f IC=0.25
+Rvwp vwp 0 1e15
+Rvwn vwn 0 1e15
+
+* Feature dynamic state.
+Cpre pre 0 10f IC=0
+Cact act 0 20f IC=0
+Cscore score 0 10f IC=0
+Cscoren scoren 0 10f IC=0
+Chdp hdp 0 12f IC=0
+Rpre pre 0 1G
+Ract act 0 1G
+Rscore score 0 1G
+Rscoren scoren 0 1G
+Rhdp hdp 0 1G
+
+* Shared forward phase rails for this feature.
+Mhfpos_phase hfp_rail fwd pre 0 NM W=12u L=180n
+Mhfneg_phase pre fwd hfn_rail 0 NM W=12u L=180n
+Chfp_rail hfp_rail 0 0.1f IC=0
+Chfn_rail hfn_rail 0 0.1f IC=0
+Rhfp_rail hfp_rail 0 1G
+Rhfn_rail hfn_rail 0 1G
+
+* Signed hidden forward contribution for one pixel.
+Mhpos_x vdd x hp_0 0 NM W=3u L=180n
+Mhpos_w hp_0 whp hfp_rail 0 NM W=3u L=180n
+Mhneg_x hfn_rail x hn_0 0 NM W=2.25u L=180n
+Mhneg_w hn_0 whn 0 0 NM W=2.25u L=180n
+Rhp_0 hp_0 0 1G
+Rhn_0 hn_0 0 1G
+
+* Stored bias contribution.
+Mhbpos_b vdd bhp hbp_0 0 NM W=3u L=180n
+Mhbpos_f hbp_0 fwd pre 0 NM W=3u L=180n
+Mhbneg_f pre fwd hbn_0 0 NM W=2.25u L=180n
+Mhbneg_b hbn_0 bhn 0 0 NM W=2.25u L=180n
+Rhbp_0 hbp_0 0 1G
+Rhbn_0 hbn_0 0 1G
+
+* Activation storage / analog ReLU-ish transfer.
+Mrelu_h vdd pre act 0 NR W=24u L=180n
+
+* Readout contribution from activation to differential score rails.
+Movpos_a vdd act op_0 0 NS W=64u L=180n
+Movpos_w op_0 vwp op_1 0 NS W=64u L=180n
+Movpos_f op_1 fwd score 0 NS W=64u L=180n
+Movneg_a vdd act on_0 0 NS W=48u L=180n
+Movneg_w on_0 vwn on_1 0 NS W=48u L=180n
+Movneg_f on_1 fwd scoren 0 NS W=48u L=180n
+Rop_0 op_0 0 1G
+Rop_1 op_1 0 1G
+Ron_0 on_0 0 1G
+Ron_1 on_1 0 1G
+
+* Restored readout-weight sign for hidden credit.
+Mrvwp_p vdd rvwn rvwp vdd PM W=6u L=180n
+Mrvwn_p vdd rvwp rvwn vdd PM W=6u L=180n
+Mrvwp_n rvwp vwn rvw_src 0 NS W=6u L=180n
+Mrvwn_n rvwn vwp rvw_src 0 NS W=6u L=180n
+Mrvw_tail rvw_src err 0 0 NM W=6u L=180n
+Crvwp rvwp 0 4f IC=0
+Crvwn rvwn 0 4f IC=0
+Crvw_src rvw_src 0 0.1f IC=0
+Rrvwp rvwp 0 1G
+Rrvwn rvwn 0 1G
+Rrvw_src rvw_src 0 1G
+
+* One quadrant of hidden-error transport, enough for a standalone smoke.
+Mhdp_pv_e vdd edp hdp_pv_e 0 NS W=8u L=180n
+Mhdp_pv_w hdp_pv_e rvwp hdp_pv_w 0 NS W=8u L=180n
+Mhdp_pv_a hdp_pv_w act hdp_pv_a 0 NR W=8u L=180n
+Mhdp_pv_b hdp_pv_a bwd hdp 0 NM W=8u L=180n
+Rhdp_pv_e hdp_pv_e 0 1G
+Rhdp_pv_w hdp_pv_w 0 1G
+Rhdp_pv_a hdp_pv_a 0 1G
+
+.tran 10p 20n uic
+.meas tran pre_forward FIND V(pre) AT=4n
+.meas tran act_forward FIND V(act) AT=4n
+.meas tran score_forward FIND V(score) AT=4n
+.meas tran scoren_forward FIND V(scoren) AT=4n
+.meas tran rvwp_after_err FIND V(rvwp) AT=8n
+.meas tran rvwn_after_err FIND V(rvwn) AT=8n
+.meas tran hdp_after_bwd FIND V(hdp) AT=11n
+.end

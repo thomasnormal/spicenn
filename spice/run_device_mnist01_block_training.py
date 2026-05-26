@@ -2577,6 +2577,8 @@ def score_net_diagnostics(initial_eval_rows: pd.DataFrame, final_eval_rows: pd.D
         **metrics("final_eval", final_eval_rows, "out_diff"),
         **metrics("initial_eval", initial_eval_rows, "decision_after"),
         **metrics("final_eval", final_eval_rows, "decision_after"),
+        **metrics("initial_eval", initial_eval_rows, "decisionn_after"),
+        **metrics("final_eval", final_eval_rows, "decisionn_after"),
         **metrics("initial_eval", initial_eval_rows, "decision_diff"),
         **metrics("final_eval", final_eval_rows, "decision_diff"),
     }
@@ -2633,11 +2635,13 @@ def threshold_window_diagnostics(
     *,
     signal: str,
     output_positive_when: str = "high",
+    prefix: str | None = None,
 ) -> dict[str, float | None]:
+    key = signal if prefix is None else prefix
     empty = {
-        f"{signal}_best_threshold_accuracy": None,
-        f"{signal}_best_threshold": None,
-        f"{signal}_best_threshold_active_fraction": None,
+        f"{key}_best_threshold_accuracy": None,
+        f"{key}_best_threshold": None,
+        f"{key}_best_threshold_active_fraction": None,
     }
     if rows.empty or signal not in rows.columns or "positive_label" not in rows.columns:
         return empty
@@ -2668,9 +2672,9 @@ def threshold_window_diagnostics(
             best_threshold = threshold
             best_active_fraction = active_fraction
     return {
-        f"{signal}_best_threshold_accuracy": best_accuracy,
-        f"{signal}_best_threshold": best_threshold,
-        f"{signal}_best_threshold_active_fraction": best_active_fraction,
+        f"{key}_best_threshold_accuracy": best_accuracy,
+        f"{key}_best_threshold": best_threshold,
+        f"{key}_best_threshold_active_fraction": best_active_fraction,
     }
 
 
@@ -3496,6 +3500,12 @@ def main() -> None:
             final_eval_rows,
             signal="decision_after",
             output_positive_when=output_positive_when,
+        ),
+        **threshold_window_diagnostics(
+            final_eval_rows,
+            signal="decisionn_after",
+            output_positive_when="low" if output_positive_when == "high" else "high",
+            prefix="decisionn_after_reject",
         ),
         **threshold_window_diagnostics(
             final_eval_rows,

@@ -600,16 +600,16 @@ def test_score_net_diagnostics_report_class_margin() -> None:
     diagnostics = block.score_net_diagnostics(
         pd.DataFrame(
             [
-                {"positive_label": 1.0, "score_net": 0.001, "out_after": 0.01},
-                {"positive_label": 0.0, "score_net": 0.003, "out_after": 0.02},
+                {"positive_label": 1.0, "score_net": 0.001, "out_after": 0.01, "decisionn_after": 0.2},
+                {"positive_label": 0.0, "score_net": 0.003, "out_after": 0.02, "decisionn_after": 0.8},
             ]
         ),
         pd.DataFrame(
             [
-                {"positive_label": 1.0, "score_net": 0.014, "out_after": 0.037},
-                {"positive_label": 1.0, "score_net": 0.012, "out_after": 0.038},
-                {"positive_label": 0.0, "score_net": 0.011, "out_after": 0.041},
-                {"positive_label": 0.0, "score_net": 0.005, "out_after": 0.039},
+                {"positive_label": 1.0, "score_net": 0.014, "out_after": 0.037, "decisionn_after": 0.006},
+                {"positive_label": 1.0, "score_net": 0.012, "out_after": 0.038, "decisionn_after": 0.002},
+                {"positive_label": 0.0, "score_net": 0.011, "out_after": 0.041, "decisionn_after": 0.140},
+                {"positive_label": 0.0, "score_net": 0.005, "out_after": 0.039, "decisionn_after": 1.180},
             ]
         ),
     )
@@ -619,6 +619,9 @@ def test_score_net_diagnostics_report_class_margin() -> None:
     assert np.isclose(diagnostics["final_eval_score_net_negative_mean"], 0.008)
     assert np.isclose(diagnostics["final_eval_score_net_margin"], 0.005)
     assert np.isclose(diagnostics["final_eval_out_after_margin"], -0.0025)
+    assert np.isclose(diagnostics["final_eval_decisionn_after_positive_mean"], 0.004)
+    assert np.isclose(diagnostics["final_eval_decisionn_after_negative_mean"], 0.66)
+    assert diagnostics["final_eval_decisionn_after_margin"] < 0.0
 
 
 def test_binary_accuracy_for_signal_can_use_circuit_decision_rail() -> None:
@@ -811,6 +814,31 @@ def test_threshold_window_diagnostics_report_best_output_threshold() -> None:
     assert diagnostics["out_after_best_threshold_accuracy"] == 1.0
     assert 1.128 < diagnostics["out_after_best_threshold"] < 1.132
     assert diagnostics["out_after_best_threshold_active_fraction"] == 0.5
+
+
+def test_threshold_window_diagnostics_can_report_prefixed_low_positive_reject_rail() -> None:
+    sys.path.insert(0, str(SPICE_DIR))
+    import run_device_mnist01_block_training as block
+
+    rows = pd.DataFrame(
+        [
+            {"positive_label": 1.0, "decisionn_after": 0.006},
+            {"positive_label": 1.0, "decisionn_after": 0.002},
+            {"positive_label": 0.0, "decisionn_after": 0.140},
+            {"positive_label": 0.0, "decisionn_after": 1.180},
+        ]
+    )
+
+    diagnostics = block.threshold_window_diagnostics(
+        rows,
+        signal="decisionn_after",
+        output_positive_when="low",
+        prefix="decisionn_after_reject",
+    )
+
+    assert diagnostics["decisionn_after_reject_best_threshold_accuracy"] == 1.0
+    assert 0.006 < diagnostics["decisionn_after_reject_best_threshold"] < 0.140
+    assert diagnostics["decisionn_after_reject_best_threshold_active_fraction"] == 0.5
 
 
 def test_block_netlist_emits_per_pixel_trainable_caps_and_no_behavioral_sources() -> None:

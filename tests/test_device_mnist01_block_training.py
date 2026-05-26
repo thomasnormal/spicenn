@@ -51,6 +51,7 @@ def test_device_mnist01_block_script_help_runs_from_repo_root() -> None:
     assert "--readout-weight-leak-resistance" in proc.stdout
     assert "--readout-stack-shunt-resistance" in proc.stdout
     assert "--readout-stack-parasitic-capacitance" in proc.stdout
+    assert "--readout-score-load-resistance" in proc.stdout
     assert "--activation-competition-width" in proc.stdout
     assert "--score-activity-inhibition-width" in proc.stdout
     assert "--output-bias" in proc.stdout
@@ -1090,6 +1091,66 @@ def test_block_netlist_can_emit_conductance_row_readout_topology() -> None:
             training_enabled=True,
             score_mode="single-ended",
             readout_forward_topology="conductance-row",
+        )
+
+
+def test_block_netlist_can_emit_isolated_conductance_row_readout_with_score_load() -> None:
+    sys.path.insert(0, str(SPICE_DIR))
+    import pytest
+    import run_device_mnist01_block_training as block
+
+    image_size = 4
+    weights = block.initial_block_weights(image_size, 2, 2, 1, seed=1)
+    sample = {f"x{i}": 0.2 + 0.01 * i for i in range(image_size * image_size)}
+    sample["target"] = 1.1
+    netlist = block.block_netlist(
+        [sample],
+        weights,
+        image_size=image_size,
+        block_size=2,
+        stride=2,
+        channels=1,
+        training_enabled=True,
+        score_mode="differential",
+        forward_phase_mode="split-hidden-output",
+        readout_forward_topology="conductance-row-isolated",
+        readout_weight_gate_model="switch",
+        readout_score_load_resistance=10000.0,
+    )
+
+    assert "\nB" not in netlist
+    assert "Rscore score 0 10000" in netlist
+    assert "Rscoren scoren 0 10000" in netlist
+    assert "Cread_midp3 read_midp3 0 0.1f IC=0" in netlist
+    assert "Cread_midn3 read_midn3 0 0.1f IC=0" in netlist
+    assert "Movpos3_cond actrow3 vwp3 read_midp3 0 NMOS W=64u L=180n" in netlist
+    assert "Movpos3_diode read_midp3 read_midp3 score 0 NSENSE W=64u L=180n" in netlist
+    assert "Movneg3_cond actrow3 vwn3 read_midn3 0 NMOS W=48u L=180n" in netlist
+    assert "Movneg3_diode read_midn3 read_midn3 scoren 0 NSENSE W=48u L=180n" in netlist
+    assert "Movpos3_cond actrow3 vwp3 score" not in netlist
+    assert "Movpos3_a vdd act3 op3_0" not in netlist
+    with pytest.raises(ValueError, match="readout_score_load_resistance"):
+        block.block_netlist(
+            [sample],
+            weights,
+            image_size=image_size,
+            block_size=2,
+            stride=2,
+            channels=1,
+            training_enabled=True,
+            readout_score_load_resistance=0.0,
+        )
+    with pytest.raises(ValueError, match="conductance-row-isolated"):
+        block.block_netlist(
+            [sample],
+            weights,
+            image_size=image_size,
+            block_size=2,
+            stride=2,
+            channels=1,
+            training_enabled=True,
+            score_mode="single-ended",
+            readout_forward_topology="conductance-row-isolated",
         )
 
 

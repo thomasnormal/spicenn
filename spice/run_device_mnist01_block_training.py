@@ -32,7 +32,7 @@ TARGET_POLARITIES = ("active-high", "active-low")
 HIDDEN_ACTIVATION_MODELS = ("nrel", "sense")
 HIDDEN_FORWARD_TOPOLOGIES = ("per-pixel-phase", "shared-phase", "always-on", "split-rail")
 READOUT_FORWARD_MODELS = ("nrel", "sense")
-READOUT_FORWARD_TOPOLOGIES = ("stacked", "conductance-row")
+READOUT_FORWARD_TOPOLOGIES = ("stacked", "conductance-row", "conductance-row-isolated")
 READOUT_WEIGHT_GATE_MODELS = ("same", "nrel", "sense", "switch")
 READOUT_GRADIENT_SOURCES = ("act", "pre", "eligibility", "eligibility-restored")
 READOUT_WEIGHT_UPDATE_TOPOLOGIES = ("rail", "bounded-ref")
@@ -789,6 +789,7 @@ def block_netlist(
     learning_activation_gate_model: str = "nrel",
     readout_weight_leak_resistance: float = 0.0,
     readout_weight_apply_clamp_width: float = 0.0,
+    readout_score_load_resistance: float = 1e9,
     readout_stack_shunt_resistance: float = 0.0,
     readout_stack_parasitic_capacitance: float = 0.0,
     readout_weight_positive_ref: float = 0.52,
@@ -905,8 +906,8 @@ def block_netlist(
         raise ValueError("readout_forward_width must be positive")
     if readout_forward_topology not in READOUT_FORWARD_TOPOLOGIES:
         raise ValueError(f"readout_forward_topology must be one of {READOUT_FORWARD_TOPOLOGIES}")
-    if readout_forward_topology == "conductance-row" and score_mode != "differential":
-        raise ValueError("conductance-row readout_forward_topology requires differential score_mode")
+    if readout_forward_topology in {"conductance-row", "conductance-row-isolated"} and score_mode != "differential":
+        raise ValueError(f"{readout_forward_topology} readout_forward_topology requires differential score_mode")
     if readout_weight_gate_model not in READOUT_WEIGHT_GATE_MODELS:
         raise ValueError(f"readout_weight_gate_model must be one of {READOUT_WEIGHT_GATE_MODELS}")
     if readout_gradient_source not in READOUT_GRADIENT_SOURCES:
@@ -923,6 +924,8 @@ def block_netlist(
         raise ValueError("readout_weight_leak_resistance must be nonnegative")
     if readout_weight_apply_clamp_width < 0.0:
         raise ValueError("readout_weight_apply_clamp_width must be nonnegative")
+    if readout_score_load_resistance <= 0.0:
+        raise ValueError("readout_score_load_resistance must be positive")
     if readout_stack_shunt_resistance < 0.0:
         raise ValueError("readout_stack_shunt_resistance must be nonnegative")
     if readout_stack_parasitic_capacitance < 0.0:
@@ -1318,8 +1321,8 @@ def block_netlist(
         f"Cout out 0 {spice_capacitance(output_latch_capacitance)} IC=0",
         "Cdp dp 0 20f IC=0",
         "Cdn dn 0 20f IC=0",
-        "Rscore score 0 1G",
-        "Rscoren scoren 0 1G",
+        f"Rscore score 0 {readout_score_load_resistance:.12g}",
+        f"Rscoren scoren 0 {readout_score_load_resistance:.12g}",
         "Rout out 0 1G",
         "Rdp dp 0 1G",
         "Rdn dn 0 1G",
@@ -1644,15 +1647,29 @@ def block_netlist(
                 readout_gradient_gate_node = f"egon{feature}"
             else:
                 readout_gradient_gate_node = f"act{feature}"
-            if readout_forward_topology == "conductance-row":
+            if readout_forward_topology in {"conductance-row", "conductance-row-isolated"}:
                 readout_forward_lines = [
                     f"Mactrow{feature}_n actrow{feature} {readout_forward_clock} act{feature} 0 NMOS W={max(1.0, readout_forward_width / 4.0):.6g}u L=180n",
                     f"Mactrow{feature}_p actrow{feature} fwdon act{feature} vdd PMOS W={max(2.0, readout_forward_width / 2.0):.6g}u L=180n",
                     f"Mactrow{feature}_rst actrow{feature} rstf 0 0 NMOS W=4u L=180n",
                     f"Ractrow{feature} actrow{feature} 0 1e12",
-                    f"Movpos{feature}_cond actrow{feature} vwp{feature} score 0 {readout_weight_model} W={readout_forward_width:.6g}u L=180n",
-                    f"Movneg{feature}_cond actrow{feature} vwn{feature} scoren 0 {readout_weight_model} W={readout_negative_forward_width:.6g}u L=180n",
                 ]
+                if readout_forward_topology == "conductance-row":
+                    readout_forward_lines += [
+                        f"Movpos{feature}_cond actrow{feature} vwp{feature} score 0 {readout_weight_model} W={readout_forward_width:.6g}u L=180n",
+                        f"Movneg{feature}_cond actrow{feature} vwn{feature} scoren 0 {readout_weight_model} W={readout_negative_forward_width:.6g}u L=180n",
+                    ]
+                else:
+                    readout_forward_lines += [
+                        f"Cread_midp{feature} read_midp{feature} 0 0.1f IC=0",
+                        f"Cread_midn{feature} read_midn{feature} 0 0.1f IC=0",
+                        f"Rread_midp{feature} read_midp{feature} 0 1G",
+                        f"Rread_midn{feature} read_midn{feature} 0 1G",
+                        f"Movpos{feature}_cond actrow{feature} vwp{feature} read_midp{feature} 0 {readout_weight_model} W={readout_forward_width:.6g}u L=180n",
+                        f"Movpos{feature}_diode read_midp{feature} read_midp{feature} score 0 NSENSE W={readout_forward_width:.6g}u L=180n",
+                        f"Movneg{feature}_cond actrow{feature} vwn{feature} read_midn{feature} 0 {readout_weight_model} W={readout_negative_forward_width:.6g}u L=180n",
+                        f"Movneg{feature}_diode read_midn{feature} read_midn{feature} scoren 0 NSENSE W={readout_negative_forward_width:.6g}u L=180n",
+                    ]
             else:
                 readout_forward_lines = [
                     f"Movpos{feature}_a vdd act{feature} op{feature}_0 0 {readout_model} W={readout_forward_width:.6g}u L=180n",
@@ -2507,6 +2524,7 @@ def run_device_sequence(
     learning_activation_gate_model: str,
     readout_weight_leak_resistance: float,
     readout_weight_apply_clamp_width: float,
+    readout_score_load_resistance: float,
     readout_stack_shunt_resistance: float,
     readout_stack_parasitic_capacitance: float,
     readout_weight_positive_ref: float,
@@ -2588,6 +2606,7 @@ def run_device_sequence(
         learning_activation_gate_model=learning_activation_gate_model,
         readout_weight_leak_resistance=readout_weight_leak_resistance,
         readout_weight_apply_clamp_width=readout_weight_apply_clamp_width,
+        readout_score_load_resistance=readout_score_load_resistance,
         readout_stack_shunt_resistance=readout_stack_shunt_resistance,
         readout_stack_parasitic_capacitance=readout_stack_parasitic_capacitance,
         readout_weight_positive_ref=readout_weight_positive_ref,
@@ -2697,7 +2716,8 @@ def main() -> None:
         default="stacked",
         help=(
             "stacked uses the historical act/weight/phase MOS stack; conductance-row pulses act through "
-            "a row driver and lets stored readout weights act as conductances into score/scoren."
+            "a row driver and lets stored readout weights act as conductances into score/scoren; "
+            "conductance-row-isolated inserts diode-connected isolation devices before the shared rails."
         ),
     )
     ap.add_argument(
@@ -2751,6 +2771,15 @@ def main() -> None:
     )
     ap.add_argument("--readout-stack-shunt-resistance", type=float, default=0.0)
     ap.add_argument("--readout-stack-parasitic-capacitance", type=float, default=0.0)
+    ap.add_argument(
+        "--readout-score-load-resistance",
+        type=float,
+        default=1e9,
+        help=(
+            "Resistance from score and scoren to ground. Lower values provide a current-mode/low-impedance "
+            "score load for conductance-row readout experiments."
+        ),
+    )
     ap.add_argument("--readout-weight-positive-init", type=float, default=0.52)
     ap.add_argument("--readout-weight-negative-init", type=float, default=0.25)
     ap.add_argument("--readout-weight-init-sigma", type=float, default=0.025)
@@ -2894,6 +2923,8 @@ def main() -> None:
         raise ValueError("readout-eligibility-width must be positive")
     if args.readout_eligibility_restore_width <= 0.0:
         raise ValueError("readout-eligibility-restore-width must be positive")
+    if args.readout_score_load_resistance <= 0.0:
+        raise ValueError("readout-score-load-resistance must be positive")
     if args.measurement_detail != "full" and not args.continuous_final_eval:
         raise ValueError("--measurement-detail outputs requires --continuous-final-eval")
     blocks, feature_count = block_topology(args.image_size, args.block_size, args.stride, args.channels)
@@ -3000,6 +3031,7 @@ def main() -> None:
         "learning_activation_gate_model": args.learning_activation_gate_model,
         "readout_weight_leak_resistance": args.readout_weight_leak_resistance,
         "readout_weight_apply_clamp_width": args.readout_weight_apply_clamp_width,
+        "readout_score_load_resistance": args.readout_score_load_resistance,
         "readout_stack_shunt_resistance": args.readout_stack_shunt_resistance,
         "readout_stack_parasitic_capacitance": args.readout_stack_parasitic_capacitance,
         "readout_weight_positive_ref": args.readout_weight_positive_ref,
@@ -3229,6 +3261,7 @@ def main() -> None:
         "learning_activation_gate_model": args.learning_activation_gate_model,
         "readout_weight_leak_resistance": args.readout_weight_leak_resistance,
         "readout_weight_apply_clamp_width": args.readout_weight_apply_clamp_width,
+        "readout_score_load_resistance": args.readout_score_load_resistance,
         "readout_stack_shunt_resistance": args.readout_stack_shunt_resistance,
         "readout_stack_parasitic_capacitance": args.readout_stack_parasitic_capacitance,
         "readout_weight_positive_init": args.readout_weight_positive_init,

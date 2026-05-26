@@ -91,6 +91,8 @@ def test_device_mnist01_block_script_help_runs_from_repo_root() -> None:
     assert "--continuous-final-eval" in proc.stdout
     assert "--skip-initial-eval" in proc.stdout
     assert "--hidden-forward-topology" in proc.stdout
+    assert "--input-waveform-mode" in proc.stdout
+    assert "--input-row-drive-width" in proc.stdout
 
 
 def test_block_topology_matches_target_10x10_b4_stride2_c2_shape() -> None:
@@ -139,6 +141,7 @@ def test_block_training_schedule_can_split_hidden_and_output_forward_phases() ->
 
     assert "Vfwd fwd 0 PWL" in phases
     assert "Vfwdh fwdh 0 PWL(0n 0" in phases
+    assert "Vfwdhn fwdhn 0 PWL(0n 1.2" in phases
     assert "0.75n 1.2" in phases
     assert "2.145n 1.2" in phases
     assert "12.8n 1.2" in phases
@@ -149,6 +152,41 @@ def test_block_training_schedule_can_split_hidden_and_output_forward_phases() ->
             training_enabled=True,
             phase_time_scale=1.0,
             forward_phase_mode="bad",
+        )
+
+
+def test_block_training_row_pulsed_input_uses_hidden_forward_windows() -> None:
+    sys.path.insert(0, str(SPICE_DIR))
+    import pytest
+    import run_device_mnist01_block_training as block
+
+    schedule = block.block_phase_schedule(
+        1,
+        training_enabled=True,
+        phase_time_scale=1.0,
+        forward_phase_mode="split-hidden-output",
+    )
+    wave = block.block_row_pulsed_sample_wave(
+        [{"x0": 0.8, "target": 1.1}],
+        "x0",
+        schedule.stop_ns,
+        hidden_forward_windows_by_sample=schedule.hidden_forward_windows_by_sample,
+    )
+
+    assert wave.startswith("PWL(0n 0")
+    assert "0.75n 0.8" in wave
+    assert "2.195n 0.8" in wave
+    assert "2.245n 0" in wave
+    assert "12.8n 0.8" in wave
+    assert "14.586n 0.8" in wave
+    assert "14.636n 0" in wave
+    assert "3n 0.8" not in wave
+    with pytest.raises(ValueError, match="hidden forward window schedule"):
+        block.block_row_pulsed_sample_wave(
+            [{"x0": 0.8, "target": 1.1}],
+            "x0",
+            schedule.stop_ns,
+            hidden_forward_windows_by_sample=[],
         )
 
 
@@ -930,6 +968,64 @@ def test_block_netlist_can_emit_split_rail_hidden_forward_topology() -> None:
     assert "Mhpos3_3_f" not in netlist
     assert "hp3_3_0" not in netlist
     assert "hn3_3_0" not in netlist
+
+
+def test_block_netlist_can_pulse_input_rows_for_split_rail_topology() -> None:
+    sys.path.insert(0, str(SPICE_DIR))
+    import pytest
+    import run_device_mnist01_block_training as block
+
+    image_size = 4
+    weights = block.initial_block_weights(image_size, 2, 2, 1, seed=1)
+    sample = {f"x{i}": 0.2 + 0.01 * i for i in range(image_size * image_size)}
+    sample["target"] = 1.1
+    netlist = block.block_netlist(
+        [sample],
+        weights,
+        image_size=image_size,
+        block_size=2,
+        stride=2,
+        channels=1,
+        training_enabled=True,
+        hidden_forward_topology="split-rail",
+        forward_phase_mode="split-hidden-output",
+        input_waveform_mode="row-pulsed",
+    )
+
+    assert "\nB" not in netlist
+    assert "Vx0 x0_src 0 PWL(0n 0 0.7n 0 0.75n 0.2 2.195n 0.2 2.245n 0" in netlist
+    assert "12.8n 0.2 14.586n 0.2 14.636n 0" in netlist
+    assert "Mx0_row_n x0 fwdh x0_src 0 NMOS W=12u L=180n" in netlist
+    assert "Mx0_row_p x0 fwdhn x0_src vdd PMOS W=24u L=180n" in netlist
+    assert "Mx0_row_rst x0 rstf 0 0 NMOS W=4u L=180n" in netlist
+    assert "Rx0_row_leak x0 0 1e12" in netlist
+    assert "Vfwdhn fwdhn 0 PWL" in netlist
+    assert "Vtarget target 0 PWL(0n 1.1 15.95n 1.1 16n 1.1)" in netlist
+    assert "Xhs3_3 x15 whp3_3 whn3_3 pre3 pren3 split_rail_hidden_pixel" in netlist
+    assert "Mhpos3_3_f" not in netlist
+    with pytest.raises(ValueError, match="input_waveform_mode"):
+        block.block_netlist(
+            [sample],
+            weights,
+            image_size=image_size,
+            block_size=2,
+            stride=2,
+            channels=1,
+            training_enabled=True,
+            input_waveform_mode="bad",
+        )
+    with pytest.raises(ValueError, match="input_row_drive_width"):
+        block.block_netlist(
+            [sample],
+            weights,
+            image_size=image_size,
+            block_size=2,
+            stride=2,
+            channels=1,
+            training_enabled=True,
+            input_waveform_mode="row-pulsed",
+            input_row_drive_width=0.0,
+        )
 
 
 def test_block_netlist_split_rail_has_no_per_pixel_hidden_stack_conditioning_nodes() -> None:

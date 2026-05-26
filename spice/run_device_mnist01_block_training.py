@@ -5,6 +5,7 @@ import hashlib
 import json
 import time
 from collections.abc import Sequence
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -26,6 +27,7 @@ from spicenn.timing import CYCLE_NS
 
 
 INPUT_RAIL_MODES = ("raw", "complement", "alternating-complement")
+INPUT_WAVEFORM_MODES = ("held", "row-pulsed")
 TARGET_POLARITIES = ("active-high", "active-low")
 HIDDEN_ACTIVATION_MODELS = ("nrel", "sense")
 HIDDEN_FORWARD_TOPOLOGIES = ("per-pixel-phase", "shared-phase", "always-on", "split-rail")
@@ -352,6 +354,102 @@ def validate_block_samples(samples: list[dict[str, Any]], *, required_rails: lis
             raise ValueError(f"sample {idx} missing target rail")
 
 
+@dataclass(frozen=True)
+class BlockPhaseSchedule:
+    cycle_ns: float
+    stop_ns: float
+    windows: dict[str, list[tuple[float, float]]]
+    hidden_forward_windows_by_sample: list[list[tuple[float, float]]]
+
+
+def block_phase_schedule(
+    sample_count: int,
+    *,
+    training_enabled: bool | Sequence[bool],
+    phase_time_scale: float,
+    phase_jitter_sigma_ns: float = 0.0,
+    phase_jitter_seed: int = 0,
+    forward_phase_mode: str = "single",
+) -> BlockPhaseSchedule:
+    if phase_jitter_sigma_ns < 0.0:
+        raise ValueError("phase_jitter_sigma_ns must be nonnegative")
+    if forward_phase_mode not in FORWARD_PHASE_MODES:
+        raise ValueError(f"forward_phase_mode must be one of {FORWARD_PHASE_MODES}")
+    if phase_time_scale <= 0.0:
+        raise ValueError("phase_time_scale must be positive")
+    training_schedule = expand_training_schedule(sample_count, training_enabled)
+    cycle_ns = CYCLE_NS * phase_time_scale
+    stop = sample_count * cycle_ns
+    windows: dict[str, list[tuple[float, float]]] = {
+        "rstf": [],
+        "rstg": [],
+        "fwd": [],
+        "fwdh": [],
+        "fwdo": [],
+        "err": [],
+        "bwd": [],
+        "acc": [],
+        "apply": [],
+        "dec": [],
+    }
+    hidden_forward_by_sample: list[list[tuple[float, float]]] = []
+    for idx in range(sample_count):
+        base = idx * cycle_ns
+        scale = phase_time_scale
+        sample_start = base
+        sample_stop = base + cycle_ns
+
+        def window(label: str, start: float, end: float) -> tuple[float, float]:
+            return jittered_interval(
+                start,
+                end,
+                min_start=sample_start,
+                max_end=sample_stop,
+                sigma=phase_jitter_sigma_ns,
+                seed=phase_jitter_seed,
+                name=f"phase:{idx}:{label}",
+            )
+
+        windows["rstf"].extend(
+            [
+                window("rstf0", base + 0.00 * scale, base + 0.50 * scale),
+                window("rstf1", base + 12.05 * scale, base + 12.55 * scale),
+            ]
+        )
+        windows["rstg"].append(window("rstg", base + 0.00 * scale, base + 0.50 * scale))
+        fwd_windows = [
+            window("fwd0", base + 0.75 * scale, base + 3.00 * scale),
+            window("fwd1", base + 12.80 * scale, base + 15.60 * scale),
+        ]
+        windows["fwd"].extend(fwd_windows)
+        hidden_windows: list[tuple[float, float]] = []
+        output_windows: list[tuple[float, float]] = []
+        if forward_phase_mode == "split-hidden-output":
+            for start, end in fwd_windows:
+                split = start + 0.62 * (end - start)
+                gap = min(0.10 * scale, max(0.0, (end - split) * 0.25))
+                hidden_windows.append((start, split))
+                output_windows.append((min(end, split + gap), end))
+        else:
+            hidden_windows.extend(fwd_windows)
+            output_windows.extend(fwd_windows)
+        windows["fwdh"].extend(hidden_windows)
+        windows["fwdo"].extend(output_windows)
+        hidden_forward_by_sample.append(hidden_windows)
+        windows["dec"].append(window("dec", base + 15.00 * scale, base + 15.55 * scale))
+        if training_schedule[idx]:
+            windows["err"].append(window("err", base + 3.25 * scale, base + 5.00 * scale))
+            windows["bwd"].append(window("bwd", base + 5.25 * scale, base + 7.00 * scale))
+            windows["acc"].append(window("acc", base + 7.25 * scale, base + 9.00 * scale))
+            windows["apply"].append(window("apply", base + 9.25 * scale, base + 11.20 * scale))
+    return BlockPhaseSchedule(
+        cycle_ns=cycle_ns,
+        stop_ns=stop,
+        windows=windows,
+        hidden_forward_windows_by_sample=hidden_forward_by_sample,
+    )
+
+
 def block_sample_wave(samples: list[dict[str, Any]], key: str, stop_ns: float, *, cycle_ns: float) -> str:
     points: list[tuple[float, float]] = []
     for idx, sample in enumerate(samples):
@@ -365,6 +463,38 @@ def block_sample_wave(samples: list[dict[str, Any]], key: str, stop_ns: float, *
         points.append((min(stop_ns, end - 0.05), value))
     points.append((stop_ns, float(samples[-1][key])))
     return "PWL(" + " ".join(f"{t:.12g}n {v:.12g}" for t, v in points) + ")"
+
+
+def block_row_pulsed_sample_wave(
+    samples: list[dict[str, Any]],
+    key: str,
+    stop_ns: float,
+    *,
+    hidden_forward_windows_by_sample: list[list[tuple[float, float]]],
+    hold_after_ns: float = 0.05,
+    fall_after_ns: float = 0.10,
+) -> str:
+    if len(hidden_forward_windows_by_sample) != len(samples):
+        raise ValueError("hidden forward window schedule must match sample count")
+    if hold_after_ns < 0.0 or fall_after_ns < hold_after_ns:
+        raise ValueError("row pulse fall timing must not precede the hold timing")
+    points: list[tuple[float, float]] = [(0.0, 0.0)]
+    for idx, sample in enumerate(samples):
+        value = float(sample[key])
+        for start, end in hidden_forward_windows_by_sample[idx]:
+            if start > 0.0:
+                points.append((max(0.0, start - 0.05), 0.0))
+            points.append((start, value))
+            points.append((min(stop_ns, end + hold_after_ns), value))
+            points.append((min(stop_ns, end + fall_after_ns), 0.0))
+    points.append((stop_ns, 0.0))
+    compact: list[tuple[float, float]] = []
+    for t, v in sorted(points):
+        if compact and abs(compact[-1][0] - t) < 1e-12:
+            compact[-1] = (t, v)
+        else:
+            compact.append((t, v))
+    return "PWL(" + " ".join(f"{t:.12g}n {v:.12g}" for t, v in compact) + ")"
 
 
 def perturb_input_records(
@@ -454,78 +584,31 @@ def block_repeated_phases(
         raise ValueError("phase_transient_noise_sigma must be nonnegative")
     if transient_noise_timestep <= 0.0:
         raise ValueError("transient_noise_timestep must be positive")
-    if forward_phase_mode not in FORWARD_PHASE_MODES:
-        raise ValueError(f"forward_phase_mode must be one of {FORWARD_PHASE_MODES}")
-    training_schedule = expand_training_schedule(sample_count, training_enabled)
-    cycle_ns = CYCLE_NS * phase_time_scale
-    stop = sample_count * cycle_ns
-    rstf: list[tuple[float, float]] = []
-    rstg: list[tuple[float, float]] = []
-    fwd: list[tuple[float, float]] = []
-    fwdh: list[tuple[float, float]] = []
-    fwdo: list[tuple[float, float]] = []
-    err: list[tuple[float, float]] = []
-    bwd: list[tuple[float, float]] = []
-    acc: list[tuple[float, float]] = []
-    apply: list[tuple[float, float]] = []
-    dec: list[tuple[float, float]] = []
-    for idx in range(sample_count):
-        base = idx * cycle_ns
-        scale = phase_time_scale
-        sample_start = base
-        sample_stop = base + cycle_ns
-
-        def window(label: str, start: float, end: float) -> tuple[float, float]:
-            return jittered_interval(
-                start,
-                end,
-                min_start=sample_start,
-                max_end=sample_stop,
-                sigma=phase_jitter_sigma_ns,
-                seed=phase_jitter_seed,
-                name=f"phase:{idx}:{label}",
-            )
-
-        rstf += [
-            window("rstf0", base + 0.00 * scale, base + 0.50 * scale),
-            window("rstf1", base + 12.05 * scale, base + 12.55 * scale),
-        ]
-        rstg += [window("rstg", base + 0.00 * scale, base + 0.50 * scale)]
-        fwd_windows = [
-            window("fwd0", base + 0.75 * scale, base + 3.00 * scale),
-            window("fwd1", base + 12.80 * scale, base + 15.60 * scale),
-        ]
-        fwd += fwd_windows
-        if forward_phase_mode == "split-hidden-output":
-            for fwd_idx, (start, end) in enumerate(fwd_windows):
-                split = start + 0.62 * (end - start)
-                gap = min(0.10 * scale, max(0.0, (end - split) * 0.25))
-                fwdh.append((start, split))
-                fwdo.append((min(end, split + gap), end))
-        else:
-            fwdh += fwd_windows
-            fwdo += fwd_windows
-        dec.append(window("dec", base + 15.00 * scale, base + 15.55 * scale))
-        if training_schedule[idx]:
-            err.append(window("err", base + 3.25 * scale, base + 5.00 * scale))
-            bwd.append(window("bwd", base + 5.25 * scale, base + 7.00 * scale))
-            acc.append(window("acc", base + 7.25 * scale, base + 9.00 * scale))
-            apply.append(window("apply", base + 9.25 * scale, base + 11.20 * scale))
+    schedule = block_phase_schedule(
+        sample_count,
+        training_enabled=training_enabled,
+        phase_time_scale=phase_time_scale,
+        phase_jitter_sigma_ns=phase_jitter_sigma_ns,
+        phase_jitter_seed=phase_jitter_seed,
+        forward_phase_mode=forward_phase_mode,
+    )
+    windows = schedule.windows
     lines: list[str] = []
     for source_name, node, value in [
-        ("Vrstf", "rstf", pulse_wave(rstf, stop)),
-        ("Vrstfn", "rstfn", active_low_pulse_wave(rstf, stop)),
-        ("Vrstg", "rstg", pulse_wave(rstg, stop)),
-        ("Vrstgn", "rstgn", active_low_pulse_wave(rstg, stop)),
-        ("Vfwd", "fwd", pulse_wave(fwd, stop)),
-        ("Vfwdh", "fwdh", pulse_wave(fwdh, stop)),
-        ("Vfwdo", "fwdo", pulse_wave(fwdo, stop)),
-        ("Verr", "err", pulse_wave(err, stop)),
-        ("Vbwd", "bwd", pulse_wave(bwd, stop)),
-        ("Vacc", "acc", pulse_wave(acc, stop)),
-        ("Vapply", "apply", pulse_wave(apply, stop)),
-        ("Vapplyn", "applyn", active_low_pulse_wave(apply, stop)),
-        ("Vdec", "dec", pulse_wave(dec, stop)),
+        ("Vrstf", "rstf", pulse_wave(windows["rstf"], schedule.stop_ns)),
+        ("Vrstfn", "rstfn", active_low_pulse_wave(windows["rstf"], schedule.stop_ns)),
+        ("Vrstg", "rstg", pulse_wave(windows["rstg"], schedule.stop_ns)),
+        ("Vrstgn", "rstgn", active_low_pulse_wave(windows["rstg"], schedule.stop_ns)),
+        ("Vfwd", "fwd", pulse_wave(windows["fwd"], schedule.stop_ns)),
+        ("Vfwdh", "fwdh", pulse_wave(windows["fwdh"], schedule.stop_ns)),
+        ("Vfwdhn", "fwdhn", active_low_pulse_wave(windows["fwdh"], schedule.stop_ns)),
+        ("Vfwdo", "fwdo", pulse_wave(windows["fwdo"], schedule.stop_ns)),
+        ("Verr", "err", pulse_wave(windows["err"], schedule.stop_ns)),
+        ("Vbwd", "bwd", pulse_wave(windows["bwd"], schedule.stop_ns)),
+        ("Vacc", "acc", pulse_wave(windows["acc"], schedule.stop_ns)),
+        ("Vapply", "apply", pulse_wave(windows["apply"], schedule.stop_ns)),
+        ("Vapplyn", "applyn", active_low_pulse_wave(windows["apply"], schedule.stop_ns)),
+        ("Vdec", "dec", pulse_wave(windows["dec"], schedule.stop_ns)),
     ]:
         lines += voltage_source_lines(
             source_name,
@@ -691,6 +774,8 @@ def block_netlist(
     forward_phase_mode: str = "single",
     score_mode: str = "single-ended",
     input_rail_mode: str = "alternating-complement",
+    input_waveform_mode: str = "held",
+    input_row_drive_width: float = 12.0,
     measurement_detail: str = "full",
 ) -> str:
     if readout_apply_scale <= 0.0:
@@ -828,6 +913,10 @@ def block_netlist(
     learning_activation_model = learning_activation_gate_device_model(learning_activation_gate_model)
     if input_rail_mode not in INPUT_RAIL_MODES:
         raise ValueError(f"input_rail_mode must be one of {INPUT_RAIL_MODES}")
+    if input_waveform_mode not in INPUT_WAVEFORM_MODES:
+        raise ValueError(f"input_waveform_mode must be one of {INPUT_WAVEFORM_MODES}")
+    if input_row_drive_width <= 0.0:
+        raise ValueError("input_row_drive_width must be positive")
     if measurement_detail not in MEASUREMENT_DETAILS:
         raise ValueError(f"measurement_detail must be one of {MEASUREMENT_DETAILS}")
     blocks, expected_features = block_topology(image_size, block_size, stride, channels)
@@ -857,6 +946,14 @@ def block_netlist(
     readout_negative_forward_width = max(0.5, readout_forward_width * 0.75)
     cycle_ns = CYCLE_NS * phase_time_scale
     stop = len(samples) * cycle_ns
+    phase_schedule = block_phase_schedule(
+        len(samples),
+        training_enabled=training_enabled,
+        phase_time_scale=phase_time_scale,
+        phase_jitter_sigma_ns=phase_jitter_sigma_ns,
+        phase_jitter_seed=phase_jitter_seed,
+        forward_phase_mode=forward_phase_mode,
+    )
     measures: list[str] = []
     prints: list[str] = []
     for idx in range(len(samples)):
@@ -1026,14 +1123,38 @@ def block_netlist(
         else:
             lines.append(f"Voutref outref 0 {output_decision_ref:.12g}")
     for rail in required_rails:
-        lines += voltage_source_lines(
-            f"V{rail}",
-            rail,
-            "0",
-            block_sample_wave(samples, rail, stop, cycle_ns=cycle_ns),
-            transient_noise_sigma=input_transient_noise_sigma,
-            transient_noise_timestep=transient_noise_timestep,
-        )
+        if input_waveform_mode == "row-pulsed":
+            source_node = f"{rail}_src"
+            input_wave = block_row_pulsed_sample_wave(
+                samples,
+                rail,
+                stop,
+                hidden_forward_windows_by_sample=phase_schedule.hidden_forward_windows_by_sample,
+            )
+            lines += voltage_source_lines(
+                f"V{rail}",
+                source_node,
+                "0",
+                input_wave,
+                transient_noise_sigma=input_transient_noise_sigma,
+                transient_noise_timestep=transient_noise_timestep,
+            )
+            lines += [
+                f"M{rail}_row_n {rail} fwdh {source_node} 0 NMOS W={input_row_drive_width:.6g}u L=180n",
+                f"M{rail}_row_p {rail} fwdhn {source_node} vdd PMOS W={2.0 * input_row_drive_width:.6g}u L=180n",
+                f"M{rail}_row_rst {rail} rstf 0 0 NMOS W={max(1.0, input_row_drive_width / 3.0):.6g}u L=180n",
+                f"R{rail}_row_leak {rail} 0 1e12",
+            ]
+        else:
+            input_wave = block_sample_wave(samples, rail, stop, cycle_ns=cycle_ns)
+            lines += voltage_source_lines(
+                f"V{rail}",
+                rail,
+                "0",
+                input_wave,
+                transient_noise_sigma=input_transient_noise_sigma,
+                transient_noise_timestep=transient_noise_timestep,
+            )
     lines += [
         *voltage_source_lines(
             "Vtarget",
@@ -2296,6 +2417,8 @@ def run_device_sequence(
     forward_phase_mode: str,
     score_mode: str,
     input_rail_mode: str,
+    input_waveform_mode: str,
+    input_row_drive_width: float,
     measurement_detail: str,
 ) -> pd.DataFrame:
     netlist = block_netlist(
@@ -2371,6 +2494,8 @@ def run_device_sequence(
         forward_phase_mode=forward_phase_mode,
         score_mode=score_mode,
         input_rail_mode=input_rail_mode,
+        input_waveform_mode=input_waveform_mode,
+        input_row_drive_width=input_row_drive_width,
         measurement_detail=measurement_detail,
     )
     if "\nB" in netlist:
@@ -2543,6 +2668,21 @@ def main() -> None:
     )
     ap.add_argument("--score-mode", choices=SCORE_MODES, default="single-ended")
     ap.add_argument("--input-rail-mode", choices=INPUT_RAIL_MODES, default="alternating-complement")
+    ap.add_argument(
+        "--input-waveform-mode",
+        choices=INPUT_WAVEFORM_MODES,
+        default="held",
+        help=(
+            "held keeps pixel rails at the sample value for the whole cycle; row-pulsed drives them only "
+            "during the hidden-forward windows, intended for split-rail conductance synapses."
+        ),
+    )
+    ap.add_argument(
+        "--input-row-drive-width",
+        type=float,
+        default=12.0,
+        help="NMOS width, in um, for row-pulsed input transmission-gate row drivers.",
+    )
     ap.add_argument(
         "--measurement-detail",
         choices=MEASUREMENT_DETAILS,
@@ -2726,6 +2866,8 @@ def main() -> None:
         "forward_phase_mode": args.forward_phase_mode,
         "score_mode": args.score_mode,
         "input_rail_mode": args.input_rail_mode,
+        "input_waveform_mode": args.input_waveform_mode,
+        "input_row_drive_width": args.input_row_drive_width,
         "measurement_detail": args.measurement_detail,
     }
     if args.skip_initial_eval:
@@ -2879,6 +3021,8 @@ def main() -> None:
             "raw and optional complemented resized pixel rails encoded as 0.08 + 0.92 * intensity; no PCA/local-PCA"
         ),
         "input_rail_mode": args.input_rail_mode,
+        "input_waveform_mode": args.input_waveform_mode,
+        "input_row_drive_width": args.input_row_drive_width,
         "complement_rail_scale": args.complement_rail_scale,
         "hidden_bias_state": "persistent signed bhp/bhn capacitors with MOS/passive local bias writers",
         "hidden_credit_mode": args.hidden_credit_mode,

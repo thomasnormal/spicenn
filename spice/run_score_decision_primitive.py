@@ -12,6 +12,7 @@ from run_spice_sweep import ROOT, detect_spice
 
 
 SCORE_CASES = ("positive", "negative", "neutral", "shifted_positive", "shifted_negative")
+DECISION_TOPOLOGIES = ("score-diff", "score-diff-reject-ref", "score-diff-window")
 
 
 def score_values(case: str, *, center: float, delta: float) -> tuple[float, float]:
@@ -33,12 +34,18 @@ def generate_netlist(
     score_case: str,
     score_center: float = 0.10,
     score_delta: float = 0.04,
+    score: float | None = None,
+    scoren: float | None = None,
     pullup_width: float = 8.0,
     pulldown_width: float = 12.0,
     scoren_pulldown_scale: float = 1.0,
+    decision_topology: str = "score-diff",
+    reject_ref: float = 0.075,
 ) -> str:
     if score_case not in SCORE_CASES:
         raise ValueError(f"score_case must be one of {SCORE_CASES}")
+    if decision_topology not in DECISION_TOPOLOGIES:
+        raise ValueError(f"decision_topology must be one of {DECISION_TOPOLOGIES}")
     for name, value in {
         "pullup_width": pullup_width,
         "pulldown_width": pulldown_width,
@@ -46,9 +53,14 @@ def generate_netlist(
     }.items():
         if value <= 0.0:
             raise ValueError(f"{name} must be positive")
-    score, scoren = score_values(score_case, center=score_center, delta=score_delta)
-    if min(score, scoren) < 0.0 or max(score, scoren) > 1.2:
+    if reject_ref < 0.0 or reject_ref > 1.2:
+        raise ValueError("reject_ref must stay within supply rails")
+    case_score, case_scoren = score_values(score_case, center=score_center, delta=score_delta)
+    score_v = case_score if score is None else score
+    scoren_v = case_scoren if scoren is None else scoren
+    if min(score_v, scoren_v) < 0.0 or max(score_v, scoren_v) > 1.2:
         raise ValueError("score rails must stay within supply rails")
+    measure_time = "5.80n" if decision_topology == "score-diff-reject-ref" else "4.5n"
     lines = [
         "* Score differential precharged decision primitive smoke.",
         "* Tests direct transistor sensing of score/scoren without output-latch indirection.",
@@ -57,25 +69,81 @@ def generate_netlist(
         mos_models(),
         ".options method=gear reltol=1e-3 abstol=1e-12 vntol=1e-6",
         "Vdd vdd 0 {VDD}",
-        f"Vscore score 0 {score:.12g}",
-        f"Vscoren scoren 0 {scoren:.12g}",
+        f"Vscore score 0 {score_v:.12g}",
+        f"Vscoren scoren 0 {scoren_v:.12g}",
+        f"Voutref outref 0 {reject_ref:.12g}",
         "Vrstfn rstfn 0 PULSE(0 1.2 0.8n 10p 10p 8n 10n)",
         "Vdec dec 0 PULSE(0 1.2 1.0n 10p 10p 3n 10n)",
+        "Vdec2 dec2 0 PULSE(0 1.2 4.6n 10p 10p 0.7n 10n)",
         "Cdecision decision 0 20f IC=0",
         "Cdecisionn decisionn 0 20f IC=0",
         "Rdecision decision 0 1G",
         "Rdecisionn decisionn 0 1G",
         "Mprecharge_decision decision rstfn vdd vdd PMOS W=4u L=180n",
         "Mprecharge_decisionn decisionn rstfn vdd vdd PMOS W=4u L=180n",
-        f"Mdec_scorepc_p decision decisionn vdd vdd PMOS W={pullup_width:.6g}u L=180n",
-        f"Mdecn_scorepc_p decisionn decision vdd vdd PMOS W={pullup_width:.6g}u L=180n",
-        f"Mdec_scorepc_n decision scoren dec_src 0 NSENSE W={pulldown_width * scoren_pulldown_scale:.6g}u L=180n",
-        f"Mdecn_scorepc_n decisionn score dec_src 0 NSENSE W={pulldown_width:.6g}u L=180n",
-        f"Mdec_scorepc_tail dec_src dec 0 0 NMOS W={pulldown_width:.6g}u L=180n",
-        ".meas tran decision_after FIND V(decision) AT=4.5n",
-        ".meas tran decisionn_after FIND V(decisionn) AT=4.5n",
+    ]
+    if decision_topology == "score-diff":
+        lines += [
+            f"Mdec_scorepc_p decision decisionn vdd vdd PMOS W={pullup_width:.6g}u L=180n",
+            f"Mdecn_scorepc_p decisionn decision vdd vdd PMOS W={pullup_width:.6g}u L=180n",
+            f"Mdec_scorepc_n decision scoren dec_src 0 NSENSE W={pulldown_width * scoren_pulldown_scale:.6g}u L=180n",
+            f"Mdecn_scorepc_n decisionn score dec_src 0 NSENSE W={pulldown_width:.6g}u L=180n",
+            f"Mdec_scorepc_tail dec_src dec 0 0 NMOS W={pulldown_width:.6g}u L=180n",
+        ]
+    elif decision_topology == "score-diff-reject-ref":
+        lines += [
+            "Cdecision_pre decision_pre 0 20f IC=0",
+            "Cdecisionn_pre decisionn_pre 0 20f IC=0",
+            "Rdecision_pre decision_pre 0 1G",
+            "Rdecisionn_pre decisionn_pre 0 1G",
+            "Mprecharge_decision_pre decision_pre rstfn vdd vdd PMOS W=4u L=180n",
+            "Mprecharge_decisionn_pre decisionn_pre rstfn vdd vdd PMOS W=4u L=180n",
+            f"Mdec_scorepre_p decision_pre decisionn_pre vdd vdd PMOS W={pullup_width:.6g}u L=180n",
+            f"Mdecn_scorepre_p decisionn_pre decision_pre vdd vdd PMOS W={pullup_width:.6g}u L=180n",
+            f"Mdec_scorepre_n decision_pre scoren dec_src 0 NSENSE W={pulldown_width * scoren_pulldown_scale:.6g}u L=180n",
+            f"Mdecn_scorepre_n decisionn_pre score dec_src 0 NSENSE W={pulldown_width:.6g}u L=180n",
+            f"Mdec_scorepre_tail dec_src dec 0 0 NMOS W={pulldown_width:.6g}u L=180n",
+            f"Mdec_reject_p decision decisionn vdd vdd PMOS W={pullup_width:.6g}u L=180n",
+            f"Mdecn_reject_p decisionn decision vdd vdd PMOS W={pullup_width:.6g}u L=180n",
+            f"Mdec_reject_n decision decisionn_pre dec2_src 0 NSENSE W={pulldown_width:.6g}u L=180n",
+            f"Mdecn_reject_n decisionn outref dec2_src 0 NSENSE W={pulldown_width:.6g}u L=180n",
+            f"Mdec_reject_tail dec2_src dec2 0 0 NMOS W={pulldown_width:.6g}u L=180n",
+            ".meas tran decision_pre_after FIND V(decision_pre) AT=4.5n",
+            ".meas tran decisionn_pre_after FIND V(decisionn_pre) AT=4.5n",
+            ".meas tran decision_pre_diff PARAM='decision_pre_after-decisionn_pre_after'",
+        ]
+    else:
+        lines += [
+            "Cdecision_posn decision_posn 0 20f IC=0",
+            "Cdecision_negn decision_negn 0 20f IC=0",
+            "Rdecision_posn decision_posn 0 1G",
+            "Rdecision_negn decision_negn 0 1G",
+            "Mprecharge_decision_posn decision_posn rstfn vdd vdd PMOS W=4u L=180n",
+            "Mprecharge_decision_negn decision_negn rstfn vdd vdd PMOS W=4u L=180n",
+            "* Positive window comparator: score must beat scoren plus outref current.",
+            f"Mdec_win_pos_p decision decision_posn vdd vdd PMOS W={pullup_width:.6g}u L=180n",
+            f"Mdecn_win_pos_p decision_posn decision vdd vdd PMOS W={pullup_width:.6g}u L=180n",
+            f"Mdec_win_pos_scoren decision scoren pos_src 0 NSENSE W={pulldown_width:.6g}u L=180n",
+            f"Mdec_win_pos_ref decision outref pos_src 0 NSENSE W={pulldown_width:.6g}u L=180n",
+            f"Mdecn_win_pos_score decision_posn score pos_src 0 NSENSE W={pulldown_width:.6g}u L=180n",
+            f"Mdec_win_pos_tail pos_src dec 0 0 NMOS W={pulldown_width:.6g}u L=180n",
+            "* Negative window comparator: scoren must beat score plus outref current.",
+            f"Mdec_win_neg_p decisionn decision_negn vdd vdd PMOS W={pullup_width:.6g}u L=180n",
+            f"Mdecn_win_neg_p decision_negn decisionn vdd vdd PMOS W={pullup_width:.6g}u L=180n",
+            f"Mdec_win_neg_score decisionn score neg_src 0 NSENSE W={pulldown_width:.6g}u L=180n",
+            f"Mdec_win_neg_ref decisionn outref neg_src 0 NSENSE W={pulldown_width:.6g}u L=180n",
+            f"Mdecn_win_neg_scoren decision_negn scoren neg_src 0 NSENSE W={pulldown_width:.6g}u L=180n",
+            f"Mdec_win_neg_tail neg_src dec 0 0 NMOS W={pulldown_width:.6g}u L=180n",
+            ".meas tran decision_posn_after FIND V(decision_posn) AT=4.5n",
+            ".meas tran decision_negn_after FIND V(decision_negn) AT=4.5n",
+            ".meas tran positive_window_diff PARAM='decision_after-decision_posn_after'",
+            ".meas tran negative_window_diff PARAM='decisionn_after-decision_negn_after'",
+        ]
+    lines += [
+        f".meas tran decision_after FIND V(decision) AT={measure_time}",
+        f".meas tran decisionn_after FIND V(decisionn) AT={measure_time}",
         ".meas tran decision_diff PARAM='decision_after-decisionn_after'",
-        ".tran 2p 5n uic",
+        ".tran 2p 6.2n uic",
         ".control",
         "run",
         "quit",
@@ -131,6 +199,8 @@ def run_cases(args: argparse.Namespace) -> dict[str, Any]:
                 pullup_width=args.pullup_width,
                 pulldown_width=args.pulldown_width,
                 scoren_pulldown_scale=args.scoren_pulldown_scale,
+                decision_topology=args.decision_topology,
+                reject_ref=args.reject_ref,
             ),
             timeout=args.timeout,
         )
@@ -173,6 +243,8 @@ def build_arg_parser() -> argparse.ArgumentParser:
     ap.add_argument("--pullup-width", type=float, default=8.0)
     ap.add_argument("--pulldown-width", type=float, default=12.0)
     ap.add_argument("--scoren-pulldown-scale", type=float, default=1.0)
+    ap.add_argument("--decision-topology", choices=DECISION_TOPOLOGIES, default="score-diff")
+    ap.add_argument("--reject-ref", type=float, default=0.075)
     ap.add_argument("--min-abs-margin", type=float, default=50e-3)
     return ap
 
@@ -183,6 +255,8 @@ def validate_args(args: argparse.Namespace) -> None:
     for name in ["pullup_width", "pulldown_width", "scoren_pulldown_scale"]:
         if getattr(args, name) <= 0.0:
             raise ValueError(f"{name.replace('_', '-')} must be positive")
+    if args.reject_ref < 0.0 or args.reject_ref > 1.2:
+        raise ValueError("reject-ref must stay within supply rails")
     if args.min_abs_margin < 0.0:
         raise ValueError("min-abs-margin must be nonnegative")
 

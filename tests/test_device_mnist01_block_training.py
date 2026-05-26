@@ -128,6 +128,7 @@ def test_block_training_schedule_can_disable_writes_for_eval_tail() -> None:
     assert "35.25n" in phases
     assert "19.25n" not in phases
     assert "Vfwd fwd 0 PWL" in phases
+    assert "Vdec2 dec2 0 PWL" in phases
     assert "Vfwdh fwdh 0 PWL" in phases
     assert "Vfwdo fwdo 0 PWL" in phases
     assert "15n" in phases
@@ -600,16 +601,52 @@ def test_score_net_diagnostics_report_class_margin() -> None:
     diagnostics = block.score_net_diagnostics(
         pd.DataFrame(
             [
-                {"positive_label": 1.0, "score_net": 0.001, "out_after": 0.01, "decisionn_after": 0.2},
-                {"positive_label": 0.0, "score_net": 0.003, "out_after": 0.02, "decisionn_after": 0.8},
+                {
+                    "positive_label": 1.0,
+                    "score_net": 0.001,
+                    "score_net_at_decision": 0.011,
+                    "out_after": 0.01,
+                    "decisionn_after": 0.2,
+                },
+                {
+                    "positive_label": 0.0,
+                    "score_net": 0.003,
+                    "score_net_at_decision": -0.001,
+                    "out_after": 0.02,
+                    "decisionn_after": 0.8,
+                },
             ]
         ),
         pd.DataFrame(
             [
-                {"positive_label": 1.0, "score_net": 0.014, "out_after": 0.037, "decisionn_after": 0.006},
-                {"positive_label": 1.0, "score_net": 0.012, "out_after": 0.038, "decisionn_after": 0.002},
-                {"positive_label": 0.0, "score_net": 0.011, "out_after": 0.041, "decisionn_after": 0.140},
-                {"positive_label": 0.0, "score_net": 0.005, "out_after": 0.039, "decisionn_after": 1.180},
+                {
+                    "positive_label": 1.0,
+                    "score_net": 0.014,
+                    "score_net_at_decision": 0.020,
+                    "out_after": 0.037,
+                    "decisionn_after": 0.006,
+                },
+                {
+                    "positive_label": 1.0,
+                    "score_net": 0.012,
+                    "score_net_at_decision": 0.018,
+                    "out_after": 0.038,
+                    "decisionn_after": 0.002,
+                },
+                {
+                    "positive_label": 0.0,
+                    "score_net": 0.011,
+                    "score_net_at_decision": -0.010,
+                    "out_after": 0.041,
+                    "decisionn_after": 0.140,
+                },
+                {
+                    "positive_label": 0.0,
+                    "score_net": 0.005,
+                    "score_net_at_decision": -0.030,
+                    "out_after": 0.039,
+                    "decisionn_after": 1.180,
+                },
             ]
         ),
     )
@@ -618,6 +655,7 @@ def test_score_net_diagnostics_report_class_margin() -> None:
     assert np.isclose(diagnostics["final_eval_score_net_positive_mean"], 0.013)
     assert np.isclose(diagnostics["final_eval_score_net_negative_mean"], 0.008)
     assert np.isclose(diagnostics["final_eval_score_net_margin"], 0.005)
+    assert np.isclose(diagnostics["final_eval_score_net_at_decision_margin"], 0.039)
     assert np.isclose(diagnostics["final_eval_out_after_margin"], -0.0025)
     assert np.isclose(diagnostics["final_eval_decisionn_after_positive_mean"], 0.004)
     assert np.isclose(diagnostics["final_eval_decisionn_after_negative_mean"], 0.66)
@@ -2341,6 +2379,115 @@ def test_block_netlist_can_emit_precharged_score_differential_decision_stage() -
             score_mode="differential",
             output_decision_stage="score-diff-precharged-latched",
             output_decision_scoren_pulldown_scale=0,
+        )
+
+
+def test_block_netlist_can_emit_two_phase_score_reject_reference_decision_stage() -> None:
+    sys.path.insert(0, str(SPICE_DIR))
+    import pytest
+    import run_device_mnist01_block_training as block
+
+    image_size = 4
+    weights = block.initial_block_weights(image_size, 2, 2, 1, seed=1)
+    sample = {f"x{i}": 0.2 + 0.01 * i for i in range(image_size * image_size)}
+    sample["target"] = 1.1
+    netlist = block.block_netlist(
+        [sample],
+        weights,
+        image_size=image_size,
+        block_size=2,
+        stride=2,
+        channels=1,
+        training_enabled=True,
+        score_mode="differential",
+        output_differential_stage="simple",
+        output_decision_stage="score-diff-reject-ref-latched",
+        output_decision_ref=0.075,
+        output_decision_ref_source="divider",
+        output_decision_ref_resistance=1.2e6,
+        output_decision_pullup_width=8.0,
+        output_decision_pulldown_width=12.0,
+        output_decision_scoren_pulldown_scale=0.35,
+    )
+
+    assert "\nB" not in netlist
+    assert "Routref_top vdd outref 1125000" in netlist
+    assert "Routref_bot outref 0 75000" in netlist
+    assert "Vdec2 dec2 0 PWL" in netlist
+    assert "Cdecision_pre decision_pre 0 10f IC=0" in netlist
+    assert "Mprecharge_decision_pre decision_pre rstfn vdd vdd PMOS W=4u" in netlist
+    assert "Mdec_scorepre_n decision_pre scoren dec_src 0 NSENSE W=4.2u" in netlist
+    assert "Mdecn_scorepre_n decisionn_pre score dec_src 0 NSENSE W=12u" in netlist
+    assert "Mdec_reject_n decision decisionn_pre dec2_src 0 NSENSE W=12u" in netlist
+    assert "Mdecn_reject_n decisionn outref dec2_src 0 NSENSE W=12u" in netlist
+    assert "Mdec_reject_tail dec2_src dec2 0 0 NMOS W=12u" in netlist
+    assert ".meas tran decision_after_0 FIND V(decision) AT=16.50n" in netlist
+    assert ".meas tran decisionn_pre_after_0 FIND V(decisionn_pre) AT=15.50n" in netlist
+    with pytest.raises(ValueError, match="requires differential score_mode"):
+        block.block_netlist(
+            [sample],
+            weights,
+            image_size=image_size,
+            block_size=2,
+            stride=2,
+            channels=1,
+            training_enabled=True,
+            score_mode="single-ended",
+            output_decision_stage="score-diff-reject-ref-latched",
+        )
+
+
+def test_block_netlist_can_emit_pre_regeneration_score_window_decision_stage() -> None:
+    sys.path.insert(0, str(SPICE_DIR))
+    import pytest
+    import run_device_mnist01_block_training as block
+
+    image_size = 4
+    weights = block.initial_block_weights(image_size, 2, 2, 1, seed=1)
+    sample = {f"x{i}": 0.2 + 0.01 * i for i in range(image_size * image_size)}
+    sample["target"] = 1.1
+    netlist = block.block_netlist(
+        [sample],
+        weights,
+        image_size=image_size,
+        block_size=2,
+        stride=2,
+        channels=1,
+        training_enabled=True,
+        score_mode="differential",
+        output_differential_stage="simple",
+        output_decision_stage="score-diff-window-latched",
+        output_decision_ref=0.075,
+        output_decision_ref_source="divider",
+        output_decision_ref_resistance=1.2e6,
+        output_decision_pullup_width=8.0,
+        output_decision_pulldown_width=12.0,
+    )
+
+    assert "\nB" not in netlist
+    assert "Routref_top vdd outref 1125000" in netlist
+    assert "Routref_bot outref 0 75000" in netlist
+    assert "Cdecision_posn decision_posn 0 10f IC=0" in netlist
+    assert "Mprecharge_decision_posn decision_posn rstfn vdd vdd PMOS W=4u" in netlist
+    assert "Mdec_win_pos_scoren decision scoren pos_src 0 NSENSE W=12u" in netlist
+    assert "Mdec_win_pos_ref decision outref pos_src 0 NSENSE W=12u" in netlist
+    assert "Mdecn_win_pos_score decision_posn score pos_src 0 NSENSE W=12u" in netlist
+    assert "Mdec_win_neg_score decisionn score neg_src 0 NSENSE W=12u" in netlist
+    assert "Mdec_win_neg_ref decisionn outref neg_src 0 NSENSE W=12u" in netlist
+    assert "Mdecn_win_neg_scoren decision_negn scoren neg_src 0 NSENSE W=12u" in netlist
+    assert ".meas tran positive_window_diff_0 PARAM='decision_after_0-decision_posn_after_0'" in netlist
+    assert ".meas tran negative_window_diff_0 PARAM='decisionn_after_0-decision_negn_after_0'" in netlist
+    with pytest.raises(ValueError, match="requires differential score_mode"):
+        block.block_netlist(
+            [sample],
+            weights,
+            image_size=image_size,
+            block_size=2,
+            stride=2,
+            channels=1,
+            training_enabled=True,
+            score_mode="single-ended",
+            output_decision_stage="score-diff-window-latched",
         )
 
 

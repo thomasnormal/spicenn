@@ -54,13 +54,15 @@ OUTPUT_DECISION_STAGES = (
     "diff-latched",
     "diff-precharged-latched",
     "score-diff-precharged-latched",
+    "score-diff-reject-ref-latched",
+    "score-diff-window-latched",
     "ratio-inverter",
     "stacked-inverter",
     "shift-inverter",
 )
 MEASUREMENT_DETAILS = ("full", "outputs")
 FORWARD_PHASE_MODES = ("single", "split-hidden-output")
-ACCURACY_SIGNALS = ("auto", "out_after", "out_diff", "decision_after", "decision_diff")
+ACCURACY_SIGNALS = ("auto", "out_after", "out_diff", "decision_after", "decisionn_after", "decision_diff")
 VDD_VALUE = 1.2
 
 
@@ -411,6 +413,7 @@ def block_phase_schedule(
         "acc": [],
         "apply": [],
         "dec": [],
+        "dec2": [],
     }
     hidden_forward_by_sample: list[list[tuple[float, float]]] = []
     for idx in range(sample_count):
@@ -457,6 +460,7 @@ def block_phase_schedule(
         windows["fwdo"].extend(output_windows)
         hidden_forward_by_sample.append(hidden_windows)
         windows["dec"].append(window("dec", base + 15.00 * scale, base + 15.55 * scale))
+        windows["dec2"].append(window("dec2", base + 15.65 * scale, base + 16.20 * scale))
         if training_schedule[idx]:
             windows["err"].append(window("err", base + 3.25 * scale, base + 5.00 * scale))
             windows["bwd"].append(window("bwd", base + 5.25 * scale, base + 7.00 * scale))
@@ -630,6 +634,7 @@ def block_repeated_phases(
         ("Vapply", "apply", pulse_wave(windows["apply"], schedule.stop_ns)),
         ("Vapplyn", "applyn", active_low_pulse_wave(windows["apply"], schedule.stop_ns)),
         ("Vdec", "dec", pulse_wave(windows["dec"], schedule.stop_ns)),
+        ("Vdec2", "dec2", pulse_wave(windows["dec2"], schedule.stop_ns)),
     ]:
         lines += voltage_source_lines(
             source_name,
@@ -877,13 +882,19 @@ def block_netlist(
         and output_differential_stage != "latched"
     ):
         raise ValueError("output_decision_stage requires latched output_differential_stage")
-    if output_decision_stage == "score-diff-precharged-latched" and score_mode != "differential":
-        raise ValueError("score-diff-precharged-latched output_decision_stage requires differential score_mode")
+    if output_decision_stage in {
+        "score-diff-precharged-latched",
+        "score-diff-reject-ref-latched",
+        "score-diff-window-latched",
+    } and score_mode != "differential":
+        raise ValueError(f"{output_decision_stage} output_decision_stage requires differential score_mode")
     if output_decision_ref_source in {"adaptive", "track"} and output_decision_stage not in {
         "ref-latched",
         "ref-precharged-latched",
         "ref-preamp-latched",
         "ref-precharged-preamp-latched",
+        "score-diff-reject-ref-latched",
+        "score-diff-window-latched",
     }:
         raise ValueError(f"{output_decision_ref_source} output_decision_ref_source requires a reference decision stage")
     if output_decision_pullup_width <= 0.0:
@@ -1060,10 +1071,14 @@ def block_netlist(
     for idx in range(len(samples)):
         base = idx * cycle_ns
         scale = phase_time_scale
+        decision_measure_offset = 16.50 if output_decision_stage == "score-diff-reject-ref-latched" else 15.50
         measures += [
             f".meas tran score_before_{idx} FIND V(score) AT={base + 2.95 * scale:.2f}n",
             f".meas tran scoren_before_{idx} FIND V(scoren) AT={base + 2.95 * scale:.2f}n",
             f".meas tran score_net_{idx} PARAM='score_before_{idx}-scoren_before_{idx}'",
+            f".meas tran score_at_decision_{idx} FIND V(score) AT={base + 15.45 * scale:.2f}n",
+            f".meas tran scoren_at_decision_{idx} FIND V(scoren) AT={base + 15.45 * scale:.2f}n",
+            f".meas tran score_net_at_decision_{idx} PARAM='score_at_decision_{idx}-scoren_at_decision_{idx}'",
             f".meas tran out_before_{idx} FIND V(out) AT={base + 2.95 * scale:.2f}n",
             f".meas tran score_error_{idx} FIND V(score) AT={base + 4.25 * scale:.2f}n",
             f".meas tran dp_after_{idx} FIND V(dp) AT={base + 5.10 * scale:.2f}n",
@@ -1087,10 +1102,23 @@ def block_netlist(
         if output_decision_stage != "none":
             measures += [
                 f".meas tran decision_before_{idx} FIND V(decision) AT={base + 2.95 * scale:.2f}n",
-                f".meas tran decision_after_{idx} FIND V(decision) AT={base + 15.50 * scale:.2f}n",
-                f".meas tran decisionn_after_{idx} FIND V(decisionn) AT={base + 15.50 * scale:.2f}n",
+                f".meas tran decision_after_{idx} FIND V(decision) AT={base + decision_measure_offset * scale:.2f}n",
+                f".meas tran decisionn_after_{idx} FIND V(decisionn) AT={base + decision_measure_offset * scale:.2f}n",
                 f".meas tran decision_diff_{idx} PARAM='decision_after_{idx}-decisionn_after_{idx}'",
             ]
+            if output_decision_stage == "score-diff-reject-ref-latched":
+                measures += [
+                    f".meas tran decision_pre_after_{idx} FIND V(decision_pre) AT={base + 15.50 * scale:.2f}n",
+                    f".meas tran decisionn_pre_after_{idx} FIND V(decisionn_pre) AT={base + 15.50 * scale:.2f}n",
+                    f".meas tran decision_pre_diff_{idx} PARAM='decision_pre_after_{idx}-decisionn_pre_after_{idx}'",
+                ]
+            if output_decision_stage == "score-diff-window-latched":
+                measures += [
+                    f".meas tran decision_posn_after_{idx} FIND V(decision_posn) AT={base + 15.50 * scale:.2f}n",
+                    f".meas tran decision_negn_after_{idx} FIND V(decision_negn) AT={base + 15.50 * scale:.2f}n",
+                    f".meas tran positive_window_diff_{idx} PARAM='decision_after_{idx}-decision_posn_after_{idx}'",
+                    f".meas tran negative_window_diff_{idx} PARAM='decisionn_after_{idx}-decision_negn_after_{idx}'",
+                ]
         if output_decision_ref_source in {"adaptive", "track"}:
             measures += [
                 f".meas tran outref_before_{idx} FIND V(outref) AT={base + 0.60 * scale:.2f}n",
@@ -1198,6 +1226,8 @@ def block_netlist(
         "ref-precharged-latched",
         "ref-preamp-latched",
         "ref-precharged-preamp-latched",
+        "score-diff-reject-ref-latched",
+        "score-diff-window-latched",
     }:
         if output_decision_ref_source == "divider":
             rtop, rbot = decision_ref_divider_resistances(output_decision_ref, output_decision_ref_resistance)
@@ -1409,12 +1439,23 @@ def block_netlist(
             "Rdecision decision 0 1G",
             "Rdecisionn decisionn 0 1G",
         ]
-    if output_decision_stage in {"ref-preamp-latched", "ref-precharged-preamp-latched"}:
+    if output_decision_stage in {
+        "ref-preamp-latched",
+        "ref-precharged-preamp-latched",
+        "score-diff-reject-ref-latched",
+    }:
         lines += [
             "Cdecision_pre decision_pre 0 10f IC=0",
             "Cdecisionn_pre decisionn_pre 0 10f IC=0",
             "Rdecision_pre decision_pre 0 1G",
             "Rdecisionn_pre decisionn_pre 0 1G",
+        ]
+    if output_decision_stage == "score-diff-window-latched":
+        lines += [
+            "Cdecision_posn decision_posn 0 10f IC=0",
+            "Cdecision_negn decision_negn 0 10f IC=0",
+            "Rdecision_posn decision_posn 0 1G",
+            "Rdecision_negn decision_negn 0 1G",
         ]
     if output_decision_stage == "shift-inverter":
         lines += [
@@ -1503,6 +1544,8 @@ def block_netlist(
         "ref-precharged-preamp-latched",
         "diff-precharged-latched",
         "score-diff-precharged-latched",
+        "score-diff-reject-ref-latched",
+        "score-diff-window-latched",
     }:
         lines += [
             "Mreset_decision decision rstf 0 0 NMOS W=4u L=180n",
@@ -1513,6 +1556,8 @@ def block_netlist(
         "ref-precharged-preamp-latched",
         "diff-precharged-latched",
         "score-diff-precharged-latched",
+        "score-diff-reject-ref-latched",
+        "score-diff-window-latched",
     }:
         lines += [
             "Mprecharge_decision decision rstfn vdd vdd PMOS W=4u L=180n",
@@ -1528,6 +1573,16 @@ def block_netlist(
             "Mprecharge_decision_pre decision_pre rstfn vdd vdd PMOS W=4u L=180n",
             "Mprecharge_decisionn_pre decisionn_pre rstfn vdd vdd PMOS W=4u L=180n",
             "Mequalize_decision_pre decision_pre rstf decisionn_pre 0 NMOS W=4u L=180n",
+        ]
+    if output_decision_stage == "score-diff-reject-ref-latched":
+        lines += [
+            "Mprecharge_decision_pre decision_pre rstfn vdd vdd PMOS W=4u L=180n",
+            "Mprecharge_decisionn_pre decisionn_pre rstfn vdd vdd PMOS W=4u L=180n",
+        ]
+    if output_decision_stage == "score-diff-window-latched":
+        lines += [
+            "Mprecharge_decision_posn decision_posn rstfn vdd vdd PMOS W=4u L=180n",
+            "Mprecharge_decision_negn decision_negn rstfn vdd vdd PMOS W=4u L=180n",
         ]
     if activation_competition_width > 0.0:
         lines.append("Mreset_actinh actinh rstf 0 0 NMOS W=4u L=180n")
@@ -2054,6 +2109,40 @@ def block_netlist(
                 f"Mdec_scorepc_tail dec_src dec 0 0 NMOS W={output_decision_pulldown_width:.6g}u L=180n",
             ]
         )
+    elif output_decision_stage == "score-diff-reject-ref-latched":
+        decision_stage = "\n".join(
+            [
+                "* Two-phase score decision: dec resolves score/scoren, dec2 compares the reject rail to outref.",
+                f"Mdec_scorepre_p decision_pre decisionn_pre vdd vdd PMOS W={output_decision_pullup_width:.6g}u L=180n",
+                f"Mdecn_scorepre_p decisionn_pre decision_pre vdd vdd PMOS W={output_decision_pullup_width:.6g}u L=180n",
+                f"Mdec_scorepre_n decision_pre scoren dec_src 0 NSENSE W={output_decision_pulldown_width * output_decision_scoren_pulldown_scale:.6g}u L=180n",
+                f"Mdecn_scorepre_n decisionn_pre score dec_src 0 NSENSE W={output_decision_pulldown_width:.6g}u L=180n",
+                f"Mdec_scorepre_tail dec_src dec 0 0 NMOS W={output_decision_pulldown_width:.6g}u L=180n",
+                f"Mdec_reject_p decision decisionn vdd vdd PMOS W={output_decision_pullup_width:.6g}u L=180n",
+                f"Mdecn_reject_p decisionn decision vdd vdd PMOS W={output_decision_pullup_width:.6g}u L=180n",
+                f"Mdec_reject_n decision decisionn_pre dec2_src 0 NSENSE W={output_decision_pulldown_width:.6g}u L=180n",
+                f"Mdecn_reject_n decisionn outref dec2_src 0 NSENSE W={output_decision_pulldown_width:.6g}u L=180n",
+                f"Mdec_reject_tail dec2_src dec2 0 0 NMOS W={output_decision_pulldown_width:.6g}u L=180n",
+            ]
+        )
+    elif output_decision_stage == "score-diff-window-latched":
+        decision_stage = "\n".join(
+            [
+                "* Pre-regeneration score window: separate offset comparisons reject near-zero score differentials.",
+                f"Mdec_win_pos_p decision decision_posn vdd vdd PMOS W={output_decision_pullup_width:.6g}u L=180n",
+                f"Mdecn_win_pos_p decision_posn decision vdd vdd PMOS W={output_decision_pullup_width:.6g}u L=180n",
+                f"Mdec_win_pos_scoren decision scoren pos_src 0 NSENSE W={output_decision_pulldown_width:.6g}u L=180n",
+                f"Mdec_win_pos_ref decision outref pos_src 0 NSENSE W={output_decision_pulldown_width:.6g}u L=180n",
+                f"Mdecn_win_pos_score decision_posn score pos_src 0 NSENSE W={output_decision_pulldown_width:.6g}u L=180n",
+                f"Mdec_win_pos_tail pos_src dec 0 0 NMOS W={output_decision_pulldown_width:.6g}u L=180n",
+                f"Mdec_win_neg_p decisionn decision_negn vdd vdd PMOS W={output_decision_pullup_width:.6g}u L=180n",
+                f"Mdecn_win_neg_p decision_negn decisionn vdd vdd PMOS W={output_decision_pullup_width:.6g}u L=180n",
+                f"Mdec_win_neg_score decisionn score neg_src 0 NSENSE W={output_decision_pulldown_width:.6g}u L=180n",
+                f"Mdec_win_neg_ref decisionn outref neg_src 0 NSENSE W={output_decision_pulldown_width:.6g}u L=180n",
+                f"Mdecn_win_neg_scoren decision_negn scoren neg_src 0 NSENSE W={output_decision_pulldown_width:.6g}u L=180n",
+                f"Mdec_win_neg_tail neg_src dec 0 0 NMOS W={output_decision_pulldown_width:.6g}u L=180n",
+            ]
+        )
     elif output_decision_stage == "ratio-inverter":
         decision_stage = "\n".join(
             [
@@ -2571,6 +2660,8 @@ def score_net_diagnostics(initial_eval_rows: pd.DataFrame, final_eval_rows: pd.D
     return {
         **metrics("initial_eval", initial_eval_rows, "score_net"),
         **metrics("final_eval", final_eval_rows, "score_net"),
+        **metrics("initial_eval", initial_eval_rows, "score_net_at_decision"),
+        **metrics("final_eval", final_eval_rows, "score_net_at_decision"),
         **metrics("initial_eval", initial_eval_rows, "out_after"),
         **metrics("final_eval", final_eval_rows, "out_after"),
         **metrics("initial_eval", initial_eval_rows, "out_diff"),

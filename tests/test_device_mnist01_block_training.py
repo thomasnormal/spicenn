@@ -641,6 +641,30 @@ def test_nontrivial_learning_requires_initial_eval_baseline() -> None:
     assert block.nontrivial_learning_flag(0.75, 0.75) is False
 
 
+def test_sample_order_diagnostics_expose_seed_order_and_balance() -> None:
+    sys.path.insert(0, str(SPICE_DIR))
+    import pytest
+    import run_device_mnist01_block_training as block
+
+    samples = [
+        {"digit": 0.0, "positive_label": 1.0, "mnist_index": 10.0},
+        {"digit": 1.0, "positive_label": 0.0, "mnist_index": 20.0},
+        {"digit": 0.0, "positive_label": 1.0, "mnist_index": 11.0},
+    ]
+    diagnostics = block.sample_order_diagnostics("train", samples, prefix_len=2)
+    reversed_diagnostics = block.sample_order_diagnostics("train", list(reversed(samples)), prefix_len=2)
+
+    assert diagnostics["train_sample_count"] == 3
+    assert diagnostics["train_digit_sequence_prefix"] == [0, 1]
+    assert diagnostics["train_positive_label_sequence_prefix"] == [1, 0]
+    assert diagnostics["train_mnist_index_sequence_prefix"] == [10, 20]
+    assert diagnostics["train_positive_label_fraction"] == pytest.approx(2.0 / 3.0)
+    assert diagnostics["train_unique_digit_count"] == 2
+    assert diagnostics["train_order_hash"] != reversed_diagnostics["train_order_hash"]
+    with pytest.raises(ValueError, match="prefix_len"):
+        block.sample_order_diagnostics("train", samples, prefix_len=0)
+
+
 def test_full_objective_contract_issues_include_bias_drift_caveat() -> None:
     sys.path.insert(0, str(SPICE_DIR))
     import run_device_mnist01_block_training as block

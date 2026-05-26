@@ -2192,6 +2192,27 @@ def rows_from_measures(
     return pd.DataFrame(rows)
 
 
+def sample_order_diagnostics(prefix: str, samples: list[dict[str, Any]], *, prefix_len: int = 16) -> dict[str, Any]:
+    if prefix_len <= 0:
+        raise ValueError("prefix_len must be positive")
+    digits = [int(sample["digit"]) for sample in samples if sample.get("digit") is not None]
+    labels = [int(float(sample["positive_label"]) > 0.5) for sample in samples if sample.get("positive_label") is not None]
+    indices = [int(sample["mnist_index"]) for sample in samples if sample.get("mnist_index") is not None]
+    digest_payload = json.dumps(
+        {"digits": digits, "labels": labels, "indices": indices},
+        separators=(",", ":"),
+    ).encode("utf-8")
+    return {
+        f"{prefix}_sample_count": len(samples),
+        f"{prefix}_digit_sequence_prefix": digits[:prefix_len],
+        f"{prefix}_positive_label_sequence_prefix": labels[:prefix_len],
+        f"{prefix}_mnist_index_sequence_prefix": indices[:prefix_len],
+        f"{prefix}_positive_label_fraction": None if not labels else float(np.mean(labels)),
+        f"{prefix}_unique_digit_count": len(set(digits)),
+        f"{prefix}_order_hash": hashlib.blake2b(digest_payload, digest_size=8).hexdigest(),
+    }
+
+
 def final_weights_from_rows(rows: pd.DataFrame, *, feature_count: int, block_len: int) -> dict[str, Any]:
     if rows.empty:
         raise ValueError("cannot extract final weights from empty rows")
@@ -3381,6 +3402,8 @@ def main() -> None:
         "train_samples": args.train_samples,
         "eval_samples": args.eval_samples,
         "mnist_index_order": "stable_balanced_random_digit01",
+        **sample_order_diagnostics("train", train_samples),
+        **sample_order_diagnostics("eval", eval_samples),
         "decision_threshold": args.decision_threshold,
         "requested_accuracy_signal": args.accuracy_signal,
         "accuracy_signal": accuracy_signal,

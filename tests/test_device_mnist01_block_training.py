@@ -30,6 +30,7 @@ def test_device_mnist01_block_script_help_runs_from_repo_root() -> None:
     assert "--complement-rail-scale" in proc.stdout
     assert "--readout-gradient-width" in proc.stdout
     assert "--hidden-error-width" in proc.stdout
+    assert "--hidden-credit-mode" in proc.stdout
     assert "--hidden-update-width" in proc.stdout
     assert "--hidden-weight-write-width" in proc.stdout
     assert "--hidden-activation-width" in proc.stdout
@@ -414,6 +415,66 @@ def test_block_netlist_can_emit_differential_score_path_without_behavioral_sourc
     assert "Mdp_sn0 vdd scoren dp_sn 0 NSENSE" in netlist
     assert "Mdn_sn1 dn_sn scoren 0 0 NSENSE" in netlist
     assert ".meas tran score_net_0 PARAM='score_before_0-scoren_before_0'" in netlist
+
+
+def test_block_netlist_can_emit_readout_weighted_hidden_credit() -> None:
+    sys.path.insert(0, str(SPICE_DIR))
+    import run_device_mnist01_block_training as block
+
+    image_size = 4
+    weights = block.initial_block_weights(image_size, 2, 2, 1, seed=1)
+    sample = {f"x{i}": 0.2 + 0.01 * i for i in range(image_size * image_size)}
+    sample["target"] = 1.1
+    netlist = block.block_netlist(
+        [sample],
+        weights,
+        image_size=image_size,
+        block_size=2,
+        stride=2,
+        channels=1,
+        training_enabled=True,
+        score_mode="differential",
+        hidden_credit_mode="readout-weighted",
+        hidden_error_width=40.0,
+    )
+
+    assert "\nB" not in netlist
+    assert "Mhdp3_d0 vdd dp hdp3_d0 0 NSENSE" not in netlist
+    assert "Mhdn3_d0 vdd dn hdn3_d0 0 NSENSE" not in netlist
+    assert "Mhdp3_pv_e vdd dp hdp3_pv_e 0 NSENSE W=40u" in netlist
+    assert "Mhdp3_pv_w hdp3_pv_e vwp3 hdp3_pv_w 0 NSENSE W=40u" in netlist
+    assert "Mhdp3_pv_a hdp3_pv_w act3 hdp3_pv_a 0 NREL W=40u" in netlist
+    assert "Mhdp3_pv_b hdp3_pv_a bwd hdp3 0 NMOS W=40u" in netlist
+    assert "Mhdp3_nv_e vdd dn hdp3_nv_e 0 NSENSE W=40u" in netlist
+    assert "Mhdp3_nv_w hdp3_nv_e vwn3 hdp3_nv_w 0 NSENSE W=40u" in netlist
+    assert "Mhdn3_pv_e vdd dp hdn3_pv_e 0 NSENSE W=40u" in netlist
+    assert "Mhdn3_pv_w hdn3_pv_e vwn3 hdn3_pv_w 0 NSENSE W=40u" in netlist
+    assert "Mhdn3_nv_e vdd dn hdn3_nv_e 0 NSENSE W=40u" in netlist
+    assert "Mhdn3_nv_w hdn3_nv_e vwp3 hdn3_nv_w 0 NSENSE W=40u" in netlist
+
+
+def test_readout_weighted_hidden_credit_requires_differential_score() -> None:
+    sys.path.insert(0, str(SPICE_DIR))
+    import pytest
+    import run_device_mnist01_block_training as block
+
+    image_size = 4
+    weights = block.initial_block_weights(image_size, 2, 2, 1, seed=1)
+    sample = {f"x{i}": 0.2 + 0.01 * i for i in range(image_size * image_size)}
+    sample["target"] = 1.1
+
+    with pytest.raises(ValueError, match="requires differential score_mode"):
+        block.block_netlist(
+            [sample],
+            weights,
+            image_size=image_size,
+            block_size=2,
+            stride=2,
+            channels=1,
+            training_enabled=True,
+            hidden_credit_mode="readout-weighted",
+            score_mode="single-ended",
+        )
 
 
 def test_block_netlist_can_tune_differential_output_sense_widths() -> None:

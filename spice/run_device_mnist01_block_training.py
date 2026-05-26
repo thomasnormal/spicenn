@@ -30,6 +30,7 @@ HIDDEN_ACTIVATION_MODELS = ("nrel", "sense")
 READOUT_FORWARD_MODELS = ("nrel", "sense")
 LEARNING_ACTIVATION_GATE_MODELS = ("nrel", "sense")
 HIDDEN_POLARITY_INITS = ("ink", "alternating-channel", "random-pixel")
+HIDDEN_CREDIT_MODES = ("direct-feedback", "readout-weighted")
 SCORE_MODES = ("single-ended", "differential")
 OUTPUT_DIFFERENTIAL_STAGES = ("simple", "score-gated", "latched")
 OUTPUT_DECISION_REF_SOURCES = ("voltage", "divider", "adaptive")
@@ -281,6 +282,44 @@ def learning_activation_gate_device_model(model: str) -> str:
     raise ValueError(f"learning_activation_gate_model must be one of {LEARNING_ACTIVATION_GATE_MODELS}")
 
 
+def hidden_credit_device_lines(
+    feature: int,
+    *,
+    mode: str,
+    hidden_error_width: float,
+    learning_activation_model: str,
+) -> list[str]:
+    if mode == "direct-feedback":
+        return [
+            f"Mhdp{feature}_d0 vdd dp hdp{feature}_d0 0 NSENSE W={hidden_error_width:.6g}u L=180n",
+            f"Mhdp{feature}_d1 hdp{feature}_d0 act{feature} hdp{feature}_d1 0 {learning_activation_model} W={hidden_error_width:.6g}u L=180n",
+            f"Mhdp{feature}_d2 hdp{feature}_d1 bwd hdp{feature} 0 NMOS W={hidden_error_width:.6g}u L=180n",
+            f"Mhdn{feature}_d0 vdd dn hdn{feature}_d0 0 NSENSE W={hidden_error_width:.6g}u L=180n",
+            f"Mhdn{feature}_d1 hdn{feature}_d0 act{feature} hdn{feature}_d1 0 {learning_activation_model} W={hidden_error_width:.6g}u L=180n",
+            f"Mhdn{feature}_d2 hdn{feature}_d1 bwd hdn{feature} 0 NMOS W={hidden_error_width:.6g}u L=180n",
+        ]
+    if mode == "readout-weighted":
+        return [
+            f"Mhdp{feature}_pv_e vdd dp hdp{feature}_pv_e 0 NSENSE W={hidden_error_width:.6g}u L=180n",
+            f"Mhdp{feature}_pv_w hdp{feature}_pv_e vwp{feature} hdp{feature}_pv_w 0 NSENSE W={hidden_error_width:.6g}u L=180n",
+            f"Mhdp{feature}_pv_a hdp{feature}_pv_w act{feature} hdp{feature}_pv_a 0 {learning_activation_model} W={hidden_error_width:.6g}u L=180n",
+            f"Mhdp{feature}_pv_b hdp{feature}_pv_a bwd hdp{feature} 0 NMOS W={hidden_error_width:.6g}u L=180n",
+            f"Mhdp{feature}_nv_e vdd dn hdp{feature}_nv_e 0 NSENSE W={hidden_error_width:.6g}u L=180n",
+            f"Mhdp{feature}_nv_w hdp{feature}_nv_e vwn{feature} hdp{feature}_nv_w 0 NSENSE W={hidden_error_width:.6g}u L=180n",
+            f"Mhdp{feature}_nv_a hdp{feature}_nv_w act{feature} hdp{feature}_nv_a 0 {learning_activation_model} W={hidden_error_width:.6g}u L=180n",
+            f"Mhdp{feature}_nv_b hdp{feature}_nv_a bwd hdp{feature} 0 NMOS W={hidden_error_width:.6g}u L=180n",
+            f"Mhdn{feature}_pv_e vdd dp hdn{feature}_pv_e 0 NSENSE W={hidden_error_width:.6g}u L=180n",
+            f"Mhdn{feature}_pv_w hdn{feature}_pv_e vwn{feature} hdn{feature}_pv_w 0 NSENSE W={hidden_error_width:.6g}u L=180n",
+            f"Mhdn{feature}_pv_a hdn{feature}_pv_w act{feature} hdn{feature}_pv_a 0 {learning_activation_model} W={hidden_error_width:.6g}u L=180n",
+            f"Mhdn{feature}_pv_b hdn{feature}_pv_a bwd hdn{feature} 0 NMOS W={hidden_error_width:.6g}u L=180n",
+            f"Mhdn{feature}_nv_e vdd dn hdn{feature}_nv_e 0 NSENSE W={hidden_error_width:.6g}u L=180n",
+            f"Mhdn{feature}_nv_w hdn{feature}_nv_e vwp{feature} hdn{feature}_nv_w 0 NSENSE W={hidden_error_width:.6g}u L=180n",
+            f"Mhdn{feature}_nv_a hdn{feature}_nv_w act{feature} hdn{feature}_nv_a 0 {learning_activation_model} W={hidden_error_width:.6g}u L=180n",
+            f"Mhdn{feature}_nv_b hdn{feature}_nv_a bwd hdn{feature} 0 NMOS W={hidden_error_width:.6g}u L=180n",
+        ]
+    raise ValueError(f"hidden_credit_mode must be one of {HIDDEN_CREDIT_MODES}")
+
+
 def block_netlist(
     samples: list[dict[str, Any]],
     weights: dict[str, Any],
@@ -307,6 +346,7 @@ def block_netlist(
     hidden_forward_width: float = 3.0,
     readout_gradient_width: float = 24.0,
     hidden_error_width: float = 32.0,
+    hidden_credit_mode: str = "direct-feedback",
     hidden_update_width: float = 12.0,
     hidden_weight_write_width: float = 0.25,
     hidden_activation_width: float = 24.0,
@@ -379,6 +419,10 @@ def block_netlist(
         raise ValueError("readout_gradient_width must be positive")
     if hidden_error_width <= 0.0:
         raise ValueError("hidden_error_width must be positive")
+    if hidden_credit_mode not in HIDDEN_CREDIT_MODES:
+        raise ValueError(f"hidden_credit_mode must be one of {HIDDEN_CREDIT_MODES}")
+    if hidden_credit_mode == "readout-weighted" and score_mode != "differential":
+        raise ValueError("readout-weighted hidden_credit_mode requires differential score_mode")
     if hidden_update_width <= 0.0:
         raise ValueError("hidden_update_width must be positive")
     if hidden_weight_write_width <= 0.0:
@@ -839,12 +883,12 @@ def block_netlist(
                         f"Movneg{feature}_w on{feature}_1 vwn{feature} 0 0 {readout_model} W={readout_negative_forward_width:.6g}u L=180n",
                     ]
                 ),
-                f"Mhdp{feature}_d0 vdd dp hdp{feature}_d0 0 NSENSE W={hidden_error_width:.6g}u L=180n",
-                f"Mhdp{feature}_d1 hdp{feature}_d0 act{feature} hdp{feature}_d1 0 {learning_activation_model} W={hidden_error_width:.6g}u L=180n",
-                f"Mhdp{feature}_d2 hdp{feature}_d1 bwd hdp{feature} 0 NMOS W={hidden_error_width:.6g}u L=180n",
-                f"Mhdn{feature}_d0 vdd dn hdn{feature}_d0 0 NSENSE W={hidden_error_width:.6g}u L=180n",
-                f"Mhdn{feature}_d1 hdn{feature}_d0 act{feature} hdn{feature}_d1 0 {learning_activation_model} W={hidden_error_width:.6g}u L=180n",
-                f"Mhdn{feature}_d2 hdn{feature}_d1 bwd hdn{feature} 0 NMOS W={hidden_error_width:.6g}u L=180n",
+                *hidden_credit_device_lines(
+                    feature,
+                    mode=hidden_credit_mode,
+                    hidden_error_width=hidden_error_width,
+                    learning_activation_model=learning_activation_model,
+                ),
                 f"Mgvp{feature}_a vdd act{feature} gvp{feature}_a 0 {learning_activation_model} W={readout_gradient_width:.6g}u L=180n",
                 f"Mgvp{feature}_d gvp{feature}_a dp gvp{feature}_d 0 NSENSE W={readout_gradient_width:.6g}u L=180n",
                 f"Mgvp{feature}_g gvp{feature}_d acc gvp{feature} 0 NREL W={readout_gradient_width:.6g}u L=180n",
@@ -1421,6 +1465,7 @@ def run_device_sequence(
     hidden_forward_width: float,
     readout_gradient_width: float,
     hidden_error_width: float,
+    hidden_credit_mode: str,
     hidden_update_width: float,
     hidden_weight_write_width: float,
     hidden_activation_width: float,
@@ -1474,6 +1519,7 @@ def run_device_sequence(
         hidden_forward_width=hidden_forward_width,
         readout_gradient_width=readout_gradient_width,
         hidden_error_width=hidden_error_width,
+        hidden_credit_mode=hidden_credit_mode,
         hidden_update_width=hidden_update_width,
         hidden_weight_write_width=hidden_weight_write_width,
         hidden_activation_width=hidden_activation_width,
@@ -1543,6 +1589,7 @@ def main() -> None:
     ap.add_argument("--hidden-forward-width", type=float, default=3.0)
     ap.add_argument("--readout-gradient-width", type=float, default=24.0)
     ap.add_argument("--hidden-error-width", type=float, default=32.0)
+    ap.add_argument("--hidden-credit-mode", choices=HIDDEN_CREDIT_MODES, default="direct-feedback")
     ap.add_argument("--hidden-update-width", type=float, default=12.0)
     ap.add_argument("--hidden-weight-write-width", type=float, default=0.25)
     ap.add_argument("--hidden-activation-width", type=float, default=24.0)
@@ -1665,6 +1712,7 @@ def main() -> None:
         "hidden_forward_width": args.hidden_forward_width,
         "readout_gradient_width": args.readout_gradient_width,
         "hidden_error_width": args.hidden_error_width,
+        "hidden_credit_mode": args.hidden_credit_mode,
         "hidden_update_width": args.hidden_update_width,
         "hidden_weight_write_width": args.hidden_weight_write_width,
         "hidden_activation_width": args.hidden_activation_width,
@@ -1834,7 +1882,7 @@ def main() -> None:
         "input_rail_mode": args.input_rail_mode,
         "complement_rail_scale": args.complement_rail_scale,
         "hidden_bias_state": "persistent signed bhp/bhn capacitors with MOS/passive local bias writers",
-        "hidden_credit_mode": "direct_feedback",
+        "hidden_credit_mode": args.hidden_credit_mode,
         "output_driver_model": args.output_driver_model,
         "output_differential_stage": args.output_differential_stage,
         "output_score_pullup_width": args.output_score_pullup_width,

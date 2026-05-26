@@ -39,6 +39,8 @@ def test_device_mnist01_block_script_help_runs_from_repo_root() -> None:
     assert "--readout-forward-model" in proc.stdout
     assert "--learning-activation-gate-model" in proc.stdout
     assert "--readout-weight-leak-resistance" in proc.stdout
+    assert "--readout-stack-shunt-resistance" in proc.stdout
+    assert "--readout-stack-parasitic-capacitance" in proc.stdout
     assert "--activation-competition-width" in proc.stdout
     assert "--score-activity-inhibition-width" in proc.stdout
     assert "--output-bias" in proc.stdout
@@ -52,6 +54,11 @@ def test_device_mnist01_block_script_help_runs_from_repo_root() -> None:
     assert "--output-differential-stage" in proc.stdout
     assert "--output-score-pullup-width" in proc.stdout
     assert "--output-scoren-pulldown-width" in proc.stdout
+    assert "--output-decision-stage" in proc.stdout
+    assert "--output-decision-ref" in proc.stdout
+    assert "--output-decision-pullup-width" in proc.stdout
+    assert "--output-decision-pulldown-width" in proc.stdout
+    assert "--output-decision-threshold" in proc.stdout
 
 
 def test_block_topology_matches_target_10x10_b4_stride2_c2_shape() -> None:
@@ -200,6 +207,28 @@ def test_score_net_diagnostics_report_class_margin() -> None:
     assert np.isclose(diagnostics["final_eval_score_net_negative_mean"], 0.008)
     assert np.isclose(diagnostics["final_eval_score_net_margin"], 0.005)
     assert np.isclose(diagnostics["final_eval_out_after_margin"], -0.0025)
+
+
+def test_binary_accuracy_for_signal_can_use_circuit_decision_rail() -> None:
+    sys.path.insert(0, str(SPICE_DIR))
+    import run_device_mnist01_block_training as block
+
+    rows = pd.DataFrame(
+        [
+            {"positive_label": 1.0, "decision_after": 1.06},
+            {"positive_label": 0.0, "decision_after": 0.03},
+            {"positive_label": 1.0, "decision_after": 0.92},
+            {"positive_label": 0.0, "decision_after": 0.72},
+        ]
+    )
+
+    assert block.binary_accuracy_for_signal(rows, signal="decision_after", threshold=0.6) == 0.75
+    assert block.binary_accuracy_for_signal(
+        rows,
+        signal="decision_after",
+        threshold=0.6,
+        output_positive_when="low",
+    ) == 0.25
 
 
 def test_block_netlist_emits_per_pixel_trainable_caps_and_no_behavioral_sources() -> None:
@@ -370,6 +399,102 @@ def test_block_netlist_can_emit_latched_differential_output_stage() -> None:
     assert ".meas tran out_diff_0 PARAM='out_after_0-outn_after_0'" in netlist
 
 
+def test_block_netlist_can_emit_reference_latched_decision_stage() -> None:
+    sys.path.insert(0, str(SPICE_DIR))
+    import run_device_mnist01_block_training as block
+
+    image_size = 4
+    weights = block.initial_block_weights(image_size, 2, 2, 1, seed=1)
+    sample = {f"x{i}": 0.2 + 0.01 * i for i in range(image_size * image_size)}
+    sample["target"] = 1.1
+    netlist = block.block_netlist(
+        [sample],
+        weights,
+        image_size=image_size,
+        block_size=2,
+        stride=2,
+        channels=1,
+        training_enabled=True,
+        score_mode="differential",
+        output_differential_stage="latched",
+        output_decision_stage="ref-latched",
+        output_decision_ref=1.09,
+        output_decision_pullup_width=48.0,
+        output_decision_pulldown_width=96.0,
+    )
+
+    assert "\nB" not in netlist
+    assert "Voutref outref 0 1.09" in netlist
+    assert "Cdecision decision 0 20f IC=0" in netlist
+    assert "Cdecisionn decisionn 0 20f IC=0" in netlist
+    assert "Mreset_decision decision rstf 0 0 NMOS W=4u" in netlist
+    assert "Mreset_decisionn decisionn rstf 0 0 NMOS W=4u" in netlist
+    assert "Mdec_p decision decisionn vdd vdd PMOS W=48u" in netlist
+    assert "Mdecn_p decisionn decision vdd vdd PMOS W=48u" in netlist
+    assert "Mdec_n decision outref dec_src 0 NSENSE W=96u" in netlist
+    assert "Mdecn_n decisionn out dec_src 0 NSENSE W=96u" in netlist
+    assert "Mdec_tail dec_src fwd 0 0 NMOS W=96u" in netlist
+    assert ".meas tran decision_after_0 FIND V(decision) AT=15.50n" in netlist
+    assert ".meas tran decisionn_after_0 FIND V(decisionn) AT=15.50n" in netlist
+    assert ".meas tran decision_diff_0 PARAM='decision_after_0-decisionn_after_0'" in netlist
+
+
+def test_block_netlist_can_emit_differential_latched_decision_stage() -> None:
+    sys.path.insert(0, str(SPICE_DIR))
+    import run_device_mnist01_block_training as block
+
+    image_size = 4
+    weights = block.initial_block_weights(image_size, 2, 2, 1, seed=1)
+    sample = {f"x{i}": 0.2 + 0.01 * i for i in range(image_size * image_size)}
+    sample["target"] = 1.1
+    netlist = block.block_netlist(
+        [sample],
+        weights,
+        image_size=image_size,
+        block_size=2,
+        stride=2,
+        channels=1,
+        training_enabled=True,
+        score_mode="differential",
+        output_differential_stage="latched",
+        output_decision_stage="diff-latched",
+        output_decision_pullup_width=48.0,
+        output_decision_pulldown_width=96.0,
+    )
+
+    assert "\nB" not in netlist
+    assert "Voutref" not in netlist
+    assert "Cdecision decision 0 20f IC=0" in netlist
+    assert "Mdec_n decision outn dec_src 0 NSENSE W=96u" in netlist
+    assert "Mdecn_n decisionn out dec_src 0 NSENSE W=96u" in netlist
+    assert "Mdec_n decision outref dec_src 0 NSENSE" not in netlist
+    assert ".meas tran decision_after_0 FIND V(decision) AT=15.50n" in netlist
+
+
+def test_reference_latched_decision_stage_requires_latched_output_stage() -> None:
+    sys.path.insert(0, str(SPICE_DIR))
+    import pytest
+    import run_device_mnist01_block_training as block
+
+    image_size = 4
+    weights = block.initial_block_weights(image_size, 2, 2, 1, seed=1)
+    sample = {f"x{i}": 0.2 + 0.01 * i for i in range(image_size * image_size)}
+    sample["target"] = 1.1
+    with pytest.raises(ValueError, match="requires latched output_differential_stage"):
+        block.block_netlist(
+            [sample],
+            weights,
+            image_size=image_size,
+            block_size=2,
+            stride=2,
+            channels=1,
+            training_enabled=True,
+            score_mode="differential",
+            output_differential_stage="simple",
+            output_decision_stage="ref-latched",
+        )
+
+
 def test_non_simple_output_stage_requires_differential_score_mode() -> None:
     sys.path.insert(0, str(SPICE_DIR))
     import pytest
@@ -472,6 +597,58 @@ def test_block_netlist_can_emit_passive_readout_weight_leak() -> None:
     assert "Vvwn_ref vwn_ref 0 0.25" in netlist
     assert "Rvwp0_leak vwp0 vwp_ref 5e+06" in netlist
     assert "Rvwn3_leak vwn3 vwn_ref 5e+06" in netlist
+
+
+def test_block_netlist_can_emit_passive_readout_stack_shunts() -> None:
+    sys.path.insert(0, str(SPICE_DIR))
+    import run_device_mnist01_block_training as block
+
+    image_size = 4
+    weights = block.initial_block_weights(image_size, 2, 2, 1, seed=1)
+    sample = {f"x{i}": 0.2 + 0.01 * i for i in range(image_size * image_size)}
+    sample["target"] = 1.1
+    netlist = block.block_netlist(
+        [sample],
+        weights,
+        image_size=image_size,
+        block_size=2,
+        stride=2,
+        channels=1,
+        training_enabled=True,
+        readout_stack_shunt_resistance=1e12,
+    )
+
+    assert "\nB" not in netlist
+    assert "Rread_op3_0 op3_0 0 1e+12" in netlist
+    assert "Rread_op3_1 op3_1 0 1e+12" in netlist
+    assert "Rread_on3_0 on3_0 0 1e+12" in netlist
+    assert "Rread_on3_1 on3_1 0 1e+12" in netlist
+
+
+def test_block_netlist_can_emit_passive_readout_stack_parasitic_caps() -> None:
+    sys.path.insert(0, str(SPICE_DIR))
+    import run_device_mnist01_block_training as block
+
+    image_size = 4
+    weights = block.initial_block_weights(image_size, 2, 2, 1, seed=1)
+    sample = {f"x{i}": 0.2 + 0.01 * i for i in range(image_size * image_size)}
+    sample["target"] = 1.1
+    netlist = block.block_netlist(
+        [sample],
+        weights,
+        image_size=image_size,
+        block_size=2,
+        stride=2,
+        channels=1,
+        training_enabled=True,
+        readout_stack_parasitic_capacitance=1e-16,
+    )
+
+    assert "\nB" not in netlist
+    assert "Cread_op3_0 op3_0 0 1e-16" in netlist
+    assert "Cread_op3_1 op3_1 0 1e-16" in netlist
+    assert "Cread_on3_0 on3_0 0 1e-16" in netlist
+    assert "Cread_on3_1 on3_1 0 1e-16" in netlist
 
 
 def test_block_netlist_can_emit_transistor_activation_competition() -> None:

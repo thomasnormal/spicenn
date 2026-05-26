@@ -31,6 +31,7 @@ LEARNING_ACTIVATION_GATE_MODELS = ("nrel", "sense")
 HIDDEN_POLARITY_INITS = ("ink", "alternating-channel", "random-pixel")
 SCORE_MODES = ("single-ended", "differential")
 OUTPUT_DIFFERENTIAL_STAGES = ("simple", "score-gated", "latched")
+OUTPUT_DECISION_STAGES = ("none", "ref-latched", "diff-latched")
 
 
 def block_topology(image_size: int, block_size: int, stride: int, channels: int) -> tuple[list[list[int]], int]:
@@ -241,6 +242,10 @@ def block_netlist(
     output_differential_stage: str = "simple",
     output_score_pullup_width: float = 24.0,
     output_scoren_pulldown_width: float = 24.0,
+    output_decision_stage: str = "none",
+    output_decision_ref: float = 1.09,
+    output_decision_pullup_width: float = 48.0,
+    output_decision_pulldown_width: float = 96.0,
     readout_apply_scale: float = 0.35,
     hidden_forward_width: float = 3.0,
     readout_gradient_width: float = 24.0,
@@ -254,6 +259,8 @@ def block_netlist(
     readout_forward_model: str = "nrel",
     learning_activation_gate_model: str = "nrel",
     readout_weight_leak_resistance: float = 0.0,
+    readout_stack_shunt_resistance: float = 0.0,
+    readout_stack_parasitic_capacitance: float = 0.0,
     readout_weight_positive_ref: float = 0.52,
     readout_weight_negative_ref: float = 0.25,
     activation_competition_width: float = 0.0,
@@ -275,6 +282,14 @@ def block_netlist(
         raise ValueError("output_score_pullup_width must be positive")
     if output_scoren_pulldown_width <= 0.0:
         raise ValueError("output_scoren_pulldown_width must be positive")
+    if output_decision_stage not in OUTPUT_DECISION_STAGES:
+        raise ValueError(f"output_decision_stage must be one of {OUTPUT_DECISION_STAGES}")
+    if output_decision_stage != "none" and output_differential_stage != "latched":
+        raise ValueError("output_decision_stage requires latched output_differential_stage")
+    if output_decision_pullup_width <= 0.0:
+        raise ValueError("output_decision_pullup_width must be positive")
+    if output_decision_pulldown_width <= 0.0:
+        raise ValueError("output_decision_pulldown_width must be positive")
     if hidden_forward_width <= 0.0:
         raise ValueError("hidden_forward_width must be positive")
     if readout_gradient_width <= 0.0:
@@ -293,6 +308,10 @@ def block_netlist(
         raise ValueError("readout_forward_width must be positive")
     if readout_weight_leak_resistance < 0.0:
         raise ValueError("readout_weight_leak_resistance must be nonnegative")
+    if readout_stack_shunt_resistance < 0.0:
+        raise ValueError("readout_stack_shunt_resistance must be nonnegative")
+    if readout_stack_parasitic_capacitance < 0.0:
+        raise ValueError("readout_stack_parasitic_capacitance must be nonnegative")
     if activation_competition_width < 0.0:
         raise ValueError("activation_competition_width must be nonnegative")
     if score_activity_inhibition_width < 0.0:
@@ -357,6 +376,13 @@ def block_netlist(
                 f".meas tran outn_before_{idx} FIND V(outn) AT={base + 2.95 * scale:.2f}n",
                 f".meas tran outn_after_{idx} FIND V(outn) AT={base + 15.50 * scale:.2f}n",
                 f".meas tran out_diff_{idx} PARAM='out_after_{idx}-outn_after_{idx}'",
+            ]
+        if output_decision_stage != "none":
+            measures += [
+                f".meas tran decision_before_{idx} FIND V(decision) AT={base + 2.95 * scale:.2f}n",
+                f".meas tran decision_after_{idx} FIND V(decision) AT={base + 15.50 * scale:.2f}n",
+                f".meas tran decisionn_after_{idx} FIND V(decisionn) AT={base + 15.50 * scale:.2f}n",
+                f".meas tran decision_diff_{idx} PARAM='decision_after_{idx}-decisionn_after_{idx}'",
             ]
         if output_bias_enabled:
             measures += [
@@ -425,6 +451,8 @@ def block_netlist(
             f"Vobp_ref obp_ref 0 {output_bias_positive_ref:.12g}",
             f"Vobn_ref obn_ref 0 {output_bias_negative_ref:.12g}",
         ]
+    if output_decision_stage == "ref-latched":
+        lines.append(f"Voutref outref 0 {output_decision_ref:.12g}")
     for rail in required_rails:
         lines.append(f"V{rail} {rail} 0 {block_sample_wave(samples, rail, stop, cycle_ns=cycle_ns)}")
     lines += [
@@ -506,6 +534,13 @@ def block_netlist(
             "Coutn outn 0 20f IC=0",
             "Routn outn 0 1G",
         ]
+    if output_decision_stage != "none":
+        lines += [
+            "Cdecision decision 0 20f IC=0",
+            "Cdecisionn decisionn 0 20f IC=0",
+            "Rdecision decision 0 1G",
+            "Rdecisionn decisionn 0 1G",
+        ]
     for feature in range(feature_count):
         lines += [
             f"Cpre{feature} pre{feature} 0 10f IC=0",
@@ -553,6 +588,11 @@ def block_netlist(
         ]
     if output_differential_stage == "latched":
         lines.append("Mreset_outn outn rstf 0 0 NMOS W=4u L=180n")
+    if output_decision_stage != "none":
+        lines += [
+            "Mreset_decision decision rstf 0 0 NMOS W=4u L=180n",
+            "Mreset_decisionn decisionn rstf 0 0 NMOS W=4u L=180n",
+        ]
     if activation_competition_width > 0.0:
         lines.append("Mreset_actinh actinh rstf 0 0 NMOS W=4u L=180n")
     for feature in range(feature_count):
@@ -679,6 +719,26 @@ def block_netlist(
                 f"Mvwn{feature}_up_p1 vwn{feature}_up applyn vwn{feature} vdd PMOS W={readout_pmos_w:.6g}u L=180n",
                 f"Mvwp{feature}_dn_a vwp{feature} apply vwp{feature}_dn 0 NREL W={readout_nmos_w:.6g}u L=180n",
                 f"Mvwp{feature}_dn_g vwp{feature}_dn gvn{feature} 0 0 NSENSE W={readout_nmos_w:.6g}u L=180n",
+                *(
+                    [
+                        f"Rread_op{feature}_0 op{feature}_0 0 {readout_stack_shunt_resistance:.12g}",
+                        f"Rread_op{feature}_1 op{feature}_1 0 {readout_stack_shunt_resistance:.12g}",
+                        f"Rread_on{feature}_0 on{feature}_0 0 {readout_stack_shunt_resistance:.12g}",
+                        f"Rread_on{feature}_1 on{feature}_1 0 {readout_stack_shunt_resistance:.12g}",
+                    ]
+                    if readout_stack_shunt_resistance > 0.0
+                    else []
+                ),
+                *(
+                    [
+                        f"Cread_op{feature}_0 op{feature}_0 0 {readout_stack_parasitic_capacitance:.12g}",
+                        f"Cread_op{feature}_1 op{feature}_1 0 {readout_stack_parasitic_capacitance:.12g}",
+                        f"Cread_on{feature}_0 on{feature}_0 0 {readout_stack_parasitic_capacitance:.12g}",
+                        f"Cread_on{feature}_1 on{feature}_1 0 {readout_stack_parasitic_capacitance:.12g}",
+                    ]
+                    if readout_stack_parasitic_capacitance > 0.0
+                    else []
+                ),
             ]
 
     if output_bias_enabled:
@@ -760,9 +820,35 @@ def block_netlist(
     else:
         output_stage = output_driver_line(output_driver_model)
 
+    if output_decision_stage == "ref-latched":
+        decision_stage = "\n".join(
+            [
+                "* Reference latch converts analog out into a circuit decision rail.",
+                f"Mdec_p decision decisionn vdd vdd PMOS W={output_decision_pullup_width:.6g}u L=180n",
+                f"Mdecn_p decisionn decision vdd vdd PMOS W={output_decision_pullup_width:.6g}u L=180n",
+                f"Mdec_n decision outref dec_src 0 NSENSE W={output_decision_pulldown_width:.6g}u L=180n",
+                f"Mdecn_n decisionn out dec_src 0 NSENSE W={output_decision_pulldown_width:.6g}u L=180n",
+                f"Mdec_tail dec_src fwd 0 0 NMOS W={output_decision_pulldown_width:.6g}u L=180n",
+            ]
+        )
+    elif output_decision_stage == "diff-latched":
+        decision_stage = "\n".join(
+            [
+                "* Differential latch converts out/outn into a circuit decision rail.",
+                f"Mdec_p decision decisionn vdd vdd PMOS W={output_decision_pullup_width:.6g}u L=180n",
+                f"Mdecn_p decisionn decision vdd vdd PMOS W={output_decision_pullup_width:.6g}u L=180n",
+                f"Mdec_n decision outn dec_src 0 NSENSE W={output_decision_pulldown_width:.6g}u L=180n",
+                f"Mdecn_n decisionn out dec_src 0 NSENSE W={output_decision_pulldown_width:.6g}u L=180n",
+                f"Mdec_tail dec_src fwd 0 0 NMOS W={output_decision_pulldown_width:.6g}u L=180n",
+            ]
+        )
+    else:
+        decision_stage = ""
+
     lines += [
         "",
         output_stage,
+        *(["", decision_stage] if decision_stage else []),
         "",
         "* Shared output error from target/raw-score conductance competition.",
         "Mdp_t0 vdd target dp_t 0 NSENSE W=32u L=180n",
@@ -991,7 +1077,34 @@ def score_net_diagnostics(initial_eval_rows: pd.DataFrame, final_eval_rows: pd.D
         **metrics("final_eval", final_eval_rows, "out_after"),
         **metrics("initial_eval", initial_eval_rows, "out_diff"),
         **metrics("final_eval", final_eval_rows, "out_diff"),
+        **metrics("initial_eval", initial_eval_rows, "decision_after"),
+        **metrics("final_eval", final_eval_rows, "decision_after"),
+        **metrics("initial_eval", initial_eval_rows, "decision_diff"),
+        **metrics("final_eval", final_eval_rows, "decision_diff"),
     }
+
+
+def binary_accuracy_for_signal(
+    rows: pd.DataFrame,
+    *,
+    signal: str,
+    threshold: float,
+    output_positive_when: str = "high",
+) -> float:
+    if signal == "out_after":
+        return binary_accuracy(rows, threshold=threshold, output_positive_when=output_positive_when)
+    if rows.empty:
+        return 0.0
+    if signal not in rows.columns:
+        raise ValueError(f"missing accuracy signal column: {signal}")
+    if output_positive_when == "high":
+        predicted = rows[signal].to_numpy(dtype=float) > threshold
+    elif output_positive_when == "low":
+        predicted = rows[signal].to_numpy(dtype=float) <= threshold
+    else:
+        raise ValueError("output_positive_when must be 'high' or 'low'")
+    expected = rows["positive_label"].to_numpy(dtype=float) > 0.5
+    return float(np.mean(predicted == expected))
 
 
 def run_device_sequence(
@@ -1011,6 +1124,10 @@ def run_device_sequence(
     output_differential_stage: str,
     output_score_pullup_width: float,
     output_scoren_pulldown_width: float,
+    output_decision_stage: str,
+    output_decision_ref: float,
+    output_decision_pullup_width: float,
+    output_decision_pulldown_width: float,
     readout_apply_scale: float,
     hidden_forward_width: float,
     readout_gradient_width: float,
@@ -1024,6 +1141,8 @@ def run_device_sequence(
     readout_forward_model: str,
     learning_activation_gate_model: str,
     readout_weight_leak_resistance: float,
+    readout_stack_shunt_resistance: float,
+    readout_stack_parasitic_capacitance: float,
     readout_weight_positive_ref: float,
     readout_weight_negative_ref: float,
     activation_competition_width: float,
@@ -1051,6 +1170,10 @@ def run_device_sequence(
         output_differential_stage=output_differential_stage,
         output_score_pullup_width=output_score_pullup_width,
         output_scoren_pulldown_width=output_scoren_pulldown_width,
+        output_decision_stage=output_decision_stage,
+        output_decision_ref=output_decision_ref,
+        output_decision_pullup_width=output_decision_pullup_width,
+        output_decision_pulldown_width=output_decision_pulldown_width,
         readout_apply_scale=readout_apply_scale,
         hidden_forward_width=hidden_forward_width,
         readout_gradient_width=readout_gradient_width,
@@ -1064,6 +1187,8 @@ def run_device_sequence(
         readout_forward_model=readout_forward_model,
         learning_activation_gate_model=learning_activation_gate_model,
         readout_weight_leak_resistance=readout_weight_leak_resistance,
+        readout_stack_shunt_resistance=readout_stack_shunt_resistance,
+        readout_stack_parasitic_capacitance=readout_stack_parasitic_capacitance,
         readout_weight_positive_ref=readout_weight_positive_ref,
         readout_weight_negative_ref=readout_weight_negative_ref,
         activation_competition_width=activation_competition_width,
@@ -1106,6 +1231,11 @@ def main() -> None:
     ap.add_argument("--output-differential-stage", choices=OUTPUT_DIFFERENTIAL_STAGES, default="simple")
     ap.add_argument("--output-score-pullup-width", type=float, default=24.0)
     ap.add_argument("--output-scoren-pulldown-width", type=float, default=24.0)
+    ap.add_argument("--output-decision-stage", choices=OUTPUT_DECISION_STAGES, default="none")
+    ap.add_argument("--output-decision-ref", type=float, default=1.09)
+    ap.add_argument("--output-decision-pullup-width", type=float, default=48.0)
+    ap.add_argument("--output-decision-pulldown-width", type=float, default=96.0)
+    ap.add_argument("--output-decision-threshold", type=float, default=0.6)
     ap.add_argument("--readout-apply-scale", type=float, default=0.35)
     ap.add_argument("--hidden-forward-width", type=float, default=3.0)
     ap.add_argument("--readout-gradient-width", type=float, default=24.0)
@@ -1120,6 +1250,8 @@ def main() -> None:
     ap.add_argument("--readout-forward-model", choices=READOUT_FORWARD_MODELS, default="nrel")
     ap.add_argument("--learning-activation-gate-model", choices=LEARNING_ACTIVATION_GATE_MODELS, default="nrel")
     ap.add_argument("--readout-weight-leak-resistance", type=float, default=0.0)
+    ap.add_argument("--readout-stack-shunt-resistance", type=float, default=0.0)
+    ap.add_argument("--readout-stack-parasitic-capacitance", type=float, default=0.0)
     ap.add_argument("--readout-weight-positive-ref", type=float, default=0.52)
     ap.add_argument("--readout-weight-negative-ref", type=float, default=0.25)
     ap.add_argument("--activation-competition-width", type=float, default=0.0)
@@ -1191,6 +1323,10 @@ def main() -> None:
         "output_differential_stage": args.output_differential_stage,
         "output_score_pullup_width": args.output_score_pullup_width,
         "output_scoren_pulldown_width": args.output_scoren_pulldown_width,
+        "output_decision_stage": args.output_decision_stage,
+        "output_decision_ref": args.output_decision_ref,
+        "output_decision_pullup_width": args.output_decision_pullup_width,
+        "output_decision_pulldown_width": args.output_decision_pulldown_width,
         "readout_apply_scale": args.readout_apply_scale,
         "hidden_forward_width": args.hidden_forward_width,
         "readout_gradient_width": args.readout_gradient_width,
@@ -1204,6 +1340,8 @@ def main() -> None:
         "readout_forward_model": args.readout_forward_model,
         "learning_activation_gate_model": args.learning_activation_gate_model,
         "readout_weight_leak_resistance": args.readout_weight_leak_resistance,
+        "readout_stack_shunt_resistance": args.readout_stack_shunt_resistance,
+        "readout_stack_parasitic_capacitance": args.readout_stack_parasitic_capacitance,
         "readout_weight_positive_ref": args.readout_weight_positive_ref,
         "readout_weight_negative_ref": args.readout_weight_negative_ref,
         "activation_competition_width": args.activation_competition_width,
@@ -1255,17 +1393,25 @@ def main() -> None:
     curve.to_csv(table_curve_path, index=False)
 
     output_positive_when = "high" if args.target_polarity == "active-high" else "low"
-    initial_accuracy = binary_accuracy(
-        initial_eval_rows, threshold=args.decision_threshold, output_positive_when=output_positive_when
+    accuracy_signal = "decision_after" if args.output_decision_stage != "none" else "out_after"
+    accuracy_threshold = args.output_decision_threshold if args.output_decision_stage != "none" else args.decision_threshold
+    initial_accuracy = binary_accuracy_for_signal(
+        initial_eval_rows,
+        signal=accuracy_signal,
+        threshold=accuracy_threshold,
+        output_positive_when=output_positive_when,
     )
-    final_accuracy = binary_accuracy(
-        final_eval_rows, threshold=args.decision_threshold, output_positive_when=output_positive_when
+    final_accuracy = binary_accuracy_for_signal(
+        final_eval_rows,
+        signal=accuracy_signal,
+        threshold=accuracy_threshold,
+        output_positive_when=output_positive_when,
     )
     initial_active_fraction = float(
-        np.mean(np.abs(initial_eval_rows["out_after"].to_numpy(dtype=float)) > args.decision_threshold)
+        np.mean(np.abs(initial_eval_rows[accuracy_signal].to_numpy(dtype=float)) > accuracy_threshold)
     )
     final_active_fraction = float(
-        np.mean(np.abs(final_eval_rows["out_after"].to_numpy(dtype=float)) > args.decision_threshold)
+        np.mean(np.abs(final_eval_rows[accuracy_signal].to_numpy(dtype=float)) > accuracy_threshold)
     )
     nontrivial_learning_met = final_accuracy > max(initial_accuracy, 0.5)
     target_topology = args.image_size == 10 and args.block_size == 4 and args.stride == 2 and args.channels == 2
@@ -1305,6 +1451,10 @@ def main() -> None:
         "output_differential_stage": args.output_differential_stage,
         "output_score_pullup_width": args.output_score_pullup_width,
         "output_scoren_pulldown_width": args.output_scoren_pulldown_width,
+        "output_decision_stage": args.output_decision_stage,
+        "output_decision_ref": args.output_decision_ref,
+        "output_decision_pullup_width": args.output_decision_pullup_width,
+        "output_decision_pulldown_width": args.output_decision_pulldown_width,
         "readout_apply_scale": args.readout_apply_scale,
         "hidden_forward_width": args.hidden_forward_width,
         "readout_gradient_width": args.readout_gradient_width,
@@ -1319,6 +1469,8 @@ def main() -> None:
         "readout_forward_model": args.readout_forward_model,
         "learning_activation_gate_model": args.learning_activation_gate_model,
         "readout_weight_leak_resistance": args.readout_weight_leak_resistance,
+        "readout_stack_shunt_resistance": args.readout_stack_shunt_resistance,
+        "readout_stack_parasitic_capacitance": args.readout_stack_parasitic_capacitance,
         "readout_weight_positive_ref": args.readout_weight_positive_ref,
         "readout_weight_negative_ref": args.readout_weight_negative_ref,
         "activation_competition_width": args.activation_competition_width,
@@ -1354,6 +1506,9 @@ def main() -> None:
         "eval_samples": args.eval_samples,
         "mnist_index_order": "stable_balanced_random_digit01",
         "decision_threshold": args.decision_threshold,
+        "accuracy_signal": accuracy_signal,
+        "accuracy_threshold": accuracy_threshold,
+        "output_decision_threshold": args.output_decision_threshold,
         "initial_eval_accuracy": initial_accuracy,
         "final_eval_accuracy": final_accuracy,
         "eval_accuracy_delta": final_accuracy - initial_accuracy,

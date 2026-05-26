@@ -641,6 +641,24 @@ def test_nontrivial_learning_requires_initial_eval_baseline() -> None:
     assert block.nontrivial_learning_flag(0.75, 0.75) is False
 
 
+def test_full_objective_contract_issues_include_bias_drift_caveat() -> None:
+    sys.path.insert(0, str(SPICE_DIR))
+    import run_device_mnist01_block_training as block
+
+    issues = block.full_objective_contract_issues(
+        target_topology=False,
+        continuous_final_eval=True,
+        nontrivial_learning_met=True,
+        output_bias_state_drift_warning=True,
+    )
+
+    assert "binary MNIST01 smoke, not multiclass MNIST" in issues
+    assert "not yet the 10x10 b4 stride2 c2 target topology" in issues
+    assert "output-bias state drift is threshold-scale" in issues
+    assert "does not yet demonstrate nontrivial learning" not in issues
+    assert "final eval is seeded from Python-extracted train weights" not in issues
+
+
 def test_threshold_window_diagnostics_report_best_output_threshold() -> None:
     sys.path.insert(0, str(SPICE_DIR))
     import run_device_mnist01_block_training as block

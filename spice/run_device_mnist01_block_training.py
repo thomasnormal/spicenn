@@ -2494,6 +2494,23 @@ def nontrivial_learning_flag(initial_accuracy: float | None, final_accuracy: flo
     return final_accuracy > max(initial_accuracy, 0.5)
 
 
+def full_objective_contract_issues(
+    *,
+    target_topology: bool,
+    continuous_final_eval: bool,
+    nontrivial_learning_met: bool,
+    output_bias_state_drift_warning: bool,
+) -> list[str]:
+    issues = [
+        "binary MNIST01 smoke, not multiclass MNIST",
+        "" if target_topology else "not yet the 10x10 b4 stride2 c2 target topology",
+        "" if continuous_final_eval else "final eval is seeded from Python-extracted train weights",
+        "does not yet demonstrate nontrivial learning" if not nontrivial_learning_met else "",
+        "output-bias state drift is threshold-scale" if output_bias_state_drift_warning else "",
+    ]
+    return [issue for issue in issues if issue]
+
+
 def run_device_sequence(
     spice_bin: str,
     path: Path,
@@ -3400,19 +3417,18 @@ def main() -> None:
             ),
         },
         "wall_time_s": time.perf_counter() - t0,
-        "full_objective_contract_issues": [
-            "binary MNIST01 smoke, not multiclass MNIST",
-            "" if target_topology else "not yet the 10x10 b4 stride2 c2 target topology",
-            "" if args.continuous_final_eval else "final eval is seeded from Python-extracted train weights",
-            "does not yet demonstrate nontrivial learning" if not nontrivial_learning_met else "",
-        ],
+        "full_objective_contract_issues": full_objective_contract_issues(
+            target_topology=target_topology,
+            continuous_final_eval=args.continuous_final_eval,
+            nontrivial_learning_met=nontrivial_learning_met,
+            output_bias_state_drift_warning=bool(output_bias_summary["output_bias_state_drift_warning"]),
+        ),
         "interpretation": (
             "This runner replaces scalar tile inputs with block-local raw pixel rails and persistent per-pixel "
             "hidden weight capacitors. It is a topology-scaling rung toward 10x10 b4 stride2 c2 while preserving "
             "the no-Python-update and no-behavioral-learning-device contract."
         ),
     }
-    summary["full_objective_contract_issues"] = [issue for issue in summary["full_objective_contract_issues"] if issue]
     if args.assert_nonbehavioral:
         assert summary["no_behavioral_learning_devices"] is True
         assert summary["transistor_or_passive_learning_path"] is True

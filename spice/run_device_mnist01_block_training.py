@@ -59,6 +59,7 @@ OUTPUT_DECISION_STAGES = (
     "score-diff-window-latched",
     "score-diff-gain-window-latched",
     "score-diff-low-gain-latched",
+    "score-diff-low-gain-ref-latched",
     "ratio-inverter",
     "stacked-inverter",
     "shift-inverter",
@@ -69,11 +70,14 @@ ACCURACY_SIGNALS = ("auto", "out_after", "out_diff", "decision_after", "decision
 VDD_VALUE = 1.2
 DEFAULT_OUTPUT_DECISION_REF = 1.09
 DEFAULT_SCORE_WINDOW_DECISION_REF = 0.05
+DEFAULT_LOW_GAIN_REF_DECISION_REF = 0.165
 
 
 def default_output_decision_ref(output_decision_stage: str) -> float:
     if output_decision_stage in {"score-diff-window-latched", "score-diff-gain-window-latched"}:
         return DEFAULT_SCORE_WINDOW_DECISION_REF
+    if output_decision_stage == "score-diff-low-gain-ref-latched":
+        return DEFAULT_LOW_GAIN_REF_DECISION_REF
     return DEFAULT_OUTPUT_DECISION_REF
 
 
@@ -907,6 +911,7 @@ def block_netlist(
         "score-diff-window-latched",
         "score-diff-gain-window-latched",
         "score-diff-low-gain-latched",
+        "score-diff-low-gain-ref-latched",
     } and score_mode != "differential":
         raise ValueError(f"{output_decision_stage} output_decision_stage requires differential score_mode")
     if output_decision_ref_source in {"adaptive", "track"} and output_decision_stage not in {
@@ -917,6 +922,7 @@ def block_netlist(
         "score-diff-reject-ref-latched",
         "score-diff-window-latched",
         "score-diff-gain-window-latched",
+        "score-diff-low-gain-ref-latched",
     }:
         raise ValueError(f"{output_decision_ref_source} output_decision_ref_source requires a reference decision stage")
     if output_decision_pullup_width <= 0.0:
@@ -1111,7 +1117,12 @@ def block_netlist(
         decision_measure_offset = (
             15.97
             if output_decision_stage
-            in {"score-diff-reject-ref-latched", "score-diff-gain-window-latched", "score-diff-low-gain-latched"}
+            in {
+                "score-diff-reject-ref-latched",
+                "score-diff-gain-window-latched",
+                "score-diff-low-gain-latched",
+                "score-diff-low-gain-ref-latched",
+            }
             else 15.50
         )
         measures += [
@@ -1154,7 +1165,10 @@ def block_netlist(
                     f".meas tran decisionn_pre_after_{idx} FIND V(decisionn_pre) AT={base + 15.50 * scale:.2f}n",
                     f".meas tran decision_pre_diff_{idx} PARAM='decision_pre_after_{idx}-decisionn_pre_after_{idx}'",
                 ]
-            if output_decision_stage in {"score-diff-window-latched", "score-diff-gain-window-latched"}:
+            if output_decision_stage in {
+                "score-diff-window-latched",
+                "score-diff-gain-window-latched",
+            }:
                 measures += [
                     f".meas tran decision_posn_after_{idx} FIND V(decision_posn) AT={base + 15.50 * scale:.2f}n",
                     f".meas tran decision_negn_after_{idx} FIND V(decision_negn) AT={base + 15.50 * scale:.2f}n",
@@ -1167,7 +1181,10 @@ def block_netlist(
                     f".meas tran scoren_amp_after_{idx} FIND V(scoren_amp) AT={base + 15.60 * scale:.2f}n",
                     f".meas tran score_gain_diff_{idx} PARAM='scoren_amp_after_{idx}-score_amp_after_{idx}'",
                 ]
-            if output_decision_stage == "score-diff-low-gain-latched":
+            if output_decision_stage in {
+                "score-diff-low-gain-latched",
+                "score-diff-low-gain-ref-latched",
+            }:
                 measures += [
                     f".meas tran score_amp_after_{idx} FIND V(score_amp) AT={base + 15.60 * scale:.2f}n",
                     f".meas tran scoren_amp_after_{idx} FIND V(scoren_amp) AT={base + 15.60 * scale:.2f}n",
@@ -1288,6 +1305,7 @@ def block_netlist(
         "score-diff-reject-ref-latched",
         "score-diff-window-latched",
         "score-diff-gain-window-latched",
+        "score-diff-low-gain-ref-latched",
     }:
         if output_decision_ref_source == "divider":
             rtop, rbot = decision_ref_divider_resistances(output_decision_ref, output_decision_ref_resistance)
@@ -1522,7 +1540,11 @@ def block_netlist(
             "Rdecision_posn decision_posn 0 1G",
             "Rdecision_negn decision_negn 0 1G",
         ]
-    if output_decision_stage in {"score-diff-gain-window-latched", "score-diff-low-gain-latched"}:
+    if output_decision_stage in {
+        "score-diff-gain-window-latched",
+        "score-diff-low-gain-latched",
+        "score-diff-low-gain-ref-latched",
+    }:
         lines += [
             "Cscore_amp score_amp 0 8f IC=1.2",
             "Cscoren_amp scoren_amp 0 8f IC=1.2",
@@ -1664,12 +1686,19 @@ def block_netlist(
             "Mprecharge_decision_pre decision_pre rstfn vdd vdd PMOS W=4u L=180n",
             "Mprecharge_decisionn_pre decisionn_pre rstfn vdd vdd PMOS W=4u L=180n",
         ]
-    if output_decision_stage in {"score-diff-window-latched", "score-diff-gain-window-latched"}:
+    if output_decision_stage in {
+        "score-diff-window-latched",
+        "score-diff-gain-window-latched",
+    }:
         lines += [
             "Mprecharge_decision_posn decision_posn rstfn vdd vdd PMOS W=4u L=180n",
             "Mprecharge_decision_negn decision_negn rstfn vdd vdd PMOS W=4u L=180n",
         ]
-    if output_decision_stage in {"score-diff-gain-window-latched", "score-diff-low-gain-latched"}:
+    if output_decision_stage in {
+        "score-diff-gain-window-latched",
+        "score-diff-low-gain-latched",
+        "score-diff-low-gain-ref-latched",
+    }:
         lines += [
             "Mprecharge_score_amp score_amp rstfn vdd vdd PMOS W=4u L=180n",
             "Mprecharge_scoren_amp scoren_amp rstfn vdd vdd PMOS W=4u L=180n",
@@ -2303,6 +2332,22 @@ def block_netlist(
                 f"Mdec_low_gain_tail dec_src dec2 0 0 NMOS W={output_decision_pulldown_width:.6g}u L=180n",
             ]
         )
+    elif output_decision_stage == "score-diff-low-gain-ref-latched":
+        decision_stage = "\n".join(
+            [
+                "* Low-common-mode PMOS-input score preamp followed by a referenced binary latch.",
+                "Mscoreamp_score_p score_amp score scoreamp_score_i vdd PMOS W=1u L=180n",
+                "Mscoreamp_score_tail scoreamp_score_i dec 0 0 NMOS W=8u L=180n",
+                "Mscoreamp_scoren_p scoren_amp scoren scoreamp_scoren_i vdd PMOS W=1u L=180n",
+                "Mscoreamp_scoren_tail scoreamp_scoren_i dec 0 0 NMOS W=8u L=180n",
+                f"Mdec_low_gain_ref_p decision decisionn vdd vdd PMOS W={output_decision_pullup_width:.6g}u L=180n",
+                f"Mdecn_low_gain_ref_p decisionn decision vdd vdd PMOS W={output_decision_pullup_width:.6g}u L=180n",
+                f"Mdec_low_gain_ref_scorenamp decision scoren_amp dec_src 0 NSENSE W={output_decision_pulldown_width:.6g}u L=180n",
+                f"Mdec_low_gain_ref_ref decision outref dec_src 0 NSENSE W={output_decision_pulldown_width:.6g}u L=180n",
+                f"Mdecn_low_gain_ref_scoreamp decisionn score_amp dec_src 0 NSENSE W={output_decision_pulldown_width:.6g}u L=180n",
+                f"Mdec_low_gain_ref_tail dec_src dec2 0 0 NMOS W={output_decision_pulldown_width:.6g}u L=180n",
+            ]
+        )
     elif output_decision_stage == "ratio-inverter":
         decision_stage = "\n".join(
             [
@@ -2879,7 +2924,23 @@ def resolve_accuracy_signal_and_threshold(
     if requested_signal not in ACCURACY_SIGNALS:
         raise ValueError(f"accuracy_signal must be one of {ACCURACY_SIGNALS}")
     if requested_signal == "auto":
-        signal = "decision_after" if output_decision_stage != "none" else "out_after"
+        differential_decision_stages = {
+            "diff-latched",
+            "diff-precharged-latched",
+            "score-diff-precharged-latched",
+            "score-diff-reject-ref-latched",
+            "score-diff-window-latched",
+            "score-diff-gain-window-latched",
+            "score-diff-low-gain-latched",
+            "score-diff-low-gain-ref-latched",
+        }
+        signal = (
+            "decision_diff"
+            if output_decision_stage in differential_decision_stages
+            else "decision_after"
+            if output_decision_stage != "none"
+            else "out_after"
+        )
     else:
         signal = requested_signal
     if requested_threshold is not None:

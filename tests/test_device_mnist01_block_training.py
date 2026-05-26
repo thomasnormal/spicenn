@@ -718,6 +718,12 @@ def test_accuracy_signal_resolution_preserves_auto_and_defaults_differential_to_
         output_decision_threshold=0.6,
     ) == ("out_after", 0.1)
     assert block.resolve_accuracy_signal_and_threshold(
+        requested_signal="auto",
+        output_decision_stage="score-diff-low-gain-ref-latched",
+        decision_threshold=0.1,
+        output_decision_threshold=0.6,
+    ) == ("decision_diff", 0.0)
+    assert block.resolve_accuracy_signal_and_threshold(
         requested_signal="decision_diff",
         output_decision_stage="diff-precharged-latched",
         decision_threshold=0.1,
@@ -2537,6 +2543,7 @@ def test_score_window_decision_uses_small_default_dead_zone_reference() -> None:
 
     assert block.default_output_decision_ref("ref-latched") == 1.09
     assert block.default_output_decision_ref("score-diff-window-latched") == 0.05
+    assert block.default_output_decision_ref("score-diff-low-gain-ref-latched") == 0.165
 
     netlist = block.block_netlist(
         [sample],
@@ -2654,6 +2661,59 @@ def test_block_netlist_can_emit_low_common_mode_score_gain_decision_stage() -> N
             training_enabled=True,
             score_mode="single-ended",
             output_decision_stage="score-diff-low-gain-latched",
+        )
+
+
+def test_block_netlist_can_emit_low_common_mode_referenced_score_gain_decision_stage() -> None:
+    sys.path.insert(0, str(SPICE_DIR))
+    import pytest
+    import run_device_mnist01_block_training as block
+
+    image_size = 4
+    weights = block.initial_block_weights(image_size, 2, 2, 1, seed=1)
+    sample = {f"x{i}": 0.2 + 0.01 * i for i in range(image_size * image_size)}
+    sample["target"] = 1.1
+
+    netlist = block.block_netlist(
+        [sample],
+        weights,
+        image_size=image_size,
+        block_size=2,
+        stride=2,
+        channels=1,
+        training_enabled=True,
+        score_mode="differential",
+        output_differential_stage="simple",
+        output_decision_stage="score-diff-low-gain-ref-latched",
+        output_decision_ref_source="divider",
+        output_decision_ref_resistance=1.2e6,
+        output_decision_pullup_width=8.0,
+        output_decision_pulldown_width=12.0,
+    )
+
+    assert "\nB" not in netlist
+    assert "Routref_top vdd outref 1035000" in netlist
+    assert "Routref_bot outref 0 165000" in netlist
+    assert "Cscore_amp score_amp 0 8f IC=1.2" in netlist
+    assert "Mprecharge_score_amp score_amp rstfn vdd vdd PMOS W=4u" in netlist
+    assert "Mscoreamp_score_p score_amp score scoreamp_score_i vdd PMOS W=1u" in netlist
+    assert "Mscoreamp_scoren_p scoren_amp scoren scoreamp_scoren_i vdd PMOS W=1u" in netlist
+    assert "Mdec_low_gain_ref_scorenamp decision scoren_amp dec_src 0 NSENSE W=12u" in netlist
+    assert "Mdec_low_gain_ref_ref decision outref dec_src 0 NSENSE W=12u" in netlist
+    assert "Mdecn_low_gain_ref_scoreamp decisionn score_amp dec_src 0 NSENSE W=12u" in netlist
+    assert ".meas tran decision_after_0 FIND V(decision) AT=15.97n" in netlist
+    assert ".meas tran score_gain_diff_0 PARAM='score_amp_after_0-scoren_amp_after_0'" in netlist
+    with pytest.raises(ValueError, match="requires differential score_mode"):
+        block.block_netlist(
+            [sample],
+            weights,
+            image_size=image_size,
+            block_size=2,
+            stride=2,
+            channels=1,
+            training_enabled=True,
+            score_mode="single-ended",
+            output_decision_stage="score-diff-low-gain-ref-latched",
         )
 
 

@@ -18,6 +18,7 @@ ERROR_CASES = (
     "target_negative_score_negative",
     "neutral",
 )
+ERROR_TOPOLOGIES = ("competition", "binary-descent")
 
 
 def case_values(case: str, *, score_center: float, score_delta: float) -> tuple[float, float, float]:
@@ -36,6 +37,16 @@ def case_values(case: str, *, score_center: float, score_delta: float) -> tuple[
     raise ValueError(f"error case must be one of {ERROR_CASES}")
 
 
+def label_values(case: str) -> tuple[float, float]:
+    if case in {"target_positive_score_negative", "target_positive_score_positive"}:
+        return 1.2, 0.0
+    if case in {"target_negative_score_positive", "target_negative_score_negative"}:
+        return 0.0, 1.2
+    if case == "neutral":
+        return 0.0, 0.0
+    raise ValueError(f"error case must be one of {ERROR_CASES}")
+
+
 def generate_netlist(
     *,
     error_case: str,
@@ -43,15 +54,19 @@ def generate_netlist(
     score_delta: float = 0.08,
     restore_error: bool = True,
     error_restore_width: float = 7.0,
+    error_topology: str = "competition",
 ) -> str:
     if error_case not in ERROR_CASES:
         raise ValueError(f"error_case must be one of {ERROR_CASES}")
+    if error_topology not in ERROR_TOPOLOGIES:
+        raise ValueError(f"error_topology must be one of {ERROR_TOPOLOGIES}")
     if score_delta < 0.0:
         raise ValueError("score_delta must be nonnegative")
     if error_restore_width <= 0.0:
         raise ValueError("error_restore_width must be positive")
     target, score, scoren = case_values(error_case, score_center=score_center, score_delta=score_delta)
-    if min(target, score, scoren) < 0.0 or max(target, score, scoren) > 1.2:
+    targetp, targetn = label_values(error_case)
+    if min(target, targetp, targetn, score, scoren) < 0.0 or max(target, targetp, targetn, score, scoren) > 1.2:
         raise ValueError("target and score rails must stay within supply rails")
     lines = [
         "* Output score/error primitive smoke.",
@@ -63,6 +78,8 @@ def generate_netlist(
         ".options method=gear reltol=1e-3 abstol=1e-12 vntol=1e-6",
         "Vdd vdd 0 {VDD}",
         f"Vtarget target 0 {target:.12g}",
+        f"Vtargetp targetp 0 {targetp:.12g}",
+        f"Vtargetn targetn 0 {targetn:.12g}",
         f"Vscore score 0 {score:.12g}",
         f"Vscoren scoren 0 {scoren:.12g}",
         "Verr err 0 PULSE(0 1.2 1.0n 10p 10p 3.0n 10n)",
@@ -86,22 +103,34 @@ def generate_netlist(
             "Mprecharge_edp edp rstgn vdd vdd PMOS W=4u L=180n",
             "Mprecharge_edn edn rstgn vdd vdd PMOS W=4u L=180n",
         ]
-    lines += [
-        "",
-        "* Shared output error from target/raw-score conductance competition.",
-        "Mdp_t0 vdd target dp_t 0 NSENSE W=32u L=180n",
-        "Mdp_t1 dp_t err dp 0 NSENSE W=32u L=180n",
-        "Mdp_sn0 vdd scoren dp_sn 0 NSENSE W=24u L=180n",
-        "Mdp_sn1 dp_sn err dp 0 NSENSE W=24u L=180n",
-        "Mdp_y0 dp err dp_y 0 NSENSE W=24u L=180n",
-        "Mdp_y1 dp_y score 0 0 NSENSE W=24u L=180n",
-        "Mdn_y0 vdd score dn_y 0 NSENSE W=32u L=180n",
-        "Mdn_y1 dn_y err dn 0 NSENSE W=32u L=180n",
-        "Mdn_sn0 dn err dn_sn 0 NSENSE W=24u L=180n",
-        "Mdn_sn1 dn_sn scoren 0 0 NSENSE W=24u L=180n",
-        "Mdn_t0 dn err dn_t 0 NSENSE W=24u L=180n",
-        "Mdn_t1 dn_t target 0 0 NSENSE W=24u L=180n",
-    ]
+    if error_topology == "competition":
+        lines += [
+            "",
+            "* Shared output error from target/raw-score conductance competition.",
+            "Mdp_t0 vdd target dp_t 0 NSENSE W=32u L=180n",
+            "Mdp_t1 dp_t err dp 0 NSENSE W=32u L=180n",
+            "Mdp_sn0 vdd scoren dp_sn 0 NSENSE W=24u L=180n",
+            "Mdp_sn1 dp_sn err dp 0 NSENSE W=24u L=180n",
+            "Mdp_y0 dp err dp_y 0 NSENSE W=24u L=180n",
+            "Mdp_y1 dp_y score 0 0 NSENSE W=24u L=180n",
+            "Mdn_y0 vdd score dn_y 0 NSENSE W=32u L=180n",
+            "Mdn_y1 dn_y err dn 0 NSENSE W=32u L=180n",
+            "Mdn_sn0 dn err dn_sn 0 NSENSE W=24u L=180n",
+            "Mdn_sn1 dn_sn scoren 0 0 NSENSE W=24u L=180n",
+            "Mdn_t0 dn err dn_t 0 NSENSE W=24u L=180n",
+            "Mdn_t1 dn_t target 0 0 NSENSE W=24u L=180n",
+        ]
+    else:
+        lines += [
+            "",
+            "* Binary descent output error: dp ~= targetp*scoren, dn ~= targetn*score.",
+            "Mdp_bd_t vdd targetp dp_bd_t 0 NSENSE W=48u L=180n",
+            "Mdp_bd_s dp_bd_t scoren dp_bd_s 0 NSENSE W=48u L=180n",
+            "Mdp_bd_e dp_bd_s err dp 0 NSENSE W=48u L=180n",
+            "Mdn_bd_t vdd targetn dn_bd_t 0 NSENSE W=48u L=180n",
+            "Mdn_bd_s dn_bd_t score dn_bd_s 0 NSENSE W=48u L=180n",
+            "Mdn_bd_e dn_bd_s err dn 0 NSENSE W=48u L=180n",
+        ]
     if restore_error:
         lines += [
             "",
@@ -143,6 +172,14 @@ def expected_raw_sign(case: str) -> float:
     return 0.0
 
 
+def expected_binary_descent_sign(case: str) -> float:
+    if case in {"target_positive_score_negative", "target_positive_score_positive"}:
+        return 1.0
+    if case in {"target_negative_score_positive", "target_negative_score_negative"}:
+        return -1.0
+    return 0.0
+
+
 def classify_sign(actual: float, expected: float, *, min_abs_margin: float) -> str:
     if abs(expected) < 1e-15:
         return "dead_zone" if abs(actual) < min_abs_margin else "biased"
@@ -156,7 +193,11 @@ def classify_sign(actual: float, expected: float, *, min_abs_margin: float) -> s
 
 
 def classify_row(row: dict[str, Any], *, min_abs_margin: float) -> dict[str, str]:
-    expected = expected_raw_sign(str(row["error_case"]))
+    expected = (
+        expected_binary_descent_sign(str(row["error_case"]))
+        if str(row.get("error_topology", "competition")) == "binary-descent"
+        else expected_raw_sign(str(row["error_case"]))
+    )
     classifications = {
         "raw_error_classification": classify_sign(
             float(row["raw_error_diff"]),
@@ -193,10 +234,11 @@ def run_cases(args: argparse.Namespace) -> dict[str, Any]:
                 score_delta=args.score_delta,
                 restore_error=not args.no_restore_error,
                 error_restore_width=args.error_restore_width,
+                error_topology=args.error_topology,
             ),
             timeout=args.timeout,
         )
-        row = {"error_case": case, **measures}
+        row = {"error_case": case, "error_topology": args.error_topology, **measures}
         row.update(classify_row(row, min_abs_margin=args.min_abs_margin))
         rows.append(row)
     csv_path = tables / f"{tag}.csv"
@@ -242,6 +284,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
     ap.add_argument("--score-delta", type=float, default=0.08)
     ap.add_argument("--no-restore-error", action="store_true")
     ap.add_argument("--error-restore-width", type=float, default=7.0)
+    ap.add_argument("--error-topology", choices=ERROR_TOPOLOGIES, default="competition")
     ap.add_argument("--min-abs-margin", type=float, default=25e-3)
     return ap
 

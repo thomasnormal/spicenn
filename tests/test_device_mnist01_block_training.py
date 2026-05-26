@@ -33,6 +33,7 @@ def test_device_mnist01_block_script_help_runs_from_repo_root() -> None:
     assert "--hidden-credit-mode" in proc.stdout
     assert "--readout-feedback-restore-width" in proc.stdout
     assert "--error-signal-mode" in proc.stdout
+    assert "--error-topology" in proc.stdout
     assert "--error-restore-width" in proc.stdout
     assert "--hidden-update-width" in proc.stdout
     assert "--hidden-weight-write-width" in proc.stdout
@@ -1442,6 +1443,52 @@ def test_block_netlist_can_emit_restored_error_rails_for_learning() -> None:
     assert "Mdec_pc_n decision outref dec_src 0 NSENSE" in netlist
     assert ".meas tran edp_after_0 FIND V(edp)" in netlist
     assert ".meas tran error_restored_diff_0 PARAM='edp_after_0-edn_after_0'" in netlist
+
+
+def test_block_netlist_can_emit_binary_descent_error_topology() -> None:
+    sys.path.insert(0, str(SPICE_DIR))
+    import pytest
+    import run_device_mnist01_block_training as block
+
+    image_size = 4
+    weights = block.initial_block_weights(image_size, 2, 2, 1, seed=1)
+    sample = {f"x{i}": 0.2 + 0.01 * i for i in range(image_size * image_size)}
+    sample["target"] = 0.0
+    sample["positive_label"] = 0.0
+    netlist = block.block_netlist(
+        [sample],
+        weights,
+        image_size=image_size,
+        block_size=2,
+        stride=2,
+        channels=1,
+        training_enabled=True,
+        score_mode="differential",
+        error_topology="binary-descent",
+    )
+
+    assert "\nB" not in netlist
+    assert "Vtargetp targetp 0 PWL(0n 0" in netlist
+    assert "Vtargetn targetn 0 PWL(0n 1.1" in netlist
+    assert "* Binary descent output error: dp ~= targetp*scoren, dn ~= targetn*score." in netlist
+    assert "Mdp_bd_t vdd targetp dp_bd_t 0 NSENSE W=48u L=180n" in netlist
+    assert "Mdp_bd_s dp_bd_t scoren dp_bd_s 0 NSENSE W=48u L=180n" in netlist
+    assert "Mdn_bd_t vdd targetn dn_bd_t 0 NSENSE W=48u L=180n" in netlist
+    assert "Mdn_bd_s dn_bd_t score dn_bd_s 0 NSENSE W=48u L=180n" in netlist
+    assert "Mdp_sn0" not in netlist
+    assert "Mdn_t0" not in netlist
+    with pytest.raises(ValueError, match="binary-descent error_topology requires differential score_mode"):
+        block.block_netlist(
+            [sample],
+            weights,
+            image_size=image_size,
+            block_size=2,
+            stride=2,
+            channels=1,
+            training_enabled=True,
+            score_mode="single-ended",
+            error_topology="binary-descent",
+        )
 
 
 def test_block_netlist_can_restore_only_hidden_error_transport() -> None:
@@ -3087,5 +3134,9 @@ def test_target_polarity_changes_only_label_voltage_convention(monkeypatch) -> N
 
     assert [row["positive_label"] for row in active_high] == [1.0, 0.0]
     assert [row["target"] for row in active_high] == [1.1, 0.0]
+    assert [row["targetp"] for row in active_high] == [1.1, 0.0]
+    assert [row["targetn"] for row in active_high] == [0.0, 1.1]
     assert [row["positive_label"] for row in active_low] == [1.0, 0.0]
     assert [row["target"] for row in active_low] == [0.0, 1.1]
+    assert [row["targetp"] for row in active_low] == [1.1, 0.0]
+    assert [row["targetn"] for row in active_low] == [0.0, 1.1]

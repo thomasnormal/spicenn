@@ -261,6 +261,118 @@ capacitor state, not a shared software kernel broadcast over many positions.
   \label{fig:working-architecture}
 \end{figure}
 
+\subsection{Current Differential Score And Binary-Descent Error Path}
+
+The newer transistor/passive MNIST01 block runner is not the same circuit as
+the high-accuracy behavioral run above.  It is a smaller device-level rung used
+to test whether the circuit motifs can learn without Python weight writes.  The
+important switches are:
+\[
+  \code{score\_mode=differential},\qquad
+  \code{error\_topology=binary-descent}.
+\]
+In this mode the readout does not produce one scalar output node.  It stores two
+dynamic score rails:
+\[
+  s^+ \equiv V(\code{score}),\qquad
+  s^- \equiv V(\code{scoren}),
+\]
+and the class evidence is the differential margin \(s^+-s^-\).  Positive and
+negative readout conductance states contribute to different rails.  This matches
+the signed-state convention used throughout the circuit:
+\[
+  V_{\mathrm{readout}} \approx G(V^+) - G(V^-).
+\]
+
+The binary-descent error path is a local two-rail approximation to the
+descent-direction sign.  It uses explicit label rails \(t^+\) and \(t^-\), not a
+softmax:
+\[
+  d^+ \leftarrow t^+\,s^-,
+  \qquad
+  d^- \leftarrow t^-\,s^+ .
+\]
+Thus a positive-class sample asks the circuit to increase positive evidence
+when negative score is present, while a negative-class sample asks the circuit
+to decrease positive evidence when positive score is present.  The primitive is
+implemented by MOS stacks, not by an algebraic subtractor:
+\[
+  V_{\mathrm{DD}}\rightarrow t^+\rightarrow s^-\rightarrow \code{err}\rightarrow d^+,
+  \qquad
+  V_{\mathrm{DD}}\rightarrow t^-\rightarrow s^+\rightarrow \code{err}\rightarrow d^- .
+\]
+The optional restored-hidden mode then converts the raw \(d^+/d^-\) margin into
+temporary \(\code{edp}/\code{edn}\) rails for hidden-error transport, while the
+readout writer may still use the raw rails.  Hidden credit can remain
+latch-free by transporting error through the readout conductance pair:
+\[
+  \delta h^+ \mathrel{+}= d^+G_V^+ + d^-G_V^-,
+  \qquad
+  \delta h^- \mathrel{+}= d^+G_V^- + d^-G_V^+ .
+\]
+This preserves magnitude better than restoring only the sign of the readout
+weight, but it also means weak readout weights create weak hidden credit.
+
+\begin{figure}[H]
+  \centering
+  \resizebox{0.98\linewidth}{!}{%
+  \begin{tikzpicture}[
+      font=\small,
+      nodebox/.style={draw, rounded corners=2pt, minimum height=0.82cm,
+        minimum width=2.15cm, align=center, fill=lightgray, inner sep=3pt},
+      capbox/.style={draw, cylinder, shape border rotate=90, aspect=0.30,
+        minimum height=0.72cm, minimum width=0.58cm, align=center, fill=green!10},
+      railbox/.style={draw, rounded corners=2pt, minimum height=0.74cm,
+        minimum width=1.55cm, align=center, fill=blue!5, inner sep=3pt},
+      errbox/.style={draw, rounded corners=2pt, minimum height=0.74cm,
+        minimum width=1.55cm, align=center, fill=red!5, inner sep=3pt},
+      arr/.style={-{Latex[length=2mm]}, semithick},
+      lbl/.style={font=\footnotesize, fill=white, inner sep=1.2pt}
+    ]
+    \node[nodebox] (row) {row-pulsed\\input rails};
+    \node[capbox, below=1.0cm of row] (cw) {\(C_{W^+},C_{W^-}\)};
+    \node[nodebox, right=1.35cm of row] (hidden) {split-rail\\conductance\\hidden cell};
+    \node[railbox, right=1.35cm of hidden, yshift=0.45cm] (sp) {\(s^+\)\\score};
+    \node[railbox, right=1.35cm of hidden, yshift=-0.45cm] (sn) {\(s^-\)\\scoren};
+    \node[capbox, below=1.05cm of sp, xshift=-0.55cm] (cvp) {\(C_{V^+}\)};
+    \node[capbox, below=1.05cm of sn, xshift=0.55cm] (cvn) {\(C_{V^-}\)};
+    \node[errbox, right=1.35cm of sp] (dp) {\(d^+\)\\dp};
+    \node[errbox, right=1.35cm of sn] (dn) {\(d^-\)\\dn};
+    \node[nodebox, right=1.25cm of dp, yshift=-0.45cm] (restore) {optional\\edp/edn\\restore};
+    \node[nodebox, below=1.15cm of restore] (hd) {latch-free\\hidden credit\\\(\delta h^+,\delta h^-\)};
+
+    \draw[arr, forwardblue] (row) -- node[lbl, above] {\(x(t)\)} (hidden);
+    \draw[arr, stategreen] (cw) -- node[lbl, left] {conductance} (hidden);
+    \draw[arr, forwardblue] (hidden) -- node[lbl, above] {\(G_V^+h\)} (sp);
+    \draw[arr, forwardblue] (hidden) -- node[lbl, below] {\(G_V^-h\)} (sn);
+    \draw[arr, stategreen] (cvp) -- (sp);
+    \draw[arr, stategreen] (cvn) -- (sn);
+    \draw[arr, backred] (sn) -- node[lbl, above] {\(t^+s^-\)} (dp);
+    \draw[arr, backred] (sp) -- node[lbl, below] {\(t^-s^+\)} (dn);
+    \draw[arr, backred] (dp) -- (restore);
+    \draw[arr, backred] (dn) -- (restore);
+    \draw[arr, backred] (dp.south) |- (hd.west);
+    \draw[arr, backred] (dn.south) |- (hd.west);
+    \draw[arr, stategreen] (cvp.south) |- node[lbl, below, pos=0.28] {\(G_V^+,G_V^-\)} (hd.west);
+    \draw[arr, writeorange] (dp.south west) |- node[lbl, below, pos=0.15] {readout write} (cvp.south);
+    \draw[arr, writeorange] (dn.south west) |- node[lbl, below, pos=0.15] {readout write} (cvn.south);
+  \end{tikzpicture}}
+  \caption{Current tested device-level score/error path.  Differential score
+  mode keeps separate \(s^+\) and \(s^-\) dynamic rails.  Binary-descent error
+  uses label rails to form \(d^+\approx t^+s^-\) and \(d^-\approx t^-s^+\)
+  with MOS stacks.  This is a circuit primitive under test, not the
+  softmax-like behavioral error used in the high-accuracy reference run.}
+  \label{fig:binary-descent-error-path}
+\end{figure}
+
+Ngspice-backed primitive tests now cover this block in isolation.  They verify
+that clear positive and negative cases drive the expected \(d^+-d^-\) sign, and
+that the older target/raw-score competition can create an unwanted positive
+pressure when \(t^-=1\) and \(s^-\) is high.  The binary-descent path removes
+that specific sign error, but the integrated MNIST01 block runner still has not
+shown robust learning at larger scale; recent strict \(4\times4\) binary
+smokes remain sequence-sensitive and can fail to move the readout weights.
+
 
 \section{State And Update Equations}
 

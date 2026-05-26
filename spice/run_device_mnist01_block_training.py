@@ -41,6 +41,7 @@ LEARNING_ACTIVATION_GATE_MODELS = ("nrel", "sense")
 HIDDEN_POLARITY_INITS = ("ink", "alternating-channel", "random-pixel")
 HIDDEN_CREDIT_MODES = ("direct-feedback", "readout-weighted", "readout-restored", "readout-restored-hardgate")
 ERROR_SIGNAL_MODES = ("raw", "restored", "restored-hidden")
+ERROR_TOPOLOGIES = ("competition", "binary-descent")
 SCORE_MODES = ("single-ended", "differential")
 OUTPUT_DIFFERENTIAL_STAGES = ("simple", "score-gated", "latched")
 OUTPUT_DECISION_REF_SOURCES = ("voltage", "divider", "adaptive", "track")
@@ -356,6 +357,21 @@ def validate_block_samples(samples: list[dict[str, Any]], *, required_rails: lis
             raise ValueError(f"sample {idx} missing pixel rails: {', '.join(missing[:4])}")
         if "target" not in sample:
             raise ValueError(f"sample {idx} missing target rail")
+
+
+def samples_with_label_error_rails(samples: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    normalized: list[dict[str, Any]] = []
+    for sample in samples:
+        record = dict(sample)
+        if "targetp" not in record or "targetn" not in record:
+            if "positive_label" in record:
+                positive = float(record["positive_label"]) > 0.5
+            else:
+                positive = expected_positive(float(record["target"]))
+            record.setdefault("targetp", 1.1 if positive else 0.0)
+            record.setdefault("targetn", 0.0 if positive else 1.1)
+        normalized.append(record)
+    return normalized
 
 
 @dataclass(frozen=True)
@@ -767,6 +783,7 @@ def block_netlist(
     hidden_credit_mode: str = "direct-feedback",
     readout_feedback_restore_width: float = 4.0,
     error_signal_mode: str = "raw",
+    error_topology: str = "competition",
     error_restore_width: float = 4.0,
     hidden_update_width: float = 12.0,
     hidden_weight_write_width: float = 0.25,
@@ -887,8 +904,12 @@ def block_netlist(
         raise ValueError("readout_feedback_restore_width must be positive")
     if error_signal_mode not in ERROR_SIGNAL_MODES:
         raise ValueError(f"error_signal_mode must be one of {ERROR_SIGNAL_MODES}")
+    if error_topology not in ERROR_TOPOLOGIES:
+        raise ValueError(f"error_topology must be one of {ERROR_TOPOLOGIES}")
     if error_signal_mode in {"restored", "restored-hidden"} and score_mode != "differential":
         raise ValueError(f"{error_signal_mode} error_signal_mode requires differential score_mode")
+    if error_topology == "binary-descent" and score_mode != "differential":
+        raise ValueError("binary-descent error_topology requires differential score_mode")
     if error_restore_width <= 0.0:
         raise ValueError("error_restore_width must be positive")
     if hidden_update_width <= 0.0:
@@ -993,6 +1014,7 @@ def block_netlist(
     pixel_count = image_size * image_size
     required_rails = required_input_rail_names(pixel_count, channels, input_rail_mode)
     validate_block_samples(samples, required_rails=required_rails)
+    source_samples = samples_with_label_error_rails(samples)
 
     readout_pmos_w = 8.0 * readout_apply_scale
     readout_nmos_w = 2.0 * readout_apply_scale
@@ -1204,7 +1226,7 @@ def block_netlist(
         if input_waveform_mode == "row-pulsed":
             source_node = f"{rail}_src"
             input_wave = block_row_pulsed_sample_wave(
-                samples,
+                source_samples,
                 rail,
                 stop,
                 hidden_forward_windows_by_sample=phase_schedule.hidden_forward_windows_by_sample,
@@ -1224,7 +1246,7 @@ def block_netlist(
                 f"R{rail}_row_leak {rail} 0 1e12",
             ]
         else:
-            input_wave = block_sample_wave(samples, rail, stop, cycle_ns=cycle_ns)
+            input_wave = block_sample_wave(source_samples, rail, stop, cycle_ns=cycle_ns)
             lines += voltage_source_lines(
                 f"V{rail}",
                 rail,
@@ -1238,7 +1260,23 @@ def block_netlist(
             "Vtarget",
             "target",
             "0",
-            block_sample_wave(samples, "target", stop, cycle_ns=cycle_ns),
+            block_sample_wave(source_samples, "target", stop, cycle_ns=cycle_ns),
+            transient_noise_sigma=input_transient_noise_sigma,
+            transient_noise_timestep=transient_noise_timestep,
+        ),
+        *voltage_source_lines(
+            "Vtargetp",
+            "targetp",
+            "0",
+            block_sample_wave(source_samples, "targetp", stop, cycle_ns=cycle_ns),
+            transient_noise_sigma=input_transient_noise_sigma,
+            transient_noise_timestep=transient_noise_timestep,
+        ),
+        *voltage_source_lines(
+            "Vtargetn",
+            "targetn",
+            "0",
+            block_sample_wave(source_samples, "targetn", stop, cycle_ns=cycle_ns),
             transient_noise_sigma=input_transient_noise_sigma,
             transient_noise_timestep=transient_noise_timestep,
         ),
@@ -2051,31 +2089,45 @@ def block_netlist(
         output_stage,
         *(["", decision_stage] if decision_stage else []),
         "",
-        "* Shared output error from target/raw-score conductance competition.",
-        "Mdp_t0 vdd target dp_t 0 NSENSE W=32u L=180n",
-        "Mdp_t1 dp_t err dp 0 NSENSE W=32u L=180n",
         *(
             [
-                "Mdp_sn0 vdd scoren dp_sn 0 NSENSE W=24u L=180n",
-                "Mdp_sn1 dp_sn err dp 0 NSENSE W=24u L=180n",
+                "* Shared output error from target/raw-score conductance competition.",
+                "Mdp_t0 vdd target dp_t 0 NSENSE W=32u L=180n",
+                "Mdp_t1 dp_t err dp 0 NSENSE W=32u L=180n",
+                *(
+                    [
+                        "Mdp_sn0 vdd scoren dp_sn 0 NSENSE W=24u L=180n",
+                        "Mdp_sn1 dp_sn err dp 0 NSENSE W=24u L=180n",
+                    ]
+                    if score_mode == "differential"
+                    else []
+                ),
+                "Mdp_y0 dp err dp_y 0 NSENSE W=24u L=180n",
+                "Mdp_y1 dp_y score 0 0 NSENSE W=24u L=180n",
+                "Mdn_y0 vdd score dn_y 0 NSENSE W=32u L=180n",
+                "Mdn_y1 dn_y err dn 0 NSENSE W=32u L=180n",
+                *(
+                    [
+                        "Mdn_sn0 dn err dn_sn 0 NSENSE W=24u L=180n",
+                        "Mdn_sn1 dn_sn scoren 0 0 NSENSE W=24u L=180n",
+                    ]
+                    if score_mode == "differential"
+                    else []
+                ),
+                "Mdn_t0 dn err dn_t 0 NSENSE W=24u L=180n",
+                "Mdn_t1 dn_t target 0 0 NSENSE W=24u L=180n",
             ]
-            if score_mode == "differential"
-            else []
-        ),
-        "Mdp_y0 dp err dp_y 0 NSENSE W=24u L=180n",
-        "Mdp_y1 dp_y score 0 0 NSENSE W=24u L=180n",
-        "Mdn_y0 vdd score dn_y 0 NSENSE W=32u L=180n",
-        "Mdn_y1 dn_y err dn 0 NSENSE W=32u L=180n",
-        *(
-            [
-                "Mdn_sn0 dn err dn_sn 0 NSENSE W=24u L=180n",
-                "Mdn_sn1 dn_sn scoren 0 0 NSENSE W=24u L=180n",
+            if error_topology == "competition"
+            else [
+                "* Binary descent output error: dp ~= targetp*scoren, dn ~= targetn*score.",
+                "Mdp_bd_t vdd targetp dp_bd_t 0 NSENSE W=48u L=180n",
+                "Mdp_bd_s dp_bd_t scoren dp_bd_s 0 NSENSE W=48u L=180n",
+                "Mdp_bd_e dp_bd_s err dp 0 NSENSE W=48u L=180n",
+                "Mdn_bd_t vdd targetn dn_bd_t 0 NSENSE W=48u L=180n",
+                "Mdn_bd_s dn_bd_t score dn_bd_s 0 NSENSE W=48u L=180n",
+                "Mdn_bd_e dn_bd_s err dn 0 NSENSE W=48u L=180n",
             ]
-            if score_mode == "differential"
-            else []
         ),
-        "Mdn_t0 dn err dn_t 0 NSENSE W=24u L=180n",
-        "Mdn_t1 dn_t target 0 0 NSENSE W=24u L=180n",
         *(
             [
                 "",
@@ -2143,6 +2195,8 @@ def load_mnist01_block_records(
             target_high = is_positive if target_polarity == "active-high" else not is_positive
             record: dict[str, Any] = {
                 "target": 1.1 if target_high else 0.0,
+                "targetp": 1.1 if is_positive else 0.0,
+                "targetn": 0.0 if is_positive else 1.1,
                 "digit": float(digit_i),
                 "mnist_index": float(index),
                 "positive_label": 1.0 if is_positive else 0.0,
@@ -2566,6 +2620,7 @@ def run_device_sequence(
     hidden_credit_mode: str,
     readout_feedback_restore_width: float,
     error_signal_mode: str,
+    error_topology: str,
     error_restore_width: float,
     hidden_update_width: float,
     hidden_weight_write_width: float,
@@ -2650,6 +2705,7 @@ def run_device_sequence(
         hidden_credit_mode=hidden_credit_mode,
         readout_feedback_restore_width=readout_feedback_restore_width,
         error_signal_mode=error_signal_mode,
+        error_topology=error_topology,
         error_restore_width=error_restore_width,
         hidden_update_width=hidden_update_width,
         hidden_weight_write_width=hidden_weight_write_width,
@@ -2765,6 +2821,7 @@ def main() -> None:
     ap.add_argument("--hidden-credit-mode", choices=HIDDEN_CREDIT_MODES, default="direct-feedback")
     ap.add_argument("--readout-feedback-restore-width", type=float, default=4.0)
     ap.add_argument("--error-signal-mode", choices=ERROR_SIGNAL_MODES, default="raw")
+    ap.add_argument("--error-topology", choices=ERROR_TOPOLOGIES, default="competition")
     ap.add_argument("--error-restore-width", type=float, default=4.0)
     ap.add_argument("--hidden-update-width", type=float, default=12.0)
     ap.add_argument("--hidden-weight-write-width", type=float, default=0.25)
@@ -3084,6 +3141,7 @@ def main() -> None:
         "hidden_credit_mode": args.hidden_credit_mode,
         "readout_feedback_restore_width": args.readout_feedback_restore_width,
         "error_signal_mode": args.error_signal_mode,
+        "error_topology": args.error_topology,
         "error_restore_width": args.error_restore_width,
         "hidden_update_width": args.hidden_update_width,
         "hidden_weight_write_width": args.hidden_weight_write_width,
@@ -3297,6 +3355,7 @@ def main() -> None:
         "hidden_credit_mode": args.hidden_credit_mode,
         "readout_feedback_restore_width": args.readout_feedback_restore_width,
         "error_signal_mode": args.error_signal_mode,
+        "error_topology": args.error_topology,
         "error_restore_width": args.error_restore_width,
         "output_driver_model": args.output_driver_model,
         "output_differential_stage": args.output_differential_stage,

@@ -27,6 +27,23 @@ def test_readout_writer_primitive_emits_bounded_reference_writer() -> None:
     assert "Mvwp0_up_p0 vwp0_up rgp0 vdd vdd PMOS" not in netlist
 
 
+def test_readout_writer_primitive_can_restore_weak_gradient_gate() -> None:
+    netlist = writer.generate_netlist(
+        update_mode="positive",
+        topology="bounded-ref",
+        gradient_gate_topology="restored",
+        gate_amplitude=0.04,
+        gate_restore_width=32.0,
+    )
+
+    assert "\nB" not in netlist
+    assert "Velig elig 0 PULSE(0 0.04 0.5n 10p 10p 3.0n 30n)" in netlist
+    assert "Cegon act 0 10f IC=0" in netlist
+    assert "Megate_pd egate elig 0 0 NSENSE W=32u L=180n" in netlist
+    assert "Megon_p act egate vdd vdd PMOS W=32u L=180n" in netlist
+    assert "Mgvp0_a vdd act gvp0_a 0 NSENSE W=24u L=180n" in netlist
+
+
 def test_readout_writer_primitive_keeps_legacy_rail_writer_available() -> None:
     netlist = writer.generate_netlist(update_mode="negative", topology="rail", update_scale=0.1)
 
@@ -59,6 +76,10 @@ def test_readout_writer_primitive_validation() -> None:
         writer.main_for_test(["--error-amplitude", "1.3"])
     with pytest.raises(ValueError, match="gradient-restore-width"):
         writer.main_for_test(["--gradient-restore-width", "0"])
+    with pytest.raises(ValueError, match="gate-amplitude"):
+        writer.main_for_test(["--gate-amplitude", "1.3"])
+    with pytest.raises(ValueError, match="gate-restore-width"):
+        writer.main_for_test(["--gate-restore-width", "0"])
 
 
 @pytest.mark.parametrize(
@@ -145,3 +166,49 @@ def test_readout_writer_primitive_ngspice_stronger_restore_uses_weak_error(
     assert float(measures["gradient_margin"]) > 0.025
     assert float(measures["signed_delta"]) > 0.05
     assert abs(float(measures["common_delta"])) < 0.05
+
+
+def test_readout_writer_primitive_ngspice_restored_gate_uses_weak_eligibility(
+    tmp_path: Path,
+) -> None:
+    ngspice = shutil.which("ngspice")
+    if ngspice is None:
+        pytest.skip("ngspice is not installed")
+
+    direct = run_netlist(
+        ngspice,
+        tmp_path / "readout_writer_weak_direct_gate.cir",
+        writer.generate_netlist(
+            update_mode="positive",
+            topology="bounded-ref",
+            update_scale=0.05,
+            error_amplitude=0.08,
+            gradient_restore_width=32.0,
+            gate_amplitude=0.04,
+        ),
+        timeout=20.0,
+    )
+    restored = run_netlist(
+        ngspice,
+        tmp_path / "readout_writer_weak_restored_gate.cir",
+        writer.generate_netlist(
+            update_mode="positive",
+            topology="bounded-ref",
+            update_scale=0.05,
+            error_amplitude=0.08,
+            gradient_restore_width=32.0,
+            gradient_gate_topology="restored",
+            gate_amplitude=0.04,
+            gate_restore_width=32.0,
+        ),
+        timeout=20.0,
+    )
+
+    assert float(direct["gate_before_apply"]) < 0.05
+    assert float(direct["gradient_margin"]) < 0.025
+    assert abs(float(direct["signed_delta"])) < 1e-3
+
+    assert float(restored["gate_before_apply"]) > 0.5
+    assert float(restored["gradient_margin"]) > 0.025
+    assert float(restored["signed_delta"]) > 0.05
+    assert abs(float(restored["common_delta"])) < 0.05

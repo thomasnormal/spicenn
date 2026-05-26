@@ -14,6 +14,7 @@ from run_spice_sweep import ROOT, detect_spice
 
 UPDATE_MODES = ("none", "positive", "negative")
 READOUT_WRITER_TOPOLOGIES = ("rail", "bounded-ref")
+GRADIENT_GATE_TOPOLOGIES = ("direct", "restored")
 
 
 def update_rails(mode: str, *, amplitude: float) -> tuple[float, float]:
@@ -37,6 +38,9 @@ def generate_netlist(
     update_span: float = 0.15,
     gradient_width: float = 24.0,
     gradient_restore_width: float = 16.0,
+    gradient_gate_topology: str = "direct",
+    gate_amplitude: float = 1.2,
+    gate_restore_width: float = 7.0,
     update_scale: float = 0.10,
     error_amplitude: float = 1.2,
 ) -> str:
@@ -44,14 +48,20 @@ def generate_netlist(
         raise ValueError(f"update_mode must be one of {UPDATE_MODES}")
     if topology not in READOUT_WRITER_TOPOLOGIES:
         raise ValueError(f"topology must be one of {READOUT_WRITER_TOPOLOGIES}")
+    if gradient_gate_topology not in GRADIENT_GATE_TOPOLOGIES:
+        raise ValueError(f"gradient_gate_topology must be one of {GRADIENT_GATE_TOPOLOGIES}")
     for name, value in {
         "gradient_width": gradient_width,
         "gradient_restore_width": gradient_restore_width,
+        "gate_amplitude": gate_amplitude,
+        "gate_restore_width": gate_restore_width,
         "update_scale": update_scale,
         "error_amplitude": error_amplitude,
     }.items():
         if value <= 0.0:
             raise ValueError(f"{name} must be positive")
+    if gate_amplitude > 1.2:
+        raise ValueError("gate_amplitude must not exceed VDD")
     if error_amplitude > 1.2:
         raise ValueError("error_amplitude must not exceed VDD")
     if update_span < 0.0:
@@ -69,7 +79,6 @@ def generate_netlist(
         mos_models(),
         ".options method=gear reltol=1e-3 abstol=1e-12 vntol=1e-6",
         "Vdd vdd 0 {VDD}",
-        "Vact act 0 PULSE(0 1.2 1.0n 10p 10p 2.0n 30n)",
         f"Vdp dp 0 PULSE(0 {dp:.12g} 1.0n 10p 10p 2.0n 30n)",
         f"Vdn dn 0 PULSE(0 {dn:.12g} 1.0n 10p 10p 2.0n 30n)",
         "Vacc acc 0 PULSE(0 1.2 1.0n 10p 10p 2.0n 30n)",
@@ -88,6 +97,21 @@ def generate_netlist(
         "Rrgp rgp0 vdd 50k",
         "Rrgn rgn0 vdd 50k",
     ]
+    gradient_gate_node = "act"
+    if gradient_gate_topology == "direct":
+        lines += [
+            f"Vact act 0 PULSE(0 {gate_amplitude:.12g} 1.0n 10p 10p 2.0n 30n)",
+        ]
+    else:
+        lines += [
+            f"Velig elig 0 PULSE(0 {gate_amplitude:.12g} 0.5n 10p 10p 3.0n 30n)",
+            "Cegon act 0 10f IC=0",
+            "Cegate egate 0 4f IC=1.2",
+            "Regon act 0 1G",
+            "Regate egate vdd 50k",
+            f"Megate_pd egate elig 0 0 NSENSE W={gate_restore_width:.6g}u L=180n",
+            f"Megon_p act egate vdd vdd PMOS W={gate_restore_width:.6g}u L=180n",
+        ]
     if topology == "bounded-ref":
         lines += [
             f"Vvwhi_ref vwhi_ref 0 {high_ref:.12g}",
@@ -96,10 +120,10 @@ def generate_netlist(
     readout_pmos_w = 8.0 * update_scale
     readout_nmos_w = 2.0 * update_scale
     lines += [
-        f"Mgvp0_a vdd act gvp0_a 0 NSENSE W={gradient_width:.6g}u L=180n",
+        f"Mgvp0_a vdd {gradient_gate_node} gvp0_a 0 NSENSE W={gradient_width:.6g}u L=180n",
         f"Mgvp0_d gvp0_a dp gvp0_d 0 NSENSE W={gradient_width:.6g}u L=180n",
         f"Mgvp0_g gvp0_d acc gvp0 0 NREL W={gradient_width:.6g}u L=180n",
-        f"Mgvn0_a vdd act gvn0_a 0 NSENSE W={gradient_width:.6g}u L=180n",
+        f"Mgvn0_a vdd {gradient_gate_node} gvn0_a 0 NSENSE W={gradient_width:.6g}u L=180n",
         f"Mgvn0_d gvn0_a dn gvn0_d 0 NSENSE W={gradient_width:.6g}u L=180n",
         f"Mgvn0_g gvn0_d acc gvn0 0 NREL W={gradient_width:.6g}u L=180n",
         f"Mrgp0_pd rgp0 gvp0 0 0 NSENSE W={gradient_restore_width:.6g}u L=180n",
@@ -112,6 +136,7 @@ def generate_netlist(
         ),
         ".meas tran vwp_before FIND V(vwp0) AT=3.5n",
         ".meas tran vwn_before FIND V(vwn0) AT=3.5n",
+        ".meas tran gate_before_apply FIND V(act) AT=3.5n",
         ".meas tran gvp_before_apply FIND V(gvp0) AT=3.5n",
         ".meas tran gvn_before_apply FIND V(gvn0) AT=3.5n",
         ".meas tran gradient_margin PARAM='gvp_before_apply-gvn_before_apply'",
@@ -185,6 +210,9 @@ def run_cases(args: argparse.Namespace) -> dict[str, Any]:
                 update_span=args.update_span,
                 gradient_width=args.gradient_width,
                 gradient_restore_width=args.gradient_restore_width,
+                gradient_gate_topology=args.gradient_gate_topology,
+                gate_amplitude=args.gate_amplitude,
+                gate_restore_width=args.gate_restore_width,
                 update_scale=args.update_scale,
                 error_amplitude=args.error_amplitude,
             ),
@@ -238,6 +266,9 @@ def build_arg_parser() -> argparse.ArgumentParser:
     ap.add_argument("--update-span", type=float, default=0.15)
     ap.add_argument("--gradient-width", type=float, default=24.0)
     ap.add_argument("--gradient-restore-width", type=float, default=16.0)
+    ap.add_argument("--gradient-gate-topology", choices=GRADIENT_GATE_TOPOLOGIES, default="direct")
+    ap.add_argument("--gate-amplitude", type=float, default=1.2)
+    ap.add_argument("--gate-restore-width", type=float, default=7.0)
     ap.add_argument("--update-scale", type=float, default=0.10)
     ap.add_argument("--error-amplitude", type=float, default=1.2)
     ap.add_argument("--min-abs-delta", type=float, default=1e-3)
@@ -248,9 +279,18 @@ def build_arg_parser() -> argparse.ArgumentParser:
 def validate_args(args: argparse.Namespace) -> None:
     if args.timeout <= 0.0:
         raise ValueError("timeout must be positive")
-    for name in ["gradient_width", "gradient_restore_width", "update_scale", "error_amplitude"]:
+    for name in [
+        "gradient_width",
+        "gradient_restore_width",
+        "gate_amplitude",
+        "gate_restore_width",
+        "update_scale",
+        "error_amplitude",
+    ]:
         if getattr(args, name) <= 0.0:
             raise ValueError(f"{name.replace('_', '-')} must be positive")
+    if args.gate_amplitude > 1.2:
+        raise ValueError("gate-amplitude must not exceed VDD")
     if args.error_amplitude > 1.2:
         raise ValueError("error-amplitude must not exceed VDD")
     if args.update_span < 0.0:

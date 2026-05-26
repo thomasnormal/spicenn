@@ -827,6 +827,59 @@ def final_weights_from_rows(rows: pd.DataFrame, *, feature_count: int, block_len
     return weights
 
 
+def output_bias_diagnostics(
+    train_rows: pd.DataFrame,
+    final_eval_rows: pd.DataFrame,
+    *,
+    enabled: bool,
+    decision_threshold: float,
+) -> dict[str, float | bool | None]:
+    empty = {
+        "output_bias_signed_final_train": None,
+        "output_bias_signed_final_train_abs": None,
+        "output_bias_signed_final_eval_first": None,
+        "output_bias_signed_final_eval_last": None,
+        "output_bias_signed_final_eval_drift": None,
+        "output_bias_signed_final_eval_drift_abs": None,
+        "output_bias_signed_final_eval_max_abs": None,
+        "output_bias_signed_final_train_to_threshold_ratio": None,
+        "output_bias_state_drift_warning": False,
+    }
+    if (
+        not enabled
+        or "output_bias_signed_after" not in train_rows.columns
+        or "output_bias_signed_after" not in final_eval_rows.columns
+    ):
+        return empty
+
+    train_bias = train_rows["output_bias_signed_after"].dropna().to_numpy(dtype=float)
+    eval_bias = final_eval_rows["output_bias_signed_after"].dropna().to_numpy(dtype=float)
+    if train_bias.size == 0 or eval_bias.size == 0:
+        return empty
+
+    final_train = float(train_bias[-1])
+    first_eval = float(eval_bias[0])
+    last_eval = float(eval_bias[-1])
+    drift = last_eval - first_eval
+    threshold_ratio = abs(final_train) / decision_threshold if decision_threshold > 0.0 else None
+    drift_warning = (
+        decision_threshold > 0.0
+        and abs(final_train) > decision_threshold
+        and abs(drift) > decision_threshold
+    )
+    return {
+        "output_bias_signed_final_train": final_train,
+        "output_bias_signed_final_train_abs": abs(final_train),
+        "output_bias_signed_final_eval_first": first_eval,
+        "output_bias_signed_final_eval_last": last_eval,
+        "output_bias_signed_final_eval_drift": drift,
+        "output_bias_signed_final_eval_drift_abs": abs(drift),
+        "output_bias_signed_final_eval_max_abs": float(np.max(np.abs(eval_bias))),
+        "output_bias_signed_final_train_to_threshold_ratio": threshold_ratio,
+        "output_bias_state_drift_warning": drift_warning,
+    }
+
+
 def run_device_sequence(
     spice_bin: str,
     path: Path,
@@ -1082,6 +1135,12 @@ def main() -> None:
     )
     nontrivial_learning_met = final_accuracy > max(initial_accuracy, 0.5)
     target_topology = args.image_size == 10 and args.block_size == 4 and args.stride == 2 and args.channels == 2
+    output_bias_summary = output_bias_diagnostics(
+        train_rows,
+        final_eval_rows,
+        enabled=args.output_bias,
+        decision_threshold=args.decision_threshold,
+    )
     summary = {
         "simulator": version,
         "architecture": "device_level_mnist01_block_stride_channel_training",
@@ -1161,6 +1220,7 @@ def main() -> None:
         "initial_eval_output_active_fraction": initial_active_fraction,
         "final_eval_output_active_fraction": final_active_fraction,
         "nontrivial_learning_met": nontrivial_learning_met,
+        **output_bias_summary,
         "initial_weights": initial_weights,
         "final_weights": final_weights,
         "curve": str(curve_path),

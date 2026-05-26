@@ -131,6 +131,44 @@ def test_final_block_weights_preserve_measured_output_bias() -> None:
     assert weights["obn"] == 0.27
 
 
+def test_output_bias_diagnostics_flag_large_eval_drift() -> None:
+    sys.path.insert(0, str(SPICE_DIR))
+    import run_device_mnist01_block_training as block
+
+    diagnostics = block.output_bias_diagnostics(
+        pd.DataFrame([{"output_bias_signed_after": 0.05}, {"output_bias_signed_after": 0.67}]),
+        pd.DataFrame(
+            [
+                {"output_bias_signed_after": 0.42},
+                {"output_bias_signed_after": 0.22},
+                {"output_bias_signed_after": 0.02},
+            ]
+        ),
+        enabled=True,
+        decision_threshold=0.1,
+    )
+
+    assert diagnostics["output_bias_signed_final_train"] == 0.67
+    assert np.isclose(diagnostics["output_bias_signed_final_eval_drift"], -0.4)
+    assert np.isclose(diagnostics["output_bias_signed_final_train_to_threshold_ratio"], 6.7)
+    assert diagnostics["output_bias_state_drift_warning"] is True
+
+
+def test_output_bias_diagnostics_are_empty_when_bias_disabled() -> None:
+    sys.path.insert(0, str(SPICE_DIR))
+    import run_device_mnist01_block_training as block
+
+    diagnostics = block.output_bias_diagnostics(
+        pd.DataFrame([{"output_bias_signed_after": 0.67}]),
+        pd.DataFrame([{"output_bias_signed_after": 0.42}]),
+        enabled=False,
+        decision_threshold=0.1,
+    )
+
+    assert diagnostics["output_bias_signed_final_train"] is None
+    assert diagnostics["output_bias_state_drift_warning"] is False
+
+
 def test_block_netlist_emits_per_pixel_trainable_caps_and_no_behavioral_sources() -> None:
     sys.path.insert(0, str(SPICE_DIR))
     import run_device_mnist01_block_training as block

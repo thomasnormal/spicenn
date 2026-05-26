@@ -37,6 +37,7 @@ def test_device_mnist01_block_script_help_runs_from_repo_root() -> None:
     assert "--readout-forward-model" in proc.stdout
     assert "--learning-activation-gate-model" in proc.stdout
     assert "--readout-weight-leak-resistance" in proc.stdout
+    assert "--activation-competition-width" in proc.stdout
     assert "--score-mode" in proc.stdout
     assert "--readout-forward-width" in proc.stdout
     assert "--phase-time-scale" in proc.stdout
@@ -247,6 +248,35 @@ def test_block_netlist_can_emit_passive_readout_weight_leak() -> None:
     assert "Vvwn_ref vwn_ref 0 0.25" in netlist
     assert "Rvwp0_leak vwp0 vwp_ref 5e+06" in netlist
     assert "Rvwn3_leak vwn3 vwn_ref 5e+06" in netlist
+
+
+def test_block_netlist_can_emit_transistor_activation_competition() -> None:
+    sys.path.insert(0, str(SPICE_DIR))
+    import run_device_mnist01_block_training as block
+
+    image_size = 4
+    weights = block.initial_block_weights(image_size, 2, 2, 1, seed=1)
+    sample = {f"x{i}": 0.2 + 0.01 * i for i in range(image_size * image_size)}
+    sample["target"] = 1.1
+    netlist = block.block_netlist(
+        [sample],
+        weights,
+        image_size=image_size,
+        block_size=2,
+        stride=2,
+        channels=1,
+        training_enabled=True,
+        activation_competition_width=5.0,
+    )
+
+    assert "\nB" not in netlist
+    assert "Cactinh actinh 0 10f IC=0" in netlist
+    assert "Mreset_actinh actinh rstf 0 0 NMOS" in netlist
+    assert "Mactinh_src3_a vdd act3 actinh_src3_a 0 NSENSE W=5u" in netlist
+    assert "Mactinh_src3_f actinh_src3_a fwd actinh 0 NMOS W=5u" in netlist
+    assert "Mactinh_sink3_i act3 actinh actinh_sink3_i 0 NSENSE W=5u" in netlist
+    assert "Mactinh_sink3_f actinh_sink3_i fwd 0 0 NMOS W=5u" in netlist
+    assert ".meas tran actinh_before_0 FIND V(actinh) AT=2.95n" in netlist
 
 
 def test_block_netlist_can_emit_target_topology_without_behavioral_sources() -> None:

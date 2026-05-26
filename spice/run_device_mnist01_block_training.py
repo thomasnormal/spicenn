@@ -245,6 +245,7 @@ def block_netlist(
     readout_weight_leak_resistance: float = 0.0,
     readout_weight_positive_ref: float = 0.52,
     readout_weight_negative_ref: float = 0.25,
+    activation_competition_width: float = 0.0,
     phase_time_scale: float = 1.0,
     score_mode: str = "single-ended",
     input_rail_mode: str = "alternating-complement",
@@ -267,6 +268,8 @@ def block_netlist(
         raise ValueError("readout_forward_width must be positive")
     if readout_weight_leak_resistance < 0.0:
         raise ValueError("readout_weight_leak_resistance must be nonnegative")
+    if activation_competition_width < 0.0:
+        raise ValueError("activation_competition_width must be nonnegative")
     if phase_time_scale <= 0.0:
         raise ValueError("phase_time_scale must be positive")
     if score_mode not in SCORE_MODES:
@@ -310,6 +313,11 @@ def block_netlist(
             f".meas tran d_out_{idx} PARAM='out_after_{idx}-out_before_{idx}'",
             f".meas tran error_net_{idx} PARAM='dp_after_{idx}-dn_after_{idx}'",
         ]
+        if activation_competition_width > 0.0:
+            measures += [
+                f".meas tran actinh_before_{idx} FIND V(actinh) AT={base + 2.95 * scale:.2f}n",
+                f".meas tran actinh_after_{idx} FIND V(actinh) AT={base + 15.50 * scale:.2f}n",
+            ]
         for feature in range(feature_count):
             measures += [
                 f".meas tran act{feature}_before_{idx} FIND V(act{feature}) AT={base + 2.95 * scale:.2f}n",
@@ -401,6 +409,11 @@ def block_netlist(
         "Rdp dp 0 1G",
         "Rdn dn 0 1G",
     ]
+    if activation_competition_width > 0.0:
+        lines += [
+            "Cactinh actinh 0 10f IC=0",
+            "Ractinh actinh 0 1G",
+        ]
     for feature in range(feature_count):
         lines += [
             f"Cpre{feature} pre{feature} 0 10f IC=0",
@@ -441,6 +454,8 @@ def block_netlist(
         "Mreset_dp dp rstg 0 0 NMOS W=4u L=180n",
         "Mreset_dn dn rstg 0 0 NMOS W=4u L=180n",
     ]
+    if activation_competition_width > 0.0:
+        lines.append("Mreset_actinh actinh rstf 0 0 NMOS W=4u L=180n")
     for feature in range(feature_count):
         lines += [
             f"Mreset_pre{feature} pre{feature} rstf 0 0 NMOS W=4u L=180n",
@@ -492,6 +507,16 @@ def block_netlist(
                 f"Mhbneg{feature}_f pre{feature} fwd hbn{feature}_0 0 NMOS W={hidden_neg_width:.6g}u L=180n",
                 f"Mhbneg{feature}_b hbn{feature}_0 bhn{feature} 0 0 NMOS W={hidden_neg_width:.6g}u L=180n",
                 f"Mrelu_h{feature} vdd pre{feature} act{feature} 0 {activation_model} W={hidden_activation_width:.6g}u L=180n",
+                *(
+                    [
+                        f"Mactinh_src{feature}_a vdd act{feature} actinh_src{feature}_a 0 NSENSE W={activation_competition_width:.6g}u L=180n",
+                        f"Mactinh_src{feature}_f actinh_src{feature}_a fwd actinh 0 NMOS W={activation_competition_width:.6g}u L=180n",
+                        f"Mactinh_sink{feature}_i act{feature} actinh actinh_sink{feature}_i 0 NSENSE W={activation_competition_width:.6g}u L=180n",
+                        f"Mactinh_sink{feature}_f actinh_sink{feature}_i fwd 0 0 NMOS W={activation_competition_width:.6g}u L=180n",
+                    ]
+                    if activation_competition_width > 0.0
+                    else []
+                ),
                 f"Movpos{feature}_a vdd act{feature} op{feature}_0 0 {readout_model} W={readout_forward_width:.6g}u L=180n",
                 f"Movpos{feature}_w op{feature}_0 vwp{feature} op{feature}_1 0 {readout_model} W={readout_forward_width:.6g}u L=180n",
                 f"Movpos{feature}_f op{feature}_1 fwd score 0 {readout_model} W={readout_forward_width:.6g}u L=180n",
@@ -727,6 +752,7 @@ def run_device_sequence(
     readout_weight_leak_resistance: float,
     readout_weight_positive_ref: float,
     readout_weight_negative_ref: float,
+    activation_competition_width: float,
     phase_time_scale: float,
     score_mode: str,
     input_rail_mode: str,
@@ -754,6 +780,7 @@ def run_device_sequence(
         readout_weight_leak_resistance=readout_weight_leak_resistance,
         readout_weight_positive_ref=readout_weight_positive_ref,
         readout_weight_negative_ref=readout_weight_negative_ref,
+        activation_competition_width=activation_competition_width,
         phase_time_scale=phase_time_scale,
         score_mode=score_mode,
         input_rail_mode=input_rail_mode,
@@ -797,6 +824,7 @@ def main() -> None:
     ap.add_argument("--readout-weight-leak-resistance", type=float, default=0.0)
     ap.add_argument("--readout-weight-positive-ref", type=float, default=0.52)
     ap.add_argument("--readout-weight-negative-ref", type=float, default=0.25)
+    ap.add_argument("--activation-competition-width", type=float, default=0.0)
     ap.add_argument("--phase-time-scale", type=float, default=1.0)
     ap.add_argument("--score-mode", choices=SCORE_MODES, default="single-ended")
     ap.add_argument("--input-rail-mode", choices=INPUT_RAIL_MODES, default="alternating-complement")
@@ -866,6 +894,7 @@ def main() -> None:
         "readout_weight_leak_resistance": args.readout_weight_leak_resistance,
         "readout_weight_positive_ref": args.readout_weight_positive_ref,
         "readout_weight_negative_ref": args.readout_weight_negative_ref,
+        "activation_competition_width": args.activation_competition_width,
         "phase_time_scale": args.phase_time_scale,
         "score_mode": args.score_mode,
         "input_rail_mode": args.input_rail_mode,
@@ -961,6 +990,7 @@ def main() -> None:
         "readout_weight_leak_resistance": args.readout_weight_leak_resistance,
         "readout_weight_positive_ref": args.readout_weight_positive_ref,
         "readout_weight_negative_ref": args.readout_weight_negative_ref,
+        "activation_competition_width": args.activation_competition_width,
         "phase_time_scale": args.phase_time_scale,
         "score_mode": args.score_mode,
         "hidden_bias_positive_init": args.hidden_bias_positive_init,

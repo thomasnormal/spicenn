@@ -18,6 +18,7 @@ SCORE_CASES = (
     "shifted_positive",
     "shifted_negative",
     "tiny_positive",
+    "tiny_negative",
     "tiny_neutral",
 )
 DECISION_TOPOLOGIES = (
@@ -41,6 +42,8 @@ def score_values(case: str, *, center: float, delta: float) -> tuple[float, floa
         return center - delta, center + delta
     if case == "tiny_positive":
         return center + 0.0011, center - 0.0011
+    if case == "tiny_negative":
+        return center - 0.0011, center + 0.0011
     if case == "tiny_neutral":
         return center + 0.000045, center - 0.000045
     raise ValueError(f"score case must be one of {SCORE_CASES}")
@@ -231,7 +234,7 @@ def classify_sign(actual: float, expected: float, *, min_abs_margin: float) -> s
 
 def classify_row(row: dict[str, Any], *, min_abs_margin: float) -> dict[str, str]:
     case = str(row["score_case"])
-    if case == "neutral":
+    if case in {"neutral", "tiny_neutral"}:
         margin = abs(float(row.get("decision_diff", 0.0)))
         return {"decision_classification": "resolved" if margin >= min_abs_margin else "dead_zone"}
     expected = 1.0 if case in {"positive", "shifted_positive", "tiny_positive"} else -1.0

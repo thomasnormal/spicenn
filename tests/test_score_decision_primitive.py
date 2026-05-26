@@ -278,7 +278,7 @@ def test_score_decision_primitive_ngspice_window_stage_rejects_near_zero_before_
     assert abs(float(near_zero["decision_diff"])) < 0.05
 
 
-def test_score_decision_primitive_ngspice_gain_window_amplifies_tiny_positive_and_rejects_tiny_neutral(
+def test_score_decision_primitive_ngspice_gain_window_amplifies_tiny_margins_and_rejects_tiny_neutral(
     tmp_path: Path,
     ngspice_path: str,
 ) -> None:
@@ -302,6 +302,16 @@ def test_score_decision_primitive_ngspice_gain_window_amplifies_tiny_positive_an
         ),
         timeout=20.0,
     )
+    tiny_negative = run_netlist(
+        ngspice_path,
+        tmp_path / "score_decision_gain_window_tiny_negative.cir",
+        decision.generate_netlist(
+            score_case="tiny_negative",
+            decision_topology="score-diff-gain-window",
+            reject_ref=0.05,
+        ),
+        timeout=20.0,
+    )
     direct_tiny_positive = run_netlist(
         ngspice_path,
         tmp_path / "score_decision_window_tiny_positive_direct.cir",
@@ -319,6 +329,11 @@ def test_score_decision_primitive_ngspice_gain_window_amplifies_tiny_positive_an
     assert float(tiny_positive["positive_window_diff"]) > 0.05
     assert float(tiny_positive["negative_window_diff"]) < -0.05
     assert float(tiny_positive["decision_diff"]) > 0.05
+
+    assert float(tiny_negative["score_gain_diff"]) < -0.04
+    assert float(tiny_negative["positive_window_diff"]) < -0.05
+    assert float(tiny_negative["negative_window_diff"]) > 0.05
+    assert float(tiny_negative["decision_diff"]) < -0.05
 
     assert abs(float(tiny_neutral["score_gain_diff"])) < 0.05
     assert float(tiny_neutral["positive_window_diff"]) < -0.05

@@ -109,6 +109,9 @@ def generate_sum_netlist(
     score_capacitance: float = 10e-15,
     isolation: str = "direct",
     score_load_resistance: float = 1e9,
+    include_decision: bool = False,
+    decision_pullup_width: float = 8.0,
+    decision_pulldown_width: float = 12.0,
 ) -> str:
     if sum_case not in SUM_CASES:
         raise ValueError(f"sum_case must be one of {SUM_CASES}")
@@ -118,6 +121,8 @@ def generate_sum_netlist(
         "readout_width": readout_width,
         "score_capacitance": score_capacitance,
         "score_load_resistance": score_load_resistance,
+        "decision_pullup_width": decision_pullup_width,
+        "decision_pulldown_width": decision_pulldown_width,
     }.items():
         if value <= 0.0:
             raise ValueError(f"{name} must be positive")
@@ -138,6 +143,22 @@ def generate_sum_netlist(
         f"Rscore score 0 {score_load_resistance:.12g}",
         f"Rscoren scoren 0 {score_load_resistance:.12g}",
     ]
+    if include_decision:
+        lines += [
+            "Vrstdec_n rstdec_n 0 PULSE(0 1.2 3.0n 10p 10p 10n 20n)",
+            "Vdec dec 0 PULSE(0 1.2 3.2n 10p 10p 1.4n 20n)",
+            "Cdecision decision 0 20f IC=0",
+            "Cdecisionn decisionn 0 20f IC=0",
+            "Rdecision decision 0 1G",
+            "Rdecisionn decisionn 0 1G",
+            "Mprecharge_decision decision rstdec_n vdd vdd PMOS W=4u L=180n",
+            "Mprecharge_decisionn decisionn rstdec_n vdd vdd PMOS W=4u L=180n",
+            f"Mdec_scorepc_p decision decisionn vdd vdd PMOS W={decision_pullup_width:.6g}u L=180n",
+            f"Mdecn_scorepc_p decisionn decision vdd vdd PMOS W={decision_pullup_width:.6g}u L=180n",
+            f"Mdec_scorepc_n decision scoren dec_src 0 NSENSE W={decision_pulldown_width:.6g}u L=180n",
+            f"Mdecn_scorepc_n decisionn score dec_src 0 NSENSE W={decision_pulldown_width:.6g}u L=180n",
+            f"Mdec_scorepc_tail dec_src dec 0 0 NMOS W={decision_pulldown_width:.6g}u L=180n",
+        ]
     for index, (act, vwp, vwn) in enumerate(features):
         lines += [
             f"Vact{index} act{index} 0 {act:.12g}",
@@ -172,6 +193,15 @@ def generate_sum_netlist(
         ".meas tran scoren_after FIND V(scoren) AT=4.5n",
         ".meas tran score_margin PARAM='score_after-scoren_after'",
         ".meas tran score_common PARAM='0.5*(score_after+scoren_after)'",
+        *(
+            [
+                ".meas tran decisionn_after FIND V(decisionn) AT=4.5n",
+                ".meas tran decision_after FIND V(decision) AT=4.5n",
+                ".meas tran decision_diff PARAM='decision_after-decisionn_after'",
+            ]
+            if include_decision
+            else []
+        ),
         ".tran 5p 8n uic",
         ".control",
         "run",

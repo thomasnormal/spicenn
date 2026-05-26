@@ -34,6 +34,8 @@ def test_conductance_readout_primitive_validation() -> None:
         readout.generate_sum_netlist(sum_case="single_positive", isolation="bad")
     with pytest.raises(ValueError, match="readout_width"):
         readout.generate_netlist(readout_case="positive", readout_width=0.0)
+    with pytest.raises(ValueError, match="decision_pullup_width"):
+        readout.generate_sum_netlist(sum_case="single_positive", include_decision=True, decision_pullup_width=0.0)
     with pytest.raises(ValueError, match="timeout"):
         readout.main_for_test(["--timeout", "0"])
 
@@ -145,3 +147,54 @@ def test_conductance_readout_sum_primitive_ngspice_low_impedance_load_increases_
     double_margin = float(double["score_margin"])
     assert single_margin > 1e-3
     assert double_margin > 2.0 * single_margin
+
+
+def test_conductance_readout_sum_primitive_ngspice_mid_load_is_additive_and_latchable(tmp_path: Path) -> None:
+    single = _run_sum_case(tmp_path, "single_positive", isolation="diode", score_load_resistance=3e4)
+    double = _run_sum_case(tmp_path, "two_positive", isolation="diode", score_load_resistance=3e4)
+    inactive_extra = _run_sum_case(tmp_path, "inactive_extra", isolation="diode", score_load_resistance=3e4)
+
+    single_margin = float(single["score_margin"])
+    double_margin = float(double["score_margin"])
+    assert single_margin > 0.03
+    assert double_margin > 1.8 * single_margin
+    assert abs(float(inactive_extra["score_margin"]) - single_margin) < 5e-3
+
+
+@pytest.mark.parametrize(
+    ("case", "expected"),
+    [
+        ("single_positive", 1.0),
+        ("mixed_cancel", 0.0),
+    ],
+)
+def test_conductance_readout_sum_primitive_ngspice_mid_load_drives_score_latch(
+    tmp_path: Path,
+    case: str,
+    expected: float,
+) -> None:
+    ngspice = shutil.which("ngspice")
+    if ngspice is None:
+        pytest.skip("ngspice is not installed")
+    measures = run_netlist(
+        ngspice,
+        tmp_path / f"conductance_readout_sum_latched_{case}.cir",
+        readout.generate_sum_netlist(
+            sum_case=case,
+            positive_weight=0.50,
+            negative_weight=0.34,
+            isolation="diode",
+            score_load_resistance=3e4,
+            include_decision=True,
+        ),
+        timeout=20.0,
+    )
+
+    decision_diff = float(measures["decision_diff"])
+    if expected > 0.0:
+        assert float(measures["score_margin"]) > 0.03
+        assert decision_diff > 0.05
+    else:
+        assert abs(float(measures["score_margin"])) < 2e-3
+        # The regenerative decision latch is not a neutral dead-zone detector.
+        assert abs(decision_diff) > 0.05

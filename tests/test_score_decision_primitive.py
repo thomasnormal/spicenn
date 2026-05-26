@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import shutil
 import sys
 from pathlib import Path
 
@@ -33,6 +32,8 @@ def test_score_decision_primitive_validation() -> None:
         decision.generate_netlist(score_case="positive", score_center=1.19, score_delta=0.04)
     with pytest.raises(ValueError, match="timeout"):
         decision.main_for_test(["--timeout", "0"])
+    with pytest.raises(ValueError, match="scoren-pulldown-scale"):
+        decision.main_for_test(["--scoren-pulldown-scale", "0"])
 
 
 @pytest.mark.parametrize(
@@ -42,13 +43,14 @@ def test_score_decision_primitive_validation() -> None:
         ("negative", -1.0),
     ],
 )
-def test_score_decision_primitive_ngspice_polarity(tmp_path: Path, case: str, expected: float) -> None:
-    ngspice = shutil.which("ngspice")
-    if ngspice is None:
-        pytest.skip("ngspice is not installed")
-
+def test_score_decision_primitive_ngspice_polarity(
+    tmp_path: Path,
+    ngspice_path: str,
+    case: str,
+    expected: float,
+) -> None:
     measures = run_netlist(
-        ngspice,
+        ngspice_path,
         tmp_path / f"score_decision_{case}.cir",
         decision.generate_netlist(score_case=case, score_center=0.10, score_delta=0.04),
         timeout=20.0,
@@ -61,13 +63,12 @@ def test_score_decision_primitive_ngspice_polarity(tmp_path: Path, case: str, ex
         assert margin < -0.05
 
 
-def test_score_decision_primitive_ngspice_neutral_is_metastable_not_dead_zone(tmp_path: Path) -> None:
-    ngspice = shutil.which("ngspice")
-    if ngspice is None:
-        pytest.skip("ngspice is not installed")
-
+def test_score_decision_primitive_ngspice_neutral_is_metastable_not_dead_zone(
+    tmp_path: Path,
+    ngspice_path: str,
+) -> None:
     measures = run_netlist(
-        ngspice,
+        ngspice_path,
         tmp_path / "score_decision_neutral.cir",
         decision.generate_netlist(score_case="neutral", score_center=0.10, score_delta=0.04),
         timeout=20.0,
@@ -77,3 +78,45 @@ def test_score_decision_primitive_ngspice_neutral_is_metastable_not_dead_zone(tm
     # according to numerical/device imbalance. Training should not rely on
     # neutral score rails producing a small decision margin.
     assert abs(float(measures["decision_diff"])) > 0.05
+
+
+def test_score_decision_primitive_ngspice_balance_recenters_shifted_scores(
+    tmp_path: Path,
+    ngspice_path: str,
+) -> None:
+    default_positive = run_netlist(
+        ngspice_path,
+        tmp_path / "score_decision_shifted_positive_default.cir",
+        decision.generate_netlist(
+            score_case="shifted_positive",
+            score_center=0.20,
+            score_delta=0.07,
+        ),
+        timeout=20.0,
+    )
+    balanced_positive = run_netlist(
+        ngspice_path,
+        tmp_path / "score_decision_shifted_positive_balanced.cir",
+        decision.generate_netlist(
+            score_case="shifted_positive",
+            score_center=0.20,
+            score_delta=0.07,
+            scoren_pulldown_scale=0.25,
+        ),
+        timeout=20.0,
+    )
+    balanced_negative = run_netlist(
+        ngspice_path,
+        tmp_path / "score_decision_shifted_negative_balanced.cir",
+        decision.generate_netlist(
+            score_case="shifted_negative",
+            score_center=0.20,
+            score_delta=0.07,
+            scoren_pulldown_scale=0.25,
+        ),
+        timeout=20.0,
+    )
+
+    assert float(default_positive["decision_diff"]) < -0.05
+    assert float(balanced_positive["decision_diff"]) > 0.05
+    assert float(balanced_negative["decision_diff"]) < -0.05

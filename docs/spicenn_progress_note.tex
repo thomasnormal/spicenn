@@ -373,6 +373,53 @@ that specific sign error, but the integrated MNIST01 block runner still has not
 shown robust learning at larger scale; recent strict \(4\times4\) binary
 smokes remain sequence-sensitive and can fail to move the readout weights.
 
+A second primitive now tests the final score decision separately from the
+score/error generator.  The \code{score-diff-precharged-latched} stage
+precharges two decision rails and uses cross-coupled PMOS pullups plus
+score-controlled NMOS pulldowns:
+\[
+  \code{decision}\leftarrow s^-,
+  \qquad
+  \code{decisionn}\leftarrow s^+ .
+\]
+With symmetric pulldowns this latch correctly resolves clean positive and
+negative \(s^+-s^-\) margins, but it is not a neutral dead-zone circuit: exact
+\(s^+=s^-\) resolves to a rail according to numerical/device imbalance.  The
+recent bounded-writer MNIST01 smokes exposed a related centering failure: the
+analog score/output rails could be separable only under a shifted threshold,
+while the fixed hardware decision rail put every sample on the same side.
+
+The block runner therefore exposes one physical centering knob,
+\[
+  \code{output\_decision\_scoren\_pulldown\_scale},
+\]
+which scales only the NMOS pulldown driven by \(s^-\) in the precharged score
+latch.  This is deliberately a transistor-ratio experiment, not a Python
+threshold applied after the run.  In the low-level ngspice fixture, the default
+symmetric latch misclassifies a shifted-positive score pair near the current
+integrated operating point, while a \(0.25\times\) \(s^-\)-pulldown scale
+restores the positive decision and still rejects the more negative shifted
+case.  This is useful evidence that comparator offset can be moved by circuit
+sizing, but it is not yet a robust MNIST result; the integrated continuous
+transient must still show that the same centering survives real sample
+sequence, stored readout updates, and final-evaluation dynamics.
+
+The first integrated check with this knob is positive but deliberately small.
+On a strict continuous \(4\times4\), block-2, stride-2, 2-channel MNIST01
+smoke with restored eligibility, bounded-reference readout writes
+(\(\code{readout\_weight\_update\_span}=0.34\)), and
+\(\code{output\_decision\_scoren\_pulldown\_scale}=0.25\), the hardware
+\(\code{decision\_diff}\) accuracy improved from \(0.5\) to \(1.0\) over four
+training samples and four final-evaluation samples.  The final score-net
+margin was \(66.9\) mV, the fixed-threshold decision margins were about
+\(1.14\) V on each class side, and only three of eight readout features moved
+by more than \(10\) mV.  The full on-device contract was still met: one
+continuous transient, \(\mathrm{batch\_size}=1\), no Python weight updates,
+no checkpoint transfer into final evaluation, and no behavioral learning
+devices.  The result should be treated as a score-latch-centering rung, not as
+the final architecture: it is binary MNIST01, not multiclass MNIST, and it is
+not yet the \(10\times10\), block-4, stride-2, 2-channel target topology.
+
 
 \section{State And Update Equations}
 

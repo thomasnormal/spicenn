@@ -775,6 +775,7 @@ def block_netlist(
     output_decision_ref_write_width: float = 1.0,
     output_decision_pullup_width: float = 48.0,
     output_decision_pulldown_width: float = 96.0,
+    output_decision_scoren_pulldown_scale: float = 1.0,
     readout_apply_scale: float = 0.35,
     hidden_forward_width: float = 3.0,
     hidden_forward_topology: str = "per-pixel-phase",
@@ -889,6 +890,8 @@ def block_netlist(
         raise ValueError("output_decision_pullup_width must be positive")
     if output_decision_pulldown_width <= 0.0:
         raise ValueError("output_decision_pulldown_width must be positive")
+    if output_decision_scoren_pulldown_scale <= 0.0:
+        raise ValueError("output_decision_scoren_pulldown_scale must be positive")
     if hidden_forward_width <= 0.0:
         raise ValueError("hidden_forward_width must be positive")
     if hidden_forward_topology not in HIDDEN_FORWARD_TOPOLOGIES:
@@ -2046,7 +2049,7 @@ def block_netlist(
                 "* Precharged score differential latch: reset precharges both decision rails high, dec discharges directly from score/scoren.",
                 f"Mdec_scorepc_p decision decisionn vdd vdd PMOS W={output_decision_pullup_width:.6g}u L=180n",
                 f"Mdecn_scorepc_p decisionn decision vdd vdd PMOS W={output_decision_pullup_width:.6g}u L=180n",
-                f"Mdec_scorepc_n decision scoren dec_src 0 NSENSE W={output_decision_pulldown_width:.6g}u L=180n",
+                f"Mdec_scorepc_n decision scoren dec_src 0 NSENSE W={output_decision_pulldown_width * output_decision_scoren_pulldown_scale:.6g}u L=180n",
                 f"Mdecn_scorepc_n decisionn score dec_src 0 NSENSE W={output_decision_pulldown_width:.6g}u L=180n",
                 f"Mdec_scorepc_tail dec_src dec 0 0 NMOS W={output_decision_pulldown_width:.6g}u L=180n",
             ]
@@ -2670,6 +2673,7 @@ def run_device_sequence(
     output_decision_ref_write_width: float,
     output_decision_pullup_width: float,
     output_decision_pulldown_width: float,
+    output_decision_scoren_pulldown_scale: float,
     readout_apply_scale: float,
     hidden_forward_width: float,
     hidden_forward_topology: str,
@@ -2756,6 +2760,7 @@ def run_device_sequence(
         output_decision_ref_write_width=output_decision_ref_write_width,
         output_decision_pullup_width=output_decision_pullup_width,
         output_decision_pulldown_width=output_decision_pulldown_width,
+        output_decision_scoren_pulldown_scale=output_decision_scoren_pulldown_scale,
         readout_apply_scale=readout_apply_scale,
         hidden_forward_width=hidden_forward_width,
         hidden_forward_topology=hidden_forward_topology,
@@ -2857,6 +2862,7 @@ def main() -> None:
     ap.add_argument("--output-decision-ref-write-width", type=float, default=1.0)
     ap.add_argument("--output-decision-pullup-width", type=float, default=48.0)
     ap.add_argument("--output-decision-pulldown-width", type=float, default=96.0)
+    ap.add_argument("--output-decision-scoren-pulldown-scale", type=float, default=1.0)
     ap.add_argument("--output-decision-threshold", type=float, default=0.6)
     ap.add_argument(
         "--accuracy-signal",
@@ -3196,6 +3202,7 @@ def main() -> None:
         "output_decision_ref_write_width": args.output_decision_ref_write_width,
         "output_decision_pullup_width": args.output_decision_pullup_width,
         "output_decision_pulldown_width": args.output_decision_pulldown_width,
+        "output_decision_scoren_pulldown_scale": args.output_decision_scoren_pulldown_scale,
         "readout_apply_scale": args.readout_apply_scale,
         "hidden_forward_width": args.hidden_forward_width,
         "hidden_forward_topology": args.hidden_forward_topology,
@@ -3442,6 +3449,7 @@ def main() -> None:
         "output_decision_ref_write_width": args.output_decision_ref_write_width,
         "output_decision_pullup_width": args.output_decision_pullup_width,
         "output_decision_pulldown_width": args.output_decision_pulldown_width,
+        "output_decision_scoren_pulldown_scale": args.output_decision_scoren_pulldown_scale,
         "readout_apply_scale": args.readout_apply_scale,
         "hidden_forward_width": args.hidden_forward_width,
         "hidden_forward_topology": args.hidden_forward_topology,

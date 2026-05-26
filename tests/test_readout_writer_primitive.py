@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import shutil
 import sys
 from pathlib import Path
 
@@ -92,15 +91,12 @@ def test_readout_writer_primitive_validation() -> None:
 )
 def test_readout_writer_primitive_ngspice_sign_and_common_mode(
     tmp_path: Path,
+    ngspice_path: str,
     mode: str,
     expected_sign: float,
 ) -> None:
-    ngspice = shutil.which("ngspice")
-    if ngspice is None:
-        pytest.skip("ngspice is not installed")
-
     measures = run_netlist(
-        ngspice,
+        ngspice_path,
         tmp_path / f"readout_writer_{mode}.cir",
         writer.generate_netlist(update_mode=mode, topology="bounded-ref", update_scale=0.10),
         timeout=20.0,
@@ -119,19 +115,16 @@ def test_readout_writer_primitive_ngspice_sign_and_common_mode(
 
 def test_readout_writer_primitive_ngspice_weak_error_starves_default_writer(
     tmp_path: Path,
+    ngspice_path: str,
 ) -> None:
-    ngspice = shutil.which("ngspice")
-    if ngspice is None:
-        pytest.skip("ngspice is not installed")
-
     strong = run_netlist(
-        ngspice,
+        ngspice_path,
         tmp_path / "readout_writer_strong_error.cir",
         writer.generate_netlist(update_mode="positive", topology="bounded-ref", update_scale=0.10, error_amplitude=1.2),
         timeout=20.0,
     )
     weak = run_netlist(
-        ngspice,
+        ngspice_path,
         tmp_path / "readout_writer_weak_error.cir",
         writer.generate_netlist(update_mode="positive", topology="bounded-ref", update_scale=0.10, error_amplitude=0.08),
         timeout=20.0,
@@ -145,13 +138,10 @@ def test_readout_writer_primitive_ngspice_weak_error_starves_default_writer(
 
 def test_readout_writer_primitive_ngspice_stronger_restore_uses_weak_error(
     tmp_path: Path,
+    ngspice_path: str,
 ) -> None:
-    ngspice = shutil.which("ngspice")
-    if ngspice is None:
-        pytest.skip("ngspice is not installed")
-
     measures = run_netlist(
-        ngspice,
+        ngspice_path,
         tmp_path / "readout_writer_weak_error_stronger_restore.cir",
         writer.generate_netlist(
             update_mode="positive",
@@ -170,13 +160,10 @@ def test_readout_writer_primitive_ngspice_stronger_restore_uses_weak_error(
 
 def test_readout_writer_primitive_ngspice_restored_gate_uses_weak_eligibility(
     tmp_path: Path,
+    ngspice_path: str,
 ) -> None:
-    ngspice = shutil.which("ngspice")
-    if ngspice is None:
-        pytest.skip("ngspice is not installed")
-
     direct = run_netlist(
-        ngspice,
+        ngspice_path,
         tmp_path / "readout_writer_weak_direct_gate.cir",
         writer.generate_netlist(
             update_mode="positive",
@@ -189,7 +176,7 @@ def test_readout_writer_primitive_ngspice_restored_gate_uses_weak_eligibility(
         timeout=20.0,
     )
     restored = run_netlist(
-        ngspice,
+        ngspice_path,
         tmp_path / "readout_writer_weak_restored_gate.cir",
         writer.generate_netlist(
             update_mode="positive",

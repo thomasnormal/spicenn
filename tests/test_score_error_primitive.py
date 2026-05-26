@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import shutil
 import sys
 from pathlib import Path
 
@@ -16,16 +15,14 @@ from run_device_sequential_training import run_netlist  # noqa: E402
 
 def _run_ngspice_case(
     tmp_path: Path,
+    ngspice_path: str,
     case: str,
     *,
     restore_error: bool = True,
     error_topology: str = "competition",
 ) -> dict[str, float]:
-    ngspice = shutil.which("ngspice")
-    if ngspice is None:
-        pytest.skip("ngspice is not installed")
     return run_netlist(
-        ngspice,
+        ngspice_path,
         tmp_path / f"score_error_{case}_{restore_error}_{error_topology}.cir",
         error.generate_netlist(error_case=case, restore_error=restore_error, error_topology=error_topology),
         timeout=20.0,
@@ -75,10 +72,11 @@ def test_score_error_primitive_validation() -> None:
 )
 def test_score_error_primitive_ngspice_raw_error_polarity(
     tmp_path: Path,
+    ngspice_path: str,
     case: str,
     expected: float,
 ) -> None:
-    measures = _run_ngspice_case(tmp_path, case, restore_error=False)
+    measures = _run_ngspice_case(tmp_path, ngspice_path, case, restore_error=False)
 
     margin = float(measures["raw_error_diff"])
     if expected > 0.0:
@@ -99,10 +97,11 @@ def test_score_error_primitive_ngspice_raw_error_polarity(
 )
 def test_score_error_primitive_ngspice_restored_error_polarity(
     tmp_path: Path,
+    ngspice_path: str,
     case: str,
     expected: float,
 ) -> None:
-    measures = _run_ngspice_case(tmp_path, case, restore_error=True)
+    measures = _run_ngspice_case(tmp_path, ngspice_path, case, restore_error=True)
 
     raw_margin = float(measures["raw_error_diff"])
     restored_margin = float(measures["restored_error_diff"])
@@ -121,8 +120,9 @@ def test_score_error_primitive_ngspice_restored_error_polarity(
 
 def test_score_error_primitive_ngspice_negative_label_negative_score_exposes_bias(
     tmp_path: Path,
+    ngspice_path: str,
 ) -> None:
-    measures = _run_ngspice_case(tmp_path, "target_negative_score_negative", restore_error=False)
+    measures = _run_ngspice_case(tmp_path, ngspice_path, "target_negative_score_negative", restore_error=False)
 
     # This is intentionally documented as an observed circuit behavior rather
     # than a desired learning contract: the current raw error circuit treats
@@ -132,8 +132,9 @@ def test_score_error_primitive_ngspice_negative_label_negative_score_exposes_bia
 
 def test_score_error_primitive_ngspice_neutral_raw_case_stays_small_without_restore(
     tmp_path: Path,
+    ngspice_path: str,
 ) -> None:
-    measures = _run_ngspice_case(tmp_path, "neutral", restore_error=False)
+    measures = _run_ngspice_case(tmp_path, ngspice_path, "neutral", restore_error=False)
 
     assert abs(float(measures["raw_error_diff"])) < 0.025
 
@@ -166,10 +167,11 @@ def test_score_error_primitive_emits_binary_descent_error_motif() -> None:
 )
 def test_score_error_primitive_ngspice_binary_descent_raw_error_polarity(
     tmp_path: Path,
+    ngspice_path: str,
     case: str,
     expected: float,
 ) -> None:
-    measures = _run_ngspice_case(tmp_path, case, restore_error=False, error_topology="binary-descent")
+    measures = _run_ngspice_case(tmp_path, ngspice_path, case, restore_error=False, error_topology="binary-descent")
 
     margin = float(measures["raw_error_diff"])
     if expected > 0.0:
@@ -182,10 +184,12 @@ def test_score_error_primitive_ngspice_binary_descent_raw_error_polarity(
 
 def test_score_error_primitive_ngspice_binary_descent_removes_negative_scoren_positive_bias(
     tmp_path: Path,
+    ngspice_path: str,
 ) -> None:
-    old = _run_ngspice_case(tmp_path, "target_negative_score_negative", restore_error=False)
+    old = _run_ngspice_case(tmp_path, ngspice_path, "target_negative_score_negative", restore_error=False)
     new = _run_ngspice_case(
         tmp_path,
+        ngspice_path,
         "target_negative_score_negative",
         restore_error=False,
         error_topology="binary-descent",
@@ -198,7 +202,8 @@ def test_score_error_primitive_ngspice_binary_descent_removes_negative_scoren_po
 
 def test_score_error_primitive_ngspice_binary_descent_neutral_stays_small(
     tmp_path: Path,
+    ngspice_path: str,
 ) -> None:
-    measures = _run_ngspice_case(tmp_path, "neutral", restore_error=False, error_topology="binary-descent")
+    measures = _run_ngspice_case(tmp_path, ngspice_path, "neutral", restore_error=False, error_topology="binary-descent")
 
     assert abs(float(measures["raw_error_diff"])) < 0.025

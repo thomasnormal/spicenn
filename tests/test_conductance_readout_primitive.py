@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import shutil
 import sys
 from pathlib import Path
 
@@ -52,15 +51,12 @@ def test_conductance_readout_primitive_validation() -> None:
 )
 def test_conductance_readout_primitive_ngspice_score_polarity(
     tmp_path: Path,
+    ngspice_path: str,
     case: str,
     expected: float,
 ) -> None:
-    ngspice = shutil.which("ngspice")
-    if ngspice is None:
-        pytest.skip("ngspice is not installed")
-
     measures = run_netlist(
-        ngspice,
+        ngspice_path,
         tmp_path / f"conductance_readout_{case}.cir",
         readout.generate_netlist(readout_case=case, positive_weight=0.50, negative_weight=0.34),
         timeout=20.0,
@@ -75,13 +71,12 @@ def test_conductance_readout_primitive_ngspice_score_polarity(
         assert abs(margin) < 1e-3
 
 
-def test_conductance_readout_primitive_ngspice_inactive_row_stays_quiet(tmp_path: Path) -> None:
-    ngspice = shutil.which("ngspice")
-    if ngspice is None:
-        pytest.skip("ngspice is not installed")
-
+def test_conductance_readout_primitive_ngspice_inactive_row_stays_quiet(
+    tmp_path: Path,
+    ngspice_path: str,
+) -> None:
     measures = run_netlist(
-        ngspice,
+        ngspice_path,
         tmp_path / "conductance_readout_inactive.cir",
         readout.generate_netlist(readout_case="inactive", positive_weight=0.50, negative_weight=0.34),
         timeout=20.0,
@@ -91,12 +86,16 @@ def test_conductance_readout_primitive_ngspice_inactive_row_stays_quiet(tmp_path
     assert float(measures["score_common"]) < 5e-3
 
 
-def _run_sum_case(tmp_path: Path, case: str, *, isolation: str = "direct", score_load_resistance: float = 1e9) -> dict[str, float]:
-    ngspice = shutil.which("ngspice")
-    if ngspice is None:
-        pytest.skip("ngspice is not installed")
+def _run_sum_case(
+    tmp_path: Path,
+    ngspice_path: str,
+    case: str,
+    *,
+    isolation: str = "direct",
+    score_load_resistance: float = 1e9,
+) -> dict[str, float]:
     return run_netlist(
-        ngspice,
+        ngspice_path,
         tmp_path / f"conductance_readout_sum_{case}_{isolation}_{score_load_resistance:.0f}.cir",
         readout.generate_sum_netlist(
             sum_case=case,
@@ -109,9 +108,12 @@ def _run_sum_case(tmp_path: Path, case: str, *, isolation: str = "direct", score
     )
 
 
-def test_conductance_readout_sum_primitive_ngspice_direct_floating_is_not_additive(tmp_path: Path) -> None:
-    single = _run_sum_case(tmp_path, "single_positive")
-    double = _run_sum_case(tmp_path, "two_positive")
+def test_conductance_readout_sum_primitive_ngspice_direct_floating_is_not_additive(
+    tmp_path: Path,
+    ngspice_path: str,
+) -> None:
+    single = _run_sum_case(tmp_path, ngspice_path, "single_positive")
+    double = _run_sum_case(tmp_path, ngspice_path, "two_positive")
 
     single_margin = float(single["score_margin"])
     double_margin = float(double["score_margin"])
@@ -119,31 +121,43 @@ def test_conductance_readout_sum_primitive_ngspice_direct_floating_is_not_additi
     assert abs(double_margin - single_margin) < 5e-3
 
 
-def test_conductance_readout_sum_primitive_ngspice_cancels_mixed_signs(tmp_path: Path) -> None:
-    mixed = _run_sum_case(tmp_path, "mixed_cancel")
+def test_conductance_readout_sum_primitive_ngspice_cancels_mixed_signs(
+    tmp_path: Path,
+    ngspice_path: str,
+) -> None:
+    mixed = _run_sum_case(tmp_path, ngspice_path, "mixed_cancel")
 
     assert abs(float(mixed["score_margin"])) < 2e-3
     assert float(mixed["score_common"]) > 0.05
 
 
-def test_conductance_readout_sum_primitive_ngspice_direct_inactive_extra_branch_shunts(tmp_path: Path) -> None:
-    single = _run_sum_case(tmp_path, "single_positive")
-    inactive_extra = _run_sum_case(tmp_path, "inactive_extra")
+def test_conductance_readout_sum_primitive_ngspice_direct_inactive_extra_branch_shunts(
+    tmp_path: Path,
+    ngspice_path: str,
+) -> None:
+    single = _run_sum_case(tmp_path, ngspice_path, "single_positive")
+    inactive_extra = _run_sum_case(tmp_path, ngspice_path, "inactive_extra")
 
     assert float(inactive_extra["score_margin"]) < 0.75 * float(single["score_margin"])
 
 
-def test_conductance_readout_sum_primitive_ngspice_diode_isolation_blocks_inactive_shunt(tmp_path: Path) -> None:
-    single = _run_sum_case(tmp_path, "single_positive", isolation="diode")
-    inactive_extra = _run_sum_case(tmp_path, "inactive_extra", isolation="diode")
+def test_conductance_readout_sum_primitive_ngspice_diode_isolation_blocks_inactive_shunt(
+    tmp_path: Path,
+    ngspice_path: str,
+) -> None:
+    single = _run_sum_case(tmp_path, ngspice_path, "single_positive", isolation="diode")
+    inactive_extra = _run_sum_case(tmp_path, ngspice_path, "inactive_extra", isolation="diode")
 
     assert float(single["score_margin"]) > 0.05
     assert abs(float(single["score_margin"]) - float(inactive_extra["score_margin"])) < 5e-3
 
 
-def test_conductance_readout_sum_primitive_ngspice_low_impedance_load_increases_increment(tmp_path: Path) -> None:
-    single = _run_sum_case(tmp_path, "single_positive", isolation="diode", score_load_resistance=1e4)
-    double = _run_sum_case(tmp_path, "two_positive", isolation="diode", score_load_resistance=1e4)
+def test_conductance_readout_sum_primitive_ngspice_low_impedance_load_increases_increment(
+    tmp_path: Path,
+    ngspice_path: str,
+) -> None:
+    single = _run_sum_case(tmp_path, ngspice_path, "single_positive", isolation="diode", score_load_resistance=1e4)
+    double = _run_sum_case(tmp_path, ngspice_path, "two_positive", isolation="diode", score_load_resistance=1e4)
 
     single_margin = float(single["score_margin"])
     double_margin = float(double["score_margin"])
@@ -151,10 +165,13 @@ def test_conductance_readout_sum_primitive_ngspice_low_impedance_load_increases_
     assert double_margin > 2.0 * single_margin
 
 
-def test_conductance_readout_sum_primitive_ngspice_mid_load_is_additive_and_latchable(tmp_path: Path) -> None:
-    single = _run_sum_case(tmp_path, "single_positive", isolation="diode", score_load_resistance=3e4)
-    double = _run_sum_case(tmp_path, "two_positive", isolation="diode", score_load_resistance=3e4)
-    inactive_extra = _run_sum_case(tmp_path, "inactive_extra", isolation="diode", score_load_resistance=3e4)
+def test_conductance_readout_sum_primitive_ngspice_mid_load_is_additive_and_latchable(
+    tmp_path: Path,
+    ngspice_path: str,
+) -> None:
+    single = _run_sum_case(tmp_path, ngspice_path, "single_positive", isolation="diode", score_load_resistance=3e4)
+    double = _run_sum_case(tmp_path, ngspice_path, "two_positive", isolation="diode", score_load_resistance=3e4)
+    inactive_extra = _run_sum_case(tmp_path, ngspice_path, "inactive_extra", isolation="diode", score_load_resistance=3e4)
 
     single_margin = float(single["score_margin"])
     double_margin = float(double["score_margin"])
@@ -172,14 +189,12 @@ def test_conductance_readout_sum_primitive_ngspice_mid_load_is_additive_and_latc
 )
 def test_conductance_readout_sum_primitive_ngspice_mid_load_drives_score_latch(
     tmp_path: Path,
+    ngspice_path: str,
     case: str,
     expected: float,
 ) -> None:
-    ngspice = shutil.which("ngspice")
-    if ngspice is None:
-        pytest.skip("ngspice is not installed")
     measures = run_netlist(
-        ngspice,
+        ngspice_path,
         tmp_path / f"conductance_readout_sum_latched_{case}.cir",
         readout.generate_sum_netlist(
             sum_case=case,
@@ -204,10 +219,11 @@ def test_conductance_readout_sum_primitive_ngspice_mid_load_drives_score_latch(
 
 def test_conductance_readout_sum_primitive_ngspice_conductance_bias_shifts_score_without_erasing_delta(
     tmp_path: Path,
+    ngspice_path: str,
 ) -> None:
-    unbiased_mixed = _run_sum_case(tmp_path, "mixed_cancel", isolation="diode", score_load_resistance=3e4)
-    biased_mixed = _run_sum_case_with_bias(tmp_path, "mixed_cancel")
-    biased_single = _run_sum_case_with_bias(tmp_path, "single_positive")
+    unbiased_mixed = _run_sum_case(tmp_path, ngspice_path, "mixed_cancel", isolation="diode", score_load_resistance=3e4)
+    biased_mixed = _run_sum_case_with_bias(tmp_path, ngspice_path, "mixed_cancel")
+    biased_single = _run_sum_case_with_bias(tmp_path, ngspice_path, "single_positive")
 
     bias_shift = float(biased_mixed["score_margin"]) - float(unbiased_mixed["score_margin"])
     biased_increment = float(biased_single["score_margin"]) - float(biased_mixed["score_margin"])
@@ -215,12 +231,9 @@ def test_conductance_readout_sum_primitive_ngspice_conductance_bias_shifts_score
     assert biased_increment > 0.025
 
 
-def _run_sum_case_with_bias(tmp_path: Path, case: str) -> dict[str, float]:
-    ngspice = shutil.which("ngspice")
-    if ngspice is None:
-        pytest.skip("ngspice is not installed")
+def _run_sum_case_with_bias(tmp_path: Path, ngspice_path: str, case: str) -> dict[str, float]:
     return run_netlist(
-        ngspice,
+        ngspice_path,
         tmp_path / f"conductance_readout_sum_{case}_biased.cir",
         readout.generate_sum_netlist(
             sum_case=case,

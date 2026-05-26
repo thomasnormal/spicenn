@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import re
-import shutil
 import subprocess
 
 import pytest
@@ -835,11 +834,10 @@ def test_sparse_hidden_update_layer_can_use_hybrid_trace_spike_writer() -> None:
     assert "Mwh0_0p_pch_a wh0_0p_pch_x fhp0_0 wh0_0p 0 NREL W=0.001u" in text
 
 
-def test_differential_relu_hidden_cell_transient_routes_signed_synapse_rails(tmp_path) -> None:
-    ngspice = shutil.which("ngspice")
-    if ngspice is None:
-        pytest.skip("ngspice is not installed")
-
+def test_differential_relu_hidden_cell_transient_routes_signed_synapse_rails(
+    tmp_path,
+    ngspice_path: str,
+) -> None:
     def render_case(prefix: str, weight_pos_v: float, weight_neg_v: float) -> str:
         deck = NetlistBuilder()
         weight = DifferentialCapState.from_base(
@@ -907,7 +905,7 @@ Vfwd fwd 0 PULSE(0 {{VDD}} 0.1n 10p 10p 2n 4n)
     path = tmp_path / "differential_relu_hidden.cir"
     path.write_text(netlist)
 
-    proc = subprocess.run([ngspice, "-b", str(path)], text=True, capture_output=True, timeout=20)
+    proc = subprocess.run([ngspice_path, "-b", str(path)], text=True, capture_output=True, timeout=20)
 
     assert proc.returncode == 0, (proc.stdout + proc.stderr)[-2000:]
     measures = parse_measures(proc.stdout + "\n" + proc.stderr)
@@ -919,11 +917,10 @@ Vfwd fwd 0 PULSE(0 {{VDD}} 0.1n 10p 10p 2n 4n)
     assert measures["act_neg"] < 0.05
 
 
-def test_differential_relu_hidden_cell_transient_stays_quiet_at_zero_preactivation(tmp_path) -> None:
-    ngspice = shutil.which("ngspice")
-    if ngspice is None:
-        pytest.skip("ngspice is not installed")
-
+def test_differential_relu_hidden_cell_transient_stays_quiet_at_zero_preactivation(
+    tmp_path,
+    ngspice_path: str,
+) -> None:
     deck = NetlistBuilder()
     preactivation = DifferentialCapState.from_base(
         "u_zero",
@@ -968,7 +965,7 @@ Vfwd fwd 0 PULSE(0 {{VDD}} 0.1n 10p 10p 2n 4n)
     path = tmp_path / "differential_relu_zero.cir"
     path.write_text(netlist)
 
-    proc = subprocess.run([ngspice, "-b", str(path)], text=True, capture_output=True, timeout=20)
+    proc = subprocess.run([ngspice_path, "-b", str(path)], text=True, capture_output=True, timeout=20)
 
     assert proc.returncode == 0, (proc.stdout + proc.stderr)[-2000:]
     measures = parse_measures(proc.stdout + "\n" + proc.stderr)
@@ -977,11 +974,10 @@ Vfwd fwd 0 PULSE(0 {{VDD}} 0.1n 10p 10p 2n 4n)
     assert measures["act_zero"] < 0.05
 
 
-def test_differential_relu_hidden_cell_transient_bleeds_modest_negative_rail(tmp_path) -> None:
-    ngspice = shutil.which("ngspice")
-    if ngspice is None:
-        pytest.skip("ngspice is not installed")
-
+def test_differential_relu_hidden_cell_transient_bleeds_modest_negative_rail(
+    tmp_path,
+    ngspice_path: str,
+) -> None:
     deck = NetlistBuilder()
     for name, pos_v, neg_v in (
         ("positive", 0.22, 0.05),
@@ -1030,7 +1026,7 @@ Vfwd fwd 0 PULSE(0 {{VDD}} 0.1n 10p 10p 2n 4n)
     path = tmp_path / "differential_relu_modest_negative.cir"
     path.write_text(netlist)
 
-    proc = subprocess.run([ngspice, "-b", str(path)], text=True, capture_output=True, timeout=20)
+    proc = subprocess.run([ngspice_path, "-b", str(path)], text=True, capture_output=True, timeout=20)
 
     assert proc.returncode == 0, (proc.stdout + proc.stderr)[-2000:]
     measures = parse_measures(proc.stdout + "\n" + proc.stderr)
@@ -1038,11 +1034,10 @@ Vfwd fwd 0 PULSE(0 {{VDD}} 0.1n 10p 10p 2n 4n)
     assert measures["act_negative"] < 0.05
 
 
-def test_differential_error_transport_transient_routes_signed_products(tmp_path) -> None:
-    ngspice = shutil.which("ngspice")
-    if ngspice is None:
-        pytest.skip("ngspice is not installed")
-
+def test_differential_error_transport_transient_routes_signed_products(
+    tmp_path,
+    ngspice_path: str,
+) -> None:
     def render_case(prefix: str, err_pos_v: float, err_neg_v: float, weight_pos_v: float, weight_neg_v: float) -> str:
         deck = NetlistBuilder()
         weight = DifferentialCapState.from_base(
@@ -1096,7 +1091,7 @@ Vbwd bwd 0 PULSE(0 {{VDD}} 0.1n 10p 10p 2n 4n)
     path = tmp_path / "differential_error_transport.cir"
     path.write_text(netlist)
 
-    proc = subprocess.run([ngspice, "-b", str(path)], text=True, capture_output=True, timeout=20)
+    proc = subprocess.run([ngspice_path, "-b", str(path)], text=True, capture_output=True, timeout=20)
 
     assert proc.returncode == 0, (proc.stdout + proc.stderr)[-2000:]
     measures = parse_measures(proc.stdout + "\n" + proc.stderr)
@@ -1135,11 +1130,10 @@ def test_pretrace_cell_renders_current_synapse_spike_contract() -> None:
     assert "Mspike_fprg00_n fprg00 fprbar00 0 0 NMOS W=3.5u L=180n" in text
 
 
-def test_pretrace_spike_detector_transient_fires_on_small_relu_activation(tmp_path) -> None:
-    ngspice = shutil.which("ngspice")
-    if ngspice is None:
-        pytest.skip("ngspice is not installed")
-
+def test_pretrace_spike_detector_transient_fires_on_small_relu_activation(
+    tmp_path,
+    ngspice_path: str,
+) -> None:
     cell = PreTraceCell(
         name="fpr",
         source_node="act",
@@ -1172,7 +1166,7 @@ Vrstf rstf 0 DC 0
     path = tmp_path / "pretrace_low_activation.cir"
     path.write_text(netlist)
 
-    proc = subprocess.run([ngspice, "-b", str(path)], text=True, capture_output=True, timeout=20)
+    proc = subprocess.run([ngspice_path, "-b", str(path)], text=True, capture_output=True, timeout=20)
 
     assert proc.returncode == 0, (proc.stdout + proc.stderr)[-2000:]
     measures = parse_measures(proc.stdout + "\n" + proc.stderr)

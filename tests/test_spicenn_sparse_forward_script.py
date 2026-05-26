@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import shutil
 import sys
 from pathlib import Path
 
@@ -547,11 +546,10 @@ def test_spicenn_sparse_forward_train_netlist_can_update_hidden2_weights() -> No
     assert ".meas tran gdh2_0_p FIND V(gdh2_0p) AT=4.35n" in text
 
 
-def test_spicenn_sparse_forward_hidden2_senseamp_cmos_transient_moves_signed_weights(tmp_path: Path) -> None:
-    ngspice = shutil.which("ngspice")
-    if ngspice is None:
-        pytest.skip("ngspice is not installed")
-
+def test_spicenn_sparse_forward_hidden2_senseamp_cmos_transient_moves_signed_weights(
+    tmp_path: Path,
+    ngspice_path: str,
+) -> None:
     topology = sparse_forward.build_topology(
         hidden_count=4,
         output_count=1,
@@ -589,7 +587,12 @@ def test_spicenn_sparse_forward_hidden2_senseamp_cmos_transient_moves_signed_wei
         hidden2_update_write_mode="senseamp_cmos_complementary_charge_discharge",
     )
     measures = sparse_forward.add_train_derived_measures(
-        sparse_forward.run_netlist(ngspice, tmp_path / "spicenn_hidden2_senseamp_cmos_train.cir", text, timeout=20),
+        sparse_forward.run_netlist(
+            ngspice_path,
+            tmp_path / "spicenn_hidden2_senseamp_cmos_train.cir",
+            text,
+            timeout=20,
+        ),
         step_topology,
     )
 
@@ -680,11 +683,10 @@ def test_spicenn_sparse_forward_extracts_after_weights_for_next_step() -> None:
     assert summary["row0_signed_sum"] == pytest.approx(0.2)
 
 
-def test_spicenn_sparse_forward_train_step_transient_moves_readout_row_positive(tmp_path: Path) -> None:
-    ngspice = shutil.which("ngspice")
-    if ngspice is None:
-        pytest.skip("ngspice is not installed")
-
+def test_spicenn_sparse_forward_train_step_transient_moves_readout_row_positive(
+    tmp_path: Path,
+    ngspice_path: str,
+) -> None:
     text, topology = sparse_forward.train_netlist(
         x0=1.0,
         x1=1.0,
@@ -703,7 +705,7 @@ def test_spicenn_sparse_forward_train_step_transient_moves_readout_row_positive(
         spike_ref_v=0.1,
     )
     measures = sparse_forward.add_train_derived_measures(
-        sparse_forward.run_netlist(ngspice, tmp_path / "spicenn_sparse_train_step.cir", text, timeout=20),
+        sparse_forward.run_netlist(ngspice_path, tmp_path / "spicenn_sparse_train_step.cir", text, timeout=20),
         topology,
     )
 
@@ -1066,11 +1068,10 @@ def test_spicenn_sparse_forward_feature_probe_summarizes_hidden_separation(monke
     assert result["hidden_weight_mode"] == "signed_hidden1"
 
 
-def test_spicenn_sparse_forward_cmos_train_step_transient_has_low_common_mode(tmp_path: Path) -> None:
-    ngspice = shutil.which("ngspice")
-    if ngspice is None:
-        pytest.skip("ngspice is not installed")
-
+def test_spicenn_sparse_forward_cmos_train_step_transient_has_low_common_mode(
+    tmp_path: Path,
+    ngspice_path: str,
+) -> None:
     text, topology = sparse_forward.train_netlist(
         x0=1.0,
         x1=1.0,
@@ -1089,7 +1090,7 @@ def test_spicenn_sparse_forward_cmos_train_step_transient_has_low_common_mode(tm
         spike_ref_v=0.1,
     )
     measures = sparse_forward.add_train_derived_measures(
-        sparse_forward.run_netlist(ngspice, tmp_path / "spicenn_sparse_cmos_train_step.cir", text, timeout=20),
+        sparse_forward.run_netlist(ngspice_path, tmp_path / "spicenn_sparse_cmos_train_step.cir", text, timeout=20),
         topology,
     )
 
@@ -1099,13 +1100,12 @@ def test_spicenn_sparse_forward_cmos_train_step_transient_has_low_common_mode(tm
     assert abs(measures["row0_common_delta"]) < abs(measures["row0_signed_delta"])
 
 
-def test_spicenn_sparse_forward_repeated_readout_training_carries_cap_states(tmp_path: Path) -> None:
-    ngspice = shutil.which("ngspice")
-    if ngspice is None:
-        pytest.skip("ngspice is not installed")
-
+def test_spicenn_sparse_forward_repeated_readout_training_carries_cap_states(
+    tmp_path: Path,
+    ngspice_path: str,
+) -> None:
     result = sparse_forward.run_repeated_readout_training(
-        spice_bin=ngspice,
+        spice_bin=ngspice_path,
         generated_dir=tmp_path,
         tag="repeat",
         samples=[

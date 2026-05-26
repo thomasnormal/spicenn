@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import shutil
 import sys
 from pathlib import Path
 
@@ -46,13 +45,12 @@ def test_spicenn_readout_update_smoke_derived_sign_metrics() -> None:
     assert measures["neg_common_delta"] == pytest.approx(0.0)
 
 
-def test_spicenn_readout_update_smoke_transient_signs_match_error_direction(tmp_path: Path) -> None:
-    ngspice = shutil.which("ngspice")
-    if ngspice is None:
-        pytest.skip("ngspice is not installed")
-
+def test_spicenn_readout_update_smoke_transient_signs_match_error_direction(
+    tmp_path: Path,
+    ngspice_path: str,
+) -> None:
     measures = update_smoke.run_netlist(
-        ngspice,
+        ngspice_path,
         tmp_path / "spicenn_readout_update_smoke.cir",
         update_smoke.netlist(update_width_u=0.004),
         timeout=20,

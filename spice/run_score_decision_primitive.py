@@ -11,7 +11,7 @@ from run_device_sequential_training import mos_models, run_netlist
 from run_spice_sweep import ROOT, detect_spice
 
 
-SCORE_CASES = ("positive", "negative", "neutral")
+SCORE_CASES = ("positive", "negative", "neutral", "shifted_positive", "shifted_negative")
 
 
 def score_values(case: str, *, center: float, delta: float) -> tuple[float, float]:
@@ -21,6 +21,10 @@ def score_values(case: str, *, center: float, delta: float) -> tuple[float, floa
         return center - delta / 2.0, center + delta / 2.0
     if case == "neutral":
         return center, center
+    if case == "shifted_positive":
+        return center - delta / 2.0, center + delta / 2.0
+    if case == "shifted_negative":
+        return center - delta, center + delta
     raise ValueError(f"score case must be one of {SCORE_CASES}")
 
 
@@ -31,10 +35,15 @@ def generate_netlist(
     score_delta: float = 0.04,
     pullup_width: float = 8.0,
     pulldown_width: float = 12.0,
+    scoren_pulldown_scale: float = 1.0,
 ) -> str:
     if score_case not in SCORE_CASES:
         raise ValueError(f"score_case must be one of {SCORE_CASES}")
-    for name, value in {"pullup_width": pullup_width, "pulldown_width": pulldown_width}.items():
+    for name, value in {
+        "pullup_width": pullup_width,
+        "pulldown_width": pulldown_width,
+        "scoren_pulldown_scale": scoren_pulldown_scale,
+    }.items():
         if value <= 0.0:
             raise ValueError(f"{name} must be positive")
     score, scoren = score_values(score_case, center=score_center, delta=score_delta)
@@ -60,7 +69,7 @@ def generate_netlist(
         "Mprecharge_decisionn decisionn rstfn vdd vdd PMOS W=4u L=180n",
         f"Mdec_scorepc_p decision decisionn vdd vdd PMOS W={pullup_width:.6g}u L=180n",
         f"Mdecn_scorepc_p decisionn decision vdd vdd PMOS W={pullup_width:.6g}u L=180n",
-        f"Mdec_scorepc_n decision scoren dec_src 0 NSENSE W={pulldown_width:.6g}u L=180n",
+        f"Mdec_scorepc_n decision scoren dec_src 0 NSENSE W={pulldown_width * scoren_pulldown_scale:.6g}u L=180n",
         f"Mdecn_scorepc_n decisionn score dec_src 0 NSENSE W={pulldown_width:.6g}u L=180n",
         f"Mdec_scorepc_tail dec_src dec 0 0 NMOS W={pulldown_width:.6g}u L=180n",
         ".meas tran decision_after FIND V(decision) AT=4.5n",
@@ -91,7 +100,7 @@ def classify_row(row: dict[str, Any], *, min_abs_margin: float) -> dict[str, str
     if case == "neutral":
         margin = abs(float(row.get("decision_diff", 0.0)))
         return {"decision_classification": "resolved" if margin >= min_abs_margin else "dead_zone"}
-    expected = 1.0 if case == "positive" else -1.0 if case == "negative" else 0.0
+    expected = 1.0 if case in {"positive", "shifted_positive"} else -1.0
     return {
         "decision_classification": classify_sign(
             float(row.get("decision_diff", 0.0)),
@@ -121,6 +130,7 @@ def run_cases(args: argparse.Namespace) -> dict[str, Any]:
                 score_delta=args.score_delta,
                 pullup_width=args.pullup_width,
                 pulldown_width=args.pulldown_width,
+                scoren_pulldown_scale=args.scoren_pulldown_scale,
             ),
             timeout=args.timeout,
         )
@@ -162,6 +172,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
     ap.add_argument("--score-delta", type=float, default=0.04)
     ap.add_argument("--pullup-width", type=float, default=8.0)
     ap.add_argument("--pulldown-width", type=float, default=12.0)
+    ap.add_argument("--scoren-pulldown-scale", type=float, default=1.0)
     ap.add_argument("--min-abs-margin", type=float, default=50e-3)
     return ap
 
@@ -169,7 +180,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
 def validate_args(args: argparse.Namespace) -> None:
     if args.timeout <= 0.0:
         raise ValueError("timeout must be positive")
-    for name in ["pullup_width", "pulldown_width"]:
+    for name in ["pullup_width", "pulldown_width", "scoren_pulldown_scale"]:
         if getattr(args, name) <= 0.0:
             raise ValueError(f"{name.replace('_', '-')} must be positive")
     if args.min_abs_margin < 0.0:

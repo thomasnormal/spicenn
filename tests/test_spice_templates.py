@@ -1,23 +1,16 @@
 from __future__ import annotations
 
-import shutil
 import subprocess
 from pathlib import Path
-
-import pytest
 
 
 ROOT = Path(__file__).resolve().parents[1]
 
 
-def test_shared_phase_local_feature_cell_template_runs_in_ngspice() -> None:
-    ngspice = shutil.which("ngspice")
-    if ngspice is None:
-        pytest.skip("ngspice is not installed")
-
+def test_shared_phase_local_feature_cell_template_runs_in_ngspice(ngspice_path: str) -> None:
     template = ROOT / "spice/templates/shared_phase_local_feature_cell_smoke.cir"
     proc = subprocess.run(
-        [ngspice, "-b", str(template)],
+        [ngspice_path, "-b", str(template)],
         cwd=ROOT,
         text=True,
         capture_output=True,
@@ -33,14 +26,10 @@ def test_shared_phase_local_feature_cell_template_runs_in_ngspice() -> None:
     assert "hdp_after_bwd" in output
 
 
-def test_shared_phase_local_feature_cell_full_template_runs_in_ngspice() -> None:
-    ngspice = shutil.which("ngspice")
-    if ngspice is None:
-        pytest.skip("ngspice is not installed")
-
+def test_shared_phase_local_feature_cell_full_template_runs_in_ngspice(ngspice_path: str) -> None:
     template = ROOT / "spice/templates/shared_phase_local_feature_cell_full_smoke.cir"
     proc = subprocess.run(
-        [ngspice, "-b", str(template)],
+        [ngspice_path, "-b", str(template)],
         cwd=ROOT,
         text=True,
         capture_output=True,

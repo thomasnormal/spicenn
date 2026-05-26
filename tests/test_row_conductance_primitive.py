@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import shutil
 import sys
 from pathlib import Path
 
@@ -11,16 +10,13 @@ ROOT = Path(__file__).resolve().parents[1]
 SPICE_DIR = ROOT / "spice"
 
 
-def _run_ngspice_case(tmp_path: Path, name: str, **kwargs: float | str) -> dict[str, float]:
-    ngspice = shutil.which("ngspice")
-    if ngspice is None:
-        pytest.skip("ngspice is not installed")
+def _run_ngspice_case(tmp_path: Path, ngspice_path: str, name: str, **kwargs: float | str) -> dict[str, float]:
     sys.path.insert(0, str(SPICE_DIR))
     import run_row_conductance_primitive as primitive
     from run_device_sequential_training import run_netlist
 
     return run_netlist(
-        ngspice,
+        ngspice_path,
         tmp_path / f"row_conductance_{name}.cir",
         primitive.generate_netlist(**kwargs),
         timeout=20.0,
@@ -103,6 +99,7 @@ def test_row_conductance_cli_validation() -> None:
 )
 def test_row_conductance_primitive_ngspice_forward_polarity(
     tmp_path: Path,
+    ngspice_path: str,
     name: str,
     wp: float,
     wn: float,
@@ -111,6 +108,7 @@ def test_row_conductance_primitive_ngspice_forward_polarity(
 ) -> None:
     measures = _run_ngspice_case(
         tmp_path,
+        ngspice_path,
         f"forward_{name}",
         wp=wp,
         wn=wn,
@@ -142,11 +140,13 @@ def test_row_conductance_primitive_ngspice_forward_polarity(
 )
 def test_row_conductance_primitive_ngspice_update_moves_stored_weight(
     tmp_path: Path,
+    ngspice_path: str,
     mode: str,
     expected_sign: float,
 ) -> None:
     measures = _run_ngspice_case(
         tmp_path,
+        ngspice_path,
         f"update_{mode}",
         wp=0.45,
         wn=0.40,
@@ -175,6 +175,7 @@ def test_row_conductance_primitive_ngspice_update_moves_stored_weight(
 )
 def test_row_conductance_primitive_ngspice_latch_free_hidden_credit(
     tmp_path: Path,
+    ngspice_path: str,
     name: str,
     credit_mode: str,
     readout_wp: float,
@@ -183,6 +184,7 @@ def test_row_conductance_primitive_ngspice_latch_free_hidden_credit(
 ) -> None:
     measures = _run_ngspice_case(
         tmp_path,
+        ngspice_path,
         f"credit_{name}",
         wp=0.45,
         wn=0.40,

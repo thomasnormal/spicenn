@@ -34,6 +34,7 @@ def test_device_mnist01_block_script_help_runs_from_repo_root() -> None:
     assert "--hidden-weight-write-width" in proc.stdout
     assert "--hidden-activation-width" in proc.stdout
     assert "--hidden-input-residual-width" in proc.stdout
+    assert "--hidden-stack-parasitic-capacitance" in proc.stdout
     assert "--hidden-activation-model" in proc.stdout
     assert "--hidden-polarity-init" in proc.stdout
     assert "--readout-forward-model" in proc.stdout
@@ -433,7 +434,8 @@ def test_block_netlist_can_emit_reference_latched_decision_stage() -> None:
     assert "Mdecn_p decisionn decision vdd vdd PMOS W=48u" in netlist
     assert "Mdec_n decision outref dec_src 0 NSENSE W=96u" in netlist
     assert "Mdecn_n decisionn out dec_src 0 NSENSE W=96u" in netlist
-    assert "Mdec_tail dec_src fwd 0 0 NMOS W=96u" in netlist
+    assert "Mdec_tail dec_src dec 0 0 NMOS W=96u" in netlist
+    assert "Vdec dec 0 PWL" in netlist
     assert ".meas tran decision_after_0 FIND V(decision) AT=15.50n" in netlist
     assert ".meas tran decisionn_after_0 FIND V(decisionn) AT=15.50n" in netlist
     assert ".meas tran decision_diff_0 PARAM='decision_after_0-decisionn_after_0'" in netlist
@@ -467,11 +469,73 @@ def test_block_netlist_can_emit_differential_latched_decision_stage() -> None:
     assert "Cdecision decision 0 20f IC=0" in netlist
     assert "Mdec_n decision outn dec_src 0 NSENSE W=96u" in netlist
     assert "Mdecn_n decisionn out dec_src 0 NSENSE W=96u" in netlist
+    assert "Mdec_tail dec_src dec 0 0 NMOS W=96u" in netlist
     assert "Mdec_n decision outref dec_src 0 NSENSE" not in netlist
     assert ".meas tran decision_after_0 FIND V(decision) AT=15.50n" in netlist
 
 
-def test_reference_latched_decision_stage_requires_latched_output_stage() -> None:
+def test_block_netlist_can_emit_ratioed_inverter_decision_stage() -> None:
+    sys.path.insert(0, str(SPICE_DIR))
+    import run_device_mnist01_block_training as block
+
+    image_size = 4
+    weights = block.initial_block_weights(image_size, 2, 2, 1, seed=1)
+    sample = {f"x{i}": 0.2 + 0.01 * i for i in range(image_size * image_size)}
+    sample["target"] = 1.1
+    netlist = block.block_netlist(
+        [sample],
+        weights,
+        image_size=image_size,
+        block_size=2,
+        stride=2,
+        channels=1,
+        training_enabled=True,
+        output_decision_stage="ratio-inverter",
+        output_decision_pullup_width=192.0,
+        output_decision_pulldown_width=1.0,
+    )
+
+    assert "\nB" not in netlist
+    assert "Voutref" not in netlist
+    assert "Mdec_inv1_p decisionn out vdd vdd PMOS W=192u" in netlist
+    assert "Mdec_inv1_n decisionn out 0 0 NMOS W=1u" in netlist
+    assert "Mdec_inv2_p decision decisionn vdd vdd PMOS W=192u" in netlist
+    assert "Mdec_inv2_n decision decisionn 0 0 NMOS W=1u" in netlist
+    assert ".meas tran decision_after_0 FIND V(decision) AT=15.50n" in netlist
+
+
+def test_block_netlist_can_emit_shifted_inverter_decision_stage() -> None:
+    sys.path.insert(0, str(SPICE_DIR))
+    import run_device_mnist01_block_training as block
+
+    image_size = 4
+    weights = block.initial_block_weights(image_size, 2, 2, 1, seed=1)
+    sample = {f"x{i}": 0.2 + 0.01 * i for i in range(image_size * image_size)}
+    sample["target"] = 1.1
+    netlist = block.block_netlist(
+        [sample],
+        weights,
+        image_size=image_size,
+        block_size=2,
+        stride=2,
+        channels=1,
+        training_enabled=True,
+        output_decision_stage="shift-inverter",
+        output_decision_pullup_width=32.0,
+        output_decision_pulldown_width=4.0,
+    )
+
+    assert "\nB" not in netlist
+    assert "Cdec_mid dec_mid 0 20f IC=0" in netlist
+    assert "Mdec_shift vdd out decisionn 0 NMOS W=4u" in netlist
+    assert "Mdec_inv1_p dec_mid decisionn vdd vdd PMOS W=32u" in netlist
+    assert "Mdec_inv1_n dec_mid decisionn 0 0 NMOS W=4u" in netlist
+    assert "Mdec_inv2_p decision dec_mid vdd vdd PMOS W=32u" in netlist
+    assert "Mdec_inv2_n decision dec_mid 0 0 NMOS W=4u" in netlist
+    assert ".meas tran decision_after_0 FIND V(decision) AT=15.50n" in netlist
+
+
+def test_latched_decision_stage_requires_latched_output_stage() -> None:
     sys.path.insert(0, str(SPICE_DIR))
     import pytest
     import run_device_mnist01_block_training as block
@@ -704,6 +768,32 @@ def test_block_netlist_can_emit_input_dependent_activation_residual() -> None:
     assert "Mhres0_0_f hres0_0_0 fwd act0 0 NMOS W=1.5u" in netlist
     assert "Mhres3_3_x vdd x15 hres3_3_0 0 NSENSE W=1.5u" in netlist
     assert "Mhres3_3_f hres3_3_0 fwd act3 0 NMOS W=1.5u" in netlist
+
+
+def test_block_netlist_can_emit_passive_hidden_stack_parasitic_caps() -> None:
+    sys.path.insert(0, str(SPICE_DIR))
+    import run_device_mnist01_block_training as block
+
+    image_size = 4
+    weights = block.initial_block_weights(image_size, 2, 2, 1, seed=1)
+    sample = {f"x{i}": 0.2 + 0.01 * i for i in range(image_size * image_size)}
+    sample["target"] = 1.1
+    netlist = block.block_netlist(
+        [sample],
+        weights,
+        image_size=image_size,
+        block_size=2,
+        stride=2,
+        channels=1,
+        training_enabled=True,
+        hidden_stack_parasitic_capacitance=1e-16,
+    )
+
+    assert "\nB" not in netlist
+    assert "Chread_hp3_3_0 hp3_3_0 0 1e-16" in netlist
+    assert "Chread_hp3_3_1 hp3_3_1 0 1e-16" in netlist
+    assert "Chread_hn3_3_0 hn3_3_0 0 1e-16" in netlist
+    assert "Chread_hn3_3_1 hn3_3_1 0 1e-16" in netlist
 
 
 def test_block_netlist_can_emit_score_activity_inhibition() -> None:

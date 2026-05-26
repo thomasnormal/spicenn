@@ -31,7 +31,7 @@ LEARNING_ACTIVATION_GATE_MODELS = ("nrel", "sense")
 HIDDEN_POLARITY_INITS = ("ink", "alternating-channel", "random-pixel")
 SCORE_MODES = ("single-ended", "differential")
 OUTPUT_DIFFERENTIAL_STAGES = ("simple", "score-gated", "latched")
-OUTPUT_DECISION_STAGES = ("none", "ref-latched", "diff-latched")
+OUTPUT_DECISION_STAGES = ("none", "ref-latched", "diff-latched", "ratio-inverter", "shift-inverter")
 
 
 def block_topology(image_size: int, block_size: int, stride: int, channels: int) -> tuple[list[list[int]], int]:
@@ -180,12 +180,14 @@ def block_repeated_phases(sample_count: int, *, training_enabled: bool, phase_ti
     bwd: list[tuple[float, float]] = []
     acc: list[tuple[float, float]] = []
     apply: list[tuple[float, float]] = []
+    dec: list[tuple[float, float]] = []
     for idx in range(sample_count):
         base = idx * cycle_ns
         scale = phase_time_scale
         rstf += [(base + 0.00 * scale, base + 0.50 * scale), (base + 12.05 * scale, base + 12.55 * scale)]
         rstg += [(base + 0.00 * scale, base + 0.50 * scale)]
         fwd += [(base + 0.75 * scale, base + 3.00 * scale), (base + 12.80 * scale, base + 15.60 * scale)]
+        dec.append((base + 15.00 * scale, base + 15.55 * scale))
         if training_enabled:
             err.append((base + 3.25 * scale, base + 5.00 * scale))
             bwd.append((base + 5.25 * scale, base + 7.00 * scale))
@@ -201,6 +203,7 @@ def block_repeated_phases(sample_count: int, *, training_enabled: bool, phase_ti
             f"Vacc acc 0 {pulse_wave(acc, stop)}",
             f"Vapply apply 0 {pulse_wave(apply, stop)}",
             f"Vapplyn applyn 0 {active_low_pulse_wave(apply, stop)}",
+            f"Vdec dec 0 {pulse_wave(dec, stop)}",
         ]
     )
 
@@ -254,6 +257,7 @@ def block_netlist(
     hidden_weight_write_width: float = 0.25,
     hidden_activation_width: float = 24.0,
     hidden_input_residual_width: float = 0.0,
+    hidden_stack_parasitic_capacitance: float = 0.0,
     hidden_activation_model: str = "nrel",
     readout_forward_width: float = 64.0,
     readout_forward_model: str = "nrel",
@@ -284,7 +288,7 @@ def block_netlist(
         raise ValueError("output_scoren_pulldown_width must be positive")
     if output_decision_stage not in OUTPUT_DECISION_STAGES:
         raise ValueError(f"output_decision_stage must be one of {OUTPUT_DECISION_STAGES}")
-    if output_decision_stage != "none" and output_differential_stage != "latched":
+    if output_decision_stage in {"ref-latched", "diff-latched"} and output_differential_stage != "latched":
         raise ValueError("output_decision_stage requires latched output_differential_stage")
     if output_decision_pullup_width <= 0.0:
         raise ValueError("output_decision_pullup_width must be positive")
@@ -304,6 +308,8 @@ def block_netlist(
         raise ValueError("hidden_activation_width must be positive")
     if hidden_input_residual_width < 0.0:
         raise ValueError("hidden_input_residual_width must be nonnegative")
+    if hidden_stack_parasitic_capacitance < 0.0:
+        raise ValueError("hidden_stack_parasitic_capacitance must be nonnegative")
     if readout_forward_width <= 0.0:
         raise ValueError("readout_forward_width must be positive")
     if readout_weight_leak_resistance < 0.0:
@@ -541,6 +547,11 @@ def block_netlist(
             "Rdecision decision 0 1G",
             "Rdecisionn decisionn 0 1G",
         ]
+    if output_decision_stage == "shift-inverter":
+        lines += [
+            "Cdec_mid dec_mid 0 20f IC=0",
+            "Rdec_mid dec_mid 0 1G",
+        ]
     for feature in range(feature_count):
         lines += [
             f"Cpre{feature} pre{feature} 0 10f IC=0",
@@ -625,6 +636,16 @@ def block_netlist(
                     f"Mhneg{feature}_{pix}_f pre{feature} fwd hn{feature}_{pix}_0 0 NMOS W={hidden_neg_width:.6g}u L=180n",
                     f"Mhneg{feature}_{pix}_x hn{feature}_{pix}_0 {input_node} hn{feature}_{pix}_1 0 NMOS W={hidden_neg_width:.6g}u L=180n",
                     f"Mhneg{feature}_{pix}_w hn{feature}_{pix}_1 whn{feature}_{pix} 0 0 NMOS W={hidden_neg_width:.6g}u L=180n",
+                    *(
+                        [
+                            f"Chread_hp{feature}_{pix}_0 hp{feature}_{pix}_0 0 {hidden_stack_parasitic_capacitance:.12g}",
+                            f"Chread_hp{feature}_{pix}_1 hp{feature}_{pix}_1 0 {hidden_stack_parasitic_capacitance:.12g}",
+                            f"Chread_hn{feature}_{pix}_0 hn{feature}_{pix}_0 0 {hidden_stack_parasitic_capacitance:.12g}",
+                            f"Chread_hn{feature}_{pix}_1 hn{feature}_{pix}_1 0 {hidden_stack_parasitic_capacitance:.12g}",
+                        ]
+                        if hidden_stack_parasitic_capacitance > 0.0
+                        else []
+                    ),
                     f"Mghp{feature}_{pix}_x vdd {input_node} ghp{feature}_{pix}_x 0 NMOS W={hidden_update_width:.6g}u L=180n",
                     f"Mghp{feature}_{pix}_d ghp{feature}_{pix}_x hdp{feature} ghp{feature}_{pix}_d 0 NSENSE W={hidden_update_width:.6g}u L=180n",
                     f"Mghp{feature}_{pix}_g ghp{feature}_{pix}_d acc ghp{feature}_{pix} 0 NMOS W={hidden_update_width:.6g}u L=180n",
@@ -828,7 +849,7 @@ def block_netlist(
                 f"Mdecn_p decisionn decision vdd vdd PMOS W={output_decision_pullup_width:.6g}u L=180n",
                 f"Mdec_n decision outref dec_src 0 NSENSE W={output_decision_pulldown_width:.6g}u L=180n",
                 f"Mdecn_n decisionn out dec_src 0 NSENSE W={output_decision_pulldown_width:.6g}u L=180n",
-                f"Mdec_tail dec_src fwd 0 0 NMOS W={output_decision_pulldown_width:.6g}u L=180n",
+                f"Mdec_tail dec_src dec 0 0 NMOS W={output_decision_pulldown_width:.6g}u L=180n",
             ]
         )
     elif output_decision_stage == "diff-latched":
@@ -839,7 +860,28 @@ def block_netlist(
                 f"Mdecn_p decisionn decision vdd vdd PMOS W={output_decision_pullup_width:.6g}u L=180n",
                 f"Mdec_n decision outn dec_src 0 NSENSE W={output_decision_pulldown_width:.6g}u L=180n",
                 f"Mdecn_n decisionn out dec_src 0 NSENSE W={output_decision_pulldown_width:.6g}u L=180n",
-                f"Mdec_tail dec_src fwd 0 0 NMOS W={output_decision_pulldown_width:.6g}u L=180n",
+                f"Mdec_tail dec_src dec 0 0 NMOS W={output_decision_pulldown_width:.6g}u L=180n",
+            ]
+        )
+    elif output_decision_stage == "ratio-inverter":
+        decision_stage = "\n".join(
+            [
+                "* Static CMOS threshold detector: decision rises when out crosses the ratioed inverter trip.",
+                f"Mdec_inv1_p decisionn out vdd vdd PMOS W={output_decision_pullup_width:.6g}u L=180n",
+                f"Mdec_inv1_n decisionn out 0 0 NMOS W={output_decision_pulldown_width:.6g}u L=180n",
+                f"Mdec_inv2_p decision decisionn vdd vdd PMOS W={output_decision_pullup_width:.6g}u L=180n",
+                f"Mdec_inv2_n decision decisionn 0 0 NMOS W={output_decision_pulldown_width:.6g}u L=180n",
+            ]
+        )
+    elif output_decision_stage == "shift-inverter":
+        decision_stage = "\n".join(
+            [
+                "* Source-follower level shift plus ratioed CMOS inverter threshold detector.",
+                f"Mdec_shift vdd out decisionn 0 NMOS W={output_decision_pulldown_width:.6g}u L=180n",
+                f"Mdec_inv1_p dec_mid decisionn vdd vdd PMOS W={output_decision_pullup_width:.6g}u L=180n",
+                f"Mdec_inv1_n dec_mid decisionn 0 0 NMOS W={output_decision_pulldown_width:.6g}u L=180n",
+                f"Mdec_inv2_p decision dec_mid vdd vdd PMOS W={output_decision_pullup_width:.6g}u L=180n",
+                f"Mdec_inv2_n decision dec_mid 0 0 NMOS W={output_decision_pulldown_width:.6g}u L=180n",
             ]
         )
     else:
@@ -1136,6 +1178,7 @@ def run_device_sequence(
     hidden_weight_write_width: float,
     hidden_activation_width: float,
     hidden_input_residual_width: float,
+    hidden_stack_parasitic_capacitance: float,
     hidden_activation_model: str,
     readout_forward_width: float,
     readout_forward_model: str,
@@ -1182,6 +1225,7 @@ def run_device_sequence(
         hidden_weight_write_width=hidden_weight_write_width,
         hidden_activation_width=hidden_activation_width,
         hidden_input_residual_width=hidden_input_residual_width,
+        hidden_stack_parasitic_capacitance=hidden_stack_parasitic_capacitance,
         hidden_activation_model=hidden_activation_model,
         readout_forward_width=readout_forward_width,
         readout_forward_model=readout_forward_model,
@@ -1244,6 +1288,7 @@ def main() -> None:
     ap.add_argument("--hidden-weight-write-width", type=float, default=0.25)
     ap.add_argument("--hidden-activation-width", type=float, default=24.0)
     ap.add_argument("--hidden-input-residual-width", type=float, default=0.0)
+    ap.add_argument("--hidden-stack-parasitic-capacitance", type=float, default=0.0)
     ap.add_argument("--hidden-activation-model", choices=HIDDEN_ACTIVATION_MODELS, default="nrel")
     ap.add_argument("--hidden-polarity-init", choices=HIDDEN_POLARITY_INITS, default="ink")
     ap.add_argument("--readout-forward-width", type=float, default=64.0)
@@ -1335,6 +1380,7 @@ def main() -> None:
         "hidden_weight_write_width": args.hidden_weight_write_width,
         "hidden_activation_width": args.hidden_activation_width,
         "hidden_input_residual_width": args.hidden_input_residual_width,
+        "hidden_stack_parasitic_capacitance": args.hidden_stack_parasitic_capacitance,
         "hidden_activation_model": args.hidden_activation_model,
         "readout_forward_width": args.readout_forward_width,
         "readout_forward_model": args.readout_forward_model,
@@ -1463,6 +1509,7 @@ def main() -> None:
         "hidden_weight_write_width": args.hidden_weight_write_width,
         "hidden_activation_width": args.hidden_activation_width,
         "hidden_input_residual_width": args.hidden_input_residual_width,
+        "hidden_stack_parasitic_capacitance": args.hidden_stack_parasitic_capacitance,
         "hidden_activation_model": args.hidden_activation_model,
         "hidden_polarity_init": args.hidden_polarity_init,
         "readout_forward_width": args.readout_forward_width,

@@ -12,6 +12,8 @@ from run_spice_sweep import ROOT, detect_spice
 
 
 READOUT_CASES = ("positive", "negative", "neutral", "inactive")
+SUM_CASES = ("single_positive", "two_positive", "mixed_cancel", "inactive_extra")
+SUM_ISOLATION_MODES = ("direct", "diode")
 
 
 def readout_values(case: str, *, positive_weight: float, negative_weight: float) -> tuple[float, float, float]:
@@ -69,6 +71,103 @@ def generate_netlist(
         f"Movpos_cond actrow vwp score 0 NMOS W={readout_width:.6g}u L=180n",
         f"Movneg_cond actrow vwn scoren 0 NMOS W={0.75 * readout_width:.6g}u L=180n",
         ".meas tran actrow_after FIND V(actrow) AT=4.5n",
+        ".meas tran score_after FIND V(score) AT=4.5n",
+        ".meas tran scoren_after FIND V(scoren) AT=4.5n",
+        ".meas tran score_margin PARAM='score_after-scoren_after'",
+        ".meas tran score_common PARAM='0.5*(score_after+scoren_after)'",
+        ".tran 5p 8n uic",
+        ".control",
+        "run",
+        "quit",
+        ".endc",
+        ".end",
+    ]
+    return "\n".join(lines) + "\n"
+
+
+def sum_features(case: str, *, positive_weight: float, negative_weight: float) -> list[tuple[float, float, float]]:
+    positive = (0.85, positive_weight, negative_weight)
+    negative = (0.85, negative_weight, positive_weight)
+    inactive = (0.0, positive_weight, negative_weight)
+    if case == "single_positive":
+        return [positive]
+    if case == "two_positive":
+        return [positive, positive]
+    if case == "mixed_cancel":
+        return [positive, negative]
+    if case == "inactive_extra":
+        return [positive, inactive]
+    raise ValueError(f"sum case must be one of {SUM_CASES}")
+
+
+def generate_sum_netlist(
+    *,
+    sum_case: str,
+    positive_weight: float = 0.50,
+    negative_weight: float = 0.34,
+    readout_width: float = 64.0,
+    score_capacitance: float = 10e-15,
+    isolation: str = "direct",
+    score_load_resistance: float = 1e9,
+) -> str:
+    if sum_case not in SUM_CASES:
+        raise ValueError(f"sum_case must be one of {SUM_CASES}")
+    if isolation not in SUM_ISOLATION_MODES:
+        raise ValueError(f"isolation must be one of {SUM_ISOLATION_MODES}")
+    for name, value in {
+        "readout_width": readout_width,
+        "score_capacitance": score_capacitance,
+        "score_load_resistance": score_load_resistance,
+    }.items():
+        if value <= 0.0:
+            raise ValueError(f"{name} must be positive")
+    features = sum_features(sum_case, positive_weight=positive_weight, negative_weight=negative_weight)
+    lines = [
+        "* Multi-feature conductance-row readout summation primitive smoke.",
+        "* Tests several actrow -> conductance branches sharing score/scoren capacitors.",
+        "* No behavioral sources.",
+        ".param VDD=1.2",
+        mos_models(),
+        ".options method=gear reltol=1e-3 abstol=1e-12 vntol=1e-6",
+        "Vdd vdd 0 {VDD}",
+        "Vrst rst 0 PULSE(0 1.2 0.0n 10p 10p 0.55n 20n)",
+        "Vfwd fwd 0 PULSE(0 1.2 1.0n 10p 10p 3.0n 20n)",
+        "Vfwdn fwdn 0 PULSE(1.2 0 1.0n 10p 10p 3.0n 20n)",
+        f"Cscore score 0 {score_capacitance:.12g} IC=0",
+        f"Cscoren scoren 0 {score_capacitance:.12g} IC=0",
+        f"Rscore score 0 {score_load_resistance:.12g}",
+        f"Rscoren scoren 0 {score_load_resistance:.12g}",
+    ]
+    for index, (act, vwp, vwn) in enumerate(features):
+        lines += [
+            f"Vact{index} act{index} 0 {act:.12g}",
+            f"Cvwp{index} vwp{index} 0 20f IC={vwp:.12g}",
+            f"Cvwn{index} vwn{index} 0 20f IC={vwn:.12g}",
+            f"Rvwp{index} vwp{index} 0 1e15",
+            f"Rvwn{index} vwn{index} 0 1e15",
+            f"Cactrow{index} actrow{index} 0 1f IC=0",
+            f"Ractrow{index} actrow{index} 0 1e12",
+            f"Mactrow{index}_n actrow{index} fwd act{index} 0 NMOS W={max(1.0, readout_width / 4.0):.6g}u L=180n",
+            f"Mactrow{index}_p actrow{index} fwdn act{index} vdd PMOS W={max(2.0, readout_width / 2.0):.6g}u L=180n",
+            f"Mactrow{index}_rst actrow{index} rst 0 0 NMOS W=4u L=180n",
+        ]
+        if isolation == "direct":
+            lines += [
+                f"Movpos{index}_cond actrow{index} vwp{index} score 0 NMOS W={readout_width:.6g}u L=180n",
+                f"Movneg{index}_cond actrow{index} vwn{index} scoren 0 NMOS W={0.75 * readout_width:.6g}u L=180n",
+            ]
+        else:
+            lines += [
+                f"Cmidp{index} midp{index} 0 0.1f IC=0",
+                f"Cmidn{index} midn{index} 0 0.1f IC=0",
+                f"Rmidp{index} midp{index} 0 1G",
+                f"Rmidn{index} midn{index} 0 1G",
+                f"Movpos{index}_cond actrow{index} vwp{index} midp{index} 0 NMOS W={readout_width:.6g}u L=180n",
+                f"Movpos{index}_diode midp{index} midp{index} score 0 NSENSE W={readout_width:.6g}u L=180n",
+                f"Movneg{index}_cond actrow{index} vwn{index} midn{index} 0 NMOS W={0.75 * readout_width:.6g}u L=180n",
+                f"Movneg{index}_diode midn{index} midn{index} scoren 0 NSENSE W={0.75 * readout_width:.6g}u L=180n",
+            ]
+    lines += [
         ".meas tran score_after FIND V(score) AT=4.5n",
         ".meas tran scoren_after FIND V(scoren) AT=4.5n",
         ".meas tran score_margin PARAM='score_after-scoren_after'",

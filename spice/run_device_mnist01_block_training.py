@@ -1224,7 +1224,6 @@ def block_netlist(
                 f".meas tran gnorm_after_apply_{idx} FIND V(gnorm) AT={base + 11.50 * scale:.2f}n",
             ]
         if measurement_detail == "outputs":
-            prints.append(f"print out_before_{idx} out_after_{idx} error_net_{idx}")
             continue
         for feature in range(feature_count):
             measures += [
@@ -1265,6 +1264,21 @@ def block_netlist(
                     f".meas tran whn{feature}_{pix}_after_apply_{idx} FIND V(whn{feature}_{pix}) AT={base + 11.50 * scale:.2f}n",
                 ]
         prints.append(f"print out_before_{idx} out_after_{idx} error_net_{idx}")
+
+    control_lines: list[str] = []
+    if measurement_detail == "outputs":
+        save_nodes = output_measurement_save_nodes(
+            output_differential_stage=output_differential_stage,
+            output_decision_stage=output_decision_stage,
+            output_decision_ref_source=output_decision_ref_source,
+            restore_error_enabled=restore_error_enabled,
+            output_bias_enabled=output_bias_enabled,
+            activation_competition_width=activation_competition_width,
+            readout_gradient_normalization=readout_gradient_normalization,
+        )
+        for start in range(0, len(save_nodes), 8):
+            chunk = save_nodes[start : start + 8]
+            control_lines.append("save " + " ".join(f"v({node})" for node in chunk))
 
     lines = [
         "* Block/stride MNIST01 device-level training smoke.",
@@ -2461,6 +2475,7 @@ def block_netlist(
         f".tran {tran_step_ps:.12g}p {stop:.2f}n uic",
         *measures,
         ".control",
+        *control_lines,
         "run",
         *prints,
         ".endc",
@@ -3081,6 +3096,45 @@ def full_objective_contract_issues(
         "accuracy signal is separable only with a shifted threshold" if accuracy_signal_separable_but_uncentered else "",
     ]
     return [issue for issue in issues if issue]
+
+
+def output_measurement_save_nodes(
+    *,
+    output_differential_stage: str,
+    output_decision_stage: str,
+    output_decision_ref_source: str,
+    restore_error_enabled: bool,
+    output_bias_enabled: bool,
+    activation_competition_width: float,
+    readout_gradient_normalization: str,
+) -> list[str]:
+    nodes = ["score", "scoren", "out", "dp", "dn"]
+    if restore_error_enabled:
+        nodes += ["edp", "edn"]
+    if output_differential_stage == "latched":
+        nodes.append("outn")
+    if output_decision_stage != "none":
+        nodes += ["decision", "decisionn"]
+    if output_decision_stage in {
+        "score-diff-window-latched",
+        "score-diff-gain-window-latched",
+    }:
+        nodes += ["decision_posn", "decision_negn"]
+    if output_decision_stage in {
+        "score-diff-gain-window-latched",
+        "score-diff-low-gain-latched",
+        "score-diff-low-gain-ref-latched",
+    }:
+        nodes += ["score_amp", "scoren_amp"]
+    if output_decision_ref_source in {"adaptive", "track"}:
+        nodes.append("outref")
+    if output_bias_enabled:
+        nodes += ["obp", "obn", "gop", "gon"]
+    if activation_competition_width > 0.0:
+        nodes.append("actinh")
+    if readout_gradient_normalization in {"shared-shunt", "shared-gate-shunt"}:
+        nodes.append("gnorm")
+    return list(dict.fromkeys(nodes))
 
 
 def run_device_sequence(

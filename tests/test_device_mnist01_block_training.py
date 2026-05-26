@@ -395,17 +395,48 @@ def test_block_netlist_output_measurement_detail_omits_state_capacitor_measures(
         channels=1,
         training_enabled=True,
         measurement_detail="outputs",
+        output_decision_stage="score-diff-low-gain-ref-latched",
+        output_decision_ref=0.25,
+        error_signal_mode="restored-hidden",
+        score_mode="differential",
     )
 
     assert "\nB" not in netlist
+    assert "save v(score) v(scoren) v(out) v(dp) v(dn) v(edp) v(edn) v(decision)" in netlist
+    assert "save v(decisionn) v(score_amp) v(scoren_amp)" in netlist
     assert ".meas tran score_before_0" in netlist
     assert ".meas tran out_after_0" in netlist
     assert ".meas tran error_net_0" in netlist
+    assert "\nprint " not in netlist
     assert ".meas tran whp0_0_after_apply_0" not in netlist
     assert ".meas tran act0_before_0" not in netlist
     assert ".subckt signed_store p n Cp=20f Icp=0.5 Icn=0.2 Rleak=1e15" in netlist
     assert "Xwh0_0 whp0_0 whn0_0 signed_store Cp=20f" in netlist
     assert "Mwhp0_0_up_g" in netlist
+
+
+def test_block_netlist_full_measurement_detail_keeps_default_save_behavior() -> None:
+    sys.path.insert(0, str(SPICE_DIR))
+    import run_device_mnist01_block_training as block
+
+    image_size = 4
+    weights = block.initial_block_weights(image_size, 2, 2, 1, seed=1)
+    sample = {f"x{i}": 0.2 + 0.01 * i for i in range(image_size * image_size)}
+    sample["target"] = 1.1
+    netlist = block.block_netlist(
+        [sample],
+        weights,
+        image_size=image_size,
+        block_size=2,
+        stride=2,
+        channels=1,
+        training_enabled=True,
+        measurement_detail="full",
+    )
+
+    assert "\nB" not in netlist
+    assert "\nsave " not in netlist
+    assert ".meas tran whp0_0_after_apply_0" in netlist
 
 
 def test_alternating_channel_hidden_polarity_initializes_absence_channels() -> None:

@@ -1178,6 +1178,12 @@ def binary_accuracy_for_signal(
     return float(np.mean(predicted == expected))
 
 
+def nontrivial_learning_flag(initial_accuracy: float | None, final_accuracy: float) -> bool:
+    if initial_accuracy is None:
+        return False
+    return final_accuracy > max(initial_accuracy, 0.5)
+
+
 def run_device_sequence(
     spice_bin: str,
     path: Path,
@@ -1546,8 +1552,7 @@ def main() -> None:
     final_active_fraction = float(
         np.mean(np.abs(final_eval_rows[accuracy_signal].to_numpy(dtype=float)) > accuracy_threshold)
     )
-    baseline_accuracy = initial_accuracy if initial_accuracy is not None else 0.5
-    nontrivial_learning_met = final_accuracy > max(baseline_accuracy, 0.5)
+    nontrivial_learning_met = nontrivial_learning_flag(initial_accuracy, final_accuracy)
     target_topology = args.image_size == 10 and args.block_size == 4 and args.stride == 2 and args.channels == 2
     output_bias_summary = output_bias_diagnostics(
         train_rows,

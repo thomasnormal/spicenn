@@ -301,6 +301,15 @@ def test_binary_accuracy_for_signal_can_use_circuit_decision_rail() -> None:
     ) == 0.25
 
 
+def test_nontrivial_learning_requires_initial_eval_baseline() -> None:
+    sys.path.insert(0, str(SPICE_DIR))
+    import run_device_mnist01_block_training as block
+
+    assert block.nontrivial_learning_flag(None, 1.0) is False
+    assert block.nontrivial_learning_flag(0.5, 0.75) is True
+    assert block.nontrivial_learning_flag(0.75, 0.75) is False
+
+
 def test_block_netlist_emits_per_pixel_trainable_caps_and_no_behavioral_sources() -> None:
     sys.path.insert(0, str(SPICE_DIR))
     import run_device_mnist01_block_training as block

@@ -298,6 +298,24 @@ def test_initial_block_weights_honor_output_bias_initial_conditions() -> None:
     assert weights["obn"] == 0.31
 
 
+def test_initial_block_weights_can_start_readout_near_neutral() -> None:
+    sys.path.insert(0, str(SPICE_DIR))
+    import run_device_mnist01_block_training as block
+
+    weights = block.initial_block_weights(
+        4,
+        2,
+        2,
+        2,
+        readout_weight_positive_init=0.36,
+        readout_weight_negative_init=0.34,
+        readout_weight_init_sigma=0.0,
+    )
+
+    assert np.allclose(weights["vwp"], 0.36)
+    assert np.allclose(weights["vwn"], 0.34)
+
+
 def test_final_block_weights_preserve_measured_output_bias() -> None:
     sys.path.insert(0, str(SPICE_DIR))
     import run_device_mnist01_block_training as block

@@ -236,11 +236,16 @@ def initial_block_weights(
     hidden_bias_positive_init: float = 0.50,
     hidden_bias_negative_init: float = 0.20,
     hidden_polarity_init: str = "ink",
+    readout_weight_positive_init: float = 0.52,
+    readout_weight_negative_init: float = 0.25,
+    readout_weight_init_sigma: float = 0.025,
     output_bias_positive_init: float = 0.52,
     output_bias_negative_init: float = 0.25,
 ) -> dict[str, Any]:
     if hidden_polarity_init not in HIDDEN_POLARITY_INITS:
         raise ValueError(f"hidden_polarity_init must be one of {HIDDEN_POLARITY_INITS}")
+    if readout_weight_init_sigma < 0.0:
+        raise ValueError("readout_weight_init_sigma must be nonnegative")
     blocks, feature_count = block_topology(image_size, block_size, stride, channels)
     block_len = len(blocks[0])
     rng = np.random.default_rng(seed)
@@ -248,8 +253,16 @@ def initial_block_weights(
     whn = np.clip(0.22 + rng.normal(0.0, 0.025, size=(feature_count, block_len)), 0.05, 0.42)
     bhp = np.clip(hidden_bias_positive_init + rng.normal(0.0, 0.025, size=feature_count), 0.05, 1.15)
     bhn = np.clip(hidden_bias_negative_init + rng.normal(0.0, 0.020, size=feature_count), 0.02, 1.10)
-    vwp = np.clip(0.52 + rng.normal(0.0, 0.025, size=feature_count), 0.35, 0.75)
-    vwn = np.clip(0.25 + rng.normal(0.0, 0.020, size=feature_count), 0.08, 0.45)
+    vwp = np.clip(
+        readout_weight_positive_init + rng.normal(0.0, readout_weight_init_sigma, size=feature_count),
+        0.02,
+        1.15,
+    )
+    vwn = np.clip(
+        readout_weight_negative_init + rng.normal(0.0, readout_weight_init_sigma, size=feature_count),
+        0.02,
+        1.15,
+    )
     obp = output_bias_positive_init
     obn = output_bias_negative_init
     if hidden_polarity_init == "alternating-channel":
@@ -2280,6 +2293,9 @@ def main() -> None:
     ap.add_argument("--readout-weight-leak-resistance", type=float, default=0.0)
     ap.add_argument("--readout-stack-shunt-resistance", type=float, default=0.0)
     ap.add_argument("--readout-stack-parasitic-capacitance", type=float, default=0.0)
+    ap.add_argument("--readout-weight-positive-init", type=float, default=0.52)
+    ap.add_argument("--readout-weight-negative-init", type=float, default=0.25)
+    ap.add_argument("--readout-weight-init-sigma", type=float, default=0.025)
     ap.add_argument("--readout-weight-positive-ref", type=float, default=0.52)
     ap.add_argument("--readout-weight-negative-ref", type=float, default=0.25)
     ap.add_argument("--activation-competition-width", type=float, default=0.0)
@@ -2367,6 +2383,8 @@ def main() -> None:
         raise ValueError("passive-mismatch-sigma must be nonnegative")
     if args.state_ic_mismatch_sigma < 0.0:
         raise ValueError("state-ic-mismatch-sigma must be nonnegative")
+    if args.readout_weight_init_sigma < 0.0:
+        raise ValueError("readout-weight-init-sigma must be nonnegative")
     if args.measurement_detail != "full" and not args.continuous_final_eval:
         raise ValueError("--measurement-detail outputs requires --continuous-final-eval")
     blocks, feature_count = block_topology(args.image_size, args.block_size, args.stride, args.channels)
@@ -2412,6 +2430,9 @@ def main() -> None:
         hidden_bias_positive_init=args.hidden_bias_positive_init,
         hidden_bias_negative_init=args.hidden_bias_negative_init,
         hidden_polarity_init=args.hidden_polarity_init,
+        readout_weight_positive_init=args.readout_weight_positive_init,
+        readout_weight_negative_init=args.readout_weight_negative_init,
+        readout_weight_init_sigma=args.readout_weight_init_sigma,
         output_bias_positive_init=args.output_bias_positive_init,
         output_bias_negative_init=args.output_bias_negative_init,
     )
@@ -2678,6 +2699,9 @@ def main() -> None:
         "readout_weight_leak_resistance": args.readout_weight_leak_resistance,
         "readout_stack_shunt_resistance": args.readout_stack_shunt_resistance,
         "readout_stack_parasitic_capacitance": args.readout_stack_parasitic_capacitance,
+        "readout_weight_positive_init": args.readout_weight_positive_init,
+        "readout_weight_negative_init": args.readout_weight_negative_init,
+        "readout_weight_init_sigma": args.readout_weight_init_sigma,
         "readout_weight_positive_ref": args.readout_weight_positive_ref,
         "readout_weight_negative_ref": args.readout_weight_negative_ref,
         "activation_competition_width": args.activation_competition_width,

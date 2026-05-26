@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import sys
 import time
 from collections.abc import Sequence
 from dataclasses import dataclass
@@ -3282,6 +3283,38 @@ def run_device_sequence(
     return rows_from_measures(samples, measures, sequence=sequence, required_rails=required_rails)
 
 
+def run_device_sequence_stage(
+    stage: str,
+    spice_bin: str,
+    path: Path,
+    samples: list[dict[str, Any]],
+    weights: dict[str, Any],
+    *,
+    progress_log: bool = False,
+    **kwargs: Any,
+) -> pd.DataFrame:
+    started = time.perf_counter()
+    if progress_log:
+        print(
+            f"[block-training] start {stage}: samples={len(samples)} deck={path}",
+            file=sys.stderr,
+            flush=True,
+        )
+    try:
+        rows = run_device_sequence(spice_bin, path, samples, weights, **kwargs)
+    except Exception as exc:
+        elapsed = time.perf_counter() - started
+        raise RuntimeError(f"{stage} SPICE stage failed after {elapsed:.1f}s: {path}") from exc
+    if progress_log:
+        elapsed = time.perf_counter() - started
+        print(
+            f"[block-training] done {stage}: rows={len(rows)} wall={elapsed:.1f}s",
+            file=sys.stderr,
+            flush=True,
+        )
+    return rows
+
+
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--train-samples", type=int, default=4)
@@ -3298,6 +3331,11 @@ def main() -> None:
     ap.add_argument("--download", action="store_true")
     ap.add_argument("--timeout", type=float, default=120.0)
     ap.add_argument("--tag", default="device_mnist01_block")
+    ap.add_argument(
+        "--progress-log",
+        action="store_true",
+        help="Print start/done messages for each SPICE deck to stderr during long diagnostics.",
+    )
     ap.add_argument("--output-driver-model", choices=["sense", "nrel"], default="sense")
     ap.add_argument("--output-differential-stage", choices=OUTPUT_DIFFERENTIAL_STAGES, default="simple")
     ap.add_argument("--output-score-pullup-width", type=float, default=24.0)
@@ -3770,11 +3808,13 @@ def main() -> None:
     if args.skip_initial_eval:
         initial_eval_rows = pd.DataFrame()
     else:
-        initial_eval_rows = run_device_sequence(
+        initial_eval_rows = run_device_sequence_stage(
+            "initial_eval",
             spice_bin,
             generated / f"{safe_tag}_initial_eval.cir",
             eval_samples,
             initial_weights,
+            progress_log=args.progress_log,
             training_enabled=False,
             sequence="initial_eval",
             **common,
@@ -3783,11 +3823,13 @@ def main() -> None:
         combined_samples = [*train_samples, *eval_samples]
         combined_schedule = [True] * len(train_samples) + [False] * len(eval_samples)
         combined_sequence = ["train"] * len(train_samples) + ["final_eval"] * len(eval_samples)
-        combined_rows = run_device_sequence(
+        combined_rows = run_device_sequence_stage(
+            "train_final_eval",
             spice_bin,
             generated / f"{safe_tag}_train_final_eval.cir",
             combined_samples,
             initial_weights,
+            progress_log=args.progress_log,
             training_enabled=combined_schedule,
             sequence=combined_sequence,
             **common,
@@ -3795,21 +3837,25 @@ def main() -> None:
         train_rows = combined_rows.loc[combined_rows["sequence"] == "train"].reset_index(drop=True)
         final_eval_rows = combined_rows.loc[combined_rows["sequence"] == "final_eval"].reset_index(drop=True)
     else:
-        train_rows = run_device_sequence(
+        train_rows = run_device_sequence_stage(
+            "train",
             spice_bin,
             generated / f"{safe_tag}_train.cir",
             train_samples,
             initial_weights,
+            progress_log=args.progress_log,
             training_enabled=True,
             sequence="train",
             **common,
         )
         final_weights_for_eval = final_weights_from_rows(train_rows, feature_count=feature_count, block_len=block_len)
-        final_eval_rows = run_device_sequence(
+        final_eval_rows = run_device_sequence_stage(
+            "final_eval",
             spice_bin,
             generated / f"{safe_tag}_final_eval.cir",
             eval_samples,
             final_weights_for_eval,
+            progress_log=args.progress_log,
             training_enabled=False,
             sequence="final_eval",
             **common,
@@ -4029,6 +4075,7 @@ def main() -> None:
         "score_mode": args.score_mode,
         "measurement_detail": args.measurement_detail,
         "tran_step_ps": args.tran_step_ps,
+        "progress_log": args.progress_log,
         "hidden_bias_positive_init": args.hidden_bias_positive_init,
         "hidden_bias_negative_init": args.hidden_bias_negative_init,
         "learning_device_implementation": "transistor_passive",

@@ -7,6 +7,7 @@ from pathlib import Path
 
 import numpy as np
 import pandas as pd
+import pytest
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -100,9 +101,76 @@ def test_device_mnist01_block_script_help_runs_from_repo_root() -> None:
     assert "--accuracy-threshold" in proc.stdout
     assert "--continuous-final-eval" in proc.stdout
     assert "--skip-initial-eval" in proc.stdout
+    assert "--progress-log" in proc.stdout
     assert "--hidden-forward-topology" in proc.stdout
     assert "--input-waveform-mode" in proc.stdout
     assert "--input-row-drive-width" in proc.stdout
+
+
+def test_run_device_sequence_stage_reports_progress(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], tmp_path: Path
+) -> None:
+    sys.path.insert(0, str(SPICE_DIR))
+    import run_device_mnist01_block_training as block
+
+    def fake_run_device_sequence(
+        spice_bin: str,
+        path: Path,
+        samples: list[dict[str, object]],
+        weights: dict[str, object],
+        **kwargs: object,
+    ) -> pd.DataFrame:
+        assert spice_bin == "ngspice"
+        assert path == tmp_path / "stage.cir"
+        assert samples == [{"target": 1.1}]
+        assert weights == {"dummy": 1}
+        assert kwargs["training_enabled"] is False
+        return pd.DataFrame({"sequence": ["initial_eval"]})
+
+    monkeypatch.setattr(block, "run_device_sequence", fake_run_device_sequence)
+
+    rows = block.run_device_sequence_stage(
+        "initial_eval",
+        "ngspice",
+        tmp_path / "stage.cir",
+        [{"target": 1.1}],
+        {"dummy": 1},
+        progress_log=True,
+        training_enabled=False,
+    )
+
+    assert rows["sequence"].tolist() == ["initial_eval"]
+    captured = capsys.readouterr()
+    assert "[block-training] start initial_eval: samples=1" in captured.err
+    assert "[block-training] done initial_eval: rows=1" in captured.err
+
+
+def test_run_device_sequence_stage_failure_names_stage(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    sys.path.insert(0, str(SPICE_DIR))
+    import run_device_mnist01_block_training as block
+
+    def fake_run_device_sequence(*_args: object, **_kwargs: object) -> pd.DataFrame:
+        raise RuntimeError("ngspice return code 1")
+
+    monkeypatch.setattr(block, "run_device_sequence", fake_run_device_sequence)
+
+    with pytest.raises(RuntimeError) as excinfo:
+        block.run_device_sequence_stage(
+            "train_final_eval",
+            "ngspice",
+            tmp_path / "train_final_eval.cir",
+            [{"target": 0.0}],
+            {"dummy": 1},
+            training_enabled=True,
+        )
+
+    message = str(excinfo.value)
+    assert "train_final_eval SPICE stage failed" in message
+    assert "train_final_eval.cir" in message
+    assert isinstance(excinfo.value.__cause__, RuntimeError)
+    assert "ngspice return code 1" in str(excinfo.value.__cause__)
 
 
 def test_block_topology_matches_target_10x10_b4_stride2_c2_shape() -> None:

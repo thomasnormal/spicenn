@@ -30,7 +30,7 @@ READOUT_FORWARD_MODELS = ("nrel", "sense")
 LEARNING_ACTIVATION_GATE_MODELS = ("nrel", "sense")
 HIDDEN_POLARITY_INITS = ("ink", "alternating-channel", "random-pixel")
 SCORE_MODES = ("single-ended", "differential")
-OUTPUT_DIFFERENTIAL_STAGES = ("simple", "score-gated")
+OUTPUT_DIFFERENTIAL_STAGES = ("simple", "score-gated", "latched")
 
 
 def block_topology(image_size: int, block_size: int, stride: int, channels: int) -> tuple[list[list[int]], int]:
@@ -309,6 +309,8 @@ def block_netlist(
         raise ValueError(f"score_mode must be one of {SCORE_MODES}")
     if output_differential_stage not in OUTPUT_DIFFERENTIAL_STAGES:
         raise ValueError(f"output_differential_stage must be one of {OUTPUT_DIFFERENTIAL_STAGES}")
+    if output_differential_stage != "simple" and score_mode != "differential":
+        raise ValueError("non-simple output_differential_stage requires differential score_mode")
     activation_model = hidden_activation_device_model(hidden_activation_model)
     readout_model = readout_forward_device_model(readout_forward_model)
     learning_activation_model = learning_activation_gate_device_model(learning_activation_gate_model)
@@ -350,6 +352,12 @@ def block_netlist(
             f".meas tran d_out_{idx} PARAM='out_after_{idx}-out_before_{idx}'",
             f".meas tran error_net_{idx} PARAM='dp_after_{idx}-dn_after_{idx}'",
         ]
+        if output_differential_stage == "latched":
+            measures += [
+                f".meas tran outn_before_{idx} FIND V(outn) AT={base + 2.95 * scale:.2f}n",
+                f".meas tran outn_after_{idx} FIND V(outn) AT={base + 15.50 * scale:.2f}n",
+                f".meas tran out_diff_{idx} PARAM='out_after_{idx}-outn_after_{idx}'",
+            ]
         if output_bias_enabled:
             measures += [
                 f".meas tran obp_before_{idx} FIND V(obp) AT={base + 0.60 * scale:.2f}n",
@@ -493,6 +501,11 @@ def block_netlist(
             "Cactinh actinh 0 10f IC=0",
             "Ractinh actinh 0 1G",
         ]
+    if output_differential_stage == "latched":
+        lines += [
+            "Coutn outn 0 20f IC=0",
+            "Routn outn 0 1G",
+        ]
     for feature in range(feature_count):
         lines += [
             f"Cpre{feature} pre{feature} 0 10f IC=0",
@@ -538,6 +551,8 @@ def block_netlist(
             "Mreset_gop gop rstg 0 0 NMOS W=4u L=180n",
             "Mreset_gon gon rstg 0 0 NMOS W=4u L=180n",
         ]
+    if output_differential_stage == "latched":
+        lines.append("Mreset_outn outn rstf 0 0 NMOS W=4u L=180n")
     if activation_competition_width > 0.0:
         lines.append("Mreset_actinh actinh rstf 0 0 NMOS W=4u L=180n")
     for feature in range(feature_count):
@@ -716,7 +731,18 @@ def block_netlist(
             ),
         ]
 
-    if score_mode == "differential" and output_differential_stage == "score-gated":
+    if score_mode == "differential" and output_differential_stage == "latched":
+        output_stage = "\n".join(
+            [
+                "* Dynamic differential output latch: score discharges outn, scoren discharges out.",
+                f"Moutlat_p_out vdd outn out vdd PMOS W={output_score_pullup_width:.6g}u L=180n",
+                f"Moutlat_p_outn vdd out outn vdd PMOS W={output_score_pullup_width:.6g}u L=180n",
+                f"Moutlat_n_out out scoren outlat_src 0 NSENSE W={output_scoren_pulldown_width:.6g}u L=180n",
+                f"Moutlat_n_outn outn score outlat_src 0 NSENSE W={output_scoren_pulldown_width:.6g}u L=180n",
+                f"Moutlat_tail outlat_src fwd 0 0 NMOS W={output_scoren_pulldown_width:.6g}u L=180n",
+            ]
+        )
+    elif score_mode == "differential" and output_differential_stage == "score-gated":
         output_stage = "\n".join(
             [
                 f"Moutp_gate vdd scoren outp_gate vdd PMOS W={output_score_pullup_width:.6g}u L=180n",
@@ -963,6 +989,8 @@ def score_net_diagnostics(initial_eval_rows: pd.DataFrame, final_eval_rows: pd.D
         **metrics("final_eval", final_eval_rows, "score_net"),
         **metrics("initial_eval", initial_eval_rows, "out_after"),
         **metrics("final_eval", final_eval_rows, "out_after"),
+        **metrics("initial_eval", initial_eval_rows, "out_diff"),
+        **metrics("final_eval", final_eval_rows, "out_diff"),
     }
 
 

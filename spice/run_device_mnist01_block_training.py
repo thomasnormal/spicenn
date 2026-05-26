@@ -2566,6 +2566,59 @@ def threshold_window_diagnostics(
     }
 
 
+def accuracy_signal_centering_diagnostics(
+    rows: pd.DataFrame,
+    *,
+    signal: str,
+    threshold: float,
+    final_accuracy: float,
+    best_threshold_accuracy: float | None,
+    output_positive_when: str = "high",
+) -> dict[str, float | bool | None]:
+    empty = {
+        "accuracy_signal_fixed_threshold_positive_margin": None,
+        "accuracy_signal_fixed_threshold_negative_margin": None,
+        "accuracy_signal_fixed_threshold_worst_margin": None,
+        "accuracy_signal_all_samples_same_side": None,
+        "accuracy_signal_separable_but_uncentered": False,
+    }
+    if rows.empty or signal not in rows.columns or "positive_label" not in rows.columns:
+        return empty
+
+    positives = rows.loc[rows["positive_label"] > 0.5, signal].dropna().to_numpy(dtype=float)
+    negatives = rows.loc[rows["positive_label"] <= 0.5, signal].dropna().to_numpy(dtype=float)
+    values = rows[signal].dropna().to_numpy(dtype=float)
+    if positives.size == 0 or negatives.size == 0 or values.size == 0:
+        return empty
+
+    if output_positive_when == "high":
+        positive_margin = float(np.min(positives - threshold))
+        negative_margin = float(np.min(threshold - negatives))
+        active = values > threshold
+    elif output_positive_when == "low":
+        positive_margin = float(np.min(threshold - positives))
+        negative_margin = float(np.min(negatives - threshold))
+        active = values <= threshold
+    else:
+        raise ValueError("output_positive_when must be 'high' or 'low'")
+    worst_margin = min(positive_margin, negative_margin)
+    active_fraction = float(np.mean(active))
+    all_same_side = active_fraction in {0.0, 1.0}
+    separable_but_uncentered = (
+        best_threshold_accuracy is not None
+        and best_threshold_accuracy >= 0.75
+        and best_threshold_accuracy > final_accuracy
+        and worst_margin <= 0.0
+    )
+    return {
+        "accuracy_signal_fixed_threshold_positive_margin": positive_margin,
+        "accuracy_signal_fixed_threshold_negative_margin": negative_margin,
+        "accuracy_signal_fixed_threshold_worst_margin": worst_margin,
+        "accuracy_signal_all_samples_same_side": all_same_side,
+        "accuracy_signal_separable_but_uncentered": separable_but_uncentered,
+    }
+
+
 def nontrivial_learning_flag(initial_accuracy: float | None, final_accuracy: float) -> bool:
     if initial_accuracy is None:
         return False
@@ -2578,6 +2631,7 @@ def full_objective_contract_issues(
     continuous_final_eval: bool,
     nontrivial_learning_met: bool,
     output_bias_state_drift_warning: bool,
+    accuracy_signal_separable_but_uncentered: bool = False,
 ) -> list[str]:
     issues = [
         "binary MNIST01 smoke, not multiclass MNIST",
@@ -2585,6 +2639,7 @@ def full_objective_contract_issues(
         "" if continuous_final_eval else "final eval is seeded from Python-extracted train weights",
         "does not yet demonstrate nontrivial learning" if not nontrivial_learning_met else "",
         "output-bias state drift is threshold-scale" if output_bias_state_drift_warning else "",
+        "accuracy signal is separable only with a shifted threshold" if accuracy_signal_separable_but_uncentered else "",
     ]
     return [issue for issue in issues if issue]
 
@@ -3335,6 +3390,14 @@ def main() -> None:
             output_positive_when=output_positive_when,
         ),
     }
+    accuracy_centering_summary = accuracy_signal_centering_diagnostics(
+        final_eval_rows,
+        signal=accuracy_signal,
+        threshold=accuracy_threshold,
+        final_accuracy=final_accuracy,
+        best_threshold_accuracy=threshold_window_summary.get(f"{accuracy_signal}_best_threshold_accuracy"),
+        output_positive_when=output_positive_when,
+    )
     summary = {
         "simulator": version,
         "architecture": "device_level_mnist01_block_stride_channel_training",
@@ -3488,6 +3551,7 @@ def main() -> None:
         "nontrivial_learning_met": nontrivial_learning_met,
         **score_net_summary,
         **threshold_window_summary,
+        **accuracy_centering_summary,
         **output_bias_summary,
         **readout_update_summary,
         **adaptive_reference_summary,
@@ -3514,6 +3578,9 @@ def main() -> None:
             continuous_final_eval=args.continuous_final_eval,
             nontrivial_learning_met=nontrivial_learning_met,
             output_bias_state_drift_warning=bool(output_bias_summary["output_bias_state_drift_warning"]),
+            accuracy_signal_separable_but_uncentered=bool(
+                accuracy_centering_summary["accuracy_signal_separable_but_uncentered"]
+            ),
         ),
         "interpretation": (
             "This runner replaces scalar tile inputs with block-local raw pixel rails and persistent per-pixel "

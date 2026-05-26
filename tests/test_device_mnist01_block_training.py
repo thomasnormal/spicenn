@@ -676,6 +676,7 @@ def test_full_objective_contract_issues_include_bias_drift_caveat() -> None:
         continuous_final_eval=True,
         nontrivial_learning_met=True,
         output_bias_state_drift_warning=True,
+        accuracy_signal_separable_but_uncentered=False,
     )
 
     assert "binary MNIST01 smoke, not multiclass MNIST" in issues
@@ -683,6 +684,49 @@ def test_full_objective_contract_issues_include_bias_drift_caveat() -> None:
     assert "output-bias state drift is threshold-scale" in issues
     assert "does not yet demonstrate nontrivial learning" not in issues
     assert "final eval is seeded from Python-extracted train weights" not in issues
+
+
+def test_accuracy_signal_centering_diagnostics_flag_shifted_threshold_only_result() -> None:
+    sys.path.insert(0, str(SPICE_DIR))
+    import run_device_mnist01_block_training as block
+
+    rows = pd.DataFrame(
+        [
+            {"positive_label": 1.0, "decision_diff": 0.52},
+            {"positive_label": 1.0, "decision_diff": 0.51},
+            {"positive_label": 0.0, "decision_diff": 0.49},
+            {"positive_label": 0.0, "decision_diff": 0.48},
+        ]
+    )
+
+    diagnostics = block.accuracy_signal_centering_diagnostics(
+        rows,
+        signal="decision_diff",
+        threshold=0.0,
+        final_accuracy=0.5,
+        best_threshold_accuracy=1.0,
+    )
+
+    assert diagnostics["accuracy_signal_all_samples_same_side"] is True
+    assert diagnostics["accuracy_signal_fixed_threshold_positive_margin"] > 0.5
+    assert diagnostics["accuracy_signal_fixed_threshold_negative_margin"] < 0.0
+    assert diagnostics["accuracy_signal_fixed_threshold_worst_margin"] < 0.0
+    assert diagnostics["accuracy_signal_separable_but_uncentered"] is True
+
+
+def test_full_objective_contract_issues_include_uncentered_accuracy_signal_caveat() -> None:
+    sys.path.insert(0, str(SPICE_DIR))
+    import run_device_mnist01_block_training as block
+
+    issues = block.full_objective_contract_issues(
+        target_topology=True,
+        continuous_final_eval=True,
+        nontrivial_learning_met=True,
+        output_bias_state_drift_warning=False,
+        accuracy_signal_separable_but_uncentered=True,
+    )
+
+    assert "accuracy signal is separable only with a shifted threshold" in issues
 
 
 def test_threshold_window_diagnostics_report_best_output_threshold() -> None:

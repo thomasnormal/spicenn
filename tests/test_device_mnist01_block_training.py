@@ -58,10 +58,15 @@ def test_device_mnist01_block_script_help_runs_from_repo_root() -> None:
     assert "--score-mode" in proc.stdout
     assert "--measurement-detail" in proc.stdout
     assert "--readout-forward-width" in proc.stdout
+    assert "--readout-eligibility-width" in proc.stdout
     assert "--phase-time-scale" in proc.stdout
     assert "--forward-phase-mode" in proc.stdout
     assert "--input-voltage-jitter-sigma" in proc.stdout
     assert "--phase-jitter-sigma-ns" in proc.stdout
+    assert "--supply-transient-noise-sigma" in proc.stdout
+    assert "--input-transient-noise-sigma" in proc.stdout
+    assert "--phase-transient-noise-sigma" in proc.stdout
+    assert "--transient-noise-timestep" in proc.stdout
     assert "--passive-mismatch-sigma" in proc.stdout
     assert "--state-ic-mismatch-sigma" in proc.stdout
     assert "--perturbation-seed" in proc.stdout
@@ -172,6 +177,39 @@ def test_block_training_phase_jitter_is_deterministic_and_changes_edges() -> Non
     assert "Vfwd fwd 0 PWL" in jittered_a
     with pytest.raises(ValueError, match="phase_jitter_sigma_ns"):
         block.block_repeated_phases(1, training_enabled=True, phase_time_scale=1.0, phase_jitter_sigma_ns=-0.01)
+
+
+def test_block_training_phase_sources_can_include_trnoise() -> None:
+    sys.path.insert(0, str(SPICE_DIR))
+    import pytest
+    import run_device_mnist01_block_training as block
+
+    phases = block.block_repeated_phases(
+        1,
+        training_enabled=True,
+        phase_time_scale=1.0,
+        phase_transient_noise_sigma=0.002,
+        transient_noise_timestep=10e-12,
+    )
+
+    assert "Vfwd_ideal fwd_ideal 0 PWL" in phases
+    assert "Vfwd_noise fwd fwd_ideal DC 0 TRNOISE(0.002 1e-11 0 0)" in phases
+    assert "Vapplyn_noise applyn applyn_ideal DC 0 TRNOISE(0.002 1e-11 0 0)" in phases
+    with pytest.raises(ValueError, match="phase_transient_noise_sigma"):
+        block.block_repeated_phases(
+            1,
+            training_enabled=True,
+            phase_time_scale=1.0,
+            phase_transient_noise_sigma=-0.001,
+        )
+    with pytest.raises(ValueError, match="transient_noise_timestep"):
+        block.block_repeated_phases(
+            1,
+            training_enabled=True,
+            phase_time_scale=1.0,
+            phase_transient_noise_sigma=0.001,
+            transient_noise_timestep=0.0,
+        )
 
 
 def test_input_and_state_perturbations_are_seeded_and_bounded() -> None:
@@ -624,6 +662,38 @@ def test_block_netlist_emits_per_pixel_trainable_caps_and_no_behavioral_sources(
     assert ".meas tran gvn3_after_0 FIND V(gvn3) AT=18.20n" in netlist
     assert ".tran 10p 32.00n uic" in netlist
     assert "Mrelu_o vdd score out 0 NSENSE" in netlist
+
+
+def test_block_netlist_can_wrap_supply_input_and_phase_sources_with_trnoise() -> None:
+    sys.path.insert(0, str(SPICE_DIR))
+    import run_device_mnist01_block_training as block
+
+    image_size = 4
+    weights = block.initial_block_weights(image_size, 2, 2, 1, seed=1)
+    sample = {f"x{i}": 0.2 + 0.01 * i for i in range(image_size * image_size)}
+    sample["target"] = 1.1
+    netlist = block.block_netlist(
+        [sample],
+        weights,
+        image_size=image_size,
+        block_size=2,
+        stride=2,
+        channels=1,
+        training_enabled=True,
+        supply_transient_noise_sigma=0.003,
+        input_transient_noise_sigma=0.001,
+        phase_transient_noise_sigma=0.002,
+        transient_noise_timestep=10e-12,
+    )
+
+    assert "\nB" not in netlist
+    assert "Vdd_ideal vdd_ideal 0 {VDD}" in netlist
+    assert "Vdd_noise vdd vdd_ideal DC 0 TRNOISE(0.003 1e-11 0 0)" in netlist
+    assert "Vx0_ideal x0_ideal 0 PWL" in netlist
+    assert "Vx0_noise x0 x0_ideal DC 0 TRNOISE(0.001 1e-11 0 0)" in netlist
+    assert "Vtarget_noise target target_ideal DC 0 TRNOISE(0.001 1e-11 0 0)" in netlist
+    assert "Vfwd_ideal fwd_ideal 0 PWL" in netlist
+    assert "Vfwd_noise fwd fwd_ideal DC 0 TRNOISE(0.002 1e-11 0 0)" in netlist
 
 
 def test_block_netlist_default_hidden_forward_uses_per_pixel_phase_stack() -> None:
@@ -1988,6 +2058,38 @@ def test_block_netlist_can_gate_readout_gradient_from_preactivation_state() -> N
     assert "Mgvn3_a vdd pre3 gvn3_a 0 NREL W=24u" in netlist
     assert "Mhdp3_d1 hdp3_d0 act3 hdp3_d1 0 NREL W=32u" in netlist
     assert "Mgvp3_a vdd act3 gvp3_a" not in netlist
+
+
+def test_block_netlist_can_store_forward_eligibility_for_readout_gradient() -> None:
+    sys.path.insert(0, str(SPICE_DIR))
+    import run_device_mnist01_block_training as block
+
+    image_size = 4
+    weights = block.initial_block_weights(image_size, 2, 2, 1, seed=1)
+    sample = {f"x{i}": 0.2 + 0.01 * i for i in range(image_size * image_size)}
+    sample["target"] = 1.1
+    netlist = block.block_netlist(
+        [sample],
+        weights,
+        image_size=image_size,
+        block_size=2,
+        stride=2,
+        channels=1,
+        training_enabled=True,
+        readout_gradient_source="eligibility",
+        readout_eligibility_width=18.0,
+    )
+
+    assert "\nB" not in netlist
+    assert "Ceg3 eg3 0 10f IC=0" in netlist
+    assert "Mreset_eg3 eg3 rstg 0 0 NMOS W=4u" in netlist
+    assert "Meg3_s vdd pre3 eg3_s 0 NREL W=18u" in netlist
+    assert "Meg3_f eg3_s fwd eg3 0 NMOS W=18u" in netlist
+    assert "Reg3_s eg3_s 0 1G" in netlist
+    assert "Mgvp3_a vdd eg3 gvp3_a 0 NREL W=24u" in netlist
+    assert "Mgvn3_a vdd eg3 gvn3_a 0 NREL W=24u" in netlist
+    assert ".meas tran eg3_after_fwd_0 FIND V(eg3)" in netlist
+    assert "Mhdp3_d1 hdp3_d0 act3 hdp3_d1 0 NREL W=32u" in netlist
 
 
 def test_block_netlist_can_emit_passive_readout_weight_leak() -> None:

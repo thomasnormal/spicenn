@@ -31,7 +31,7 @@ HIDDEN_ACTIVATION_MODELS = ("nrel", "sense")
 HIDDEN_FORWARD_TOPOLOGIES = ("per-pixel-phase", "shared-phase", "always-on", "split-rail")
 READOUT_FORWARD_MODELS = ("nrel", "sense")
 READOUT_WEIGHT_GATE_MODELS = ("same", "nrel", "sense", "switch")
-READOUT_GRADIENT_SOURCES = ("act", "pre")
+READOUT_GRADIENT_SOURCES = ("act", "pre", "eligibility")
 LEARNING_ACTIVATION_GATE_MODELS = ("nrel", "sense")
 HIDDEN_POLARITY_INITS = ("ink", "alternating-channel", "random-pixel")
 HIDDEN_CREDIT_MODES = ("direct-feedback", "readout-weighted", "readout-restored", "readout-restored-hardgate")
@@ -77,6 +77,31 @@ def mismatch_factor(seed: int, name: str, sigma: float) -> float:
 
 def clamp_voltage(value: float) -> float:
     return min(VDD_VALUE, max(0.0, value))
+
+
+def voltage_source_lines(
+    source_name: str,
+    node: str,
+    reference: str,
+    value: str,
+    *,
+    transient_noise_sigma: float = 0.0,
+    transient_noise_timestep: float = 20e-12,
+) -> list[str]:
+    if transient_noise_sigma < 0.0:
+        raise ValueError("transient noise sigma must be nonnegative")
+    if transient_noise_timestep <= 0.0:
+        raise ValueError("transient noise timestep must be positive")
+    if transient_noise_sigma == 0.0:
+        return [f"{source_name} {node} {reference} {value}"]
+    ideal_node = f"{node}_ideal"
+    return [
+        f"{source_name}_ideal {ideal_node} {reference} {value}",
+        (
+            f"{source_name}_noise {node} {ideal_node} DC 0 "
+            f"TRNOISE({transient_noise_sigma:.12g} {transient_noise_timestep:.12g} 0 0)"
+        ),
+    ]
 
 
 def spice_capacitance(value: float) -> str:
@@ -419,10 +444,16 @@ def block_repeated_phases(
     phase_time_scale: float,
     phase_jitter_sigma_ns: float = 0.0,
     phase_jitter_seed: int = 0,
+    phase_transient_noise_sigma: float = 0.0,
+    transient_noise_timestep: float = 20e-12,
     forward_phase_mode: str = "single",
 ) -> str:
     if phase_jitter_sigma_ns < 0.0:
         raise ValueError("phase_jitter_sigma_ns must be nonnegative")
+    if phase_transient_noise_sigma < 0.0:
+        raise ValueError("phase_transient_noise_sigma must be nonnegative")
+    if transient_noise_timestep <= 0.0:
+        raise ValueError("transient_noise_timestep must be positive")
     if forward_phase_mode not in FORWARD_PHASE_MODES:
         raise ValueError(f"forward_phase_mode must be one of {FORWARD_PHASE_MODES}")
     training_schedule = expand_training_schedule(sample_count, training_enabled)
@@ -480,23 +511,31 @@ def block_repeated_phases(
             bwd.append(window("bwd", base + 5.25 * scale, base + 7.00 * scale))
             acc.append(window("acc", base + 7.25 * scale, base + 9.00 * scale))
             apply.append(window("apply", base + 9.25 * scale, base + 11.20 * scale))
-    return "\n".join(
-        [
-            f"Vrstf rstf 0 {pulse_wave(rstf, stop)}",
-            f"Vrstfn rstfn 0 {active_low_pulse_wave(rstf, stop)}",
-            f"Vrstg rstg 0 {pulse_wave(rstg, stop)}",
-            f"Vrstgn rstgn 0 {active_low_pulse_wave(rstg, stop)}",
-            f"Vfwd fwd 0 {pulse_wave(fwd, stop)}",
-            f"Vfwdh fwdh 0 {pulse_wave(fwdh, stop)}",
-            f"Vfwdo fwdo 0 {pulse_wave(fwdo, stop)}",
-            f"Verr err 0 {pulse_wave(err, stop)}",
-            f"Vbwd bwd 0 {pulse_wave(bwd, stop)}",
-            f"Vacc acc 0 {pulse_wave(acc, stop)}",
-            f"Vapply apply 0 {pulse_wave(apply, stop)}",
-            f"Vapplyn applyn 0 {active_low_pulse_wave(apply, stop)}",
-            f"Vdec dec 0 {pulse_wave(dec, stop)}",
-        ]
-    )
+    lines: list[str] = []
+    for source_name, node, value in [
+        ("Vrstf", "rstf", pulse_wave(rstf, stop)),
+        ("Vrstfn", "rstfn", active_low_pulse_wave(rstf, stop)),
+        ("Vrstg", "rstg", pulse_wave(rstg, stop)),
+        ("Vrstgn", "rstgn", active_low_pulse_wave(rstg, stop)),
+        ("Vfwd", "fwd", pulse_wave(fwd, stop)),
+        ("Vfwdh", "fwdh", pulse_wave(fwdh, stop)),
+        ("Vfwdo", "fwdo", pulse_wave(fwdo, stop)),
+        ("Verr", "err", pulse_wave(err, stop)),
+        ("Vbwd", "bwd", pulse_wave(bwd, stop)),
+        ("Vacc", "acc", pulse_wave(acc, stop)),
+        ("Vapply", "apply", pulse_wave(apply, stop)),
+        ("Vapplyn", "applyn", active_low_pulse_wave(apply, stop)),
+        ("Vdec", "dec", pulse_wave(dec, stop)),
+    ]:
+        lines += voltage_source_lines(
+            source_name,
+            node,
+            "0",
+            value,
+            transient_noise_sigma=phase_transient_noise_sigma,
+            transient_noise_timestep=transient_noise_timestep,
+        )
+    return "\n".join(lines)
 
 
 def hidden_activation_device_model(model: str) -> str:
@@ -623,6 +662,7 @@ def block_netlist(
     readout_forward_model: str = "nrel",
     readout_weight_gate_model: str = "same",
     readout_gradient_source: str = "act",
+    readout_eligibility_width: float = 24.0,
     learning_activation_gate_model: str = "nrel",
     readout_weight_leak_resistance: float = 0.0,
     readout_stack_shunt_resistance: float = 0.0,
@@ -641,6 +681,10 @@ def block_netlist(
     phase_time_scale: float = 1.0,
     phase_jitter_sigma_ns: float = 0.0,
     phase_jitter_seed: int = 0,
+    supply_transient_noise_sigma: float = 0.0,
+    input_transient_noise_sigma: float = 0.0,
+    phase_transient_noise_sigma: float = 0.0,
+    transient_noise_timestep: float = 20e-12,
     passive_mismatch_sigma: float = 0.0,
     passive_mismatch_seed: int = 0,
     forward_phase_mode: str = "single",
@@ -735,6 +779,8 @@ def block_netlist(
         raise ValueError(f"readout_weight_gate_model must be one of {READOUT_WEIGHT_GATE_MODELS}")
     if readout_gradient_source not in READOUT_GRADIENT_SOURCES:
         raise ValueError(f"readout_gradient_source must be one of {READOUT_GRADIENT_SOURCES}")
+    if readout_eligibility_width <= 0.0:
+        raise ValueError("readout_eligibility_width must be positive")
     if readout_weight_leak_resistance < 0.0:
         raise ValueError("readout_weight_leak_resistance must be nonnegative")
     if readout_stack_shunt_resistance < 0.0:
@@ -755,6 +801,14 @@ def block_netlist(
         raise ValueError("phase_time_scale must be positive")
     if phase_jitter_sigma_ns < 0.0:
         raise ValueError("phase_jitter_sigma_ns must be nonnegative")
+    if supply_transient_noise_sigma < 0.0:
+        raise ValueError("supply_transient_noise_sigma must be nonnegative")
+    if input_transient_noise_sigma < 0.0:
+        raise ValueError("input_transient_noise_sigma must be nonnegative")
+    if phase_transient_noise_sigma < 0.0:
+        raise ValueError("phase_transient_noise_sigma must be nonnegative")
+    if transient_noise_timestep <= 0.0:
+        raise ValueError("transient_noise_timestep must be positive")
     if passive_mismatch_sigma < 0.0:
         raise ValueError("passive_mismatch_sigma must be nonnegative")
     if forward_phase_mode not in FORWARD_PHASE_MODES:
@@ -872,6 +926,7 @@ def block_netlist(
                 f".meas tran vwn{feature}_before_{idx} FIND V(vwn{feature}) AT={base + 0.60 * scale:.2f}n",
                 f".meas tran hdp{feature}_after_{idx} FIND V(hdp{feature}) AT={base + 7.10 * scale:.2f}n",
                 f".meas tran hdn{feature}_after_{idx} FIND V(hdn{feature}) AT={base + 7.10 * scale:.2f}n",
+                f".meas tran eg{feature}_after_fwd_{idx} FIND V(eg{feature}) AT={base + 2.95 * scale:.2f}n",
                 f".meas tran gvp{feature}_after_{idx} FIND V(gvp{feature}) AT={base + 9.10 * scale:.2f}n",
                 f".meas tran gvn{feature}_after_{idx} FIND V(gvn{feature}) AT={base + 9.10 * scale:.2f}n",
                 f".meas tran gbp{feature}_after_{idx} FIND V(gbp{feature}) AT={base + 9.10 * scale:.2f}n",
@@ -907,8 +962,15 @@ def block_netlist(
         f".param VDD={VDD_VALUE:.12g}",
         mos_models(),
         spice_subcircuits(),
-        "Vdd vdd 0 {VDD}",
     ]
+    lines += voltage_source_lines(
+        "Vdd",
+        "vdd",
+        "0",
+        "{VDD}",
+        transient_noise_sigma=supply_transient_noise_sigma,
+        transient_noise_timestep=transient_noise_timestep,
+    )
     if readout_weight_leak_resistance > 0.0:
         lines += [
             f"Vvwp_ref vwp_ref 0 {readout_weight_positive_ref:.12g}",
@@ -960,15 +1022,31 @@ def block_netlist(
         else:
             lines.append(f"Voutref outref 0 {output_decision_ref:.12g}")
     for rail in required_rails:
-        lines.append(f"V{rail} {rail} 0 {block_sample_wave(samples, rail, stop, cycle_ns=cycle_ns)}")
+        lines += voltage_source_lines(
+            f"V{rail}",
+            rail,
+            "0",
+            block_sample_wave(samples, rail, stop, cycle_ns=cycle_ns),
+            transient_noise_sigma=input_transient_noise_sigma,
+            transient_noise_timestep=transient_noise_timestep,
+        )
     lines += [
-        f"Vtarget target 0 {block_sample_wave(samples, 'target', stop, cycle_ns=cycle_ns)}",
+        *voltage_source_lines(
+            "Vtarget",
+            "target",
+            "0",
+            block_sample_wave(samples, "target", stop, cycle_ns=cycle_ns),
+            transient_noise_sigma=input_transient_noise_sigma,
+            transient_noise_timestep=transient_noise_timestep,
+        ),
         block_repeated_phases(
             len(samples),
             training_enabled=training_enabled,
             phase_time_scale=phase_time_scale,
             phase_jitter_sigma_ns=phase_jitter_sigma_ns,
             phase_jitter_seed=phase_jitter_seed,
+            phase_transient_noise_sigma=phase_transient_noise_sigma,
+            transient_noise_timestep=transient_noise_timestep,
             forward_phase_mode=forward_phase_mode,
         ),
         "",
@@ -1104,6 +1182,7 @@ def block_netlist(
             f"Chdn{feature} hdn{feature} 0 12f IC=0",
             f"Cgvp{feature} gvp{feature} 0 2f IC=0",
             f"Cgvn{feature} gvn{feature} 0 2f IC=0",
+            f"Ceg{feature} eg{feature} 0 10f IC=0",
             f"Cgbp{feature} gbp{feature} 0 10f IC=0",
             f"Cgbn{feature} gbn{feature} 0 10f IC=0",
             f"Crgp{feature} rgp{feature} 0 4f IC=1.2",
@@ -1114,6 +1193,7 @@ def block_netlist(
             f"Rhdn{feature} hdn{feature} 0 1G",
             f"Rgvp{feature} gvp{feature} 0 1G",
             f"Rgvn{feature} gvn{feature} 0 1G",
+            f"Reg{feature} eg{feature} 0 1G",
             f"Rgbp{feature} gbp{feature} 0 1G",
             f"Rgbn{feature} gbn{feature} 0 1G",
             f"Rrgp{feature} rgp{feature} vdd 50k",
@@ -1197,6 +1277,7 @@ def block_netlist(
             f"Mreset_hdn{feature} hdn{feature} rstg 0 0 NMOS W=4u L=180n",
             f"Mreset_gvp{feature} gvp{feature} rstg 0 0 NMOS W=4u L=180n",
             f"Mreset_gvn{feature} gvn{feature} rstg 0 0 NMOS W=4u L=180n",
+            f"Mreset_eg{feature} eg{feature} rstg 0 0 NMOS W=4u L=180n",
             f"Mreset_gbp{feature} gbp{feature} rstg 0 0 NMOS W=4u L=180n",
             f"Mreset_gbn{feature} gbn{feature} rstg 0 0 NMOS W=4u L=180n",
         ]
@@ -1351,10 +1432,24 @@ def block_netlist(
                 hidden_activation_lines = [
                     f"Mrelu_h{feature} vdd pre{feature} act{feature} 0 {activation_model} W={hidden_activation_width:.6g}u L=180n",
                 ]
-            readout_gradient_gate_node = f"pre{feature}" if readout_gradient_source == "pre" else f"act{feature}"
+            if readout_gradient_source == "pre":
+                readout_gradient_gate_node = f"pre{feature}"
+            elif readout_gradient_source == "eligibility":
+                readout_gradient_gate_node = f"eg{feature}"
+            else:
+                readout_gradient_gate_node = f"act{feature}"
             lines += [
                 *hidden_bias_lines,
                 *hidden_activation_lines,
+                *(
+                    [
+                        f"Meg{feature}_s vdd pre{feature} eg{feature}_s 0 {learning_activation_model} W={readout_eligibility_width:.6g}u L=180n",
+                        f"Meg{feature}_f eg{feature}_s {hidden_forward_clock} eg{feature} 0 NMOS W={readout_eligibility_width:.6g}u L=180n",
+                        f"Reg{feature}_s eg{feature}_s 0 1G",
+                    ]
+                    if readout_gradient_source == "eligibility"
+                    else []
+                ),
                 *(
                     [
                         line
@@ -2153,6 +2248,7 @@ def run_device_sequence(
     readout_forward_model: str,
     readout_weight_gate_model: str,
     readout_gradient_source: str,
+    readout_eligibility_width: float,
     learning_activation_gate_model: str,
     readout_weight_leak_resistance: float,
     readout_stack_shunt_resistance: float,
@@ -2171,6 +2267,10 @@ def run_device_sequence(
     phase_time_scale: float,
     phase_jitter_sigma_ns: float,
     phase_jitter_seed: int,
+    supply_transient_noise_sigma: float,
+    input_transient_noise_sigma: float,
+    phase_transient_noise_sigma: float,
+    transient_noise_timestep: float,
     passive_mismatch_sigma: float,
     passive_mismatch_seed: int,
     forward_phase_mode: str,
@@ -2222,6 +2322,7 @@ def run_device_sequence(
         readout_forward_model=readout_forward_model,
         readout_weight_gate_model=readout_weight_gate_model,
         readout_gradient_source=readout_gradient_source,
+        readout_eligibility_width=readout_eligibility_width,
         learning_activation_gate_model=learning_activation_gate_model,
         readout_weight_leak_resistance=readout_weight_leak_resistance,
         readout_stack_shunt_resistance=readout_stack_shunt_resistance,
@@ -2240,6 +2341,10 @@ def run_device_sequence(
         phase_time_scale=phase_time_scale,
         phase_jitter_sigma_ns=phase_jitter_sigma_ns,
         phase_jitter_seed=phase_jitter_seed,
+        supply_transient_noise_sigma=supply_transient_noise_sigma,
+        input_transient_noise_sigma=input_transient_noise_sigma,
+        phase_transient_noise_sigma=phase_transient_noise_sigma,
+        transient_noise_timestep=transient_noise_timestep,
         passive_mismatch_sigma=passive_mismatch_sigma,
         passive_mismatch_seed=passive_mismatch_seed,
         forward_phase_mode=forward_phase_mode,
@@ -2334,8 +2439,12 @@ def main() -> None:
         "--readout-gradient-source",
         choices=READOUT_GRADIENT_SOURCES,
         default="act",
-        help="Local state node that gates readout gradient storage: stored activation or preactivation capacitor.",
+        help=(
+            "Local state node that gates readout gradient storage: stored activation, preactivation, "
+            "or a forward-sampled eligibility capacitor."
+        ),
     )
+    ap.add_argument("--readout-eligibility-width", type=float, default=24.0)
     ap.add_argument("--learning-activation-gate-model", choices=LEARNING_ACTIVATION_GATE_MODELS, default="nrel")
     ap.add_argument("--readout-weight-leak-resistance", type=float, default=0.0)
     ap.add_argument("--readout-stack-shunt-resistance", type=float, default=0.0)
@@ -2367,6 +2476,30 @@ def main() -> None:
         type=float,
         default=0.0,
         help="Gaussian timing jitter, in ns, applied deterministically to phase pulse windows.",
+    )
+    ap.add_argument(
+        "--supply-transient-noise-sigma",
+        type=float,
+        default=0.0,
+        help="ngspice TRNOISE voltage sigma, in volts, inserted in series with the supply rail.",
+    )
+    ap.add_argument(
+        "--input-transient-noise-sigma",
+        type=float,
+        default=0.0,
+        help="ngspice TRNOISE voltage sigma, in volts, inserted in series with input and target rails.",
+    )
+    ap.add_argument(
+        "--phase-transient-noise-sigma",
+        type=float,
+        default=0.0,
+        help="ngspice TRNOISE voltage sigma, in volts, inserted in series with phase/control rails.",
+    )
+    ap.add_argument(
+        "--transient-noise-timestep",
+        type=float,
+        default=20e-12,
+        help="ngspice TRNOISE noise timestep in seconds.",
     )
     ap.add_argument(
         "--passive-mismatch-sigma",
@@ -2426,12 +2559,22 @@ def main() -> None:
         raise ValueError("input-voltage-jitter-sigma must be nonnegative")
     if args.phase_jitter_sigma_ns < 0.0:
         raise ValueError("phase-jitter-sigma-ns must be nonnegative")
+    if args.supply_transient_noise_sigma < 0.0:
+        raise ValueError("supply-transient-noise-sigma must be nonnegative")
+    if args.input_transient_noise_sigma < 0.0:
+        raise ValueError("input-transient-noise-sigma must be nonnegative")
+    if args.phase_transient_noise_sigma < 0.0:
+        raise ValueError("phase-transient-noise-sigma must be nonnegative")
+    if args.transient_noise_timestep <= 0.0:
+        raise ValueError("transient-noise-timestep must be positive")
     if args.passive_mismatch_sigma < 0.0:
         raise ValueError("passive-mismatch-sigma must be nonnegative")
     if args.state_ic_mismatch_sigma < 0.0:
         raise ValueError("state-ic-mismatch-sigma must be nonnegative")
     if args.readout_weight_init_sigma < 0.0:
         raise ValueError("readout-weight-init-sigma must be nonnegative")
+    if args.readout_eligibility_width <= 0.0:
+        raise ValueError("readout-eligibility-width must be positive")
     if args.measurement_detail != "full" and not args.continuous_final_eval:
         raise ValueError("--measurement-detail outputs requires --continuous-final-eval")
     blocks, feature_count = block_topology(args.image_size, args.block_size, args.stride, args.channels)
@@ -2530,6 +2673,7 @@ def main() -> None:
         "readout_forward_model": args.readout_forward_model,
         "readout_weight_gate_model": args.readout_weight_gate_model,
         "readout_gradient_source": args.readout_gradient_source,
+        "readout_eligibility_width": args.readout_eligibility_width,
         "learning_activation_gate_model": args.learning_activation_gate_model,
         "readout_weight_leak_resistance": args.readout_weight_leak_resistance,
         "readout_stack_shunt_resistance": args.readout_stack_shunt_resistance,
@@ -2548,6 +2692,10 @@ def main() -> None:
         "phase_time_scale": args.phase_time_scale,
         "phase_jitter_sigma_ns": args.phase_jitter_sigma_ns,
         "phase_jitter_seed": stable_seed(args.perturbation_seed, "phase-jitter"),
+        "supply_transient_noise_sigma": args.supply_transient_noise_sigma,
+        "input_transient_noise_sigma": args.input_transient_noise_sigma,
+        "phase_transient_noise_sigma": args.phase_transient_noise_sigma,
+        "transient_noise_timestep": args.transient_noise_timestep,
         "passive_mismatch_sigma": args.passive_mismatch_sigma,
         "passive_mismatch_seed": stable_seed(args.perturbation_seed, "passive-mismatch"),
         "forward_phase_mode": args.forward_phase_mode,
@@ -2745,6 +2893,7 @@ def main() -> None:
         "readout_forward_model": args.readout_forward_model,
         "readout_weight_gate_model": args.readout_weight_gate_model,
         "readout_gradient_source": args.readout_gradient_source,
+        "readout_eligibility_width": args.readout_eligibility_width,
         "learning_activation_gate_model": args.learning_activation_gate_model,
         "readout_weight_leak_resistance": args.readout_weight_leak_resistance,
         "readout_stack_shunt_resistance": args.readout_stack_shunt_resistance,
@@ -2767,12 +2916,17 @@ def main() -> None:
         "forward_phase_mode": args.forward_phase_mode,
         "input_voltage_jitter_sigma": args.input_voltage_jitter_sigma,
         "phase_jitter_sigma_ns": args.phase_jitter_sigma_ns,
+        "supply_transient_noise_sigma": args.supply_transient_noise_sigma,
+        "input_transient_noise_sigma": args.input_transient_noise_sigma,
+        "phase_transient_noise_sigma": args.phase_transient_noise_sigma,
+        "transient_noise_timestep": args.transient_noise_timestep,
         "passive_mismatch_sigma": args.passive_mismatch_sigma,
         "state_ic_mismatch_sigma": args.state_ic_mismatch_sigma,
         "perturbation_seed": args.perturbation_seed,
         "robustness_perturbation_model": (
             "deterministic Gaussian input-DAC rail jitter, phase timing jitter, passive reference-resistor "
-            "mismatch, and initial capacitor-state mismatch; no behavioral learning elements are added"
+            "mismatch, initial capacitor-state mismatch, and optional ngspice TRNOISE series sources on "
+            "supply/input/phase rails; no behavioral learning elements are added"
         ),
         "score_mode": args.score_mode,
         "measurement_detail": args.measurement_detail,

@@ -30,6 +30,7 @@ READOUT_FORWARD_MODELS = ("nrel", "sense")
 LEARNING_ACTIVATION_GATE_MODELS = ("nrel", "sense")
 HIDDEN_POLARITY_INITS = ("ink", "alternating-channel", "random-pixel")
 SCORE_MODES = ("single-ended", "differential")
+OUTPUT_DIFFERENTIAL_STAGES = ("simple", "score-gated")
 
 
 def block_topology(image_size: int, block_size: int, stride: int, channels: int) -> tuple[list[list[int]], int]:
@@ -237,6 +238,7 @@ def block_netlist(
     channels: int,
     training_enabled: bool,
     output_driver_model: str = "sense",
+    output_differential_stage: str = "simple",
     output_score_pullup_width: float = 24.0,
     output_scoren_pulldown_width: float = 24.0,
     readout_apply_scale: float = 0.35,
@@ -305,6 +307,8 @@ def block_netlist(
         raise ValueError("phase_time_scale must be positive")
     if score_mode not in SCORE_MODES:
         raise ValueError(f"score_mode must be one of {SCORE_MODES}")
+    if output_differential_stage not in OUTPUT_DIFFERENTIAL_STAGES:
+        raise ValueError(f"output_differential_stage must be one of {OUTPUT_DIFFERENTIAL_STAGES}")
     activation_model = hidden_activation_device_model(hidden_activation_model)
     readout_model = readout_forward_device_model(readout_forward_model)
     learning_activation_model = learning_activation_gate_device_model(learning_activation_gate_model)
@@ -712,18 +716,27 @@ def block_netlist(
             ),
         ]
 
+    if score_mode == "differential" and output_differential_stage == "score-gated":
+        output_stage = "\n".join(
+            [
+                f"Moutp_gate vdd scoren outp_gate vdd PMOS W={output_score_pullup_width:.6g}u L=180n",
+                f"Moutp_score outp_gate score out 0 NSENSE W={output_score_pullup_width:.6g}u L=180n",
+                f"Moutn out scoren 0 0 NSENSE W={output_scoren_pulldown_width:.6g}u L=180n",
+            ]
+        )
+    elif score_mode == "differential":
+        output_stage = "\n".join(
+            [
+                f"Moutp vdd score out 0 NSENSE W={output_score_pullup_width:.6g}u L=180n",
+                f"Moutn out scoren 0 0 NSENSE W={output_scoren_pulldown_width:.6g}u L=180n",
+            ]
+        )
+    else:
+        output_stage = output_driver_line(output_driver_model)
+
     lines += [
         "",
-        (
-            "\n".join(
-                [
-                    f"Moutp vdd score out 0 NSENSE W={output_score_pullup_width:.6g}u L=180n",
-                    f"Moutn out scoren 0 0 NSENSE W={output_scoren_pulldown_width:.6g}u L=180n",
-                ]
-            )
-            if score_mode == "differential"
-            else output_driver_line(output_driver_model)
-        ),
+        output_stage,
         "",
         "* Shared output error from target/raw-score conductance competition.",
         "Mdp_t0 vdd target dp_t 0 NSENSE W=32u L=180n",
@@ -925,29 +938,31 @@ def output_bias_diagnostics(
 
 
 def score_net_diagnostics(initial_eval_rows: pd.DataFrame, final_eval_rows: pd.DataFrame) -> dict[str, float | None]:
-    def metrics(prefix: str, rows: pd.DataFrame) -> dict[str, float | None]:
+    def metrics(prefix: str, rows: pd.DataFrame, signal: str) -> dict[str, float | None]:
         empty = {
-            f"{prefix}_score_net_positive_mean": None,
-            f"{prefix}_score_net_negative_mean": None,
-            f"{prefix}_score_net_margin": None,
+            f"{prefix}_{signal}_positive_mean": None,
+            f"{prefix}_{signal}_negative_mean": None,
+            f"{prefix}_{signal}_margin": None,
         }
-        if "score_net" not in rows.columns or "positive_label" not in rows.columns:
+        if signal not in rows.columns or "positive_label" not in rows.columns:
             return empty
-        positives = rows.loc[rows["positive_label"] > 0.5, "score_net"].dropna().to_numpy(dtype=float)
-        negatives = rows.loc[rows["positive_label"] <= 0.5, "score_net"].dropna().to_numpy(dtype=float)
+        positives = rows.loc[rows["positive_label"] > 0.5, signal].dropna().to_numpy(dtype=float)
+        negatives = rows.loc[rows["positive_label"] <= 0.5, signal].dropna().to_numpy(dtype=float)
         if positives.size == 0 or negatives.size == 0:
             return empty
         positive_mean = float(np.mean(positives))
         negative_mean = float(np.mean(negatives))
         return {
-            f"{prefix}_score_net_positive_mean": positive_mean,
-            f"{prefix}_score_net_negative_mean": negative_mean,
-            f"{prefix}_score_net_margin": positive_mean - negative_mean,
+            f"{prefix}_{signal}_positive_mean": positive_mean,
+            f"{prefix}_{signal}_negative_mean": negative_mean,
+            f"{prefix}_{signal}_margin": positive_mean - negative_mean,
         }
 
     return {
-        **metrics("initial_eval", initial_eval_rows),
-        **metrics("final_eval", final_eval_rows),
+        **metrics("initial_eval", initial_eval_rows, "score_net"),
+        **metrics("final_eval", final_eval_rows, "score_net"),
+        **metrics("initial_eval", initial_eval_rows, "out_after"),
+        **metrics("final_eval", final_eval_rows, "out_after"),
     }
 
 
@@ -965,6 +980,7 @@ def run_device_sequence(
     timeout: float,
     sequence: str,
     output_driver_model: str,
+    output_differential_stage: str,
     output_score_pullup_width: float,
     output_scoren_pulldown_width: float,
     readout_apply_scale: float,
@@ -1004,6 +1020,7 @@ def run_device_sequence(
         channels=channels,
         training_enabled=training_enabled,
         output_driver_model=output_driver_model,
+        output_differential_stage=output_differential_stage,
         output_score_pullup_width=output_score_pullup_width,
         output_scoren_pulldown_width=output_scoren_pulldown_width,
         readout_apply_scale=readout_apply_scale,
@@ -1058,6 +1075,7 @@ def main() -> None:
     ap.add_argument("--timeout", type=float, default=120.0)
     ap.add_argument("--tag", default="device_mnist01_block")
     ap.add_argument("--output-driver-model", choices=["sense", "nrel"], default="sense")
+    ap.add_argument("--output-differential-stage", choices=OUTPUT_DIFFERENTIAL_STAGES, default="simple")
     ap.add_argument("--output-score-pullup-width", type=float, default=24.0)
     ap.add_argument("--output-scoren-pulldown-width", type=float, default=24.0)
     ap.add_argument("--readout-apply-scale", type=float, default=0.35)
@@ -1142,6 +1160,7 @@ def main() -> None:
         "channels": args.channels,
         "timeout": args.timeout,
         "output_driver_model": args.output_driver_model,
+        "output_differential_stage": args.output_differential_stage,
         "output_score_pullup_width": args.output_score_pullup_width,
         "output_scoren_pulldown_width": args.output_scoren_pulldown_width,
         "readout_apply_scale": args.readout_apply_scale,
@@ -1255,6 +1274,7 @@ def main() -> None:
         "hidden_bias_state": "persistent signed bhp/bhn capacitors with MOS/passive local bias writers",
         "hidden_credit_mode": "direct_feedback",
         "output_driver_model": args.output_driver_model,
+        "output_differential_stage": args.output_differential_stage,
         "output_score_pullup_width": args.output_score_pullup_width,
         "output_scoren_pulldown_width": args.output_scoren_pulldown_width,
         "readout_apply_scale": args.readout_apply_scale,

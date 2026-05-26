@@ -49,6 +49,7 @@ def test_device_mnist01_block_script_help_runs_from_repo_root() -> None:
     assert "--phase-time-scale" in proc.stdout
     assert "--hidden-bias-positive-init" in proc.stdout
     assert "--assert-nonbehavioral" in proc.stdout
+    assert "--output-differential-stage" in proc.stdout
     assert "--output-score-pullup-width" in proc.stdout
     assert "--output-scoren-pulldown-width" in proc.stdout
 
@@ -180,16 +181,16 @@ def test_score_net_diagnostics_report_class_margin() -> None:
     diagnostics = block.score_net_diagnostics(
         pd.DataFrame(
             [
-                {"positive_label": 1.0, "score_net": 0.001},
-                {"positive_label": 0.0, "score_net": 0.003},
+                {"positive_label": 1.0, "score_net": 0.001, "out_after": 0.01},
+                {"positive_label": 0.0, "score_net": 0.003, "out_after": 0.02},
             ]
         ),
         pd.DataFrame(
             [
-                {"positive_label": 1.0, "score_net": 0.014},
-                {"positive_label": 1.0, "score_net": 0.012},
-                {"positive_label": 0.0, "score_net": 0.011},
-                {"positive_label": 0.0, "score_net": 0.005},
+                {"positive_label": 1.0, "score_net": 0.014, "out_after": 0.037},
+                {"positive_label": 1.0, "score_net": 0.012, "out_after": 0.038},
+                {"positive_label": 0.0, "score_net": 0.011, "out_after": 0.041},
+                {"positive_label": 0.0, "score_net": 0.005, "out_after": 0.039},
             ]
         ),
     )
@@ -198,6 +199,7 @@ def test_score_net_diagnostics_report_class_margin() -> None:
     assert np.isclose(diagnostics["final_eval_score_net_positive_mean"], 0.013)
     assert np.isclose(diagnostics["final_eval_score_net_negative_mean"], 0.008)
     assert np.isclose(diagnostics["final_eval_score_net_margin"], 0.005)
+    assert np.isclose(diagnostics["final_eval_out_after_margin"], -0.0025)
 
 
 def test_block_netlist_emits_per_pixel_trainable_caps_and_no_behavioral_sources() -> None:
@@ -305,6 +307,35 @@ def test_block_netlist_can_tune_differential_output_sense_widths() -> None:
     assert "\nB" not in netlist
     assert "Moutp vdd score out 0 NSENSE W=48u" in netlist
     assert "Moutn out scoren 0 0 NSENSE W=96u" in netlist
+
+
+def test_block_netlist_can_emit_score_gated_differential_output_stage() -> None:
+    sys.path.insert(0, str(SPICE_DIR))
+    import run_device_mnist01_block_training as block
+
+    image_size = 4
+    weights = block.initial_block_weights(image_size, 2, 2, 1, seed=1)
+    sample = {f"x{i}": 0.2 + 0.01 * i for i in range(image_size * image_size)}
+    sample["target"] = 1.1
+    netlist = block.block_netlist(
+        [sample],
+        weights,
+        image_size=image_size,
+        block_size=2,
+        stride=2,
+        channels=1,
+        training_enabled=True,
+        score_mode="differential",
+        output_differential_stage="score-gated",
+        output_score_pullup_width=48.0,
+        output_scoren_pulldown_width=96.0,
+    )
+
+    assert "\nB" not in netlist
+    assert "Moutp_gate vdd scoren outp_gate vdd PMOS W=48u" in netlist
+    assert "Moutp_score outp_gate score out 0 NSENSE W=48u" in netlist
+    assert "Moutn out scoren 0 0 NSENSE W=96u" in netlist
+    assert "Moutp vdd score out 0 NSENSE" not in netlist
 
 
 def test_block_netlist_can_emit_low_threshold_readout_score_stack() -> None:

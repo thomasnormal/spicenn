@@ -30,9 +30,10 @@ TARGET_POLARITIES = ("active-high", "active-low")
 HIDDEN_ACTIVATION_MODELS = ("nrel", "sense")
 HIDDEN_FORWARD_TOPOLOGIES = ("per-pixel-phase", "shared-phase", "always-on", "split-rail")
 READOUT_FORWARD_MODELS = ("nrel", "sense")
+READOUT_WEIGHT_GATE_MODELS = ("same", "nrel", "sense", "switch")
 LEARNING_ACTIVATION_GATE_MODELS = ("nrel", "sense")
 HIDDEN_POLARITY_INITS = ("ink", "alternating-channel", "random-pixel")
-HIDDEN_CREDIT_MODES = ("direct-feedback", "readout-weighted", "readout-restored")
+HIDDEN_CREDIT_MODES = ("direct-feedback", "readout-weighted", "readout-restored", "readout-restored-hardgate")
 ERROR_SIGNAL_MODES = ("raw", "restored", "restored-hidden")
 SCORE_MODES = ("single-ended", "differential")
 OUTPUT_DIFFERENTIAL_STAGES = ("simple", "score-gated", "latched")
@@ -500,6 +501,17 @@ def readout_forward_device_model(model: str) -> str:
     raise ValueError(f"readout_forward_model must be one of {READOUT_FORWARD_MODELS}")
 
 
+def readout_weight_gate_device_model(model: str, forward_model: str) -> str:
+    resolved = forward_model if model == "same" else model
+    if resolved == "nrel":
+        return "NREL"
+    if resolved == "sense":
+        return "NSENSE"
+    if resolved == "switch":
+        return "NMOS"
+    raise ValueError(f"readout_weight_gate_model must be one of {READOUT_WEIGHT_GATE_MODELS}")
+
+
 def learning_activation_gate_device_model(model: str) -> str:
     if model == "nrel":
         return "NREL"
@@ -526,24 +538,26 @@ def hidden_credit_device_lines(
             f"Mhdn{feature}_d1 hdn{feature}_d0 act{feature} hdn{feature}_d1 0 {learning_activation_model} W={hidden_error_width:.6g}u L=180n",
             f"Mhdn{feature}_d2 hdn{feature}_d1 bwd hdn{feature} 0 NMOS W={hidden_error_width:.6g}u L=180n",
         ]
-    if mode in {"readout-weighted", "readout-restored"}:
-        positive_weight_gate = f"rvwp{feature}" if mode == "readout-restored" else f"vwp{feature}"
-        negative_weight_gate = f"rvwn{feature}" if mode == "readout-restored" else f"vwn{feature}"
+    if mode in {"readout-weighted", "readout-restored", "readout-restored-hardgate"}:
+        restored = mode in {"readout-restored", "readout-restored-hardgate"}
+        positive_weight_gate = f"rvwp{feature}" if restored else f"vwp{feature}"
+        negative_weight_gate = f"rvwn{feature}" if restored else f"vwn{feature}"
+        weight_gate_model = "NMOS" if mode == "readout-restored-hardgate" else "NSENSE"
         return [
             f"Mhdp{feature}_pv_e vdd {positive_error_node} hdp{feature}_pv_e 0 NSENSE W={hidden_error_width:.6g}u L=180n",
-            f"Mhdp{feature}_pv_w hdp{feature}_pv_e {positive_weight_gate} hdp{feature}_pv_w 0 NSENSE W={hidden_error_width:.6g}u L=180n",
+            f"Mhdp{feature}_pv_w hdp{feature}_pv_e {positive_weight_gate} hdp{feature}_pv_w 0 {weight_gate_model} W={hidden_error_width:.6g}u L=180n",
             f"Mhdp{feature}_pv_a hdp{feature}_pv_w act{feature} hdp{feature}_pv_a 0 {learning_activation_model} W={hidden_error_width:.6g}u L=180n",
             f"Mhdp{feature}_pv_b hdp{feature}_pv_a bwd hdp{feature} 0 NMOS W={hidden_error_width:.6g}u L=180n",
             f"Mhdp{feature}_nv_e vdd {negative_error_node} hdp{feature}_nv_e 0 NSENSE W={hidden_error_width:.6g}u L=180n",
-            f"Mhdp{feature}_nv_w hdp{feature}_nv_e {negative_weight_gate} hdp{feature}_nv_w 0 NSENSE W={hidden_error_width:.6g}u L=180n",
+            f"Mhdp{feature}_nv_w hdp{feature}_nv_e {negative_weight_gate} hdp{feature}_nv_w 0 {weight_gate_model} W={hidden_error_width:.6g}u L=180n",
             f"Mhdp{feature}_nv_a hdp{feature}_nv_w act{feature} hdp{feature}_nv_a 0 {learning_activation_model} W={hidden_error_width:.6g}u L=180n",
             f"Mhdp{feature}_nv_b hdp{feature}_nv_a bwd hdp{feature} 0 NMOS W={hidden_error_width:.6g}u L=180n",
             f"Mhdn{feature}_pv_e vdd {positive_error_node} hdn{feature}_pv_e 0 NSENSE W={hidden_error_width:.6g}u L=180n",
-            f"Mhdn{feature}_pv_w hdn{feature}_pv_e {negative_weight_gate} hdn{feature}_pv_w 0 NSENSE W={hidden_error_width:.6g}u L=180n",
+            f"Mhdn{feature}_pv_w hdn{feature}_pv_e {negative_weight_gate} hdn{feature}_pv_w 0 {weight_gate_model} W={hidden_error_width:.6g}u L=180n",
             f"Mhdn{feature}_pv_a hdn{feature}_pv_w act{feature} hdn{feature}_pv_a 0 {learning_activation_model} W={hidden_error_width:.6g}u L=180n",
             f"Mhdn{feature}_pv_b hdn{feature}_pv_a bwd hdn{feature} 0 NMOS W={hidden_error_width:.6g}u L=180n",
             f"Mhdn{feature}_nv_e vdd {negative_error_node} hdn{feature}_nv_e 0 NSENSE W={hidden_error_width:.6g}u L=180n",
-            f"Mhdn{feature}_nv_w hdn{feature}_nv_e {positive_weight_gate} hdn{feature}_nv_w 0 NSENSE W={hidden_error_width:.6g}u L=180n",
+            f"Mhdn{feature}_nv_w hdn{feature}_nv_e {positive_weight_gate} hdn{feature}_nv_w 0 {weight_gate_model} W={hidden_error_width:.6g}u L=180n",
             f"Mhdn{feature}_nv_a hdn{feature}_nv_w act{feature} hdn{feature}_nv_a 0 {learning_activation_model} W={hidden_error_width:.6g}u L=180n",
             f"Mhdn{feature}_nv_b hdn{feature}_nv_a bwd hdn{feature} 0 NMOS W={hidden_error_width:.6g}u L=180n",
         ]
@@ -593,6 +607,7 @@ def block_netlist(
     hidden_activation_model: str = "nrel",
     readout_forward_width: float = 64.0,
     readout_forward_model: str = "nrel",
+    readout_weight_gate_model: str = "same",
     learning_activation_gate_model: str = "nrel",
     readout_weight_leak_resistance: float = 0.0,
     readout_stack_shunt_resistance: float = 0.0,
@@ -675,7 +690,7 @@ def block_netlist(
         raise ValueError("hidden_error_width must be positive")
     if hidden_credit_mode not in HIDDEN_CREDIT_MODES:
         raise ValueError(f"hidden_credit_mode must be one of {HIDDEN_CREDIT_MODES}")
-    if hidden_credit_mode in {"readout-weighted", "readout-restored"} and score_mode != "differential":
+    if hidden_credit_mode in {"readout-weighted", "readout-restored", "readout-restored-hardgate"} and score_mode != "differential":
         raise ValueError(f"{hidden_credit_mode} hidden_credit_mode requires differential score_mode")
     if readout_feedback_restore_width <= 0.0:
         raise ValueError("readout_feedback_restore_width must be positive")
@@ -701,6 +716,8 @@ def block_netlist(
         raise ValueError("hidden_stack_parasitic_capacitance must be nonnegative")
     if readout_forward_width <= 0.0:
         raise ValueError("readout_forward_width must be positive")
+    if readout_weight_gate_model not in READOUT_WEIGHT_GATE_MODELS:
+        raise ValueError(f"readout_weight_gate_model must be one of {READOUT_WEIGHT_GATE_MODELS}")
     if readout_weight_leak_resistance < 0.0:
         raise ValueError("readout_weight_leak_resistance must be nonnegative")
     if readout_stack_shunt_resistance < 0.0:
@@ -733,6 +750,7 @@ def block_netlist(
         raise ValueError("non-simple output_differential_stage requires differential score_mode")
     activation_model = hidden_activation_device_model(hidden_activation_model)
     readout_model = readout_forward_device_model(readout_forward_model)
+    readout_weight_model = readout_weight_gate_device_model(readout_weight_gate_model, readout_forward_model)
     learning_activation_model = learning_activation_gate_device_model(learning_activation_gate_model)
     if input_rail_mode not in INPUT_RAIL_MODES:
         raise ValueError(f"input_rail_mode must be one of {INPUT_RAIL_MODES}")
@@ -852,7 +870,7 @@ def block_netlist(
                 f".meas tran d_bias{feature}_signed_{idx} PARAM='bias{feature}_signed_after_{idx}-bias{feature}_signed_before_{idx}'",
                 f".meas tran d_readout{feature}_signed_{idx} PARAM='readout{feature}_signed_after_{idx}-readout{feature}_signed_before_{idx}'",
             ]
-            if hidden_credit_mode == "readout-restored":
+            if hidden_credit_mode in {"readout-restored", "readout-restored-hardgate"}:
                 measures += [
                     f".meas tran rvwp{feature}_after_err_{idx} FIND V(rvwp{feature}) AT={base + 5.10 * scale:.2f}n",
                     f".meas tran rvwn{feature}_after_err_{idx} FIND V(rvwn{feature}) AT={base + 5.10 * scale:.2f}n",
@@ -1089,7 +1107,7 @@ def block_netlist(
                 f"Cpren{feature} pren{feature} 0 10f IC=0",
                 f"Rpren{feature} pren{feature} 0 1G",
             ]
-        if hidden_credit_mode == "readout-restored":
+        if hidden_credit_mode in {"readout-restored", "readout-restored-hardgate"}:
             lines += [
                 f"Crvwp{feature} rvwp{feature} 0 4f IC=0",
                 f"Crvwn{feature} rvwn{feature} 0 4f IC=0",
@@ -1167,7 +1185,7 @@ def block_netlist(
         ]
         if hidden_forward_topology == "split-rail":
             lines.append(f"Mreset_pren{feature} pren{feature} rstf 0 0 NMOS W=4u L=180n")
-        if hidden_credit_mode == "readout-restored":
+        if hidden_credit_mode in {"readout-restored", "readout-restored-hardgate"}:
             lines += [
                 f"Mprecharge_rvwp{feature} rvwp{feature} rstgn vdd vdd PMOS W=4u L=180n",
                 f"Mprecharge_rvwn{feature} rvwn{feature} rstgn vdd vdd PMOS W=4u L=180n",
@@ -1343,19 +1361,19 @@ def block_netlist(
                     else []
                 ),
                 f"Movpos{feature}_a vdd act{feature} op{feature}_0 0 {readout_model} W={readout_forward_width:.6g}u L=180n",
-                f"Movpos{feature}_w op{feature}_0 vwp{feature} op{feature}_1 0 {readout_model} W={readout_forward_width:.6g}u L=180n",
+                f"Movpos{feature}_w op{feature}_0 vwp{feature} op{feature}_1 0 {readout_weight_model} W={readout_forward_width:.6g}u L=180n",
                 f"Movpos{feature}_f op{feature}_1 {readout_forward_clock} score 0 {readout_model} W={readout_forward_width:.6g}u L=180n",
                 *(
                     [
                         f"Movneg{feature}_a vdd act{feature} on{feature}_0 0 {readout_model} W={readout_negative_forward_width:.6g}u L=180n",
-                        f"Movneg{feature}_w on{feature}_0 vwn{feature} on{feature}_1 0 {readout_model} W={readout_negative_forward_width:.6g}u L=180n",
+                        f"Movneg{feature}_w on{feature}_0 vwn{feature} on{feature}_1 0 {readout_weight_model} W={readout_negative_forward_width:.6g}u L=180n",
                         f"Movneg{feature}_f on{feature}_1 {readout_forward_clock} scoren 0 {readout_model} W={readout_negative_forward_width:.6g}u L=180n",
                     ]
                     if score_mode == "differential"
                     else [
                         f"Movneg{feature}_f score {readout_forward_clock} on{feature}_0 0 {readout_model} W={readout_negative_forward_width:.6g}u L=180n",
                         f"Movneg{feature}_a on{feature}_0 act{feature} on{feature}_1 0 {readout_model} W={readout_negative_forward_width:.6g}u L=180n",
-                        f"Movneg{feature}_w on{feature}_1 vwn{feature} 0 0 {readout_model} W={readout_negative_forward_width:.6g}u L=180n",
+                        f"Movneg{feature}_w on{feature}_1 vwn{feature} 0 0 {readout_weight_model} W={readout_negative_forward_width:.6g}u L=180n",
                     ]
                 ),
                 *(
@@ -1366,7 +1384,7 @@ def block_netlist(
                         f"Mrvwn{feature}_n rvwn{feature} vwp{feature} rvw_src{feature} 0 NSENSE W={readout_feedback_restore_width:.6g}u L=180n",
                         f"Mrvw{feature}_tail rvw_src{feature} err 0 0 NMOS W={readout_feedback_restore_width:.6g}u L=180n",
                     ]
-                    if hidden_credit_mode == "readout-restored"
+                    if hidden_credit_mode in {"readout-restored", "readout-restored-hardgate"}
                     else []
                 ),
                 *hidden_credit_device_lines(
@@ -1431,17 +1449,17 @@ def block_netlist(
         lines += [
             "",
             "* Trainable signed output bias contribution and local error-driven writer.",
-            f"Mobpos_w vdd obp obp_f0 0 {readout_model} W={readout_forward_width:.6g}u L=180n",
+            f"Mobpos_w vdd obp obp_f0 0 {readout_weight_model} W={readout_forward_width:.6g}u L=180n",
             f"Mobpos_f obp_f0 {readout_forward_clock} score 0 {readout_model} W={readout_forward_width:.6g}u L=180n",
             *(
                 [
-                    f"Mobneg_w vdd obn obn_f0 0 {readout_model} W={readout_negative_forward_width:.6g}u L=180n",
+                    f"Mobneg_w vdd obn obn_f0 0 {readout_weight_model} W={readout_negative_forward_width:.6g}u L=180n",
                     f"Mobneg_f obn_f0 {readout_forward_clock} scoren 0 {readout_model} W={readout_negative_forward_width:.6g}u L=180n",
                 ]
                 if score_mode == "differential"
                 else [
                     f"Mobneg_f score {readout_forward_clock} obn_f0 0 {readout_model} W={readout_negative_forward_width:.6g}u L=180n",
-                    f"Mobneg_w obn_f0 obn 0 0 {readout_model} W={readout_negative_forward_width:.6g}u L=180n",
+                    f"Mobneg_w obn_f0 obn 0 0 {readout_weight_model} W={readout_negative_forward_width:.6g}u L=180n",
                 ]
             ),
             f"Mgop_d vdd {readout_positive_error_node} gop_d 0 NSENSE W={readout_gradient_width:.6g}u L=180n",
@@ -2081,6 +2099,7 @@ def run_device_sequence(
     hidden_activation_model: str,
     readout_forward_width: float,
     readout_forward_model: str,
+    readout_weight_gate_model: str,
     learning_activation_gate_model: str,
     readout_weight_leak_resistance: float,
     readout_stack_shunt_resistance: float,
@@ -2148,6 +2167,7 @@ def run_device_sequence(
         hidden_activation_model=hidden_activation_model,
         readout_forward_width=readout_forward_width,
         readout_forward_model=readout_forward_model,
+        readout_weight_gate_model=readout_weight_gate_model,
         learning_activation_gate_model=learning_activation_gate_model,
         readout_weight_leak_resistance=readout_weight_leak_resistance,
         readout_stack_shunt_resistance=readout_stack_shunt_resistance,
@@ -2247,6 +2267,15 @@ def main() -> None:
     ap.add_argument("--hidden-polarity-init", choices=HIDDEN_POLARITY_INITS, default="ink")
     ap.add_argument("--readout-forward-width", type=float, default=64.0)
     ap.add_argument("--readout-forward-model", choices=READOUT_FORWARD_MODELS, default="nrel")
+    ap.add_argument(
+        "--readout-weight-gate-model",
+        choices=READOUT_WEIGHT_GATE_MODELS,
+        default="same",
+        help=(
+            "Device model for the stored readout-weight gate in the forward score stack. "
+            "'same' follows --readout-forward-model; 'switch' uses the nominal NMOS threshold as a hard gate."
+        ),
+    )
     ap.add_argument("--learning-activation-gate-model", choices=LEARNING_ACTIVATION_GATE_MODELS, default="nrel")
     ap.add_argument("--readout-weight-leak-resistance", type=float, default=0.0)
     ap.add_argument("--readout-stack-shunt-resistance", type=float, default=0.0)
@@ -2431,6 +2460,7 @@ def main() -> None:
         "hidden_activation_model": args.hidden_activation_model,
         "readout_forward_width": args.readout_forward_width,
         "readout_forward_model": args.readout_forward_model,
+        "readout_weight_gate_model": args.readout_weight_gate_model,
         "learning_activation_gate_model": args.learning_activation_gate_model,
         "readout_weight_leak_resistance": args.readout_weight_leak_resistance,
         "readout_stack_shunt_resistance": args.readout_stack_shunt_resistance,
@@ -2643,6 +2673,7 @@ def main() -> None:
         "hidden_polarity_init": args.hidden_polarity_init,
         "readout_forward_width": args.readout_forward_width,
         "readout_forward_model": args.readout_forward_model,
+        "readout_weight_gate_model": args.readout_weight_gate_model,
         "learning_activation_gate_model": args.learning_activation_gate_model,
         "readout_weight_leak_resistance": args.readout_weight_leak_resistance,
         "readout_stack_shunt_resistance": args.readout_stack_shunt_resistance,

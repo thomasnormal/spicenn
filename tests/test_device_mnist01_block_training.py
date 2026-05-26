@@ -951,6 +951,72 @@ def test_block_netlist_can_emit_restored_readout_weighted_hidden_credit() -> Non
     assert "Mhdn3_nv_w hdn3_nv_e rvwp3 hdn3_nv_w 0 NSENSE W=40u" in netlist
 
 
+def test_block_netlist_can_emit_hardgated_restored_readout_hidden_credit() -> None:
+    sys.path.insert(0, str(SPICE_DIR))
+    import run_device_mnist01_block_training as block
+
+    image_size = 4
+    weights = block.initial_block_weights(image_size, 2, 2, 1, seed=1)
+    sample = {f"x{i}": 0.2 + 0.01 * i for i in range(image_size * image_size)}
+    sample["target"] = 1.1
+    netlist = block.block_netlist(
+        [sample],
+        weights,
+        image_size=image_size,
+        block_size=2,
+        stride=2,
+        channels=1,
+        training_enabled=True,
+        score_mode="differential",
+        hidden_credit_mode="readout-restored-hardgate",
+        hidden_error_width=40.0,
+        readout_feedback_restore_width=6.0,
+    )
+
+    assert "\nB" not in netlist
+    assert "Mprecharge_rvwp3 rvwp3 rstgn vdd vdd PMOS W=4u" in netlist
+    assert "Mrvwp3_n rvwp3 vwn3 rvw_src3 0 NSENSE W=6u" in netlist
+    assert "Mhdp3_pv_w hdp3_pv_e rvwp3 hdp3_pv_w 0 NMOS W=40u" in netlist
+    assert "Mhdp3_nv_w hdp3_nv_e rvwn3 hdp3_nv_w 0 NMOS W=40u" in netlist
+    assert "Mhdn3_pv_w hdn3_pv_e rvwn3 hdn3_pv_w 0 NMOS W=40u" in netlist
+    assert "Mhdn3_nv_w hdn3_nv_e rvwp3 hdn3_nv_w 0 NMOS W=40u" in netlist
+    assert "Mhdp3_pv_w hdp3_pv_e rvwp3 hdp3_pv_w 0 NSENSE" not in netlist
+
+
+def test_block_netlist_can_hardgate_readout_weight_without_changing_readout_stack() -> None:
+    sys.path.insert(0, str(SPICE_DIR))
+    import run_device_mnist01_block_training as block
+
+    image_size = 4
+    weights = block.initial_block_weights(image_size, 2, 2, 1, seed=1)
+    sample = {f"x{i}": 0.2 + 0.01 * i for i in range(image_size * image_size)}
+    sample["target"] = 1.1
+    netlist = block.block_netlist(
+        [sample],
+        weights,
+        image_size=image_size,
+        block_size=2,
+        stride=2,
+        channels=1,
+        training_enabled=True,
+        score_mode="differential",
+        readout_forward_model="sense",
+        readout_weight_gate_model="switch",
+        output_bias_enabled=True,
+    )
+
+    assert "\nB" not in netlist
+    assert "Movpos3_a vdd act3 op3_0 0 NSENSE" in netlist
+    assert "Movpos3_w op3_0 vwp3 op3_1 0 NMOS" in netlist
+    assert "Movpos3_f op3_1 fwd score 0 NSENSE" in netlist
+    assert "Movneg3_a vdd act3 on3_0 0 NSENSE" in netlist
+    assert "Movneg3_w on3_0 vwn3 on3_1 0 NMOS" in netlist
+    assert "Movneg3_f on3_1 fwd scoren 0 NSENSE" in netlist
+    assert "Mobpos_w vdd obp obp_f0 0 NMOS" in netlist
+    assert "Mobpos_f obp_f0 fwd score 0 NSENSE" in netlist
+    assert "Movpos3_w op3_0 vwp3 op3_1 0 NSENSE" not in netlist
+
+
 def test_block_netlist_can_emit_restored_error_rails_for_learning() -> None:
     sys.path.insert(0, str(SPICE_DIR))
     import run_device_mnist01_block_training as block

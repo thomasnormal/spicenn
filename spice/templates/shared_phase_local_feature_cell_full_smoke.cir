@@ -73,10 +73,10 @@ Ract act 0 1G
 
 * Readout contribution from activation to differential score rails.
 Movpos_a vdd act op_0 0 NSENSE W={Wreadp} L=180n
-Movpos_w op_0 vwp op_1 0 NSENSE W={Wreadp} L=180n
+Movpos_w op_0 vwp op_1 0 NMOS W={Wreadp} L=180n
 Movpos_f op_1 fwd score 0 NSENSE W={Wreadp} L=180n
 Movneg_a vdd act on_0 0 NSENSE W={Wreadn} L=180n
-Movneg_w on_0 vwn on_1 0 NSENSE W={Wreadn} L=180n
+Movneg_w on_0 vwn on_1 0 NMOS W={Wreadn} L=180n
 Movneg_f on_1 fwd scoren 0 NSENSE W={Wreadn} L=180n
 Rop_0 op_0 0 1G
 Rop_1 op_1 0 1G
@@ -106,20 +106,20 @@ Rrvw_src rvw_src 0 1G
 
 * Hidden error: restored error rails edp/edn crossed with restored readout sign.
 Mhdp_pv_e vdd edp hdp_pv_e 0 NSENSE W={Werr} L=180n
-Mhdp_pv_w hdp_pv_e rvwp hdp_pv_w 0 NSENSE W={Werr} L=180n
+Mhdp_pv_w hdp_pv_e rvwp hdp_pv_w 0 NMOS W={Werr} L=180n
 Mhdp_pv_a hdp_pv_w act hdp_pv_a 0 NREL W={Werr} L=180n
 Mhdp_pv_b hdp_pv_a bwd hdp 0 NMOS W={Werr} L=180n
 Mhdp_nv_e vdd edn hdp_nv_e 0 NSENSE W={Werr} L=180n
-Mhdp_nv_w hdp_nv_e rvwn hdp_nv_w 0 NSENSE W={Werr} L=180n
+Mhdp_nv_w hdp_nv_e rvwn hdp_nv_w 0 NMOS W={Werr} L=180n
 Mhdp_nv_a hdp_nv_w act hdp_nv_a 0 NREL W={Werr} L=180n
 Mhdp_nv_b hdp_nv_a bwd hdp 0 NMOS W={Werr} L=180n
 
 Mhdn_pv_e vdd edp hdn_pv_e 0 NSENSE W={Werr} L=180n
-Mhdn_pv_w hdn_pv_e rvwn hdn_pv_w 0 NSENSE W={Werr} L=180n
+Mhdn_pv_w hdn_pv_e rvwn hdn_pv_w 0 NMOS W={Werr} L=180n
 Mhdn_pv_a hdn_pv_w act hdn_pv_a 0 NREL W={Werr} L=180n
 Mhdn_pv_b hdn_pv_a bwd hdn 0 NMOS W={Werr} L=180n
 Mhdn_nv_e vdd edn hdn_nv_e 0 NSENSE W={Werr} L=180n
-Mhdn_nv_w hdn_nv_e rvwp hdn_nv_w 0 NSENSE W={Werr} L=180n
+Mhdn_nv_w hdn_nv_e rvwp hdn_nv_w 0 NMOS W={Werr} L=180n
 Mhdn_nv_a hdn_nv_w act hdn_nv_a 0 NREL W={Werr} L=180n
 Mhdn_nv_b hdn_nv_a bwd hdn 0 NMOS W={Werr} L=180n
 

@@ -27,7 +27,7 @@ from spicenn.timing import CYCLE_NS
 INPUT_RAIL_MODES = ("raw", "complement", "alternating-complement")
 TARGET_POLARITIES = ("active-high", "active-low")
 HIDDEN_ACTIVATION_MODELS = ("nrel", "sense")
-HIDDEN_FORWARD_TOPOLOGIES = ("per-pixel-phase", "shared-phase", "always-on")
+HIDDEN_FORWARD_TOPOLOGIES = ("per-pixel-phase", "shared-phase", "always-on", "split-rail")
 READOUT_FORWARD_MODELS = ("nrel", "sense")
 LEARNING_ACTIVATION_GATE_MODELS = ("nrel", "sense")
 HIDDEN_POLARITY_INITS = ("ink", "alternating-channel", "random-pixel")
@@ -58,6 +58,35 @@ def spice_capacitance(value: float) -> str:
     if value < 1e-9:
         return f"{value / 1e-12:.12g}p"
     return f"{value:.12g}"
+
+
+def spice_subcircuits() -> str:
+    return "\n".join(
+        [
+            ".subckt signed_store p n Cp=20f Icp=0.5 Icn=0.2 Rleak=1e15",
+            "Cp_ p 0 {Cp} IC={Icp}",
+            "Cn_ n 0 {Cp} IC={Icn}",
+            "Rp_ p 0 {Rleak}",
+            "Rn_ n 0 {Rleak}",
+            ".ends signed_store",
+        ]
+    )
+
+
+def signed_store_instance(
+    name: str,
+    positive_node: str,
+    negative_node: str,
+    *,
+    capacitance: str = "20f",
+    positive_ic: float,
+    negative_ic: float,
+    leak_resistance: str = "1e15",
+) -> str:
+    return (
+        f"X{name} {positive_node} {negative_node} signed_store "
+        f"Cp={capacitance} Icp={positive_ic:.12g} Icn={negative_ic:.12g} Rleak={leak_resistance}"
+    )
 
 
 def decision_ref_divider_resistances(ref_voltage: float, total_resistance: float) -> tuple[float, float]:
@@ -626,6 +655,7 @@ def block_netlist(
         f"* {feature_count} feature cells, each with {block_len} trainable hidden pixel weights.",
         f".param VDD={VDD_VALUE:.12g}",
         mos_models(),
+        spice_subcircuits(),
         "Vdd vdd 0 {VDD}",
     ]
     if readout_weight_leak_resistance > 0.0:
@@ -677,10 +707,13 @@ def block_netlist(
     for feature in range(feature_count):
         for pix in range(block_len):
             lines += [
-                f"Cwhp{feature}_{pix} whp{feature}_{pix} 0 20f IC={float(weights['whp'][feature][pix]):.12g}",
-                f"Cwhn{feature}_{pix} whn{feature}_{pix} 0 20f IC={float(weights['whn'][feature][pix]):.12g}",
-                f"Rwhp{feature}_{pix} whp{feature}_{pix} 0 1e15",
-                f"Rwhn{feature}_{pix} whn{feature}_{pix} 0 1e15",
+                signed_store_instance(
+                    f"wh{feature}_{pix}",
+                    f"whp{feature}_{pix}",
+                    f"whn{feature}_{pix}",
+                    positive_ic=float(weights["whp"][feature][pix]),
+                    negative_ic=float(weights["whn"][feature][pix]),
+                ),
             ]
             if hidden_weight_leak_resistance > 0.0:
                 lines += [
@@ -688,14 +721,20 @@ def block_netlist(
                     f"Rwhn{feature}_{pix}_leak whn{feature}_{pix} whn_ref {hidden_weight_leak_resistance:.6g}",
                 ]
         lines += [
-            f"Cbhp{feature} bhp{feature} 0 20f IC={float(weights['bhp'][feature]):.12g}",
-            f"Cbhn{feature} bhn{feature} 0 20f IC={float(weights['bhn'][feature]):.12g}",
-            f"Cvwp{feature} vwp{feature} 0 20f IC={float(weights['vwp'][feature]):.12g}",
-            f"Cvwn{feature} vwn{feature} 0 20f IC={float(weights['vwn'][feature]):.12g}",
-            f"Rbhp{feature} bhp{feature} 0 1e15",
-            f"Rbhn{feature} bhn{feature} 0 1e15",
-            f"Rvwp{feature} vwp{feature} 0 1e15",
-            f"Rvwn{feature} vwn{feature} 0 1e15",
+            signed_store_instance(
+                f"bh{feature}",
+                f"bhp{feature}",
+                f"bhn{feature}",
+                positive_ic=float(weights["bhp"][feature]),
+                negative_ic=float(weights["bhn"][feature]),
+            ),
+            signed_store_instance(
+                f"vw{feature}",
+                f"vwp{feature}",
+                f"vwn{feature}",
+                positive_ic=float(weights["vwp"][feature]),
+                negative_ic=float(weights["vwn"][feature]),
+            ),
         ]
         if hidden_weight_leak_resistance > 0.0:
             lines += [
@@ -714,14 +753,11 @@ def block_netlist(
         lines += [
             "",
             "* Persistent signed output bias and local bias-gradient state.",
-            f"Cobp obp 0 20f IC={obp_initial:.12g}",
-            f"Cobn obn 0 20f IC={obn_initial:.12g}",
+            signed_store_instance("ob", "obp", "obn", positive_ic=obp_initial, negative_ic=obn_initial),
             "Cgop gop 0 2f IC=0",
             "Cgon gon 0 2f IC=0",
             "Crop rop 0 4f IC=1.2",
             "Cron ron 0 4f IC=1.2",
-            "Robp obp 0 1e15",
-            "Robn obn 0 1e15",
             "Rgop gop 0 1G",
             "Rgon gon 0 1G",
             "Rrop rop vdd 50k",
@@ -813,6 +849,11 @@ def block_netlist(
             f"Rrgp{feature} rgp{feature} vdd 50k",
             f"Rrgn{feature} rgn{feature} vdd 50k",
         ]
+        if hidden_forward_topology == "split-rail":
+            lines += [
+                f"Cpren{feature} pren{feature} 0 10f IC=0",
+                f"Rpren{feature} pren{feature} 0 1G",
+            ]
         if hidden_credit_mode == "readout-restored":
             lines += [
                 f"Crvwp{feature} rvwp{feature} 0 4f IC=0",
@@ -879,6 +920,8 @@ def block_netlist(
             f"Mreset_gbp{feature} gbp{feature} rstg 0 0 NMOS W=4u L=180n",
             f"Mreset_gbn{feature} gbn{feature} rstg 0 0 NMOS W=4u L=180n",
         ]
+        if hidden_forward_topology == "split-rail":
+            lines.append(f"Mreset_pren{feature} pren{feature} rstf 0 0 NMOS W=4u L=180n")
         if hidden_credit_mode == "readout-restored":
             lines += [
                 f"Mprecharge_rvwp{feature} vdd rstgn rvwp{feature} vdd PMOS W=4u L=180n",
@@ -927,6 +970,12 @@ def block_netlist(
                         f"hp{feature}_{pix}_0",
                         f"hn{feature}_{pix}_0",
                     ]
+                elif hidden_forward_topology == "split-rail":
+                    hidden_forward_lines = [
+                        f"Mhspos{feature}_{pix} {input_node} whp{feature}_{pix} pre{feature} 0 NMOS W={hidden_forward_width:.6g}u L=180n",
+                        f"Mhsneg{feature}_{pix} {input_node} whn{feature}_{pix} pren{feature} 0 NMOS W={hidden_neg_width:.6g}u L=180n",
+                    ]
+                    hidden_stack_nodes = []
                 else:
                     hidden_forward_lines = [
                         f"Mhpos{feature}_{pix}_x vdd {input_node} hp{feature}_{pix}_0 0 NMOS W={hidden_forward_width:.6g}u L=180n",
@@ -980,6 +1029,11 @@ def block_netlist(
                     f"Mhbpos{feature}_b vdd bhp{feature} pre{feature} 0 NMOS W={hidden_forward_width:.6g}u L=180n",
                     f"Mhbneg{feature}_b pre{feature} bhn{feature} 0 0 NMOS W={hidden_neg_width:.6g}u L=180n",
                 ]
+            elif hidden_forward_topology == "split-rail":
+                hidden_bias_lines = [
+                    f"Mhbpos{feature}_b vdd bhp{feature} pre{feature} 0 NMOS W={hidden_forward_width:.6g}u L=180n",
+                    f"Mhbneg{feature}_b vdd bhn{feature} pren{feature} 0 NMOS W={hidden_neg_width:.6g}u L=180n",
+                ]
             else:
                 hidden_bias_lines = [
                     f"Mhbpos{feature}_b vdd bhp{feature} hbp{feature}_0 0 NMOS W={hidden_forward_width:.6g}u L=180n",
@@ -987,9 +1041,18 @@ def block_netlist(
                     f"Mhbneg{feature}_f pre{feature} fwd hbn{feature}_0 0 NMOS W={hidden_neg_width:.6g}u L=180n",
                     f"Mhbneg{feature}_b hbn{feature}_0 bhn{feature} 0 0 NMOS W={hidden_neg_width:.6g}u L=180n",
                 ]
+            if hidden_forward_topology == "split-rail":
+                hidden_activation_lines = [
+                    f"Mrelu_h{feature}_p vdd pre{feature} act{feature} 0 {activation_model} W={hidden_activation_width:.6g}u L=180n",
+                    f"Mrelu_h{feature}_n act{feature} pren{feature} 0 0 {activation_model} W={hidden_activation_width:.6g}u L=180n",
+                ]
+            else:
+                hidden_activation_lines = [
+                    f"Mrelu_h{feature} vdd pre{feature} act{feature} 0 {activation_model} W={hidden_activation_width:.6g}u L=180n",
+                ]
             lines += [
                 *hidden_bias_lines,
-                f"Mrelu_h{feature} vdd pre{feature} act{feature} 0 {activation_model} W={hidden_activation_width:.6g}u L=180n",
+                *hidden_activation_lines,
                 *(
                     [
                         line

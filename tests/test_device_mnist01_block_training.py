@@ -154,7 +154,8 @@ def test_block_netlist_output_measurement_detail_omits_state_capacitor_measures(
     assert ".meas tran error_net_0" in netlist
     assert ".meas tran whp0_0_after_apply_0" not in netlist
     assert ".meas tran act0_before_0" not in netlist
-    assert "Cwhp0_0 whp0_0 0 20f" in netlist
+    assert ".subckt signed_store p n Cp=20f Icp=0.5 Icn=0.2 Rleak=1e15" in netlist
+    assert "Xwh0_0 whp0_0 whn0_0 signed_store Cp=20f" in netlist
     assert "Mwhp0_0_up_g" in netlist
 
 
@@ -371,12 +372,14 @@ def test_block_netlist_emits_per_pixel_trainable_caps_and_no_behavioral_sources(
     )
 
     assert "\nB" not in netlist
-    assert netlist.count("Cwhp") == 16
-    assert netlist.count("Cbhp") == 4
+    assert netlist.count("\nXwh") == 16
+    assert netlist.count("\nXbh") == 4
+    assert netlist.count("\nXvw") == 4
     assert "Vx15 x15 0 PWL" in netlist
     assert "Vx16 x16 0 PWL" not in netlist
-    assert "Cwhp3_3 whp3_3 0 20f" in netlist
-    assert "Cbhp3 bhp3 0 20f" in netlist
+    assert "Xwh3_3 whp3_3 whn3_3 signed_store Cp=20f" in netlist
+    assert "Xbh3 bhp3 bhn3 signed_store Cp=20f" in netlist
+    assert "Xvw3 vwp3 vwn3 signed_store Cp=20f" in netlist
     assert "Mhpos3_3_x vdd x15 hp3_3_0 0 NMOS" in netlist
     assert "Mhbpos3_b vdd bhp3 hbp3_0 0 NMOS" in netlist
     assert "Mghp3_3_d ghp3_3_x hdp3 ghp3_3_d 0 NSENSE W=18u" in netlist
@@ -554,6 +557,72 @@ def test_block_netlist_always_on_hidden_stack_conditioning_matches_shallow_nodes
     assert "Rhread_hn3_3_0 hn3_3_0 0 1e+12" in netlist
     assert "Chread_hp3_3_1" not in netlist
     assert "Rhread_hn3_3_1" not in netlist
+
+
+def test_block_netlist_can_emit_split_rail_hidden_forward_topology() -> None:
+    sys.path.insert(0, str(SPICE_DIR))
+    import run_device_mnist01_block_training as block
+
+    image_size = 4
+    weights = block.initial_block_weights(image_size, 2, 2, 1, seed=1)
+    sample = {f"x{i}": 0.2 + 0.01 * i for i in range(image_size * image_size)}
+    sample["target"] = 1.1
+    netlist = block.block_netlist(
+        [sample],
+        weights,
+        image_size=image_size,
+        block_size=2,
+        stride=2,
+        channels=1,
+        training_enabled=True,
+        hidden_forward_width=3.0,
+        hidden_forward_topology="split-rail",
+    )
+
+    assert "\nB" not in netlist
+    assert "Cpren3 pren3 0 10f IC=0" in netlist
+    assert "Rpren3 pren3 0 1G" in netlist
+    assert "Mreset_pren3 pren3 rstf 0 0 NMOS W=4u" in netlist
+    assert "Mhspos3_3 x15 whp3_3 pre3 0 NMOS W=3u" in netlist
+    assert "Mhsneg3_3 x15 whn3_3 pren3 0 NMOS W=2.25u" in netlist
+    assert "Mhbpos3_b vdd bhp3 pre3 0 NMOS W=3u" in netlist
+    assert "Mhbneg3_b vdd bhn3 pren3 0 NMOS W=2.25u" in netlist
+    assert "Mrelu_h3_p vdd pre3 act3 0 NREL W=24u" in netlist
+    assert "Mrelu_h3_n act3 pren3 0 0 NREL W=24u" in netlist
+    assert "Mhpos3_3_x" not in netlist
+    assert "Mhneg3_3_x" not in netlist
+    assert "Mhpos3_3_f" not in netlist
+    assert "hp3_3_0" not in netlist
+    assert "hn3_3_0" not in netlist
+
+
+def test_block_netlist_split_rail_has_no_per_pixel_hidden_stack_conditioning_nodes() -> None:
+    sys.path.insert(0, str(SPICE_DIR))
+    import run_device_mnist01_block_training as block
+
+    image_size = 4
+    weights = block.initial_block_weights(image_size, 2, 2, 1, seed=1)
+    sample = {f"x{i}": 0.2 + 0.01 * i for i in range(image_size * image_size)}
+    sample["target"] = 1.1
+    netlist = block.block_netlist(
+        [sample],
+        weights,
+        image_size=image_size,
+        block_size=2,
+        stride=2,
+        channels=1,
+        training_enabled=True,
+        hidden_forward_topology="split-rail",
+        hidden_stack_parasitic_capacitance=1e-16,
+        hidden_stack_shunt_resistance=1e12,
+    )
+
+    assert "\nB" not in netlist
+    assert "Chread_hp3_3_0" not in netlist
+    assert "Rhread_hp3_3_0" not in netlist
+    assert "Chread_hn3_3_0" not in netlist
+    assert "Rhread_hn3_3_0" not in netlist
+    assert "Cpren3 pren3 0 10f IC=0" in netlist
 
 
 def test_block_netlist_can_emit_differential_score_path_without_behavioral_sources() -> None:
@@ -1648,8 +1717,7 @@ def test_block_netlist_can_emit_trainable_output_bias() -> None:
     )
 
     assert "\nB" not in netlist
-    assert "Cobp obp 0 20f IC=0.52" in netlist
-    assert "Cobn obn 0 20f IC=0.25" in netlist
+    assert "Xob obp obn signed_store Cp=20f Icp=0.52 Icn=0.25 Rleak=1e15" in netlist
     assert "Mobpos_w vdd obp obp_f0 0 NREL W=64u" in netlist
     assert "Mobpos_f obp_f0 fwd score 0 NREL W=64u" in netlist
     assert "Mobneg_w vdd obn obn_f0 0 NREL W=48u" in netlist
@@ -1734,12 +1802,13 @@ def test_block_netlist_can_emit_target_topology_without_behavioral_sources() -> 
     )
 
     assert "\nB" not in netlist
-    assert netlist.count("Cwhp") == 32 * 16
-    assert netlist.count("Cbhp") == 32
+    assert netlist.count("\nXwh") == 32 * 16
+    assert netlist.count("\nXbh") == 32
+    assert netlist.count("\nXvw") == 32
     assert "Vx99 x99 0 PWL" in netlist
     assert "Vnx99 nx99 0 PWL" in netlist
-    assert "Cwhp31_15 whp31_15 0 20f" in netlist
-    assert "Cbhp31 bhp31 0 20f" in netlist
+    assert "Xwh31_15 whp31_15 whn31_15 signed_store Cp=20f" in netlist
+    assert "Xbh31 bhp31 bhn31 signed_store Cp=20f" in netlist
     assert "Mhpos30_15_x vdd x99 hp30_15_0 0 NMOS" in netlist
     assert "Mhpos31_15_x vdd nx99 hp31_15_0 0 NMOS" in netlist
     assert "Mghp31_15_x vdd nx99 ghp31_15_x 0 NMOS" in netlist

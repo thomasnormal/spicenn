@@ -125,7 +125,9 @@ def test_readout_writer_primitive_validation() -> None:
     with pytest.raises(ValueError, match="update_mode"):
         writer.generate_netlist(update_mode="bad")
     with pytest.raises(ValueError, match="bounded-ref update references"):
-        writer.generate_netlist(update_mode="positive", topology="bounded-ref", negative_ref=0.05, update_span=0.10)
+        writer.generate_netlist(update_mode="positive", topology="bounded-ref", positive_ref=1.15, update_span=0.10)
+    with pytest.raises(ValueError, match="update_low_floor"):
+        writer.generate_netlist(update_mode="positive", topology="bounded-ref", update_low_floor=-0.01)
     with pytest.raises(ValueError, match="timeout"):
         writer.main_for_test(["--timeout", "0"])
     with pytest.raises(ValueError, match="error-amplitude"):
@@ -256,6 +258,43 @@ def test_readout_writer_primitive_ngspice_restored_gate_uses_weak_eligibility(
     assert float(restored["gradient_margin"]) > 0.025
     assert float(restored["signed_delta"]) > 0.05
     assert abs(float(restored["common_delta"])) < 0.05
+
+
+def test_readout_writer_primitive_ngspice_low_floor_prevents_opposite_rail_erasure(
+    tmp_path: Path,
+    ngspice_path: str,
+) -> None:
+    erased = run_netlist(
+        ngspice_path,
+        tmp_path / "readout_writer_bounded_ref_erased.cir",
+        writer.generate_netlist(
+            update_mode="positive",
+            topology="bounded-ref",
+            update_span=0.34,
+            update_low_floor=0.0,
+            update_scale=0.10,
+            error_amplitude=1.2,
+        ),
+        timeout=20.0,
+    )
+    floored = run_netlist(
+        ngspice_path,
+        tmp_path / "readout_writer_bounded_ref_floored.cir",
+        writer.generate_netlist(
+            update_mode="positive",
+            topology="bounded-ref",
+            update_span=0.34,
+            update_low_floor=0.20,
+            update_scale=0.10,
+            error_amplitude=1.2,
+        ),
+        timeout=20.0,
+    )
+
+    assert float(erased["vwn_after"]) < 1e-3
+    assert float(floored["vwn_after"]) > 0.18
+    assert float(floored["signed_delta"]) > 0.25
+    assert abs(float(floored["common_delta"])) < 0.15
 
 
 def test_readout_writer_distribution_ngspice_direct_gate_starves_weak_feature(

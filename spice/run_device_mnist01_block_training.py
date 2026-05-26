@@ -819,6 +819,7 @@ def block_netlist(
     readout_gradient_source: str = "act",
     readout_weight_update_topology: str = "rail",
     readout_weight_update_span: float = 0.15,
+    readout_weight_update_low_floor: float = 0.0,
     readout_eligibility_width: float = 24.0,
     readout_eligibility_restore_width: float = 8.0,
     readout_gradient_normalization: str = "none",
@@ -986,6 +987,8 @@ def block_netlist(
         raise ValueError(f"readout_weight_update_topology must be one of {READOUT_WEIGHT_UPDATE_TOPOLOGIES}")
     if readout_weight_update_span < 0.0:
         raise ValueError("readout_weight_update_span must be nonnegative")
+    if readout_weight_update_low_floor < 0.0 or readout_weight_update_low_floor > VDD_VALUE:
+        raise ValueError("readout_weight_update_low_floor must stay within supply rails")
     if readout_eligibility_width <= 0.0:
         raise ValueError("readout_eligibility_width must be positive")
     if readout_eligibility_restore_width <= 0.0:
@@ -1075,7 +1078,10 @@ def block_netlist(
     readout_positive_error_node = "edp" if error_signal_mode == "restored" else "dp"
     readout_negative_error_node = "edn" if error_signal_mode == "restored" else "dn"
     readout_weight_update_high_ref = readout_weight_positive_ref + readout_weight_update_span
-    readout_weight_update_low_ref = readout_weight_negative_ref - readout_weight_update_span
+    readout_weight_update_low_ref = max(
+        readout_weight_negative_ref - readout_weight_update_span,
+        readout_weight_update_low_floor,
+    )
     if readout_weight_update_topology == "bounded-ref" and (
         readout_weight_update_high_ref > VDD_VALUE or readout_weight_update_low_ref < 0.0
     ):
@@ -3027,6 +3033,7 @@ def run_device_sequence(
     readout_gradient_source: str,
     readout_weight_update_topology: str,
     readout_weight_update_span: float,
+    readout_weight_update_low_floor: float,
     readout_eligibility_width: float,
     readout_eligibility_restore_width: float,
     readout_gradient_normalization: str,
@@ -3119,6 +3126,7 @@ def run_device_sequence(
         readout_gradient_source=readout_gradient_source,
         readout_weight_update_topology=readout_weight_update_topology,
         readout_weight_update_span=readout_weight_update_span,
+        readout_weight_update_low_floor=readout_weight_update_low_floor,
         readout_eligibility_width=readout_eligibility_width,
         readout_eligibility_restore_width=readout_eligibility_restore_width,
         readout_gradient_normalization=readout_gradient_normalization,
@@ -3290,8 +3298,14 @@ def main() -> None:
         default=0.15,
         help=(
             "Voltage offset used by bounded-ref readout writes: high_ref=positive_ref+span and "
-            "low_ref=negative_ref-span."
+            "low_ref=max(negative_ref-span, low_floor)."
         ),
+    )
+    ap.add_argument(
+        "--readout-weight-update-low-floor",
+        type=float,
+        default=0.0,
+        help="Optional physical floor for the bounded-ref low write target, preventing conductance erasure.",
     )
     ap.add_argument("--readout-eligibility-width", type=float, default=24.0)
     ap.add_argument("--readout-eligibility-restore-width", type=float, default=8.0)
@@ -3472,6 +3486,8 @@ def main() -> None:
         raise ValueError("readout-weight-init-sigma must be nonnegative")
     if args.readout_gradient_restore_width <= 0.0:
         raise ValueError("readout-gradient-restore-width must be positive")
+    if args.readout_weight_update_low_floor < 0.0 or args.readout_weight_update_low_floor > VDD_VALUE:
+        raise ValueError("readout-weight-update-low-floor must stay within supply rails")
     if args.readout_eligibility_width <= 0.0:
         raise ValueError("readout-eligibility-width must be positive")
     if args.readout_eligibility_restore_width <= 0.0:
@@ -3590,6 +3606,7 @@ def main() -> None:
         "readout_gradient_source": args.readout_gradient_source,
         "readout_weight_update_topology": args.readout_weight_update_topology,
         "readout_weight_update_span": args.readout_weight_update_span,
+        "readout_weight_update_low_floor": args.readout_weight_update_low_floor,
         "readout_eligibility_width": args.readout_eligibility_width,
         "readout_eligibility_restore_width": args.readout_eligibility_restore_width,
         "readout_gradient_normalization": args.readout_gradient_normalization,
@@ -3845,6 +3862,7 @@ def main() -> None:
         "readout_gradient_source": args.readout_gradient_source,
         "readout_weight_update_topology": args.readout_weight_update_topology,
         "readout_weight_update_span": args.readout_weight_update_span,
+        "readout_weight_update_low_floor": args.readout_weight_update_low_floor,
         "readout_eligibility_width": args.readout_eligibility_width,
         "readout_eligibility_restore_width": args.readout_eligibility_restore_width,
         "readout_gradient_normalization": args.readout_gradient_normalization,

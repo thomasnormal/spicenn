@@ -37,6 +37,7 @@ def generate_netlist(
     positive_ref: float = 0.36,
     negative_ref: float = 0.34,
     update_span: float = 0.15,
+    update_low_floor: float = 0.0,
     gradient_width: float = 24.0,
     gradient_restore_width: float = 16.0,
     gradient_gate_topology: str = "direct",
@@ -67,8 +68,10 @@ def generate_netlist(
         raise ValueError("error_amplitude must not exceed VDD")
     if update_span < 0.0:
         raise ValueError("update_span must be nonnegative")
+    if update_low_floor < 0.0 or update_low_floor > 1.2:
+        raise ValueError("update_low_floor must stay within supply rails")
     high_ref = positive_ref + update_span
-    low_ref = negative_ref - update_span
+    low_ref = max(negative_ref - update_span, update_low_floor)
     if topology == "bounded-ref" and (high_ref > 1.2 or low_ref < 0.0):
         raise ValueError("bounded-ref update references must stay within supply rails")
     dp, dn = update_rails(update_mode, amplitude=error_amplitude)
@@ -169,6 +172,7 @@ def generate_distribution_netlist(
     positive_ref: float = 0.36,
     negative_ref: float = 0.34,
     update_span: float = 0.15,
+    update_low_floor: float = 0.0,
     gradient_width: float = 24.0,
     gradient_restore_width: float = 32.0,
     gradient_gate_topology: str = "restored",
@@ -208,8 +212,10 @@ def generate_distribution_netlist(
         raise ValueError("error_amplitude must not exceed VDD")
     if update_span < 0.0:
         raise ValueError("update_span must be nonnegative")
+    if update_low_floor < 0.0 or update_low_floor > 1.2:
+        raise ValueError("update_low_floor must stay within supply rails")
     high_ref = positive_ref + update_span
-    low_ref = negative_ref - update_span
+    low_ref = max(negative_ref - update_span, update_low_floor)
     if topology == "bounded-ref" and (high_ref > 1.2 or low_ref < 0.0):
         raise ValueError("bounded-ref update references must stay within supply rails")
     dp, dn = update_rails(update_mode, amplitude=error_amplitude)
@@ -383,6 +389,7 @@ def run_cases(args: argparse.Namespace) -> dict[str, Any]:
                 positive_ref=args.positive_ref,
                 negative_ref=args.negative_ref,
                 update_span=args.update_span,
+                update_low_floor=args.update_low_floor,
                 gradient_width=args.gradient_width,
                 gradient_restore_width=args.gradient_restore_width,
                 gradient_gate_topology=args.gradient_gate_topology,
@@ -439,6 +446,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
     ap.add_argument("--positive-ref", type=float, default=0.36)
     ap.add_argument("--negative-ref", type=float, default=0.34)
     ap.add_argument("--update-span", type=float, default=0.15)
+    ap.add_argument("--update-low-floor", type=float, default=0.0)
     ap.add_argument("--gradient-width", type=float, default=24.0)
     ap.add_argument("--gradient-restore-width", type=float, default=16.0)
     ap.add_argument("--gradient-gate-topology", choices=GRADIENT_GATE_TOPOLOGIES, default="direct")
@@ -470,6 +478,8 @@ def validate_args(args: argparse.Namespace) -> None:
         raise ValueError("error-amplitude must not exceed VDD")
     if args.update_span < 0.0:
         raise ValueError("update-span must be nonnegative")
+    if args.update_low_floor < 0.0 or args.update_low_floor > 1.2:
+        raise ValueError("update-low-floor must stay within supply rails")
     if args.min_abs_delta < 0.0:
         raise ValueError("min-abs-delta must be nonnegative")
     if args.max_common_delta < 0.0:

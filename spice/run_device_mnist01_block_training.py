@@ -31,6 +31,7 @@ READOUT_FORWARD_MODELS = ("nrel", "sense")
 LEARNING_ACTIVATION_GATE_MODELS = ("nrel", "sense")
 HIDDEN_POLARITY_INITS = ("ink", "alternating-channel", "random-pixel")
 HIDDEN_CREDIT_MODES = ("direct-feedback", "readout-weighted", "readout-restored")
+ERROR_SIGNAL_MODES = ("raw", "restored", "restored-hidden")
 SCORE_MODES = ("single-ended", "differential")
 OUTPUT_DIFFERENTIAL_STAGES = ("simple", "score-gated", "latched")
 OUTPUT_DECISION_REF_SOURCES = ("voltage", "divider", "adaptive")
@@ -287,15 +288,17 @@ def hidden_credit_device_lines(
     feature: int,
     *,
     mode: str,
+    positive_error_node: str,
+    negative_error_node: str,
     hidden_error_width: float,
     learning_activation_model: str,
 ) -> list[str]:
     if mode == "direct-feedback":
         return [
-            f"Mhdp{feature}_d0 vdd dp hdp{feature}_d0 0 NSENSE W={hidden_error_width:.6g}u L=180n",
+            f"Mhdp{feature}_d0 vdd {positive_error_node} hdp{feature}_d0 0 NSENSE W={hidden_error_width:.6g}u L=180n",
             f"Mhdp{feature}_d1 hdp{feature}_d0 act{feature} hdp{feature}_d1 0 {learning_activation_model} W={hidden_error_width:.6g}u L=180n",
             f"Mhdp{feature}_d2 hdp{feature}_d1 bwd hdp{feature} 0 NMOS W={hidden_error_width:.6g}u L=180n",
-            f"Mhdn{feature}_d0 vdd dn hdn{feature}_d0 0 NSENSE W={hidden_error_width:.6g}u L=180n",
+            f"Mhdn{feature}_d0 vdd {negative_error_node} hdn{feature}_d0 0 NSENSE W={hidden_error_width:.6g}u L=180n",
             f"Mhdn{feature}_d1 hdn{feature}_d0 act{feature} hdn{feature}_d1 0 {learning_activation_model} W={hidden_error_width:.6g}u L=180n",
             f"Mhdn{feature}_d2 hdn{feature}_d1 bwd hdn{feature} 0 NMOS W={hidden_error_width:.6g}u L=180n",
         ]
@@ -303,19 +306,19 @@ def hidden_credit_device_lines(
         positive_weight_gate = f"rvwp{feature}" if mode == "readout-restored" else f"vwp{feature}"
         negative_weight_gate = f"rvwn{feature}" if mode == "readout-restored" else f"vwn{feature}"
         return [
-            f"Mhdp{feature}_pv_e vdd dp hdp{feature}_pv_e 0 NSENSE W={hidden_error_width:.6g}u L=180n",
+            f"Mhdp{feature}_pv_e vdd {positive_error_node} hdp{feature}_pv_e 0 NSENSE W={hidden_error_width:.6g}u L=180n",
             f"Mhdp{feature}_pv_w hdp{feature}_pv_e {positive_weight_gate} hdp{feature}_pv_w 0 NSENSE W={hidden_error_width:.6g}u L=180n",
             f"Mhdp{feature}_pv_a hdp{feature}_pv_w act{feature} hdp{feature}_pv_a 0 {learning_activation_model} W={hidden_error_width:.6g}u L=180n",
             f"Mhdp{feature}_pv_b hdp{feature}_pv_a bwd hdp{feature} 0 NMOS W={hidden_error_width:.6g}u L=180n",
-            f"Mhdp{feature}_nv_e vdd dn hdp{feature}_nv_e 0 NSENSE W={hidden_error_width:.6g}u L=180n",
+            f"Mhdp{feature}_nv_e vdd {negative_error_node} hdp{feature}_nv_e 0 NSENSE W={hidden_error_width:.6g}u L=180n",
             f"Mhdp{feature}_nv_w hdp{feature}_nv_e {negative_weight_gate} hdp{feature}_nv_w 0 NSENSE W={hidden_error_width:.6g}u L=180n",
             f"Mhdp{feature}_nv_a hdp{feature}_nv_w act{feature} hdp{feature}_nv_a 0 {learning_activation_model} W={hidden_error_width:.6g}u L=180n",
             f"Mhdp{feature}_nv_b hdp{feature}_nv_a bwd hdp{feature} 0 NMOS W={hidden_error_width:.6g}u L=180n",
-            f"Mhdn{feature}_pv_e vdd dp hdn{feature}_pv_e 0 NSENSE W={hidden_error_width:.6g}u L=180n",
+            f"Mhdn{feature}_pv_e vdd {positive_error_node} hdn{feature}_pv_e 0 NSENSE W={hidden_error_width:.6g}u L=180n",
             f"Mhdn{feature}_pv_w hdn{feature}_pv_e {negative_weight_gate} hdn{feature}_pv_w 0 NSENSE W={hidden_error_width:.6g}u L=180n",
             f"Mhdn{feature}_pv_a hdn{feature}_pv_w act{feature} hdn{feature}_pv_a 0 {learning_activation_model} W={hidden_error_width:.6g}u L=180n",
             f"Mhdn{feature}_pv_b hdn{feature}_pv_a bwd hdn{feature} 0 NMOS W={hidden_error_width:.6g}u L=180n",
-            f"Mhdn{feature}_nv_e vdd dn hdn{feature}_nv_e 0 NSENSE W={hidden_error_width:.6g}u L=180n",
+            f"Mhdn{feature}_nv_e vdd {negative_error_node} hdn{feature}_nv_e 0 NSENSE W={hidden_error_width:.6g}u L=180n",
             f"Mhdn{feature}_nv_w hdn{feature}_nv_e {positive_weight_gate} hdn{feature}_nv_w 0 NSENSE W={hidden_error_width:.6g}u L=180n",
             f"Mhdn{feature}_nv_a hdn{feature}_nv_w act{feature} hdn{feature}_nv_a 0 {learning_activation_model} W={hidden_error_width:.6g}u L=180n",
             f"Mhdn{feature}_nv_b hdn{feature}_nv_a bwd hdn{feature} 0 NMOS W={hidden_error_width:.6g}u L=180n",
@@ -351,6 +354,8 @@ def block_netlist(
     hidden_error_width: float = 32.0,
     hidden_credit_mode: str = "direct-feedback",
     readout_feedback_restore_width: float = 4.0,
+    error_signal_mode: str = "raw",
+    error_restore_width: float = 4.0,
     hidden_update_width: float = 12.0,
     hidden_weight_write_width: float = 0.25,
     hidden_activation_width: float = 24.0,
@@ -429,6 +434,12 @@ def block_netlist(
         raise ValueError(f"{hidden_credit_mode} hidden_credit_mode requires differential score_mode")
     if readout_feedback_restore_width <= 0.0:
         raise ValueError("readout_feedback_restore_width must be positive")
+    if error_signal_mode not in ERROR_SIGNAL_MODES:
+        raise ValueError(f"error_signal_mode must be one of {ERROR_SIGNAL_MODES}")
+    if error_signal_mode in {"restored", "restored-hidden"} and score_mode != "differential":
+        raise ValueError(f"{error_signal_mode} error_signal_mode requires differential score_mode")
+    if error_restore_width <= 0.0:
+        raise ValueError("error_restore_width must be positive")
     if hidden_update_width <= 0.0:
         raise ValueError("hidden_update_width must be positive")
     if hidden_weight_write_width <= 0.0:
@@ -487,6 +498,11 @@ def block_netlist(
     readout_nmos_w = 2.0 * readout_apply_scale
     output_bias_pmos_w = readout_pmos_w * output_bias_apply_scale
     output_bias_nmos_w = readout_nmos_w * output_bias_apply_scale
+    restore_error_enabled = error_signal_mode in {"restored", "restored-hidden"}
+    hidden_positive_error_node = "edp" if restore_error_enabled else "dp"
+    hidden_negative_error_node = "edn" if restore_error_enabled else "dn"
+    readout_positive_error_node = "edp" if error_signal_mode == "restored" else "dp"
+    readout_negative_error_node = "edn" if error_signal_mode == "restored" else "dn"
     hidden_neg_width = max(0.5, hidden_forward_width * 0.75)
     readout_negative_forward_width = max(0.5, readout_forward_width * 0.75)
     cycle_ns = CYCLE_NS * phase_time_scale
@@ -508,6 +524,12 @@ def block_netlist(
             f".meas tran d_out_{idx} PARAM='out_after_{idx}-out_before_{idx}'",
             f".meas tran error_net_{idx} PARAM='dp_after_{idx}-dn_after_{idx}'",
         ]
+        if restore_error_enabled:
+            measures += [
+                f".meas tran edp_after_{idx} FIND V(edp) AT={base + 5.10 * scale:.2f}n",
+                f".meas tran edn_after_{idx} FIND V(edn) AT={base + 5.10 * scale:.2f}n",
+                f".meas tran error_restored_diff_{idx} PARAM='edp_after_{idx}-edn_after_{idx}'",
+            ]
         if output_differential_stage == "latched":
             measures += [
                 f".meas tran outn_before_{idx} FIND V(outn) AT={base + 2.95 * scale:.2f}n",
@@ -697,6 +719,15 @@ def block_netlist(
         "Rdp dp 0 1G",
         "Rdn dn 0 1G",
     ]
+    if restore_error_enabled:
+        lines += [
+            "Cedp edp 0 8f IC=0",
+            "Cedn edn 0 8f IC=0",
+            "Cerrstore_src errstore_src 0 0.1f IC=0",
+            "Redp edp 0 1G",
+            "Redn edn 0 1G",
+            "Rerrstore_src errstore_src 0 1G",
+        ]
     if activation_competition_width > 0.0:
         lines += [
             "Cactinh actinh 0 10f IC=0",
@@ -780,6 +811,11 @@ def block_netlist(
         "Mreset_dp dp rstg 0 0 NMOS W=4u L=180n",
         "Mreset_dn dn rstg 0 0 NMOS W=4u L=180n",
     ]
+    if restore_error_enabled:
+        lines += [
+            "Mprecharge_edp vdd rstgn edp vdd PMOS W=4u L=180n",
+            "Mprecharge_edn vdd rstgn edn vdd PMOS W=4u L=180n",
+        ]
     if output_bias_enabled:
         lines += [
             "Mreset_gop gop rstg 0 0 NMOS W=4u L=180n",
@@ -923,14 +959,16 @@ def block_netlist(
                 *hidden_credit_device_lines(
                     feature,
                     mode=hidden_credit_mode,
+                    positive_error_node=hidden_positive_error_node,
+                    negative_error_node=hidden_negative_error_node,
                     hidden_error_width=hidden_error_width,
                     learning_activation_model=learning_activation_model,
                 ),
                 f"Mgvp{feature}_a vdd act{feature} gvp{feature}_a 0 {learning_activation_model} W={readout_gradient_width:.6g}u L=180n",
-                f"Mgvp{feature}_d gvp{feature}_a dp gvp{feature}_d 0 NSENSE W={readout_gradient_width:.6g}u L=180n",
+                f"Mgvp{feature}_d gvp{feature}_a {readout_positive_error_node} gvp{feature}_d 0 NSENSE W={readout_gradient_width:.6g}u L=180n",
                 f"Mgvp{feature}_g gvp{feature}_d acc gvp{feature} 0 NREL W={readout_gradient_width:.6g}u L=180n",
                 f"Mgvn{feature}_a vdd act{feature} gvn{feature}_a 0 {learning_activation_model} W={readout_gradient_width:.6g}u L=180n",
-                f"Mgvn{feature}_d gvn{feature}_a dn gvn{feature}_d 0 NSENSE W={readout_gradient_width:.6g}u L=180n",
+                f"Mgvn{feature}_d gvn{feature}_a {readout_negative_error_node} gvn{feature}_d 0 NSENSE W={readout_gradient_width:.6g}u L=180n",
                 f"Mgvn{feature}_g gvn{feature}_d acc gvn{feature} 0 NREL W={readout_gradient_width:.6g}u L=180n",
                 f"Mgbp{feature}_d vdd hdp{feature} gbp{feature}_d 0 NSENSE W={hidden_update_width:.6g}u L=180n",
                 f"Mgbp{feature}_g gbp{feature}_d acc gbp{feature} 0 NMOS W={hidden_update_width:.6g}u L=180n",
@@ -993,9 +1031,9 @@ def block_netlist(
                     f"Mobneg_w obn_f0 obn 0 0 {readout_model} W={readout_negative_forward_width:.6g}u L=180n",
                 ]
             ),
-            f"Mgop_d vdd dp gop_d 0 NSENSE W={readout_gradient_width:.6g}u L=180n",
+            f"Mgop_d vdd {readout_positive_error_node} gop_d 0 NSENSE W={readout_gradient_width:.6g}u L=180n",
             f"Mgop_g gop_d acc gop 0 NREL W={readout_gradient_width:.6g}u L=180n",
-            f"Mgon_d vdd dn gon_d 0 NSENSE W={readout_gradient_width:.6g}u L=180n",
+            f"Mgon_d vdd {readout_negative_error_node} gon_d 0 NSENSE W={readout_gradient_width:.6g}u L=180n",
             f"Mgon_g gon_d acc gon 0 NREL W={readout_gradient_width:.6g}u L=180n",
             "Mrop_pd rop gop 0 0 NSENSE W=16u L=180n",
             "Mron_pd ron gon 0 0 NSENSE W=16u L=180n",
@@ -1014,11 +1052,11 @@ def block_netlist(
         lines += [
             "",
             "* Adaptive decision-reference state: dp lowers the threshold, dn raises it during apply.",
-            "Moutref_raise_gate outref_raise_gate dn 0 0 NSENSE W=16u L=180n",
+            f"Moutref_raise_gate outref_raise_gate {readout_negative_error_node} 0 0 NSENSE W=16u L=180n",
             f"Moutref_raise_p0 vdd outref_raise_gate outref_raise vdd PMOS W={outref_charge_width:.6g}u L=180n",
             f"Moutref_raise_p1 outref_raise applyn outref vdd PMOS W={outref_charge_width:.6g}u L=180n",
             f"Moutref_lower_a outref apply outref_lower 0 NREL W={output_decision_ref_write_width:.6g}u L=180n",
-            f"Moutref_lower_g outref_lower dp 0 0 NSENSE W={output_decision_ref_write_width:.6g}u L=180n",
+            f"Moutref_lower_g outref_lower {readout_positive_error_node} 0 0 NSENSE W={output_decision_ref_write_width:.6g}u L=180n",
         ]
 
     if score_activity_inhibition_width > 0.0:
@@ -1182,6 +1220,19 @@ def block_netlist(
         ),
         "Mdn_t0 dn err dn_t 0 NSENSE W=24u L=180n",
         "Mdn_t1 dn_t target 0 0 NSENSE W=24u L=180n",
+        *(
+            [
+                "",
+                "* Restored output-error latch: raw dp/dn select full-swing edp/edn learning rails.",
+                f"Merrstore_p vdd edn edp vdd PMOS W={error_restore_width:.6g}u L=180n",
+                f"Merrstore_n vdd edp edn vdd PMOS W={error_restore_width:.6g}u L=180n",
+                f"Merrstore_ep edp dn errstore_src 0 NSENSE W={error_restore_width:.6g}u L=180n",
+                f"Merrstore_en edn dp errstore_src 0 NSENSE W={error_restore_width:.6g}u L=180n",
+                f"Merrstore_tail errstore_src err 0 0 NMOS W={error_restore_width:.6g}u L=180n",
+            ]
+            if restore_error_enabled
+            else []
+        ),
         "",
         ".options method=gear maxord=2",
         f".tran 10p {stop:.2f}n uic",
@@ -1504,6 +1555,8 @@ def run_device_sequence(
     hidden_error_width: float,
     hidden_credit_mode: str,
     readout_feedback_restore_width: float,
+    error_signal_mode: str,
+    error_restore_width: float,
     hidden_update_width: float,
     hidden_weight_write_width: float,
     hidden_activation_width: float,
@@ -1559,6 +1612,8 @@ def run_device_sequence(
         hidden_error_width=hidden_error_width,
         hidden_credit_mode=hidden_credit_mode,
         readout_feedback_restore_width=readout_feedback_restore_width,
+        error_signal_mode=error_signal_mode,
+        error_restore_width=error_restore_width,
         hidden_update_width=hidden_update_width,
         hidden_weight_write_width=hidden_weight_write_width,
         hidden_activation_width=hidden_activation_width,
@@ -1630,6 +1685,8 @@ def main() -> None:
     ap.add_argument("--hidden-error-width", type=float, default=32.0)
     ap.add_argument("--hidden-credit-mode", choices=HIDDEN_CREDIT_MODES, default="direct-feedback")
     ap.add_argument("--readout-feedback-restore-width", type=float, default=4.0)
+    ap.add_argument("--error-signal-mode", choices=ERROR_SIGNAL_MODES, default="raw")
+    ap.add_argument("--error-restore-width", type=float, default=4.0)
     ap.add_argument("--hidden-update-width", type=float, default=12.0)
     ap.add_argument("--hidden-weight-write-width", type=float, default=0.25)
     ap.add_argument("--hidden-activation-width", type=float, default=24.0)
@@ -1754,6 +1811,8 @@ def main() -> None:
         "hidden_error_width": args.hidden_error_width,
         "hidden_credit_mode": args.hidden_credit_mode,
         "readout_feedback_restore_width": args.readout_feedback_restore_width,
+        "error_signal_mode": args.error_signal_mode,
+        "error_restore_width": args.error_restore_width,
         "hidden_update_width": args.hidden_update_width,
         "hidden_weight_write_width": args.hidden_weight_write_width,
         "hidden_activation_width": args.hidden_activation_width,
@@ -1925,6 +1984,8 @@ def main() -> None:
         "hidden_bias_state": "persistent signed bhp/bhn capacitors with MOS/passive local bias writers",
         "hidden_credit_mode": args.hidden_credit_mode,
         "readout_feedback_restore_width": args.readout_feedback_restore_width,
+        "error_signal_mode": args.error_signal_mode,
+        "error_restore_width": args.error_restore_width,
         "output_driver_model": args.output_driver_model,
         "output_differential_stage": args.output_differential_stage,
         "output_score_pullup_width": args.output_score_pullup_width,

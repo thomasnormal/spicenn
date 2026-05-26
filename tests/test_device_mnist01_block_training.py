@@ -32,6 +32,8 @@ def test_device_mnist01_block_script_help_runs_from_repo_root() -> None:
     assert "--hidden-error-width" in proc.stdout
     assert "--hidden-credit-mode" in proc.stdout
     assert "--readout-feedback-restore-width" in proc.stdout
+    assert "--error-signal-mode" in proc.stdout
+    assert "--error-restore-width" in proc.stdout
     assert "--hidden-update-width" in proc.stdout
     assert "--hidden-weight-write-width" in proc.stdout
     assert "--hidden-activation-width" in proc.stdout
@@ -490,6 +492,81 @@ def test_block_netlist_can_emit_restored_readout_weighted_hidden_credit() -> Non
     assert "Mhdp3_nv_w hdp3_nv_e rvwn3 hdp3_nv_w 0 NSENSE W=40u" in netlist
     assert "Mhdn3_pv_w hdn3_pv_e rvwn3 hdn3_pv_w 0 NSENSE W=40u" in netlist
     assert "Mhdn3_nv_w hdn3_nv_e rvwp3 hdn3_nv_w 0 NSENSE W=40u" in netlist
+
+
+def test_block_netlist_can_emit_restored_error_rails_for_learning() -> None:
+    sys.path.insert(0, str(SPICE_DIR))
+    import run_device_mnist01_block_training as block
+
+    image_size = 4
+    weights = block.initial_block_weights(image_size, 2, 2, 1, seed=1)
+    sample = {f"x{i}": 0.2 + 0.01 * i for i in range(image_size * image_size)}
+    sample["target"] = 1.1
+    netlist = block.block_netlist(
+        [sample],
+        weights,
+        image_size=image_size,
+        block_size=2,
+        stride=2,
+        channels=1,
+        training_enabled=True,
+        score_mode="differential",
+        hidden_credit_mode="readout-restored",
+        error_signal_mode="restored",
+        error_restore_width=7.0,
+        output_decision_stage="ref-precharged-latched",
+        output_differential_stage="latched",
+    )
+
+    assert "\nB" not in netlist
+    assert "Cedp edp 0 8f IC=0" in netlist
+    assert "Cedn edn 0 8f IC=0" in netlist
+    assert "Mprecharge_edp vdd rstgn edp vdd PMOS W=4u" in netlist
+    assert "Mprecharge_edn vdd rstgn edn vdd PMOS W=4u" in netlist
+    assert "Merrstore_p vdd edn edp vdd PMOS W=7u" in netlist
+    assert "Merrstore_n vdd edp edn vdd PMOS W=7u" in netlist
+    assert "Merrstore_ep edp dn errstore_src 0 NSENSE W=7u" in netlist
+    assert "Merrstore_en edn dp errstore_src 0 NSENSE W=7u" in netlist
+    assert "Merrstore_tail errstore_src err 0 0 NMOS W=7u" in netlist
+    assert "Mhdp3_pv_e vdd edp hdp3_pv_e 0 NSENSE" in netlist
+    assert "Mhdp3_nv_e vdd edn hdp3_nv_e 0 NSENSE" in netlist
+    assert "Mhdn3_pv_e vdd edp hdn3_pv_e 0 NSENSE" in netlist
+    assert "Mhdn3_nv_e vdd edn hdn3_nv_e 0 NSENSE" in netlist
+    assert "Mgvp3_d gvp3_a edp gvp3_d 0 NSENSE" in netlist
+    assert "Mgvn3_d gvn3_a edn gvn3_d 0 NSENSE" in netlist
+    assert "Mdec_pc_n decision outref dec_src 0 NSENSE" in netlist
+    assert ".meas tran edp_after_0 FIND V(edp)" in netlist
+    assert ".meas tran error_restored_diff_0 PARAM='edp_after_0-edn_after_0'" in netlist
+
+
+def test_block_netlist_can_restore_only_hidden_error_transport() -> None:
+    sys.path.insert(0, str(SPICE_DIR))
+    import run_device_mnist01_block_training as block
+
+    image_size = 4
+    weights = block.initial_block_weights(image_size, 2, 2, 1, seed=1)
+    sample = {f"x{i}": 0.2 + 0.01 * i for i in range(image_size * image_size)}
+    sample["target"] = 1.1
+    netlist = block.block_netlist(
+        [sample],
+        weights,
+        image_size=image_size,
+        block_size=2,
+        stride=2,
+        channels=1,
+        training_enabled=True,
+        score_mode="differential",
+        hidden_credit_mode="readout-restored",
+        error_signal_mode="restored-hidden",
+        output_differential_stage="latched",
+    )
+
+    assert "\nB" not in netlist
+    assert "Merrstore_ep edp dn errstore_src 0 NSENSE" in netlist
+    assert "Mhdp3_pv_e vdd edp hdp3_pv_e 0 NSENSE" in netlist
+    assert "Mhdn3_nv_e vdd edn hdn3_nv_e 0 NSENSE" in netlist
+    assert "Mgvp3_d gvp3_a dp gvp3_d 0 NSENSE" in netlist
+    assert "Mgvn3_d gvn3_a dn gvn3_d 0 NSENSE" in netlist
 
 
 def test_readout_weighted_hidden_credit_requires_differential_score() -> None:

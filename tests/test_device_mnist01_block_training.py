@@ -310,6 +310,26 @@ def test_nontrivial_learning_requires_initial_eval_baseline() -> None:
     assert block.nontrivial_learning_flag(0.75, 0.75) is False
 
 
+def test_threshold_window_diagnostics_report_best_output_threshold() -> None:
+    sys.path.insert(0, str(SPICE_DIR))
+    import run_device_mnist01_block_training as block
+
+    rows = pd.DataFrame(
+        [
+            {"positive_label": 1.0, "out_after": 1.133},
+            {"positive_label": 1.0, "out_after": 1.132},
+            {"positive_label": 0.0, "out_after": 1.128},
+            {"positive_label": 0.0, "out_after": 1.123},
+        ]
+    )
+
+    diagnostics = block.threshold_window_diagnostics(rows, signal="out_after")
+
+    assert diagnostics["out_after_best_threshold_accuracy"] == 1.0
+    assert 1.128 < diagnostics["out_after_best_threshold"] < 1.132
+    assert diagnostics["out_after_best_threshold_active_fraction"] == 0.5
+
+
 def test_block_netlist_emits_per_pixel_trainable_caps_and_no_behavioral_sources() -> None:
     sys.path.insert(0, str(SPICE_DIR))
     import run_device_mnist01_block_training as block

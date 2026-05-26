@@ -1178,6 +1178,52 @@ def binary_accuracy_for_signal(
     return float(np.mean(predicted == expected))
 
 
+def threshold_window_diagnostics(
+    rows: pd.DataFrame,
+    *,
+    signal: str,
+    output_positive_when: str = "high",
+) -> dict[str, float | None]:
+    empty = {
+        f"{signal}_best_threshold_accuracy": None,
+        f"{signal}_best_threshold": None,
+        f"{signal}_best_threshold_active_fraction": None,
+    }
+    if rows.empty or signal not in rows.columns or "positive_label" not in rows.columns:
+        return empty
+    signal_values = rows[signal].dropna().to_numpy(dtype=float)
+    if signal_values.size == 0:
+        return empty
+    unique_values = np.unique(signal_values)
+    eps = max(1e-12, float(np.ptp(unique_values)) * 1e-9)
+    candidates = [float(unique_values[0] - eps), float(unique_values[-1] + eps)]
+    candidates += [float((lo + hi) / 2.0) for lo, hi in zip(unique_values[:-1], unique_values[1:])]
+
+    best_accuracy = -1.0
+    best_threshold = candidates[0]
+    best_active_fraction = 0.0
+    for threshold in candidates:
+        accuracy = binary_accuracy_for_signal(
+            rows,
+            signal=signal,
+            threshold=threshold,
+            output_positive_when=output_positive_when,
+        )
+        if output_positive_when == "high":
+            active_fraction = float(np.mean(rows[signal].to_numpy(dtype=float) > threshold))
+        else:
+            active_fraction = float(np.mean(rows[signal].to_numpy(dtype=float) <= threshold))
+        if accuracy > best_accuracy:
+            best_accuracy = accuracy
+            best_threshold = threshold
+            best_active_fraction = active_fraction
+    return {
+        f"{signal}_best_threshold_accuracy": best_accuracy,
+        f"{signal}_best_threshold": best_threshold,
+        f"{signal}_best_threshold_active_fraction": best_active_fraction,
+    }
+
+
 def nontrivial_learning_flag(initial_accuracy: float | None, final_accuracy: float) -> bool:
     if initial_accuracy is None:
         return False
@@ -1561,6 +1607,28 @@ def main() -> None:
         decision_threshold=args.decision_threshold,
     )
     score_net_summary = score_net_diagnostics(initial_eval_rows, final_eval_rows)
+    threshold_window_summary = {
+        **threshold_window_diagnostics(
+            final_eval_rows,
+            signal="out_after",
+            output_positive_when=output_positive_when,
+        ),
+        **threshold_window_diagnostics(
+            final_eval_rows,
+            signal="out_diff",
+            output_positive_when=output_positive_when,
+        ),
+        **threshold_window_diagnostics(
+            final_eval_rows,
+            signal="decision_after",
+            output_positive_when=output_positive_when,
+        ),
+        **threshold_window_diagnostics(
+            final_eval_rows,
+            signal="decision_diff",
+            output_positive_when=output_positive_when,
+        ),
+    }
     summary = {
         "simulator": version,
         "architecture": "device_level_mnist01_block_stride_channel_training",
@@ -1663,6 +1731,7 @@ def main() -> None:
         "final_eval_output_active_fraction": final_active_fraction,
         "nontrivial_learning_met": nontrivial_learning_met,
         **score_net_summary,
+        **threshold_window_summary,
         **output_bias_summary,
         "initial_weights": initial_weights,
         "final_weights": final_weights,

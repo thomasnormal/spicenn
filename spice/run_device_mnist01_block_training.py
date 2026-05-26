@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import time
 from collections.abc import Sequence
@@ -48,6 +49,28 @@ OUTPUT_DECISION_STAGES = (
 )
 MEASUREMENT_DETAILS = ("full", "outputs")
 VDD_VALUE = 1.2
+
+
+def stable_seed(seed: int, name: str) -> int:
+    digest = hashlib.blake2b(f"{seed}:{name}".encode("utf-8"), digest_size=8).digest()
+    return int.from_bytes(digest, "little") & ((1 << 63) - 1)
+
+
+def stable_normal(seed: int, name: str, sigma: float) -> float:
+    if sigma <= 0.0:
+        return 0.0
+    rng = np.random.default_rng(stable_seed(seed, name))
+    return float(rng.normal(0.0, sigma))
+
+
+def mismatch_factor(seed: int, name: str, sigma: float) -> float:
+    if sigma <= 0.0:
+        return 1.0
+    return max(0.05, 1.0 + stable_normal(seed, name, sigma))
+
+
+def clamp_voltage(value: float) -> float:
+    return min(VDD_VALUE, max(0.0, value))
 
 
 def spice_capacitance(value: float) -> str:
@@ -300,6 +323,67 @@ def block_sample_wave(samples: list[dict[str, Any]], key: str, stop_ns: float, *
     return "PWL(" + " ".join(f"{t:.12g}n {v:.12g}" for t, v in points) + ")"
 
 
+def perturb_input_records(
+    records: list[dict[str, Any]],
+    *,
+    sigma: float,
+    seed: int,
+) -> list[dict[str, Any]]:
+    if sigma < 0.0:
+        raise ValueError("input_voltage_jitter_sigma must be nonnegative")
+    if sigma == 0.0:
+        return [dict(record) for record in records]
+    perturbed: list[dict[str, Any]] = []
+    for sample_idx, record in enumerate(records):
+        copy = dict(record)
+        for key, value in record.items():
+            if key.startswith("x") or key.startswith("nx"):
+                copy[key] = clamp_voltage(float(value) + stable_normal(seed, f"input:{sample_idx}:{key}", sigma))
+        perturbed.append(copy)
+    return perturbed
+
+
+def perturb_initial_state(
+    weights: dict[str, Any],
+    *,
+    sigma: float,
+    seed: int,
+) -> dict[str, Any]:
+    if sigma < 0.0:
+        raise ValueError("state_ic_mismatch_sigma must be nonnegative")
+    copied: dict[str, Any] = {}
+    for name, value in weights.items():
+        array = np.asarray(value, dtype=float)
+        if sigma == 0.0:
+            copied[name] = array.copy().tolist()
+            continue
+        out = np.empty_like(array, dtype=float)
+        for index in np.ndindex(array.shape):
+            suffix = "_".join(str(part) for part in index)
+            out[index] = clamp_voltage(float(array[index]) + stable_normal(seed, f"state:{name}:{suffix}", sigma))
+        copied[name] = out.tolist()
+    return copied
+
+
+def jittered_interval(
+    start: float,
+    end: float,
+    *,
+    min_start: float,
+    max_end: float,
+    sigma: float,
+    seed: int,
+    name: str,
+) -> tuple[float, float]:
+    if sigma <= 0.0:
+        return start, end
+    offset = stable_normal(seed, name, sigma)
+    lower = min_start - start
+    upper = max_end - end
+    offset = min(max(offset, lower), upper)
+    return start + offset, end + offset
+
+
 def expand_training_schedule(sample_count: int, training_enabled: bool | Sequence[bool]) -> list[bool]:
     if isinstance(training_enabled, bool):
         return [training_enabled] * sample_count
@@ -314,7 +398,11 @@ def block_repeated_phases(
     *,
     training_enabled: bool | Sequence[bool],
     phase_time_scale: float,
+    phase_jitter_sigma_ns: float = 0.0,
+    phase_jitter_seed: int = 0,
 ) -> str:
+    if phase_jitter_sigma_ns < 0.0:
+        raise ValueError("phase_jitter_sigma_ns must be nonnegative")
     training_schedule = expand_training_schedule(sample_count, training_enabled)
     cycle_ns = CYCLE_NS * phase_time_scale
     stop = sample_count * cycle_ns
@@ -329,15 +417,35 @@ def block_repeated_phases(
     for idx in range(sample_count):
         base = idx * cycle_ns
         scale = phase_time_scale
-        rstf += [(base + 0.00 * scale, base + 0.50 * scale), (base + 12.05 * scale, base + 12.55 * scale)]
-        rstg += [(base + 0.00 * scale, base + 0.50 * scale)]
-        fwd += [(base + 0.75 * scale, base + 3.00 * scale), (base + 12.80 * scale, base + 15.60 * scale)]
-        dec.append((base + 15.00 * scale, base + 15.55 * scale))
+        sample_start = base
+        sample_stop = base + cycle_ns
+
+        def window(label: str, start: float, end: float) -> tuple[float, float]:
+            return jittered_interval(
+                start,
+                end,
+                min_start=sample_start,
+                max_end=sample_stop,
+                sigma=phase_jitter_sigma_ns,
+                seed=phase_jitter_seed,
+                name=f"phase:{idx}:{label}",
+            )
+
+        rstf += [
+            window("rstf0", base + 0.00 * scale, base + 0.50 * scale),
+            window("rstf1", base + 12.05 * scale, base + 12.55 * scale),
+        ]
+        rstg += [window("rstg", base + 0.00 * scale, base + 0.50 * scale)]
+        fwd += [
+            window("fwd0", base + 0.75 * scale, base + 3.00 * scale),
+            window("fwd1", base + 12.80 * scale, base + 15.60 * scale),
+        ]
+        dec.append(window("dec", base + 15.00 * scale, base + 15.55 * scale))
         if training_schedule[idx]:
-            err.append((base + 3.25 * scale, base + 5.00 * scale))
-            bwd.append((base + 5.25 * scale, base + 7.00 * scale))
-            acc.append((base + 7.25 * scale, base + 9.00 * scale))
-            apply.append((base + 9.25 * scale, base + 11.20 * scale))
+            err.append(window("err", base + 3.25 * scale, base + 5.00 * scale))
+            bwd.append(window("bwd", base + 5.25 * scale, base + 7.00 * scale))
+            acc.append(window("acc", base + 7.25 * scale, base + 9.00 * scale))
+            apply.append(window("apply", base + 9.25 * scale, base + 11.20 * scale))
     return "\n".join(
         [
             f"Vrstf rstf 0 {pulse_wave(rstf, stop)}",
@@ -480,6 +588,10 @@ def block_netlist(
     output_bias_positive_ref: float = 0.25,
     output_bias_negative_ref: float = 0.25,
     phase_time_scale: float = 1.0,
+    phase_jitter_sigma_ns: float = 0.0,
+    phase_jitter_seed: int = 0,
+    passive_mismatch_sigma: float = 0.0,
+    passive_mismatch_seed: int = 0,
     score_mode: str = "single-ended",
     input_rail_mode: str = "alternating-complement",
     measurement_detail: str = "full",
@@ -576,6 +688,10 @@ def block_netlist(
         raise ValueError("output_bias_leak_resistance must be nonnegative")
     if phase_time_scale <= 0.0:
         raise ValueError("phase_time_scale must be positive")
+    if phase_jitter_sigma_ns < 0.0:
+        raise ValueError("phase_jitter_sigma_ns must be nonnegative")
+    if passive_mismatch_sigma < 0.0:
+        raise ValueError("passive_mismatch_sigma must be nonnegative")
     if score_mode not in SCORE_MODES:
         raise ValueError(f"score_mode must be one of {SCORE_MODES}")
     if output_differential_stage not in OUTPUT_DIFFERENTIAL_STAGES:
@@ -741,6 +857,8 @@ def block_netlist(
     if output_decision_stage in {"ref-latched", "ref-precharged-latched", "ref-preamp-latched"}:
         if output_decision_ref_source == "divider":
             rtop, rbot = decision_ref_divider_resistances(output_decision_ref, output_decision_ref_resistance)
+            rtop *= mismatch_factor(passive_mismatch_seed, "Routref_top", passive_mismatch_sigma)
+            rbot *= mismatch_factor(passive_mismatch_seed, "Routref_bot", passive_mismatch_sigma)
             lines += [
                 f"Routref_top vdd outref {rtop:.12g}",
                 f"Routref_bot outref 0 {rbot:.12g}",
@@ -755,6 +873,8 @@ def block_netlist(
             ]
             if output_decision_ref_resistance > 0.0:
                 rtop, rbot = decision_ref_divider_resistances(output_decision_ref, output_decision_ref_resistance)
+                rtop *= mismatch_factor(passive_mismatch_seed, "Routref_top", passive_mismatch_sigma)
+                rbot *= mismatch_factor(passive_mismatch_seed, "Routref_bot", passive_mismatch_sigma)
                 lines += [
                     f"Routref_top vdd outref {rtop:.12g}",
                     f"Routref_bot outref 0 {rbot:.12g}",
@@ -765,7 +885,13 @@ def block_netlist(
         lines.append(f"V{rail} {rail} 0 {block_sample_wave(samples, rail, stop, cycle_ns=cycle_ns)}")
     lines += [
         f"Vtarget target 0 {block_sample_wave(samples, 'target', stop, cycle_ns=cycle_ns)}",
-        block_repeated_phases(len(samples), training_enabled=training_enabled, phase_time_scale=phase_time_scale),
+        block_repeated_phases(
+            len(samples),
+            training_enabled=training_enabled,
+            phase_time_scale=phase_time_scale,
+            phase_jitter_sigma_ns=phase_jitter_sigma_ns,
+            phase_jitter_seed=phase_jitter_seed,
+        ),
         "",
         "* Persistent signed hidden and readout weights.",
     ]
@@ -1862,6 +1988,10 @@ def run_device_sequence(
     output_bias_positive_ref: float,
     output_bias_negative_ref: float,
     phase_time_scale: float,
+    phase_jitter_sigma_ns: float,
+    phase_jitter_seed: int,
+    passive_mismatch_sigma: float,
+    passive_mismatch_seed: int,
     score_mode: str,
     input_rail_mode: str,
     measurement_detail: str,
@@ -1924,6 +2054,10 @@ def run_device_sequence(
         output_bias_positive_ref=output_bias_positive_ref,
         output_bias_negative_ref=output_bias_negative_ref,
         phase_time_scale=phase_time_scale,
+        phase_jitter_sigma_ns=phase_jitter_sigma_ns,
+        phase_jitter_seed=phase_jitter_seed,
+        passive_mismatch_sigma=passive_mismatch_sigma,
+        passive_mismatch_seed=passive_mismatch_seed,
         score_mode=score_mode,
         input_rail_mode=input_rail_mode,
         measurement_detail=measurement_detail,
@@ -2003,6 +2137,36 @@ def main() -> None:
     ap.add_argument("--output-bias-positive-ref", type=float, default=0.25)
     ap.add_argument("--output-bias-negative-ref", type=float, default=0.25)
     ap.add_argument("--phase-time-scale", type=float, default=1.0)
+    ap.add_argument(
+        "--input-voltage-jitter-sigma",
+        type=float,
+        default=0.0,
+        help="Gaussian input-DAC voltage jitter, in volts, applied deterministically to Python-supplied input rails.",
+    )
+    ap.add_argument(
+        "--phase-jitter-sigma-ns",
+        type=float,
+        default=0.0,
+        help="Gaussian timing jitter, in ns, applied deterministically to phase pulse windows.",
+    )
+    ap.add_argument(
+        "--passive-mismatch-sigma",
+        type=float,
+        default=0.0,
+        help="Relative sigma for passive resistor mismatch in generated circuit references.",
+    )
+    ap.add_argument(
+        "--state-ic-mismatch-sigma",
+        type=float,
+        default=0.0,
+        help="Gaussian initial capacitor-state mismatch, in volts, applied once before the transient.",
+    )
+    ap.add_argument(
+        "--perturbation-seed",
+        type=int,
+        default=0,
+        help="Seed for deterministic input jitter, phase jitter, and mismatch perturbations.",
+    )
     ap.add_argument("--score-mode", choices=SCORE_MODES, default="single-ended")
     ap.add_argument("--input-rail-mode", choices=INPUT_RAIL_MODES, default="alternating-complement")
     ap.add_argument(
@@ -2039,6 +2203,14 @@ def main() -> None:
         raise ValueError("train-samples must be positive for a training smoke")
     if args.eval_samples <= 0:
         raise ValueError("eval-samples must be positive")
+    if args.input_voltage_jitter_sigma < 0.0:
+        raise ValueError("input-voltage-jitter-sigma must be nonnegative")
+    if args.phase_jitter_sigma_ns < 0.0:
+        raise ValueError("phase-jitter-sigma-ns must be nonnegative")
+    if args.passive_mismatch_sigma < 0.0:
+        raise ValueError("passive-mismatch-sigma must be nonnegative")
+    if args.state_ic_mismatch_sigma < 0.0:
+        raise ValueError("state-ic-mismatch-sigma must be nonnegative")
     if args.measurement_detail != "full" and not args.continuous_final_eval:
         raise ValueError("--measurement-detail outputs requires --continuous-final-eval")
     blocks, feature_count = block_topology(args.image_size, args.block_size, args.stride, args.channels)
@@ -2065,6 +2237,16 @@ def main() -> None:
         target_polarity=args.target_polarity,
         download=args.download,
     )
+    train_samples = perturb_input_records(
+        train_samples,
+        sigma=args.input_voltage_jitter_sigma,
+        seed=stable_seed(args.perturbation_seed, "train-inputs"),
+    )
+    eval_samples = perturb_input_records(
+        eval_samples,
+        sigma=args.input_voltage_jitter_sigma,
+        seed=stable_seed(args.perturbation_seed, "eval-inputs"),
+    )
     initial_weights = initial_block_weights(
         args.image_size,
         args.block_size,
@@ -2076,6 +2258,11 @@ def main() -> None:
         hidden_polarity_init=args.hidden_polarity_init,
         output_bias_positive_init=args.output_bias_positive_init,
         output_bias_negative_init=args.output_bias_negative_init,
+    )
+    initial_weights = perturb_initial_state(
+        initial_weights,
+        sigma=args.state_ic_mismatch_sigma,
+        seed=stable_seed(args.perturbation_seed, "initial-state"),
     )
     common = {
         "image_size": args.image_size,
@@ -2133,6 +2320,10 @@ def main() -> None:
         "output_bias_positive_ref": args.output_bias_positive_ref,
         "output_bias_negative_ref": args.output_bias_negative_ref,
         "phase_time_scale": args.phase_time_scale,
+        "phase_jitter_sigma_ns": args.phase_jitter_sigma_ns,
+        "phase_jitter_seed": stable_seed(args.perturbation_seed, "phase-jitter"),
+        "passive_mismatch_sigma": args.passive_mismatch_sigma,
+        "passive_mismatch_seed": stable_seed(args.perturbation_seed, "passive-mismatch"),
         "score_mode": args.score_mode,
         "input_rail_mode": args.input_rail_mode,
         "measurement_detail": args.measurement_detail,
@@ -2335,6 +2526,15 @@ def main() -> None:
         "output_bias_positive_ref": args.output_bias_positive_ref,
         "output_bias_negative_ref": args.output_bias_negative_ref,
         "phase_time_scale": args.phase_time_scale,
+        "input_voltage_jitter_sigma": args.input_voltage_jitter_sigma,
+        "phase_jitter_sigma_ns": args.phase_jitter_sigma_ns,
+        "passive_mismatch_sigma": args.passive_mismatch_sigma,
+        "state_ic_mismatch_sigma": args.state_ic_mismatch_sigma,
+        "perturbation_seed": args.perturbation_seed,
+        "robustness_perturbation_model": (
+            "deterministic Gaussian input-DAC rail jitter, phase timing jitter, passive reference-resistor "
+            "mismatch, and initial capacitor-state mismatch; no behavioral learning elements are added"
+        ),
         "score_mode": args.score_mode,
         "measurement_detail": args.measurement_detail,
         "hidden_bias_positive_init": args.hidden_bias_positive_init,

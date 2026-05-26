@@ -59,6 +59,11 @@ def test_device_mnist01_block_script_help_runs_from_repo_root() -> None:
     assert "--measurement-detail" in proc.stdout
     assert "--readout-forward-width" in proc.stdout
     assert "--phase-time-scale" in proc.stdout
+    assert "--input-voltage-jitter-sigma" in proc.stdout
+    assert "--phase-jitter-sigma-ns" in proc.stdout
+    assert "--passive-mismatch-sigma" in proc.stdout
+    assert "--state-ic-mismatch-sigma" in proc.stdout
+    assert "--perturbation-seed" in proc.stdout
     assert "--hidden-bias-positive-init" in proc.stdout
     assert "--assert-nonbehavioral" in proc.stdout
     assert "--output-differential-stage" in proc.stdout
@@ -107,6 +112,61 @@ def test_block_training_schedule_can_disable_writes_for_eval_tail() -> None:
     assert "31n" in phases
     with pytest.raises(ValueError, match="training schedule length"):
         block.block_repeated_phases(2, training_enabled=[True], phase_time_scale=1.0)
+
+
+def test_block_training_phase_jitter_is_deterministic_and_changes_edges() -> None:
+    sys.path.insert(0, str(SPICE_DIR))
+    import pytest
+    import run_device_mnist01_block_training as block
+
+    nominal = block.block_repeated_phases(2, training_enabled=True, phase_time_scale=1.0)
+    jittered_a = block.block_repeated_phases(
+        2,
+        training_enabled=True,
+        phase_time_scale=1.0,
+        phase_jitter_sigma_ns=0.02,
+        phase_jitter_seed=123,
+    )
+    jittered_b = block.block_repeated_phases(
+        2,
+        training_enabled=True,
+        phase_time_scale=1.0,
+        phase_jitter_sigma_ns=0.02,
+        phase_jitter_seed=123,
+    )
+
+    assert jittered_a == jittered_b
+    assert jittered_a != nominal
+    assert "Vfwd fwd 0 PWL" in jittered_a
+    with pytest.raises(ValueError, match="phase_jitter_sigma_ns"):
+        block.block_repeated_phases(1, training_enabled=True, phase_time_scale=1.0, phase_jitter_sigma_ns=-0.01)
+
+
+def test_input_and_state_perturbations_are_seeded_and_bounded() -> None:
+    sys.path.insert(0, str(SPICE_DIR))
+    import pytest
+    import run_device_mnist01_block_training as block
+
+    samples = [{"x0": 0.1, "nx0": 1.19, "target": 1.1, "positive_label": 1.0}]
+    jittered_a = block.perturb_input_records(samples, sigma=0.02, seed=7)
+    jittered_b = block.perturb_input_records(samples, sigma=0.02, seed=7)
+    jittered_c = block.perturb_input_records(samples, sigma=0.02, seed=8)
+
+    assert jittered_a == jittered_b
+    assert jittered_a != jittered_c
+    assert jittered_a[0]["target"] == 1.1
+    assert 0.0 <= jittered_a[0]["x0"] <= block.VDD_VALUE
+    assert 0.0 <= jittered_a[0]["nx0"] <= block.VDD_VALUE
+
+    weights = {"whp": [[0.5]], "whn": [[0.2]], "bhp": [0.5], "bhn": [0.2], "vwp": [0.52], "vwn": [0.25]}
+    state_a = block.perturb_initial_state(weights, sigma=0.01, seed=9)
+    state_b = block.perturb_initial_state(weights, sigma=0.01, seed=9)
+    assert state_a == state_b
+    assert state_a != weights
+    with pytest.raises(ValueError, match="input_voltage_jitter_sigma"):
+        block.perturb_input_records(samples, sigma=-0.01, seed=1)
+    with pytest.raises(ValueError, match="state_ic_mismatch_sigma"):
+        block.perturb_initial_state(weights, sigma=-0.01, seed=1)
 
 
 def test_rows_from_measures_can_label_train_and_eval_segments() -> None:
@@ -1095,6 +1155,45 @@ def test_block_netlist_can_emit_passive_decision_reference_divider() -> None:
     assert "Routref_top vdd outref 250000" in netlist
     assert "Routref_bot outref 0 950000" in netlist
     assert "Coutref outref 0 1f IC=0" in netlist
+
+
+def test_passive_mismatch_perturbs_reference_divider_deterministically() -> None:
+    sys.path.insert(0, str(SPICE_DIR))
+    import run_device_mnist01_block_training as block
+
+    image_size = 4
+    weights = block.initial_block_weights(image_size, 2, 2, 1, seed=1)
+    sample = {f"x{i}": 0.2 + 0.01 * i for i in range(image_size * image_size)}
+    sample["target"] = 1.1
+
+    def emit(seed: int) -> str:
+        return block.block_netlist(
+            [sample],
+            weights,
+            image_size=image_size,
+            block_size=2,
+            stride=2,
+            channels=1,
+            training_enabled=True,
+            score_mode="differential",
+            output_differential_stage="latched",
+            output_decision_stage="ref-precharged-latched",
+            output_decision_ref=0.95,
+            output_decision_ref_source="divider",
+            output_decision_ref_resistance=1.2e6,
+            passive_mismatch_sigma=0.01,
+            passive_mismatch_seed=seed,
+        )
+
+    netlist_a = emit(5)
+    netlist_b = emit(5)
+    netlist_c = emit(6)
+
+    assert "\nB" not in netlist_a
+    assert netlist_a == netlist_b
+    assert netlist_a != netlist_c
+    assert "Routref_top vdd outref 250000" not in netlist_a
+    assert "Routref_bot outref 0 950000" not in netlist_a
 
 
 def test_block_netlist_can_emit_adaptive_decision_reference_state() -> None:

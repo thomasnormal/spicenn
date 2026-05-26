@@ -32,8 +32,27 @@ LEARNING_ACTIVATION_GATE_MODELS = ("nrel", "sense")
 HIDDEN_POLARITY_INITS = ("ink", "alternating-channel", "random-pixel")
 SCORE_MODES = ("single-ended", "differential")
 OUTPUT_DIFFERENTIAL_STAGES = ("simple", "score-gated", "latched")
-OUTPUT_DECISION_STAGES = ("none", "ref-latched", "diff-latched", "ratio-inverter", "shift-inverter")
+OUTPUT_DECISION_STAGES = (
+    "none",
+    "ref-latched",
+    "ref-precharged-latched",
+    "ref-preamp-latched",
+    "diff-latched",
+    "ratio-inverter",
+    "stacked-inverter",
+    "shift-inverter",
+)
 MEASUREMENT_DETAILS = ("full", "outputs")
+
+
+def spice_capacitance(value: float) -> str:
+    if value <= 0.0:
+        raise ValueError("capacitance must be positive")
+    if value < 1e-12:
+        return f"{value / 1e-15:.12g}f"
+    if value < 1e-9:
+        return f"{value / 1e-12:.12g}p"
+    return f"{value:.12g}"
 
 
 def block_topology(image_size: int, block_size: int, stride: int, channels: int) -> tuple[list[list[int]], int]:
@@ -213,6 +232,7 @@ def block_repeated_phases(
     return "\n".join(
         [
             f"Vrstf rstf 0 {pulse_wave(rstf, stop)}",
+            f"Vrstfn rstfn 0 {active_low_pulse_wave(rstf, stop)}",
             f"Vrstg rstg 0 {pulse_wave(rstg, stop)}",
             f"Vfwd fwd 0 {pulse_wave(fwd, stop)}",
             f"Verr err 0 {pulse_wave(err, stop)}",
@@ -262,6 +282,7 @@ def block_netlist(
     output_differential_stage: str = "simple",
     output_score_pullup_width: float = 24.0,
     output_scoren_pulldown_width: float = 24.0,
+    output_latch_capacitance: float = 20e-15,
     output_decision_stage: str = "none",
     output_decision_ref: float = 1.09,
     output_decision_pullup_width: float = 48.0,
@@ -304,9 +325,14 @@ def block_netlist(
         raise ValueError("output_score_pullup_width must be positive")
     if output_scoren_pulldown_width <= 0.0:
         raise ValueError("output_scoren_pulldown_width must be positive")
+    if output_latch_capacitance <= 0.0:
+        raise ValueError("output_latch_capacitance must be positive")
     if output_decision_stage not in OUTPUT_DECISION_STAGES:
         raise ValueError(f"output_decision_stage must be one of {OUTPUT_DECISION_STAGES}")
-    if output_decision_stage in {"ref-latched", "diff-latched"} and output_differential_stage != "latched":
+    if (
+        output_decision_stage in {"ref-latched", "ref-precharged-latched", "ref-preamp-latched", "diff-latched"}
+        and output_differential_stage != "latched"
+    ):
         raise ValueError("output_decision_stage requires latched output_differential_stage")
     if output_decision_pullup_width <= 0.0:
         raise ValueError("output_decision_pullup_width must be positive")
@@ -480,7 +506,7 @@ def block_netlist(
             f"Vobp_ref obp_ref 0 {output_bias_positive_ref:.12g}",
             f"Vobn_ref obn_ref 0 {output_bias_negative_ref:.12g}",
         ]
-    if output_decision_stage == "ref-latched":
+    if output_decision_stage in {"ref-latched", "ref-precharged-latched", "ref-preamp-latched"}:
         lines.append(f"Voutref outref 0 {output_decision_ref:.12g}")
     for rail in required_rails:
         lines.append(f"V{rail} {rail} 0 {block_sample_wave(samples, rail, stop, cycle_ns=cycle_ns)}")
@@ -544,7 +570,7 @@ def block_netlist(
         "* Shared output/error state.",
         "Cscore score 0 10f IC=0",
         "Cscoren scoren 0 10f IC=0",
-        "Cout out 0 20f IC=0",
+        f"Cout out 0 {spice_capacitance(output_latch_capacitance)} IC=0",
         "Cdp dp 0 20f IC=0",
         "Cdn dn 0 20f IC=0",
         "Rscore score 0 1G",
@@ -560,7 +586,7 @@ def block_netlist(
         ]
     if output_differential_stage == "latched":
         lines += [
-            "Coutn outn 0 20f IC=0",
+            f"Coutn outn 0 {spice_capacitance(output_latch_capacitance)} IC=0",
             "Routn outn 0 1G",
         ]
     if output_decision_stage != "none":
@@ -570,10 +596,22 @@ def block_netlist(
             "Rdecision decision 0 1G",
             "Rdecisionn decisionn 0 1G",
         ]
+    if output_decision_stage == "ref-preamp-latched":
+        lines += [
+            "Cdecision_pre decision_pre 0 10f IC=0",
+            "Cdecisionn_pre decisionn_pre 0 10f IC=0",
+            "Rdecision_pre decision_pre 0 1G",
+            "Rdecisionn_pre decisionn_pre 0 1G",
+        ]
     if output_decision_stage == "shift-inverter":
         lines += [
             "Cdec_mid dec_mid 0 20f IC=0",
             "Rdec_mid dec_mid 0 1G",
+        ]
+    if output_decision_stage == "stacked-inverter":
+        lines += [
+            "Cdec_stack0 dec_stack0 0 0.1f IC=0",
+            "Cdec_stack1 dec_stack1 0 0.1f IC=0",
         ]
     for feature in range(feature_count):
         lines += [
@@ -622,10 +660,20 @@ def block_netlist(
         ]
     if output_differential_stage == "latched":
         lines.append("Mreset_outn outn rstf 0 0 NMOS W=4u L=180n")
-    if output_decision_stage != "none":
+    if output_decision_stage != "none" and output_decision_stage != "ref-precharged-latched":
         lines += [
             "Mreset_decision decision rstf 0 0 NMOS W=4u L=180n",
             "Mreset_decisionn decisionn rstf 0 0 NMOS W=4u L=180n",
+        ]
+    if output_decision_stage == "ref-precharged-latched":
+        lines += [
+            "Mprecharge_decision vdd rstfn decision vdd PMOS W=4u L=180n",
+            "Mprecharge_decisionn vdd rstfn decisionn vdd PMOS W=4u L=180n",
+        ]
+    if output_decision_stage == "ref-preamp-latched":
+        lines += [
+            "Mreset_decision_pre decision_pre rstf 0 0 NMOS W=4u L=180n",
+            "Mreset_decisionn_pre decisionn_pre rstf 0 0 NMOS W=4u L=180n",
         ]
     if activation_competition_width > 0.0:
         lines.append("Mreset_actinh actinh rstf 0 0 NMOS W=4u L=180n")
@@ -875,6 +923,33 @@ def block_netlist(
                 f"Mdec_tail dec_src dec 0 0 NMOS W={output_decision_pulldown_width:.6g}u L=180n",
             ]
         )
+    elif output_decision_stage == "ref-precharged-latched":
+        decision_stage = "\n".join(
+            [
+                "* Precharged reference latch: reset precharges both decision rails high, dec discharges the lower side.",
+                f"Mdec_pc_p vdd decisionn decision vdd PMOS W={output_decision_pullup_width:.6g}u L=180n",
+                f"Mdecn_pc_p vdd decision decisionn vdd PMOS W={output_decision_pullup_width:.6g}u L=180n",
+                f"Mdec_pc_n decision outref dec_src 0 NSENSE W={output_decision_pulldown_width:.6g}u L=180n",
+                f"Mdecn_pc_n decisionn out dec_src 0 NSENSE W={output_decision_pulldown_width:.6g}u L=180n",
+                f"Mdec_pc_tail dec_src dec 0 0 NMOS W={output_decision_pulldown_width:.6g}u L=180n",
+            ]
+        )
+    elif output_decision_stage == "ref-preamp-latched":
+        decision_stage = "\n".join(
+            [
+                "* High-impedance reference preamp followed by a regenerative decision latch.",
+                f"Mdecpre_lp vdd decision_pre decision_pre vdd PMOS W={output_decision_pullup_width:.6g}u L=180n",
+                f"Mdecpre_ln vdd decisionn_pre decisionn_pre vdd PMOS W={output_decision_pullup_width:.6g}u L=180n",
+                f"Mdecpre_ref decision_pre outref decpre_src 0 NSENSE W={output_decision_pulldown_width:.6g}u L=180n",
+                f"Mdecpre_out decisionn_pre out decpre_src 0 NSENSE W={output_decision_pulldown_width:.6g}u L=180n",
+                f"Mdecpre_tail decpre_src dec 0 0 NMOS W={output_decision_pulldown_width:.6g}u L=180n",
+                f"Mdec_p decision decisionn vdd vdd PMOS W={output_decision_pullup_width:.6g}u L=180n",
+                f"Mdecn_p decisionn decision vdd vdd PMOS W={output_decision_pullup_width:.6g}u L=180n",
+                f"Mdec_n decision decisionn_pre dec_src 0 NSENSE W={output_decision_pulldown_width:.6g}u L=180n",
+                f"Mdecn_n decisionn decision_pre dec_src 0 NSENSE W={output_decision_pulldown_width:.6g}u L=180n",
+                f"Mdec_tail dec_src dec 0 0 NMOS W={output_decision_pulldown_width:.6g}u L=180n",
+            ]
+        )
     elif output_decision_stage == "diff-latched":
         decision_stage = "\n".join(
             [
@@ -894,6 +969,18 @@ def block_netlist(
                 f"Mdec_inv1_n decisionn out 0 0 NMOS W={output_decision_pulldown_width:.6g}u L=180n",
                 f"Mdec_inv2_p decision decisionn vdd vdd PMOS W={output_decision_pullup_width:.6g}u L=180n",
                 f"Mdec_inv2_n decision decisionn 0 0 NMOS W={output_decision_pulldown_width:.6g}u L=180n",
+            ]
+        )
+    elif output_decision_stage == "stacked-inverter":
+        decision_stage = "\n".join(
+            [
+                "* High-threshold CMOS detector: three stacked NMOS devices raise the input trip without loading out.",
+                f"Mdec_stack_p decisionn out vdd vdd PMOS W={output_decision_pullup_width:.6g}u L=180n",
+                f"Mdec_stack_n0 decisionn out dec_stack0 0 NMOS W={output_decision_pulldown_width:.6g}u L=180n",
+                f"Mdec_stack_n1 dec_stack0 out dec_stack1 0 NMOS W={output_decision_pulldown_width:.6g}u L=180n",
+                f"Mdec_stack_n2 dec_stack1 out 0 0 NMOS W={output_decision_pulldown_width:.6g}u L=180n",
+                f"Mdec_buf_p decision decisionn vdd vdd PMOS W={output_decision_pullup_width:.6g}u L=180n",
+                f"Mdec_buf_n decision decisionn 0 0 NMOS W={output_decision_pulldown_width:.6g}u L=180n",
             ]
         )
     elif output_decision_stage == "shift-inverter":
@@ -1247,6 +1334,7 @@ def run_device_sequence(
     output_differential_stage: str,
     output_score_pullup_width: float,
     output_scoren_pulldown_width: float,
+    output_latch_capacitance: float,
     output_decision_stage: str,
     output_decision_ref: float,
     output_decision_pullup_width: float,
@@ -1295,6 +1383,7 @@ def run_device_sequence(
         output_differential_stage=output_differential_stage,
         output_score_pullup_width=output_score_pullup_width,
         output_scoren_pulldown_width=output_scoren_pulldown_width,
+        output_latch_capacitance=output_latch_capacitance,
         output_decision_stage=output_decision_stage,
         output_decision_ref=output_decision_ref,
         output_decision_pullup_width=output_decision_pullup_width,
@@ -1358,6 +1447,7 @@ def main() -> None:
     ap.add_argument("--output-differential-stage", choices=OUTPUT_DIFFERENTIAL_STAGES, default="simple")
     ap.add_argument("--output-score-pullup-width", type=float, default=24.0)
     ap.add_argument("--output-scoren-pulldown-width", type=float, default=24.0)
+    ap.add_argument("--output-latch-capacitance", type=float, default=20e-15)
     ap.add_argument("--output-decision-stage", choices=OUTPUT_DECISION_STAGES, default="none")
     ap.add_argument("--output-decision-ref", type=float, default=1.09)
     ap.add_argument("--output-decision-pullup-width", type=float, default=48.0)
@@ -1476,6 +1566,7 @@ def main() -> None:
         "output_differential_stage": args.output_differential_stage,
         "output_score_pullup_width": args.output_score_pullup_width,
         "output_scoren_pulldown_width": args.output_scoren_pulldown_width,
+        "output_latch_capacitance": args.output_latch_capacitance,
         "output_decision_stage": args.output_decision_stage,
         "output_decision_ref": args.output_decision_ref,
         "output_decision_pullup_width": args.output_decision_pullup_width,
@@ -1658,6 +1749,7 @@ def main() -> None:
         "output_differential_stage": args.output_differential_stage,
         "output_score_pullup_width": args.output_score_pullup_width,
         "output_scoren_pulldown_width": args.output_scoren_pulldown_width,
+        "output_latch_capacitance": args.output_latch_capacitance,
         "output_decision_stage": args.output_decision_stage,
         "output_decision_ref": args.output_decision_ref,
         "output_decision_pullup_width": args.output_decision_pullup_width,

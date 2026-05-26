@@ -56,6 +56,7 @@ def test_device_mnist01_block_script_help_runs_from_repo_root() -> None:
     assert "--output-differential-stage" in proc.stdout
     assert "--output-score-pullup-width" in proc.stdout
     assert "--output-scoren-pulldown-width" in proc.stdout
+    assert "--output-latch-capacitance" in proc.stdout
     assert "--output-decision-stage" in proc.stdout
     assert "--output-decision-ref" in proc.stdout
     assert "--output-decision-pullup-width" in proc.stdout
@@ -498,6 +499,31 @@ def test_block_netlist_can_emit_latched_differential_output_stage() -> None:
     assert ".meas tran out_diff_0 PARAM='out_after_0-outn_after_0'" in netlist
 
 
+def test_block_netlist_can_size_latched_output_storage_capacitance() -> None:
+    sys.path.insert(0, str(SPICE_DIR))
+    import run_device_mnist01_block_training as block
+
+    image_size = 4
+    weights = block.initial_block_weights(image_size, 2, 2, 1, seed=1)
+    sample = {f"x{i}": 0.2 + 0.01 * i for i in range(image_size * image_size)}
+    sample["target"] = 1.1
+    netlist = block.block_netlist(
+        [sample],
+        weights,
+        image_size=image_size,
+        block_size=2,
+        stride=2,
+        channels=1,
+        training_enabled=True,
+        score_mode="differential",
+        output_differential_stage="latched",
+        output_latch_capacitance=200e-15,
+    )
+
+    assert "Cout out 0 200f IC=0" in netlist
+    assert "Coutn outn 0 200f IC=0" in netlist
+
+
 def test_block_netlist_can_emit_reference_latched_decision_stage() -> None:
     sys.path.insert(0, str(SPICE_DIR))
     import run_device_mnist01_block_training as block
@@ -537,6 +563,88 @@ def test_block_netlist_can_emit_reference_latched_decision_stage() -> None:
     assert ".meas tran decision_after_0 FIND V(decision) AT=15.50n" in netlist
     assert ".meas tran decisionn_after_0 FIND V(decisionn) AT=15.50n" in netlist
     assert ".meas tran decision_diff_0 PARAM='decision_after_0-decisionn_after_0'" in netlist
+
+
+def test_block_netlist_can_emit_precharged_reference_latched_decision_stage() -> None:
+    sys.path.insert(0, str(SPICE_DIR))
+    import run_device_mnist01_block_training as block
+
+    image_size = 4
+    weights = block.initial_block_weights(image_size, 2, 2, 1, seed=1)
+    sample = {f"x{i}": 0.2 + 0.01 * i for i in range(image_size * image_size)}
+    sample["target"] = 1.1
+    netlist = block.block_netlist(
+        [sample],
+        weights,
+        image_size=image_size,
+        block_size=2,
+        stride=2,
+        channels=1,
+        training_enabled=True,
+        score_mode="differential",
+        output_differential_stage="latched",
+        output_decision_stage="ref-precharged-latched",
+        output_decision_ref=1.13,
+        output_decision_pullup_width=48.0,
+        output_decision_pulldown_width=96.0,
+    )
+
+    assert "\nB" not in netlist
+    assert "Vrstfn rstfn 0 PWL" in netlist
+    assert "Voutref outref 0 1.13" in netlist
+    assert "Cdecision decision 0 20f IC=0" in netlist
+    assert "Cdecisionn decisionn 0 20f IC=0" in netlist
+    assert "Mreset_decision decision rstf 0 0 NMOS" not in netlist
+    assert "Mreset_decisionn decisionn rstf 0 0 NMOS" not in netlist
+    assert "Mprecharge_decision vdd rstfn decision vdd PMOS W=4u" in netlist
+    assert "Mprecharge_decisionn vdd rstfn decisionn vdd PMOS W=4u" in netlist
+    assert "Mdec_pc_p vdd decisionn decision vdd PMOS W=48u" in netlist
+    assert "Mdecn_pc_p vdd decision decisionn vdd PMOS W=48u" in netlist
+    assert "Mdec_pc_n decision outref dec_src 0 NSENSE W=96u" in netlist
+    assert "Mdecn_pc_n decisionn out dec_src 0 NSENSE W=96u" in netlist
+    assert "Mdec_pc_tail dec_src dec 0 0 NMOS W=96u" in netlist
+    assert ".meas tran decision_diff_0 PARAM='decision_after_0-decisionn_after_0'" in netlist
+
+
+def test_block_netlist_can_emit_reference_preamp_latched_decision_stage() -> None:
+    sys.path.insert(0, str(SPICE_DIR))
+    import run_device_mnist01_block_training as block
+
+    image_size = 4
+    weights = block.initial_block_weights(image_size, 2, 2, 1, seed=1)
+    sample = {f"x{i}": 0.2 + 0.01 * i for i in range(image_size * image_size)}
+    sample["target"] = 1.1
+    netlist = block.block_netlist(
+        [sample],
+        weights,
+        image_size=image_size,
+        block_size=2,
+        stride=2,
+        channels=1,
+        training_enabled=True,
+        score_mode="differential",
+        output_differential_stage="latched",
+        output_decision_stage="ref-preamp-latched",
+        output_decision_ref=1.13,
+        output_decision_pullup_width=64.0,
+        output_decision_pulldown_width=128.0,
+    )
+
+    assert "\nB" not in netlist
+    assert "Voutref outref 0 1.13" in netlist
+    assert "Cdecision_pre decision_pre 0 10f IC=0" in netlist
+    assert "Cdecisionn_pre decisionn_pre 0 10f IC=0" in netlist
+    assert "Mreset_decision_pre decision_pre rstf 0 0 NMOS W=4u" in netlist
+    assert "Mreset_decisionn_pre decisionn_pre rstf 0 0 NMOS W=4u" in netlist
+    assert "Mdecpre_lp vdd decision_pre decision_pre vdd PMOS W=64u" in netlist
+    assert "Mdecpre_ln vdd decisionn_pre decisionn_pre vdd PMOS W=64u" in netlist
+    assert "Mdecpre_ref decision_pre outref decpre_src 0 NSENSE W=128u" in netlist
+    assert "Mdecpre_out decisionn_pre out decpre_src 0 NSENSE W=128u" in netlist
+    assert "Mdecpre_tail decpre_src dec 0 0 NMOS W=128u" in netlist
+    assert "Mdec_n decision decisionn_pre dec_src 0 NSENSE W=128u" in netlist
+    assert "Mdecn_n decisionn decision_pre dec_src 0 NSENSE W=128u" in netlist
+    assert "Mdec_n decision outref dec_src 0 NSENSE" not in netlist
+    assert ".meas tran decision_after_0 FIND V(decision) AT=15.50n" in netlist
 
 
 def test_block_netlist_can_emit_differential_latched_decision_stage() -> None:
@@ -599,6 +707,40 @@ def test_block_netlist_can_emit_ratioed_inverter_decision_stage() -> None:
     assert "Mdec_inv1_n decisionn out 0 0 NMOS W=1u" in netlist
     assert "Mdec_inv2_p decision decisionn vdd vdd PMOS W=192u" in netlist
     assert "Mdec_inv2_n decision decisionn 0 0 NMOS W=1u" in netlist
+    assert ".meas tran decision_after_0 FIND V(decision) AT=15.50n" in netlist
+
+
+def test_block_netlist_can_emit_stacked_inverter_decision_stage() -> None:
+    sys.path.insert(0, str(SPICE_DIR))
+    import run_device_mnist01_block_training as block
+
+    image_size = 4
+    weights = block.initial_block_weights(image_size, 2, 2, 1, seed=1)
+    sample = {f"x{i}": 0.2 + 0.01 * i for i in range(image_size * image_size)}
+    sample["target"] = 1.1
+    netlist = block.block_netlist(
+        [sample],
+        weights,
+        image_size=image_size,
+        block_size=2,
+        stride=2,
+        channels=1,
+        training_enabled=True,
+        output_decision_stage="stacked-inverter",
+        output_decision_pullup_width=192.0,
+        output_decision_pulldown_width=1.0,
+    )
+
+    assert "\nB" not in netlist
+    assert "Voutref" not in netlist
+    assert "Cdec_stack0 dec_stack0 0 0.1f IC=0" in netlist
+    assert "Cdec_stack1 dec_stack1 0 0.1f IC=0" in netlist
+    assert "Mdec_stack_p decisionn out vdd vdd PMOS W=192u" in netlist
+    assert "Mdec_stack_n0 decisionn out dec_stack0 0 NMOS W=1u" in netlist
+    assert "Mdec_stack_n1 dec_stack0 out dec_stack1 0 NMOS W=1u" in netlist
+    assert "Mdec_stack_n2 dec_stack1 out 0 0 NMOS W=1u" in netlist
+    assert "Mdec_buf_p decision decisionn vdd vdd PMOS W=192u" in netlist
+    assert "Mdec_buf_n decision decisionn 0 0 NMOS W=1u" in netlist
     assert ".meas tran decision_after_0 FIND V(decision) AT=15.50n" in netlist
 
 

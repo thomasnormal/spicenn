@@ -77,6 +77,30 @@ def test_score_decision_primitive_emits_pre_regeneration_window_stage() -> None:
     assert ".meas tran negative_window_diff PARAM='decisionn_after-decision_negn_after'" in netlist
 
 
+def test_score_decision_primitive_emits_gain_before_window_stage() -> None:
+    netlist = decision.generate_netlist(
+        score_case="tiny_positive",
+        decision_topology="score-diff-gain-window",
+        reject_ref=0.05,
+    )
+
+    assert "\nB" not in netlist
+    assert "Vscore score 0 0.1011" in netlist
+    assert "Vscoren scoren 0 0.0989" in netlist
+    assert "Cscore_amp score_amp 0 8f IC=1.2" in netlist
+    assert "Mprecharge_score_amp score_amp rstfn vdd vdd PMOS W=4u" in netlist
+    assert "Mprecharge_scoren_amp scoren_amp rstfn vdd vdd PMOS W=4u" in netlist
+    assert "Mscoreamp_score score_amp score scoreamp_score_i 0 NSENSE W=1u" in netlist
+    assert "Mscoreamp_scoren scoren_amp scoren scoreamp_scoren_i 0 NSENSE W=1u" in netlist
+    assert "Mscoreamp_score_tail scoreamp_score_i amp 0 0 NMOS W=8u" in netlist
+    assert "Mscoreamp_scoren_tail scoreamp_scoren_i amp 0 0 NMOS W=8u" in netlist
+    assert "Mdec_gain_win_pos_scoreamp decision score_amp pos_src 0 NSENSE W=12u" in netlist
+    assert "Mdecn_gain_win_pos_scorenamp decision_posn scoren_amp pos_src 0 NSENSE W=12u" in netlist
+    assert "Mdec_gain_win_neg_scorenamp decisionn scoren_amp neg_src 0 NSENSE W=12u" in netlist
+    assert "Mdecn_gain_win_neg_scoreamp decision_negn score_amp neg_src 0 NSENSE W=12u" in netlist
+    assert ".meas tran score_gain_diff PARAM='scoren_amp_after-score_amp_after'" in netlist
+
+
 @pytest.mark.parametrize(
     ("case", "expected"),
     [
@@ -252,3 +276,51 @@ def test_score_decision_primitive_ngspice_window_stage_rejects_near_zero_before_
     assert float(near_zero["positive_window_diff"]) < -0.05
     assert float(near_zero["negative_window_diff"]) < -0.05
     assert abs(float(near_zero["decision_diff"])) < 0.05
+
+
+def test_score_decision_primitive_ngspice_gain_window_amplifies_tiny_positive_and_rejects_tiny_neutral(
+    tmp_path: Path,
+    ngspice_path: str,
+) -> None:
+    tiny_positive = run_netlist(
+        ngspice_path,
+        tmp_path / "score_decision_gain_window_tiny_positive.cir",
+        decision.generate_netlist(
+            score_case="tiny_positive",
+            decision_topology="score-diff-gain-window",
+            reject_ref=0.05,
+        ),
+        timeout=20.0,
+    )
+    tiny_neutral = run_netlist(
+        ngspice_path,
+        tmp_path / "score_decision_gain_window_tiny_neutral.cir",
+        decision.generate_netlist(
+            score_case="tiny_neutral",
+            decision_topology="score-diff-gain-window",
+            reject_ref=0.05,
+        ),
+        timeout=20.0,
+    )
+    direct_tiny_positive = run_netlist(
+        ngspice_path,
+        tmp_path / "score_decision_window_tiny_positive_direct.cir",
+        decision.generate_netlist(
+            score_case="tiny_positive",
+            decision_topology="score-diff-window",
+            reject_ref=0.05,
+        ),
+        timeout=20.0,
+    )
+
+    assert float(direct_tiny_positive["positive_window_diff"]) < -0.05
+
+    assert float(tiny_positive["score_gain_diff"]) > 0.04
+    assert float(tiny_positive["positive_window_diff"]) > 0.05
+    assert float(tiny_positive["negative_window_diff"]) < -0.05
+    assert float(tiny_positive["decision_diff"]) > 0.05
+
+    assert abs(float(tiny_neutral["score_gain_diff"])) < 0.05
+    assert float(tiny_neutral["positive_window_diff"]) < -0.05
+    assert float(tiny_neutral["negative_window_diff"]) < -0.05
+    assert abs(float(tiny_neutral["decision_diff"])) < 0.05

@@ -57,6 +57,7 @@ OUTPUT_DECISION_STAGES = (
     "score-diff-precharged-latched",
     "score-diff-reject-ref-latched",
     "score-diff-window-latched",
+    "score-diff-gain-window-latched",
     "ratio-inverter",
     "stacked-inverter",
     "shift-inverter",
@@ -70,7 +71,7 @@ DEFAULT_SCORE_WINDOW_DECISION_REF = 0.05
 
 
 def default_output_decision_ref(output_decision_stage: str) -> float:
-    if output_decision_stage == "score-diff-window-latched":
+    if output_decision_stage in {"score-diff-window-latched", "score-diff-gain-window-latched"}:
         return DEFAULT_SCORE_WINDOW_DECISION_REF
     return DEFAULT_OUTPUT_DECISION_REF
 
@@ -902,6 +903,7 @@ def block_netlist(
         "score-diff-precharged-latched",
         "score-diff-reject-ref-latched",
         "score-diff-window-latched",
+        "score-diff-gain-window-latched",
     } and score_mode != "differential":
         raise ValueError(f"{output_decision_stage} output_decision_stage requires differential score_mode")
     if output_decision_ref_source in {"adaptive", "track"} and output_decision_stage not in {
@@ -911,6 +913,7 @@ def block_netlist(
         "ref-precharged-preamp-latched",
         "score-diff-reject-ref-latched",
         "score-diff-window-latched",
+        "score-diff-gain-window-latched",
     }:
         raise ValueError(f"{output_decision_ref_source} output_decision_ref_source requires a reference decision stage")
     if output_decision_pullup_width <= 0.0:
@@ -1097,7 +1100,11 @@ def block_netlist(
     for idx in range(len(samples)):
         base = idx * cycle_ns
         scale = phase_time_scale
-        decision_measure_offset = 16.50 if output_decision_stage == "score-diff-reject-ref-latched" else 15.50
+        decision_measure_offset = (
+            16.50
+            if output_decision_stage in {"score-diff-reject-ref-latched", "score-diff-gain-window-latched"}
+            else 15.50
+        )
         measures += [
             f".meas tran score_before_{idx} FIND V(score) AT={base + 2.95 * scale:.2f}n",
             f".meas tran scoren_before_{idx} FIND V(scoren) AT={base + 2.95 * scale:.2f}n",
@@ -1138,12 +1145,18 @@ def block_netlist(
                     f".meas tran decisionn_pre_after_{idx} FIND V(decisionn_pre) AT={base + 15.50 * scale:.2f}n",
                     f".meas tran decision_pre_diff_{idx} PARAM='decision_pre_after_{idx}-decisionn_pre_after_{idx}'",
                 ]
-            if output_decision_stage == "score-diff-window-latched":
+            if output_decision_stage in {"score-diff-window-latched", "score-diff-gain-window-latched"}:
                 measures += [
                     f".meas tran decision_posn_after_{idx} FIND V(decision_posn) AT={base + 15.50 * scale:.2f}n",
                     f".meas tran decision_negn_after_{idx} FIND V(decision_negn) AT={base + 15.50 * scale:.2f}n",
                     f".meas tran positive_window_diff_{idx} PARAM='decision_after_{idx}-decision_posn_after_{idx}'",
                     f".meas tran negative_window_diff_{idx} PARAM='decisionn_after_{idx}-decision_negn_after_{idx}'",
+                ]
+            if output_decision_stage == "score-diff-gain-window-latched":
+                measures += [
+                    f".meas tran score_amp_after_{idx} FIND V(score_amp) AT={base + 15.60 * scale:.2f}n",
+                    f".meas tran scoren_amp_after_{idx} FIND V(scoren_amp) AT={base + 15.60 * scale:.2f}n",
+                    f".meas tran score_gain_diff_{idx} PARAM='scoren_amp_after_{idx}-score_amp_after_{idx}'",
                 ]
         if output_decision_ref_source in {"adaptive", "track"}:
             measures += [
@@ -1259,6 +1272,7 @@ def block_netlist(
         "ref-precharged-preamp-latched",
         "score-diff-reject-ref-latched",
         "score-diff-window-latched",
+        "score-diff-gain-window-latched",
     }:
         if output_decision_ref_source == "divider":
             rtop, rbot = decision_ref_divider_resistances(output_decision_ref, output_decision_ref_resistance)
@@ -1493,6 +1507,17 @@ def block_netlist(
             "Rdecision_posn decision_posn 0 1G",
             "Rdecision_negn decision_negn 0 1G",
         ]
+    if output_decision_stage == "score-diff-gain-window-latched":
+        lines += [
+            "Cscore_amp score_amp 0 8f IC=1.2",
+            "Cscoren_amp scoren_amp 0 8f IC=1.2",
+            "Rscore_amp score_amp 0 1G",
+            "Rscoren_amp scoren_amp 0 1G",
+            "Cdecision_posn decision_posn 0 10f IC=0",
+            "Cdecision_negn decision_negn 0 10f IC=0",
+            "Rdecision_posn decision_posn 0 1G",
+            "Rdecision_negn decision_negn 0 1G",
+        ]
     if output_decision_stage == "shift-inverter":
         lines += [
             "Cdec_mid dec_mid 0 20f IC=0",
@@ -1584,6 +1609,7 @@ def block_netlist(
         "score-diff-precharged-latched",
         "score-diff-reject-ref-latched",
         "score-diff-window-latched",
+        "score-diff-gain-window-latched",
     }:
         lines += [
             "Mreset_decision decision rstf 0 0 NMOS W=4u L=180n",
@@ -1596,6 +1622,7 @@ def block_netlist(
         "score-diff-precharged-latched",
         "score-diff-reject-ref-latched",
         "score-diff-window-latched",
+        "score-diff-gain-window-latched",
     }:
         lines += [
             "Mprecharge_decision decision rstfn vdd vdd PMOS W=4u L=180n",
@@ -1617,10 +1644,15 @@ def block_netlist(
             "Mprecharge_decision_pre decision_pre rstfn vdd vdd PMOS W=4u L=180n",
             "Mprecharge_decisionn_pre decisionn_pre rstfn vdd vdd PMOS W=4u L=180n",
         ]
-    if output_decision_stage == "score-diff-window-latched":
+    if output_decision_stage in {"score-diff-window-latched", "score-diff-gain-window-latched"}:
         lines += [
             "Mprecharge_decision_posn decision_posn rstfn vdd vdd PMOS W=4u L=180n",
             "Mprecharge_decision_negn decision_negn rstfn vdd vdd PMOS W=4u L=180n",
+        ]
+    if output_decision_stage == "score-diff-gain-window-latched":
+        lines += [
+            "Mprecharge_score_amp score_amp rstfn vdd vdd PMOS W=4u L=180n",
+            "Mprecharge_scoren_amp scoren_amp rstfn vdd vdd PMOS W=4u L=180n",
         ]
     if activation_competition_width > 0.0:
         lines.append("Mreset_actinh actinh rstf 0 0 NMOS W=4u L=180n")
@@ -2212,6 +2244,28 @@ def block_netlist(
                 f"Mdec_win_neg_ref decisionn outref neg_src 0 NSENSE W={output_decision_pulldown_width:.6g}u L=180n",
                 f"Mdecn_win_neg_scoren decision_negn scoren neg_src 0 NSENSE W={output_decision_pulldown_width:.6g}u L=180n",
                 f"Mdec_win_neg_tail neg_src dec 0 0 NMOS W={output_decision_pulldown_width:.6g}u L=180n",
+            ]
+        )
+    elif output_decision_stage == "score-diff-gain-window-latched":
+        decision_stage = "\n".join(
+            [
+                "* Dynamic score-gain stage followed by a pre-regeneration score window.",
+                "Mscoreamp_score score_amp score scoreamp_score_i 0 NSENSE W=1u L=180n",
+                "Mscoreamp_score_tail scoreamp_score_i dec 0 0 NMOS W=8u L=180n",
+                "Mscoreamp_scoren scoren_amp scoren scoreamp_scoren_i 0 NSENSE W=1u L=180n",
+                "Mscoreamp_scoren_tail scoreamp_scoren_i dec 0 0 NMOS W=8u L=180n",
+                f"Mdec_gain_win_pos_p decision decision_posn vdd vdd PMOS W={output_decision_pullup_width:.6g}u L=180n",
+                f"Mdecn_gain_win_pos_p decision_posn decision vdd vdd PMOS W={output_decision_pullup_width:.6g}u L=180n",
+                f"Mdec_gain_win_pos_scoreamp decision score_amp pos_src 0 NSENSE W={output_decision_pulldown_width:.6g}u L=180n",
+                f"Mdec_gain_win_pos_ref decision outref pos_src 0 NSENSE W={output_decision_pulldown_width:.6g}u L=180n",
+                f"Mdecn_gain_win_pos_scorenamp decision_posn scoren_amp pos_src 0 NSENSE W={output_decision_pulldown_width:.6g}u L=180n",
+                f"Mdec_gain_win_pos_tail pos_src dec2 0 0 NMOS W={output_decision_pulldown_width:.6g}u L=180n",
+                f"Mdec_gain_win_neg_p decisionn decision_negn vdd vdd PMOS W={output_decision_pullup_width:.6g}u L=180n",
+                f"Mdecn_gain_win_neg_p decision_negn decisionn vdd vdd PMOS W={output_decision_pullup_width:.6g}u L=180n",
+                f"Mdec_gain_win_neg_scorenamp decisionn scoren_amp neg_src 0 NSENSE W={output_decision_pulldown_width:.6g}u L=180n",
+                f"Mdec_gain_win_neg_ref decisionn outref neg_src 0 NSENSE W={output_decision_pulldown_width:.6g}u L=180n",
+                f"Mdecn_gain_win_neg_scoreamp decision_negn score_amp neg_src 0 NSENSE W={output_decision_pulldown_width:.6g}u L=180n",
+                f"Mdec_gain_win_neg_tail neg_src dec2 0 0 NMOS W={output_decision_pulldown_width:.6g}u L=180n",
             ]
         )
     elif output_decision_stage == "ratio-inverter":
@@ -3142,7 +3196,8 @@ def main() -> None:
         default=None,
         help=(
             "Decision reference voltage. Defaults to 1.09 V for ordinary output/reference stages and "
-            "50 mV for score-diff-window-latched, where it acts as a score-difference dead-zone offset."
+            "50 mV for score-diff-window-latched and score-diff-gain-window-latched, where it acts as "
+            "a score-difference dead-zone offset."
         ),
     )
     ap.add_argument("--output-decision-ref-source", choices=OUTPUT_DECISION_REF_SOURCES, default="voltage")

@@ -436,26 +436,34 @@ this row-pulsed split-rail path increased hidden-activation and restored
 eligibility participation from a few features to most of the eight feature
 rows, so it is the better base for future scaling.
 
-The newest readout experiments add a transistor/passive shared-shunt
-normalizer for readout-gradient storage:
+The newest readout-normalization experiments add two transistor/passive shared
+shunt variants for readout-gradient storage:
 \[
-  \code{readout\_gradient\_normalization=shared-shunt}.
+  \code{readout\_gradient\_normalization=shared-shunt},\qquad
+  \code{readout\_gradient\_normalization=shared-gate-shunt}.
 \]
-Active restored eligibility gates charge a shared \(gnorm\) capacitor during
-the gradient-accumulation phase; \(gnorm\) then weakly shunts each local
-\(gvp/gvn\) gradient capacitor.  Low-level ngspice tests prove the intended
-local behavior: one active feature still writes, while many simultaneously
+In \code{shared-shunt}, active restored eligibility gates charge a shared
+\(gnorm\) capacitor during the gradient-accumulation phase; \(gnorm\) then
+weakly shunts each local \(gvp/gvn\) gradient capacitor.  In
+\code{shared-gate-shunt}, \(gnorm\) instead pulls down the restored gradient
+gate before \(gvp/gvn\) storage.  Low-level ngspice tests prove the intended
+local behavior.  One active feature still writes, while many simultaneously
 active features have their total readout update suppressed and common-mode
-motion bounded.  The integrated result is more sobering.  A strict
-\(4\times4\) split-rail MNIST01 smoke with restored eligibility,
-bounded-reference writes, shared-shunt normalization, and the
+motion bounded; the tuned \code{shared-gate-shunt} primitive leaves a single
+active feature with about \(62\) mV of signed readout movement while
+suppressing four common-active features to below \(1\) mV total signed update.
+
+The integrated result is more sobering.  A strict \(4\times4\) split-rail
+MNIST01 smoke with restored eligibility, bounded-reference writes,
+\code{shared-shunt} normalization, and the
 \code{score-diff-window-latched} decision stage still stayed at chance, with
 only about \(0.5\) mV of final decision-time \(s^+-s^-\) class margin.  A
 compact full diagnostic showed that feature participation was no longer the
 main issue: hidden activations, restored eligibility, and readout gradients
 were broad, but the readout updates created mostly same-polarity evidence.
-Thus the current blocker is upstream score-polarity/evidence normalization,
-not the final comparator threshold.
+Adding \code{shared-gate-shunt} reduced readout-gradient L1 in the same
+family, but by itself still left seven of eight readout weights moving more
+than \(10\) mV and final score evidence positive for both classes.
 
 The score-window decision stage also has a stage-specific reference
 interpretation.  Ordinary output/reference latches use a high reference near
@@ -464,9 +472,24 @@ small dead-zone offset between \(s^+\) and \(s^-\).  The runner now defaults
 that stage to \(50\) mV unless overridden.  Re-running the compact diagnostic
 with the corrected default did not recover learning: \(s^+-s^-\) was positive
 for both held-out classes.  This rules out the stale high reference as the
-main failure and further supports the next direction: contrast or normalize
-feature/readout evidence before score regeneration, rather than adding more
-final-stage latch ratios.
+main failure.
+
+The follow-up binary-descent comparison is the more important result.  On the
+same compact \(2\)-train/\(2\)-eval split-rail diagnostic, switching from the
+older competition error topology to
+\code{error\_topology=binary-descent} reduced the largest per-feature
+readout-gradient L1 scale to about \(0.33\)--\(0.36\), limited
+active/update participation to four of eight features, and avoided the
+previous all-positive rail slam.  The \code{shared-gate-shunt} and no-shunt
+binary-descent runs were close, so the main improvement came from the
+class-conditional error topology rather than the common-activity shunt.
+However, the final evidence was still too small and uncentered: final
+\(s^+-s^-\) class margin was only about \(2.1\)--\(2.2\) mV, and the best
+shifted threshold on \(\code{decision\_diff}\) separated the two held-out
+classes only because both class means remained positive.  The current aligned
+direction is therefore physical score/readout gain and centering before
+regeneration, not more final-stage threshold interpretation and not more
+common-activity shunting alone.
 
 
 \section{State And Update Equations}

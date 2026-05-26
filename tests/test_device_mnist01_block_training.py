@@ -3130,6 +3130,18 @@ def test_block_netlist_can_emit_bounded_reference_readout_writer() -> None:
     weights = block.initial_block_weights(image_size, 2, 2, 1, seed=1)
     sample = {f"x{i}": 0.2 + 0.01 * i for i in range(image_size * image_size)}
     sample["target"] = 1.1
+    default_netlist = block.block_netlist(
+        [sample],
+        weights,
+        image_size=image_size,
+        block_size=2,
+        stride=2,
+        channels=1,
+        training_enabled=True,
+        readout_weight_update_topology="bounded-ref",
+        readout_weight_positive_ref=0.36,
+        readout_weight_negative_ref=0.34,
+    )
     netlist = block.block_netlist(
         [sample],
         weights,
@@ -3144,6 +3156,8 @@ def test_block_netlist_can_emit_bounded_reference_readout_writer() -> None:
         readout_weight_negative_ref=0.34,
     )
 
+    assert "Vvwhi_ref vwhi_ref 0 0.42" in default_netlist
+    assert "Vvwlo_ref vwlo_ref 0 0.28" in default_netlist
     assert "\nB" not in netlist
     assert "Vvwhi_ref vwhi_ref 0 0.48" in netlist
     assert "Vvwlo_ref vwlo_ref 0 0.22" in netlist

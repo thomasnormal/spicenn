@@ -71,6 +71,7 @@ VDD_VALUE = 1.2
 DEFAULT_OUTPUT_DECISION_REF = 1.09
 DEFAULT_SCORE_WINDOW_DECISION_REF = 0.05
 DEFAULT_LOW_GAIN_REF_DECISION_REF = 0.165
+DEFAULT_READOUT_WEIGHT_UPDATE_SPAN = 0.06
 
 
 def default_output_decision_ref(output_decision_stage: str) -> float:
@@ -823,7 +824,7 @@ def block_netlist(
     readout_weight_gate_model: str = "same",
     readout_gradient_source: str = "act",
     readout_weight_update_topology: str = "rail",
-    readout_weight_update_span: float = 0.15,
+    readout_weight_update_span: float = DEFAULT_READOUT_WEIGHT_UPDATE_SPAN,
     readout_weight_update_low_floor: float = 0.0,
     readout_eligibility_width: float = 24.0,
     readout_eligibility_restore_width: float = 8.0,
@@ -3395,7 +3396,7 @@ def main() -> None:
     ap.add_argument(
         "--readout-weight-update-span",
         type=float,
-        default=0.15,
+        default=DEFAULT_READOUT_WEIGHT_UPDATE_SPAN,
         help=(
             "Voltage offset used by bounded-ref readout writes: high_ref=positive_ref+span and "
             "low_ref=max(negative_ref-span, low_floor)."

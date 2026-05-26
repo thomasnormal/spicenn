@@ -33,6 +33,7 @@ HIDDEN_POLARITY_INITS = ("ink", "alternating-channel", "random-pixel")
 SCORE_MODES = ("single-ended", "differential")
 OUTPUT_DIFFERENTIAL_STAGES = ("simple", "score-gated", "latched")
 OUTPUT_DECISION_STAGES = ("none", "ref-latched", "diff-latched", "ratio-inverter", "shift-inverter")
+MEASUREMENT_DETAILS = ("full", "outputs")
 
 
 def block_topology(image_size: int, block_size: int, stride: int, channels: int) -> tuple[list[list[int]], int]:
@@ -295,6 +296,7 @@ def block_netlist(
     phase_time_scale: float = 1.0,
     score_mode: str = "single-ended",
     input_rail_mode: str = "alternating-complement",
+    measurement_detail: str = "full",
 ) -> str:
     if readout_apply_scale <= 0.0:
         raise ValueError("readout_apply_scale must be positive")
@@ -357,6 +359,8 @@ def block_netlist(
     learning_activation_model = learning_activation_gate_device_model(learning_activation_gate_model)
     if input_rail_mode not in INPUT_RAIL_MODES:
         raise ValueError(f"input_rail_mode must be one of {INPUT_RAIL_MODES}")
+    if measurement_detail not in MEASUREMENT_DETAILS:
+        raise ValueError(f"measurement_detail must be one of {MEASUREMENT_DETAILS}")
     blocks, expected_features = block_topology(image_size, block_size, stride, channels)
     feature_count, block_len = block_weight_shape(weights)
     if feature_count != expected_features or block_len != len(blocks[0]):
@@ -423,6 +427,9 @@ def block_netlist(
                 f".meas tran actinh_before_{idx} FIND V(actinh) AT={base + 2.95 * scale:.2f}n",
                 f".meas tran actinh_after_{idx} FIND V(actinh) AT={base + 15.50 * scale:.2f}n",
             ]
+        if measurement_detail == "outputs":
+            prints.append(f"print out_before_{idx} out_after_{idx} error_net_{idx}")
+            continue
         for feature in range(feature_count):
             measures += [
                 f".meas tran act{feature}_before_{idx} FIND V(act{feature}) AT={base + 2.95 * scale:.2f}n",
@@ -1222,6 +1229,7 @@ def run_device_sequence(
     phase_time_scale: float,
     score_mode: str,
     input_rail_mode: str,
+    measurement_detail: str,
 ) -> pd.DataFrame:
     netlist = block_netlist(
         samples,
@@ -1269,6 +1277,7 @@ def run_device_sequence(
         phase_time_scale=phase_time_scale,
         score_mode=score_mode,
         input_rail_mode=input_rail_mode,
+        measurement_detail=measurement_detail,
     )
     if "\nB" in netlist:
         raise ValueError("block-stride device runner generated a behavioral source")
@@ -1333,6 +1342,16 @@ def main() -> None:
     ap.add_argument("--phase-time-scale", type=float, default=1.0)
     ap.add_argument("--score-mode", choices=SCORE_MODES, default="single-ended")
     ap.add_argument("--input-rail-mode", choices=INPUT_RAIL_MODES, default="alternating-complement")
+    ap.add_argument(
+        "--measurement-detail",
+        choices=MEASUREMENT_DETAILS,
+        default="full",
+        help=(
+            "'full' records every state capacitor for debugging. 'outputs' records only output/accuracy "
+            "diagnostics and requires --continuous-final-eval because Python will not have measured weights "
+            "available to seed a separate eval deck."
+        ),
+    )
     ap.add_argument("--complement-rail-scale", type=float, default=0.5)
     ap.add_argument("--hidden-bias-positive-init", type=float, default=0.50)
     ap.add_argument("--hidden-bias-negative-init", type=float, default=0.20)
@@ -1357,6 +1376,8 @@ def main() -> None:
         raise ValueError("train-samples must be positive for a training smoke")
     if args.eval_samples <= 0:
         raise ValueError("eval-samples must be positive")
+    if args.measurement_detail != "full" and not args.continuous_final_eval:
+        raise ValueError("--measurement-detail outputs requires --continuous-final-eval")
     blocks, feature_count = block_topology(args.image_size, args.block_size, args.stride, args.channels)
     block_len = len(blocks[0])
 
@@ -1437,6 +1458,7 @@ def main() -> None:
         "phase_time_scale": args.phase_time_scale,
         "score_mode": args.score_mode,
         "input_rail_mode": args.input_rail_mode,
+        "measurement_detail": args.measurement_detail,
     }
     if args.skip_initial_eval:
         initial_eval_rows = pd.DataFrame()
@@ -1485,7 +1507,11 @@ def main() -> None:
             sequence="final_eval",
             **common,
         )
-    final_weights = final_weights_from_rows(train_rows, feature_count=feature_count, block_len=block_len)
+    final_weights = (
+        final_weights_from_rows(train_rows, feature_count=feature_count, block_len=block_len)
+        if args.measurement_detail == "full"
+        else None
+    )
 
     curve = pd.concat([initial_eval_rows, train_rows, final_eval_rows], ignore_index=True)
     curve_path = results / f"{safe_tag}.csv"
@@ -1593,6 +1619,7 @@ def main() -> None:
         "output_bias_negative_ref": args.output_bias_negative_ref,
         "phase_time_scale": args.phase_time_scale,
         "score_mode": args.score_mode,
+        "measurement_detail": args.measurement_detail,
         "hidden_bias_positive_init": args.hidden_bias_positive_init,
         "hidden_bias_negative_init": args.hidden_bias_negative_init,
         "learning_device_implementation": "transistor_passive",
@@ -1613,6 +1640,7 @@ def main() -> None:
         "final_weights_used_to_seed_eval": not args.continuous_final_eval,
         "python_hidden_state_intervention": False,
         "training_eval_uses_spice_forward_path": True,
+        "passive_weight_diagnostics_recorded": args.measurement_detail == "full",
         "uses_local_pca": False,
         "realistic_train_order": True,
         "train_samples": args.train_samples,

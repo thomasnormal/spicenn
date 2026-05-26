@@ -48,6 +48,7 @@ def test_device_mnist01_block_script_help_runs_from_repo_root() -> None:
     assert "--output-bias-apply-scale" in proc.stdout
     assert "--output-bias-leak-resistance" in proc.stdout
     assert "--score-mode" in proc.stdout
+    assert "--measurement-detail" in proc.stdout
     assert "--readout-forward-width" in proc.stdout
     assert "--phase-time-scale" in proc.stdout
     assert "--hidden-bias-positive-init" in proc.stdout
@@ -112,6 +113,35 @@ def test_rows_from_measures_can_label_train_and_eval_segments() -> None:
     assert rows["sequence"].tolist() == ["train", "final_eval"]
     assert rows["sample_idx"].tolist() == [0, 1]
     assert rows["out_after"].tolist() == [0.8, 0.1]
+
+
+def test_block_netlist_output_measurement_detail_omits_state_capacitor_measures() -> None:
+    sys.path.insert(0, str(SPICE_DIR))
+    import run_device_mnist01_block_training as block
+
+    image_size = 4
+    weights = block.initial_block_weights(image_size, 2, 2, 1, seed=1)
+    sample = {f"x{i}": 0.2 + 0.01 * i for i in range(image_size * image_size)}
+    sample["target"] = 1.1
+    netlist = block.block_netlist(
+        [sample],
+        weights,
+        image_size=image_size,
+        block_size=2,
+        stride=2,
+        channels=1,
+        training_enabled=True,
+        measurement_detail="outputs",
+    )
+
+    assert "\nB" not in netlist
+    assert ".meas tran score_before_0" in netlist
+    assert ".meas tran out_after_0" in netlist
+    assert ".meas tran error_net_0" in netlist
+    assert ".meas tran whp0_0_after_apply_0" not in netlist
+    assert ".meas tran act0_before_0" not in netlist
+    assert "Cwhp0_0 whp0_0 0 20f" in netlist
+    assert "Mwhp0_0_up_g" in netlist
 
 
 def test_alternating_channel_hidden_polarity_initializes_absence_channels() -> None:

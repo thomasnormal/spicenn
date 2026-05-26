@@ -1356,6 +1356,45 @@ def test_block_netlist_can_emit_adaptive_decision_reference_state() -> None:
     assert ".meas tran d_outref_0 PARAM='outref_after_apply_0-outref_before_0'" in netlist
 
 
+def test_block_netlist_can_emit_tracked_decision_reference_state() -> None:
+    sys.path.insert(0, str(SPICE_DIR))
+    import run_device_mnist01_block_training as block
+
+    image_size = 4
+    weights = block.initial_block_weights(image_size, 2, 2, 1, seed=1)
+    sample = {f"x{i}": 0.2 + 0.01 * i for i in range(image_size * image_size)}
+    sample["target"] = 1.1
+    netlist = block.block_netlist(
+        [sample],
+        weights,
+        image_size=image_size,
+        block_size=2,
+        stride=2,
+        channels=1,
+        training_enabled=True,
+        score_mode="differential",
+        output_differential_stage="latched",
+        output_decision_stage="ref-precharged-latched",
+        output_decision_ref=0.95,
+        output_decision_ref_source="track",
+        output_decision_ref_resistance=1.2e6,
+        output_decision_ref_capacitance=200e-15,
+        output_decision_ref_write_width=0.05,
+    )
+
+    assert "\nB" not in netlist
+    assert "Voutref outref 0" not in netlist
+    assert "Coutref outref 0 200f IC=0.95" in netlist
+    assert "Routref_top vdd outref 250000" in netlist
+    assert "Routref_bot outref 0 950000" in netlist
+    assert "Coutref_raise_gate" not in netlist
+    assert "Moutref_raise_gate" not in netlist
+    assert "Moutref_track_n outref apply out 0 NMOS W=0.05u" in netlist
+    assert "Moutref_track_p outref applyn out vdd PMOS W=0.05u" in netlist
+    assert ".meas tran outref_before_0 FIND V(outref)" in netlist
+    assert ".meas tran d_outref_0 PARAM='outref_after_apply_0-outref_before_0'" in netlist
+
+
 def test_decision_reference_divider_rejects_invalid_reference() -> None:
     sys.path.insert(0, str(SPICE_DIR))
     import pytest
@@ -1420,6 +1459,20 @@ def test_adaptive_decision_reference_rejects_invalid_state_devices() -> None:
             output_differential_stage="latched",
             output_decision_stage="diff-latched",
             output_decision_ref_source="adaptive",
+        )
+    with pytest.raises(ValueError, match="requires a reference decision stage"):
+        block.block_netlist(
+            [sample],
+            weights,
+            image_size=image_size,
+            block_size=2,
+            stride=2,
+            channels=1,
+            training_enabled=True,
+            score_mode="differential",
+            output_differential_stage="latched",
+            output_decision_stage="diff-latched",
+            output_decision_ref_source="track",
         )
 
 

@@ -36,7 +36,7 @@ HIDDEN_CREDIT_MODES = ("direct-feedback", "readout-weighted", "readout-restored"
 ERROR_SIGNAL_MODES = ("raw", "restored", "restored-hidden")
 SCORE_MODES = ("single-ended", "differential")
 OUTPUT_DIFFERENTIAL_STAGES = ("simple", "score-gated", "latched")
-OUTPUT_DECISION_REF_SOURCES = ("voltage", "divider", "adaptive")
+OUTPUT_DECISION_REF_SOURCES = ("voltage", "divider", "adaptive", "track")
 OUTPUT_DECISION_STAGES = (
     "none",
     "ref-latched",
@@ -629,11 +629,11 @@ def block_netlist(
         raise ValueError(f"output_decision_stage must be one of {OUTPUT_DECISION_STAGES}")
     if output_decision_ref_source not in OUTPUT_DECISION_REF_SOURCES:
         raise ValueError(f"output_decision_ref_source must be one of {OUTPUT_DECISION_REF_SOURCES}")
-    if output_decision_ref_source in {"divider", "adaptive"} and output_decision_ref_resistance < 0.0:
+    if output_decision_ref_source in {"divider", "adaptive", "track"} and output_decision_ref_resistance < 0.0:
         raise ValueError("output_decision_ref_resistance must be nonnegative")
-    if output_decision_ref_source in {"divider", "adaptive"} and output_decision_ref_resistance > 0.0:
+    if output_decision_ref_source in {"divider", "adaptive", "track"} and output_decision_ref_resistance > 0.0:
         decision_ref_divider_resistances(output_decision_ref, output_decision_ref_resistance)
-    if output_decision_ref_source == "adaptive":
+    if output_decision_ref_source in {"adaptive", "track"}:
         if output_decision_ref_capacitance <= 0.0:
             raise ValueError("output_decision_ref_capacitance must be positive")
         if output_decision_ref_write_width <= 0.0:
@@ -646,12 +646,12 @@ def block_netlist(
         and output_differential_stage != "latched"
     ):
         raise ValueError("output_decision_stage requires latched output_differential_stage")
-    if output_decision_ref_source == "adaptive" and output_decision_stage not in {
+    if output_decision_ref_source in {"adaptive", "track"} and output_decision_stage not in {
         "ref-latched",
         "ref-precharged-latched",
         "ref-preamp-latched",
     }:
-        raise ValueError("adaptive output_decision_ref_source requires a reference decision stage")
+        raise ValueError(f"{output_decision_ref_source} output_decision_ref_source requires a reference decision stage")
     if output_decision_pullup_width <= 0.0:
         raise ValueError("output_decision_pullup_width must be positive")
     if output_decision_pulldown_width <= 0.0:
@@ -792,7 +792,7 @@ def block_netlist(
                 f".meas tran decisionn_after_{idx} FIND V(decisionn) AT={base + 15.50 * scale:.2f}n",
                 f".meas tran decision_diff_{idx} PARAM='decision_after_{idx}-decisionn_after_{idx}'",
             ]
-        if output_decision_ref_source == "adaptive":
+        if output_decision_ref_source in {"adaptive", "track"}:
             measures += [
                 f".meas tran outref_before_{idx} FIND V(outref) AT={base + 0.60 * scale:.2f}n",
                 f".meas tran outref_after_apply_{idx} FIND V(outref) AT={base + 11.50 * scale:.2f}n",
@@ -890,12 +890,10 @@ def block_netlist(
                 f"Routref_bot outref 0 {rbot:.12g}",
                 "Coutref outref 0 1f IC=0",
             ]
-        elif output_decision_ref_source == "adaptive":
+        elif output_decision_ref_source in {"adaptive", "track"}:
             lines += [
                 f"Coutref outref 0 {spice_capacitance(output_decision_ref_capacitance)} IC={output_decision_ref:.12g}",
                 "Routref outref 0 1e15",
-                "Coutref_raise_gate outref_raise_gate 0 4f IC=1.2",
-                "Routref_raise_gate outref_raise_gate vdd 50k",
             ]
             if output_decision_ref_resistance > 0.0:
                 rtop, rbot = decision_ref_divider_resistances(output_decision_ref, output_decision_ref_resistance)
@@ -904,6 +902,11 @@ def block_netlist(
                 lines += [
                     f"Routref_top vdd outref {rtop:.12g}",
                     f"Routref_bot outref 0 {rbot:.12g}",
+                ]
+            if output_decision_ref_source == "adaptive":
+                lines += [
+                    "Coutref_raise_gate outref_raise_gate 0 4f IC=1.2",
+                    "Routref_raise_gate outref_raise_gate vdd 50k",
                 ]
         else:
             lines.append(f"Voutref outref 0 {output_decision_ref:.12g}")
@@ -1443,6 +1446,13 @@ def block_netlist(
             f"Moutref_raise_p1 outref applyn outref_raise vdd PMOS W={outref_charge_width:.6g}u L=180n",
             f"Moutref_lower_a outref apply outref_lower 0 NREL W={output_decision_ref_write_width:.6g}u L=180n",
             f"Moutref_lower_g outref_lower {readout_positive_error_node} 0 0 NSENSE W={output_decision_ref_write_width:.6g}u L=180n",
+        ]
+    elif output_decision_ref_source == "track":
+        lines += [
+            "",
+            "* Sampled decision-reference state: outref slowly shares charge with out during apply.",
+            f"Moutref_track_n outref apply out 0 NMOS W={output_decision_ref_write_width:.6g}u L=180n",
+            f"Moutref_track_p outref applyn out vdd PMOS W={output_decision_ref_write_width:.6g}u L=180n",
         ]
 
     if score_activity_inhibition_width > 0.0:
@@ -2510,7 +2520,7 @@ def main() -> None:
     adaptive_reference_summary = adaptive_reference_diagnostics(
         train_rows,
         final_eval_rows,
-        enabled=args.output_decision_ref_source == "adaptive",
+        enabled=args.output_decision_ref_source in {"adaptive", "track"},
         nominal_ref=args.output_decision_ref,
     )
     score_net_summary = score_net_diagnostics(initial_eval_rows, final_eval_rows)

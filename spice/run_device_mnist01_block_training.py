@@ -244,6 +244,7 @@ def block_netlist(
     hidden_update_width: float = 12.0,
     hidden_weight_write_width: float = 0.25,
     hidden_activation_width: float = 24.0,
+    hidden_input_residual_width: float = 0.0,
     hidden_activation_model: str = "nrel",
     readout_forward_width: float = 64.0,
     readout_forward_model: str = "nrel",
@@ -277,6 +278,8 @@ def block_netlist(
         raise ValueError("hidden_weight_write_width must be positive")
     if hidden_activation_width <= 0.0:
         raise ValueError("hidden_activation_width must be positive")
+    if hidden_input_residual_width < 0.0:
+        raise ValueError("hidden_input_residual_width must be nonnegative")
     if readout_forward_width <= 0.0:
         raise ValueError("readout_forward_width must be positive")
     if readout_weight_leak_resistance < 0.0:
@@ -573,6 +576,19 @@ def block_netlist(
                 f"Mhbneg{feature}_f pre{feature} fwd hbn{feature}_0 0 NMOS W={hidden_neg_width:.6g}u L=180n",
                 f"Mhbneg{feature}_b hbn{feature}_0 bhn{feature} 0 0 NMOS W={hidden_neg_width:.6g}u L=180n",
                 f"Mrelu_h{feature} vdd pre{feature} act{feature} 0 {activation_model} W={hidden_activation_width:.6g}u L=180n",
+                *(
+                    [
+                        line
+                        for pix, pixel_node in enumerate(block)
+                        for input_node in [input_rail_name(pixel_node, channel, input_rail_mode)]
+                        for line in [
+                            f"Mhres{feature}_{pix}_x vdd {input_node} hres{feature}_{pix}_0 0 NSENSE W={hidden_input_residual_width:.6g}u L=180n",
+                            f"Mhres{feature}_{pix}_f hres{feature}_{pix}_0 fwd act{feature} 0 NMOS W={hidden_input_residual_width:.6g}u L=180n",
+                        ]
+                    ]
+                    if hidden_input_residual_width > 0.0
+                    else []
+                ),
                 *(
                     [
                         f"Mactinh_src{feature}_a vdd act{feature} actinh_src{feature}_a 0 NSENSE W={activation_competition_width:.6g}u L=180n",
@@ -901,6 +917,7 @@ def run_device_sequence(
     hidden_update_width: float,
     hidden_weight_write_width: float,
     hidden_activation_width: float,
+    hidden_input_residual_width: float,
     hidden_activation_model: str,
     readout_forward_width: float,
     readout_forward_model: str,
@@ -936,6 +953,7 @@ def run_device_sequence(
         hidden_update_width=hidden_update_width,
         hidden_weight_write_width=hidden_weight_write_width,
         hidden_activation_width=hidden_activation_width,
+        hidden_input_residual_width=hidden_input_residual_width,
         hidden_activation_model=hidden_activation_model,
         readout_forward_width=readout_forward_width,
         readout_forward_model=readout_forward_model,
@@ -986,6 +1004,7 @@ def main() -> None:
     ap.add_argument("--hidden-update-width", type=float, default=12.0)
     ap.add_argument("--hidden-weight-write-width", type=float, default=0.25)
     ap.add_argument("--hidden-activation-width", type=float, default=24.0)
+    ap.add_argument("--hidden-input-residual-width", type=float, default=0.0)
     ap.add_argument("--hidden-activation-model", choices=HIDDEN_ACTIVATION_MODELS, default="nrel")
     ap.add_argument("--hidden-polarity-init", choices=HIDDEN_POLARITY_INITS, default="ink")
     ap.add_argument("--readout-forward-width", type=float, default=64.0)
@@ -1066,6 +1085,7 @@ def main() -> None:
         "hidden_update_width": args.hidden_update_width,
         "hidden_weight_write_width": args.hidden_weight_write_width,
         "hidden_activation_width": args.hidden_activation_width,
+        "hidden_input_residual_width": args.hidden_input_residual_width,
         "hidden_activation_model": args.hidden_activation_model,
         "readout_forward_width": args.readout_forward_width,
         "readout_forward_model": args.readout_forward_model,
@@ -1174,6 +1194,7 @@ def main() -> None:
         "hidden_update_width": args.hidden_update_width,
         "hidden_weight_write_width": args.hidden_weight_write_width,
         "hidden_activation_width": args.hidden_activation_width,
+        "hidden_input_residual_width": args.hidden_input_residual_width,
         "hidden_activation_model": args.hidden_activation_model,
         "hidden_polarity_init": args.hidden_polarity_init,
         "readout_forward_width": args.readout_forward_width,

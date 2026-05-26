@@ -33,6 +33,7 @@ def test_device_mnist01_block_script_help_runs_from_repo_root() -> None:
     assert "--hidden-update-width" in proc.stdout
     assert "--hidden-weight-write-width" in proc.stdout
     assert "--hidden-activation-width" in proc.stdout
+    assert "--hidden-input-residual-width" in proc.stdout
     assert "--hidden-activation-model" in proc.stdout
     assert "--hidden-polarity-init" in proc.stdout
     assert "--readout-forward-model" in proc.stdout
@@ -358,6 +359,32 @@ def test_block_netlist_can_emit_transistor_activation_competition() -> None:
     assert "Mactinh_sink3_i act3 actinh actinh_sink3_i 0 NSENSE W=5u" in netlist
     assert "Mactinh_sink3_f actinh_sink3_i fwd 0 0 NMOS W=5u" in netlist
     assert ".meas tran actinh_before_0 FIND V(actinh) AT=2.95n" in netlist
+
+
+def test_block_netlist_can_emit_input_dependent_activation_residual() -> None:
+    sys.path.insert(0, str(SPICE_DIR))
+    import run_device_mnist01_block_training as block
+
+    image_size = 4
+    weights = block.initial_block_weights(image_size, 2, 2, 1, seed=1)
+    sample = {f"x{i}": 0.2 + 0.01 * i for i in range(image_size * image_size)}
+    sample["target"] = 1.1
+    netlist = block.block_netlist(
+        [sample],
+        weights,
+        image_size=image_size,
+        block_size=2,
+        stride=2,
+        channels=1,
+        training_enabled=True,
+        hidden_input_residual_width=1.5,
+    )
+
+    assert "\nB" not in netlist
+    assert "Mhres0_0_x vdd x0 hres0_0_0 0 NSENSE W=1.5u" in netlist
+    assert "Mhres0_0_f hres0_0_0 fwd act0 0 NMOS W=1.5u" in netlist
+    assert "Mhres3_3_x vdd x15 hres3_3_0 0 NSENSE W=1.5u" in netlist
+    assert "Mhres3_3_f hres3_3_0 fwd act3 0 NMOS W=1.5u" in netlist
 
 
 def test_block_netlist_can_emit_trainable_output_bias() -> None:

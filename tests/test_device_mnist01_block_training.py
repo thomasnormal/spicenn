@@ -820,10 +820,10 @@ def test_block_netlist_can_emit_restored_readout_weighted_hidden_credit() -> Non
     assert "\nB" not in netlist
     assert "Crvwp3 rvwp3 0 4f IC=0" in netlist
     assert "Crvwn3 rvwn3 0 4f IC=0" in netlist
-    assert "Mprecharge_rvwp3 vdd rstgn rvwp3 vdd PMOS W=4u" in netlist
-    assert "Mprecharge_rvwn3 vdd rstgn rvwn3 vdd PMOS W=4u" in netlist
-    assert "Mrvwp3_p vdd rvwn3 rvwp3 vdd PMOS W=6u" in netlist
-    assert "Mrvwn3_p vdd rvwp3 rvwn3 vdd PMOS W=6u" in netlist
+    assert "Mprecharge_rvwp3 rvwp3 rstgn vdd vdd PMOS W=4u" in netlist
+    assert "Mprecharge_rvwn3 rvwn3 rstgn vdd vdd PMOS W=4u" in netlist
+    assert "Mrvwp3_p rvwp3 rvwn3 vdd vdd PMOS W=6u" in netlist
+    assert "Mrvwn3_p rvwn3 rvwp3 vdd vdd PMOS W=6u" in netlist
     assert "Mrvwp3_n rvwp3 vwn3 rvw_src3 0 NSENSE W=6u" in netlist
     assert "Mrvwn3_n rvwn3 vwp3 rvw_src3 0 NSENSE W=6u" in netlist
     assert "Mrvw3_tail rvw_src3 err 0 0 NMOS W=6u" in netlist
@@ -860,10 +860,10 @@ def test_block_netlist_can_emit_restored_error_rails_for_learning() -> None:
     assert "\nB" not in netlist
     assert "Cedp edp 0 8f IC=0" in netlist
     assert "Cedn edn 0 8f IC=0" in netlist
-    assert "Mprecharge_edp vdd rstgn edp vdd PMOS W=4u" in netlist
-    assert "Mprecharge_edn vdd rstgn edn vdd PMOS W=4u" in netlist
-    assert "Merrstore_p vdd edn edp vdd PMOS W=7u" in netlist
-    assert "Merrstore_n vdd edp edn vdd PMOS W=7u" in netlist
+    assert "Mprecharge_edp edp rstgn vdd vdd PMOS W=4u" in netlist
+    assert "Mprecharge_edn edn rstgn vdd vdd PMOS W=4u" in netlist
+    assert "Merrstore_p edp edn vdd vdd PMOS W=7u" in netlist
+    assert "Merrstore_n edn edp vdd vdd PMOS W=7u" in netlist
     assert "Merrstore_ep edp dn errstore_src 0 NSENSE W=7u" in netlist
     assert "Merrstore_en edn dp errstore_src 0 NSENSE W=7u" in netlist
     assert "Merrstore_tail errstore_src err 0 0 NMOS W=7u" in netlist
@@ -981,7 +981,7 @@ def test_block_netlist_can_emit_score_gated_differential_output_stage() -> None:
     )
 
     assert "\nB" not in netlist
-    assert "Moutp_gate vdd scoren outp_gate vdd PMOS W=48u" in netlist
+    assert "Moutp_gate outp_gate scoren vdd vdd PMOS W=48u" in netlist
     assert "Moutp_score outp_gate score out 0 NSENSE W=48u" in netlist
     assert "Moutn out scoren 0 0 NSENSE W=96u" in netlist
     assert "Moutp vdd score out 0 NSENSE" not in netlist
@@ -1012,7 +1012,7 @@ def test_block_netlist_can_emit_latched_differential_output_stage() -> None:
     assert "\nB" not in netlist
     assert "Coutn outn 0 20f IC=0" in netlist
     assert "Mreset_outn outn rstf 0 0 NMOS W=4u" in netlist
-    assert "Moutlat_p_out vdd outn out vdd PMOS W=48u" in netlist
+    assert "Moutlat_p_out out outn vdd vdd PMOS W=48u" in netlist
     assert "Moutlat_n_out out scoren outlat_src 0 NSENSE W=96u" in netlist
     assert "Moutlat_n_outn outn score outlat_src 0 NSENSE W=96u" in netlist
     assert "Moutlat_tail outlat_src fwd 0 0 NMOS W=96u" in netlist
@@ -1116,10 +1116,10 @@ def test_block_netlist_can_emit_precharged_reference_latched_decision_stage() ->
     assert "Cdecisionn decisionn 0 20f IC=0" in netlist
     assert "Mreset_decision decision rstf 0 0 NMOS" not in netlist
     assert "Mreset_decisionn decisionn rstf 0 0 NMOS" not in netlist
-    assert "Mprecharge_decision vdd rstfn decision vdd PMOS W=4u" in netlist
-    assert "Mprecharge_decisionn vdd rstfn decisionn vdd PMOS W=4u" in netlist
-    assert "Mdec_pc_p vdd decisionn decision vdd PMOS W=48u" in netlist
-    assert "Mdecn_pc_p vdd decision decisionn vdd PMOS W=48u" in netlist
+    assert "Mprecharge_decision decision rstfn vdd vdd PMOS W=4u" in netlist
+    assert "Mprecharge_decisionn decisionn rstfn vdd vdd PMOS W=4u" in netlist
+    assert "Mdec_pc_p decision decisionn vdd vdd PMOS W=48u" in netlist
+    assert "Mdecn_pc_p decisionn decision vdd vdd PMOS W=48u" in netlist
     assert "Mdec_pc_n decision outref dec_src 0 NSENSE W=96u" in netlist
     assert "Mdecn_pc_n decisionn out dec_src 0 NSENSE W=96u" in netlist
     assert "Mdec_pc_tail dec_src dec 0 0 NMOS W=96u" in netlist
@@ -1230,8 +1230,8 @@ def test_block_netlist_can_emit_adaptive_decision_reference_state() -> None:
     assert "Coutref_raise_gate outref_raise_gate 0 4f IC=1.2" in netlist
     assert "Routref_raise_gate outref_raise_gate vdd 50k" in netlist
     assert "Moutref_raise_gate outref_raise_gate dn 0 0 NSENSE W=16u" in netlist
-    assert "Moutref_raise_p0 vdd outref_raise_gate outref_raise vdd PMOS W=4u" in netlist
-    assert "Moutref_raise_p1 outref_raise applyn outref vdd PMOS W=4u" in netlist
+    assert "Moutref_raise_p0 outref_raise outref_raise_gate vdd vdd PMOS W=4u" in netlist
+    assert "Moutref_raise_p1 outref applyn outref_raise vdd PMOS W=4u" in netlist
     assert "Moutref_lower_a outref apply outref_lower 0 NREL W=0.5u" in netlist
     assert "Moutref_lower_g outref_lower dp 0 0 NSENSE W=0.5u" in netlist
     assert ".meas tran outref_before_0 FIND V(outref)" in netlist
@@ -1335,8 +1335,8 @@ def test_block_netlist_can_emit_reference_preamp_latched_decision_stage() -> Non
     assert "Cdecisionn_pre decisionn_pre 0 10f IC=0" in netlist
     assert "Mreset_decision_pre decision_pre rstf 0 0 NMOS W=4u" in netlist
     assert "Mreset_decisionn_pre decisionn_pre rstf 0 0 NMOS W=4u" in netlist
-    assert "Mdecpre_lp vdd decision_pre decision_pre vdd PMOS W=64u" in netlist
-    assert "Mdecpre_ln vdd decisionn_pre decisionn_pre vdd PMOS W=64u" in netlist
+    assert "Mdecpre_lp decision_pre decision_pre vdd vdd PMOS W=64u" in netlist
+    assert "Mdecpre_ln decisionn_pre decisionn_pre vdd vdd PMOS W=64u" in netlist
     assert "Mdecpre_ref decision_pre outref decpre_src 0 NSENSE W=128u" in netlist
     assert "Mdecpre_out decisionn_pre out decpre_src 0 NSENSE W=128u" in netlist
     assert "Mdecpre_tail decpre_src dec 0 0 NMOS W=128u" in netlist
@@ -1377,6 +1377,74 @@ def test_block_netlist_can_emit_differential_latched_decision_stage() -> None:
     assert "Mdec_tail dec_src dec 0 0 NMOS W=96u" in netlist
     assert "Mdec_n decision outref dec_src 0 NSENSE" not in netlist
     assert ".meas tran decision_after_0 FIND V(decision) AT=15.50n" in netlist
+
+
+def test_block_netlist_can_emit_precharged_differential_latched_decision_stage() -> None:
+    sys.path.insert(0, str(SPICE_DIR))
+    import run_device_mnist01_block_training as block
+
+    image_size = 4
+    weights = block.initial_block_weights(image_size, 2, 2, 1, seed=1)
+    sample = {f"x{i}": 0.2 + 0.01 * i for i in range(image_size * image_size)}
+    sample["target"] = 1.1
+    netlist = block.block_netlist(
+        [sample],
+        weights,
+        image_size=image_size,
+        block_size=2,
+        stride=2,
+        channels=1,
+        training_enabled=True,
+        score_mode="differential",
+        output_differential_stage="latched",
+        output_decision_stage="diff-precharged-latched",
+        output_decision_pullup_width=8.0,
+        output_decision_pulldown_width=96.0,
+    )
+
+    assert "\nB" not in netlist
+    assert "Voutref" not in netlist
+    assert "Mreset_decision decision rstf 0 0 NMOS" not in netlist
+    assert "Mprecharge_decision decision rstfn vdd vdd PMOS W=4u" in netlist
+    assert "Mprecharge_decisionn decisionn rstfn vdd vdd PMOS W=4u" in netlist
+    assert "Mdec_diffpc_n decision outn dec_src 0 NSENSE W=96u" in netlist
+    assert "Mdecn_diffpc_n decisionn out dec_src 0 NSENSE W=96u" in netlist
+    assert "Mdec_diffpc_tail dec_src dec 0 0 NMOS W=96u" in netlist
+    assert "Mdec_diffpc_n decision outref dec_src 0 NSENSE" not in netlist
+    assert ".meas tran decision_diff_0 PARAM='decision_after_0-decisionn_after_0'" in netlist
+
+
+def test_generated_pmos_pullups_do_not_use_vdd_as_drain() -> None:
+    sys.path.insert(0, str(SPICE_DIR))
+    import run_device_mnist01_block_training as block
+
+    image_size = 4
+    weights = block.initial_block_weights(image_size, 2, 2, 1, seed=1)
+    sample = {f"x{i}": 0.2 + 0.01 * i for i in range(image_size * image_size)}
+    sample["target"] = 1.1
+    netlist = block.block_netlist(
+        [sample],
+        weights,
+        image_size=image_size,
+        block_size=2,
+        stride=2,
+        channels=1,
+        training_enabled=True,
+        score_mode="differential",
+        hidden_credit_mode="readout-restored",
+        error_signal_mode="restored",
+        output_bias_enabled=True,
+        output_differential_stage="latched",
+        output_decision_stage="ref-precharged-latched",
+        output_decision_ref_source="adaptive",
+    )
+
+    bad = []
+    for line in netlist.splitlines():
+        parts = line.split()
+        if len(parts) >= 6 and parts[0].startswith("M") and parts[5] == "PMOS" and parts[1] == "vdd":
+            bad.append(line)
+    assert bad == []
 
 
 def test_block_netlist_can_emit_ratioed_inverter_decision_stage() -> None:
@@ -1867,8 +1935,10 @@ def test_block_netlist_can_emit_trainable_output_bias() -> None:
     assert "Mobneg_f obn_f0 fwd scoren 0 NREL W=48u" in netlist
     assert "Mgop_d vdd dp gop_d 0 NSENSE W=24u" in netlist
     assert "Mgon_d vdd dn gon_d 0 NSENSE W=24u" in netlist
-    assert "Mobp_up_p1 obp_up applyn obp vdd PMOS" in netlist
-    assert "Mobn_up_p1 obn_up applyn obn vdd PMOS" in netlist
+    assert "Mobp_up_p0 obp_up rop vdd vdd PMOS" in netlist
+    assert "Mobp_up_p1 obp applyn obp_up vdd PMOS" in netlist
+    assert "Mobn_up_p0 obn_up ron vdd vdd PMOS" in netlist
+    assert "Mobn_up_p1 obn applyn obn_up vdd PMOS" in netlist
     assert ".meas tran output_bias_signed_after_0 PARAM='obp_after_apply_0-obn_after_apply_0'" in netlist
 
 

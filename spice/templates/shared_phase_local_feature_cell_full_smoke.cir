@@ -92,8 +92,8 @@ Rvwp vwp 0 1e15
 Rvwn vwn 0 1e15
 
 * Restored readout-weight sign for hidden credit.
-Mrvwp_p vdd rvwn rvwp vdd PMOS W=6u L=180n
-Mrvwn_p vdd rvwp rvwn vdd PMOS W=6u L=180n
+Mrvwp_p rvwp rvwn vdd vdd PMOS W=6u L=180n
+Mrvwn_p rvwn rvwp vdd vdd PMOS W=6u L=180n
 Mrvwp_n rvwp vwn rvw_src 0 NSENSE W=6u L=180n
 Mrvwn_n rvwn vwp rvw_src 0 NSENSE W=6u L=180n
 Mrvw_tail rvw_src err 0 0 NMOS W=6u L=180n

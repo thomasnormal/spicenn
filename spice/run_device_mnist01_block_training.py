@@ -43,6 +43,7 @@ OUTPUT_DECISION_STAGES = (
     "ref-precharged-latched",
     "ref-preamp-latched",
     "diff-latched",
+    "diff-precharged-latched",
     "ratio-inverter",
     "stacked-inverter",
     "shift-inverter",
@@ -620,7 +621,8 @@ def block_netlist(
     if output_decision_ref_source == "divider" and output_decision_ref_resistance <= 0.0:
         raise ValueError("output_decision_ref_resistance must be positive")
     if (
-        output_decision_stage in {"ref-latched", "ref-precharged-latched", "ref-preamp-latched", "diff-latched"}
+        output_decision_stage
+        in {"ref-latched", "ref-precharged-latched", "ref-preamp-latched", "diff-latched", "diff-precharged-latched"}
         and output_differential_stage != "latched"
     ):
         raise ValueError("output_decision_stage requires latched output_differential_stage")
@@ -1073,8 +1075,8 @@ def block_netlist(
     ]
     if restore_error_enabled:
         lines += [
-            "Mprecharge_edp vdd rstgn edp vdd PMOS W=4u L=180n",
-            "Mprecharge_edn vdd rstgn edn vdd PMOS W=4u L=180n",
+            "Mprecharge_edp edp rstgn vdd vdd PMOS W=4u L=180n",
+            "Mprecharge_edn edn rstgn vdd vdd PMOS W=4u L=180n",
         ]
     if output_bias_enabled:
         lines += [
@@ -1083,15 +1085,15 @@ def block_netlist(
         ]
     if output_differential_stage == "latched":
         lines.append("Mreset_outn outn rstf 0 0 NMOS W=4u L=180n")
-    if output_decision_stage != "none" and output_decision_stage != "ref-precharged-latched":
+    if output_decision_stage != "none" and output_decision_stage not in {"ref-precharged-latched", "diff-precharged-latched"}:
         lines += [
             "Mreset_decision decision rstf 0 0 NMOS W=4u L=180n",
             "Mreset_decisionn decisionn rstf 0 0 NMOS W=4u L=180n",
         ]
-    if output_decision_stage == "ref-precharged-latched":
+    if output_decision_stage in {"ref-precharged-latched", "diff-precharged-latched"}:
         lines += [
-            "Mprecharge_decision vdd rstfn decision vdd PMOS W=4u L=180n",
-            "Mprecharge_decisionn vdd rstfn decisionn vdd PMOS W=4u L=180n",
+            "Mprecharge_decision decision rstfn vdd vdd PMOS W=4u L=180n",
+            "Mprecharge_decisionn decisionn rstfn vdd vdd PMOS W=4u L=180n",
         ]
     if output_decision_stage == "ref-preamp-latched":
         lines += [
@@ -1115,8 +1117,8 @@ def block_netlist(
             lines.append(f"Mreset_pren{feature} pren{feature} rstf 0 0 NMOS W=4u L=180n")
         if hidden_credit_mode == "readout-restored":
             lines += [
-                f"Mprecharge_rvwp{feature} vdd rstgn rvwp{feature} vdd PMOS W=4u L=180n",
-                f"Mprecharge_rvwn{feature} vdd rstgn rvwn{feature} vdd PMOS W=4u L=180n",
+                f"Mprecharge_rvwp{feature} rvwp{feature} rstgn vdd vdd PMOS W=4u L=180n",
+                f"Mprecharge_rvwn{feature} rvwn{feature} rstgn vdd vdd PMOS W=4u L=180n",
             ]
         for pix in range(block_len):
             lines += [
@@ -1306,8 +1308,8 @@ def block_netlist(
                 ),
                 *(
                     [
-                        f"Mrvwp{feature}_p vdd rvwn{feature} rvwp{feature} vdd PMOS W={readout_feedback_restore_width:.6g}u L=180n",
-                        f"Mrvwn{feature}_p vdd rvwp{feature} rvwn{feature} vdd PMOS W={readout_feedback_restore_width:.6g}u L=180n",
+                        f"Mrvwp{feature}_p rvwp{feature} rvwn{feature} vdd vdd PMOS W={readout_feedback_restore_width:.6g}u L=180n",
+                        f"Mrvwn{feature}_p rvwn{feature} rvwp{feature} vdd vdd PMOS W={readout_feedback_restore_width:.6g}u L=180n",
                         f"Mrvwp{feature}_n rvwp{feature} vwn{feature} rvw_src{feature} 0 NSENSE W={readout_feedback_restore_width:.6g}u L=180n",
                         f"Mrvwn{feature}_n rvwn{feature} vwp{feature} rvw_src{feature} 0 NSENSE W={readout_feedback_restore_width:.6g}u L=180n",
                         f"Mrvw{feature}_tail rvw_src{feature} err 0 0 NMOS W={readout_feedback_restore_width:.6g}u L=180n",
@@ -1343,12 +1345,12 @@ def block_netlist(
                 f"Mbhn{feature}_up_a bhn{feature}_up apply bhn{feature} 0 NREL W={hidden_weight_write_width:.6g}u L=180n",
                 f"Mbhp{feature}_dn_a bhp{feature} apply bhp{feature}_dn 0 NREL W={hidden_weight_write_width:.6g}u L=180n",
                 f"Mbhp{feature}_dn_g bhp{feature}_dn gbn{feature} 0 0 NSENSE W={hidden_weight_write_width:.6g}u L=180n",
-                f"Mvwp{feature}_up_p0 vdd rgp{feature} vwp{feature}_up vdd PMOS W={readout_pmos_w:.6g}u L=180n",
-                f"Mvwp{feature}_up_p1 vwp{feature}_up applyn vwp{feature} vdd PMOS W={readout_pmos_w:.6g}u L=180n",
+                f"Mvwp{feature}_up_p0 vwp{feature}_up rgp{feature} vdd vdd PMOS W={readout_pmos_w:.6g}u L=180n",
+                f"Mvwp{feature}_up_p1 vwp{feature} applyn vwp{feature}_up vdd PMOS W={readout_pmos_w:.6g}u L=180n",
                 f"Mvwn{feature}_dn_a vwn{feature} apply vwn{feature}_dn 0 NREL W={readout_nmos_w:.6g}u L=180n",
                 f"Mvwn{feature}_dn_g vwn{feature}_dn gvp{feature} 0 0 NSENSE W={readout_nmos_w:.6g}u L=180n",
-                f"Mvwn{feature}_up_p0 vdd rgn{feature} vwn{feature}_up vdd PMOS W={readout_pmos_w:.6g}u L=180n",
-                f"Mvwn{feature}_up_p1 vwn{feature}_up applyn vwn{feature} vdd PMOS W={readout_pmos_w:.6g}u L=180n",
+                f"Mvwn{feature}_up_p0 vwn{feature}_up rgn{feature} vdd vdd PMOS W={readout_pmos_w:.6g}u L=180n",
+                f"Mvwn{feature}_up_p1 vwn{feature} applyn vwn{feature}_up vdd PMOS W={readout_pmos_w:.6g}u L=180n",
                 f"Mvwp{feature}_dn_a vwp{feature} apply vwp{feature}_dn 0 NREL W={readout_nmos_w:.6g}u L=180n",
                 f"Mvwp{feature}_dn_g vwp{feature}_dn gvn{feature} 0 0 NSENSE W={readout_nmos_w:.6g}u L=180n",
                 *(
@@ -1396,12 +1398,12 @@ def block_netlist(
             f"Mgon_g gon_d acc gon 0 NREL W={readout_gradient_width:.6g}u L=180n",
             "Mrop_pd rop gop 0 0 NSENSE W=16u L=180n",
             "Mron_pd ron gon 0 0 NSENSE W=16u L=180n",
-            f"Mobp_up_p0 vdd rop obp_up vdd PMOS W={output_bias_pmos_w:.6g}u L=180n",
-            f"Mobp_up_p1 obp_up applyn obp vdd PMOS W={output_bias_pmos_w:.6g}u L=180n",
+            f"Mobp_up_p0 obp_up rop vdd vdd PMOS W={output_bias_pmos_w:.6g}u L=180n",
+            f"Mobp_up_p1 obp applyn obp_up vdd PMOS W={output_bias_pmos_w:.6g}u L=180n",
             f"Mobn_dn_a obn apply obn_dn 0 NREL W={output_bias_nmos_w:.6g}u L=180n",
             f"Mobn_dn_g obn_dn gop 0 0 NSENSE W={output_bias_nmos_w:.6g}u L=180n",
-            f"Mobn_up_p0 vdd ron obn_up vdd PMOS W={output_bias_pmos_w:.6g}u L=180n",
-            f"Mobn_up_p1 obn_up applyn obn vdd PMOS W={output_bias_pmos_w:.6g}u L=180n",
+            f"Mobn_up_p0 obn_up ron vdd vdd PMOS W={output_bias_pmos_w:.6g}u L=180n",
+            f"Mobn_up_p1 obn applyn obn_up vdd PMOS W={output_bias_pmos_w:.6g}u L=180n",
             f"Mobp_dn_a obp apply obp_dn 0 NREL W={output_bias_nmos_w:.6g}u L=180n",
             f"Mobp_dn_g obp_dn gon 0 0 NSENSE W={output_bias_nmos_w:.6g}u L=180n",
         ]
@@ -1412,8 +1414,8 @@ def block_netlist(
             "",
             "* Adaptive decision-reference state: dp lowers the threshold, dn raises it during apply.",
             f"Moutref_raise_gate outref_raise_gate {readout_negative_error_node} 0 0 NSENSE W=16u L=180n",
-            f"Moutref_raise_p0 vdd outref_raise_gate outref_raise vdd PMOS W={outref_charge_width:.6g}u L=180n",
-            f"Moutref_raise_p1 outref_raise applyn outref vdd PMOS W={outref_charge_width:.6g}u L=180n",
+            f"Moutref_raise_p0 outref_raise outref_raise_gate vdd vdd PMOS W={outref_charge_width:.6g}u L=180n",
+            f"Moutref_raise_p1 outref applyn outref_raise vdd PMOS W={outref_charge_width:.6g}u L=180n",
             f"Moutref_lower_a outref apply outref_lower 0 NREL W={output_decision_ref_write_width:.6g}u L=180n",
             f"Moutref_lower_g outref_lower {readout_positive_error_node} 0 0 NSENSE W={output_decision_ref_write_width:.6g}u L=180n",
         ]
@@ -1439,8 +1441,8 @@ def block_netlist(
         output_stage = "\n".join(
             [
                 "* Dynamic differential output latch: score discharges outn, scoren discharges out.",
-                f"Moutlat_p_out vdd outn out vdd PMOS W={output_score_pullup_width:.6g}u L=180n",
-                f"Moutlat_p_outn vdd out outn vdd PMOS W={output_score_pullup_width:.6g}u L=180n",
+                f"Moutlat_p_out out outn vdd vdd PMOS W={output_score_pullup_width:.6g}u L=180n",
+                f"Moutlat_p_outn outn out vdd vdd PMOS W={output_score_pullup_width:.6g}u L=180n",
                 f"Moutlat_n_out out scoren outlat_src 0 NSENSE W={output_scoren_pulldown_width:.6g}u L=180n",
                 f"Moutlat_n_outn outn score outlat_src 0 NSENSE W={output_scoren_pulldown_width:.6g}u L=180n",
                 f"Moutlat_tail outlat_src fwd 0 0 NMOS W={output_scoren_pulldown_width:.6g}u L=180n",
@@ -1449,7 +1451,7 @@ def block_netlist(
     elif score_mode == "differential" and output_differential_stage == "score-gated":
         output_stage = "\n".join(
             [
-                f"Moutp_gate vdd scoren outp_gate vdd PMOS W={output_score_pullup_width:.6g}u L=180n",
+                f"Moutp_gate outp_gate scoren vdd vdd PMOS W={output_score_pullup_width:.6g}u L=180n",
                 f"Moutp_score outp_gate score out 0 NSENSE W={output_score_pullup_width:.6g}u L=180n",
                 f"Moutn out scoren 0 0 NSENSE W={output_scoren_pulldown_width:.6g}u L=180n",
             ]
@@ -1479,8 +1481,8 @@ def block_netlist(
         decision_stage = "\n".join(
             [
                 "* Precharged reference latch: reset precharges both decision rails high, dec discharges the lower side.",
-                f"Mdec_pc_p vdd decisionn decision vdd PMOS W={output_decision_pullup_width:.6g}u L=180n",
-                f"Mdecn_pc_p vdd decision decisionn vdd PMOS W={output_decision_pullup_width:.6g}u L=180n",
+                f"Mdec_pc_p decision decisionn vdd vdd PMOS W={output_decision_pullup_width:.6g}u L=180n",
+                f"Mdecn_pc_p decisionn decision vdd vdd PMOS W={output_decision_pullup_width:.6g}u L=180n",
                 f"Mdec_pc_n decision outref dec_src 0 NSENSE W={output_decision_pulldown_width:.6g}u L=180n",
                 f"Mdecn_pc_n decisionn out dec_src 0 NSENSE W={output_decision_pulldown_width:.6g}u L=180n",
                 f"Mdec_pc_tail dec_src dec 0 0 NMOS W={output_decision_pulldown_width:.6g}u L=180n",
@@ -1490,8 +1492,8 @@ def block_netlist(
         decision_stage = "\n".join(
             [
                 "* High-impedance reference preamp followed by a regenerative decision latch.",
-                f"Mdecpre_lp vdd decision_pre decision_pre vdd PMOS W={output_decision_pullup_width:.6g}u L=180n",
-                f"Mdecpre_ln vdd decisionn_pre decisionn_pre vdd PMOS W={output_decision_pullup_width:.6g}u L=180n",
+                f"Mdecpre_lp decision_pre decision_pre vdd vdd PMOS W={output_decision_pullup_width:.6g}u L=180n",
+                f"Mdecpre_ln decisionn_pre decisionn_pre vdd vdd PMOS W={output_decision_pullup_width:.6g}u L=180n",
                 f"Mdecpre_ref decision_pre outref decpre_src 0 NSENSE W={output_decision_pulldown_width:.6g}u L=180n",
                 f"Mdecpre_out decisionn_pre out decpre_src 0 NSENSE W={output_decision_pulldown_width:.6g}u L=180n",
                 f"Mdecpre_tail decpre_src dec 0 0 NMOS W={output_decision_pulldown_width:.6g}u L=180n",
@@ -1511,6 +1513,17 @@ def block_netlist(
                 f"Mdec_n decision outn dec_src 0 NSENSE W={output_decision_pulldown_width:.6g}u L=180n",
                 f"Mdecn_n decisionn out dec_src 0 NSENSE W={output_decision_pulldown_width:.6g}u L=180n",
                 f"Mdec_tail dec_src dec 0 0 NMOS W={output_decision_pulldown_width:.6g}u L=180n",
+            ]
+        )
+    elif output_decision_stage == "diff-precharged-latched":
+        decision_stage = "\n".join(
+            [
+                "* Precharged differential latch: reset precharges both decision rails high, dec discharges the lower side from out/outn.",
+                f"Mdec_diffpc_p decision decisionn vdd vdd PMOS W={output_decision_pullup_width:.6g}u L=180n",
+                f"Mdecn_diffpc_p decisionn decision vdd vdd PMOS W={output_decision_pullup_width:.6g}u L=180n",
+                f"Mdec_diffpc_n decision outn dec_src 0 NSENSE W={output_decision_pulldown_width:.6g}u L=180n",
+                f"Mdecn_diffpc_n decisionn out dec_src 0 NSENSE W={output_decision_pulldown_width:.6g}u L=180n",
+                f"Mdec_diffpc_tail dec_src dec 0 0 NMOS W={output_decision_pulldown_width:.6g}u L=180n",
             ]
         )
     elif output_decision_stage == "ratio-inverter":
@@ -1583,8 +1596,8 @@ def block_netlist(
             [
                 "",
                 "* Restored output-error latch: raw dp/dn select full-swing edp/edn learning rails.",
-                f"Merrstore_p vdd edn edp vdd PMOS W={error_restore_width:.6g}u L=180n",
-                f"Merrstore_n vdd edp edn vdd PMOS W={error_restore_width:.6g}u L=180n",
+                f"Merrstore_p edp edn vdd vdd PMOS W={error_restore_width:.6g}u L=180n",
+                f"Merrstore_n edn edp vdd vdd PMOS W={error_restore_width:.6g}u L=180n",
                 f"Merrstore_ep edp dn errstore_src 0 NSENSE W={error_restore_width:.6g}u L=180n",
                 f"Merrstore_en edn dp errstore_src 0 NSENSE W={error_restore_width:.6g}u L=180n",
                 f"Merrstore_tail errstore_src err 0 0 NMOS W={error_restore_width:.6g}u L=180n",

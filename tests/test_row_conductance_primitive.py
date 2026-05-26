@@ -22,6 +22,7 @@ def test_row_conductance_netlist_uses_differential_conductance_compute() -> None
     assert "Mrow_p row fwdn row_src vdd PMOS W=24u L=180n" in netlist
     assert "Mwp_fwd row wp pre_p 0 NMOS W=1u L=180n" in netlist
     assert "Mwn_fwd row wn pre_n 0 NMOS W=1u L=180n" in netlist
+    assert "Mwp_up_e vdd ep wp_up_e 0 NSENSE W=0.25u L=180n" in netlist
     assert "Mhdp_p edp vwp hdp 0 NSENSE W=8u L=180n" in netlist
     assert "Mhdn_p edp vwn hdn 0 NSENSE W=8u L=180n" in netlist
     assert ".meas tran forward_margin PARAM='pre_p_after-pre_n_after'" in netlist

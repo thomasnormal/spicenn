@@ -46,7 +46,7 @@ def generate_netlist(
     readout_wn: float | None = None,
     syn_width: float = 1.0,
     row_drive_width: float = 12.0,
-    update_width: float = 4.0,
+    update_width: float = 0.25,
     credit_width: float = 8.0,
 ) -> str:
     if update_mode not in UPDATE_MODES:
@@ -328,7 +328,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
     ap.add_argument("--credit-mode", choices=CREDIT_MODES, default="positive")
     ap.add_argument("--syn-width", type=float, default=1.0)
     ap.add_argument("--row-drive-width", type=float, default=12.0)
-    ap.add_argument("--update-width", type=float, default=4.0)
+    ap.add_argument("--update-width", type=float, default=0.25)
     ap.add_argument("--credit-width", type=float, default=8.0)
     ap.add_argument("--min-abs-margin", type=float, default=1e-3)
     return ap

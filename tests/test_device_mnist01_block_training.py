@@ -73,6 +73,20 @@ def test_alternating_channel_hidden_polarity_initializes_absence_channels() -> N
     assert np.all(bhp[1::2] > bhn[1::2])
 
 
+def test_random_pixel_hidden_polarity_initializes_mixed_stroke_features() -> None:
+    sys.path.insert(0, str(SPICE_DIR))
+    import run_device_mnist01_block_training as block
+
+    weights = block.initial_block_weights(4, 2, 2, 3, seed=0, hidden_polarity_init="random-pixel")
+    whp = np.asarray(weights["whp"])
+    whn = np.asarray(weights["whn"])
+
+    positive_pixels = whp > whn
+    assert np.any(positive_pixels)
+    assert np.any(~positive_pixels)
+    assert all(0 < int(np.sum(row)) < row.size for row in positive_pixels)
+
+
 def test_block_netlist_emits_per_pixel_trainable_caps_and_no_behavioral_sources() -> None:
     sys.path.insert(0, str(SPICE_DIR))
     import run_device_mnist01_block_training as block

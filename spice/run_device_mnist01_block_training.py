@@ -28,7 +28,7 @@ TARGET_POLARITIES = ("active-high", "active-low")
 HIDDEN_ACTIVATION_MODELS = ("nrel", "sense")
 READOUT_FORWARD_MODELS = ("nrel", "sense")
 LEARNING_ACTIVATION_GATE_MODELS = ("nrel", "sense")
-HIDDEN_POLARITY_INITS = ("ink", "alternating-channel")
+HIDDEN_POLARITY_INITS = ("ink", "alternating-channel", "random-pixel")
 SCORE_MODES = ("single-ended", "differential")
 
 
@@ -92,6 +92,17 @@ def initial_block_weights(
         for feature in range(feature_count):
             if feature % channels == 1:
                 whp[feature], whn[feature] = whn[feature].copy(), whp[feature].copy()
+    elif hidden_polarity_init == "random-pixel":
+        polarity = rng.random(size=(feature_count, block_len)) < 0.5
+        for feature in range(feature_count):
+            if np.all(polarity[feature]):
+                polarity[feature, int(rng.integers(0, block_len))] = False
+            elif not np.any(polarity[feature]):
+                polarity[feature, int(rng.integers(0, block_len))] = True
+        whp_mixed = whp.copy()
+        whn_mixed = whn.copy()
+        whp_mixed[~polarity], whn_mixed[~polarity] = whn[~polarity], whp[~polarity]
+        whp, whn = whp_mixed, whn_mixed
     return {
         "whp": whp.tolist(),
         "whn": whn.tolist(),

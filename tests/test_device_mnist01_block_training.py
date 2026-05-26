@@ -61,6 +61,8 @@ def test_device_mnist01_block_script_help_runs_from_repo_root() -> None:
     assert "--output-decision-ref" in proc.stdout
     assert "--output-decision-ref-source" in proc.stdout
     assert "--output-decision-ref-resistance" in proc.stdout
+    assert "--output-decision-ref-capacitance" in proc.stdout
+    assert "--output-decision-ref-write-width" in proc.stdout
     assert "--output-decision-pullup-width" in proc.stdout
     assert "--output-decision-pulldown-width" in proc.stdout
     assert "--output-decision-threshold" in proc.stdout
@@ -639,6 +641,48 @@ def test_block_netlist_can_emit_passive_decision_reference_divider() -> None:
     assert "Coutref outref 0 1f IC=0" in netlist
 
 
+def test_block_netlist_can_emit_adaptive_decision_reference_state() -> None:
+    sys.path.insert(0, str(SPICE_DIR))
+    import run_device_mnist01_block_training as block
+
+    image_size = 4
+    weights = block.initial_block_weights(image_size, 2, 2, 1, seed=1)
+    sample = {f"x{i}": 0.2 + 0.01 * i for i in range(image_size * image_size)}
+    sample["target"] = 1.1
+    netlist = block.block_netlist(
+        [sample],
+        weights,
+        image_size=image_size,
+        block_size=2,
+        stride=2,
+        channels=1,
+        training_enabled=True,
+        score_mode="differential",
+        output_differential_stage="latched",
+        output_decision_stage="ref-precharged-latched",
+        output_decision_ref=0.95,
+        output_decision_ref_source="adaptive",
+        output_decision_ref_resistance=1.2e6,
+        output_decision_ref_capacitance=40e-15,
+        output_decision_ref_write_width=0.5,
+    )
+
+    assert "\nB" not in netlist
+    assert "Voutref outref 0" not in netlist
+    assert "Coutref outref 0 40f IC=0.95" in netlist
+    assert "Routref_top vdd outref 250000" in netlist
+    assert "Routref_bot outref 0 950000" in netlist
+    assert "Coutref_raise_gate outref_raise_gate 0 4f IC=1.2" in netlist
+    assert "Routref_raise_gate outref_raise_gate vdd 50k" in netlist
+    assert "Moutref_raise_gate outref_raise_gate dn 0 0 NSENSE W=16u" in netlist
+    assert "Moutref_raise_p0 vdd outref_raise_gate outref_raise vdd PMOS W=4u" in netlist
+    assert "Moutref_raise_p1 outref_raise applyn outref vdd PMOS W=4u" in netlist
+    assert "Moutref_lower_a outref apply outref_lower 0 NREL W=0.5u" in netlist
+    assert "Moutref_lower_g outref_lower dp 0 0 NSENSE W=0.5u" in netlist
+    assert ".meas tran outref_before_0 FIND V(outref)" in netlist
+    assert ".meas tran d_outref_0 PARAM='outref_after_apply_0-outref_before_0'" in netlist
+
+
 def test_decision_reference_divider_rejects_invalid_reference() -> None:
     sys.path.insert(0, str(SPICE_DIR))
     import pytest
@@ -648,6 +692,62 @@ def test_decision_reference_divider_rejects_invalid_reference() -> None:
         block.decision_ref_divider_resistances(1.2, 1e6)
     with pytest.raises(ValueError, match="positive"):
         block.decision_ref_divider_resistances(0.8, 0.0)
+
+
+def test_adaptive_decision_reference_rejects_invalid_state_devices() -> None:
+    sys.path.insert(0, str(SPICE_DIR))
+    import pytest
+    import run_device_mnist01_block_training as block
+
+    image_size = 4
+    weights = block.initial_block_weights(image_size, 2, 2, 1, seed=1)
+    sample = {f"x{i}": 0.2 + 0.01 * i for i in range(image_size * image_size)}
+    sample["target"] = 1.1
+
+    with pytest.raises(ValueError, match="output_decision_ref_capacitance"):
+        block.block_netlist(
+            [sample],
+            weights,
+            image_size=image_size,
+            block_size=2,
+            stride=2,
+            channels=1,
+            training_enabled=True,
+            score_mode="differential",
+            output_differential_stage="latched",
+            output_decision_stage="ref-precharged-latched",
+            output_decision_ref_source="adaptive",
+            output_decision_ref_capacitance=0.0,
+        )
+    with pytest.raises(ValueError, match="output_decision_ref_write_width"):
+        block.block_netlist(
+            [sample],
+            weights,
+            image_size=image_size,
+            block_size=2,
+            stride=2,
+            channels=1,
+            training_enabled=True,
+            score_mode="differential",
+            output_differential_stage="latched",
+            output_decision_stage="ref-precharged-latched",
+            output_decision_ref_source="adaptive",
+            output_decision_ref_write_width=0.0,
+        )
+    with pytest.raises(ValueError, match="requires a reference decision stage"):
+        block.block_netlist(
+            [sample],
+            weights,
+            image_size=image_size,
+            block_size=2,
+            stride=2,
+            channels=1,
+            training_enabled=True,
+            score_mode="differential",
+            output_differential_stage="latched",
+            output_decision_stage="diff-latched",
+            output_decision_ref_source="adaptive",
+        )
 
 
 def test_block_netlist_can_emit_reference_preamp_latched_decision_stage() -> None:

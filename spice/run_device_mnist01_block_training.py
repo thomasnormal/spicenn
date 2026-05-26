@@ -32,7 +32,7 @@ LEARNING_ACTIVATION_GATE_MODELS = ("nrel", "sense")
 HIDDEN_POLARITY_INITS = ("ink", "alternating-channel", "random-pixel")
 SCORE_MODES = ("single-ended", "differential")
 OUTPUT_DIFFERENTIAL_STAGES = ("simple", "score-gated", "latched")
-OUTPUT_DECISION_REF_SOURCES = ("voltage", "divider")
+OUTPUT_DECISION_REF_SOURCES = ("voltage", "divider", "adaptive")
 OUTPUT_DECISION_STAGES = (
     "none",
     "ref-latched",
@@ -299,6 +299,8 @@ def block_netlist(
     output_decision_ref: float = 1.09,
     output_decision_ref_source: str = "voltage",
     output_decision_ref_resistance: float = 1e6,
+    output_decision_ref_capacitance: float = 20e-15,
+    output_decision_ref_write_width: float = 1.0,
     output_decision_pullup_width: float = 48.0,
     output_decision_pulldown_width: float = 96.0,
     readout_apply_scale: float = 0.35,
@@ -345,13 +347,28 @@ def block_netlist(
         raise ValueError(f"output_decision_stage must be one of {OUTPUT_DECISION_STAGES}")
     if output_decision_ref_source not in OUTPUT_DECISION_REF_SOURCES:
         raise ValueError(f"output_decision_ref_source must be one of {OUTPUT_DECISION_REF_SOURCES}")
-    if output_decision_ref_source == "divider":
+    if output_decision_ref_source in {"divider", "adaptive"} and output_decision_ref_resistance < 0.0:
+        raise ValueError("output_decision_ref_resistance must be nonnegative")
+    if output_decision_ref_source in {"divider", "adaptive"} and output_decision_ref_resistance > 0.0:
         decision_ref_divider_resistances(output_decision_ref, output_decision_ref_resistance)
+    if output_decision_ref_source == "adaptive":
+        if output_decision_ref_capacitance <= 0.0:
+            raise ValueError("output_decision_ref_capacitance must be positive")
+        if output_decision_ref_write_width <= 0.0:
+            raise ValueError("output_decision_ref_write_width must be positive")
+    if output_decision_ref_source == "divider" and output_decision_ref_resistance <= 0.0:
+        raise ValueError("output_decision_ref_resistance must be positive")
     if (
         output_decision_stage in {"ref-latched", "ref-precharged-latched", "ref-preamp-latched", "diff-latched"}
         and output_differential_stage != "latched"
     ):
         raise ValueError("output_decision_stage requires latched output_differential_stage")
+    if output_decision_ref_source == "adaptive" and output_decision_stage not in {
+        "ref-latched",
+        "ref-precharged-latched",
+        "ref-preamp-latched",
+    }:
+        raise ValueError("adaptive output_decision_ref_source requires a reference decision stage")
     if output_decision_pullup_width <= 0.0:
         raise ValueError("output_decision_pullup_width must be positive")
     if output_decision_pulldown_width <= 0.0:
@@ -454,6 +471,12 @@ def block_netlist(
                 f".meas tran decisionn_after_{idx} FIND V(decisionn) AT={base + 15.50 * scale:.2f}n",
                 f".meas tran decision_diff_{idx} PARAM='decision_after_{idx}-decisionn_after_{idx}'",
             ]
+        if output_decision_ref_source == "adaptive":
+            measures += [
+                f".meas tran outref_before_{idx} FIND V(outref) AT={base + 0.60 * scale:.2f}n",
+                f".meas tran outref_after_apply_{idx} FIND V(outref) AT={base + 11.50 * scale:.2f}n",
+                f".meas tran d_outref_{idx} PARAM='outref_after_apply_{idx}-outref_before_{idx}'",
+            ]
         if output_bias_enabled:
             measures += [
                 f".meas tran obp_before_{idx} FIND V(obp) AT={base + 0.60 * scale:.2f}n",
@@ -532,6 +555,19 @@ def block_netlist(
                 f"Routref_bot outref 0 {rbot:.12g}",
                 "Coutref outref 0 1f IC=0",
             ]
+        elif output_decision_ref_source == "adaptive":
+            lines += [
+                f"Coutref outref 0 {spice_capacitance(output_decision_ref_capacitance)} IC={output_decision_ref:.12g}",
+                "Routref outref 0 1e15",
+                "Coutref_raise_gate outref_raise_gate 0 4f IC=1.2",
+                "Routref_raise_gate outref_raise_gate vdd 50k",
+            ]
+            if output_decision_ref_resistance > 0.0:
+                rtop, rbot = decision_ref_divider_resistances(output_decision_ref, output_decision_ref_resistance)
+                lines += [
+                    f"Routref_top vdd outref {rtop:.12g}",
+                    f"Routref_bot outref 0 {rbot:.12g}",
+                ]
         else:
             lines.append(f"Voutref outref 0 {output_decision_ref:.12g}")
     for rail in required_rails:
@@ -890,6 +926,18 @@ def block_netlist(
             f"Mobn_up_p1 obn_up applyn obn vdd PMOS W={output_bias_pmos_w:.6g}u L=180n",
             f"Mobp_dn_a obp apply obp_dn 0 NREL W={output_bias_nmos_w:.6g}u L=180n",
             f"Mobp_dn_g obp_dn gon 0 0 NSENSE W={output_bias_nmos_w:.6g}u L=180n",
+        ]
+
+    if output_decision_ref_source == "adaptive":
+        outref_charge_width = max(0.5, output_decision_ref_write_width * 8.0)
+        lines += [
+            "",
+            "* Adaptive decision-reference state: dp lowers the threshold, dn raises it during apply.",
+            "Moutref_raise_gate outref_raise_gate dn 0 0 NSENSE W=16u L=180n",
+            f"Moutref_raise_p0 vdd outref_raise_gate outref_raise vdd PMOS W={outref_charge_width:.6g}u L=180n",
+            f"Moutref_raise_p1 outref_raise applyn outref vdd PMOS W={outref_charge_width:.6g}u L=180n",
+            f"Moutref_lower_a outref apply outref_lower 0 NREL W={output_decision_ref_write_width:.6g}u L=180n",
+            f"Moutref_lower_g outref_lower dp 0 0 NSENSE W={output_decision_ref_write_width:.6g}u L=180n",
         ]
 
     if score_activity_inhibition_width > 0.0:
@@ -1365,6 +1413,8 @@ def run_device_sequence(
     output_decision_ref: float,
     output_decision_ref_source: str,
     output_decision_ref_resistance: float,
+    output_decision_ref_capacitance: float,
+    output_decision_ref_write_width: float,
     output_decision_pullup_width: float,
     output_decision_pulldown_width: float,
     readout_apply_scale: float,
@@ -1416,6 +1466,8 @@ def run_device_sequence(
         output_decision_ref=output_decision_ref,
         output_decision_ref_source=output_decision_ref_source,
         output_decision_ref_resistance=output_decision_ref_resistance,
+        output_decision_ref_capacitance=output_decision_ref_capacitance,
+        output_decision_ref_write_width=output_decision_ref_write_width,
         output_decision_pullup_width=output_decision_pullup_width,
         output_decision_pulldown_width=output_decision_pulldown_width,
         readout_apply_scale=readout_apply_scale,
@@ -1482,6 +1534,8 @@ def main() -> None:
     ap.add_argument("--output-decision-ref", type=float, default=1.09)
     ap.add_argument("--output-decision-ref-source", choices=OUTPUT_DECISION_REF_SOURCES, default="voltage")
     ap.add_argument("--output-decision-ref-resistance", type=float, default=1e6)
+    ap.add_argument("--output-decision-ref-capacitance", type=float, default=20e-15)
+    ap.add_argument("--output-decision-ref-write-width", type=float, default=1.0)
     ap.add_argument("--output-decision-pullup-width", type=float, default=48.0)
     ap.add_argument("--output-decision-pulldown-width", type=float, default=96.0)
     ap.add_argument("--output-decision-threshold", type=float, default=0.6)
@@ -1603,6 +1657,8 @@ def main() -> None:
         "output_decision_ref": args.output_decision_ref,
         "output_decision_ref_source": args.output_decision_ref_source,
         "output_decision_ref_resistance": args.output_decision_ref_resistance,
+        "output_decision_ref_capacitance": args.output_decision_ref_capacitance,
+        "output_decision_ref_write_width": args.output_decision_ref_write_width,
         "output_decision_pullup_width": args.output_decision_pullup_width,
         "output_decision_pulldown_width": args.output_decision_pulldown_width,
         "readout_apply_scale": args.readout_apply_scale,
@@ -1788,6 +1844,8 @@ def main() -> None:
         "output_decision_ref": args.output_decision_ref,
         "output_decision_ref_source": args.output_decision_ref_source,
         "output_decision_ref_resistance": args.output_decision_ref_resistance,
+        "output_decision_ref_capacitance": args.output_decision_ref_capacitance,
+        "output_decision_ref_write_width": args.output_decision_ref_write_width,
         "output_decision_pullup_width": args.output_decision_pullup_width,
         "output_decision_pulldown_width": args.output_decision_pulldown_width,
         "readout_apply_scale": args.readout_apply_scale,

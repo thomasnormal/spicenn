@@ -21,6 +21,7 @@ def test_readout_writer_primitive_emits_bounded_reference_writer() -> None:
     assert "Vvwhi_ref vwhi_ref 0 0.51" in netlist
     assert "Vvwlo_ref vwlo_ref 0 0.19" in netlist
     assert "Mgvp0_a vdd act gvp0_a 0 NSENSE W=24u L=180n" in netlist
+    assert "Mrgp0_pd rgp0 gvp0 0 0 NSENSE W=16u L=180n" in netlist
     assert "Mvwp0_up_p0 vwp0_up rgp0 vwhi_ref vdd PMOS W=0.8u L=180n" in netlist
     assert "Mvwn0_dn_g vwn0_dn gvp0 vwlo_ref 0 NSENSE W=0.2u L=180n" in netlist
     assert "Mvwp0_up_p0 vwp0_up rgp0 vdd vdd PMOS" not in netlist
@@ -54,6 +55,10 @@ def test_readout_writer_primitive_validation() -> None:
         writer.generate_netlist(update_mode="positive", topology="bounded-ref", negative_ref=0.05, update_span=0.10)
     with pytest.raises(ValueError, match="timeout"):
         writer.main_for_test(["--timeout", "0"])
+    with pytest.raises(ValueError, match="error-amplitude"):
+        writer.main_for_test(["--error-amplitude", "1.3"])
+    with pytest.raises(ValueError, match="gradient-restore-width"):
+        writer.main_for_test(["--gradient-restore-width", "0"])
 
 
 @pytest.mark.parametrize(
@@ -89,3 +94,54 @@ def test_readout_writer_primitive_ngspice_sign_and_common_mode(
     else:
         assert abs(signed_delta) < 1e-3
     assert common_delta < 0.05
+
+
+def test_readout_writer_primitive_ngspice_weak_error_starves_default_writer(
+    tmp_path: Path,
+) -> None:
+    ngspice = shutil.which("ngspice")
+    if ngspice is None:
+        pytest.skip("ngspice is not installed")
+
+    strong = run_netlist(
+        ngspice,
+        tmp_path / "readout_writer_strong_error.cir",
+        writer.generate_netlist(update_mode="positive", topology="bounded-ref", update_scale=0.10, error_amplitude=1.2),
+        timeout=20.0,
+    )
+    weak = run_netlist(
+        ngspice,
+        tmp_path / "readout_writer_weak_error.cir",
+        writer.generate_netlist(update_mode="positive", topology="bounded-ref", update_scale=0.10, error_amplitude=0.08),
+        timeout=20.0,
+    )
+
+    assert float(strong["gradient_margin"]) > 0.5
+    assert float(strong["signed_delta"]) > 0.05
+    assert float(weak["gradient_margin"]) > 0.025
+    assert abs(float(weak["signed_delta"])) < 1e-3
+
+
+def test_readout_writer_primitive_ngspice_stronger_restore_uses_weak_error(
+    tmp_path: Path,
+) -> None:
+    ngspice = shutil.which("ngspice")
+    if ngspice is None:
+        pytest.skip("ngspice is not installed")
+
+    measures = run_netlist(
+        ngspice,
+        tmp_path / "readout_writer_weak_error_stronger_restore.cir",
+        writer.generate_netlist(
+            update_mode="positive",
+            topology="bounded-ref",
+            update_scale=0.05,
+            error_amplitude=0.08,
+            gradient_restore_width=32.0,
+        ),
+        timeout=20.0,
+    )
+
+    assert float(measures["gradient_margin"]) > 0.025
+    assert float(measures["signed_delta"]) > 0.05
+    assert abs(float(measures["common_delta"])) < 0.05

@@ -16,13 +16,13 @@ UPDATE_MODES = ("none", "positive", "negative")
 READOUT_WRITER_TOPOLOGIES = ("rail", "bounded-ref")
 
 
-def update_rails(mode: str) -> tuple[float, float]:
+def update_rails(mode: str, *, amplitude: float) -> tuple[float, float]:
     if mode == "none":
         return 0.0, 0.0
     if mode == "positive":
-        return 1.2, 0.0
+        return amplitude, 0.0
     if mode == "negative":
-        return 0.0, 1.2
+        return 0.0, amplitude
     raise ValueError(f"update mode must be one of {UPDATE_MODES}")
 
 
@@ -36,22 +36,31 @@ def generate_netlist(
     negative_ref: float = 0.34,
     update_span: float = 0.15,
     gradient_width: float = 24.0,
+    gradient_restore_width: float = 16.0,
     update_scale: float = 0.10,
+    error_amplitude: float = 1.2,
 ) -> str:
     if update_mode not in UPDATE_MODES:
         raise ValueError(f"update_mode must be one of {UPDATE_MODES}")
     if topology not in READOUT_WRITER_TOPOLOGIES:
         raise ValueError(f"topology must be one of {READOUT_WRITER_TOPOLOGIES}")
-    for name, value in {"gradient_width": gradient_width, "update_scale": update_scale}.items():
+    for name, value in {
+        "gradient_width": gradient_width,
+        "gradient_restore_width": gradient_restore_width,
+        "update_scale": update_scale,
+        "error_amplitude": error_amplitude,
+    }.items():
         if value <= 0.0:
             raise ValueError(f"{name} must be positive")
+    if error_amplitude > 1.2:
+        raise ValueError("error_amplitude must not exceed VDD")
     if update_span < 0.0:
         raise ValueError("update_span must be nonnegative")
     high_ref = positive_ref + update_span
     low_ref = negative_ref - update_span
     if topology == "bounded-ref" and (high_ref > 1.2 or low_ref < 0.0):
         raise ValueError("bounded-ref update references must stay within supply rails")
-    dp, dn = update_rails(update_mode)
+    dp, dn = update_rails(update_mode, amplitude=error_amplitude)
     lines = [
         "* Readout writer primitive smoke.",
         "* Tests local gradient storage plus supply-bounded or reference-bounded readout writes.",
@@ -93,8 +102,8 @@ def generate_netlist(
         f"Mgvn0_a vdd act gvn0_a 0 NSENSE W={gradient_width:.6g}u L=180n",
         f"Mgvn0_d gvn0_a dn gvn0_d 0 NSENSE W={gradient_width:.6g}u L=180n",
         f"Mgvn0_g gvn0_d acc gvn0 0 NREL W={gradient_width:.6g}u L=180n",
-        "Mrgp0_pd rgp0 gvp0 0 0 NSENSE W=16u L=180n",
-        "Mrgn0_pd rgn0 gvn0 0 0 NSENSE W=16u L=180n",
+        f"Mrgp0_pd rgp0 gvp0 0 0 NSENSE W={gradient_restore_width:.6g}u L=180n",
+        f"Mrgn0_pd rgn0 gvn0 0 0 NSENSE W={gradient_restore_width:.6g}u L=180n",
         *readout_weight_update_lines(
             0,
             topology=topology,
@@ -103,6 +112,9 @@ def generate_netlist(
         ),
         ".meas tran vwp_before FIND V(vwp0) AT=3.5n",
         ".meas tran vwn_before FIND V(vwn0) AT=3.5n",
+        ".meas tran gvp_before_apply FIND V(gvp0) AT=3.5n",
+        ".meas tran gvn_before_apply FIND V(gvn0) AT=3.5n",
+        ".meas tran gradient_margin PARAM='gvp_before_apply-gvn_before_apply'",
         ".meas tran vwp_after FIND V(vwp0) AT=9.0n",
         ".meas tran vwn_after FIND V(vwn0) AT=9.0n",
         ".meas tran signed_before PARAM='vwp_before-vwn_before'",
@@ -172,7 +184,9 @@ def run_cases(args: argparse.Namespace) -> dict[str, Any]:
                 negative_ref=args.negative_ref,
                 update_span=args.update_span,
                 gradient_width=args.gradient_width,
+                gradient_restore_width=args.gradient_restore_width,
                 update_scale=args.update_scale,
+                error_amplitude=args.error_amplitude,
             ),
             timeout=args.timeout,
         )
@@ -223,7 +237,9 @@ def build_arg_parser() -> argparse.ArgumentParser:
     ap.add_argument("--negative-ref", type=float, default=0.34)
     ap.add_argument("--update-span", type=float, default=0.15)
     ap.add_argument("--gradient-width", type=float, default=24.0)
+    ap.add_argument("--gradient-restore-width", type=float, default=16.0)
     ap.add_argument("--update-scale", type=float, default=0.10)
+    ap.add_argument("--error-amplitude", type=float, default=1.2)
     ap.add_argument("--min-abs-delta", type=float, default=1e-3)
     ap.add_argument("--max-common-delta", type=float, default=50e-3)
     return ap
@@ -232,9 +248,11 @@ def build_arg_parser() -> argparse.ArgumentParser:
 def validate_args(args: argparse.Namespace) -> None:
     if args.timeout <= 0.0:
         raise ValueError("timeout must be positive")
-    for name in ["gradient_width", "update_scale"]:
+    for name in ["gradient_width", "gradient_restore_width", "update_scale", "error_amplitude"]:
         if getattr(args, name) <= 0.0:
             raise ValueError(f"{name.replace('_', '-')} must be positive")
+    if args.error_amplitude > 1.2:
+        raise ValueError("error-amplitude must not exceed VDD")
     if args.update_span < 0.0:
         raise ValueError("update-span must be nonnegative")
     if args.min_abs_delta < 0.0:

@@ -29,6 +29,7 @@ def test_device_mnist01_block_script_help_runs_from_repo_root() -> None:
     assert "--input-rail-mode" in proc.stdout
     assert "--complement-rail-scale" in proc.stdout
     assert "--readout-gradient-width" in proc.stdout
+    assert "--readout-gradient-restore-width" in proc.stdout
     assert "--hidden-error-width" in proc.stdout
     assert "--hidden-credit-mode" in proc.stdout
     assert "--readout-feedback-restore-width" in proc.stdout
@@ -1489,6 +1490,30 @@ def test_block_netlist_can_emit_binary_descent_error_topology() -> None:
             score_mode="single-ended",
             error_topology="binary-descent",
         )
+
+
+def test_block_netlist_can_resize_readout_gradient_restore() -> None:
+    sys.path.insert(0, str(SPICE_DIR))
+    import run_device_mnist01_block_training as block
+
+    image_size = 4
+    weights = block.initial_block_weights(image_size, 2, 2, 1, seed=1)
+    sample = {f"x{i}": 0.2 + 0.01 * i for i in range(image_size * image_size)}
+    sample["target"] = 1.1
+    netlist = block.block_netlist(
+        [sample],
+        weights,
+        image_size=image_size,
+        block_size=2,
+        stride=2,
+        channels=1,
+        training_enabled=True,
+        readout_gradient_restore_width=32.0,
+    )
+
+    assert "\nB" not in netlist
+    assert "Mrgp3_pd rgp3 gvp3 0 0 NSENSE W=32u L=180n" in netlist
+    assert "Mrgn3_pd rgn3 gvn3 0 0 NSENSE W=32u L=180n" in netlist
 
 
 def test_block_netlist_can_restore_only_hidden_error_transport() -> None:

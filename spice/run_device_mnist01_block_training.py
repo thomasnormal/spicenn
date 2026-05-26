@@ -779,6 +779,7 @@ def block_netlist(
     hidden_forward_width: float = 3.0,
     hidden_forward_topology: str = "per-pixel-phase",
     readout_gradient_width: float = 24.0,
+    readout_gradient_restore_width: float = 16.0,
     hidden_error_width: float = 32.0,
     hidden_credit_mode: str = "direct-feedback",
     readout_feedback_restore_width: float = 4.0,
@@ -894,6 +895,8 @@ def block_netlist(
         raise ValueError(f"hidden_forward_topology must be one of {HIDDEN_FORWARD_TOPOLOGIES}")
     if readout_gradient_width <= 0.0:
         raise ValueError("readout_gradient_width must be positive")
+    if readout_gradient_restore_width <= 0.0:
+        raise ValueError("readout_gradient_restore_width must be positive")
     if hidden_error_width <= 0.0:
         raise ValueError("hidden_error_width must be positive")
     if hidden_credit_mode not in HIDDEN_CREDIT_MODES:
@@ -1812,8 +1815,8 @@ def block_netlist(
                 f"Mgbp{feature}_g gbp{feature}_d acc gbp{feature} 0 NMOS W={hidden_update_width:.6g}u L=180n",
                 f"Mgbn{feature}_d vdd hdn{feature} gbn{feature}_d 0 NSENSE W={hidden_update_width:.6g}u L=180n",
                 f"Mgbn{feature}_g gbn{feature}_d acc gbn{feature} 0 NMOS W={hidden_update_width:.6g}u L=180n",
-                f"Mrgp{feature}_pd rgp{feature} gvp{feature} 0 0 NSENSE W=16u L=180n",
-                f"Mrgn{feature}_pd rgn{feature} gvn{feature} 0 0 NSENSE W=16u L=180n",
+                f"Mrgp{feature}_pd rgp{feature} gvp{feature} 0 0 NSENSE W={readout_gradient_restore_width:.6g}u L=180n",
+                f"Mrgn{feature}_pd rgn{feature} gvn{feature} 0 0 NSENSE W={readout_gradient_restore_width:.6g}u L=180n",
                 f"Mbhp{feature}_up_g vdd gbp{feature} bhp{feature}_up 0 NSENSE W={hidden_weight_write_width:.6g}u L=180n",
                 f"Mbhp{feature}_up_a bhp{feature}_up apply bhp{feature} 0 NREL W={hidden_weight_write_width:.6g}u L=180n",
                 f"Mbhn{feature}_dn_a bhn{feature} apply bhn{feature}_dn 0 NREL W={hidden_weight_write_width:.6g}u L=180n",
@@ -2616,6 +2619,7 @@ def run_device_sequence(
     hidden_forward_width: float,
     hidden_forward_topology: str,
     readout_gradient_width: float,
+    readout_gradient_restore_width: float,
     hidden_error_width: float,
     hidden_credit_mode: str,
     readout_feedback_restore_width: float,
@@ -2701,6 +2705,7 @@ def run_device_sequence(
         hidden_forward_width=hidden_forward_width,
         hidden_forward_topology=hidden_forward_topology,
         readout_gradient_width=readout_gradient_width,
+        readout_gradient_restore_width=readout_gradient_restore_width,
         hidden_error_width=hidden_error_width,
         hidden_credit_mode=hidden_credit_mode,
         readout_feedback_restore_width=readout_feedback_restore_width,
@@ -2817,6 +2822,7 @@ def main() -> None:
     ap.add_argument("--hidden-forward-width", type=float, default=3.0)
     ap.add_argument("--hidden-forward-topology", choices=HIDDEN_FORWARD_TOPOLOGIES, default="per-pixel-phase")
     ap.add_argument("--readout-gradient-width", type=float, default=24.0)
+    ap.add_argument("--readout-gradient-restore-width", type=float, default=16.0)
     ap.add_argument("--hidden-error-width", type=float, default=32.0)
     ap.add_argument("--hidden-credit-mode", choices=HIDDEN_CREDIT_MODES, default="direct-feedback")
     ap.add_argument("--readout-feedback-restore-width", type=float, default=4.0)
@@ -3052,6 +3058,8 @@ def main() -> None:
         raise ValueError("state-ic-mismatch-sigma must be nonnegative")
     if args.readout_weight_init_sigma < 0.0:
         raise ValueError("readout-weight-init-sigma must be nonnegative")
+    if args.readout_gradient_restore_width <= 0.0:
+        raise ValueError("readout-gradient-restore-width must be positive")
     if args.readout_eligibility_width <= 0.0:
         raise ValueError("readout-eligibility-width must be positive")
     if args.readout_eligibility_restore_width <= 0.0:
@@ -3137,6 +3145,7 @@ def main() -> None:
         "hidden_forward_width": args.hidden_forward_width,
         "hidden_forward_topology": args.hidden_forward_topology,
         "readout_gradient_width": args.readout_gradient_width,
+        "readout_gradient_restore_width": args.readout_gradient_restore_width,
         "hidden_error_width": args.hidden_error_width,
         "hidden_credit_mode": args.hidden_credit_mode,
         "readout_feedback_restore_width": args.readout_feedback_restore_width,
@@ -3374,6 +3383,7 @@ def main() -> None:
         "hidden_forward_width": args.hidden_forward_width,
         "hidden_forward_topology": args.hidden_forward_topology,
         "readout_gradient_width": args.readout_gradient_width,
+        "readout_gradient_restore_width": args.readout_gradient_restore_width,
         "hidden_error_width": args.hidden_error_width,
         "hidden_update_width": args.hidden_update_width,
         "hidden_weight_write_width": args.hidden_weight_write_width,

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import shutil
 import sys
 from pathlib import Path
 
@@ -8,6 +9,22 @@ import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
 SPICE_DIR = ROOT / "spice"
+
+
+def _run_ngspice_case(tmp_path: Path, name: str, **kwargs: float | str) -> dict[str, float]:
+    ngspice = shutil.which("ngspice")
+    if ngspice is None:
+        pytest.skip("ngspice is not installed")
+    sys.path.insert(0, str(SPICE_DIR))
+    import run_row_conductance_primitive as primitive
+    from run_device_sequential_training import run_netlist
+
+    return run_netlist(
+        ngspice,
+        tmp_path / f"row_conductance_{name}.cir",
+        primitive.generate_netlist(**kwargs),
+        timeout=20.0,
+    )
 
 
 def test_row_conductance_netlist_uses_differential_conductance_compute() -> None:
@@ -74,3 +91,114 @@ def test_row_conductance_cli_validation() -> None:
         primitive.main_for_test(["--timeout", "0"])
     with pytest.raises(ValueError, match="min-abs-margin"):
         primitive.main_for_test(["--min-abs-margin", "-1"])
+
+
+@pytest.mark.parametrize(
+    ("name", "wp", "wn", "row", "expected_sign"),
+    [
+        ("positive_weight", 0.70, 0.25, 0.85, 1.0),
+        ("negative_weight", 0.25, 0.70, 0.85, -1.0),
+        ("inactive_row", 0.70, 0.25, 0.0, 0.0),
+    ],
+)
+def test_row_conductance_primitive_ngspice_forward_polarity(
+    tmp_path: Path,
+    name: str,
+    wp: float,
+    wn: float,
+    row: float,
+    expected_sign: float,
+) -> None:
+    measures = _run_ngspice_case(
+        tmp_path,
+        f"forward_{name}",
+        wp=wp,
+        wn=wn,
+        row=row,
+        update_mode="none",
+        credit_mode="none",
+    )
+
+    margin = float(measures["forward_margin"])
+    if expected_sign > 0.0:
+        assert margin > 0.10
+        assert float(measures["pre_p_after"]) > 0.10
+        assert float(measures["pre_n_after"]) < 1e-3
+    elif expected_sign < 0.0:
+        assert margin < -0.10
+        assert float(measures["pre_n_after"]) > 0.10
+        assert float(measures["pre_p_after"]) < 1e-3
+    else:
+        assert abs(margin) < 1e-3
+
+
+@pytest.mark.parametrize(
+    ("mode", "expected_sign"),
+    [
+        ("positive", 1.0),
+        ("negative", -1.0),
+        ("none", 0.0),
+    ],
+)
+def test_row_conductance_primitive_ngspice_update_moves_stored_weight(
+    tmp_path: Path,
+    mode: str,
+    expected_sign: float,
+) -> None:
+    measures = _run_ngspice_case(
+        tmp_path,
+        f"update_{mode}",
+        wp=0.45,
+        wn=0.40,
+        row=0.85,
+        update_mode=mode,
+        credit_mode="none",
+    )
+
+    delta = float(measures["signed_weight_delta"])
+    if expected_sign > 0.0:
+        assert delta > 0.05
+    elif expected_sign < 0.0:
+        assert delta < -0.05
+    else:
+        assert abs(delta) < 1e-3
+
+
+@pytest.mark.parametrize(
+    ("name", "credit_mode", "readout_wp", "readout_wn", "expected_sign"),
+    [
+        ("positive_error_positive_weight", "positive", 0.55, 0.30, 1.0),
+        ("positive_error_negative_weight", "positive", 0.30, 0.55, -1.0),
+        ("negative_error_negative_weight", "negative", 0.30, 0.55, 1.0),
+        ("neutral_weight_dead_zone", "positive", 0.40, 0.40, 0.0),
+    ],
+)
+def test_row_conductance_primitive_ngspice_latch_free_hidden_credit(
+    tmp_path: Path,
+    name: str,
+    credit_mode: str,
+    readout_wp: float,
+    readout_wn: float,
+    expected_sign: float,
+) -> None:
+    measures = _run_ngspice_case(
+        tmp_path,
+        f"credit_{name}",
+        wp=0.45,
+        wn=0.40,
+        row=0.85,
+        update_mode="none",
+        credit_mode=credit_mode,
+        readout_wp=readout_wp,
+        readout_wn=readout_wn,
+    )
+
+    margin = float(measures["hidden_credit_margin"])
+    if expected_sign > 0.0:
+        assert margin > 0.05
+        assert float(measures["hdp_after"]) > float(measures["hdn_after"])
+    elif expected_sign < 0.0:
+        assert margin < -0.05
+        assert float(measures["hdn_after"]) > float(measures["hdp_after"])
+    else:
+        assert abs(margin) < 1e-3

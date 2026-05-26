@@ -4,6 +4,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+import pytest
+
 
 ROOT = Path(__file__).resolve().parents[1]
 SPICE_DIR = ROOT / "spice"
@@ -23,6 +25,35 @@ def test_device_sequential_training_script_help_runs_from_repo_root() -> None:
     assert "--hidden-credit-mode" in proc.stdout
     assert "--output-driver-model" in proc.stdout
     assert "--assert-pass" in proc.stdout
+
+
+def test_run_netlist_failure_reports_stdout_and_stderr(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    sys.path.insert(0, str(SPICE_DIR))
+    import run_device_sequential_training as seq
+
+    def fake_run_text_netlist(
+        _spice_bin: str, _path: Path, _netlist: str, *, timeout: float
+    ) -> subprocess.CompletedProcess[str]:
+        assert timeout == 12.0
+        return subprocess.CompletedProcess(
+            args=["ngspice", "-b", "bad.cir"],
+            returncode=1,
+            stdout="stdout diagnostic line",
+            stderr="stderr diagnostic line",
+        )
+
+    monkeypatch.setattr(seq, "run_text_netlist", fake_run_text_netlist)
+
+    with pytest.raises(RuntimeError) as excinfo:
+        seq.run_netlist("ngspice", tmp_path / "bad.cir", "* bad", timeout=12.0)
+
+    message = str(excinfo.value)
+    assert "SPICE failed for" in message
+    assert "return code 1" in message
+    assert "stdout diagnostic line" in message
+    assert "stderr diagnostic line" in message
 
 
 def test_device_sequential_training_netlist_uses_no_behavioral_sources() -> None:

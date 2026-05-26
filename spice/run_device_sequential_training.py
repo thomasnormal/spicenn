@@ -365,7 +365,13 @@ run
 def run_netlist(spice_bin: str, path: Path, netlist: str, timeout: float) -> dict[str, float]:
     proc = run_text_netlist(spice_bin, path, netlist, timeout=timeout)
     if proc.returncode != 0:
-        raise RuntimeError((proc.stderr or proc.stdout)[-3000:])
+        stdout_tail = proc.stdout[-3000:] if proc.stdout else "<empty>"
+        stderr_tail = proc.stderr[-3000:] if proc.stderr else "<empty>"
+        raise RuntimeError(
+            f"SPICE failed for {path} with return code {proc.returncode}.\n"
+            f"--- stdout tail ---\n{stdout_tail}\n"
+            f"--- stderr tail ---\n{stderr_tail}"
+        )
     measures = parse_measures(proc.stdout + "\n" + proc.stderr)
     if not measures:
         raise RuntimeError("SPICE produced no parseable measurements:\n" + (proc.stdout + proc.stderr)[-3000:])

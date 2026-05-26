@@ -2403,10 +2403,18 @@ def readout_feature_signal_diagnostics(
     train_rows: pd.DataFrame,
     *,
     feature_count: int,
+    activation_threshold: float = 25e-3,
+    full_activation_threshold: float = 0.5,
     eligibility_threshold: float = 0.5,
     gradient_threshold: float = 25e-3,
 ) -> dict[str, float | int | str | None]:
     empty: dict[str, float | int | str | None] = {
+        "hidden_activation_measured_features": 0,
+        "hidden_activation_max": None,
+        "hidden_activation_active_features_25mv": None,
+        "hidden_activation_active_participation_25mv": None,
+        "hidden_activation_active_features_0p5v": None,
+        "hidden_activation_active_participation": None,
         "readout_eligibility_signal": None,
         "readout_eligibility_measured_features": 0,
         "readout_eligibility_max": None,
@@ -2420,6 +2428,17 @@ def readout_feature_signal_diagnostics(
     }
     if train_rows.empty or feature_count <= 0:
         return empty
+
+    activation_maxima: list[float] = []
+    for feature in range(feature_count):
+        column = f"act{feature}_before"
+        if column not in train_rows.columns:
+            column = f"act{feature}_after"
+        if column not in train_rows.columns:
+            continue
+        values = train_rows[column].dropna().to_numpy(dtype=float)
+        if values.size:
+            activation_maxima.append(float(np.max(values)))
 
     eligibility_signal = "egon" if any(f"egon{feature}_after_fwd" in train_rows.columns for feature in range(feature_count)) else "eg"
     eligibility_maxima: list[float] = []
@@ -2446,6 +2465,20 @@ def readout_feature_signal_diagnostics(
             gradient_maxima.append(float(np.max(np.abs(net))))
 
     diagnostics = dict(empty)
+    if activation_maxima:
+        activation_array = np.asarray(activation_maxima)
+        active = int(np.sum(activation_array >= activation_threshold))
+        full_active = int(np.sum(activation_array >= full_activation_threshold))
+        diagnostics.update(
+            {
+                "hidden_activation_measured_features": len(activation_maxima),
+                "hidden_activation_max": float(np.max(activation_maxima)),
+                "hidden_activation_active_features_25mv": active,
+                "hidden_activation_active_participation_25mv": float(active / len(activation_maxima)),
+                "hidden_activation_active_features_0p5v": full_active,
+                "hidden_activation_active_participation": float(full_active / len(activation_maxima)),
+            }
+        )
     if eligibility_maxima:
         active = int(np.sum(np.asarray(eligibility_maxima) >= eligibility_threshold))
         diagnostics.update(

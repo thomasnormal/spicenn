@@ -499,6 +499,8 @@ def test_readout_feature_signal_diagnostics_report_eligibility_and_gradient_part
     rows = pd.DataFrame(
         [
             {
+                "act0_before": 0.9,
+                "act1_before": 0.1,
                 "egon0_after_fwd": 1.2,
                 "egon1_after_fwd": 0.04,
                 "gvp0_after": 0.10,
@@ -507,6 +509,8 @@ def test_readout_feature_signal_diagnostics_report_eligibility_and_gradient_part
                 "gvn1_after": 0.01,
             },
             {
+                "act0_before": 0.4,
+                "act1_before": 0.8,
                 "egon0_after_fwd": 0.7,
                 "egon1_after_fwd": 0.8,
                 "gvp0_after": 0.03,
@@ -519,6 +523,11 @@ def test_readout_feature_signal_diagnostics_report_eligibility_and_gradient_part
 
     diagnostics = block.readout_feature_signal_diagnostics(rows, feature_count=2)
 
+    assert diagnostics["hidden_activation_measured_features"] == 2
+    assert diagnostics["hidden_activation_active_features_25mv"] == 2
+    assert np.isclose(diagnostics["hidden_activation_active_participation_25mv"], 1.0)
+    assert diagnostics["hidden_activation_active_features_0p5v"] == 2
+    assert np.isclose(diagnostics["hidden_activation_active_participation"], 1.0)
     assert diagnostics["readout_eligibility_signal"] == "egon"
     assert diagnostics["readout_eligibility_measured_features"] == 2
     assert diagnostics["readout_eligibility_active_features_0p5v"] == 2
@@ -537,6 +546,9 @@ def test_readout_feature_signal_diagnostics_are_empty_without_full_measurements(
     diagnostics = block.readout_feature_signal_diagnostics(pd.DataFrame([{"out_after": 1.0}]), feature_count=2)
 
     assert diagnostics["readout_eligibility_signal"] is None
+    assert diagnostics["hidden_activation_measured_features"] == 0
+    assert diagnostics["hidden_activation_active_features_25mv"] is None
+    assert diagnostics["hidden_activation_active_features_0p5v"] is None
     assert diagnostics["readout_eligibility_measured_features"] == 0
     assert diagnostics["readout_eligibility_active_features_0p5v"] is None
     assert diagnostics["readout_gradient_measured_features"] == 0

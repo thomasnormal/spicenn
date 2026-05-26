@@ -3153,6 +3153,74 @@ def test_block_netlist_can_emit_score_activity_inhibition() -> None:
     assert "Mscoreinh_f scoreinh_a fwd scoren 0 NMOS W=3u" in netlist
 
 
+def test_block_netlist_can_emit_readout_gradient_shared_shunt_normalization() -> None:
+    sys.path.insert(0, str(SPICE_DIR))
+    import pytest
+    import run_device_mnist01_block_training as block
+
+    image_size = 4
+    weights = block.initial_block_weights(image_size, 2, 2, 1, seed=1)
+    sample = {f"x{i}": 0.2 + 0.01 * i for i in range(image_size * image_size)}
+    sample["target"] = 1.1
+    netlist = block.block_netlist(
+        [sample],
+        weights,
+        image_size=image_size,
+        block_size=2,
+        stride=2,
+        channels=1,
+        training_enabled=True,
+        readout_gradient_normalization="shared-shunt",
+        readout_gradient_stack_shunt_resistance=1e12,
+        readout_gradient_source="eligibility-restored",
+        readout_eligibility_restore_width=32.0,
+    )
+
+    assert "\nB" not in netlist
+    assert "Cgnorm gnorm 0 2.5p IC=0" in netlist
+    assert "Mreset_gnorm gnorm rstg 0 0 NMOS W=4u" in netlist
+    assert "Mgnorm0_a vdd egon0 gnorm0_a 0 NREL W=0.1u" in netlist
+    assert "Mgnorm0_g gnorm0_a acc gnorm 0 NREL W=0.1u" in netlist
+    assert "Rgrad_gvp0_a gvp0_a 0 1e+12" in netlist
+    assert "Rgrad_gvp0_d gvp0_d 0 1e+12" in netlist
+    assert "Mgvp0_norm gvp0 gnorm 0 0 NSENSE W=0.001u" in netlist
+    assert "Mgvn0_norm gvn0 gnorm 0 0 NSENSE W=0.001u" in netlist
+    assert ".meas tran gnorm_after_grad_0 FIND V(gnorm) AT=8.50n" in netlist
+    with pytest.raises(ValueError, match="readout_gradient_normalization"):
+        block.block_netlist(
+            [sample],
+            weights,
+            image_size=image_size,
+            block_size=2,
+            stride=2,
+            channels=1,
+            training_enabled=True,
+            readout_gradient_normalization="bad",
+        )
+    with pytest.raises(ValueError, match="readout_gradient_normalization_width"):
+        block.block_netlist(
+            [sample],
+            weights,
+            image_size=image_size,
+            block_size=2,
+            stride=2,
+            channels=1,
+            training_enabled=True,
+            readout_gradient_normalization_width=0.0,
+        )
+    with pytest.raises(ValueError, match="readout_gradient_stack_shunt_resistance"):
+        block.block_netlist(
+            [sample],
+            weights,
+            image_size=image_size,
+            block_size=2,
+            stride=2,
+            channels=1,
+            training_enabled=True,
+            readout_gradient_stack_shunt_resistance=-1.0,
+        )
+
+
 def test_score_activity_inhibition_requires_activation_competition() -> None:
     sys.path.insert(0, str(SPICE_DIR))
     import pytest

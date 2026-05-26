@@ -15,6 +15,7 @@ from run_spice_sweep import ROOT, detect_spice
 UPDATE_MODES = ("none", "positive", "negative")
 READOUT_WRITER_TOPOLOGIES = ("rail", "bounded-ref")
 GRADIENT_GATE_TOPOLOGIES = ("direct", "restored")
+GRADIENT_NORMALIZATIONS = ("none", "shared-shunt")
 
 
 def update_rails(mode: str, *, amplitude: float) -> tuple[float, float]:
@@ -174,6 +175,10 @@ def generate_distribution_netlist(
     gate_restore_width: float = 32.0,
     update_scale: float = 0.05,
     error_amplitude: float = 0.08,
+    gradient_normalization: str = "none",
+    normalization_width: float = 0.10,
+    normalization_shunt_width: float = 0.001,
+    normalization_capacitance_f: float = 2500.0,
 ) -> str:
     if update_mode not in UPDATE_MODES:
         raise ValueError(f"update_mode must be one of {UPDATE_MODES}")
@@ -181,6 +186,8 @@ def generate_distribution_netlist(
         raise ValueError(f"topology must be one of {READOUT_WRITER_TOPOLOGIES}")
     if gradient_gate_topology not in GRADIENT_GATE_TOPOLOGIES:
         raise ValueError(f"gradient_gate_topology must be one of {GRADIENT_GATE_TOPOLOGIES}")
+    if gradient_normalization not in GRADIENT_NORMALIZATIONS:
+        raise ValueError(f"gradient_normalization must be one of {GRADIENT_NORMALIZATIONS}")
     if not gate_amplitudes:
         raise ValueError("gate_amplitudes must not be empty")
     for name, value in {
@@ -189,6 +196,9 @@ def generate_distribution_netlist(
         "gate_restore_width": gate_restore_width,
         "update_scale": update_scale,
         "error_amplitude": error_amplitude,
+        "normalization_width": normalization_width,
+        "normalization_shunt_width": normalization_shunt_width,
+        "normalization_capacitance_f": normalization_capacitance_f,
     }.items():
         if value <= 0.0:
             raise ValueError(f"{name} must be positive")
@@ -221,6 +231,11 @@ def generate_distribution_netlist(
         lines += [
             f"Vvwhi_ref vwhi_ref 0 {high_ref:.12g}",
             f"Vvwlo_ref vwlo_ref 0 {low_ref:.12g}",
+        ]
+    if gradient_normalization == "shared-shunt":
+        lines += [
+            f"Cgnorm gnorm 0 {normalization_capacitance_f:.6g}f IC=0",
+            "Rgnorm gnorm 0 1G",
         ]
     readout_pmos_w = 8.0 * update_scale
     readout_nmos_w = 2.0 * update_scale
@@ -261,6 +276,16 @@ def generate_distribution_netlist(
             f"Mgvn{feature}_g gvn{feature}_d acc gvn{feature} 0 NREL W={gradient_width:.6g}u L=180n",
             f"Mrgp{feature}_pd rgp{feature} gvp{feature} 0 0 NSENSE W={gradient_restore_width:.6g}u L=180n",
             f"Mrgn{feature}_pd rgn{feature} gvn{feature} 0 0 NSENSE W={gradient_restore_width:.6g}u L=180n",
+            *(
+                [
+                    f"Mgnorm{feature}_a vdd {gradient_gate_node} gnorm{feature}_a 0 NSENSE W={normalization_width:.6g}u L=180n",
+                    f"Mgnorm{feature}_g gnorm{feature}_a acc gnorm 0 NREL W={normalization_width:.6g}u L=180n",
+                    f"Mgvp{feature}_norm gvp{feature} gnorm 0 0 NSENSE W={normalization_shunt_width:.6g}u L=180n",
+                    f"Mgvn{feature}_norm gvn{feature} gnorm 0 0 NSENSE W={normalization_shunt_width:.6g}u L=180n",
+                ]
+                if gradient_normalization == "shared-shunt"
+                else []
+            ),
             *readout_weight_update_lines(
                 feature,
                 topology=topology,
@@ -282,6 +307,8 @@ def generate_distribution_netlist(
             f".meas tran common_after{feature} PARAM='0.5*(vwp{feature}_after+vwn{feature}_after)'",
             f".meas tran common_delta{feature} PARAM='common_after{feature}-common_before{feature}'",
         ]
+    if gradient_normalization == "shared-shunt":
+        lines.append(".meas tran gnorm_before_apply FIND V(gnorm) AT=3.5n")
     lines += [
         ".tran 5p 12n uic",
         ".control",

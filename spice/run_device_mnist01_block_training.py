@@ -35,6 +35,7 @@ READOUT_FORWARD_MODELS = ("nrel", "sense")
 READOUT_FORWARD_TOPOLOGIES = ("stacked", "conductance-row", "conductance-row-isolated")
 READOUT_WEIGHT_GATE_MODELS = ("same", "nrel", "sense", "switch")
 READOUT_GRADIENT_SOURCES = ("act", "pre", "eligibility", "eligibility-restored")
+READOUT_GRADIENT_NORMALIZATIONS = ("none", "shared-shunt")
 READOUT_WEIGHT_UPDATE_TOPOLOGIES = ("rail", "bounded-ref")
 OUTPUT_BIAS_FORWARD_TOPOLOGIES = ("stacked", "conductance-row")
 LEARNING_ACTIVATION_GATE_MODELS = ("nrel", "sense")
@@ -811,6 +812,11 @@ def block_netlist(
     readout_weight_update_span: float = 0.15,
     readout_eligibility_width: float = 24.0,
     readout_eligibility_restore_width: float = 8.0,
+    readout_gradient_normalization: str = "none",
+    readout_gradient_normalization_width: float = 0.10,
+    readout_gradient_normalization_shunt_width: float = 0.001,
+    readout_gradient_normalization_capacitance: float = 2500e-15,
+    readout_gradient_stack_shunt_resistance: float = 0.0,
     learning_activation_gate_model: str = "nrel",
     readout_weight_leak_resistance: float = 0.0,
     readout_weight_apply_clamp_width: float = 0.0,
@@ -911,6 +917,16 @@ def block_netlist(
         raise ValueError("readout_gradient_width must be positive")
     if readout_gradient_restore_width <= 0.0:
         raise ValueError("readout_gradient_restore_width must be positive")
+    if readout_gradient_normalization not in READOUT_GRADIENT_NORMALIZATIONS:
+        raise ValueError(f"readout_gradient_normalization must be one of {READOUT_GRADIENT_NORMALIZATIONS}")
+    if readout_gradient_normalization_width <= 0.0:
+        raise ValueError("readout_gradient_normalization_width must be positive")
+    if readout_gradient_normalization_shunt_width <= 0.0:
+        raise ValueError("readout_gradient_normalization_shunt_width must be positive")
+    if readout_gradient_normalization_capacitance <= 0.0:
+        raise ValueError("readout_gradient_normalization_capacitance must be positive")
+    if readout_gradient_stack_shunt_resistance < 0.0:
+        raise ValueError("readout_gradient_stack_shunt_resistance must be nonnegative")
     if hidden_error_width <= 0.0:
         raise ValueError("hidden_error_width must be positive")
     if hidden_credit_mode not in HIDDEN_CREDIT_MODES:
@@ -1141,6 +1157,11 @@ def block_netlist(
             measures += [
                 f".meas tran actinh_before_{idx} FIND V(actinh) AT={base + 2.95 * scale:.2f}n",
                 f".meas tran actinh_after_{idx} FIND V(actinh) AT={base + 15.50 * scale:.2f}n",
+            ]
+        if readout_gradient_normalization == "shared-shunt":
+            measures += [
+                f".meas tran gnorm_after_grad_{idx} FIND V(gnorm) AT={base + 8.50 * scale:.2f}n",
+                f".meas tran gnorm_after_apply_{idx} FIND V(gnorm) AT={base + 11.50 * scale:.2f}n",
             ]
         if measurement_detail == "outputs":
             prints.append(f"print out_before_{idx} out_after_{idx} error_net_{idx}")
@@ -1427,6 +1448,11 @@ def block_netlist(
             "Cactinh actinh 0 10f IC=0",
             "Ractinh actinh 0 1G",
         ]
+    if readout_gradient_normalization == "shared-shunt":
+        lines += [
+            f"Cgnorm gnorm 0 {spice_capacitance(readout_gradient_normalization_capacitance)} IC=0",
+            "Rgnorm gnorm 0 1G",
+        ]
     if output_differential_stage == "latched":
         lines += [
             f"Coutn outn 0 {spice_capacitance(output_latch_capacitance)} IC=0",
@@ -1537,6 +1563,8 @@ def block_netlist(
             "Mreset_gop gop rstg 0 0 NMOS W=4u L=180n",
             "Mreset_gon gon rstg 0 0 NMOS W=4u L=180n",
         ]
+    if readout_gradient_normalization == "shared-shunt":
+        lines.append("Mreset_gnorm gnorm rstg 0 0 NMOS W=4u L=180n")
     if output_differential_stage == "latched":
         lines.append("Mreset_outn outn rstf 0 0 NMOS W=4u L=180n")
     if output_decision_stage != "none" and output_decision_stage not in {
@@ -1869,6 +1897,26 @@ def block_netlist(
                 f"Mgvn{feature}_a vdd {readout_gradient_gate_node} gvn{feature}_a 0 {learning_activation_model} W={readout_gradient_width:.6g}u L=180n",
                 f"Mgvn{feature}_d gvn{feature}_a {readout_negative_error_node} gvn{feature}_d 0 NSENSE W={readout_gradient_width:.6g}u L=180n",
                 f"Mgvn{feature}_g gvn{feature}_d acc gvn{feature} 0 NREL W={readout_gradient_width:.6g}u L=180n",
+                *(
+                    [
+                        f"Rgrad_gvp{feature}_a gvp{feature}_a 0 {readout_gradient_stack_shunt_resistance:.12g}",
+                        f"Rgrad_gvp{feature}_d gvp{feature}_d 0 {readout_gradient_stack_shunt_resistance:.12g}",
+                        f"Rgrad_gvn{feature}_a gvn{feature}_a 0 {readout_gradient_stack_shunt_resistance:.12g}",
+                        f"Rgrad_gvn{feature}_d gvn{feature}_d 0 {readout_gradient_stack_shunt_resistance:.12g}",
+                    ]
+                    if readout_gradient_stack_shunt_resistance > 0.0
+                    else []
+                ),
+                *(
+                    [
+                        f"Mgnorm{feature}_a vdd {readout_gradient_gate_node} gnorm{feature}_a 0 {learning_activation_model} W={readout_gradient_normalization_width:.6g}u L=180n",
+                        f"Mgnorm{feature}_g gnorm{feature}_a acc gnorm 0 NREL W={readout_gradient_normalization_width:.6g}u L=180n",
+                        f"Mgvp{feature}_norm gvp{feature} gnorm 0 0 NSENSE W={readout_gradient_normalization_shunt_width:.6g}u L=180n",
+                        f"Mgvn{feature}_norm gvn{feature} gnorm 0 0 NSENSE W={readout_gradient_normalization_shunt_width:.6g}u L=180n",
+                    ]
+                    if readout_gradient_normalization == "shared-shunt"
+                    else []
+                ),
                 f"Mgbp{feature}_d vdd hdp{feature} gbp{feature}_d 0 NSENSE W={hidden_update_width:.6g}u L=180n",
                 f"Mgbp{feature}_g gbp{feature}_d acc gbp{feature} 0 NMOS W={hidden_update_width:.6g}u L=180n",
                 f"Mgbn{feature}_d vdd hdn{feature} gbn{feature}_d 0 NSENSE W={hidden_update_width:.6g}u L=180n",
@@ -2904,6 +2952,11 @@ def run_device_sequence(
     readout_weight_update_span: float,
     readout_eligibility_width: float,
     readout_eligibility_restore_width: float,
+    readout_gradient_normalization: str,
+    readout_gradient_normalization_width: float,
+    readout_gradient_normalization_shunt_width: float,
+    readout_gradient_normalization_capacitance: float,
+    readout_gradient_stack_shunt_resistance: float,
     learning_activation_gate_model: str,
     readout_weight_leak_resistance: float,
     readout_weight_apply_clamp_width: float,
@@ -2991,6 +3044,11 @@ def run_device_sequence(
         readout_weight_update_span=readout_weight_update_span,
         readout_eligibility_width=readout_eligibility_width,
         readout_eligibility_restore_width=readout_eligibility_restore_width,
+        readout_gradient_normalization=readout_gradient_normalization,
+        readout_gradient_normalization_width=readout_gradient_normalization_width,
+        readout_gradient_normalization_shunt_width=readout_gradient_normalization_shunt_width,
+        readout_gradient_normalization_capacitance=readout_gradient_normalization_capacitance,
+        readout_gradient_stack_shunt_resistance=readout_gradient_stack_shunt_resistance,
         learning_activation_gate_model=learning_activation_gate_model,
         readout_weight_leak_resistance=readout_weight_leak_resistance,
         readout_weight_apply_clamp_width=readout_weight_apply_clamp_width,
@@ -3151,6 +3209,11 @@ def main() -> None:
     )
     ap.add_argument("--readout-eligibility-width", type=float, default=24.0)
     ap.add_argument("--readout-eligibility-restore-width", type=float, default=8.0)
+    ap.add_argument("--readout-gradient-normalization", choices=READOUT_GRADIENT_NORMALIZATIONS, default="none")
+    ap.add_argument("--readout-gradient-normalization-width", type=float, default=0.10)
+    ap.add_argument("--readout-gradient-normalization-shunt-width", type=float, default=0.001)
+    ap.add_argument("--readout-gradient-normalization-capacitance", type=float, default=2500e-15)
+    ap.add_argument("--readout-gradient-stack-shunt-resistance", type=float, default=0.0)
     ap.add_argument("--learning-activation-gate-model", choices=LEARNING_ACTIVATION_GATE_MODELS, default="nrel")
     ap.add_argument("--readout-weight-leak-resistance", type=float, default=0.0)
     ap.add_argument(
@@ -3325,6 +3388,14 @@ def main() -> None:
         raise ValueError("readout-eligibility-width must be positive")
     if args.readout_eligibility_restore_width <= 0.0:
         raise ValueError("readout-eligibility-restore-width must be positive")
+    if args.readout_gradient_normalization_width <= 0.0:
+        raise ValueError("readout-gradient-normalization-width must be positive")
+    if args.readout_gradient_normalization_shunt_width <= 0.0:
+        raise ValueError("readout-gradient-normalization-shunt-width must be positive")
+    if args.readout_gradient_normalization_capacitance <= 0.0:
+        raise ValueError("readout-gradient-normalization-capacitance must be positive")
+    if args.readout_gradient_stack_shunt_resistance < 0.0:
+        raise ValueError("readout-gradient-stack-shunt-resistance must be nonnegative")
     if args.readout_score_load_resistance <= 0.0:
         raise ValueError("readout-score-load-resistance must be positive")
     if args.measurement_detail != "full" and not args.continuous_final_eval:
@@ -3433,6 +3504,11 @@ def main() -> None:
         "readout_weight_update_span": args.readout_weight_update_span,
         "readout_eligibility_width": args.readout_eligibility_width,
         "readout_eligibility_restore_width": args.readout_eligibility_restore_width,
+        "readout_gradient_normalization": args.readout_gradient_normalization,
+        "readout_gradient_normalization_width": args.readout_gradient_normalization_width,
+        "readout_gradient_normalization_shunt_width": args.readout_gradient_normalization_shunt_width,
+        "readout_gradient_normalization_capacitance": args.readout_gradient_normalization_capacitance,
+        "readout_gradient_stack_shunt_resistance": args.readout_gradient_stack_shunt_resistance,
         "learning_activation_gate_model": args.learning_activation_gate_model,
         "readout_weight_leak_resistance": args.readout_weight_leak_resistance,
         "readout_weight_apply_clamp_width": args.readout_weight_apply_clamp_width,
@@ -3683,6 +3759,11 @@ def main() -> None:
         "readout_weight_update_span": args.readout_weight_update_span,
         "readout_eligibility_width": args.readout_eligibility_width,
         "readout_eligibility_restore_width": args.readout_eligibility_restore_width,
+        "readout_gradient_normalization": args.readout_gradient_normalization,
+        "readout_gradient_normalization_width": args.readout_gradient_normalization_width,
+        "readout_gradient_normalization_shunt_width": args.readout_gradient_normalization_shunt_width,
+        "readout_gradient_normalization_capacitance": args.readout_gradient_normalization_capacitance,
+        "readout_gradient_stack_shunt_resistance": args.readout_gradient_stack_shunt_resistance,
         "learning_activation_gate_model": args.learning_activation_gate_model,
         "readout_weight_leak_resistance": args.readout_weight_leak_resistance,
         "readout_weight_apply_clamp_width": args.readout_weight_apply_clamp_width,

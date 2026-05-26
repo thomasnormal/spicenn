@@ -1,0 +1,152 @@
+Runnable shared-phase local feature cell full smoke
+* This is the self-contained version of the shared-phase local feature
+* fragment.  It uses MOS devices only: no behavioral B sources.
+
+.options method=gear reltol=1e-3 abstol=1e-12 vntol=1e-6
+
+.model NMOS NMOS LEVEL=1 VTO=0.35 KP=220u LAMBDA=0.03 GAMMA=0.20 PHI=0.60
+.model PMOS PMOS LEVEL=1 VTO=-0.35 KP=90u LAMBDA=0.03 GAMMA=0.20 PHI=0.60
+.model NREL NMOS LEVEL=1 VTO=0.12 KP=260u LAMBDA=0.03 GAMMA=0.10 PHI=0.60
+.model NSENSE NMOS LEVEL=1 VTO=0.03 KP=260u LAMBDA=0.03 GAMMA=0.05 PHI=0.60
+
+.param Wfwd=3u
+.param Wfwdn=2.25u
+.param Wphase=12u
+.param Werr=8u
+.param Wupd=12u
+.param Wwrite=0.25u
+.param Wact=24u
+.param Wreadp=64u
+.param Wreadn=48u
+
+Vdd vdd 0 1.2
+Vx x 0 0.85
+Vfwd fwd 0 PULSE(0 1.2 1n 10p 10p 4n 24n)
+Verr err 0 PULSE(0 1.2 6n 10p 10p 3n 24n)
+Vbwd bwd 0 PULSE(0 1.2 9n 10p 10p 3n 24n)
+Vedp edp 0 PULSE(0 1.2 6n 10p 10p 6n 24n)
+Vedn edn 0 0
+
+* Shared forward phase rails for this feature.
+Mhfpos_phase hfp_rail fwd pre 0 NMOS W={Wphase} L=180n
+Mhfneg_phase pre fwd hfn_rail 0 NMOS W={Wphase} L=180n
+Chfp_rail hfp_rail 0 0.1f IC=0
+Chfn_rail hfn_rail 0 0.1f IC=0
+Rhfp_rail hfp_rail 0 1G
+Rhfn_rail hfn_rail 0 1G
+
+* Signed hidden forward contribution for one pixel.
+* Positive weight branch pulls/drives pre through hfp_rail.
+Mhpos_x vdd x hp_0 0 NMOS W={Wfwd} L=180n
+Mhpos_w hp_0 whp hfp_rail 0 NMOS W={Wfwd} L=180n
+Rhp_0 hp_0 0 1G
+
+* Negative weight branch sinks from pre through hfn_rail.
+Mhneg_x hfn_rail x hn_0 0 NMOS W={Wfwdn} L=180n
+Mhneg_w hn_0 whn 0 0 NMOS W={Wfwdn} L=180n
+Rhn_0 hn_0 0 1G
+
+* Persistent signed pixel weight state.
+Cwhp whp 0 20f IC=0.7
+Cwhn whn 0 20f IC=0.2
+Rwhp whp 0 1e15
+Rwhn whn 0 1e15
+
+* Stored bias contribution.
+Mhbpos_b vdd bhp hbp_0 0 NMOS W={Wfwd} L=180n
+Mhbpos_f hbp_0 fwd pre 0 NMOS W={Wfwd} L=180n
+Mhbneg_f pre fwd hbn_0 0 NMOS W={Wfwdn} L=180n
+Mhbneg_b hbn_0 bhn 0 0 NMOS W={Wfwdn} L=180n
+Rhbp_0 hbp_0 0 1G
+Rhbn_0 hbn_0 0 1G
+Cbhp bhp 0 20f IC=0.5
+Cbhn bhn 0 20f IC=0.2
+Rbhp bhp 0 1e15
+Rbhn bhn 0 1e15
+
+* Activation storage / analog ReLU-ish transfer.
+Mrelu_h vdd pre act 0 NREL W={Wact} L=180n
+Cpre pre 0 10f IC=0
+Cact act 0 10f IC=0
+Rpre pre 0 1G
+Ract act 0 1G
+
+* Readout contribution from activation to differential score rails.
+Movpos_a vdd act op_0 0 NSENSE W={Wreadp} L=180n
+Movpos_w op_0 vwp op_1 0 NSENSE W={Wreadp} L=180n
+Movpos_f op_1 fwd score 0 NSENSE W={Wreadp} L=180n
+Movneg_a vdd act on_0 0 NSENSE W={Wreadn} L=180n
+Movneg_w on_0 vwn on_1 0 NSENSE W={Wreadn} L=180n
+Movneg_f on_1 fwd scoren 0 NSENSE W={Wreadn} L=180n
+Rop_0 op_0 0 1G
+Rop_1 op_1 0 1G
+Ron_0 on_0 0 1G
+Ron_1 on_1 0 1G
+Cscore score 0 10f IC=0
+Cscoren scoren 0 10f IC=0
+Rscore score 0 1G
+Rscoren scoren 0 1G
+Cvwp vwp 0 20f IC=0.52
+Cvwn vwn 0 20f IC=0.25
+Rvwp vwp 0 1e15
+Rvwn vwn 0 1e15
+
+* Restored readout-weight sign for hidden credit.
+Mrvwp_p vdd rvwn rvwp vdd PMOS W=6u L=180n
+Mrvwn_p vdd rvwp rvwn vdd PMOS W=6u L=180n
+Mrvwp_n rvwp vwn rvw_src 0 NSENSE W=6u L=180n
+Mrvwn_n rvwn vwp rvw_src 0 NSENSE W=6u L=180n
+Mrvw_tail rvw_src err 0 0 NMOS W=6u L=180n
+Crvwp rvwp 0 4f IC=1.2
+Crvwn rvwn 0 4f IC=1.2
+Crvw_src rvw_src 0 0.1f IC=0
+Rrvwp rvwp 0 1G
+Rrvwn rvwn 0 1G
+Rrvw_src rvw_src 0 1G
+
+* Hidden error: restored error rails edp/edn crossed with restored readout sign.
+Mhdp_pv_e vdd edp hdp_pv_e 0 NSENSE W={Werr} L=180n
+Mhdp_pv_w hdp_pv_e rvwp hdp_pv_w 0 NSENSE W={Werr} L=180n
+Mhdp_pv_a hdp_pv_w act hdp_pv_a 0 NREL W={Werr} L=180n
+Mhdp_pv_b hdp_pv_a bwd hdp 0 NMOS W={Werr} L=180n
+Mhdp_nv_e vdd edn hdp_nv_e 0 NSENSE W={Werr} L=180n
+Mhdp_nv_w hdp_nv_e rvwn hdp_nv_w 0 NSENSE W={Werr} L=180n
+Mhdp_nv_a hdp_nv_w act hdp_nv_a 0 NREL W={Werr} L=180n
+Mhdp_nv_b hdp_nv_a bwd hdp 0 NMOS W={Werr} L=180n
+
+Mhdn_pv_e vdd edp hdn_pv_e 0 NSENSE W={Werr} L=180n
+Mhdn_pv_w hdn_pv_e rvwn hdn_pv_w 0 NSENSE W={Werr} L=180n
+Mhdn_pv_a hdn_pv_w act hdn_pv_a 0 NREL W={Werr} L=180n
+Mhdn_pv_b hdn_pv_a bwd hdn 0 NMOS W={Werr} L=180n
+Mhdn_nv_e vdd edn hdn_nv_e 0 NSENSE W={Werr} L=180n
+Mhdn_nv_w hdn_nv_e rvwp hdn_nv_w 0 NSENSE W={Werr} L=180n
+Mhdn_nv_a hdn_nv_w act hdn_nv_a 0 NREL W={Werr} L=180n
+Mhdn_nv_b hdn_nv_a bwd hdn 0 NMOS W={Werr} L=180n
+
+Chdp hdp 0 10f IC=0
+Chdn hdn 0 10f IC=0
+Rhdp hdp 0 1G
+Rhdn hdn 0 1G
+Rhdp_pv_e hdp_pv_e 0 1G
+Rhdp_pv_w hdp_pv_w 0 1G
+Rhdp_pv_a hdp_pv_a 0 1G
+Rhdp_nv_e hdp_nv_e 0 1G
+Rhdp_nv_w hdp_nv_w 0 1G
+Rhdp_nv_a hdp_nv_a 0 1G
+Rhdn_pv_e hdn_pv_e 0 1G
+Rhdn_pv_w hdn_pv_w 0 1G
+Rhdn_pv_a hdn_pv_a 0 1G
+Rhdn_nv_e hdn_nv_e 0 1G
+Rhdn_nv_w hdn_nv_w 0 1G
+Rhdn_nv_a hdn_nv_a 0 1G
+
+.tran 10p 24n uic
+.meas tran pre_forward FIND V(pre) AT=4n
+.meas tran act_forward FIND V(act) AT=4n
+.meas tran score_forward FIND V(score) AT=4n
+.meas tran scoren_forward FIND V(scoren) AT=4n
+.meas tran rvwp_after_err FIND V(rvwp) AT=8n
+.meas tran rvwn_after_err FIND V(rvwn) AT=8n
+.meas tran hdp_after_bwd FIND V(hdp) AT=12n
+.meas tran hdn_after_bwd FIND V(hdn) AT=12n
+.end

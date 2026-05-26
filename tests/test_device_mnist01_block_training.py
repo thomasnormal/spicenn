@@ -76,6 +76,7 @@ def test_device_mnist01_block_script_help_runs_from_repo_root() -> None:
     assert "--output-decision-threshold" in proc.stdout
     assert "--continuous-final-eval" in proc.stdout
     assert "--skip-initial-eval" in proc.stdout
+    assert "--hidden-forward-topology" in proc.stdout
 
 
 def test_block_topology_matches_target_10x10_b4_stride2_c2_shape() -> None:
@@ -392,6 +393,100 @@ def test_block_netlist_emits_per_pixel_trainable_caps_and_no_behavioral_sources(
     assert ".meas tran gvn3_after_0 FIND V(gvn3) AT=18.20n" in netlist
     assert ".tran 10p 32.00n uic" in netlist
     assert "Mrelu_o vdd score out 0 NSENSE" in netlist
+
+
+def test_block_netlist_default_hidden_forward_uses_per_pixel_phase_stack() -> None:
+    sys.path.insert(0, str(SPICE_DIR))
+    import run_device_mnist01_block_training as block
+
+    image_size = 4
+    weights = block.initial_block_weights(image_size, 2, 2, 1, seed=1)
+    sample = {f"x{i}": 0.2 + 0.01 * i for i in range(image_size * image_size)}
+    sample["target"] = 1.1
+    netlist = block.block_netlist(
+        [sample],
+        weights,
+        image_size=image_size,
+        block_size=2,
+        stride=2,
+        channels=1,
+        training_enabled=True,
+    )
+
+    assert "\nB" not in netlist
+    assert "Mhfpos0_phase" not in netlist
+    assert "Mhfneg0_phase" not in netlist
+    assert "Mhpos3_3_x vdd x15 hp3_3_0 0 NMOS" in netlist
+    assert "Mhpos3_3_w hp3_3_0 whp3_3 hp3_3_1 0 NMOS" in netlist
+    assert "Mhpos3_3_f hp3_3_1 fwd pre3 0 NMOS" in netlist
+    assert "Mhneg3_3_f pre3 fwd hn3_3_0 0 NMOS" in netlist
+    assert "Mhneg3_3_x hn3_3_0 x15 hn3_3_1 0 NMOS" in netlist
+    assert "Mhneg3_3_w hn3_3_1 whn3_3 0 0 NMOS" in netlist
+
+
+def test_block_netlist_can_emit_shared_phase_hidden_forward_topology() -> None:
+    sys.path.insert(0, str(SPICE_DIR))
+    import run_device_mnist01_block_training as block
+
+    image_size = 4
+    weights = block.initial_block_weights(image_size, 2, 2, 1, seed=1)
+    sample = {f"x{i}": 0.2 + 0.01 * i for i in range(image_size * image_size)}
+    sample["target"] = 1.1
+    netlist = block.block_netlist(
+        [sample],
+        weights,
+        image_size=image_size,
+        block_size=2,
+        stride=2,
+        channels=1,
+        training_enabled=True,
+        hidden_forward_width=3.0,
+        hidden_forward_topology="shared-phase",
+    )
+
+    assert "\nB" not in netlist
+    assert "Mhfpos3_phase hfp3_rail fwd pre3 0 NMOS W=12u" in netlist
+    assert "Mhfneg3_phase pre3 fwd hfn3_rail 0 NMOS W=12u" in netlist
+    assert "Chfp3_rail hfp3_rail 0 0.1f IC=0" in netlist
+    assert "Rhfn3_rail hfn3_rail 0 1G" in netlist
+    assert "Mhpos3_3_x vdd x15 hp3_3_0 0 NMOS W=3u" in netlist
+    assert "Mhpos3_3_w hp3_3_0 whp3_3 hfp3_rail 0 NMOS W=3u" in netlist
+    assert "Mhneg3_3_x hfn3_rail x15 hn3_3_0 0 NMOS W=2.25u" in netlist
+    assert "Mhneg3_3_w hn3_3_0 whn3_3 0 0 NMOS W=2.25u" in netlist
+    assert "Mhpos3_3_f" not in netlist
+    assert "Mhneg3_3_f" not in netlist
+    assert "hp3_3_1" not in netlist
+    assert "hn3_3_1" not in netlist
+
+
+def test_block_netlist_shared_phase_hidden_stack_conditioning_matches_shallow_nodes() -> None:
+    sys.path.insert(0, str(SPICE_DIR))
+    import run_device_mnist01_block_training as block
+
+    image_size = 4
+    weights = block.initial_block_weights(image_size, 2, 2, 1, seed=1)
+    sample = {f"x{i}": 0.2 + 0.01 * i for i in range(image_size * image_size)}
+    sample["target"] = 1.1
+    netlist = block.block_netlist(
+        [sample],
+        weights,
+        image_size=image_size,
+        block_size=2,
+        stride=2,
+        channels=1,
+        training_enabled=True,
+        hidden_forward_topology="shared-phase",
+        hidden_stack_parasitic_capacitance=1e-16,
+        hidden_stack_shunt_resistance=1e12,
+    )
+
+    assert "\nB" not in netlist
+    assert "Chread_hp3_3_0 hp3_3_0 0 1e-16" in netlist
+    assert "Rhread_hp3_3_0 hp3_3_0 0 1e+12" in netlist
+    assert "Chread_hn3_3_0 hn3_3_0 0 1e-16" in netlist
+    assert "Rhread_hn3_3_0 hn3_3_0 0 1e+12" in netlist
+    assert "Chread_hp3_3_1" not in netlist
+    assert "Rhread_hp3_3_1" not in netlist
 
 
 def test_block_netlist_can_emit_differential_score_path_without_behavioral_sources() -> None:

@@ -27,6 +27,7 @@ from spicenn.timing import CYCLE_NS
 INPUT_RAIL_MODES = ("raw", "complement", "alternating-complement")
 TARGET_POLARITIES = ("active-high", "active-low")
 HIDDEN_ACTIVATION_MODELS = ("nrel", "sense")
+HIDDEN_FORWARD_TOPOLOGIES = ("per-pixel-phase", "shared-phase")
 READOUT_FORWARD_MODELS = ("nrel", "sense")
 LEARNING_ACTIVATION_GATE_MODELS = ("nrel", "sense")
 HIDDEN_POLARITY_INITS = ("ink", "alternating-channel", "random-pixel")
@@ -350,6 +351,7 @@ def block_netlist(
     output_decision_pulldown_width: float = 96.0,
     readout_apply_scale: float = 0.35,
     hidden_forward_width: float = 3.0,
+    hidden_forward_topology: str = "per-pixel-phase",
     readout_gradient_width: float = 24.0,
     hidden_error_width: float = 32.0,
     hidden_credit_mode: str = "direct-feedback",
@@ -428,6 +430,8 @@ def block_netlist(
         raise ValueError("output_decision_pulldown_width must be positive")
     if hidden_forward_width <= 0.0:
         raise ValueError("hidden_forward_width must be positive")
+    if hidden_forward_topology not in HIDDEN_FORWARD_TOPOLOGIES:
+        raise ValueError(f"hidden_forward_topology must be one of {HIDDEN_FORWARD_TOPOLOGIES}")
     if readout_gradient_width <= 0.0:
         raise ValueError("readout_gradient_width must be positive")
     if hidden_error_width <= 0.0:
@@ -512,6 +516,7 @@ def block_netlist(
     readout_positive_error_node = "edp" if error_signal_mode == "restored" else "dp"
     readout_negative_error_node = "edn" if error_signal_mode == "restored" else "dn"
     hidden_neg_width = max(0.5, hidden_forward_width * 0.75)
+    hidden_forward_phase_width = max(hidden_forward_width, hidden_forward_width * block_len)
     readout_negative_forward_width = max(0.5, readout_forward_width * 0.75)
     cycle_ns = CYCLE_NS * phase_time_scale
     stop = len(samples) * cycle_ns
@@ -889,31 +894,57 @@ def block_netlist(
         for channel in range(channels):
             feature = block_idx * channels + channel
             lines += ["", f"* Feature {feature}: block {block_idx}, channel {channel}."]
+            if hidden_forward_topology == "shared-phase":
+                lines += [
+                    f"Mhfpos{feature}_phase hfp{feature}_rail fwd pre{feature} 0 NMOS W={hidden_forward_phase_width:.6g}u L=180n",
+                    f"Mhfneg{feature}_phase pre{feature} fwd hfn{feature}_rail 0 NMOS W={hidden_forward_phase_width:.6g}u L=180n",
+                    f"Chfp{feature}_rail hfp{feature}_rail 0 0.1f IC=0",
+                    f"Chfn{feature}_rail hfn{feature}_rail 0 0.1f IC=0",
+                    f"Rhfp{feature}_rail hfp{feature}_rail 0 1G",
+                    f"Rhfn{feature}_rail hfn{feature}_rail 0 1G",
+                ]
             for pix, pixel_node in enumerate(block):
                 input_node = input_rail_name(pixel_node, channel, input_rail_mode)
+                if hidden_forward_topology == "shared-phase":
+                    hidden_forward_lines = [
+                        f"Mhpos{feature}_{pix}_x vdd {input_node} hp{feature}_{pix}_0 0 NMOS W={hidden_forward_width:.6g}u L=180n",
+                        f"Mhpos{feature}_{pix}_w hp{feature}_{pix}_0 whp{feature}_{pix} hfp{feature}_rail 0 NMOS W={hidden_forward_width:.6g}u L=180n",
+                        f"Mhneg{feature}_{pix}_x hfn{feature}_rail {input_node} hn{feature}_{pix}_0 0 NMOS W={hidden_neg_width:.6g}u L=180n",
+                        f"Mhneg{feature}_{pix}_w hn{feature}_{pix}_0 whn{feature}_{pix} 0 0 NMOS W={hidden_neg_width:.6g}u L=180n",
+                    ]
+                    hidden_stack_nodes = [
+                        f"hp{feature}_{pix}_0",
+                        f"hn{feature}_{pix}_0",
+                    ]
+                else:
+                    hidden_forward_lines = [
+                        f"Mhpos{feature}_{pix}_x vdd {input_node} hp{feature}_{pix}_0 0 NMOS W={hidden_forward_width:.6g}u L=180n",
+                        f"Mhpos{feature}_{pix}_w hp{feature}_{pix}_0 whp{feature}_{pix} hp{feature}_{pix}_1 0 NMOS W={hidden_forward_width:.6g}u L=180n",
+                        f"Mhpos{feature}_{pix}_f hp{feature}_{pix}_1 fwd pre{feature} 0 NMOS W={hidden_forward_width:.6g}u L=180n",
+                        f"Mhneg{feature}_{pix}_f pre{feature} fwd hn{feature}_{pix}_0 0 NMOS W={hidden_neg_width:.6g}u L=180n",
+                        f"Mhneg{feature}_{pix}_x hn{feature}_{pix}_0 {input_node} hn{feature}_{pix}_1 0 NMOS W={hidden_neg_width:.6g}u L=180n",
+                        f"Mhneg{feature}_{pix}_w hn{feature}_{pix}_1 whn{feature}_{pix} 0 0 NMOS W={hidden_neg_width:.6g}u L=180n",
+                    ]
+                    hidden_stack_nodes = [
+                        f"hp{feature}_{pix}_0",
+                        f"hp{feature}_{pix}_1",
+                        f"hn{feature}_{pix}_0",
+                        f"hn{feature}_{pix}_1",
+                    ]
                 lines += [
-                    f"Mhpos{feature}_{pix}_x vdd {input_node} hp{feature}_{pix}_0 0 NMOS W={hidden_forward_width:.6g}u L=180n",
-                    f"Mhpos{feature}_{pix}_w hp{feature}_{pix}_0 whp{feature}_{pix} hp{feature}_{pix}_1 0 NMOS W={hidden_forward_width:.6g}u L=180n",
-                    f"Mhpos{feature}_{pix}_f hp{feature}_{pix}_1 fwd pre{feature} 0 NMOS W={hidden_forward_width:.6g}u L=180n",
-                    f"Mhneg{feature}_{pix}_f pre{feature} fwd hn{feature}_{pix}_0 0 NMOS W={hidden_neg_width:.6g}u L=180n",
-                    f"Mhneg{feature}_{pix}_x hn{feature}_{pix}_0 {input_node} hn{feature}_{pix}_1 0 NMOS W={hidden_neg_width:.6g}u L=180n",
-                    f"Mhneg{feature}_{pix}_w hn{feature}_{pix}_1 whn{feature}_{pix} 0 0 NMOS W={hidden_neg_width:.6g}u L=180n",
+                    *hidden_forward_lines,
                     *(
                         [
-                            f"Rhread_hp{feature}_{pix}_0 hp{feature}_{pix}_0 0 {hidden_stack_shunt_resistance:.12g}",
-                            f"Rhread_hp{feature}_{pix}_1 hp{feature}_{pix}_1 0 {hidden_stack_shunt_resistance:.12g}",
-                            f"Rhread_hn{feature}_{pix}_0 hn{feature}_{pix}_0 0 {hidden_stack_shunt_resistance:.12g}",
-                            f"Rhread_hn{feature}_{pix}_1 hn{feature}_{pix}_1 0 {hidden_stack_shunt_resistance:.12g}",
+                            f"Rhread_{node} {node} 0 {hidden_stack_shunt_resistance:.12g}"
+                            for node in hidden_stack_nodes
                         ]
                         if hidden_stack_shunt_resistance > 0.0
                         else []
                     ),
                     *(
                         [
-                            f"Chread_hp{feature}_{pix}_0 hp{feature}_{pix}_0 0 {hidden_stack_parasitic_capacitance:.12g}",
-                            f"Chread_hp{feature}_{pix}_1 hp{feature}_{pix}_1 0 {hidden_stack_parasitic_capacitance:.12g}",
-                            f"Chread_hn{feature}_{pix}_0 hn{feature}_{pix}_0 0 {hidden_stack_parasitic_capacitance:.12g}",
-                            f"Chread_hn{feature}_{pix}_1 hn{feature}_{pix}_1 0 {hidden_stack_parasitic_capacitance:.12g}",
+                            f"Chread_{node} {node} 0 {hidden_stack_parasitic_capacitance:.12g}"
+                            for node in hidden_stack_nodes
                         ]
                         if hidden_stack_parasitic_capacitance > 0.0
                         else []
@@ -1584,6 +1615,7 @@ def run_device_sequence(
     output_decision_pulldown_width: float,
     readout_apply_scale: float,
     hidden_forward_width: float,
+    hidden_forward_topology: str,
     readout_gradient_width: float,
     hidden_error_width: float,
     hidden_credit_mode: str,
@@ -1645,6 +1677,7 @@ def run_device_sequence(
         output_decision_pulldown_width=output_decision_pulldown_width,
         readout_apply_scale=readout_apply_scale,
         hidden_forward_width=hidden_forward_width,
+        hidden_forward_topology=hidden_forward_topology,
         readout_gradient_width=readout_gradient_width,
         hidden_error_width=hidden_error_width,
         hidden_credit_mode=hidden_credit_mode,
@@ -1722,6 +1755,7 @@ def main() -> None:
     ap.add_argument("--output-decision-threshold", type=float, default=0.6)
     ap.add_argument("--readout-apply-scale", type=float, default=0.35)
     ap.add_argument("--hidden-forward-width", type=float, default=3.0)
+    ap.add_argument("--hidden-forward-topology", choices=HIDDEN_FORWARD_TOPOLOGIES, default="per-pixel-phase")
     ap.add_argument("--readout-gradient-width", type=float, default=24.0)
     ap.add_argument("--hidden-error-width", type=float, default=32.0)
     ap.add_argument("--hidden-credit-mode", choices=HIDDEN_CREDIT_MODES, default="direct-feedback")
@@ -1852,6 +1886,7 @@ def main() -> None:
         "output_decision_pulldown_width": args.output_decision_pulldown_width,
         "readout_apply_scale": args.readout_apply_scale,
         "hidden_forward_width": args.hidden_forward_width,
+        "hidden_forward_topology": args.hidden_forward_topology,
         "readout_gradient_width": args.readout_gradient_width,
         "hidden_error_width": args.hidden_error_width,
         "hidden_credit_mode": args.hidden_credit_mode,
@@ -2050,6 +2085,7 @@ def main() -> None:
         "output_decision_pulldown_width": args.output_decision_pulldown_width,
         "readout_apply_scale": args.readout_apply_scale,
         "hidden_forward_width": args.hidden_forward_width,
+        "hidden_forward_topology": args.hidden_forward_topology,
         "readout_gradient_width": args.readout_gradient_width,
         "hidden_error_width": args.hidden_error_width,
         "hidden_update_width": args.hidden_update_width,

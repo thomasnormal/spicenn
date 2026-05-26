@@ -583,12 +583,18 @@ def test_block_netlist_can_emit_split_rail_hidden_forward_topology() -> None:
     assert "Cpren3 pren3 0 10f IC=0" in netlist
     assert "Rpren3 pren3 0 1G" in netlist
     assert "Mreset_pren3 pren3 rstf 0 0 NMOS W=4u" in netlist
-    assert "Mhspos3_3 x15 whp3_3 pre3 0 NMOS W=3u" in netlist
-    assert "Mhsneg3_3 x15 whn3_3 pren3 0 NMOS W=2.25u" in netlist
-    assert "Mhbpos3_b vdd bhp3 pre3 0 NMOS W=3u" in netlist
-    assert "Mhbneg3_b vdd bhn3 pren3 0 NMOS W=2.25u" in netlist
-    assert "Mrelu_h3_p vdd pre3 act3 0 NREL W=24u" in netlist
-    assert "Mrelu_h3_n act3 pren3 0 0 NREL W=24u" in netlist
+    assert ".subckt split_rail_hidden_pixel x whp whn pre pren Wp=3u Wn=2.25u" in netlist
+    assert ".subckt split_rail_hidden_bias vdd bhp bhn pre pren Wp=3u Wn=2.25u" in netlist
+    assert ".subckt split_rail_relu_nrel vdd pre pren act W=24u" in netlist
+    assert "Xhs3_3 x15 whp3_3 whn3_3 pre3 pren3 split_rail_hidden_pixel Wp=3u Wn=2.25u" in netlist
+    assert "Xhb3 vdd bhp3 bhn3 pre3 pren3 split_rail_hidden_bias Wp=3u Wn=2.25u" in netlist
+    assert "Xrelu_h3 vdd pre3 pren3 act3 split_rail_relu_nrel W=24u" in netlist
+    assert "Mhspos3_3" not in netlist
+    assert "Mhsneg3_3" not in netlist
+    assert "Mhbpos3_b vdd bhp3 pre3" not in netlist
+    assert "Mhbneg3_b vdd bhn3 pren3" not in netlist
+    assert "Mrelu_h3_p" not in netlist
+    assert "Mrelu_h3_n" not in netlist
     assert "Mhpos3_3_x" not in netlist
     assert "Mhneg3_3_x" not in netlist
     assert "Mhpos3_3_f" not in netlist

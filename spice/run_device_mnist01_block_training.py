@@ -69,6 +69,26 @@ def spice_subcircuits() -> str:
             "Rp_ p 0 {Rleak}",
             "Rn_ n 0 {Rleak}",
             ".ends signed_store",
+            "",
+            ".subckt split_rail_hidden_pixel x whp whn pre pren Wp=3u Wn=2.25u",
+            "Mpos x whp pre 0 NMOS W={Wp} L=180n",
+            "Mneg x whn pren 0 NMOS W={Wn} L=180n",
+            ".ends split_rail_hidden_pixel",
+            "",
+            ".subckt split_rail_hidden_bias vdd bhp bhn pre pren Wp=3u Wn=2.25u",
+            "Mpos vdd bhp pre 0 NMOS W={Wp} L=180n",
+            "Mneg vdd bhn pren 0 NMOS W={Wn} L=180n",
+            ".ends split_rail_hidden_bias",
+            "",
+            ".subckt split_rail_relu_nrel vdd pre pren act W=24u",
+            "Mp vdd pre act 0 NREL W={W} L=180n",
+            "Mn act pren 0 0 NREL W={W} L=180n",
+            ".ends split_rail_relu_nrel",
+            "",
+            ".subckt split_rail_relu_sense vdd pre pren act W=24u",
+            "Mp vdd pre act 0 NSENSE W={W} L=180n",
+            "Mn act pren 0 0 NSENSE W={W} L=180n",
+            ".ends split_rail_relu_sense",
         ]
     )
 
@@ -87,6 +107,51 @@ def signed_store_instance(
         f"X{name} {positive_node} {negative_node} signed_store "
         f"Cp={capacitance} Icp={positive_ic:.12g} Icn={negative_ic:.12g} Rleak={leak_resistance}"
     )
+
+
+def split_rail_hidden_pixel_instance(
+    name: str,
+    input_node: str,
+    whp_node: str,
+    whn_node: str,
+    pre_node: str,
+    pren_node: str,
+    *,
+    positive_width: float,
+    negative_width: float,
+) -> str:
+    return (
+        f"X{name} {input_node} {whp_node} {whn_node} {pre_node} {pren_node} split_rail_hidden_pixel "
+        f"Wp={positive_width:.6g}u Wn={negative_width:.6g}u"
+    )
+
+
+def split_rail_hidden_bias_instance(
+    name: str,
+    bhp_node: str,
+    bhn_node: str,
+    pre_node: str,
+    pren_node: str,
+    *,
+    positive_width: float,
+    negative_width: float,
+) -> str:
+    return (
+        f"X{name} vdd {bhp_node} {bhn_node} {pre_node} {pren_node} split_rail_hidden_bias "
+        f"Wp={positive_width:.6g}u Wn={negative_width:.6g}u"
+    )
+
+
+def split_rail_relu_instance(
+    name: str,
+    pre_node: str,
+    pren_node: str,
+    act_node: str,
+    *,
+    model: str,
+    width: float,
+) -> str:
+    return f"X{name} vdd {pre_node} {pren_node} {act_node} split_rail_relu_{model} W={width:.6g}u"
 
 
 def decision_ref_divider_resistances(ref_voltage: float, total_resistance: float) -> tuple[float, float]:
@@ -972,8 +1037,16 @@ def block_netlist(
                     ]
                 elif hidden_forward_topology == "split-rail":
                     hidden_forward_lines = [
-                        f"Mhspos{feature}_{pix} {input_node} whp{feature}_{pix} pre{feature} 0 NMOS W={hidden_forward_width:.6g}u L=180n",
-                        f"Mhsneg{feature}_{pix} {input_node} whn{feature}_{pix} pren{feature} 0 NMOS W={hidden_neg_width:.6g}u L=180n",
+                        split_rail_hidden_pixel_instance(
+                            f"hs{feature}_{pix}",
+                            input_node,
+                            f"whp{feature}_{pix}",
+                            f"whn{feature}_{pix}",
+                            f"pre{feature}",
+                            f"pren{feature}",
+                            positive_width=hidden_forward_width,
+                            negative_width=hidden_neg_width,
+                        ),
                     ]
                     hidden_stack_nodes = []
                 else:
@@ -1031,8 +1104,15 @@ def block_netlist(
                 ]
             elif hidden_forward_topology == "split-rail":
                 hidden_bias_lines = [
-                    f"Mhbpos{feature}_b vdd bhp{feature} pre{feature} 0 NMOS W={hidden_forward_width:.6g}u L=180n",
-                    f"Mhbneg{feature}_b vdd bhn{feature} pren{feature} 0 NMOS W={hidden_neg_width:.6g}u L=180n",
+                    split_rail_hidden_bias_instance(
+                        f"hb{feature}",
+                        f"bhp{feature}",
+                        f"bhn{feature}",
+                        f"pre{feature}",
+                        f"pren{feature}",
+                        positive_width=hidden_forward_width,
+                        negative_width=hidden_neg_width,
+                    ),
                 ]
             else:
                 hidden_bias_lines = [
@@ -1043,8 +1123,14 @@ def block_netlist(
                 ]
             if hidden_forward_topology == "split-rail":
                 hidden_activation_lines = [
-                    f"Mrelu_h{feature}_p vdd pre{feature} act{feature} 0 {activation_model} W={hidden_activation_width:.6g}u L=180n",
-                    f"Mrelu_h{feature}_n act{feature} pren{feature} 0 0 {activation_model} W={hidden_activation_width:.6g}u L=180n",
+                    split_rail_relu_instance(
+                        f"relu_h{feature}",
+                        f"pre{feature}",
+                        f"pren{feature}",
+                        f"act{feature}",
+                        model=hidden_activation_model,
+                        width=hidden_activation_width,
+                    ),
                 ]
             else:
                 hidden_activation_lines = [

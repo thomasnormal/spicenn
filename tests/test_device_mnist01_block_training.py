@@ -6,6 +6,7 @@ from types import SimpleNamespace
 from pathlib import Path
 
 import numpy as np
+import pandas as pd
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -38,6 +39,9 @@ def test_device_mnist01_block_script_help_runs_from_repo_root() -> None:
     assert "--learning-activation-gate-model" in proc.stdout
     assert "--readout-weight-leak-resistance" in proc.stdout
     assert "--activation-competition-width" in proc.stdout
+    assert "--output-bias" in proc.stdout
+    assert "--output-bias-apply-scale" in proc.stdout
+    assert "--output-bias-leak-resistance" in proc.stdout
     assert "--score-mode" in proc.stdout
     assert "--readout-forward-width" in proc.stdout
     assert "--phase-time-scale" in proc.stdout
@@ -86,6 +90,45 @@ def test_random_pixel_hidden_polarity_initializes_mixed_stroke_features() -> Non
     assert np.any(positive_pixels)
     assert np.any(~positive_pixels)
     assert all(0 < int(np.sum(row)) < row.size for row in positive_pixels)
+
+
+def test_initial_block_weights_honor_output_bias_initial_conditions() -> None:
+    sys.path.insert(0, str(SPICE_DIR))
+    import run_device_mnist01_block_training as block
+
+    weights = block.initial_block_weights(
+        4,
+        2,
+        2,
+        1,
+        output_bias_positive_init=0.33,
+        output_bias_negative_init=0.31,
+    )
+
+    assert weights["obp"] == 0.33
+    assert weights["obn"] == 0.31
+
+
+def test_final_block_weights_preserve_measured_output_bias() -> None:
+    sys.path.insert(0, str(SPICE_DIR))
+    import run_device_mnist01_block_training as block
+
+    feature_count = 4
+    block_len = 4
+    row: dict[str, float] = {"obp_after_apply": 0.41, "obn_after_apply": 0.27}
+    for feature in range(feature_count):
+        row[f"bhp{feature}_after_apply"] = 0.50
+        row[f"bhn{feature}_after_apply"] = 0.20
+        row[f"vwp{feature}_after_apply"] = 0.52
+        row[f"vwn{feature}_after_apply"] = 0.25
+        for pix in range(block_len):
+            row[f"whp{feature}_{pix}_after_apply"] = 0.60
+            row[f"whn{feature}_{pix}_after_apply"] = 0.15
+
+    weights = block.final_weights_from_rows(pd.DataFrame([row]), feature_count=feature_count, block_len=block_len)
+
+    assert weights["obp"] == 0.41
+    assert weights["obn"] == 0.27
 
 
 def test_block_netlist_emits_per_pixel_trainable_caps_and_no_behavioral_sources() -> None:
@@ -277,6 +320,93 @@ def test_block_netlist_can_emit_transistor_activation_competition() -> None:
     assert "Mactinh_sink3_i act3 actinh actinh_sink3_i 0 NSENSE W=5u" in netlist
     assert "Mactinh_sink3_f actinh_sink3_i fwd 0 0 NMOS W=5u" in netlist
     assert ".meas tran actinh_before_0 FIND V(actinh) AT=2.95n" in netlist
+
+
+def test_block_netlist_can_emit_trainable_output_bias() -> None:
+    sys.path.insert(0, str(SPICE_DIR))
+    import run_device_mnist01_block_training as block
+
+    image_size = 4
+    weights = block.initial_block_weights(image_size, 2, 2, 1, seed=1)
+    sample = {f"x{i}": 0.2 + 0.01 * i for i in range(image_size * image_size)}
+    sample["target"] = 1.1
+    netlist = block.block_netlist(
+        [sample],
+        weights,
+        image_size=image_size,
+        block_size=2,
+        stride=2,
+        channels=1,
+        training_enabled=True,
+        output_bias_enabled=True,
+        score_mode="differential",
+    )
+
+    assert "\nB" not in netlist
+    assert "Cobp obp 0 20f IC=0.52" in netlist
+    assert "Cobn obn 0 20f IC=0.25" in netlist
+    assert "Mobpos_w vdd obp obp_f0 0 NREL W=64u" in netlist
+    assert "Mobpos_f obp_f0 fwd score 0 NREL W=64u" in netlist
+    assert "Mobneg_w vdd obn obn_f0 0 NREL W=48u" in netlist
+    assert "Mobneg_f obn_f0 fwd scoren 0 NREL W=48u" in netlist
+    assert "Mgop_d vdd dp gop_d 0 NSENSE W=24u" in netlist
+    assert "Mgon_d vdd dn gon_d 0 NSENSE W=24u" in netlist
+    assert "Mobp_up_p1 obp_up applyn obp vdd PMOS" in netlist
+    assert "Mobn_up_p1 obn_up applyn obn vdd PMOS" in netlist
+    assert ".meas tran output_bias_signed_after_0 PARAM='obp_after_apply_0-obn_after_apply_0'" in netlist
+
+
+def test_output_bias_does_not_inherit_readout_weight_leak() -> None:
+    sys.path.insert(0, str(SPICE_DIR))
+    import run_device_mnist01_block_training as block
+
+    image_size = 4
+    weights = block.initial_block_weights(image_size, 2, 2, 1, seed=1)
+    sample = {f"x{i}": 0.2 + 0.01 * i for i in range(image_size * image_size)}
+    sample["target"] = 1.1
+    netlist = block.block_netlist(
+        [sample],
+        weights,
+        image_size=image_size,
+        block_size=2,
+        stride=2,
+        channels=1,
+        training_enabled=True,
+        output_bias_enabled=True,
+        readout_weight_leak_resistance=5e6,
+    )
+
+    assert "Rvwp0_leak vwp0 vwp_ref 5e+06" in netlist
+    assert "Robp_leak" not in netlist
+    assert "Robn_leak" not in netlist
+
+
+def test_output_bias_can_emit_separate_neutral_passive_leak() -> None:
+    sys.path.insert(0, str(SPICE_DIR))
+    import run_device_mnist01_block_training as block
+
+    image_size = 4
+    weights = block.initial_block_weights(image_size, 2, 2, 1, seed=1)
+    sample = {f"x{i}": 0.2 + 0.01 * i for i in range(image_size * image_size)}
+    sample["target"] = 1.1
+    netlist = block.block_netlist(
+        [sample],
+        weights,
+        image_size=image_size,
+        block_size=2,
+        stride=2,
+        channels=1,
+        training_enabled=True,
+        output_bias_enabled=True,
+        output_bias_leak_resistance=7e6,
+        output_bias_positive_ref=0.25,
+        output_bias_negative_ref=0.25,
+    )
+
+    assert "Vobp_ref obp_ref 0 0.25" in netlist
+    assert "Vobn_ref obn_ref 0 0.25" in netlist
+    assert "Robp_leak obp obp_ref 7e+06" in netlist
+    assert "Robn_leak obn obn_ref 7e+06" in netlist
 
 
 def test_block_netlist_can_emit_target_topology_without_behavioral_sources() -> None:

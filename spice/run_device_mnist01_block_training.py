@@ -76,6 +76,8 @@ def initial_block_weights(
     hidden_bias_positive_init: float = 0.50,
     hidden_bias_negative_init: float = 0.20,
     hidden_polarity_init: str = "ink",
+    output_bias_positive_init: float = 0.52,
+    output_bias_negative_init: float = 0.25,
 ) -> dict[str, Any]:
     if hidden_polarity_init not in HIDDEN_POLARITY_INITS:
         raise ValueError(f"hidden_polarity_init must be one of {HIDDEN_POLARITY_INITS}")
@@ -88,6 +90,8 @@ def initial_block_weights(
     bhn = np.clip(hidden_bias_negative_init + rng.normal(0.0, 0.020, size=feature_count), 0.02, 1.10)
     vwp = np.clip(0.52 + rng.normal(0.0, 0.025, size=feature_count), 0.35, 0.75)
     vwn = np.clip(0.25 + rng.normal(0.0, 0.020, size=feature_count), 0.08, 0.45)
+    obp = output_bias_positive_init
+    obn = output_bias_negative_init
     if hidden_polarity_init == "alternating-channel":
         for feature in range(feature_count):
             if feature % channels == 1:
@@ -110,6 +114,8 @@ def initial_block_weights(
         "bhn": bhn.tolist(),
         "vwp": vwp.tolist(),
         "vwn": vwn.tolist(),
+        "obp": obp,
+        "obn": obn,
     }
 
 
@@ -246,6 +252,13 @@ def block_netlist(
     readout_weight_positive_ref: float = 0.52,
     readout_weight_negative_ref: float = 0.25,
     activation_competition_width: float = 0.0,
+    output_bias_enabled: bool = False,
+    output_bias_apply_scale: float = 1.0,
+    output_bias_positive_init: float = 0.52,
+    output_bias_negative_init: float = 0.25,
+    output_bias_leak_resistance: float = 0.0,
+    output_bias_positive_ref: float = 0.25,
+    output_bias_negative_ref: float = 0.25,
     phase_time_scale: float = 1.0,
     score_mode: str = "single-ended",
     input_rail_mode: str = "alternating-complement",
@@ -270,6 +283,10 @@ def block_netlist(
         raise ValueError("readout_weight_leak_resistance must be nonnegative")
     if activation_competition_width < 0.0:
         raise ValueError("activation_competition_width must be nonnegative")
+    if output_bias_apply_scale <= 0.0:
+        raise ValueError("output_bias_apply_scale must be positive")
+    if output_bias_leak_resistance < 0.0:
+        raise ValueError("output_bias_leak_resistance must be nonnegative")
     if phase_time_scale <= 0.0:
         raise ValueError("phase_time_scale must be positive")
     if score_mode not in SCORE_MODES:
@@ -292,6 +309,8 @@ def block_netlist(
 
     readout_pmos_w = 8.0 * readout_apply_scale
     readout_nmos_w = 2.0 * readout_apply_scale
+    output_bias_pmos_w = readout_pmos_w * output_bias_apply_scale
+    output_bias_nmos_w = readout_nmos_w * output_bias_apply_scale
     hidden_neg_width = max(0.5, hidden_forward_width * 0.75)
     readout_negative_forward_width = max(0.5, readout_forward_width * 0.75)
     cycle_ns = CYCLE_NS * phase_time_scale
@@ -313,6 +332,18 @@ def block_netlist(
             f".meas tran d_out_{idx} PARAM='out_after_{idx}-out_before_{idx}'",
             f".meas tran error_net_{idx} PARAM='dp_after_{idx}-dn_after_{idx}'",
         ]
+        if output_bias_enabled:
+            measures += [
+                f".meas tran obp_before_{idx} FIND V(obp) AT={base + 0.60 * scale:.2f}n",
+                f".meas tran obn_before_{idx} FIND V(obn) AT={base + 0.60 * scale:.2f}n",
+                f".meas tran gop_after_{idx} FIND V(gop) AT={base + 9.10 * scale:.2f}n",
+                f".meas tran gon_after_{idx} FIND V(gon) AT={base + 9.10 * scale:.2f}n",
+                f".meas tran obp_after_apply_{idx} FIND V(obp) AT={base + 11.50 * scale:.2f}n",
+                f".meas tran obn_after_apply_{idx} FIND V(obn) AT={base + 11.50 * scale:.2f}n",
+                f".meas tran output_bias_signed_before_{idx} PARAM='obp_before_{idx}-obn_before_{idx}'",
+                f".meas tran output_bias_signed_after_{idx} PARAM='obp_after_apply_{idx}-obn_after_apply_{idx}'",
+                f".meas tran d_output_bias_signed_{idx} PARAM='output_bias_signed_after_{idx}-output_bias_signed_before_{idx}'",
+            ]
         if activation_competition_width > 0.0:
             measures += [
                 f".meas tran actinh_before_{idx} FIND V(actinh) AT={base + 2.95 * scale:.2f}n",
@@ -363,6 +394,11 @@ def block_netlist(
             f"Vvwp_ref vwp_ref 0 {readout_weight_positive_ref:.12g}",
             f"Vvwn_ref vwn_ref 0 {readout_weight_negative_ref:.12g}",
         ]
+    if output_bias_enabled and output_bias_leak_resistance > 0.0:
+        lines += [
+            f"Vobp_ref obp_ref 0 {output_bias_positive_ref:.12g}",
+            f"Vobn_ref obn_ref 0 {output_bias_negative_ref:.12g}",
+        ]
     for rail in required_rails:
         lines.append(f"V{rail} {rail} 0 {block_sample_wave(samples, rail, stop, cycle_ns=cycle_ns)}")
     lines += [
@@ -393,6 +429,31 @@ def block_netlist(
             lines += [
                 f"Rvwp{feature}_leak vwp{feature} vwp_ref {readout_weight_leak_resistance:.6g}",
                 f"Rvwn{feature}_leak vwn{feature} vwn_ref {readout_weight_leak_resistance:.6g}",
+            ]
+
+    if output_bias_enabled:
+        obp_initial = float(weights.get("obp", output_bias_positive_init))
+        obn_initial = float(weights.get("obn", output_bias_negative_init))
+        lines += [
+            "",
+            "* Persistent signed output bias and local bias-gradient state.",
+            f"Cobp obp 0 20f IC={obp_initial:.12g}",
+            f"Cobn obn 0 20f IC={obn_initial:.12g}",
+            "Cgop gop 0 2f IC=0",
+            "Cgon gon 0 2f IC=0",
+            "Crop rop 0 4f IC=1.2",
+            "Cron ron 0 4f IC=1.2",
+            "Robp obp 0 1e15",
+            "Robn obn 0 1e15",
+            "Rgop gop 0 1G",
+            "Rgon gon 0 1G",
+            "Rrop rop vdd 50k",
+            "Rron ron vdd 50k",
+        ]
+        if output_bias_leak_resistance > 0.0:
+            lines += [
+                f"Robp_leak obp obp_ref {output_bias_leak_resistance:.6g}",
+                f"Robn_leak obn obn_ref {output_bias_leak_resistance:.6g}",
             ]
 
     lines += [
@@ -454,6 +515,11 @@ def block_netlist(
         "Mreset_dp dp rstg 0 0 NMOS W=4u L=180n",
         "Mreset_dn dn rstg 0 0 NMOS W=4u L=180n",
     ]
+    if output_bias_enabled:
+        lines += [
+            "Mreset_gop gop rstg 0 0 NMOS W=4u L=180n",
+            "Mreset_gon gon rstg 0 0 NMOS W=4u L=180n",
+        ]
     if activation_competition_width > 0.0:
         lines.append("Mreset_actinh actinh rstf 0 0 NMOS W=4u L=180n")
     for feature in range(feature_count):
@@ -568,6 +634,39 @@ def block_netlist(
                 f"Mvwp{feature}_dn_a vwp{feature} apply vwp{feature}_dn 0 NREL W={readout_nmos_w:.6g}u L=180n",
                 f"Mvwp{feature}_dn_g vwp{feature}_dn gvn{feature} 0 0 NSENSE W={readout_nmos_w:.6g}u L=180n",
             ]
+
+    if output_bias_enabled:
+        lines += [
+            "",
+            "* Trainable signed output bias contribution and local error-driven writer.",
+            f"Mobpos_w vdd obp obp_f0 0 {readout_model} W={readout_forward_width:.6g}u L=180n",
+            f"Mobpos_f obp_f0 fwd score 0 {readout_model} W={readout_forward_width:.6g}u L=180n",
+            *(
+                [
+                    f"Mobneg_w vdd obn obn_f0 0 {readout_model} W={readout_negative_forward_width:.6g}u L=180n",
+                    f"Mobneg_f obn_f0 fwd scoren 0 {readout_model} W={readout_negative_forward_width:.6g}u L=180n",
+                ]
+                if score_mode == "differential"
+                else [
+                    f"Mobneg_f score fwd obn_f0 0 {readout_model} W={readout_negative_forward_width:.6g}u L=180n",
+                    f"Mobneg_w obn_f0 obn 0 0 {readout_model} W={readout_negative_forward_width:.6g}u L=180n",
+                ]
+            ),
+            f"Mgop_d vdd dp gop_d 0 NSENSE W={readout_gradient_width:.6g}u L=180n",
+            f"Mgop_g gop_d acc gop 0 NREL W={readout_gradient_width:.6g}u L=180n",
+            f"Mgon_d vdd dn gon_d 0 NSENSE W={readout_gradient_width:.6g}u L=180n",
+            f"Mgon_g gon_d acc gon 0 NREL W={readout_gradient_width:.6g}u L=180n",
+            "Mrop_pd rop gop 0 0 NSENSE W=16u L=180n",
+            "Mron_pd ron gon 0 0 NSENSE W=16u L=180n",
+            f"Mobp_up_p0 vdd rop obp_up vdd PMOS W={output_bias_pmos_w:.6g}u L=180n",
+            f"Mobp_up_p1 obp_up applyn obp vdd PMOS W={output_bias_pmos_w:.6g}u L=180n",
+            f"Mobn_dn_a obn apply obn_dn 0 NREL W={output_bias_nmos_w:.6g}u L=180n",
+            f"Mobn_dn_g obn_dn gop 0 0 NSENSE W={output_bias_nmos_w:.6g}u L=180n",
+            f"Mobn_up_p0 vdd ron obn_up vdd PMOS W={output_bias_pmos_w:.6g}u L=180n",
+            f"Mobn_up_p1 obn_up applyn obn vdd PMOS W={output_bias_pmos_w:.6g}u L=180n",
+            f"Mobp_dn_a obp apply obp_dn 0 NREL W={output_bias_nmos_w:.6g}u L=180n",
+            f"Mobp_dn_g obp_dn gon 0 0 NSENSE W={output_bias_nmos_w:.6g}u L=180n",
+        ]
 
     lines += [
         "",
@@ -708,7 +807,7 @@ def final_weights_from_rows(rows: pd.DataFrame, *, feature_count: int, block_len
     if rows.empty:
         raise ValueError("cannot extract final weights from empty rows")
     final = rows.iloc[-1]
-    return {
+    weights = {
         "whp": [
             [float(final[f"whp{feature}_{pix}_after_apply"]) for pix in range(block_len)]
             for feature in range(feature_count)
@@ -722,6 +821,10 @@ def final_weights_from_rows(rows: pd.DataFrame, *, feature_count: int, block_len
         "vwp": [float(final[f"vwp{feature}_after_apply"]) for feature in range(feature_count)],
         "vwn": [float(final[f"vwn{feature}_after_apply"]) for feature in range(feature_count)],
     }
+    if "obp_after_apply" in rows.columns and "obn_after_apply" in rows.columns:
+        weights["obp"] = float(final["obp_after_apply"])
+        weights["obn"] = float(final["obn_after_apply"])
+    return weights
 
 
 def run_device_sequence(
@@ -753,6 +856,13 @@ def run_device_sequence(
     readout_weight_positive_ref: float,
     readout_weight_negative_ref: float,
     activation_competition_width: float,
+    output_bias_enabled: bool,
+    output_bias_apply_scale: float,
+    output_bias_positive_init: float,
+    output_bias_negative_init: float,
+    output_bias_leak_resistance: float,
+    output_bias_positive_ref: float,
+    output_bias_negative_ref: float,
     phase_time_scale: float,
     score_mode: str,
     input_rail_mode: str,
@@ -781,6 +891,13 @@ def run_device_sequence(
         readout_weight_positive_ref=readout_weight_positive_ref,
         readout_weight_negative_ref=readout_weight_negative_ref,
         activation_competition_width=activation_competition_width,
+        output_bias_enabled=output_bias_enabled,
+        output_bias_apply_scale=output_bias_apply_scale,
+        output_bias_positive_init=output_bias_positive_init,
+        output_bias_negative_init=output_bias_negative_init,
+        output_bias_leak_resistance=output_bias_leak_resistance,
+        output_bias_positive_ref=output_bias_positive_ref,
+        output_bias_negative_ref=output_bias_negative_ref,
         phase_time_scale=phase_time_scale,
         score_mode=score_mode,
         input_rail_mode=input_rail_mode,
@@ -825,6 +942,13 @@ def main() -> None:
     ap.add_argument("--readout-weight-positive-ref", type=float, default=0.52)
     ap.add_argument("--readout-weight-negative-ref", type=float, default=0.25)
     ap.add_argument("--activation-competition-width", type=float, default=0.0)
+    ap.add_argument("--output-bias", action="store_true")
+    ap.add_argument("--output-bias-apply-scale", type=float, default=1.0)
+    ap.add_argument("--output-bias-positive-init", type=float, default=0.52)
+    ap.add_argument("--output-bias-negative-init", type=float, default=0.25)
+    ap.add_argument("--output-bias-leak-resistance", type=float, default=0.0)
+    ap.add_argument("--output-bias-positive-ref", type=float, default=0.25)
+    ap.add_argument("--output-bias-negative-ref", type=float, default=0.25)
     ap.add_argument("--phase-time-scale", type=float, default=1.0)
     ap.add_argument("--score-mode", choices=SCORE_MODES, default="single-ended")
     ap.add_argument("--input-rail-mode", choices=INPUT_RAIL_MODES, default="alternating-complement")
@@ -872,6 +996,8 @@ def main() -> None:
         hidden_bias_positive_init=args.hidden_bias_positive_init,
         hidden_bias_negative_init=args.hidden_bias_negative_init,
         hidden_polarity_init=args.hidden_polarity_init,
+        output_bias_positive_init=args.output_bias_positive_init,
+        output_bias_negative_init=args.output_bias_negative_init,
     )
     common = {
         "image_size": args.image_size,
@@ -895,6 +1021,13 @@ def main() -> None:
         "readout_weight_positive_ref": args.readout_weight_positive_ref,
         "readout_weight_negative_ref": args.readout_weight_negative_ref,
         "activation_competition_width": args.activation_competition_width,
+        "output_bias_enabled": args.output_bias,
+        "output_bias_apply_scale": args.output_bias_apply_scale,
+        "output_bias_positive_init": args.output_bias_positive_init,
+        "output_bias_negative_init": args.output_bias_negative_init,
+        "output_bias_leak_resistance": args.output_bias_leak_resistance,
+        "output_bias_positive_ref": args.output_bias_positive_ref,
+        "output_bias_negative_ref": args.output_bias_negative_ref,
         "phase_time_scale": args.phase_time_scale,
         "score_mode": args.score_mode,
         "input_rail_mode": args.input_rail_mode,
@@ -991,6 +1124,13 @@ def main() -> None:
         "readout_weight_positive_ref": args.readout_weight_positive_ref,
         "readout_weight_negative_ref": args.readout_weight_negative_ref,
         "activation_competition_width": args.activation_competition_width,
+        "output_bias_enabled": args.output_bias,
+        "output_bias_apply_scale": args.output_bias_apply_scale,
+        "output_bias_positive_init": args.output_bias_positive_init,
+        "output_bias_negative_init": args.output_bias_negative_init,
+        "output_bias_leak_resistance": args.output_bias_leak_resistance,
+        "output_bias_positive_ref": args.output_bias_positive_ref,
+        "output_bias_negative_ref": args.output_bias_negative_ref,
         "phase_time_scale": args.phase_time_scale,
         "score_mode": args.score_mode,
         "hidden_bias_positive_init": args.hidden_bias_positive_init,

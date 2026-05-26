@@ -42,6 +42,7 @@ OUTPUT_DECISION_STAGES = (
     "ref-latched",
     "ref-precharged-latched",
     "ref-preamp-latched",
+    "ref-precharged-preamp-latched",
     "diff-latched",
     "diff-precharged-latched",
     "ratio-inverter",
@@ -642,7 +643,14 @@ def block_netlist(
         raise ValueError("output_decision_ref_resistance must be positive")
     if (
         output_decision_stage
-        in {"ref-latched", "ref-precharged-latched", "ref-preamp-latched", "diff-latched", "diff-precharged-latched"}
+        in {
+            "ref-latched",
+            "ref-precharged-latched",
+            "ref-preamp-latched",
+            "ref-precharged-preamp-latched",
+            "diff-latched",
+            "diff-precharged-latched",
+        }
         and output_differential_stage != "latched"
     ):
         raise ValueError("output_decision_stage requires latched output_differential_stage")
@@ -650,6 +658,7 @@ def block_netlist(
         "ref-latched",
         "ref-precharged-latched",
         "ref-preamp-latched",
+        "ref-precharged-preamp-latched",
     }:
         raise ValueError(f"{output_decision_ref_source} output_decision_ref_source requires a reference decision stage")
     if output_decision_pullup_width <= 0.0:
@@ -880,7 +889,12 @@ def block_netlist(
             f"Vobp_ref obp_ref 0 {output_bias_positive_ref:.12g}",
             f"Vobn_ref obn_ref 0 {output_bias_negative_ref:.12g}",
         ]
-    if output_decision_stage in {"ref-latched", "ref-precharged-latched", "ref-preamp-latched"}:
+    if output_decision_stage in {
+        "ref-latched",
+        "ref-precharged-latched",
+        "ref-preamp-latched",
+        "ref-precharged-preamp-latched",
+    }:
         if output_decision_ref_source == "divider":
             rtop, rbot = decision_ref_divider_resistances(output_decision_ref, output_decision_ref_resistance)
             rtop *= mismatch_factor(passive_mismatch_seed, "Routref_top", passive_mismatch_sigma)
@@ -1030,7 +1044,7 @@ def block_netlist(
             "Rdecision decision 0 1G",
             "Rdecisionn decisionn 0 1G",
         ]
-    if output_decision_stage == "ref-preamp-latched":
+    if output_decision_stage in {"ref-preamp-latched", "ref-precharged-preamp-latched"}:
         lines += [
             "Cdecision_pre decision_pre 0 10f IC=0",
             "Cdecisionn_pre decisionn_pre 0 10f IC=0",
@@ -1113,12 +1127,16 @@ def block_netlist(
         ]
     if output_differential_stage == "latched":
         lines.append("Mreset_outn outn rstf 0 0 NMOS W=4u L=180n")
-    if output_decision_stage != "none" and output_decision_stage not in {"ref-precharged-latched", "diff-precharged-latched"}:
+    if output_decision_stage != "none" and output_decision_stage not in {
+        "ref-precharged-latched",
+        "ref-precharged-preamp-latched",
+        "diff-precharged-latched",
+    }:
         lines += [
             "Mreset_decision decision rstf 0 0 NMOS W=4u L=180n",
             "Mreset_decisionn decisionn rstf 0 0 NMOS W=4u L=180n",
         ]
-    if output_decision_stage in {"ref-precharged-latched", "diff-precharged-latched"}:
+    if output_decision_stage in {"ref-precharged-latched", "ref-precharged-preamp-latched", "diff-precharged-latched"}:
         lines += [
             "Mprecharge_decision decision rstfn vdd vdd PMOS W=4u L=180n",
             "Mprecharge_decisionn decisionn rstfn vdd vdd PMOS W=4u L=180n",
@@ -1127,6 +1145,12 @@ def block_netlist(
         lines += [
             "Mreset_decision_pre decision_pre rstf 0 0 NMOS W=4u L=180n",
             "Mreset_decisionn_pre decisionn_pre rstf 0 0 NMOS W=4u L=180n",
+        ]
+    if output_decision_stage == "ref-precharged-preamp-latched":
+        lines += [
+            "Mprecharge_decision_pre decision_pre rstfn vdd vdd PMOS W=4u L=180n",
+            "Mprecharge_decisionn_pre decisionn_pre rstfn vdd vdd PMOS W=4u L=180n",
+            "Mequalize_decision_pre decision_pre rstf decisionn_pre 0 NMOS W=4u L=180n",
         ]
     if activation_competition_width > 0.0:
         lines.append("Mreset_actinh actinh rstf 0 0 NMOS W=4u L=180n")
@@ -1537,6 +1561,20 @@ def block_netlist(
                 f"Mdec_n decision decisionn_pre dec_src 0 NSENSE W={output_decision_pulldown_width:.6g}u L=180n",
                 f"Mdecn_n decisionn decision_pre dec_src 0 NSENSE W={output_decision_pulldown_width:.6g}u L=180n",
                 f"Mdec_tail dec_src dec 0 0 NMOS W={output_decision_pulldown_width:.6g}u L=180n",
+            ]
+        )
+    elif output_decision_stage == "ref-precharged-preamp-latched":
+        decision_stage = "\n".join(
+            [
+                "* Dynamic precharged reference preamp followed by a regenerative decision latch.",
+                f"Mdecpre_pc_ref decision_pre outref decpre_src 0 NSENSE W={output_decision_pulldown_width:.6g}u L=180n",
+                f"Mdecpre_pc_out decisionn_pre out decpre_src 0 NSENSE W={output_decision_pulldown_width:.6g}u L=180n",
+                f"Mdecpre_pc_tail decpre_src dec 0 0 NMOS W={output_decision_pulldown_width:.6g}u L=180n",
+                f"Mdec_pcpre_p decision decisionn vdd vdd PMOS W={output_decision_pullup_width:.6g}u L=180n",
+                f"Mdecn_pcpre_p decisionn decision vdd vdd PMOS W={output_decision_pullup_width:.6g}u L=180n",
+                f"Mdec_pcpre_n decision decisionn_pre dec_src 0 NSENSE W={output_decision_pulldown_width:.6g}u L=180n",
+                f"Mdecn_pcpre_n decisionn decision_pre dec_src 0 NSENSE W={output_decision_pulldown_width:.6g}u L=180n",
+                f"Mdec_pcpre_tail dec_src dec 0 0 NMOS W={output_decision_pulldown_width:.6g}u L=180n",
             ]
         )
     elif output_decision_stage == "diff-latched":

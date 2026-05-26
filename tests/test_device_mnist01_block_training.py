@@ -1517,6 +1517,48 @@ def test_block_netlist_can_emit_reference_preamp_latched_decision_stage() -> Non
     assert ".meas tran decision_after_0 FIND V(decision) AT=15.50n" in netlist
 
 
+def test_block_netlist_can_emit_precharged_reference_preamp_latched_decision_stage() -> None:
+    sys.path.insert(0, str(SPICE_DIR))
+    import run_device_mnist01_block_training as block
+
+    image_size = 4
+    weights = block.initial_block_weights(image_size, 2, 2, 1, seed=1)
+    sample = {f"x{i}": 0.2 + 0.01 * i for i in range(image_size * image_size)}
+    sample["target"] = 1.1
+    netlist = block.block_netlist(
+        [sample],
+        weights,
+        image_size=image_size,
+        block_size=2,
+        stride=2,
+        channels=1,
+        training_enabled=True,
+        score_mode="differential",
+        output_differential_stage="latched",
+        output_decision_stage="ref-precharged-preamp-latched",
+        output_decision_ref=0.95,
+        output_decision_ref_source="divider",
+        output_decision_ref_resistance=1.2e6,
+        output_decision_pullup_width=8.0,
+        output_decision_pulldown_width=1.0,
+    )
+
+    assert "\nB" not in netlist
+    assert "Voutref outref 0" not in netlist
+    assert "Routref_top vdd outref 250000" in netlist
+    assert "Cdecision_pre decision_pre 0 10f IC=0" in netlist
+    assert "Mreset_decision decision rstf 0 0 NMOS" not in netlist
+    assert "Mprecharge_decision decision rstfn vdd vdd PMOS W=4u" in netlist
+    assert "Mprecharge_decision_pre decision_pre rstfn vdd vdd PMOS W=4u" in netlist
+    assert "Mprecharge_decisionn_pre decisionn_pre rstfn vdd vdd PMOS W=4u" in netlist
+    assert "Mequalize_decision_pre decision_pre rstf decisionn_pre 0 NMOS W=4u" in netlist
+    assert "Mdecpre_pc_ref decision_pre outref decpre_src 0 NSENSE W=1u" in netlist
+    assert "Mdecpre_pc_out decisionn_pre out decpre_src 0 NSENSE W=1u" in netlist
+    assert "Mdec_pcpre_n decision decisionn_pre dec_src 0 NSENSE W=1u" in netlist
+    assert "Mdecn_pcpre_n decisionn decision_pre dec_src 0 NSENSE W=1u" in netlist
+    assert ".meas tran decision_diff_0 PARAM='decision_after_0-decisionn_after_0'" in netlist
+
+
 def test_block_netlist_can_emit_differential_latched_decision_stage() -> None:
     sys.path.insert(0, str(SPICE_DIR))
     import run_device_mnist01_block_training as block

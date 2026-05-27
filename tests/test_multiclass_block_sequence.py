@@ -273,6 +273,32 @@ def test_multiclass_block_sequence_can_blend_amplified_score_and_binary_descent(
     assert "Mc0_f0_gvn_decision" not in netlist
 
 
+def test_multiclass_block_sequence_can_use_score_mass_descent() -> None:
+    netlist = seq.generate_netlist(
+        train_records=_target0_records(1),
+        eval_records=_target0_records(1),
+        error_mode="score-mass-descent",
+    )
+
+    assert "\nB" not in netlist
+    assert "Vscoreamp scoreamp 0 PWL(" in netlist
+    assert "Vscoredec scoredec 0 PWL(" in netlist
+    assert "Vscoreerr scoreerr 0 PWL(" in netlist
+    assert "Vscoregaterst scoregaterst 0 PWL(" in netlist
+    assert "25.55n 1.1" in netlist
+    assert "Cscore_nontarget_mass score_nontarget_mass 0 8f IC=0" in netlist
+    assert "Mmass_nt1_label vdd c1_targetn mass_nt1_a 0 NSENSE W=32u" in netlist
+    assert "Mmass_nt1_score mass_nt1_a c1_score_amp mass_nt1_s 0 NSENSE W=32u" in netlist
+    assert "Cc0_errp c0_errp 0 8f IC=0" in netlist
+    assert "Mc0_errp_mass c0_errp_a score_nontarget_mass c0_errp_m 0 NSENSE W=32u" in netlist
+    assert "Mc1_errn_score c1_errn_a c1_score_amp c1_errn_s 0 NSENSE W=32u" in netlist
+    assert "Mc0_f0_gvp_e c0_f0_gvp_a c0_errp c0_f0_gvp_d 0 NSENSE" in netlist
+    assert "Mc1_f0_gvn_e c1_f0_gvn_a c1_errn c1_f0_gvn_d 0 NSENSE" in netlist
+    assert "Mc1_f0_gvn_score" not in netlist
+    assert ".meas tran score_nontarget_mass_c0_1" in netlist
+    assert ".meas tran c0_errdiff_1" in netlist
+
+
 def test_multiclass_block_sequence_can_add_target_only_class_bias_row() -> None:
     netlist = seq.generate_netlist(
         train_records=_target0_records(1),
@@ -369,6 +395,10 @@ def test_multiclass_block_sequence_validation() -> None:
         seq.main_for_test(["--nontarget-scale", "1.5"])
     with pytest.raises(ValueError, match="nontarget-width-scale"):
         seq.main_for_test(["--nontarget-width-scale", "-0.1"])
+    with pytest.raises(ValueError, match="score-mass-sum-width"):
+        seq.main_for_test(["--score-mass-sum-width", "0"])
+    with pytest.raises(ValueError, match="score-mass-error-width"):
+        seq.main_for_test(["--score-mass-error-width", "0"])
     with pytest.raises(ValueError, match="nontarget_scale"):
         seq.generate_netlist(train_records=records, eval_records=records, nontarget_scale=-0.1)
     with pytest.raises(ValueError, match="nontarget_width_scale"):
@@ -552,6 +582,82 @@ def _target_ref_score_gate_netlist(scores: tuple[float, float, float], *, target
         ".meas tran c1_gate_after FIND V(c1_score_target_gate) AT=3.4n",
         ".meas tran c2_gate_after FIND V(c2_score_target_gate) AT=3.4n",
         ".tran 2p 4n uic",
+        ".control",
+        "run",
+        "quit",
+        ".endc",
+        ".end",
+        "",
+    ]
+    return "\n".join(lines)
+
+
+def _score_mass_descent_netlist(scores: tuple[float, float, float], *, target_class: int) -> str:
+    lines = [
+        "* Low-level multiclass score-mass descent writer primitive.",
+        ".param VDD=1.2",
+        seq.mos_models(),
+        ".options method=gear reltol=1e-3 abstol=1e-12 vntol=1e-6",
+        "Vdd vdd 0 {VDD}",
+        "Vvwhi_ref vwhi_ref 0 0.42",
+        "Vvwlo_ref vwlo_ref 0 0.28",
+        "Velig elig0 0 0.85",
+        "Vscoregaterst scoregaterst 0 PULSE(1.2 0 0.4n 10p 10p 8n 20n)",
+        "Vscoredec scoredec 0 PULSE(0 1.2 1.0n 10p 10p 1.2n 20n)",
+        "Vscoreerr scoreerr 0 PULSE(0 1.2 2.4n 10p 10p 0.8n 20n)",
+        "Vacc acc 0 PULSE(0 1.2 3.4n 10p 10p 1.4n 20n)",
+        "Vapply apply 0 PULSE(0 1.2 5.2n 10p 10p 0.2n 20n)",
+        "Vapplyn applyn 0 PULSE(1.2 0 5.2n 10p 10p 0.2n 20n)",
+        *[
+            f"Vscoreamp{class_idx} c{class_idx}_score_amp 0 {score:.12g}"
+            for class_idx, score in enumerate(scores)
+        ],
+        *[
+            f"Vtargetp{class_idx} c{class_idx}_targetp 0 {1.1 if class_idx == target_class else 0.0:.12g}"
+            for class_idx in range(3)
+        ],
+        *[
+            f"Vtargetn{class_idx} c{class_idx}_targetn 0 {0.0 if class_idx == target_class else 1.1:.12g}"
+            for class_idx in range(3)
+        ],
+        *seq.shared_score_mass_error_lines(class_count=3),
+    ]
+    for class_idx in range(3):
+        lines += [
+            f"Cc{class_idx}_gvp0 c{class_idx}_gvp0 0 2f IC=0",
+            f"Cc{class_idx}_gvn0 c{class_idx}_gvn0 0 2f IC=0",
+            f"Cc{class_idx}_rgp0 c{class_idx}_rgp0 0 4f IC=1.2",
+            f"Cc{class_idx}_rgn0 c{class_idx}_rgn0 0 4f IC=1.2",
+            f"Rc{class_idx}_gvp0 c{class_idx}_gvp0 0 1G",
+            f"Rc{class_idx}_gvn0 c{class_idx}_gvn0 0 1G",
+            f"Rc{class_idx}_rgp0 c{class_idx}_rgp0 vdd 50k",
+            f"Rc{class_idx}_rgn0 c{class_idx}_rgn0 vdd 50k",
+            *seq.signed_store_lines(
+                positive_node=seq.class_node(class_idx, "vwp0"),
+                negative_node=seq.class_node(class_idx, "vwn0"),
+                positive_ic=0.40,
+                negative_ic=0.40,
+            ),
+            *seq.class_local_error_rail_gradient_lines(
+                class_idx=class_idx,
+                feature_idx=0,
+                activation_node="elig0",
+                positive_error_node=seq.class_node(class_idx, "errp"),
+                negative_error_node=seq.class_node(class_idx, "errn"),
+            ),
+            *seq.class_local_bounded_update_lines(class_idx=class_idx, feature_idx=0),
+            f".meas tran c{class_idx}_errp_after FIND V({seq.class_node(class_idx, 'errp')}) AT=3.25n",
+            f".meas tran c{class_idx}_errn_after FIND V({seq.class_node(class_idx, 'errn')}) AT=3.25n",
+            f".meas tran c{class_idx}_errdiff PARAM='c{class_idx}_errp_after-c{class_idx}_errn_after'",
+            f".meas tran c{class_idx}_gvp_after FIND V({seq.class_node(class_idx, 'gvp0')}) AT=5.0n",
+            f".meas tran c{class_idx}_gvn_after FIND V({seq.class_node(class_idx, 'gvn0')}) AT=5.0n",
+            f".meas tran c{class_idx}_vwp_after FIND V({seq.class_node(class_idx, 'vwp0')}) AT=6.0n",
+            f".meas tran c{class_idx}_vwn_after FIND V({seq.class_node(class_idx, 'vwn0')}) AT=6.0n",
+            f".meas tran c{class_idx}_signed_after PARAM='c{class_idx}_vwp_after-c{class_idx}_vwn_after'",
+        ]
+    lines += [
+        ".meas tran score_nontarget_mass_after FIND V(score_nontarget_mass) AT=2.35n",
+        ".tran 2p 7n uic",
         ".control",
         "run",
         "quit",
@@ -965,6 +1071,49 @@ def test_multiclass_block_sequence_ngspice_target_ref_gate_tracks_score_above_la
     assert float(measures["c2_gate_after"]) < 0.05
 
 
+def test_multiclass_block_sequence_ngspice_score_mass_descent_writes_target_and_nontargets(
+    tmp_path: Path,
+    ngspice_path: str,
+) -> None:
+    measures = run_netlist(
+        ngspice_path,
+        tmp_path / "score_mass_descent_high_wrong0.cir",
+        _score_mass_descent_netlist((0.75, 0.45, 0.15), target_class=1),
+        timeout=20.0,
+    )
+
+    assert float(measures["score_nontarget_mass_after"]) > 0.40
+    assert float(measures["c1_errdiff"]) > 0.10
+    assert float(measures["c0_errdiff"]) < -0.10
+    assert float(measures["c2_errdiff"]) < -0.01
+    assert float(measures["c1_signed_after"]) > 1e-3
+    assert float(measures["c0_signed_after"]) < -1e-3
+    assert abs(float(measures["c2_signed_after"])) < 1e-6
+    assert float(measures["c0_gvn_after"]) > float(measures["c2_gvn_after"]) + 20e-3
+
+
+def test_multiclass_block_sequence_ngspice_score_mass_target_pressure_tracks_nontarget_mass(
+    tmp_path: Path,
+    ngspice_path: str,
+) -> None:
+    high_wrong = run_netlist(
+        ngspice_path,
+        tmp_path / "score_mass_descent_target1_high_wrong0.cir",
+        _score_mass_descent_netlist((0.75, 0.45, 0.15), target_class=1),
+        timeout=20.0,
+    )
+    clear = run_netlist(
+        ngspice_path,
+        tmp_path / "score_mass_descent_target0_clear.cir",
+        _score_mass_descent_netlist((0.75, 0.25, 0.15), target_class=0),
+        timeout=20.0,
+    )
+
+    assert float(high_wrong["score_nontarget_mass_after"]) > float(clear["score_nontarget_mass_after"]) + 0.10
+    assert float(high_wrong["c1_errp_after"]) > float(clear["c0_errp_after"]) + 50e-3
+    assert float(high_wrong["c1_signed_after"]) > float(clear["c0_signed_after"]) + 1e-3
+
+
 def test_multiclass_block_sequence_ngspice_restored_binary_descent_gates_target_miss_and_false_positive(
     tmp_path: Path,
     ngspice_path: str,
@@ -1337,6 +1486,36 @@ def test_multiclass_block_sequence_ngspice_amplified_binary_blend_keeps_one_hot_
         for cycle in range(6, 9)
     ]
     assert final_predictions == [0, 1, 2]
+    for class_idx in range(3):
+        assert float(measures[f"c{class_idx}_f{class_idx}_signed_final"]) > 10e-3
+    assert float(measures["c0_f1_signed_final"]) < -10e-3
+    assert float(measures["c1_f0_signed_final"]) < -10e-3
+
+
+def test_multiclass_block_sequence_ngspice_score_mass_descent_keeps_one_hot_predictions(
+    tmp_path: Path,
+    ngspice_path: str,
+) -> None:
+    measures = run_netlist(
+        ngspice_path,
+        tmp_path / "multiclass_block_sequence_onehot_score_mass.cir",
+        seq.generate_netlist(
+            train_records=_one_hot_records(),
+            eval_records=_one_hot_records(),
+            class_count=3,
+            feature_count=3,
+            score_capacitance_f=5.0,
+            error_mode="score-mass-descent",
+        ),
+        timeout=100.0,
+    )
+
+    final_predictions = [
+        int(np.argmax([float(measures[f"c{class_idx}_score_net_{cycle}"]) for class_idx in range(3)]))
+        for cycle in range(6, 9)
+    ]
+    assert final_predictions == [0, 1, 2]
+    assert float(measures["score_nontarget_mass_c0_4"]) > 1e-3
     for class_idx in range(3):
         assert float(measures[f"c{class_idx}_f{class_idx}_signed_final"]) > 10e-3
     assert float(measures["c0_f1_signed_final"]) < -10e-3

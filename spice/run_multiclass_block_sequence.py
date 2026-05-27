@@ -45,6 +45,7 @@ ERROR_MODES = (
     "amplified-score-competitive",
     "amplified-score-pairwise",
     "amplified-score-binary-descent",
+    "score-mass-descent",
     "pairwise-binary-descent",
     "restored-score-binary-descent",
     "restored-score-nontarget",
@@ -348,6 +349,78 @@ def class_local_residual_score_nontarget_gradient_lines(
     ]
 
 
+def class_local_error_rail_gradient_lines(
+    *,
+    class_idx: int,
+    feature_idx: int,
+    activation_node: str,
+    positive_error_node: str,
+    negative_error_node: str,
+    width_u: float = 24.0,
+) -> list[str]:
+    prefix = f"c{class_idx}_f{feature_idx}_"
+    return [
+        f"M{prefix}gvp_a vdd {activation_node} {prefix}gvp_a 0 NREL W={width_u:.6g}u L=180n",
+        f"M{prefix}gvp_e {prefix}gvp_a {positive_error_node} {prefix}gvp_d 0 NSENSE W={width_u:.6g}u L=180n",
+        f"M{prefix}gvp_g {prefix}gvp_d acc {class_node(class_idx, f'gvp{feature_idx}')} 0 NREL W={width_u:.6g}u L=180n",
+        f"M{prefix}gvn_a vdd {activation_node} {prefix}gvn_a 0 NREL W={width_u:.6g}u L=180n",
+        f"M{prefix}gvn_e {prefix}gvn_a {negative_error_node} {prefix}gvn_d 0 NSENSE W={width_u:.6g}u L=180n",
+        f"M{prefix}gvn_g {prefix}gvn_d acc {class_node(class_idx, f'gvn{feature_idx}')} 0 NREL W={width_u:.6g}u L=180n",
+        f"M{prefix}rgp_pd {class_node(class_idx, f'rgp{feature_idx}')} {class_node(class_idx, f'gvp{feature_idx}')} 0 0 NSENSE W=16u L=180n",
+        f"M{prefix}rgn_pd {class_node(class_idx, f'rgn{feature_idx}')} {class_node(class_idx, f'gvn{feature_idx}')} 0 0 NSENSE W=16u L=180n",
+    ]
+
+
+def shared_score_mass_error_lines(
+    *,
+    class_count: int,
+    score_input_template: str = "c{class_idx}_score_amp",
+    mass_node: str = "score_nontarget_mass",
+    mass_clock_node: str = "scoredec",
+    error_clock_node: str = "scoreerr",
+    reset_node: str = "scoregaterst",
+    sum_width_u: float = 32.0,
+    error_width_u: float = 32.0,
+    mass_capacitance_f: float = 8.0,
+    error_capacitance_f: float = 8.0,
+) -> list[str]:
+    if min(sum_width_u, error_width_u, mass_capacitance_f, error_capacitance_f) <= 0.0:
+        raise ValueError("score-mass widths and capacitances must be positive")
+    lines = [
+        f"C{mass_node} {mass_node} 0 {mass_capacitance_f:.12g}f IC=0",
+        f"R{mass_node} {mass_node} 0 1G",
+        f"Mreset_{mass_node} {mass_node} {reset_node} 0 0 NMOS W=4u L=180n",
+    ]
+    for class_idx in range(class_count):
+        score_node = score_input_template.format(class_idx=class_idx)
+        errp = class_node(class_idx, "errp")
+        errn = class_node(class_idx, "errn")
+        lines += [
+            f"C{errp} {errp} 0 {error_capacitance_f:.12g}f IC=0",
+            f"C{errn} {errn} 0 {error_capacitance_f:.12g}f IC=0",
+            f"R{errp} {errp} 0 1G",
+            f"R{errn} {errn} 0 1G",
+            f"Mreset_{errp} {errp} {reset_node} 0 0 NMOS W=4u L=180n",
+            f"Mreset_{errn} {errn} {reset_node} 0 0 NMOS W=4u L=180n",
+            f"Rmass_nt{class_idx}_a mass_nt{class_idx}_a 0 1G",
+            f"Rmass_nt{class_idx}_s mass_nt{class_idx}_s 0 1G",
+            f"Mmass_nt{class_idx}_label vdd {class_node(class_idx, 'targetn')} mass_nt{class_idx}_a 0 NSENSE W={sum_width_u:.6g}u L=180n",
+            f"Mmass_nt{class_idx}_score mass_nt{class_idx}_a {score_node} mass_nt{class_idx}_s 0 NSENSE W={sum_width_u:.6g}u L=180n",
+            f"Mmass_nt{class_idx}_clk mass_nt{class_idx}_s {mass_clock_node} {mass_node} 0 NSENSE W={sum_width_u:.6g}u L=180n",
+            f"R{errp}_a {errp}_a 0 1G",
+            f"R{errp}_m {errp}_m 0 1G",
+            f"M{errp}_label vdd {class_node(class_idx, 'targetp')} {errp}_a 0 NSENSE W={error_width_u:.6g}u L=180n",
+            f"M{errp}_mass {errp}_a {mass_node} {errp}_m 0 NSENSE W={error_width_u:.6g}u L=180n",
+            f"M{errp}_clk {errp}_m {error_clock_node} {errp} 0 NSENSE W={error_width_u:.6g}u L=180n",
+            f"R{errn}_a {errn}_a 0 1G",
+            f"R{errn}_s {errn}_s 0 1G",
+            f"M{errn}_label vdd {class_node(class_idx, 'targetn')} {errn}_a 0 NSENSE W={error_width_u:.6g}u L=180n",
+            f"M{errn}_score {errn}_a {score_node} {errn}_s 0 NSENSE W={error_width_u:.6g}u L=180n",
+            f"M{errn}_clk {errn}_s {error_clock_node} {errn} 0 NSENSE W={error_width_u:.6g}u L=180n",
+        ]
+    return lines
+
+
 def class_local_amplified_score_competitive_gradient_lines(
     *,
     class_idx: int,
@@ -475,6 +548,8 @@ def generate_netlist(
     target_high: float = 1.1,
     nontarget_scale: float = 1.0,
     nontarget_width_scale: float = 1.0,
+    score_mass_sum_width: float = 32.0,
+    score_mass_error_width: float = 32.0,
     error_mode: str = "label-descent",
     class_bias_mode: str = "none",
     class_bias_input: float = 0.85,
@@ -497,6 +572,8 @@ def generate_netlist(
         "initial_positive": initial_positive,
         "initial_negative": initial_negative,
         "target_high": target_high,
+        "score_mass_sum_width": score_mass_sum_width,
+        "score_mass_error_width": score_mass_error_width,
     }.items():
         if value <= 0.0:
             raise ValueError(f"{name} must be positive")
@@ -539,6 +616,7 @@ def generate_netlist(
     uses_amplified_competitive = error_mode == "amplified-score-competitive"
     uses_amplified_pairwise = error_mode == "amplified-score-pairwise"
     uses_amplified_binary = error_mode == "amplified-score-binary-descent"
+    uses_score_mass = error_mode == "score-mass-descent"
     uses_pairwise_binary = error_mode == "pairwise-binary-descent"
     uses_restored_binary = error_mode == "restored-score-binary-descent"
     uses_score_preamp = (
@@ -549,6 +627,7 @@ def generate_netlist(
         or uses_amplified_pairwise
         or uses_amplified_binary
         or uses_target_ref_score
+        or uses_score_mass
     )
     uses_restored_winner = error_mode == "restored-winner-nontarget"
     uses_pairwise_decisions = uses_restored_winner or uses_pairwise_binary or uses_amplified_pairwise
@@ -560,7 +639,7 @@ def generate_netlist(
         or uses_score_preamp
         or uses_raw_common_ref_score
     )
-    target_start_ns = 9.55 if uses_target_ref_score else 10.8 if uses_late_restored_gate else 9.0
+    target_start_ns = 9.55 if (uses_target_ref_score or uses_score_mass) else 10.8 if uses_late_restored_gate else 9.0
     target_end_ns = 12.8 if uses_late_restored_gate else 11.0
     acc_start_ns = 10.8 if uses_late_restored_gate else 9.0
     acc_end_ns = 12.8 if uses_late_restored_gate else 11.0
@@ -595,7 +674,11 @@ def generate_netlist(
             f"Vscoreamp scoreamp 0 {periodic_phase_pwl(cycle_count, start_ns=8.60, end_ns=9.50, active_cycles=train_cycles)}",
             f"Vscoredec scoredec 0 {periodic_phase_pwl(cycle_count, start_ns=9.70, end_ns=10.40, active_cycles=train_cycles)}",
         ]
-    if uses_residual_score or uses_score_common_gate or uses_target_ref_score:
+    if uses_score_mass:
+        lines.append(
+            f"Vscoreerr scoreerr 0 {periodic_phase_pwl(cycle_count, start_ns=10.45, end_ns=10.75, active_cycles=train_cycles)}"
+        )
+    if uses_residual_score or uses_score_common_gate or uses_target_ref_score or uses_score_mass:
         lines.append(
             f"Vscoregaterst scoregaterst 0 {periodic_phase_pwl(cycle_count, start_ns=8.10, end_ns=8.35, active_cycles=train_cycles)}"
         )
@@ -717,6 +800,13 @@ def generate_netlist(
         lines += shared_score_common_reference_lines(class_count=class_count)
     elif uses_target_ref_score:
         lines += shared_label_score_reference_lines(class_count=class_count)
+    elif uses_score_mass:
+        lines += shared_score_mass_error_lines(
+            class_count=class_count,
+            score_input_template="c{class_idx}_score_amp",
+            sum_width_u=score_mass_sum_width,
+            error_width_u=score_mass_error_width,
+        )
     for class_idx in range(class_count):
         for feature in range(total_feature_count):
             if error_mode == "score-gated-nontarget":
@@ -807,6 +897,14 @@ def generate_netlist(
                     activation_node=f"elig{feature}",
                     positive_gate_node=f"c{class_idx}_decision",
                     negative_gate_node=f"c{class_idx}_decisionn",
+                )
+            elif uses_score_mass:
+                gradient_lines = class_local_error_rail_gradient_lines(
+                    class_idx=class_idx,
+                    feature_idx=feature,
+                    activation_node=f"elig{feature}",
+                    positive_error_node=class_node(class_idx, "errp"),
+                    negative_error_node=class_node(class_idx, "errn"),
                 )
             elif uses_restored_binary:
                 gradient_lines = class_local_restored_score_binary_descent_gradient_lines(
@@ -935,6 +1033,13 @@ def generate_netlist(
                     f".meas tran target_score_ref_c{class_idx}_{cycle} FIND V(target_score_ref) AT={base + 10.60:.2f}n",
                     f".meas tran c{class_idx}_score_target_gate_{cycle} FIND V({class_node(class_idx, 'score_target_gate')}) AT={base + 10.60:.2f}n",
                     f".meas tran c{class_idx}_score_above_target_{cycle} PARAM='c{class_idx}_score_amp_{cycle}-target_score_ref_c{class_idx}_{cycle}'",
+                ]
+            if uses_score_mass:
+                lines += [
+                    f".meas tran score_nontarget_mass_c{class_idx}_{cycle} FIND V(score_nontarget_mass) AT={base + 10.42:.2f}n",
+                    f".meas tran c{class_idx}_errp_{cycle} FIND V({class_node(class_idx, 'errp')}) AT={base + 10.78:.2f}n",
+                    f".meas tran c{class_idx}_errn_{cycle} FIND V({class_node(class_idx, 'errn')}) AT={base + 10.78:.2f}n",
+                    f".meas tran c{class_idx}_errdiff_{cycle} PARAM='c{class_idx}_errp_{cycle}-c{class_idx}_errn_{cycle}'",
                 ]
             if uses_residual_score:
                 lines += [
@@ -1071,6 +1176,8 @@ def run_case(args: argparse.Namespace) -> dict[str, Any]:
         initial_negative=args.initial_negative,
         nontarget_scale=args.nontarget_scale,
         nontarget_width_scale=args.nontarget_width_scale,
+        score_mass_sum_width=args.score_mass_sum_width,
+        score_mass_error_width=args.score_mass_error_width,
         error_mode=args.error_mode,
         class_bias_mode=args.class_bias_mode,
         class_bias_input=args.class_bias_input,
@@ -1134,6 +1241,8 @@ def run_case(args: argparse.Namespace) -> dict[str, Any]:
         "score_load_resistance_ohm": args.score_load_resistance,
         "nontarget_scale": args.nontarget_scale,
         "nontarget_width_scale": args.nontarget_width_scale,
+        "score_mass_sum_width_u": args.score_mass_sum_width if args.error_mode == "score-mass-descent" else None,
+        "score_mass_error_width_u": args.score_mass_error_width if args.error_mode == "score-mass-descent" else None,
         "error_mode": args.error_mode,
         "target_class": args.target_class if args.scenario == "target-repeat" else None,
         "train_samples": len(train_records),
@@ -1190,6 +1299,8 @@ def build_arg_parser() -> argparse.ArgumentParser:
     ap.add_argument("--initial-negative", type=float, default=0.40)
     ap.add_argument("--nontarget-scale", type=float, default=1.0)
     ap.add_argument("--nontarget-width-scale", type=float, default=1.0)
+    ap.add_argument("--score-mass-sum-width", type=float, default=32.0)
+    ap.add_argument("--score-mass-error-width", type=float, default=32.0)
     ap.add_argument("--error-mode", choices=ERROR_MODES, default="label-descent")
     ap.add_argument("--class-bias-mode", choices=CLASS_BIAS_MODES, default="none")
     ap.add_argument("--class-bias-input", type=float, default=0.85)
@@ -1238,6 +1349,10 @@ def validate_args(args: argparse.Namespace) -> None:
         raise ValueError("nontarget-scale must be in [0, 1]")
     if args.nontarget_width_scale < 0.0 or args.nontarget_width_scale > 1.0:
         raise ValueError("nontarget-width-scale must be in [0, 1]")
+    if args.score_mass_sum_width <= 0.0:
+        raise ValueError("score-mass-sum-width must be positive")
+    if args.score_mass_error_width <= 0.0:
+        raise ValueError("score-mass-error-width must be positive")
     if min(args.initial_positive, args.initial_negative) <= 0.0:
         raise ValueError("initial-positive and initial-negative must be positive")
     if max(args.initial_positive, args.initial_negative) > 1.2:

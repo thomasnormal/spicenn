@@ -28,6 +28,7 @@ from run_multiclass_output_head_sequence import (
     CYCLE_NS,
     active_low_phase_pwl,
     balanced_train_eval_split,
+    class_local_live_label_descent_update_lines,
     class_local_restored_score_nontarget_gradient_lines,
     class_local_score_gated_nontarget_gradient_lines,
     periodic_phase_pwl,
@@ -40,6 +41,7 @@ from run_spice_sweep import ROOT, detect_spice
 
 SCENARIOS = ("target-repeat", "one-hot", "mnist")
 CLASS_BIAS_MODES = ("none", "target-only", "label-descent")
+READOUT_UPDATE_MODES = ("sampled", "live")
 ERROR_MODES = (
     "label-descent",
     "score-gated-nontarget",
@@ -67,6 +69,19 @@ ERROR_MODES = (
     "restored-winner-nontarget",
 )
 NORMALIZER_ERROR_MODES = tuple(f"normalizer-{approach}-descent" for approach in NORMALIZATION_APPROACHES)
+
+ERROR_RAIL_DESCENT_MODES = (
+    "score-mass-descent",
+    "common-score-mass-descent",
+    "contrast-score-mass-descent",
+    "low-gain-contrast-score-mass-descent",
+    "contrast-gated-score-mass-descent",
+    "target-contrast-score-mass-descent",
+    "common-score-mass-pairwise-descent",
+    "pairwise-score-competition-descent",
+    "pairwise-margin-correction-descent",
+    *NORMALIZER_ERROR_MODES,
+)
 
 
 def normalizer_error_approach(error_mode: str) -> str:
@@ -736,6 +751,7 @@ def generate_netlist(
     pairwise_margin_error_drive_scale: float = 1.0,
     normalizer_error_clock_high: float = 1.2,
     error_mode: str = "label-descent",
+    readout_update_mode: str = "sampled",
     class_bias_mode: str = "none",
     class_bias_input: float = 0.85,
     readout_center_resistance: float = 0.0,
@@ -776,6 +792,8 @@ def generate_netlist(
         raise ValueError("nontarget_width_scale must be in [0, 1]")
     if error_mode not in ERROR_MODES:
         raise ValueError(f"error_mode must be one of {ERROR_MODES}")
+    if readout_update_mode not in READOUT_UPDATE_MODES:
+        raise ValueError(f"readout_update_mode must be one of {READOUT_UPDATE_MODES}")
     if class_bias_mode not in CLASS_BIAS_MODES:
         raise ValueError(f"class_bias_mode must be one of {CLASS_BIAS_MODES}")
     if class_bias_input < 0.0 or class_bias_input > 1.2:
@@ -903,6 +921,8 @@ def generate_netlist(
         if uses_pairwise_margin_correction
         else None
     )
+    if readout_update_mode == "live" and error_mode != "label-descent" and error_mode not in ERROR_RAIL_DESCENT_MODES:
+        raise ValueError("live readout_update_mode requires label-descent or error-rail descent modes")
 
     lines = [
         "* Continuous multiclass block sequence: split-rail hidden features and class-local readout updates.",
@@ -919,10 +939,13 @@ def generate_netlist(
         f"Vsampn sampn 0 {active_low_phase_pwl(cycle_count, start_ns=2.5, end_ns=3.5, active_cycles=set(range(cycle_count)))}",
         f"Vout out 0 {periodic_phase_pwl(cycle_count, start_ns=5.0, end_ns=8.0)}",
         f"Voutn outn 0 {active_low_phase_pwl(cycle_count, start_ns=5.0, end_ns=8.0, active_cycles=set(range(cycle_count)))}",
-        f"Vacc acc 0 {periodic_phase_pwl(cycle_count, start_ns=acc_start_ns, end_ns=acc_end_ns, active_cycles=train_cycles)}",
-        f"Vapply apply 0 {periodic_phase_pwl(cycle_count, start_ns=apply_start_ns, end_ns=apply_end_ns, active_cycles=train_cycles)}",
-        f"Vapplyn applyn 0 {active_low_phase_pwl(cycle_count, start_ns=apply_start_ns, end_ns=apply_end_ns, active_cycles=train_cycles)}",
     ]
+    if readout_update_mode == "sampled":
+        lines += [
+            f"Vacc acc 0 {periodic_phase_pwl(cycle_count, start_ns=acc_start_ns, end_ns=acc_end_ns, active_cycles=train_cycles)}",
+            f"Vapply apply 0 {periodic_phase_pwl(cycle_count, start_ns=apply_start_ns, end_ns=apply_end_ns, active_cycles=train_cycles)}",
+            f"Vapplyn applyn 0 {active_low_phase_pwl(cycle_count, start_ns=apply_start_ns, end_ns=apply_end_ns, active_cycles=train_cycles)}",
+        ]
     if readout_center_resistance > 0.0:
         lines.append(f"Vreadout_center readout_center 0 {readout_center_voltage:.12g}")
     if uses_late_restored_gate:
@@ -1466,17 +1489,39 @@ def generate_netlist(
                     feature_idx=feature,
                     activation_node=f"elig{feature}",
                 )
+            if readout_update_mode == "live":
+                positive_descent_node = (
+                    None if error_mode == "label-descent" else class_node(class_idx, "errp")
+                )
+                negative_descent_node = (
+                    None if error_mode == "label-descent" else class_node(class_idx, "errn")
+                )
+                if bias_feature is not None and feature == bias_feature and class_bias_mode == "target-only":
+                    positive_descent_node = None
+                    negative_descent_node = "0"
+                readout_update_lines = class_local_live_label_descent_update_lines(
+                    class_idx=class_idx,
+                    feature_idx=feature,
+                    activation_node=f"elig{feature}",
+                    positive_descent_node=positive_descent_node,
+                    negative_descent_node=negative_descent_node,
+                )
+            else:
+                readout_update_lines = [
+                    f"C{class_node(class_idx, f'gvp{feature}')} {class_node(class_idx, f'gvp{feature}')} 0 2f IC=0",
+                    f"C{class_node(class_idx, f'gvn{feature}')} {class_node(class_idx, f'gvn{feature}')} 0 2f IC=0",
+                    f"C{class_node(class_idx, f'rgp{feature}')} {class_node(class_idx, f'rgp{feature}')} 0 4f IC=1.2",
+                    f"C{class_node(class_idx, f'rgn{feature}')} {class_node(class_idx, f'rgn{feature}')} 0 4f IC=1.2",
+                    f"R{class_node(class_idx, f'gvp{feature}')} {class_node(class_idx, f'gvp{feature}')} 0 1G",
+                    f"R{class_node(class_idx, f'gvn{feature}')} {class_node(class_idx, f'gvn{feature}')} 0 1G",
+                    f"R{class_node(class_idx, f'rgp{feature}')} {class_node(class_idx, f'rgp{feature}')} vdd 50k",
+                    f"R{class_node(class_idx, f'rgn{feature}')} {class_node(class_idx, f'rgn{feature}')} vdd 50k",
+                    f"Mreset_{class_node(class_idx, f'gvp{feature}')} {class_node(class_idx, f'gvp{feature}')} rst 0 0 NMOS W=4u L=180n",
+                    f"Mreset_{class_node(class_idx, f'gvn{feature}')} {class_node(class_idx, f'gvn{feature}')} rst 0 0 NMOS W=4u L=180n",
+                    *gradient_lines,
+                    *class_local_bounded_update_lines(class_idx=class_idx, feature_idx=feature),
+                ]
             lines += [
-                f"C{class_node(class_idx, f'gvp{feature}')} {class_node(class_idx, f'gvp{feature}')} 0 2f IC=0",
-                f"C{class_node(class_idx, f'gvn{feature}')} {class_node(class_idx, f'gvn{feature}')} 0 2f IC=0",
-                f"C{class_node(class_idx, f'rgp{feature}')} {class_node(class_idx, f'rgp{feature}')} 0 4f IC=1.2",
-                f"C{class_node(class_idx, f'rgn{feature}')} {class_node(class_idx, f'rgn{feature}')} 0 4f IC=1.2",
-                f"R{class_node(class_idx, f'gvp{feature}')} {class_node(class_idx, f'gvp{feature}')} 0 1G",
-                f"R{class_node(class_idx, f'gvn{feature}')} {class_node(class_idx, f'gvn{feature}')} 0 1G",
-                f"R{class_node(class_idx, f'rgp{feature}')} {class_node(class_idx, f'rgp{feature}')} vdd 50k",
-                f"R{class_node(class_idx, f'rgn{feature}')} {class_node(class_idx, f'rgn{feature}')} vdd 50k",
-                f"Mreset_{class_node(class_idx, f'gvp{feature}')} {class_node(class_idx, f'gvp{feature}')} rst 0 0 NMOS W=4u L=180n",
-                f"Mreset_{class_node(class_idx, f'gvn{feature}')} {class_node(class_idx, f'gvn{feature}')} rst 0 0 NMOS W=4u L=180n",
                 *signed_store_lines(
                     positive_node=class_node(class_idx, f"vwp{feature}"),
                     negative_node=class_node(class_idx, f"vwn{feature}"),
@@ -1492,8 +1537,7 @@ def generate_netlist(
                     else []
                 ),
                 *class_local_readout_forward_lines(class_idx=class_idx, feature_idx=feature, width_u=readout_width_u),
-                *gradient_lines,
-                *class_local_bounded_update_lines(class_idx=class_idx, feature_idx=feature),
+                *readout_update_lines,
             ]
     train_seen = 0
     for cycle, (record, seq) in enumerate(zip(all_records, sequence)):
@@ -1771,6 +1815,7 @@ def run_case(args: argparse.Namespace) -> dict[str, Any]:
         pairwise_margin_error_drive_scale=args.pairwise_margin_error_drive_scale,
         normalizer_error_clock_high=args.normalizer_error_clock_high,
         error_mode=args.error_mode,
+        readout_update_mode=args.readout_update_mode,
         class_bias_mode=args.class_bias_mode,
         class_bias_input=args.class_bias_input,
         readout_center_resistance=args.readout_center_resistance,
@@ -1862,6 +1907,7 @@ def run_case(args: argparse.Namespace) -> dict[str, Any]:
             else None
         ),
         "error_mode": args.error_mode,
+        "readout_update_mode": args.readout_update_mode,
         "target_class": args.target_class if args.scenario == "target-repeat" else None,
         "train_samples": len(train_records),
         "eval_samples": len(eval_records),
@@ -1925,6 +1971,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
     ap.add_argument("--pairwise-margin-error-drive-scale", type=float, default=1.0)
     ap.add_argument("--normalizer-error-clock-high", type=float, default=1.2)
     ap.add_argument("--error-mode", choices=ERROR_MODES, default="label-descent")
+    ap.add_argument("--readout-update-mode", choices=READOUT_UPDATE_MODES, default="sampled")
     ap.add_argument("--class-bias-mode", choices=CLASS_BIAS_MODES, default="none")
     ap.add_argument("--class-bias-input", type=float, default=0.85)
     ap.add_argument("--readout-center-resistance", type=float, default=0.0)
@@ -1944,6 +1991,14 @@ def validate_args(args: argparse.Namespace) -> None:
         raise ValueError(f"scenario must be one of {SCENARIOS}")
     if args.error_mode not in ERROR_MODES:
         raise ValueError(f"error-mode must be one of {ERROR_MODES}")
+    if args.readout_update_mode not in READOUT_UPDATE_MODES:
+        raise ValueError(f"readout-update-mode must be one of {READOUT_UPDATE_MODES}")
+    if (
+        args.readout_update_mode == "live"
+        and args.error_mode != "label-descent"
+        and args.error_mode not in ERROR_RAIL_DESCENT_MODES
+    ):
+        raise ValueError("live readout-update-mode requires label-descent or error-rail descent modes")
     if args.class_bias_mode not in CLASS_BIAS_MODES:
         raise ValueError(f"class-bias-mode must be one of {CLASS_BIAS_MODES}")
     if args.scenario == "mnist" and parse_counted_mnist_dataset(args.dataset) is None:

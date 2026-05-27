@@ -583,6 +583,26 @@ def test_multiclass_block_sequence_can_add_passive_readout_center_leak() -> None
     assert "Rc2_vwp0_center c2_vwp0 readout_center 7000000" in netlist
 
 
+def test_multiclass_block_sequence_can_use_live_readout_update_without_gradient_storage() -> None:
+    netlist = seq.generate_netlist(
+        train_records=_target0_records(1),
+        eval_records=_target0_records(1),
+        readout_update_mode="live",
+        error_mode="pairwise-margin-correction-descent",
+    )
+
+    assert "\nB" not in netlist
+    assert "Vacc acc" not in netlist
+    assert "Vapply" not in netlist
+    assert "Cc0_gvp0" not in netlist
+    assert "Cc0_rgp0" not in netlist
+    assert "Vscoreerr scoreerr 0 PWL(" in netlist
+    assert "Cc0_errp c0_errp 0" in netlist
+    assert "Mc0_f0_live_pos_up_e vwhi_ref elig0 c0_f0_live_pos_up 0 NSENSE" in netlist
+    assert "Mc0_f0_live_pos_up_d c0_f0_live_pos_up c0_errp c0_vwp0 0 NSENSE" in netlist
+    assert "Mc0_f0_live_neg_dn_d c0_f0_live_neg_dn c0_errn vwlo_ref 0 NSENSE" in netlist
+
+
 def test_multiclass_block_sequence_can_gate_nontarget_with_restored_winner() -> None:
     netlist = seq.generate_netlist(
         train_records=_target0_records(1),
@@ -642,6 +662,17 @@ def test_multiclass_block_sequence_validation() -> None:
         seq.generate_netlist(train_records=records, eval_records=records, nontarget_width_scale=1.1)
     with pytest.raises(ValueError, match="error_mode"):
         seq.generate_netlist(train_records=records, eval_records=records, error_mode="missing")
+    with pytest.raises(ValueError, match="readout_update_mode"):
+        seq.generate_netlist(train_records=records, eval_records=records, readout_update_mode="missing")
+    with pytest.raises(ValueError, match="live readout_update_mode"):
+        seq.generate_netlist(
+            train_records=records,
+            eval_records=records,
+            readout_update_mode="live",
+            error_mode="score-gated-nontarget",
+        )
+    with pytest.raises(ValueError, match="readout-update-mode"):
+        seq.main_for_test(["--readout-update-mode", "live", "--error-mode", "score-gated-nontarget"])
     with pytest.raises(ValueError, match="class_bias_mode"):
         seq.generate_netlist(train_records=records, eval_records=records, class_bias_mode="missing")
     with pytest.raises(ValueError, match="class-bias-input"):
@@ -2404,6 +2435,35 @@ def test_multiclass_block_sequence_ngspice_one_hot_multiclass_learning(
         for feature in range(3):
             if feature != class_idx:
                 assert float(measures[f"c{class_idx}_f{feature}_signed_final"]) < -10e-3
+
+
+def test_multiclass_block_sequence_ngspice_live_readout_update_moves_one_hot_matrix(
+    tmp_path: Path,
+    ngspice_path: str,
+) -> None:
+    netlist = seq.generate_netlist(
+        train_records=_one_hot_records(),
+        eval_records=_one_hot_records(),
+        class_count=3,
+        feature_count=3,
+        readout_update_mode="live",
+    )
+    measures = run_netlist(
+        ngspice_path,
+        tmp_path / "multiclass_block_sequence_live_onehot.cir",
+        netlist,
+        timeout=60.0,
+    )
+
+    assert "Vacc acc" not in netlist
+    assert "Vapply" not in netlist
+    assert "Cc0_gvp0" not in netlist
+    assert "Cc0_rgp0" not in netlist
+    for class_idx in range(3):
+        assert float(measures[f"c{class_idx}_f{class_idx}_signed_final"]) > 100e-3
+        for feature in range(3):
+            if feature != class_idx:
+                assert float(measures[f"c{class_idx}_f{feature}_signed_final"]) < -100e-3
 
 
 def test_multiclass_block_sequence_ngspice_smaller_score_cap_improves_one_hot_margin(

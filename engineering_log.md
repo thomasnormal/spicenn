@@ -2,6 +2,30 @@
 
 ## 2026-05-27
 
+- Added a restored winner-gated nontarget mode to the continuous split-rail
+  multiclass block sequence.  The first pairwise winner attempt reused the
+  low-gain referenced decision cell, but ngspice showed both sides stayed near
+  \(0.8\) V with only millivolt separation, so both were still effective NMOS
+  gates.  The committed version instead uses a dynamic sense-amp-like pairwise
+  lead: both `cA_gt_cB_decision` and `cB_gt_cA_decision` precharge high, then
+  the opponent score discharges the losing side during `scoredec`, with weak
+  cross-coupled keepers.  The new ngspice regression proves rail-level
+  pairwise decisions on the one-hot sequence and verifies non-winning
+  nontarget branches stay blocked; the synthetic one-hot learner still reaches
+  \(0.333\to1.000\), with positive diagonal writes and off-diagonals near zero.
+- The restored-winner mode is not the MNIST fix.  On `mnist3fixed8_6` it stays
+  at \(0.333\to0.333\) with \(-0.835\) mV final minimum margin, matching the
+  target-only/raw-score-gated behavior.  On `mnist3fixed8_12` with 6 train and
+  6 eval samples it also stays at \(0.333\to0.333\) with \(-0.627\) mV final
+  minimum margin.  A temporary round-robin train-order probe
+  (`0,1,2,0,1,2` instead of grouped `0,0,1,1,2,2`) did not change the outcome:
+  full label descent still collapsed to class 0, and restored-winner behaved
+  like target-only/class-2 dominance.  This rules out simple winner-only
+  depression and class grouping as the dominant issue.  The next promising
+  learning-circuit direction is a calibrated residual or softmax-like error
+  source that can supply graded target and nontarget pressure, rather than
+  hard label descent, raw score gating, restored all-nontarget gating, or
+  winner-only gating.
 - Added nontarget-pressure controls and score-gated nontarget modes to the
   continuous split-rail multiclass block sequence.  The block runner now
   exposes `--nontarget-scale`, `--nontarget-width-scale`, and `--error-mode`

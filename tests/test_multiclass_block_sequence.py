@@ -95,6 +95,21 @@ def test_multiclass_block_sequence_can_restore_score_before_nontarget_gate() -> 
     assert "Mc1_scoreamp_score_p c1_score_amp c1_score c1_scoreamp_score_i vdd PMOS" in netlist
 
 
+def test_multiclass_block_sequence_can_gate_nontarget_with_restored_winner() -> None:
+    netlist = seq.generate_netlist(
+        train_records=_target0_records(1),
+        eval_records=_target0_records(1),
+        error_mode="restored-winner-nontarget",
+    )
+
+    assert "Cc0_gt_c1_decision c0_gt_c1_decision 0 20f IC=1.2" in netlist
+    assert "Mc1_gt_c0_decision_dis_s c1_gt_c0_decision c0_score c1_gt_c0_decision_dn 0 NSENSE" in netlist
+    assert "Mc1_gt_c0_decision_keep c1_gt_c0_decision c0_gt_c1_decision vdd vdd PMOS" in netlist
+    assert "Mc1_f0_gvn_gate0 c1_f0_gvn_gate0 c1_gt_c0_decision c1_f0_gvn_gate1 0 NSENSE" in netlist
+    assert "Mc1_f0_gvn_gate1 c1_f0_gvn_gate1 c1_gt_c2_decision c1_f0_gvn_gate2 0 NSENSE" in netlist
+    assert "Mc1_f0_gvn_score" not in netlist
+
+
 def test_multiclass_block_sequence_validation() -> None:
     records = _target0_records(1)
     with pytest.raises(ValueError, match="class_count"):
@@ -217,6 +232,41 @@ def test_multiclass_block_sequence_ngspice_restored_score_nontarget_keeps_one_ho
         for feature in range(3):
             if feature != class_idx:
                 assert float(measures[f"c{class_idx}_f{feature}_signed_final"]) < -10e-3
+
+
+def test_multiclass_block_sequence_ngspice_restored_winner_blocks_nonwinning_nontargets(
+    tmp_path: Path,
+    ngspice_path: str,
+) -> None:
+    measures = run_netlist(
+        ngspice_path,
+        tmp_path / "multiclass_block_sequence_onehot_restored_winner.cir",
+        seq.generate_netlist(
+            train_records=_one_hot_records(),
+            eval_records=_one_hot_records(),
+            class_count=3,
+            feature_count=3,
+            score_capacitance_f=5.0,
+            error_mode="restored-winner-nontarget",
+        ),
+        timeout=80.0,
+    )
+
+    final_predictions = [
+        int(np.argmax([float(measures[f"c{class_idx}_score_net_{cycle}"]) for class_idx in range(3)]))
+        for cycle in range(6, 9)
+    ]
+    assert final_predictions == [0, 1, 2]
+    assert abs(float(measures["c0_gt_c1_diff_4"])) > 1.0
+    assert float(measures["c0_gt_c1_diff_4"]) == pytest.approx(-float(measures["c1_gt_c0_diff_4"]), abs=1e-6)
+    for class_idx in range(3):
+        assert float(measures[f"c{class_idx}_f{class_idx}_signed_final"]) > 10e-3
+    assert abs(float(measures["c0_f1_signed_final"])) < 1e-3
+    assert abs(float(measures["c0_f2_signed_final"])) < 1e-3
+    assert abs(float(measures["c1_f0_signed_final"])) < 1e-3
+    assert abs(float(measures["c1_f2_signed_final"])) < 1e-3
+    assert abs(float(measures["c2_f0_signed_final"])) < 1e-3
+    assert abs(float(measures["c2_f1_signed_final"])) < 1e-3
 
 
 def test_multiclass_block_sequence_ngspice_persistent_weights_improve_final_margin(

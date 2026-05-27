@@ -33,7 +33,76 @@ from run_spice_sweep import ROOT, detect_spice
 
 
 SCENARIOS = ("target-repeat", "one-hot", "mnist")
-ERROR_MODES = ("label-descent", "score-gated-nontarget", "restored-score-nontarget")
+ERROR_MODES = (
+    "label-descent",
+    "score-gated-nontarget",
+    "restored-score-nontarget",
+    "restored-winner-nontarget",
+)
+
+
+def pairwise_decision_node(class_idx: int, opponent_idx: int) -> str:
+    return f"c{class_idx}_gt_c{opponent_idx}_decision"
+
+
+def pairwise_winner_lines(
+    *,
+    class_a: int,
+    class_b: int,
+    compare_clock: str = "scoredec",
+    reset_node: str = "scorepre",
+    width_u: float = 64.0,
+) -> list[str]:
+    node_ab = pairwise_decision_node(class_a, class_b)
+    node_ba = pairwise_decision_node(class_b, class_a)
+    keeper_width_u = max(1.0, width_u / 64.0)
+    return [
+        f"C{node_ab} {node_ab} 0 20f IC=1.2",
+        f"C{node_ba} {node_ba} 0 20f IC=1.2",
+        f"R{node_ab} {node_ab} 0 1G",
+        f"R{node_ba} {node_ba} 0 1G",
+        f"Mprecharge_{node_ab} {node_ab} {reset_node} vdd vdd PMOS W=4u L=180n",
+        f"Mprecharge_{node_ba} {node_ba} {reset_node} vdd vdd PMOS W=4u L=180n",
+        f"M{node_ab}_dis_s {node_ab} {class_node(class_b, 'score')} {node_ab}_dn 0 NSENSE W={width_u:.6g}u L=180n",
+        f"M{node_ab}_dis_e {node_ab}_dn {compare_clock} 0 0 NMOS W={width_u:.6g}u L=180n",
+        f"M{node_ba}_dis_s {node_ba} {class_node(class_a, 'score')} {node_ba}_dn 0 NSENSE W={width_u:.6g}u L=180n",
+        f"M{node_ba}_dis_e {node_ba}_dn {compare_clock} 0 0 NMOS W={width_u:.6g}u L=180n",
+        f"M{node_ab}_keep {node_ab} {node_ba} vdd vdd PMOS W={keeper_width_u:.6g}u L=180n",
+        f"M{node_ba}_keep {node_ba} {node_ab} vdd vdd PMOS W={keeper_width_u:.6g}u L=180n",
+        f"M{node_ab}_nkeep {node_ab} {node_ba} 0 0 NMOS W={keeper_width_u:.6g}u L=180n",
+        f"M{node_ba}_nkeep {node_ba} {node_ab} 0 0 NMOS W={keeper_width_u:.6g}u L=180n",
+    ]
+
+
+def class_local_multi_gate_nontarget_gradient_lines(
+    *,
+    class_idx: int,
+    feature_idx: int,
+    activation_node: str,
+    gate_nodes: list[str],
+    width_u: float = 24.0,
+) -> list[str]:
+    prefix = f"c{class_idx}_f{feature_idx}_"
+    lines = [
+        f"M{prefix}gvp_a vdd {activation_node} {prefix}gvp_a 0 NREL W={width_u:.6g}u L=180n",
+        f"M{prefix}gvp_d {prefix}gvp_a {class_node(class_idx, 'targetp')} {prefix}gvp_d 0 NSENSE W={width_u:.6g}u L=180n",
+        f"M{prefix}gvp_g {prefix}gvp_d acc {class_node(class_idx, f'gvp{feature_idx}')} 0 NREL W={width_u:.6g}u L=180n",
+        f"M{prefix}gvn_a vdd {activation_node} {prefix}gvn_a 0 NREL W={width_u:.6g}u L=180n",
+        f"M{prefix}gvn_label {prefix}gvn_a {class_node(class_idx, 'targetn')} {prefix}gvn_gate0 0 NSENSE W={width_u:.6g}u L=180n",
+    ]
+    previous = f"{prefix}gvn_gate0"
+    for gate_idx, gate_node in enumerate(gate_nodes):
+        next_node = f"{prefix}gvn_gate{gate_idx + 1}"
+        lines.append(
+            f"M{prefix}gvn_gate{gate_idx} {previous} {gate_node} {next_node} 0 NSENSE W={width_u:.6g}u L=180n"
+        )
+        previous = next_node
+    lines += [
+        f"M{prefix}gvn_g {previous} acc {class_node(class_idx, f'gvn{feature_idx}')} 0 NREL W={width_u:.6g}u L=180n",
+        f"M{prefix}rgp_pd {class_node(class_idx, f'rgp{feature_idx}')} {class_node(class_idx, f'gvp{feature_idx}')} 0 0 NSENSE W=16u L=180n",
+        f"M{prefix}rgn_pd {class_node(class_idx, f'rgn{feature_idx}')} {class_node(class_idx, f'gvn{feature_idx}')} 0 0 NSENSE W=16u L=180n",
+    ]
+    return lines
 
 
 def records_to_feature_matrix(records: list[dict[str, Any]], feature_count: int) -> list[list[float]]:
@@ -131,12 +200,14 @@ def generate_netlist(
     cycle_count = len(all_records)
     stop_ns = cycle_count * CYCLE_NS
     uses_restored_score = error_mode == "restored-score-nontarget"
-    target_start_ns = 10.8 if uses_restored_score else 9.0
-    target_end_ns = 12.8 if uses_restored_score else 11.0
-    acc_start_ns = 10.8 if uses_restored_score else 9.0
-    acc_end_ns = 12.8 if uses_restored_score else 11.0
-    apply_start_ns = 13.0 if uses_restored_score else 12.0
-    apply_end_ns = 13.1 if uses_restored_score else 12.1
+    uses_restored_winner = error_mode == "restored-winner-nontarget"
+    uses_late_restored_gate = uses_restored_score or uses_restored_winner
+    target_start_ns = 10.8 if uses_late_restored_gate else 9.0
+    target_end_ns = 12.8 if uses_late_restored_gate else 11.0
+    acc_start_ns = 10.8 if uses_late_restored_gate else 9.0
+    acc_end_ns = 12.8 if uses_late_restored_gate else 11.0
+    apply_start_ns = 13.0 if uses_late_restored_gate else 12.0
+    apply_end_ns = 13.1 if uses_late_restored_gate else 12.1
 
     lines = [
         "* Continuous multiclass block sequence: split-rail hidden features and class-local readout updates.",
@@ -157,7 +228,7 @@ def generate_netlist(
         f"Vapply apply 0 {periodic_phase_pwl(cycle_count, start_ns=apply_start_ns, end_ns=apply_end_ns, active_cycles=train_cycles)}",
         f"Vapplyn applyn 0 {active_low_phase_pwl(cycle_count, start_ns=apply_start_ns, end_ns=apply_end_ns, active_cycles=train_cycles)}",
     ]
-    if uses_restored_score:
+    if uses_late_restored_gate:
         lines += [
             "Voutref outref 0 0.25",
             f"Vscorepre scorepre 0 {active_low_phase_pwl(cycle_count, start_ns=8.10, end_ns=8.35, active_cycles=train_cycles)}",
@@ -238,6 +309,9 @@ def generate_netlist(
                     decision_clock_node="scoredec",
                 ),
             ]
+        if uses_restored_winner:
+            for opponent_idx in range(class_idx + 1, class_count):
+                lines += pairwise_winner_lines(class_a=class_idx, class_b=opponent_idx)
         for feature in range(feature_count):
             if error_mode == "score-gated-nontarget":
                 gradient_lines = class_local_score_gated_nontarget_gradient_lines(
@@ -251,6 +325,17 @@ def generate_netlist(
                     feature_idx=feature,
                     activation_node=f"elig{feature}",
                     score_gate_node=f"c{class_idx}_decision",
+                )
+            elif uses_restored_winner:
+                gradient_lines = class_local_multi_gate_nontarget_gradient_lines(
+                    class_idx=class_idx,
+                    feature_idx=feature,
+                    activation_node=f"elig{feature}",
+                    gate_nodes=[
+                        pairwise_decision_node(class_idx, opponent_idx)
+                        for opponent_idx in range(class_count)
+                        if opponent_idx != class_idx
+                    ],
                 )
             else:
                 gradient_lines = class_local_label_descent_gradient_lines(
@@ -301,6 +386,15 @@ def generate_netlist(
                 f".meas tran c{class_idx}_scoren_{cycle} FIND V({class_node(class_idx, 'scoren')}) AT={base + 8.5:.2f}n",
                 f".meas tran c{class_idx}_score_net_{cycle} PARAM='c{class_idx}_score_{cycle}-c{class_idx}_scoren_{cycle}'",
             ]
+            if uses_restored_winner:
+                for opponent_idx in range(class_count):
+                    if opponent_idx == class_idx:
+                        continue
+                    lines += [
+                        f".meas tran c{class_idx}_gt_c{opponent_idx}_decision_{cycle} FIND V({pairwise_decision_node(class_idx, opponent_idx)}) AT={base + 10.6:.2f}n",
+                        f".meas tran c{class_idx}_gt_c{opponent_idx}_decisionn_{cycle} FIND V({pairwise_decision_node(opponent_idx, class_idx)}) AT={base + 10.6:.2f}n",
+                        f".meas tran c{class_idx}_gt_c{opponent_idx}_diff_{cycle} PARAM='c{class_idx}_gt_c{opponent_idx}_decision_{cycle}-c{class_idx}_gt_c{opponent_idx}_decisionn_{cycle}'",
+                    ]
         if seq == "train":
             train_seen += 1
             for class_idx in range(class_count):

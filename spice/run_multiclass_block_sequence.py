@@ -925,6 +925,9 @@ def generate_netlist(
     all_records = eval_records + train_records + eval_records
     sequence = ["initial_eval"] * len(eval_records) + ["train"] * len(train_records) + ["final_eval"] * len(eval_records)
     train_cycles = {idx for idx, label in enumerate(sequence) if label == "train"}
+    cycle_count = len(all_records)
+    uses_live_writer = readout_update_mode == "live" or hidden_update_mode != "none"
+    live_writer_reset_cycles = set(range(cycle_count)) if uses_live_writer else train_cycles
     labels = [int(record["label"]) for record in all_records]
     if any(label < 0 or label >= class_count for label in labels):
         raise ValueError("record labels must be valid class indices")
@@ -932,7 +935,6 @@ def generate_netlist(
     has_class_bias = class_bias_mode != "none"
     bias_feature = feature_count if has_class_bias else None
     total_feature_count = feature_count + (1 if has_class_bias else 0)
-    cycle_count = len(all_records)
     stop_ns = cycle_count * CYCLE_NS
     uses_restored_score = error_mode == "restored-score-nontarget"
     uses_residual_score = error_mode == "residual-score-nontarget"
@@ -1169,8 +1171,10 @@ def generate_netlist(
         or uses_pairwise_margin_correction
         or uses_normalizer_error
     ):
+        scoregaterst_start_ns = 0.2 if uses_live_writer else scorepre_start_ns
+        scoregaterst_end_ns = 1.0 if uses_live_writer else scorepre_end_ns
         lines.append(
-            f"Vscoregaterst scoregaterst 0 {periodic_phase_pwl(cycle_count, start_ns=scorepre_start_ns, end_ns=scorepre_end_ns, active_cycles=train_cycles)}"
+            f"Vscoregaterst scoregaterst 0 {periodic_phase_pwl(cycle_count, start_ns=scoregaterst_start_ns, end_ns=scoregaterst_end_ns, active_cycles=live_writer_reset_cycles)}"
         )
     for feature in range(total_feature_count):
         row_values = (

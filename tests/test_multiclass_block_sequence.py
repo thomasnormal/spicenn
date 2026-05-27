@@ -29,6 +29,13 @@ def _one_hot_records() -> list[dict[str, object]]:
     ]
 
 
+def _two_class_one_hot_records() -> list[dict[str, object]]:
+    return [
+        {"label": label, "inputs": {f"x{feature}": 0.85 if feature == label else 0.0 for feature in range(2)}}
+        for label in range(2)
+    ]
+
+
 def test_multiclass_block_sequence_emits_single_continuous_deck() -> None:
     netlist = seq.generate_netlist(
         train_records=_target0_records(2),
@@ -735,6 +742,8 @@ def test_multiclass_block_sequence_can_use_live_readout_update_without_gradient_
     assert "Cc0_gvp0" not in netlist
     assert "Cc0_rgp0" not in netlist
     assert "Vscoreerr scoreerr 0 PWL(" in netlist
+    assert "Vscoregaterst scoregaterst 0 PWL(0n 0 0.19n 0 0.2n 1.2 1n 1.2" in netlist
+    assert "21.45n 1.2" not in netlist
     assert "Cc0_errp c0_errp 0" in netlist
     assert "Mc0_f0_live_pos_up_e vwhi_ref elig0 c0_f0_live_pos_up 0 NSENSE" in netlist
     assert "Mc0_f0_live_pos_up_d c0_f0_live_pos_up c0_errp c0_vwp0 0 NSENSE" in netlist
@@ -1837,6 +1846,46 @@ def test_multiclass_block_sequence_ngspice_hidden_credit_drives_live_hidden_writ
     assert float(negative["signed_after"]) < -0.5
     assert float(negative["whn_after"]) > 0.80
     assert float(negative["whp_after"]) < 0.20
+
+
+def test_multiclass_block_sequence_ngspice_live_error_rails_reset_before_eval_writer(
+    tmp_path: Path,
+    ngspice_path: str,
+) -> None:
+    records = _two_class_one_hot_records()
+    measures = run_netlist(
+        ngspice_path,
+        tmp_path / "multiclass_block_sequence_live_error_reset_hidden.cir",
+        seq.generate_netlist(
+            train_records=records,
+            eval_records=records,
+            class_count=2,
+            feature_count=2,
+            readout_update_mode="live",
+            hidden_update_mode="readout-weighted",
+            error_mode="pairwise-margin-correction-descent",
+            score_timing_mode="early",
+            score_measure_ns=5.05,
+            readout_forward_mode="diode",
+        ),
+        timeout=60.0,
+    )
+
+    final_predictions = [
+        int(np.argmax([float(measures[f"c{class_idx}_score_net_{cycle}"]) for class_idx in range(2)]))
+        for cycle in range(4, 6)
+    ]
+    assert final_predictions == [0, 1]
+    for class_idx in range(2):
+        for feature in range(2):
+            assert float(measures[f"c{class_idx}_f{feature}_signed_final"]) == pytest.approx(
+                float(measures[f"c{class_idx}_f{feature}_signed_after_train2"]),
+                abs=2e-6,
+            )
+    assert float(measures["c0_f0_signed_final"]) > 100e-3
+    assert float(measures["c1_f1_signed_final"]) > 100e-3
+    assert float(measures["c0_f1_signed_final"]) < -100e-3
+    assert float(measures["c1_f0_signed_final"]) < -100e-3
 
 
 def test_multiclass_block_sequence_ngspice_common_ref_gate_tracks_score_above_class_common(

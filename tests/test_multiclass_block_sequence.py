@@ -684,6 +684,39 @@ def test_multiclass_block_sequence_summarizes_physical_replay_margin_sizing() ->
     assert stats["readout_margin_score_cap_feasible"] is True
 
 
+def test_multiclass_block_sequence_summarizes_wrong_replay_contributions() -> None:
+    stats = seq.physical_readout_replay_wrong_contribution_stats(
+        [
+            {"cycle": 0, "label": 0, "prediction": 1, "correct": False, "score_margin_v": -0.02},
+            {"cycle": 1, "label": 1, "prediction": 1, "correct": True, "score_margin_v": 0.01},
+        ],
+        {
+            "act_f0_0": 0.8,
+            "act_f1_0": 0.4,
+            "act_f0_1": 0.0,
+            "act_f1_1": 0.0,
+        },
+        sequence=["final_eval", "final_eval"],
+        total_feature_count=2,
+        final_positive=[
+            [0.40, 0.55],
+            [0.60, 0.35],
+        ],
+        final_negative=[
+            [0.35, 0.35],
+            [0.35, 0.45],
+        ],
+    )
+
+    rows = stats["final_eval_physical_readout_replay_wrong_contribution_rows"]
+    assert stats["final_eval_physical_readout_replay_wrong_contribution_count"] == 1
+    assert rows[0]["label"] == 0
+    assert rows[0]["prediction"] == 1
+    assert rows[0]["conductance_delta_sum_v2"] == pytest.approx(0.05)
+    assert rows[0]["top_predicted_over_target_features"][0]["feature"] == 0
+    assert rows[0]["top_predicted_over_target_features"][0]["predicted_minus_target_score_v2"] == pytest.approx(0.16)
+
+
 def test_multiclass_block_sequence_can_generate_physical_readout_replay() -> None:
     netlist = seq.generate_physical_readout_replay_netlist(
         activations=[0.85, 0.25],
@@ -4351,6 +4384,57 @@ def test_multiclass_block_sequence_ngspice_centered_gain_margin_corrects_wrong_w
     assert float(measures["c0_f0_signed_final"]) < -10e-3
     assert final_margin > initial_margin + 100e-3
     assert final_scores[1] > final_scores[0] + 25e-3
+
+
+def test_multiclass_block_sequence_ngspice_live_ranked_update_corrects_offending_feature(
+    tmp_path: Path,
+    ngspice_path: str,
+) -> None:
+    records = [{"label": 1, "inputs": {f"x{idx}": 0.85 if idx == 6 else 0.0 for idx in range(8)}}]
+    initial_states = {(class_idx, feature): (0.40, 0.40) for class_idx in range(3) for feature in range(8)}
+    initial_states[(1, 6)] = (0.36, 0.41)
+    initial_states[(2, 6)] = (0.48, 0.34)
+    netlist = seq.generate_netlist(
+        train_records=records,
+        eval_records=records,
+        class_count=3,
+        feature_count=8,
+        score_capacitance_f=5.0,
+        error_mode="pairwise-margin-centered-gain-descent",
+        readout_update_mode="live",
+        score_timing_mode="early",
+        score_measure_ns=5.30,
+        readout_forward_mode="diode",
+        eligibility_gate_mode="rank",
+        eligibility_source_mode="act",
+        readout_update_eligibility_mode="restored",
+        initial_readout_states=initial_states,
+    )
+    measures = run_netlist(
+        ngspice_path,
+        tmp_path / "multiclass_block_sequence_live_ranked_feature6_correction.cir",
+        netlist,
+        timeout=80.0,
+    )
+
+    initial_scores = [float(measures[f"c{class_idx}_score_net_0"]) for class_idx in range(3)]
+    initial_margin = initial_scores[1] - max(initial_scores[0], initial_scores[2])
+    class1_feature6_initial = initial_states[(1, 6)][0] - initial_states[(1, 6)][1]
+    class2_feature6_initial = initial_states[(2, 6)][0] - initial_states[(2, 6)][1]
+
+    assert "Vacc acc" not in netlist
+    assert "Vapply" not in netlist
+    assert "Cc1_gvp6" not in netlist
+    assert initial_scores[2] > initial_scores[1] + 50e-3
+    assert initial_margin < -100e-3
+    assert float(measures["relig_f6_1"]) > 1.0
+    assert float(measures["relig_f0_1"]) < 1e-3
+    assert float(measures["c1_errdiff_1"]) > 25e-3
+    assert float(measures["c2_errdiff_1"]) < -25e-3
+    assert float(measures["c1_f6_signed_final"]) > class1_feature6_initial + 100e-3
+    assert float(measures["c2_f6_signed_final"]) < class2_feature6_initial - 100e-3
+    assert abs(float(measures["c1_f0_signed_final"])) < 1e-3
+    assert abs(float(measures["c2_f0_signed_final"])) < 1e-3
 
 
 def test_multiclass_block_sequence_ngspice_restored_winner_blocks_nonwinning_nontargets(

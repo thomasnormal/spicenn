@@ -3236,6 +3236,69 @@ def physical_readout_replay_margin_sizing_stats(
     }
 
 
+def physical_readout_replay_wrong_contribution_stats(
+    replay_rows: list[dict[str, Any]],
+    measures: dict[str, float],
+    *,
+    sequence: list[str],
+    total_feature_count: int,
+    final_positive: list[list[float]],
+    final_negative: list[list[float]],
+    positive_vto: float = 0.35,
+    negative_width_scale: float = 48.0 / 64.0,
+    max_contributors: int = 5,
+) -> dict[str, Any]:
+    if max_contributors <= 0:
+        raise ValueError("max_contributors must be positive")
+    positive = np.maximum(np.array(final_positive, dtype=float) - positive_vto, 0.0)
+    negative = negative_width_scale * np.maximum(np.array(final_negative, dtype=float) - positive_vto, 0.0)
+    weight_matrix = positive - negative
+    rows: list[dict[str, Any]] = []
+    for replay in replay_rows:
+        if bool(replay.get("correct")):
+            continue
+        cycle = int(replay["cycle"])
+        if sequence[cycle] != "final_eval":
+            continue
+        keys = [f"act_f{feature}_{cycle}" for feature in range(total_feature_count)]
+        if not all(key in measures for key in keys):
+            continue
+        label = int(replay["label"])
+        prediction = int(replay["prediction"])
+        acts = np.array([float(measures[key]) for key in keys], dtype=float)
+        target_contrib = weight_matrix[label] * acts
+        predicted_contrib = weight_matrix[prediction] * acts
+        delta = predicted_contrib - target_contrib
+        order = np.argsort(-delta)
+        contributors = [
+            {
+                "feature": int(feature),
+                "activation_v": float(acts[feature]),
+                "target_weight_eff": float(weight_matrix[label, feature]),
+                "predicted_weight_eff": float(weight_matrix[prediction, feature]),
+                "predicted_minus_target_score_v2": float(delta[feature]),
+            }
+            for feature in order[:max_contributors]
+            if float(delta[feature]) > 0.0
+        ]
+        rows.append(
+            {
+                "cycle": cycle,
+                "label": label,
+                "prediction": prediction,
+                "replay_margin_v": float(replay["score_margin_v"]),
+                "conductance_delta_sum_v2": float(np.sum(delta)),
+                "positive_delta_sum_v2": float(np.sum(np.maximum(delta, 0.0))),
+                "negative_delta_sum_v2": float(np.sum(np.minimum(delta, 0.0))),
+                "top_predicted_over_target_features": contributors,
+            }
+        )
+    return {
+        "final_eval_physical_readout_replay_wrong_contribution_rows": rows,
+        "final_eval_physical_readout_replay_wrong_contribution_count": len(rows),
+    }
+
+
 def readout_weight_matrix_stats(
     *,
     final_signed: list[list[float]],
@@ -4195,6 +4258,14 @@ def run_case(args: argparse.Namespace) -> dict[str, Any]:
             target_margin_v=args.readout_margin_target_v,
             current_readout_width_u=args.readout_width,
             current_score_cap_f=args.score_capacitance_f,
+        ),
+        **physical_readout_replay_wrong_contribution_stats(
+            physical_replay["final_eval_physical_readout_replay_rows"],
+            measures,
+            sequence=sequence,
+            total_feature_count=total_feature_count,
+            final_positive=final_positive,
+            final_negative=final_negative,
         ),
         **activation_prototype_projection_stats(
             measures,

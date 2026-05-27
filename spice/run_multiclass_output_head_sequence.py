@@ -427,16 +427,16 @@ def rows_from_measures(
         scores = [float(measures[f"c{class_idx}_score_net_{cycle}"]) for class_idx in range(class_count)]
         prediction = int(np.argmax(scores))
         label = int(record["label"])
-        rows.append(
-            {
-                "cycle": cycle,
-                "sequence": seq,
-                "label": label,
-                "prediction": prediction,
-                "correct": prediction == label,
-                "score_margin_v": float(scores[label] - max(score for idx, score in enumerate(scores) if idx != label)),
-            }
-        )
+        row = {
+            "cycle": cycle,
+            "sequence": seq,
+            "label": label,
+            "prediction": prediction,
+            "correct": prediction == label,
+            "score_margin_v": float(scores[label] - max(score for idx, score in enumerate(scores) if idx != label)),
+        }
+        row.update({f"score_c{class_idx}_v": score for class_idx, score in enumerate(scores)})
+        rows.append(row)
     return rows
 
 
@@ -451,6 +451,14 @@ def final_signed_weight_matrix(measures: dict[str, float], *, class_count: int, 
     return [
         [float(measures[f"c{class_idx}_f{feature}_signed_final"]) for feature in range(feature_count)]
         for class_idx in range(class_count)
+    ]
+
+
+def score_matrix(rows: list[dict[str, Any]], *, sequence: str, class_count: int) -> list[list[float]]:
+    return [
+        [float(row[f"score_c{class_idx}_v"]) for class_idx in range(class_count)]
+        for row in rows
+        if row["sequence"] == sequence
     ]
 
 
@@ -480,6 +488,8 @@ def run_case(args: argparse.Namespace) -> dict[str, Any]:
         eval_records=eval_records,
         class_count=class_count,
         feature_count=args.feature_count,
+        initial_positive=args.initial_positive,
+        initial_negative=args.initial_negative,
         nontarget_scale=args.nontarget_scale,
         nontarget_width_scale=args.nontarget_width_scale,
         error_mode=args.error_mode,
@@ -494,7 +504,18 @@ def run_case(args: argparse.Namespace) -> dict[str, Any]:
     final_signed_spread = float(max(final_signed_sums) - min(final_signed_sums)) if final_signed_sums else 0.0
     csv_path = tables / f"{tag}.csv"
     with csv_path.open("w", newline="") as f:
-        writer = csv.DictWriter(f, fieldnames=["cycle", "sequence", "label", "prediction", "correct", "score_margin_v"])
+        writer = csv.DictWriter(
+            f,
+            fieldnames=[
+                "cycle",
+                "sequence",
+                "label",
+                "prediction",
+                "correct",
+                "score_margin_v",
+                *[f"score_c{class_idx}_v" for class_idx in range(class_count)],
+            ],
+        )
         writer.writeheader()
         writer.writerows(rows)
     final_margins = [float(row["score_margin_v"]) for row in rows if row["sequence"] == "final_eval"]
@@ -504,6 +525,8 @@ def run_case(args: argparse.Namespace) -> dict[str, Any]:
         "dataset": args.dataset,
         "class_count": class_count,
         "feature_count": args.feature_count,
+        "initial_positive": args.initial_positive,
+        "initial_negative": args.initial_negative,
         "nontarget_scale": args.nontarget_scale,
         "nontarget_width_scale": args.nontarget_width_scale,
         "error_mode": args.error_mode,
@@ -516,6 +539,8 @@ def run_case(args: argparse.Namespace) -> dict[str, Any]:
         "final_signed_weight_sums_by_class_v": final_signed_sums,
         "final_signed_weight_sum_spread_v": final_signed_spread,
         "final_signed_weight_matrix_v": final_signed,
+        "initial_eval_score_matrix_v": score_matrix(rows, sequence="initial_eval", class_count=class_count),
+        "final_eval_score_matrix_v": score_matrix(rows, sequence="final_eval", class_count=class_count),
         "csv": str(csv_path),
         "wall_time_s": time.perf_counter() - start,
     }
@@ -534,6 +559,8 @@ def build_arg_parser() -> argparse.ArgumentParser:
     ap.add_argument("--train-samples", type=int, default=3)
     ap.add_argument("--eval-samples", type=int, default=3)
     ap.add_argument("--feature-count", type=int, default=8)
+    ap.add_argument("--initial-positive", type=float, default=0.36)
+    ap.add_argument("--initial-negative", type=float, default=0.34)
     ap.add_argument("--nontarget-scale", type=float, default=0.5)
     ap.add_argument("--nontarget-width-scale", type=float, default=1.0)
     ap.add_argument("--error-mode", choices=ERROR_MODES, default="label-descent")
@@ -548,6 +575,10 @@ def validate_args(args: argparse.Namespace) -> None:
         raise ValueError("train-samples and eval-samples must be positive")
     if args.feature_count <= 0:
         raise ValueError("feature-count must be positive")
+    if min(args.initial_positive, args.initial_negative) < 0.0:
+        raise ValueError("initial-positive and initial-negative must be nonnegative")
+    if max(args.initial_positive, args.initial_negative) > 1.2:
+        raise ValueError("initial-positive and initial-negative must stay within supply rails")
     if args.nontarget_scale < 0.0 or args.nontarget_scale > 1.0:
         raise ValueError("nontarget-scale must be in [0, 1]")
     if args.nontarget_width_scale < 0.0 or args.nontarget_width_scale > 1.0:

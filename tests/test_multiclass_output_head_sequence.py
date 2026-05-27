@@ -115,6 +115,8 @@ def test_multiclass_output_head_sequence_validation() -> None:
             feature_count=3,
             nontarget_width_scale=-0.1,
         )
+    with pytest.raises(ValueError, match="initial-positive"):
+        seq.main_for_test(["--initial-positive", "1.5"])
     with pytest.raises(ValueError, match="error_mode"):
         seq.generate_netlist(
             train_records=records,
@@ -146,6 +148,27 @@ def test_multiclass_output_head_sequence_extracts_final_signed_weight_matrix() -
     assert seq.final_signed_weight_matrix(measures, class_count=2, feature_count=3) == [
         [0.0, 0.1, 0.2],
         [1.0, 1.1, 1.2],
+    ]
+
+
+def test_multiclass_output_head_sequence_rows_include_score_vectors() -> None:
+    records = _one_hot_records()
+    sequence = ["eval"] * len(records)
+    measures = {
+        f"c{class_idx}_score_net_{cycle}": 0.1 * class_idx + cycle
+        for cycle in range(len(records))
+        for class_idx in range(3)
+    }
+
+    rows = seq.rows_from_measures(records, measures, sequence=sequence, class_count=3)
+
+    assert rows[0]["score_c0_v"] == 0.0
+    assert rows[0]["score_c1_v"] == 0.1
+    assert rows[0]["score_c2_v"] == 0.2
+    assert seq.score_matrix(rows, sequence="eval", class_count=3) == [
+        [0.0, 0.1, 0.2],
+        [1.0, 1.1, 1.2],
+        [2.0, 2.1, 2.2],
     ]
 
 

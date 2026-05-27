@@ -34,6 +34,21 @@
   nontarget gradient stack late in the transient, so sharper pulse chopping
   needs gentler shaping or better isolation before it is a reliable tuning
   axis.
+- Added explicit per-class score-vector diagnostics to the continuous
+  multiclass output sequence.  The restored-score `mnist3fixed8_12` rerun shows
+  the failure is not a subtle argmax margin issue: final eval scores collapse
+  to roughly `[8.455, 0, 0]` mV for every class-1/class-2 sample, so class 0
+  wins because the other class score paths are electrically dead.  With
+  nontarget disabled and the original near-neutral `0.36/0.34` initial
+  readout, all final score vectors remain tied near \(8.718\) mV despite
+  different signed weights, exposing poor score observability.  Starting the
+  class-local readout at the binary-style `0.52/0.25` rails makes the score
+  path visible, but the final eval vectors are dominated by class 1
+  (about `[90, 150, 88]` mV), so the output-only head is learning class-level
+  common-mode/bias structure rather than discriminative evidence.  This
+  strengthens the case for moving the proven row-pulsed split-rail block
+  topology into class-local multiclass instances instead of continuing to tune
+  the tiny output-only head.
 
 ## 2026-05-25
 

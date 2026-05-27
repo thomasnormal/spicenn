@@ -407,6 +407,23 @@ class ClassEvidenceNormalizerSizing:
     nontarget_error_width_u: float
 
 
+@dataclass(frozen=True)
+class MulticlassMarginCorrectionSizing:
+    """Derived local sizes for target-vs-impostor margin correction."""
+
+    class_count: int
+    target_margin_v: float
+    score_delta_v: float
+    observable_margin_ratio: float
+    pairwise_pullup_width_u: float
+    pairwise_pulldown_width_u: float
+    error_width_u: float
+    error_cap_f: float
+    error_window_ns: float
+    error_clock_high_v: float
+    target_error_v: float
+
+
 def derive_multiclass_readout_sizing(
     *,
     class_count: int,
@@ -580,4 +597,74 @@ def derive_class_evidence_normalizer_sizing(
         mass_width_u=mass_width_u,
         target_error_width_u=target_error_width_u,
         nontarget_error_width_u=nontarget_error_width_u,
+    )
+
+
+def derive_multiclass_margin_correction_sizing(
+    *,
+    class_count: int,
+    target_margin_v: float,
+    score_delta_v: float,
+    min_observable_score_delta_v: float = 1.0e-3,
+    error_window_ns: float = 1.2,
+    target_error_v: float = 0.08,
+    sense_threshold_v: float = 0.02,
+    anchor_error_cap_f: float = 4.0,
+    anchor_error_width_u: float = 128.0,
+    anchor_pairwise_pullup_width_u: float = 16.0,
+    anchor_pairwise_pulldown_width_u: float = 64.0,
+    error_drive_scale: float = 1.0,
+) -> MulticlassMarginCorrectionSizing:
+    """Derive sizes for a pairwise target-margin correction primitive.
+
+    The circuit contract is mistake/margin driven:
+
+    ``score_opponent + target_margin > score_target``
+
+    should create a writer-domain positive target rail and a negative rail for
+    the offending opponent. Local device sizes are anchored to the existing
+    low-gain pairwise score comparator and then scaled by the few high-level
+    knobs that should remain visible to Bayesian search.
+    """
+    if class_count < 2:
+        raise ValueError("class_count must be at least two.")
+    for name, value in [
+        ("target_margin_v", target_margin_v),
+        ("score_delta_v", score_delta_v),
+        ("min_observable_score_delta_v", min_observable_score_delta_v),
+        ("error_window_ns", error_window_ns),
+        ("target_error_v", target_error_v),
+        ("sense_threshold_v", sense_threshold_v),
+        ("anchor_error_cap_f", anchor_error_cap_f),
+        ("anchor_error_width_u", anchor_error_width_u),
+        ("anchor_pairwise_pullup_width_u", anchor_pairwise_pullup_width_u),
+        ("anchor_pairwise_pulldown_width_u", anchor_pairwise_pulldown_width_u),
+        ("error_drive_scale", error_drive_scale),
+    ]:
+        _require_positive(name, float(value))
+
+    observable_margin_ratio = min(target_margin_v, score_delta_v) / min_observable_score_delta_v
+    if observable_margin_ratio < 1.0:
+        raise ValueError("target_margin_v and score_delta_v are below the observable score-delta floor.")
+
+    error_cap_f = required_cap_ff_for_step(
+        target_error_v * anchor_error_cap_f / error_window_ns,
+        error_window_ns,
+        target_error_v,
+    )
+    error_width_u = anchor_error_width_u * error_drive_scale
+    error_clock_high_v = min(1.2, target_error_v + sense_threshold_v)
+
+    return MulticlassMarginCorrectionSizing(
+        class_count=class_count,
+        target_margin_v=target_margin_v,
+        score_delta_v=score_delta_v,
+        observable_margin_ratio=observable_margin_ratio,
+        pairwise_pullup_width_u=anchor_pairwise_pullup_width_u,
+        pairwise_pulldown_width_u=anchor_pairwise_pulldown_width_u,
+        error_width_u=error_width_u,
+        error_cap_f=error_cap_f,
+        error_window_ns=error_window_ns,
+        error_clock_high_v=error_clock_high_v,
+        target_error_v=target_error_v,
     )

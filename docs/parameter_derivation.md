@@ -93,6 +93,34 @@ learning_rate_scale
 and not individual common-reference resistors, score-mass capacitors, or
 target/non-target width ratios.
 
+For target-vs-impostor correction, the primitive contract is:
+
+```text
+score_opponent + target_margin > score_target
+  -> target-positive writer rail
+  -> offending-opponent-negative writer rail
+```
+
+The local sizing is derived as:
+
+```text
+observable_margin_ratio = min(target_margin, score_delta) / score_delta_floor
+error_clock_high        = target_writer_rail + sense_threshold
+error_capacitance       = C from I*T/V for the writer rail target
+pairwise widths         = anchored to the measured low-gain comparator family
+```
+
+That leaves the intended Bayesian surface at:
+
+```text
+target_margin
+error_drive_scale
+learning_rate_scale
+```
+
+rather than individual pairwise comparator widths, error node capacitances, and
+per-class branch widths.
+
 ## Signal Representation Contract
 
 The circuit should distinguish the mathematical sign of a value from the

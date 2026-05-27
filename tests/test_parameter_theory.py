@@ -245,3 +245,40 @@ def test_class_evidence_normalizer_sizing_rejects_invisible_contrast() -> None:
             normalized_score_delta_v=0.1e-3,
             min_writer_gate_v=0.01,
         )
+
+
+def test_multiclass_margin_correction_sizing_derives_writer_domain_defaults() -> None:
+    sizing = theory.derive_multiclass_margin_correction_sizing(
+        class_count=3,
+        target_margin_v=1.0e-3,
+        score_delta_v=3.0e-3,
+        error_window_ns=1.2,
+        target_error_v=0.08,
+        error_drive_scale=0.5,
+    )
+
+    assert sizing.class_count == 3
+    assert sizing.target_margin_v == pytest.approx(1.0e-3)
+    assert sizing.score_delta_v == pytest.approx(3.0e-3)
+    assert sizing.observable_margin_ratio == pytest.approx(1.0)
+    assert sizing.pairwise_pullup_width_u == pytest.approx(16.0)
+    assert sizing.pairwise_pulldown_width_u == pytest.approx(64.0)
+    assert sizing.error_width_u == pytest.approx(64.0)
+    assert sizing.error_cap_f == pytest.approx(4.0)
+    assert sizing.error_clock_high_v == pytest.approx(0.10)
+
+
+def test_multiclass_margin_correction_sizing_rejects_invisible_margin() -> None:
+    with pytest.raises(ValueError, match="target_margin_v"):
+        theory.derive_multiclass_margin_correction_sizing(
+            class_count=3,
+            target_margin_v=0.0,
+            score_delta_v=3.0e-3,
+        )
+    with pytest.raises(ValueError, match="observable"):
+        theory.derive_multiclass_margin_correction_sizing(
+            class_count=3,
+            target_margin_v=0.2e-3,
+            score_delta_v=3.0e-3,
+            min_observable_score_delta_v=1.0e-3,
+        )

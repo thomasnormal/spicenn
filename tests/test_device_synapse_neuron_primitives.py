@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import re
 import subprocess
 import sys
@@ -4546,6 +4547,25 @@ def test_multiclass_device_measurements_expose_all_outputs_for_python_argmax() -
     assert "other_out_0" not in lines
     assert "margin_0" not in lines
     assert prints == "print target_out_0"
+
+
+def test_direct_flow_multiclass_summary_is_labeled_and_mirrored(tmp_path: Path) -> None:
+    summary = {
+        "architecture": "device_level_multiclass_general_random_hidden",
+        "interpretation": direct_flow.experiment_interpretation(3),
+    }
+    summary_path = tmp_path / "spice" / "results" / "demo_summary.json"
+    table_summary_path = tmp_path / "results" / "tables" / "demo_summary.json"
+    summary_path.parent.mkdir(parents=True)
+    table_summary_path.parent.mkdir(parents=True)
+
+    direct_flow.write_summary_files(summary, summary_path, table_summary_path)
+
+    assert "multiclass" in direct_flow.experiment_interpretation(3)
+    assert "binary" not in direct_flow.experiment_interpretation(3)
+    assert "binary" in direct_flow.experiment_interpretation(2)
+    assert json.loads(summary_path.read_text()) == summary
+    assert table_summary_path.read_text() == summary_path.read_text()
 
 
 def test_multiclass_perceptron_separability_reports_training_accuracy() -> None:

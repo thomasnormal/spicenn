@@ -4919,6 +4919,24 @@ def run_netlist(spice_bin: str, path: Path, netlist: str, timeout: float) -> dic
     return parsed
 
 
+def experiment_interpretation(output_count: int) -> str:
+    if output_count == 2:
+        return (
+            "This removes literal-detector hidden topology and tests whether a general dense hidden layer "
+            "can run and update at device level on tiny binary datasets before moving to 8x8 MNIST."
+        )
+    return (
+        "This exercises the general dense hidden/readout device path on a tiny multiclass dataset, "
+        "including per-class score rails, one-vs-rest error rails, and transistor/passive readout writes."
+    )
+
+
+def write_summary_files(summary: dict[str, Any], summary_path: Path, table_summary_path: Path) -> None:
+    text = json.dumps(summary, indent=2) + "\n"
+    summary_path.write_text(text)
+    table_summary_path.write_text(text)
+
+
 def main() -> None:
     global CYCLE_NS
     ap = argparse.ArgumentParser()
@@ -7363,13 +7381,11 @@ def main() -> None:
         "curve": str(curve_path),
         "table_curve": str(table_path),
         "wall_time_s": time.perf_counter() - t0,
-        "interpretation": (
-            "This removes literal-detector hidden topology and tests whether a general dense hidden layer "
-            "can run and update at device level on tiny binary datasets before moving to 8x8 MNIST."
-        ),
+        "interpretation": experiment_interpretation(OUTPUTS),
     }
     summary_path = results / f"{safe_tag}_summary.json"
-    summary_path.write_text(json.dumps(summary, indent=2) + "\n")
+    table_summary_path = tables / f"{safe_tag}_summary.json"
+    write_summary_files(summary, summary_path, table_summary_path)
     print(json.dumps(summary, indent=2))
 
 

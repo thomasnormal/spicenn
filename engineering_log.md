@@ -2,6 +2,32 @@
 
 ## 2026-05-27
 
+- Added nontarget-pressure controls and score-gated nontarget modes to the
+  continuous split-rail multiclass block sequence.  The block runner now
+  exposes `--nontarget-scale`, `--nontarget-width-scale`, and `--error-mode`
+  with `label-descent`, `score-gated-nontarget`, and
+  `restored-score-nontarget`.  All modes still keep Python out of the weight
+  update path: Python supplies rows, labels, clocks, and diagnostics; class
+  readout capacitors move only through transistor/passive update circuits in
+  one continuous transient.  New ngspice regressions prove that disabling
+  nontarget pressure leaves one-hot off-diagonal readout weights near zero,
+  raw score-gating learns the one-hot diagonal without off-diagonal depression,
+  and restored-score gating regenerates enough score to recover the full
+  one-hot label-descent diagonal/off-diagonal pattern.
+- The MNIST evidence says nontarget pressure is a tuning axis, not the missing
+  learning mechanism.  On `mnist3fixed8_6`, full label descent still gives
+  \(0.333\to0.667\) accuracy with a negative final margin; pulse-width scales
+  0.5 and 0.75 also give \(0.333\to0.667\) and leave roughly \(-20.5\) mV
+  minimum margin.  Rail-amplitude scales 0 and 0.25 collapse to chance because
+  the nontarget NMOS path is mostly below threshold; amplitude scale 0.5 hit an
+  ngspice timestep failure in `c1_f0_gvn_a`.  On the harder
+  `mnist3fixed8_12` 6-train/6-eval probe, full label descent, width scale 0.5,
+  raw score gating, restored-score gating, and disabled nontarget all stay at
+  chance.  Raw score gating behaves like disabled nontarget because millivolt
+  score rails are too weak to drive the extra gate; restored-score gating
+  behaves like full label descent.  The next circuit-learning target should be
+  a calibrated residual/softmax-like error rail or strongest-impostor update,
+  not just weaker one-vs-rest nontarget depression.
 - Added a real small-MNIST scenario to the continuous multiclass block
   sequence.  The `mnist` scenario loads counted multiclass MNIST records,
   uses the existing balanced train/eval split, and still only supplies feature

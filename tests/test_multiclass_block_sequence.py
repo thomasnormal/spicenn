@@ -49,6 +49,52 @@ def test_multiclass_block_sequence_emits_single_continuous_deck() -> None:
     assert "* cycle 3 final_eval label=0" in netlist
 
 
+def test_multiclass_block_sequence_can_scale_nontarget_pressure() -> None:
+    netlist = seq.generate_netlist(
+        train_records=[
+            {"label": 0, "inputs": {"x0": 0.85}},
+            {"label": 1, "inputs": {"x0": 0.85}},
+        ],
+        eval_records=_target0_records(1),
+        nontarget_scale=0.5,
+        nontarget_width_scale=0.25,
+    )
+
+    c0_targetn = next(line for line in netlist.splitlines() if line.startswith("Vc0_targetn "))
+    assert "Vc0_targetn c0_targetn 0 PWL(" in c0_targetn
+    assert "41n 0.55 41.5n 0.55 41.51n 0" in c0_targetn
+    assert "41n 1.1" not in c0_targetn
+    assert "41n 0.55 43n 0.55" not in c0_targetn
+
+
+def test_multiclass_block_sequence_can_gate_nontarget_pressure_with_score() -> None:
+    netlist = seq.generate_netlist(
+        train_records=_target0_records(1),
+        eval_records=_target0_records(1),
+        error_mode="score-gated-nontarget",
+    )
+
+    assert "Mc1_f0_gvn_label c1_f0_gvn_a c1_targetn c1_f0_gvn_label 0 NSENSE" in netlist
+    assert "Mc1_f0_gvn_score c1_f0_gvn_label c1_score c1_f0_gvn_d 0 NSENSE" in netlist
+    assert "Mc1_f0_gvn_d c1_f0_gvn_a c1_targetn c1_f0_gvn_d 0 NSENSE" not in netlist
+
+
+def test_multiclass_block_sequence_can_restore_score_before_nontarget_gate() -> None:
+    netlist = seq.generate_netlist(
+        train_records=_target0_records(1),
+        eval_records=_target0_records(1),
+        error_mode="restored-score-nontarget",
+    )
+
+    assert "Vscoreamp scoreamp 0 PWL(" in netlist
+    assert "Vscoredec scoredec 0 PWL(" in netlist
+    assert "Coutref" not in netlist
+    assert "Vc0_targetp c0_targetp 0 PWL(" in netlist
+    assert "26.8n 1.1 28.8n 1.1" in netlist
+    assert "Mc1_f0_gvn_score c1_f0_gvn_label c1_decision c1_f0_gvn_d 0 NSENSE" in netlist
+    assert "Mc1_scoreamp_score_p c1_score_amp c1_score c1_scoreamp_score_i vdd PMOS" in netlist
+
+
 def test_multiclass_block_sequence_validation() -> None:
     records = _target0_records(1)
     with pytest.raises(ValueError, match="class_count"):
@@ -77,6 +123,100 @@ def test_multiclass_block_sequence_validation() -> None:
         seq.main_for_test(["--score-capacitance-f", "0"])
     with pytest.raises(ValueError, match="score-load-resistance"):
         seq.main_for_test(["--score-load-resistance", "0"])
+    with pytest.raises(ValueError, match="nontarget-scale"):
+        seq.main_for_test(["--nontarget-scale", "1.5"])
+    with pytest.raises(ValueError, match="nontarget-width-scale"):
+        seq.main_for_test(["--nontarget-width-scale", "-0.1"])
+    with pytest.raises(ValueError, match="nontarget_scale"):
+        seq.generate_netlist(train_records=records, eval_records=records, nontarget_scale=-0.1)
+    with pytest.raises(ValueError, match="nontarget_width_scale"):
+        seq.generate_netlist(train_records=records, eval_records=records, nontarget_width_scale=1.1)
+    with pytest.raises(ValueError, match="error_mode"):
+        seq.generate_netlist(train_records=records, eval_records=records, error_mode="missing")
+
+
+def test_multiclass_block_sequence_ngspice_nontarget_scale_removes_negative_off_diagonal_updates(
+    tmp_path: Path,
+    ngspice_path: str,
+) -> None:
+    measures = run_netlist(
+        ngspice_path,
+        tmp_path / "multiclass_block_sequence_onehot_no_nontarget.cir",
+        seq.generate_netlist(
+            train_records=_one_hot_records(),
+            eval_records=_one_hot_records(),
+            class_count=3,
+            feature_count=3,
+            nontarget_scale=0.0,
+        ),
+        timeout=60.0,
+    )
+
+    for class_idx in range(3):
+        assert float(measures[f"c{class_idx}_f{class_idx}_signed_final"]) > 10e-3
+        for feature in range(3):
+            if feature != class_idx:
+                assert abs(float(measures[f"c{class_idx}_f{feature}_signed_final"])) < 1e-3
+
+
+def test_multiclass_block_sequence_ngspice_score_gated_nontarget_keeps_one_hot_diagonal(
+    tmp_path: Path,
+    ngspice_path: str,
+) -> None:
+    measures = run_netlist(
+        ngspice_path,
+        tmp_path / "multiclass_block_sequence_onehot_score_gated.cir",
+        seq.generate_netlist(
+            train_records=_one_hot_records(),
+            eval_records=_one_hot_records(),
+            class_count=3,
+            feature_count=3,
+            score_capacitance_f=5.0,
+            error_mode="score-gated-nontarget",
+        ),
+        timeout=60.0,
+    )
+
+    final_predictions = [
+        int(np.argmax([float(measures[f"c{class_idx}_score_net_{cycle}"]) for class_idx in range(3)]))
+        for cycle in range(6, 9)
+    ]
+    assert final_predictions == [0, 1, 2]
+    for class_idx in range(3):
+        assert float(measures[f"c{class_idx}_f{class_idx}_signed_final"]) > 10e-3
+        for feature in range(3):
+            if feature != class_idx:
+                assert abs(float(measures[f"c{class_idx}_f{feature}_signed_final"])) < 1e-3
+
+
+def test_multiclass_block_sequence_ngspice_restored_score_nontarget_keeps_one_hot_learning(
+    tmp_path: Path,
+    ngspice_path: str,
+) -> None:
+    measures = run_netlist(
+        ngspice_path,
+        tmp_path / "multiclass_block_sequence_onehot_restored_score.cir",
+        seq.generate_netlist(
+            train_records=_one_hot_records(),
+            eval_records=_one_hot_records(),
+            class_count=3,
+            feature_count=3,
+            score_capacitance_f=5.0,
+            error_mode="restored-score-nontarget",
+        ),
+        timeout=80.0,
+    )
+
+    final_predictions = [
+        int(np.argmax([float(measures[f"c{class_idx}_score_net_{cycle}"]) for class_idx in range(3)]))
+        for cycle in range(6, 9)
+    ]
+    assert final_predictions == [0, 1, 2]
+    for class_idx in range(3):
+        assert float(measures[f"c{class_idx}_f{class_idx}_signed_final"]) > 10e-3
+        for feature in range(3):
+            if feature != class_idx:
+                assert float(measures[f"c{class_idx}_f{feature}_signed_final"]) < -10e-3
 
 
 def test_multiclass_block_sequence_ngspice_persistent_weights_improve_final_margin(
@@ -248,6 +388,12 @@ def test_multiclass_block_sequence_mnist_scenario_uses_counted_records(monkeypat
             "3",
             "--eval-samples",
             "3",
+            "--nontarget-scale",
+            "0.5",
+            "--nontarget-width-scale",
+            "0.75",
+            "--error-mode",
+            "score-gated-nontarget",
             "--download",
         ]
     )
@@ -258,3 +404,6 @@ def test_multiclass_block_sequence_mnist_scenario_uses_counted_records(monkeypat
     assert summary["dataset"] == "mnist3fixed8_6"
     assert summary["train_samples"] == 3
     assert summary["eval_samples"] == 3
+    assert summary["nontarget_scale"] == 0.5
+    assert summary["nontarget_width_scale"] == 0.75
+    assert summary["error_mode"] == "score-gated-nontarget"

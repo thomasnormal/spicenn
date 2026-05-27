@@ -22,13 +22,18 @@ from run_multiclass_output_head_sequence import (
     CYCLE_NS,
     active_low_phase_pwl,
     balanced_train_eval_split,
+    class_local_restored_score_nontarget_gradient_lines,
+    class_local_score_gated_nontarget_gradient_lines,
     periodic_phase_pwl,
+    width_scaled_windowed_pwl,
     windowed_pwl,
 )
+from run_score_decision_primitive import low_gain_ref_decision_lines, low_gain_ref_state_lines
 from run_spice_sweep import ROOT, detect_spice
 
 
 SCENARIOS = ("target-repeat", "one-hot", "mnist")
+ERROR_MODES = ("label-descent", "score-gated-nontarget", "restored-score-nontarget")
 
 
 def records_to_feature_matrix(records: list[dict[str, Any]], feature_count: int) -> list[list[float]]:
@@ -84,6 +89,9 @@ def generate_netlist(
     initial_positive: float = 0.40,
     initial_negative: float = 0.40,
     target_high: float = 1.1,
+    nontarget_scale: float = 1.0,
+    nontarget_width_scale: float = 1.0,
+    error_mode: str = "label-descent",
 ) -> str:
     if class_count < 2:
         raise ValueError("class_count must be at least 2")
@@ -104,6 +112,12 @@ def generate_netlist(
     }.items():
         if value <= 0.0:
             raise ValueError(f"{name} must be positive")
+    if nontarget_scale < 0.0 or nontarget_scale > 1.0:
+        raise ValueError("nontarget_scale must be in [0, 1]")
+    if nontarget_width_scale < 0.0 or nontarget_width_scale > 1.0:
+        raise ValueError("nontarget_width_scale must be in [0, 1]")
+    if error_mode not in ERROR_MODES:
+        raise ValueError(f"error_mode must be one of {ERROR_MODES}")
     if max(hidden_positive, hidden_negative, initial_positive, initial_negative, target_high) > 1.2:
         raise ValueError("voltages must stay within supply rails")
 
@@ -116,6 +130,13 @@ def generate_netlist(
     features = records_to_feature_matrix(all_records, feature_count)
     cycle_count = len(all_records)
     stop_ns = cycle_count * CYCLE_NS
+    uses_restored_score = error_mode == "restored-score-nontarget"
+    target_start_ns = 10.8 if uses_restored_score else 9.0
+    target_end_ns = 12.8 if uses_restored_score else 11.0
+    acc_start_ns = 10.8 if uses_restored_score else 9.0
+    acc_end_ns = 12.8 if uses_restored_score else 11.0
+    apply_start_ns = 13.0 if uses_restored_score else 12.0
+    apply_end_ns = 13.1 if uses_restored_score else 12.1
 
     lines = [
         "* Continuous multiclass block sequence: split-rail hidden features and class-local readout updates.",
@@ -132,10 +153,17 @@ def generate_netlist(
         f"Vsampn sampn 0 {active_low_phase_pwl(cycle_count, start_ns=2.5, end_ns=3.5, active_cycles=set(range(cycle_count)))}",
         f"Vout out 0 {periodic_phase_pwl(cycle_count, start_ns=5.0, end_ns=8.0)}",
         f"Voutn outn 0 {active_low_phase_pwl(cycle_count, start_ns=5.0, end_ns=8.0, active_cycles=set(range(cycle_count)))}",
-        f"Vacc acc 0 {periodic_phase_pwl(cycle_count, start_ns=9.0, end_ns=11.0, active_cycles=train_cycles)}",
-        f"Vapply apply 0 {periodic_phase_pwl(cycle_count, start_ns=12.0, end_ns=12.1, active_cycles=train_cycles)}",
-        f"Vapplyn applyn 0 {active_low_phase_pwl(cycle_count, start_ns=12.0, end_ns=12.1, active_cycles=train_cycles)}",
+        f"Vacc acc 0 {periodic_phase_pwl(cycle_count, start_ns=acc_start_ns, end_ns=acc_end_ns, active_cycles=train_cycles)}",
+        f"Vapply apply 0 {periodic_phase_pwl(cycle_count, start_ns=apply_start_ns, end_ns=apply_end_ns, active_cycles=train_cycles)}",
+        f"Vapplyn applyn 0 {active_low_phase_pwl(cycle_count, start_ns=apply_start_ns, end_ns=apply_end_ns, active_cycles=train_cycles)}",
     ]
+    if uses_restored_score:
+        lines += [
+            "Voutref outref 0 0.25",
+            f"Vscorepre scorepre 0 {active_low_phase_pwl(cycle_count, start_ns=8.10, end_ns=8.35, active_cycles=train_cycles)}",
+            f"Vscoreamp scoreamp 0 {periodic_phase_pwl(cycle_count, start_ns=8.60, end_ns=9.50, active_cycles=train_cycles)}",
+            f"Vscoredec scoredec 0 {periodic_phase_pwl(cycle_count, start_ns=9.70, end_ns=10.40, active_cycles=train_cycles)}",
+        ]
     for feature in range(feature_count):
         row_values = [float(row[feature]) for row in features]
         lines += [
@@ -178,12 +206,12 @@ def generate_netlist(
             target_high if cycle in train_cycles and labels[cycle] == class_idx else 0.0 for cycle in range(cycle_count)
         ]
         targetn_values = [
-            0.0 if cycle not in train_cycles or labels[cycle] == class_idx else target_high
+            0.0 if cycle not in train_cycles or labels[cycle] == class_idx else target_high * nontarget_scale
             for cycle in range(cycle_count)
         ]
         lines += [
-            f"V{class_node(class_idx, 'targetp')} {class_node(class_idx, 'targetp')} 0 {windowed_pwl(targetp_values, start_ns=9.0, end_ns=11.0)}",
-            f"V{class_node(class_idx, 'targetn')} {class_node(class_idx, 'targetn')} 0 {windowed_pwl(targetn_values, start_ns=9.0, end_ns=11.0)}",
+            f"V{class_node(class_idx, 'targetp')} {class_node(class_idx, 'targetp')} 0 {windowed_pwl(targetp_values, start_ns=target_start_ns, end_ns=target_end_ns)}",
+            f"V{class_node(class_idx, 'targetn')} {class_node(class_idx, 'targetn')} 0 {width_scaled_windowed_pwl(targetn_values, start_ns=target_start_ns, end_ns=target_end_ns, width_scale=nontarget_width_scale)}",
             f"C{class_node(class_idx, 'score')} {class_node(class_idx, 'score')} 0 {score_capacitance_f:.12g}f IC=0",
             f"C{class_node(class_idx, 'scoren')} {class_node(class_idx, 'scoren')} 0 {score_capacitance_f:.12g}f IC=0",
             f"R{class_node(class_idx, 'score')} {class_node(class_idx, 'score')} 0 {score_load_resistance:.12g}",
@@ -191,7 +219,45 @@ def generate_netlist(
             f"Mreset_{class_node(class_idx, 'score')} {class_node(class_idx, 'score')} rst 0 0 NMOS W=4u L=180n",
             f"Mreset_{class_node(class_idx, 'scoren')} {class_node(class_idx, 'scoren')} rst 0 0 NMOS W=4u L=180n",
         ]
+        if uses_restored_score:
+            prefix = f"c{class_idx}_"
+            lines += [
+                f"C{prefix}decision {prefix}decision 0 20f IC=0",
+                f"C{prefix}decisionn {prefix}decisionn 0 20f IC=0",
+                f"R{prefix}decision {prefix}decision 0 1G",
+                f"R{prefix}decisionn {prefix}decisionn 0 1G",
+                f"Mprecharge_{prefix}decision {prefix}decision scorepre vdd vdd PMOS W=4u L=180n",
+                f"Mprecharge_{prefix}decisionn {prefix}decisionn scorepre vdd vdd PMOS W=4u L=180n",
+                *low_gain_ref_state_lines(prefix=prefix, reset_node="scorepre"),
+                *low_gain_ref_decision_lines(
+                    prefix=prefix,
+                    score_node=class_node(class_idx, "score"),
+                    scoren_node=class_node(class_idx, "scoren"),
+                    outref_node="outref",
+                    amp_clock_node="scoreamp",
+                    decision_clock_node="scoredec",
+                ),
+            ]
         for feature in range(feature_count):
+            if error_mode == "score-gated-nontarget":
+                gradient_lines = class_local_score_gated_nontarget_gradient_lines(
+                    class_idx=class_idx,
+                    feature_idx=feature,
+                    activation_node=f"elig{feature}",
+                )
+            elif uses_restored_score:
+                gradient_lines = class_local_restored_score_nontarget_gradient_lines(
+                    class_idx=class_idx,
+                    feature_idx=feature,
+                    activation_node=f"elig{feature}",
+                    score_gate_node=f"c{class_idx}_decision",
+                )
+            else:
+                gradient_lines = class_local_label_descent_gradient_lines(
+                    class_idx=class_idx,
+                    feature_idx=feature,
+                    activation_node=f"elig{feature}",
+                )
             lines += [
                 f"C{class_node(class_idx, f'gvp{feature}')} {class_node(class_idx, f'gvp{feature}')} 0 2f IC=0",
                 f"C{class_node(class_idx, f'gvn{feature}')} {class_node(class_idx, f'gvn{feature}')} 0 2f IC=0",
@@ -210,11 +276,7 @@ def generate_netlist(
                     negative_ic=initial_negative,
                 ),
                 *class_local_readout_forward_lines(class_idx=class_idx, feature_idx=feature, width_u=readout_width_u),
-                *class_local_label_descent_gradient_lines(
-                    class_idx=class_idx,
-                    feature_idx=feature,
-                    activation_node=f"elig{feature}",
-                ),
+                *gradient_lines,
                 *class_local_bounded_update_lines(class_idx=class_idx, feature_idx=feature),
             ]
     train_seen = 0
@@ -367,6 +429,9 @@ def run_case(args: argparse.Namespace) -> dict[str, Any]:
         score_load_resistance=args.score_load_resistance,
         initial_positive=args.initial_positive,
         initial_negative=args.initial_negative,
+        nontarget_scale=args.nontarget_scale,
+        nontarget_width_scale=args.nontarget_width_scale,
+        error_mode=args.error_mode,
     )
     measures = run_netlist(spice_bin, path, deck, timeout=args.timeout)
     rows = rows_from_measures(all_records, measures, sequence=sequence, class_count=args.class_count)
@@ -413,6 +478,9 @@ def run_case(args: argparse.Namespace) -> dict[str, Any]:
         "readout_width_u": args.readout_width,
         "score_capacitance_f": args.score_capacitance_f,
         "score_load_resistance_ohm": args.score_load_resistance,
+        "nontarget_scale": args.nontarget_scale,
+        "nontarget_width_scale": args.nontarget_width_scale,
+        "error_mode": args.error_mode,
         "target_class": args.target_class if args.scenario == "target-repeat" else None,
         "train_samples": len(train_records),
         "eval_samples": len(eval_records),
@@ -466,6 +534,9 @@ def build_arg_parser() -> argparse.ArgumentParser:
     ap.add_argument("--score-load-resistance", type=float, default=1e6)
     ap.add_argument("--initial-positive", type=float, default=0.40)
     ap.add_argument("--initial-negative", type=float, default=0.40)
+    ap.add_argument("--nontarget-scale", type=float, default=1.0)
+    ap.add_argument("--nontarget-width-scale", type=float, default=1.0)
+    ap.add_argument("--error-mode", choices=ERROR_MODES, default="label-descent")
     ap.add_argument("--min-target-signed", type=float, default=10e-3)
     return ap
 
@@ -479,6 +550,8 @@ def validate_args(args: argparse.Namespace) -> None:
         raise ValueError("feature-count must be positive")
     if args.scenario not in SCENARIOS:
         raise ValueError(f"scenario must be one of {SCENARIOS}")
+    if args.error_mode not in ERROR_MODES:
+        raise ValueError(f"error-mode must be one of {ERROR_MODES}")
     if args.scenario == "mnist" and parse_counted_mnist_dataset(args.dataset) is None:
         raise ValueError("dataset must be a counted multiclass MNIST dataset")
     if args.target_class < 0 or args.target_class >= args.class_count:
@@ -495,6 +568,10 @@ def validate_args(args: argparse.Namespace) -> None:
         raise ValueError("score-capacitance-f must be positive")
     if args.score_load_resistance <= 0.0:
         raise ValueError("score-load-resistance must be positive")
+    if args.nontarget_scale < 0.0 or args.nontarget_scale > 1.0:
+        raise ValueError("nontarget-scale must be in [0, 1]")
+    if args.nontarget_width_scale < 0.0 or args.nontarget_width_scale > 1.0:
+        raise ValueError("nontarget-width-scale must be in [0, 1]")
     if min(args.initial_positive, args.initial_negative) <= 0.0:
         raise ValueError("initial-positive and initial-negative must be positive")
     if max(args.initial_positive, args.initial_negative) > 1.2:

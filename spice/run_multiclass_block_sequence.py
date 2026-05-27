@@ -1814,6 +1814,65 @@ def accuracy(rows: list[dict[str, Any]], sequence: str) -> float:
     return float(np.mean([bool(row["correct"]) for row in selected]))
 
 
+def signed_readout_projection_stats(
+    measures: dict[str, float],
+    *,
+    labels: list[int],
+    sequence: list[str],
+    class_count: int,
+    total_feature_count: int,
+    final_signed: list[list[float]],
+) -> dict[str, Any]:
+    """Compare physical score rails with an ideal signed dot-product readout.
+
+    This is a diagnostic only: it uses measured activation capacitors and final
+    readout capacitor state after ngspice completes. It does not feed anything
+    back into the transient.
+    """
+    rows: list[dict[str, Any]] = []
+    weight_matrix = np.array(final_signed, dtype=float)
+    for cycle, seq in enumerate(sequence):
+        if seq != "final_eval":
+            continue
+        keys = [f"act_f{feature}_{cycle}" for feature in range(total_feature_count)]
+        if not all(key in measures for key in keys):
+            continue
+        acts = np.array([float(measures[key]) for key in keys], dtype=float)
+        scores = weight_matrix @ acts
+        label = int(labels[cycle])
+        prediction = int(np.argmax(scores))
+        margin = float(scores[label] - max(score for idx, score in enumerate(scores) if idx != label))
+        rows.append(
+            {
+                "cycle": cycle,
+                "label": label,
+                "prediction": prediction,
+                "correct": prediction == label,
+                "score_margin_v2": margin,
+                **{f"score_c{class_idx}_v2": float(scores[class_idx]) for class_idx in range(class_count)},
+            }
+        )
+    if not rows:
+        return {
+            "final_eval_signed_projection_rows": [],
+            "final_eval_signed_projection_accuracy": None,
+            "final_eval_signed_projection_min_margin_v2": None,
+            "final_eval_signed_projection_mean_abs_score_v2": None,
+        }
+    margins = [float(row["score_margin_v2"]) for row in rows]
+    score_values = [
+        abs(float(row[f"score_c{class_idx}_v2"]))
+        for row in rows
+        for class_idx in range(class_count)
+    ]
+    return {
+        "final_eval_signed_projection_rows": rows,
+        "final_eval_signed_projection_accuracy": float(np.mean([bool(row["correct"]) for row in rows])),
+        "final_eval_signed_projection_min_margin_v2": float(np.min(margins)),
+        "final_eval_signed_projection_mean_abs_score_v2": float(np.mean(score_values)),
+    }
+
+
 def error_rail_stats(
     measures: dict[str, float],
     *,
@@ -2127,6 +2186,14 @@ def run_case(args: argparse.Namespace) -> dict[str, Any]:
         "margin_improvement_v": final_margin - initial_margin,
         "final_signed_matrix_v": final_signed,
         "signed_after_each_train_v": train_progress,
+        **signed_readout_projection_stats(
+            measures,
+            labels=labels,
+            sequence=sequence,
+            class_count=args.class_count,
+            total_feature_count=total_feature_count,
+            final_signed=final_signed,
+        ),
         **error_rail_stats(measures, labels=labels, sequence=sequence, class_count=args.class_count),
         **eligibility_stats(measures, sequence=sequence, total_feature_count=total_feature_count),
         **eligibility_gate_stats(measures, sequence=sequence, feature_count=feature_count),

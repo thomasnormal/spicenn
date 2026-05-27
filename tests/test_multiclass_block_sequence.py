@@ -405,6 +405,33 @@ def test_multiclass_block_sequence_summarizes_train_eligibility_gate_activity() 
     assert stats["train_eligibility_gate_max_v"] == 1.1
 
 
+def test_multiclass_block_sequence_summarizes_final_signed_projection() -> None:
+    measures = {
+        "act_f0_2": 0.8,
+        "act_f1_2": 0.1,
+        "act_f0_3": 0.1,
+        "act_f1_3": 0.7,
+    }
+
+    stats = seq.signed_readout_projection_stats(
+        measures,
+        labels=[0, 1, 0, 1],
+        sequence=["initial_eval", "train", "final_eval", "final_eval"],
+        class_count=2,
+        total_feature_count=2,
+        final_signed=[
+            [0.4, -0.1],
+            [-0.2, 0.3],
+        ],
+    )
+
+    assert stats["final_eval_signed_projection_accuracy"] == 1.0
+    assert stats["final_eval_signed_projection_min_margin_v2"] == pytest.approx(0.22)
+    assert stats["final_eval_signed_projection_rows"][0]["prediction"] == 0
+    assert stats["final_eval_signed_projection_rows"][1]["prediction"] == 1
+    assert stats["final_eval_signed_projection_mean_abs_score_v2"] == pytest.approx(0.165)
+
+
 def test_multiclass_block_sequence_can_use_common_score_mass_descent() -> None:
     netlist = seq.generate_netlist(
         train_records=_target0_records(1),

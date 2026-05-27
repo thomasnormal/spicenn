@@ -36,6 +36,21 @@ def _two_class_one_hot_records() -> list[dict[str, object]]:
     ]
 
 
+def test_multiclass_block_sequence_round_robin_order_preserves_per_class_order() -> None:
+    records = [
+        {"label": 0, "inputs": {"x0": 0.0}, "id": "0a"},
+        {"label": 0, "inputs": {"x0": 0.0}, "id": "0b"},
+        {"label": 1, "inputs": {"x0": 0.0}, "id": "1a"},
+        {"label": 1, "inputs": {"x0": 0.0}, "id": "1b"},
+        {"label": 2, "inputs": {"x0": 0.0}, "id": "2a"},
+        {"label": 2, "inputs": {"x0": 0.0}, "id": "2b"},
+    ]
+
+    ordered = seq.order_records_by_class_round_robin(records, class_count=3)
+
+    assert [record["id"] for record in ordered] == ["0a", "1a", "2a", "0b", "1b", "2b"]
+
+
 def test_multiclass_block_sequence_emits_single_continuous_deck() -> None:
     netlist = seq.generate_netlist(
         train_records=_target0_records(2),
@@ -4068,6 +4083,7 @@ def test_multiclass_block_sequence_mnist_scenario_uses_counted_records(monkeypat
     assert calls == [{"name": "mnist3fixed8_6", "seed": 3, "root": tmp_path, "download": True}]
     assert summary["scenario"] == "mnist"
     assert summary["dataset"] == "mnist3fixed8_6"
+    assert summary["sample_order"] == "grouped"
     assert summary["train_samples"] == 3
     assert summary["eval_samples"] == 3
     assert summary["nontarget_scale"] == 0.5

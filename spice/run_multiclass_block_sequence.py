@@ -48,6 +48,7 @@ from run_spice_sweep import ROOT, detect_spice
 
 
 SCENARIOS = ("target-repeat", "one-hot", "mnist")
+SAMPLE_ORDER_MODES = ("grouped", "round-robin")
 CLASS_BIAS_MODES = ("none", "target-only", "label-descent")
 READOUT_UPDATE_MODES = ("sampled", "live")
 HIDDEN_UPDATE_MODES = ("none", "readout-weighted", "direct-readout-weighted")
@@ -1146,6 +1147,19 @@ def one_hot_records(*, class_count: int, repeats: int, active_value: float) -> l
                 }
             )
     return records
+
+
+def order_records_by_class_round_robin(records: list[dict[str, Any]], *, class_count: int) -> list[dict[str, Any]]:
+    buckets = [[record for record in records if int(record["label"]) == class_idx] for class_idx in range(class_count)]
+    if not buckets:
+        return []
+    max_len = max(len(bucket) for bucket in buckets)
+    ordered: list[dict[str, Any]] = []
+    for item_idx in range(max_len):
+        for class_idx in range(class_count):
+            if item_idx < len(buckets[class_idx]):
+                ordered.append(buckets[class_idx][item_idx])
+    return ordered
 
 
 def generate_netlist(
@@ -3045,6 +3059,9 @@ def run_case(args: argparse.Namespace) -> dict[str, Any]:
             train_samples=args.train_samples,
             eval_samples=args.eval_samples,
         )
+        if args.sample_order == "round-robin":
+            train_records = order_records_by_class_round_robin(train_records, class_count=args.class_count)
+            eval_records = order_records_by_class_round_robin(eval_records, class_count=args.class_count)
     else:
         raise ValueError(f"scenario must be one of {SCENARIOS}")
     all_records = eval_records + train_records + eval_records
@@ -3160,6 +3177,7 @@ def run_case(args: argparse.Namespace) -> dict[str, Any]:
         "scenario": args.scenario,
         "dataset": args.dataset if args.scenario == "mnist" else None,
         "seed": args.seed if args.scenario == "mnist" else None,
+        "sample_order": args.sample_order if args.scenario == "mnist" else None,
         "class_count": args.class_count,
         "feature_count": feature_count,
         "total_feature_count": total_feature_count,
@@ -3351,6 +3369,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
     ap.add_argument("--scenario", choices=SCENARIOS, default="target-repeat")
     ap.add_argument("--dataset", default="mnist3fixed8_6")
     ap.add_argument("--seed", type=int, default=3)
+    ap.add_argument("--sample-order", choices=SAMPLE_ORDER_MODES, default="grouped")
     ap.add_argument("--download", action="store_true")
     ap.add_argument("--target-class", type=int, default=0)
     ap.add_argument("--train-samples", type=int, default=2)
@@ -3422,6 +3441,8 @@ def validate_args(args: argparse.Namespace) -> None:
         raise ValueError("feature-count must be positive")
     if args.scenario not in SCENARIOS:
         raise ValueError(f"scenario must be one of {SCENARIOS}")
+    if args.sample_order not in SAMPLE_ORDER_MODES:
+        raise ValueError(f"sample-order must be one of {SAMPLE_ORDER_MODES}")
     if args.error_mode not in ERROR_MODES:
         raise ValueError(f"error-mode must be one of {ERROR_MODES}")
     if args.readout_update_mode not in READOUT_UPDATE_MODES:

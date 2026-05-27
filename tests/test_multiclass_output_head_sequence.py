@@ -55,6 +55,27 @@ def test_multiclass_output_head_sequence_can_gate_nontarget_update_with_score() 
     assert "Mc2_f1_gvn_d c2_f1_gvn_a c2_targetn" not in netlist
 
 
+def test_multiclass_output_head_sequence_can_restore_score_before_nontarget_update() -> None:
+    records = _one_hot_records()
+    netlist = seq.generate_netlist(
+        train_records=records,
+        eval_records=records,
+        class_count=3,
+        feature_count=3,
+        error_mode="restored-score-nontarget",
+    )
+
+    assert "\nB" not in netlist
+    assert "Vscorepre scorepre 0 PWL(" in netlist
+    assert "Vscoreamp scoreamp 0 PWL(" in netlist
+    assert "Vscoredec scoredec 0 PWL(" in netlist
+    assert "Mc2_scoreamp_score_p c2_score_amp c2_score c2_scoreamp_score_i vdd PMOS W=1u" in netlist
+    assert "Mc2_dec_low_gain_ref_tail c2_dec_src scoredec 0 0 NMOS W=12u" in netlist
+    assert "Mc2_f1_gvn_score c2_f1_gvn_label c2_decision c2_f1_gvn_d 0 NSENSE" in netlist
+    assert "Mc2_f1_gvn_score c2_f1_gvn_label c2_score c2_f1_gvn_d 0 NSENSE" not in netlist
+    assert "52.55n 1.2 54.25n 1.2" in netlist
+
+
 def test_multiclass_output_head_sequence_validation() -> None:
     records = _one_hot_records()
     with pytest.raises(ValueError, match="class_count"):
@@ -110,6 +131,32 @@ def test_multiclass_output_head_sequence_ngspice_learns_one_hot_sequence(
         ngspice_path,
         tmp_path / "multiclass_output_head_sequence.cir",
         seq.generate_netlist(train_records=records, eval_records=records, class_count=3, feature_count=3),
+        timeout=20.0,
+    )
+    rows = seq.rows_from_measures(all_records, measures, sequence=sequence, class_count=3)
+
+    assert seq.accuracy(rows, "initial_eval") < 1.0
+    assert seq.accuracy(rows, "final_eval") == 1.0
+    assert min(row["score_margin_v"] for row in rows if row["sequence"] == "final_eval") > 1e-3
+
+
+def test_multiclass_output_head_sequence_ngspice_restored_score_mode_keeps_one_hot_learning(
+    tmp_path: Path,
+    ngspice_path: str,
+) -> None:
+    records = _one_hot_records()
+    all_records = records + records + records
+    sequence = ["initial_eval"] * 3 + ["train"] * 3 + ["final_eval"] * 3
+    measures = run_netlist(
+        ngspice_path,
+        tmp_path / "multiclass_output_head_sequence_restored_score.cir",
+        seq.generate_netlist(
+            train_records=records,
+            eval_records=records,
+            class_count=3,
+            feature_count=3,
+            error_mode="restored-score-nontarget",
+        ),
         timeout=20.0,
     )
     rows = seq.rows_from_measures(all_records, measures, sequence=sequence, class_count=3)

@@ -1,5 +1,27 @@
 # Engineering Log
 
+## 2026-05-27
+
+- Added a restored-score nontarget mode to the continuous multiclass output
+  sequence.  The new `restored-score-nontarget` path reuses the prefixed
+  low-common-mode score decision primitive per class: an early class-local
+  readout window charges `score/scoren`, `scoreamp`/`scoredec` restore that
+  small differential score into a full class decision rail, and a delayed
+  update window uses the restored rail to gate nontarget depression.  The
+  focused ngspice regression keeps the synthetic one-hot 3-class sequence
+  learning from an initial tie to perfect final eval, and the broader focused
+  run `python3 -m pytest tests/test_multiclass_output_head_primitive.py
+  tests/test_multiclass_output_head_sequence.py
+  tests/test_score_decision_primitive.py tests/test_ngspice_availability.py
+  -q` passes with 32 tests.
+- The restored-score mode did not solve the real MNIST3 fixed8 output-only
+  rung.  On `mnist3fixed8_12`, 6 train / 6 eval, feature-count 8, seed 3, the
+  `nontarget_scale=1.0` run stayed at \(0.333\to0.333\) accuracy with
+  \(-8.456\) mV final minimum margin.  Repeating at `nontarget_scale=0.5`
+  produced essentially the same weights and accuracy, which shows the restored
+  score rail is now acting as a hard gate; the remaining problem is the
+  multiclass competitive/update rule, not raw score-gate weakness alone.
+
 ## 2026-05-25
 
 - Clarified the core hybrid restored-enable/analog-error writer plots.  The

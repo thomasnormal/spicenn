@@ -18,11 +18,12 @@ from run_multiclass_output_head_primitive import (
     class_node,
     signed_store_lines,
 )
+from run_score_decision_primitive import low_gain_ref_decision_lines, low_gain_ref_state_lines
 from run_spice_sweep import ROOT, detect_spice
 
 
 CYCLE_NS = 16.0
-ERROR_MODES = ("label-descent", "score-gated-nontarget")
+ERROR_MODES = ("label-descent", "score-gated-nontarget", "restored-score-nontarget")
 
 
 def pwl(points: list[tuple[float, float]]) -> str:
@@ -178,6 +179,28 @@ def class_local_score_gated_nontarget_gradient_lines(
     ]
 
 
+def class_local_restored_score_nontarget_gradient_lines(
+    *,
+    class_idx: int,
+    feature_idx: int,
+    activation_node: str,
+    score_gate_node: str,
+    width_u: float = 24.0,
+) -> list[str]:
+    prefix = f"c{class_idx}_f{feature_idx}_"
+    return [
+        f"M{prefix}gvp_a vdd {activation_node} {prefix}gvp_a 0 NREL W={width_u:.6g}u L=180n",
+        f"M{prefix}gvp_d {prefix}gvp_a {class_node(class_idx, 'targetp')} {prefix}gvp_d 0 NSENSE W={width_u:.6g}u L=180n",
+        f"M{prefix}gvp_g {prefix}gvp_d acc {class_node(class_idx, f'gvp{feature_idx}')} 0 NREL W={width_u:.6g}u L=180n",
+        f"M{prefix}gvn_a vdd {activation_node} {prefix}gvn_a 0 NREL W={width_u:.6g}u L=180n",
+        f"M{prefix}gvn_label {prefix}gvn_a {class_node(class_idx, 'targetn')} {prefix}gvn_label 0 NSENSE W={width_u:.6g}u L=180n",
+        f"M{prefix}gvn_score {prefix}gvn_label {score_gate_node} {prefix}gvn_d 0 NSENSE W={width_u:.6g}u L=180n",
+        f"M{prefix}gvn_g {prefix}gvn_d acc {class_node(class_idx, f'gvn{feature_idx}')} 0 NREL W={width_u:.6g}u L=180n",
+        f"M{prefix}rgp_pd {class_node(class_idx, f'rgp{feature_idx}')} {class_node(class_idx, f'gvp{feature_idx}')} 0 0 NSENSE W=16u L=180n",
+        f"M{prefix}rgn_pd {class_node(class_idx, f'rgn{feature_idx}')} {class_node(class_idx, f'gvn{feature_idx}')} 0 0 NSENSE W=16u L=180n",
+    ]
+
+
 def generate_netlist(
     *,
     train_records: list[dict[str, Any]],
@@ -212,6 +235,15 @@ def generate_netlist(
     features = records_to_feature_matrix(all_records, feature_count)
     cycle_count = len(all_records)
     stop_ns = cycle_count * CYCLE_NS
+    uses_early_score = error_mode in {"score-gated-nontarget", "restored-score-nontarget"}
+    uses_restored_score = error_mode == "restored-score-nontarget"
+    update_signal_start_ns = 4.25 if uses_restored_score else 1.8
+    update_signal_end_ns = 6.35 if uses_restored_score else 4.2
+    acc_start_ns = 4.55 if uses_restored_score else 2.0
+    acc_end_ns = 6.25 if uses_restored_score else 4.0
+    apply_start_ns = 6.65 if uses_restored_score else 5.0
+    apply_end_ns = 8.15 if uses_restored_score else 7.0
+    score_reset_windows = [(0.2, 1.0), (8.35, 8.85)] if uses_restored_score else [(0.2, 1.0), (7.4, 8.0)]
 
     lines = [
         "* Continuous class-local multiclass output-head training sequence.",
@@ -223,17 +255,24 @@ def generate_netlist(
         "Vdd vdd 0 {VDD}",
         "Vvwhi_ref vwhi_ref 0 0.42",
         "Vvwlo_ref vwlo_ref 0 0.28",
-        f"Vacc acc 0 {periodic_phase_pwl(cycle_count, start_ns=2.0, end_ns=4.0, active_cycles=train_cycles)}",
-        f"Vapply apply 0 {periodic_phase_pwl(cycle_count, start_ns=5.0, end_ns=7.0, active_cycles=train_cycles)}",
-        f"Vapplyn applyn 0 {active_low_phase_pwl(cycle_count, start_ns=5.0, end_ns=7.0, active_cycles=train_cycles)}",
+        f"Vacc acc 0 {periodic_phase_pwl(cycle_count, start_ns=acc_start_ns, end_ns=acc_end_ns, active_cycles=train_cycles)}",
+        f"Vapply apply 0 {periodic_phase_pwl(cycle_count, start_ns=apply_start_ns, end_ns=apply_end_ns, active_cycles=train_cycles)}",
+        f"Vapplyn applyn 0 {active_low_phase_pwl(cycle_count, start_ns=apply_start_ns, end_ns=apply_end_ns, active_cycles=train_cycles)}",
         f"Vrst rst 0 {periodic_phase_pwl(cycle_count, start_ns=0.2, end_ns=1.0)}",
-        f"Vrstscore rstscore 0 {multi_window_phase_pwl(cycle_count, windows=[(0.2, 1.0), (7.4, 8.0)])}",
+        f"Vrstscore rstscore 0 {multi_window_phase_pwl(cycle_count, windows=score_reset_windows)}",
     ]
+    if uses_restored_score:
+        lines += [
+            "Voutref outref 0 0.25",
+            f"Vscorepre scorepre 0 {active_low_phase_pwl(cycle_count, start_ns=0.2, end_ns=1.0, active_cycles=set(range(cycle_count)))}",
+            f"Vscoreamp scoreamp 0 {periodic_phase_pwl(cycle_count, start_ns=1.75, end_ns=3.15, active_cycles=train_cycles)}",
+            f"Vscoredec scoredec 0 {periodic_phase_pwl(cycle_count, start_ns=3.45, end_ns=4.15, active_cycles=train_cycles)}",
+        ]
     for feature in range(feature_count):
         act_values = [float(value) for value in features[:, feature]]
-        actrow_windows = [(1.05, 1.65), (9.0, 12.0)] if error_mode == "score-gated-nontarget" else [(9.0, 12.0)]
+        actrow_windows = [(1.05, 1.65), (9.0, 12.0)] if uses_early_score else [(9.0, 12.0)]
         lines += [
-            f"Vact{feature} act{feature} 0 {windowed_pwl(act_values, start_ns=1.8, end_ns=4.2)}",
+            f"Vact{feature} act{feature} 0 {windowed_pwl(act_values, start_ns=update_signal_start_ns, end_ns=update_signal_end_ns)}",
             f"Vactrow{feature} actrow{feature} 0 {multi_windowed_pwl(act_values, windows=actrow_windows)}",
         ]
     for class_idx in range(class_count):
@@ -245,8 +284,8 @@ def generate_netlist(
             for cycle in range(cycle_count)
         ]
         lines += [
-            f"V{class_node(class_idx, 'targetp')} {class_node(class_idx, 'targetp')} 0 {windowed_pwl(targetp_values, start_ns=1.8, end_ns=4.2)}",
-            f"V{class_node(class_idx, 'targetn')} {class_node(class_idx, 'targetn')} 0 {windowed_pwl(targetn_values, start_ns=1.8, end_ns=4.2)}",
+            f"V{class_node(class_idx, 'targetp')} {class_node(class_idx, 'targetp')} 0 {windowed_pwl(targetp_values, start_ns=update_signal_start_ns, end_ns=update_signal_end_ns)}",
+            f"V{class_node(class_idx, 'targetn')} {class_node(class_idx, 'targetn')} 0 {windowed_pwl(targetn_values, start_ns=update_signal_start_ns, end_ns=update_signal_end_ns)}",
             f"C{class_node(class_idx, 'score')} {class_node(class_idx, 'score')} 0 10f IC=0",
             f"C{class_node(class_idx, 'scoren')} {class_node(class_idx, 'scoren')} 0 10f IC=0",
             f"R{class_node(class_idx, 'score')} {class_node(class_idx, 'score')} 0 1e6",
@@ -254,6 +293,25 @@ def generate_netlist(
             f"Mreset_{class_node(class_idx, 'score')} {class_node(class_idx, 'score')} rstscore 0 0 NMOS W=4u L=180n",
             f"Mreset_{class_node(class_idx, 'scoren')} {class_node(class_idx, 'scoren')} rstscore 0 0 NMOS W=4u L=180n",
         ]
+        if uses_restored_score:
+            prefix = f"c{class_idx}_"
+            lines += [
+                f"C{prefix}decision {prefix}decision 0 20f IC=0",
+                f"C{prefix}decisionn {prefix}decisionn 0 20f IC=0",
+                f"R{prefix}decision {prefix}decision 0 1G",
+                f"R{prefix}decisionn {prefix}decisionn 0 1G",
+                f"Mprecharge_{prefix}decision {prefix}decision scorepre vdd vdd PMOS W=4u L=180n",
+                f"Mprecharge_{prefix}decisionn {prefix}decisionn scorepre vdd vdd PMOS W=4u L=180n",
+                *low_gain_ref_state_lines(prefix=prefix, reset_node="scorepre"),
+                *low_gain_ref_decision_lines(
+                    prefix=prefix,
+                    score_node=class_node(class_idx, "score"),
+                    scoren_node=class_node(class_idx, "scoren"),
+                    outref_node="outref",
+                    amp_clock_node="scoreamp",
+                    decision_clock_node="scoredec",
+                ),
+            ]
         for feature in range(feature_count):
             for node in ("gvp", "gvn"):
                 lines += [
@@ -280,6 +338,13 @@ def generate_netlist(
                         activation_node=f"act{feature}",
                     )
                     if error_mode == "score-gated-nontarget"
+                    else class_local_restored_score_nontarget_gradient_lines(
+                        class_idx=class_idx,
+                        feature_idx=feature,
+                        activation_node=f"act{feature}",
+                        score_gate_node=f"c{class_idx}_decision",
+                    )
+                    if uses_restored_score
                     else class_local_label_descent_gradient_lines(
                         class_idx=class_idx,
                         feature_idx=feature,

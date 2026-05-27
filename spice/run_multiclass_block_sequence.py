@@ -83,6 +83,7 @@ ERROR_MODES = (
     "pairwise-score-competition-descent",
     "pairwise-margin-correction-descent",
     "pairwise-margin-centered-descent",
+    "pairwise-margin-centered-gain-descent",
     *(f"normalizer-{approach}-descent" for approach in NORMALIZATION_APPROACHES),
     "pairwise-binary-descent",
     "restored-score-binary-descent",
@@ -103,6 +104,7 @@ ERROR_RAIL_DESCENT_MODES = (
     "pairwise-score-competition-descent",
     "pairwise-margin-correction-descent",
     "pairwise-margin-centered-descent",
+    "pairwise-margin-centered-gain-descent",
     *NORMALIZER_ERROR_MODES,
 )
 
@@ -192,6 +194,41 @@ def class_centered_error_rail_lines(
             f"M{prefix}local_n vdd {rawn} {errn} 0 NSENSE W={copy_width_u:.6g}u L=180n",
             f"M{prefix}subtract_common_p vdd {common_p} {errn} 0 NSENSE W={copy_width_u:.6g}u L=180n",
             f"M{prefix}add_common_n vdd {common_n} {errp} 0 NSENSE W={copy_width_u:.6g}u L=180n",
+        ]
+    return lines
+
+
+def class_error_rail_gain_restore_lines(
+    *,
+    class_count: int,
+    input_positive_suffix: str = "errp_ctr",
+    input_negative_suffix: str = "errn_ctr",
+    positive_suffix: str = "errp",
+    negative_suffix: str = "errn",
+    reset_node: str = "scoregaterst",
+    restore_width_u: float = 128.0,
+    cross_discharge_width_u: float = 64.0,
+    capacitance_f: float = 1.0,
+) -> list[str]:
+    if min(restore_width_u, cross_discharge_width_u, capacitance_f) <= 0.0:
+        raise ValueError("gain-restored error rail sizes must be positive")
+    lines: list[str] = []
+    for class_idx in range(class_count):
+        inp = class_node(class_idx, input_positive_suffix)
+        inn = class_node(class_idx, input_negative_suffix)
+        errp = class_node(class_idx, positive_suffix)
+        errn = class_node(class_idx, negative_suffix)
+        lines += [
+            f"C{errp} {errp} 0 {capacitance_f:.12g}f IC=0",
+            f"C{errn} {errn} 0 {capacitance_f:.12g}f IC=0",
+            f"R{errp} {errp} 0 1G",
+            f"R{errn} {errn} 0 1G",
+            f"Mreset_{errp} {errp} {reset_node} 0 0 NMOS W=4u L=180n",
+            f"Mreset_{errn} {errn} {reset_node} 0 0 NMOS W=4u L=180n",
+            f"Mrestore_c{class_idx}_errp vdd {inp} {errp} 0 NSENSE W={restore_width_u:.6g}u L=180n",
+            f"Mrestore_c{class_idx}_errn vdd {inn} {errn} 0 NSENSE W={restore_width_u:.6g}u L=180n",
+            f"Mrestore_c{class_idx}_errp_xdn {errp} {inn} 0 0 NMOS W={cross_discharge_width_u:.6g}u L=180n",
+            f"Mrestore_c{class_idx}_errn_xdn {errn} {inp} 0 0 NMOS W={cross_discharge_width_u:.6g}u L=180n",
         ]
     return lines
 
@@ -1296,8 +1333,13 @@ def generate_netlist(
     uses_pairwise_margin_correction = error_mode in (
         "pairwise-margin-correction-descent",
         "pairwise-margin-centered-descent",
+        "pairwise-margin-centered-gain-descent",
     )
-    uses_pairwise_margin_centered = error_mode == "pairwise-margin-centered-descent"
+    uses_pairwise_margin_centered = error_mode in (
+        "pairwise-margin-centered-descent",
+        "pairwise-margin-centered-gain-descent",
+    )
+    uses_pairwise_margin_centered_gain = error_mode == "pairwise-margin-centered-gain-descent"
     uses_normalizer_error = error_mode in NORMALIZER_ERROR_MODES
     uses_stored_hidden_credit_update = hidden_update_mode == "readout-weighted"
     uses_direct_hidden_update = hidden_update_mode == "direct-readout-weighted"
@@ -1902,7 +1944,13 @@ def generate_netlist(
             negative_suffix="errn_raw" if uses_pairwise_margin_centered else "errn",
         )
         if uses_pairwise_margin_centered:
-            lines += class_centered_error_rail_lines(class_count=class_count)
+            lines += class_centered_error_rail_lines(
+                class_count=class_count,
+                positive_suffix="errp_ctr" if uses_pairwise_margin_centered_gain else "errp",
+                negative_suffix="errn_ctr" if uses_pairwise_margin_centered_gain else "errn",
+            )
+            if uses_pairwise_margin_centered_gain:
+                lines += class_error_rail_gain_restore_lines(class_count=class_count)
     if uses_pairwise_score_competition:
         lines += pairwise_score_competition_error_lines(
             class_count=class_count,
@@ -3144,12 +3192,22 @@ def run_case(args: argparse.Namespace) -> dict[str, Any]:
         ),
         "pairwise_margin_target_v": (
             args.pairwise_margin_target_v
-            if args.error_mode in ("pairwise-margin-correction-descent", "pairwise-margin-centered-descent")
+            if args.error_mode
+            in (
+                "pairwise-margin-correction-descent",
+                "pairwise-margin-centered-descent",
+                "pairwise-margin-centered-gain-descent",
+            )
             else None
         ),
         "pairwise_margin_error_drive_scale": (
             args.pairwise_margin_error_drive_scale
-            if args.error_mode in ("pairwise-margin-correction-descent", "pairwise-margin-centered-descent")
+            if args.error_mode
+            in (
+                "pairwise-margin-correction-descent",
+                "pairwise-margin-centered-descent",
+                "pairwise-margin-centered-gain-descent",
+            )
             else None
         ),
         "normalizer_error_clock_high": (

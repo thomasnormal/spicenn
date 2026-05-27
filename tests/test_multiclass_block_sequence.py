@@ -705,6 +705,23 @@ def test_multiclass_block_sequence_can_use_pairwise_margin_centered_descent() ->
     assert ".meas tran c0_errdiff_1 PARAM='c0_errp_1-c0_errn_1'" in netlist
 
 
+def test_multiclass_block_sequence_can_use_pairwise_margin_centered_gain_descent() -> None:
+    netlist = seq.generate_netlist(
+        train_records=_target0_records(1),
+        eval_records=_target0_records(1),
+        error_mode="pairwise-margin-centered-gain-descent",
+        readout_update_mode="live",
+    )
+
+    assert "\nB" not in netlist
+    assert "Cc0_errp_raw c0_errp_raw 0 0.5f IC=0" in netlist
+    assert "Cc0_errp_ctr c0_errp_ctr 0 4f IC=0" in netlist
+    assert "Mcenter_c0_local_p vdd c0_errp_raw c0_errp_ctr 0 NSENSE" in netlist
+    assert "Cc0_errp c0_errp 0 1f IC=0" in netlist
+    assert "Mrestore_c0_errp vdd c0_errp_ctr c0_errp 0 NSENSE W=128u" in netlist
+    assert "Mc0_f0_live_pos_up_d c0_f0_live_pos_up c0_errp c0_vwp0 0 NSENSE" in netlist
+
+
 def test_multiclass_block_sequence_can_use_common_score_mass_pairwise_descent() -> None:
     netlist = seq.generate_netlist(
         train_records=_target0_records(1),
@@ -1780,7 +1797,11 @@ def _score_mass_descent_netlist(
 def _centered_error_rail_netlist(
     raw_positive: tuple[float, float, float],
     raw_negative: tuple[float, float, float],
+    *,
+    gain_restored: bool = False,
 ) -> str:
+    centered_positive_suffix = "errp_ctr" if gain_restored else "errp"
+    centered_negative_suffix = "errn_ctr" if gain_restored else "errn"
     lines = [
         "* Low-level class-centered error rail primitive.",
         ".param VDD=1.2",
@@ -1802,12 +1823,32 @@ def _centered_error_rail_netlist(
             common_width_u=128.0,
             capacitance_f=4.0,
             common_capacitance_f=4.0,
+            positive_suffix=centered_positive_suffix,
+            negative_suffix=centered_negative_suffix,
+        ),
+        *(
+            seq.class_error_rail_gain_restore_lines(
+                class_count=3,
+                restore_width_u=128.0,
+                capacitance_f=1.0,
+            )
+            if gain_restored
+            else []
         ),
         ".meas tran common_p_after FIND V(class_errp_common) AT=2.5n",
         ".meas tran common_n_after FIND V(class_errn_common) AT=2.5n",
     ]
     for class_idx in range(3):
         lines += [
+            *(
+                [
+                    f".meas tran c{class_idx}_errp_ctr_after FIND V({seq.class_node(class_idx, 'errp_ctr')}) AT=2.5n",
+                    f".meas tran c{class_idx}_errn_ctr_after FIND V({seq.class_node(class_idx, 'errn_ctr')}) AT=2.5n",
+                    f".meas tran c{class_idx}_errdiff_ctr PARAM='c{class_idx}_errp_ctr_after-c{class_idx}_errn_ctr_after'",
+                ]
+                if gain_restored
+                else []
+            ),
             f".meas tran c{class_idx}_errp_after FIND V({seq.class_node(class_idx, 'errp')}) AT=2.5n",
             f".meas tran c{class_idx}_errn_after FIND V({seq.class_node(class_idx, 'errn')}) AT=2.5n",
             f".meas tran c{class_idx}_errdiff PARAM='c{class_idx}_errp_after-c{class_idx}_errn_after'",
@@ -2790,6 +2831,33 @@ def test_multiclass_block_sequence_ngspice_centered_error_rails_preserve_relativ
     assert float(measures["c1_errdiff"]) == pytest.approx(float(measures["c2_errdiff"]), abs=10e-3)
 
 
+def test_multiclass_block_sequence_ngspice_gain_restored_centered_error_rails_preserve_cancel_and_boost(
+    tmp_path: Path,
+    ngspice_path: str,
+) -> None:
+    uniform = run_netlist(
+        ngspice_path,
+        tmp_path / "centered_gain_uniform_positive.cir",
+        _centered_error_rail_netlist((1.0, 1.0, 1.0), (0.0, 0.0, 0.0), gain_restored=True),
+        timeout=20.0,
+    )
+    directional = run_netlist(
+        ngspice_path,
+        tmp_path / "centered_gain_target_positive.cir",
+        _centered_error_rail_netlist((1.0, 0.0, 0.0), (0.0, 1.0, 1.0), gain_restored=True),
+        timeout=20.0,
+    )
+
+    for class_idx in range(3):
+        assert abs(float(uniform[f"c{class_idx}_errdiff"])) < 75e-3
+    assert float(directional["c0_errdiff"]) > float(directional["c0_errdiff_ctr"]) + 10e-3
+    assert float(directional["c1_errdiff"]) < float(directional["c1_errdiff_ctr"]) - 10e-3
+    assert float(directional["c2_errdiff"]) < float(directional["c2_errdiff_ctr"]) - 10e-3
+    assert float(directional["c0_errdiff"]) > 55e-3
+    assert float(directional["c1_errdiff"]) < -35e-3
+    assert float(directional["c1_errdiff"]) == pytest.approx(float(directional["c2_errdiff"]), abs=20e-3)
+
+
 def test_multiclass_block_sequence_ngspice_score_mass_target_pressure_tracks_nontarget_mass(
     tmp_path: Path,
     ngspice_path: str,
@@ -3676,6 +3744,45 @@ def test_multiclass_block_sequence_ngspice_live_pairwise_margin_corrects_wrong_w
     assert float(measures["c0_f0_signed_final"]) < -0.05
     assert final_margin > initial_margin + 100e-3
     assert final_scores[1] > final_scores[0] + 50e-3
+
+
+def test_multiclass_block_sequence_ngspice_centered_gain_margin_corrects_wrong_winner(
+    tmp_path: Path,
+    ngspice_path: str,
+) -> None:
+    records = [{"label": 1, "inputs": {"x0": 0.85}}]
+    measures = run_netlist(
+        ngspice_path,
+        tmp_path / "multiclass_block_sequence_one_sample_centered_gain_wrong0_margin.cir",
+        seq.generate_netlist(
+            train_records=records,
+            eval_records=records,
+            class_count=3,
+            feature_count=1,
+            score_capacitance_f=5.0,
+            error_mode="pairwise-margin-centered-gain-descent",
+            readout_update_mode="live",
+            initial_readout_states={
+                (0, 0): (0.48, 0.28),
+                (1, 0): (0.40, 0.40),
+                (2, 0): (0.34, 0.40),
+            },
+        ),
+        timeout=80.0,
+    )
+
+    initial_scores = [float(measures[f"c{class_idx}_score_net_0"]) for class_idx in range(3)]
+    final_scores = [float(measures[f"c{class_idx}_score_net_2"]) for class_idx in range(3)]
+    initial_margin = initial_scores[1] - max(initial_scores[0], initial_scores[2])
+    final_margin = final_scores[1] - max(final_scores[0], final_scores[2])
+
+    assert initial_scores[0] > initial_scores[1] + 50e-3
+    assert float(measures["c1_errdiff_1"]) > 25e-3
+    assert float(measures["c0_errdiff_1"]) < -25e-3
+    assert float(measures["c1_f0_signed_final"]) > 0.10
+    assert float(measures["c0_f0_signed_final"]) < -10e-3
+    assert final_margin > initial_margin + 100e-3
+    assert final_scores[1] > final_scores[0] + 25e-3
 
 
 def test_multiclass_block_sequence_ngspice_restored_winner_blocks_nonwinning_nontargets(

@@ -1517,6 +1517,8 @@ def generate_netlist(
     score_decision_measure_ns = scoredec_end_ns + 0.20
     score_error_measure_ns = scoreerr_end_ns + 0.03
     score_mass_measure_ns = max(scorepre_end_ns, scoreerr_start_ns - 0.03)
+    readout_eligibility_measure_ns = 5.38 if uses_hybrid_readout_eligibility else 5.08
+    readout_eligibility_update_measure_ns = max(readout_eligibility_measure_ns, acc_start_ns + 0.03)
     low_gain_contrast_sizing = (
         derive_class_evidence_normalizer_sizing(
             class_count=class_count,
@@ -2457,9 +2459,12 @@ def generate_netlist(
                     ),
                 ]
             if eligibility_gate_mode in ("competition", "rank", "contrast") and feature < feature_count:
-                lines.append(
-                    f".meas tran relig_f{feature}_{cycle} FIND V({readout_update_eligibility_node(feature)}) AT={base + 5.08:.2f}n"
-                )
+                relig = readout_update_eligibility_node(feature)
+                lines += [
+                    f".meas tran relig_f{feature}_{cycle} FIND V({relig}) AT={base + readout_eligibility_measure_ns:.2f}n",
+                    f".meas tran relig_update_f{feature}_{cycle} FIND V({relig}) AT={base + readout_eligibility_update_measure_ns:.2f}n",
+                    f".meas tran relig_pgate_f{feature}_{cycle} FIND V({relig}_pgate) AT={base + readout_eligibility_measure_ns:.2f}n",
+                ]
             if uses_stored_hidden_credit_update and feature < feature_count:
                 lines += [
                     f".meas tran hdp_f{feature}_{cycle} FIND V({hidden_credit_node(feature, 'hdp')}) AT={base + score_error_measure_ns:.2f}n",
@@ -3143,10 +3148,46 @@ def readout_update_eligibility_stats(
     sequence: list[str],
     feature_count: int,
 ) -> dict[str, Any]:
+    def collect(prefix: str) -> list[list[float]]:
+        collected: list[list[float]] = []
+        for cycle, seq in enumerate(sequence):
+            if seq != "train":
+                continue
+            keys = [f"{prefix}_f{feature}_{cycle}" for feature in range(feature_count)]
+            if not all(key in measures for key in keys):
+                continue
+            collected.append([float(measures[key]) for key in keys])
+        return collected
+
+    def activity_stats(rows: list[list[float]], *, prefix: str) -> dict[str, Any]:
+        if not rows:
+            return {
+                f"{prefix}_rows_v": [],
+                f"{prefix}_active_features_25mv_mean": None,
+                f"{prefix}_active_features_250mv_mean": None,
+                f"{prefix}_active_features_500mv_mean": None,
+                f"{prefix}_max_v": None,
+            }
+        return {
+            f"{prefix}_rows_v": rows,
+            f"{prefix}_active_features_25mv_mean": float(
+                np.mean([sum(value > 25e-3 for value in row) for row in rows])
+            ),
+            f"{prefix}_active_features_250mv_mean": float(
+                np.mean([sum(value > 250e-3 for value in row) for row in rows])
+            ),
+            f"{prefix}_active_features_500mv_mean": float(
+                np.mean([sum(value > 500e-3 for value in row) for row in rows])
+            ),
+            f"{prefix}_max_v": float(np.max(rows)),
+        }
+
     rows: list[list[float]] = []
     active_25mv: list[int] = []
     active_250mv: list[int] = []
     active_500mv: list[int] = []
+    writer_rows = collect("relig_update")
+    pgate_rows = collect("relig_pgate")
     for cycle, seq in enumerate(sequence):
         if seq != "train":
             continue
@@ -3165,6 +3206,10 @@ def readout_update_eligibility_stats(
             "train_readout_update_eligibility_active_features_250mv_mean": None,
             "train_readout_update_eligibility_active_features_500mv_mean": None,
             "train_readout_update_eligibility_max_v": None,
+            **activity_stats(writer_rows, prefix="train_readout_update_eligibility_at_writer"),
+            "train_readout_update_eligibility_pgate_rows_v": pgate_rows,
+            "train_readout_update_eligibility_pgate_min_v": float(np.min(pgate_rows)) if pgate_rows else None,
+            "train_readout_update_eligibility_pgate_max_v": float(np.max(pgate_rows)) if pgate_rows else None,
         }
     return {
         "train_readout_update_eligibility_rows_v": rows,
@@ -3172,6 +3217,13 @@ def readout_update_eligibility_stats(
         "train_readout_update_eligibility_active_features_250mv_mean": float(np.mean(active_250mv)),
         "train_readout_update_eligibility_active_features_500mv_mean": float(np.mean(active_500mv)),
         "train_readout_update_eligibility_max_v": float(np.max(rows)),
+        **activity_stats(
+            writer_rows,
+            prefix="train_readout_update_eligibility_at_writer",
+        ),
+        "train_readout_update_eligibility_pgate_rows_v": pgate_rows,
+        "train_readout_update_eligibility_pgate_min_v": float(np.min(pgate_rows)) if pgate_rows else None,
+        "train_readout_update_eligibility_pgate_max_v": float(np.max(pgate_rows)) if pgate_rows else None,
     }
 
 

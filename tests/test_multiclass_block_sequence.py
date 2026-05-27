@@ -623,6 +623,14 @@ def test_multiclass_block_sequence_summarizes_readout_update_eligibility() -> No
         "relig_f1_1": 0.02,
         "relig_f0_2": 0.30,
         "relig_f1_2": 0.28,
+        "relig_update_f0_1": 0.38,
+        "relig_update_f1_1": 0.01,
+        "relig_update_f0_2": 0.25,
+        "relig_update_f1_2": 0.20,
+        "relig_pgate_f0_1": 0.70,
+        "relig_pgate_f1_1": 1.18,
+        "relig_pgate_f0_2": 0.80,
+        "relig_pgate_f1_2": 0.85,
     }
 
     stats = seq.readout_update_eligibility_stats(
@@ -636,6 +644,12 @@ def test_multiclass_block_sequence_summarizes_readout_update_eligibility() -> No
     assert stats["train_readout_update_eligibility_active_features_250mv_mean"] == pytest.approx(1.5)
     assert stats["train_readout_update_eligibility_active_features_500mv_mean"] == pytest.approx(0.0)
     assert stats["train_readout_update_eligibility_max_v"] == pytest.approx(0.40)
+    assert stats["train_readout_update_eligibility_at_writer_rows_v"] == [[0.38, 0.01], [0.25, 0.20]]
+    assert stats["train_readout_update_eligibility_at_writer_active_features_250mv_mean"] == pytest.approx(0.5)
+    assert stats["train_readout_update_eligibility_at_writer_max_v"] == pytest.approx(0.38)
+    assert stats["train_readout_update_eligibility_pgate_rows_v"] == [[0.70, 1.18], [0.80, 0.85]]
+    assert stats["train_readout_update_eligibility_pgate_min_v"] == pytest.approx(0.70)
+    assert stats["train_readout_update_eligibility_pgate_max_v"] == pytest.approx(1.18)
 
 
 def test_multiclass_block_sequence_summarizes_readout_train_progress_by_label() -> None:
@@ -1306,6 +1320,8 @@ def test_multiclass_block_sequence_uses_sampled_gated_readout_eligibility() -> N
     assert "Mrelig0_pgate_dis_gate relig0_pgate_elig egate0 relig0_pgate_gate 0 NSENSE W=16u L=180n" in netlist
     assert "Mrelig0_pgate_dis_clk relig0_pgate_gate relsamp 0 0 NSENSE W=16u L=180n" in netlist
     assert "Mrelig0_restore_p relig0 relig0_pgate relig_ref relig_ref PMOS W=16u L=180n" in netlist
+    assert ".meas tran relig_update_f0_1 FIND V(relig0)" in netlist
+    assert ".meas tran relig_pgate_f0_1 FIND V(relig0_pgate)" in netlist
     assert "Mc0_f0_live_pos_up_e vwhi_ref relig0 c0_f0_live_pos_up 0 NSENSE W=0.5u L=180n" in netlist
     assert "Mc0_f0_live_pos_up_e vwhi_ref egate0" not in netlist
 

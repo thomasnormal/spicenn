@@ -1102,6 +1102,7 @@ def block_netlist(
         raise ValueError("bounded-ref readout weight update references must stay within supply rails")
     hidden_forward_clock = "fwdh" if forward_phase_mode == "split-hidden-output" else "fwd"
     readout_forward_clock = "fwdo" if forward_phase_mode == "split-hidden-output" else "fwd"
+    hidden_writer_uses_sampled_input = input_waveform_mode == "row-pulsed"
     hidden_neg_width = max(0.5, hidden_forward_width * 0.75)
     hidden_forward_phase_width = max(hidden_forward_width, hidden_forward_width * block_len)
     readout_negative_forward_width = max(0.5, readout_forward_width * 0.75)
@@ -1638,6 +1639,11 @@ def block_netlist(
                 f"Rghp{feature}_{pix} ghp{feature}_{pix} 0 1G",
                 f"Rghn{feature}_{pix} ghn{feature}_{pix} 0 1G",
             ]
+            if hidden_writer_uses_sampled_input:
+                lines += [
+                    f"Chelig{feature}_{pix} helig{feature}_{pix} 0 12f IC=0",
+                    f"Rhelig{feature}_{pix} helig{feature}_{pix} 0 1G",
+                ]
 
     lines += [
         "",
@@ -1750,6 +1756,8 @@ def block_netlist(
                 f"Mreset_ghp{feature}_{pix} ghp{feature}_{pix} rstg 0 0 NMOS W=4u L=180n",
                 f"Mreset_ghn{feature}_{pix} ghn{feature}_{pix} rstg 0 0 NMOS W=4u L=180n",
             ]
+            if hidden_writer_uses_sampled_input:
+                lines.append(f"Mreset_helig{feature}_{pix} helig{feature}_{pix} rstg 0 0 NMOS W=4u L=180n")
 
     for block_idx, block in enumerate(blocks):
         for channel in range(channels):
@@ -1766,6 +1774,7 @@ def block_netlist(
                 ]
             for pix, pixel_node in enumerate(block):
                 input_node = input_rail_name(pixel_node, channel, input_rail_mode)
+                hidden_writer_input_node = f"helig{feature}_{pix}" if hidden_writer_uses_sampled_input else input_node
                 if hidden_forward_topology == "shared-phase":
                     hidden_forward_lines = [
                         f"Mhpos{feature}_{pix}_x vdd {input_node} hp{feature}_{pix}_0 0 NMOS W={hidden_forward_width:.6g}u L=180n",
@@ -1821,6 +1830,14 @@ def block_netlist(
                     *hidden_forward_lines,
                     *(
                         [
+                            f"Mhelig{feature}_{pix}_sample_n {input_node} {hidden_forward_clock} helig{feature}_{pix} 0 NMOS W={max(2.0, input_row_drive_width / 2.0):.6g}u L=180n",
+                            f"Mhelig{feature}_{pix}_sample_p {input_node} fwdhn helig{feature}_{pix} vdd PMOS W={max(4.0, input_row_drive_width):.6g}u L=180n",
+                        ]
+                        if hidden_writer_uses_sampled_input
+                        else []
+                    ),
+                    *(
+                        [
                             f"Rhread_{node} {node} 0 {hidden_stack_shunt_resistance:.12g}"
                             for node in hidden_stack_nodes
                         ]
@@ -1835,10 +1852,10 @@ def block_netlist(
                         if hidden_stack_parasitic_capacitance > 0.0
                         else []
                     ),
-                    f"Mghp{feature}_{pix}_x vdd {input_node} ghp{feature}_{pix}_x 0 NMOS W={hidden_update_width:.6g}u L=180n",
+                    f"Mghp{feature}_{pix}_x vdd {hidden_writer_input_node} ghp{feature}_{pix}_x 0 NMOS W={hidden_update_width:.6g}u L=180n",
                     f"Mghp{feature}_{pix}_d ghp{feature}_{pix}_x hdp{feature} ghp{feature}_{pix}_d 0 NSENSE W={hidden_update_width:.6g}u L=180n",
                     f"Mghp{feature}_{pix}_g ghp{feature}_{pix}_d acc ghp{feature}_{pix} 0 NMOS W={hidden_update_width:.6g}u L=180n",
-                    f"Mghn{feature}_{pix}_x vdd {input_node} ghn{feature}_{pix}_x 0 NMOS W={hidden_update_width:.6g}u L=180n",
+                    f"Mghn{feature}_{pix}_x vdd {hidden_writer_input_node} ghn{feature}_{pix}_x 0 NMOS W={hidden_update_width:.6g}u L=180n",
                     f"Mghn{feature}_{pix}_d ghn{feature}_{pix}_x hdn{feature} ghn{feature}_{pix}_d 0 NSENSE W={hidden_update_width:.6g}u L=180n",
                     f"Mghn{feature}_{pix}_g ghn{feature}_{pix}_d acc ghn{feature}_{pix} 0 NMOS W={hidden_update_width:.6g}u L=180n",
                     f"Mwhp{feature}_{pix}_up_g vdd ghp{feature}_{pix} whp{feature}_{pix}_up 0 NSENSE W={hidden_weight_write_width:.6g}u L=180n",

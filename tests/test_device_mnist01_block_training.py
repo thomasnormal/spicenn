@@ -3567,6 +3567,106 @@ def test_block_netlist_can_emit_passive_hidden_stack_shunts() -> None:
     assert "Rhread_hn3_3_1 hn3_3_1 0 1e+12" in netlist
 
 
+def test_row_pulsed_block_hidden_writer_uses_sampled_input_eligibility() -> None:
+    sys.path.insert(0, str(SPICE_DIR))
+    import run_device_mnist01_block_training as block
+
+    weights = {
+        "whp": [[0.75]],
+        "whn": [[0.20]],
+        "bhp": [0.50],
+        "bhn": [0.10],
+        "vwp": [0.85],
+        "vwn": [0.05],
+        "obp": 0.52,
+        "obn": 0.25,
+    }
+    sample = {"x0": 0.85, "target": 0.0}
+    netlist = block.block_netlist(
+        [sample],
+        weights,
+        image_size=1,
+        block_size=1,
+        stride=1,
+        channels=1,
+        training_enabled=True,
+        input_rail_mode="raw",
+        input_waveform_mode="row-pulsed",
+        hidden_forward_topology="split-rail",
+        score_mode="differential",
+        hidden_credit_mode="readout-weighted",
+        error_topology="label-descent",
+        forward_phase_mode="split-hidden-output",
+    )
+
+    assert "\nB" not in netlist
+    assert "Chelig0_0 helig0_0 0 12f IC=0" in netlist
+    assert "Mhelig0_0_sample_n x0 fwdh helig0_0 0 NMOS" in netlist
+    assert "Mhelig0_0_sample_p x0 fwdhn helig0_0 vdd PMOS" in netlist
+    assert "Mreset_helig0_0 helig0_0 rstg 0 0 NMOS" in netlist
+    assert "Mghp0_0_x vdd helig0_0 ghp0_0_x 0 NMOS" in netlist
+    assert "Mghn0_0_x vdd helig0_0 ghn0_0_x 0 NMOS" in netlist
+    assert "Mghp0_0_x vdd x0 ghp0_0_x" not in netlist
+
+
+def test_row_pulsed_block_hidden_writer_updates_weight_in_ngspice(
+    tmp_path: Path,
+    ngspice_path: str,
+) -> None:
+    sys.path.insert(0, str(SPICE_DIR))
+    import run_device_mnist01_block_training as block
+    from run_device_sequential_training import run_netlist
+
+    weights = {
+        "whp": [[0.75]],
+        "whn": [[0.20]],
+        "bhp": [0.50],
+        "bhn": [0.10],
+        "vwp": [0.85],
+        "vwn": [0.05],
+        "obp": 0.52,
+        "obn": 0.25,
+    }
+    samples = [
+        {"x0": 0.85, "target": 0.0},
+        {"x0": 0.85, "target": 0.0},
+    ]
+    netlist = block.block_netlist(
+        samples,
+        weights,
+        image_size=1,
+        block_size=1,
+        stride=1,
+        channels=1,
+        training_enabled=[True, False],
+        input_rail_mode="raw",
+        input_waveform_mode="row-pulsed",
+        hidden_forward_topology="split-rail",
+        score_mode="differential",
+        hidden_credit_mode="readout-weighted",
+        error_topology="label-descent",
+        forward_phase_mode="split-hidden-output",
+        hidden_error_width=80.0,
+        hidden_update_width=48.0,
+        hidden_weight_write_width=1.0,
+        readout_gradient_width=24.0,
+        readout_apply_scale=0.35,
+        tran_step_ps=5.0,
+    )
+    measures = run_netlist(
+        ngspice_path,
+        tmp_path / "row_pulsed_hidden_writer.cir",
+        netlist,
+        timeout=20.0,
+    )
+
+    signed_after = float(measures["whp0_0_after_apply_0"]) - float(measures["whn0_0_after_apply_0"])
+    initial_signed = weights["whp"][0][0] - weights["whn"][0][0]
+    assert float(measures["hdn0_after_0"]) > float(measures["hdp0_after_0"]) + 0.02
+    assert signed_after < initial_signed - 0.005
+    assert float(measures["act0_before_1"]) < float(measures["act0_before_0"]) - 0.05
+
+
 def test_block_netlist_can_emit_score_activity_inhibition() -> None:
     sys.path.insert(0, str(SPICE_DIR))
     import run_device_mnist01_block_training as block

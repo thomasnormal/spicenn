@@ -688,6 +688,23 @@ def test_multiclass_block_sequence_can_use_pairwise_margin_correction_descent() 
     assert "Mt0_o1_errp_sup t0_o1_errp_sup c0_gt_c1_decision vdd vdd PMOS W=64u" in wider_margin
 
 
+def test_multiclass_block_sequence_can_use_pairwise_margin_centered_descent() -> None:
+    netlist = seq.generate_netlist(
+        train_records=_target0_records(1),
+        eval_records=_target0_records(1),
+        error_mode="pairwise-margin-centered-descent",
+        readout_update_mode="live",
+    )
+
+    assert "\nB" not in netlist
+    assert "Cc0_errp_raw c0_errp_raw 0 0.5f IC=0" in netlist
+    assert "Cc0_errp c0_errp 0 4f IC=0" in netlist
+    assert "Mcenter_c0_common_p vdd c0_errp_raw class_errp_common 0 NSENSE" in netlist
+    assert "Mcenter_c0_subtract_common_p vdd class_errp_common c0_errn 0 NSENSE" in netlist
+    assert "Mc0_f0_live_pos_up_d c0_f0_live_pos_up c0_errp c0_vwp0 0 NSENSE" in netlist
+    assert ".meas tran c0_errdiff_1 PARAM='c0_errp_1-c0_errn_1'" in netlist
+
+
 def test_multiclass_block_sequence_can_use_common_score_mass_pairwise_descent() -> None:
     netlist = seq.generate_netlist(
         train_records=_target0_records(1),
@@ -1760,6 +1777,53 @@ def _score_mass_descent_netlist(
     return "\n".join(lines)
 
 
+def _centered_error_rail_netlist(
+    raw_positive: tuple[float, float, float],
+    raw_negative: tuple[float, float, float],
+) -> str:
+    lines = [
+        "* Low-level class-centered error rail primitive.",
+        ".param VDD=1.2",
+        seq.mos_models(),
+        ".options method=gear reltol=1e-3 abstol=1e-12 vntol=1e-6",
+        "Vdd vdd 0 {VDD}",
+        "Vscoregaterst scoregaterst 0 0",
+        *[
+            f"Vrawp{class_idx} {seq.class_node(class_idx, 'errp_raw')} 0 {value:.12g}"
+            for class_idx, value in enumerate(raw_positive)
+        ],
+        *[
+            f"Vrawn{class_idx} {seq.class_node(class_idx, 'errn_raw')} 0 {value:.12g}"
+            for class_idx, value in enumerate(raw_negative)
+        ],
+        *seq.class_centered_error_rail_lines(
+            class_count=3,
+            copy_width_u=64.0,
+            common_width_u=128.0,
+            capacitance_f=4.0,
+            common_capacitance_f=4.0,
+        ),
+        ".meas tran common_p_after FIND V(class_errp_common) AT=2.5n",
+        ".meas tran common_n_after FIND V(class_errn_common) AT=2.5n",
+    ]
+    for class_idx in range(3):
+        lines += [
+            f".meas tran c{class_idx}_errp_after FIND V({seq.class_node(class_idx, 'errp')}) AT=2.5n",
+            f".meas tran c{class_idx}_errn_after FIND V({seq.class_node(class_idx, 'errn')}) AT=2.5n",
+            f".meas tran c{class_idx}_errdiff PARAM='c{class_idx}_errp_after-c{class_idx}_errn_after'",
+        ]
+    lines += [
+        ".tran 2p 3n uic",
+        ".control",
+        "run",
+        "quit",
+        ".endc",
+        ".end",
+        "",
+    ]
+    return "\n".join(lines)
+
+
 def _restored_score_binary_descent_netlist(
     *,
     targetp: float,
@@ -2689,6 +2753,41 @@ def test_multiclass_block_sequence_ngspice_score_mass_descent_writes_target_and_
     assert float(measures["c0_signed_after"]) < -1e-3
     assert abs(float(measures["c2_signed_after"])) < 1e-6
     assert float(measures["c0_gvn_after"]) > float(measures["c2_gvn_after"]) + 20e-3
+
+
+def test_multiclass_block_sequence_ngspice_centered_error_rails_cancel_uniform_pressure(
+    tmp_path: Path,
+    ngspice_path: str,
+) -> None:
+    measures = run_netlist(
+        ngspice_path,
+        tmp_path / "centered_error_uniform_positive.cir",
+        _centered_error_rail_netlist((1.0, 1.0, 1.0), (0.0, 0.0, 0.0)),
+        timeout=20.0,
+    )
+
+    assert float(measures["common_p_after"]) > 0.45
+    for class_idx in range(3):
+        assert abs(float(measures[f"c{class_idx}_errdiff"])) < 25e-3
+
+
+def test_multiclass_block_sequence_ngspice_centered_error_rails_preserve_relative_sign(
+    tmp_path: Path,
+    ngspice_path: str,
+) -> None:
+    measures = run_netlist(
+        ngspice_path,
+        tmp_path / "centered_error_target_positive.cir",
+        _centered_error_rail_netlist((1.0, 0.0, 0.0), (0.0, 1.0, 1.0)),
+        timeout=20.0,
+    )
+
+    assert float(measures["common_p_after"]) > 0.20
+    assert float(measures["common_n_after"]) > 0.35
+    assert float(measures["c0_errdiff"]) > 25e-3
+    assert float(measures["c1_errdiff"]) < -25e-3
+    assert float(measures["c2_errdiff"]) < -25e-3
+    assert float(measures["c1_errdiff"]) == pytest.approx(float(measures["c2_errdiff"]), abs=10e-3)
 
 
 def test_multiclass_block_sequence_ngspice_score_mass_target_pressure_tracks_nontarget_mass(

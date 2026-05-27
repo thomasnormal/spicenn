@@ -603,6 +603,18 @@ def test_multiclass_block_sequence_can_use_live_readout_update_without_gradient_
     assert "Mc0_f0_live_neg_dn_d c0_f0_live_neg_dn c0_errn vwlo_ref 0 NSENSE" in netlist
 
 
+def test_multiclass_block_sequence_can_sample_score_during_early_differential_window() -> None:
+    netlist = seq.generate_netlist(
+        train_records=_target0_records(1),
+        eval_records=_target0_records(1),
+        score_measure_ns=5.2,
+    )
+
+    assert ".meas tran c0_score_0 FIND V(c0_score) AT=5.20n" in netlist
+    assert ".meas tran c0_score_1 FIND V(c0_score) AT=21.20n" in netlist
+    assert ".meas tran c0_score_2 FIND V(c0_score) AT=37.20n" in netlist
+
+
 def test_multiclass_block_sequence_can_gate_nontarget_with_restored_winner() -> None:
     netlist = seq.generate_netlist(
         train_records=_target0_records(1),
@@ -646,6 +658,8 @@ def test_multiclass_block_sequence_validation() -> None:
         seq.main_for_test(["--score-capacitance-f", "0"])
     with pytest.raises(ValueError, match="score-load-resistance"):
         seq.main_for_test(["--score-load-resistance", "0"])
+    with pytest.raises(ValueError, match="score-measure-ns"):
+        seq.main_for_test(["--score-measure-ns", "16"])
     with pytest.raises(ValueError, match="nontarget-scale"):
         seq.main_for_test(["--nontarget-scale", "1.5"])
     with pytest.raises(ValueError, match="nontarget-width-scale"):
@@ -2464,6 +2478,40 @@ def test_multiclass_block_sequence_ngspice_live_readout_update_moves_one_hot_mat
         for feature in range(3):
             if feature != class_idx:
                 assert float(measures[f"c{class_idx}_f{feature}_signed_final"]) < -100e-3
+
+
+def test_multiclass_block_sequence_ngspice_live_readout_is_class_readable_when_sampled_early(
+    tmp_path: Path,
+    ngspice_path: str,
+) -> None:
+    netlist = seq.generate_netlist(
+        train_records=_one_hot_records(),
+        eval_records=_one_hot_records(),
+        class_count=3,
+        feature_count=3,
+        readout_update_mode="live",
+        score_measure_ns=5.2,
+    )
+    measures = run_netlist(
+        ngspice_path,
+        tmp_path / "multiclass_block_sequence_live_onehot_early_score.cir",
+        netlist,
+        timeout=60.0,
+    )
+    final_predictions = [
+        int(np.argmax([float(measures[f"c{class_idx}_score_net_{cycle}"]) for class_idx in range(3)]))
+        for cycle in range(6, 9)
+    ]
+    final_margins = []
+    for cycle, label in zip(range(6, 9), range(3)):
+        scores = [float(measures[f"c{class_idx}_score_net_{cycle}"]) for class_idx in range(3)]
+        final_margins.append(scores[label] - max(score for idx, score in enumerate(scores) if idx != label))
+
+    assert "Vacc acc" not in netlist
+    assert "Vapply" not in netlist
+    assert "Cc0_gvp0" not in netlist
+    assert final_predictions == [0, 1, 2]
+    assert min(final_margins) > 10e-3
 
 
 def test_multiclass_block_sequence_ngspice_smaller_score_cap_improves_one_hot_margin(

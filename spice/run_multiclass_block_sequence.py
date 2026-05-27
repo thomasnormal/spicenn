@@ -739,6 +739,7 @@ def generate_netlist(
     readout_width_u: float = 64.0,
     score_capacitance_f: float = 10.0,
     score_load_resistance: float = 1e6,
+    score_measure_ns: float = 8.5,
     initial_positive: float = 0.40,
     initial_negative: float = 0.40,
     target_high: float = 1.1,
@@ -770,6 +771,7 @@ def generate_netlist(
         "readout_width_u": readout_width_u,
         "score_capacitance_f": score_capacitance_f,
         "score_load_resistance": score_load_resistance,
+        "score_measure_ns": score_measure_ns,
         "initial_positive": initial_positive,
         "initial_negative": initial_negative,
         "target_high": target_high,
@@ -782,6 +784,8 @@ def generate_netlist(
     }.items():
         if value <= 0.0:
             raise ValueError(f"{name} must be positive")
+    if score_measure_ns >= CYCLE_NS:
+        raise ValueError("score_measure_ns must be inside the cycle")
     if readout_center_resistance < 0.0:
         raise ValueError("readout_center_resistance must be nonnegative")
     if readout_center_voltage < 0.0 or readout_center_voltage > 1.2:
@@ -1557,8 +1561,8 @@ def generate_netlist(
         ]
         for class_idx in range(class_count):
             lines += [
-                f".meas tran c{class_idx}_score_{cycle} FIND V({class_node(class_idx, 'score')}) AT={base + 8.5:.2f}n",
-                f".meas tran c{class_idx}_scoren_{cycle} FIND V({class_node(class_idx, 'scoren')}) AT={base + 8.5:.2f}n",
+                f".meas tran c{class_idx}_score_{cycle} FIND V({class_node(class_idx, 'score')}) AT={base + score_measure_ns:.2f}n",
+                f".meas tran c{class_idx}_scoren_{cycle} FIND V({class_node(class_idx, 'scoren')}) AT={base + score_measure_ns:.2f}n",
                 f".meas tran c{class_idx}_score_net_{cycle} PARAM='c{class_idx}_score_{cycle}-c{class_idx}_scoren_{cycle}'",
             ]
             if uses_pairwise_decisions:
@@ -1804,6 +1808,7 @@ def run_case(args: argparse.Namespace) -> dict[str, Any]:
         readout_width_u=args.readout_width,
         score_capacitance_f=args.score_capacitance_f,
         score_load_resistance=args.score_load_resistance,
+        score_measure_ns=args.score_measure_ns,
         initial_positive=args.initial_positive,
         initial_negative=args.initial_negative,
         nontarget_scale=args.nontarget_scale,
@@ -1876,6 +1881,7 @@ def run_case(args: argparse.Namespace) -> dict[str, Any]:
         "readout_width_u": args.readout_width,
         "score_capacitance_f": args.score_capacitance_f,
         "score_load_resistance_ohm": args.score_load_resistance,
+        "score_measure_ns": args.score_measure_ns,
         "nontarget_scale": args.nontarget_scale,
         "nontarget_width_scale": args.nontarget_width_scale,
         "score_mass_sum_width_u": args.score_mass_sum_width if "score-mass" in args.error_mode else None,
@@ -1960,6 +1966,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
     ap.add_argument("--readout-width", type=float, default=64.0)
     ap.add_argument("--score-capacitance-f", type=float, default=10.0)
     ap.add_argument("--score-load-resistance", type=float, default=1e6)
+    ap.add_argument("--score-measure-ns", type=float, default=8.5)
     ap.add_argument("--initial-positive", type=float, default=0.40)
     ap.add_argument("--initial-negative", type=float, default=0.40)
     ap.add_argument("--nontarget-scale", type=float, default=1.0)
@@ -2023,6 +2030,8 @@ def validate_args(args: argparse.Namespace) -> None:
         raise ValueError("score-capacitance-f must be positive")
     if args.score_load_resistance <= 0.0:
         raise ValueError("score-load-resistance must be positive")
+    if args.score_measure_ns <= 0.0 or args.score_measure_ns >= CYCLE_NS:
+        raise ValueError("score-measure-ns must stay inside the cycle")
     if args.nontarget_scale < 0.0 or args.nontarget_scale > 1.0:
         raise ValueError("nontarget-scale must be in [0, 1]")
     if args.nontarget_width_scale < 0.0 or args.nontarget_width_scale > 1.0:

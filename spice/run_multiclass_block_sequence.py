@@ -1770,6 +1770,52 @@ def error_rail_stats(
     }
 
 
+def eligibility_stats(
+    measures: dict[str, float],
+    *,
+    sequence: list[str],
+    total_feature_count: int,
+) -> dict[str, Any]:
+    rows: list[list[float]] = []
+    active_25mv: list[int] = []
+    active_250mv: list[int] = []
+    active_500mv: list[int] = []
+    for cycle, seq in enumerate(sequence):
+        if seq != "train":
+            continue
+        keys = [f"elig_f{feature}_{cycle}" for feature in range(total_feature_count)]
+        if not all(key in measures for key in keys):
+            continue
+        values = [float(measures[key]) for key in keys]
+        rows.append(values)
+        active_25mv.append(sum(value > 25e-3 for value in values))
+        active_250mv.append(sum(value > 250e-3 for value in values))
+        active_500mv.append(sum(value > 500e-3 for value in values))
+    if not rows:
+        return {
+            "train_eligibility_rows_v": [],
+            "train_eligibility_active_features_25mv_mean": None,
+            "train_eligibility_active_features_250mv_mean": None,
+            "train_eligibility_active_features_500mv_mean": None,
+            "train_eligibility_pairwise_cosine_mean": None,
+        }
+    pairwise_cosines: list[float] = []
+    vectors = [np.array(row, dtype=float) for row in rows]
+    for left_idx, left in enumerate(vectors):
+        for right in vectors[left_idx + 1 :]:
+            denom = float(np.linalg.norm(left) * np.linalg.norm(right))
+            if denom > 0.0:
+                pairwise_cosines.append(float(np.dot(left, right) / denom))
+    return {
+        "train_eligibility_rows_v": rows,
+        "train_eligibility_active_features_25mv_mean": float(np.mean(active_25mv)),
+        "train_eligibility_active_features_25mv_max": int(np.max(active_25mv)),
+        "train_eligibility_active_features_250mv_mean": float(np.mean(active_250mv)),
+        "train_eligibility_active_features_500mv_mean": float(np.mean(active_500mv)),
+        "train_eligibility_pairwise_cosine_mean": float(np.mean(pairwise_cosines)) if pairwise_cosines else None,
+    }
+
+
 def run_case(args: argparse.Namespace) -> dict[str, Any]:
     generated = ROOT / "spice/generated"
     tables = ROOT / "results/tables"
@@ -1952,6 +1998,7 @@ def run_case(args: argparse.Namespace) -> dict[str, Any]:
         "final_signed_matrix_v": final_signed,
         "signed_after_each_train_v": train_progress,
         **error_rail_stats(measures, labels=labels, sequence=sequence, class_count=args.class_count),
+        **eligibility_stats(measures, sequence=sequence, total_feature_count=total_feature_count),
         "passed": (
             accuracy(rows, "final_eval") > accuracy(rows, "initial_eval")
             if args.scenario == "mnist"

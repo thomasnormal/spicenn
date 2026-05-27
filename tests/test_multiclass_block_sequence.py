@@ -354,6 +354,29 @@ def test_multiclass_block_sequence_reduces_train_error_rail_stats() -> None:
     assert stats["train_nontarget_errdiff_mean_v"] == pytest.approx(-0.2)
 
 
+def test_multiclass_block_sequence_summarizes_train_eligibility_overlap() -> None:
+    measures = {
+        "elig_f0_1": 0.5,
+        "elig_f1_1": 0.01,
+        "elig_f2_1": 0.5,
+        "elig_f0_2": 0.5,
+        "elig_f1_2": 0.5,
+        "elig_f2_2": 0.01,
+    }
+
+    stats = seq.eligibility_stats(
+        measures,
+        sequence=["initial_eval", "train", "train"],
+        total_feature_count=3,
+    )
+
+    assert stats["train_eligibility_rows_v"] == [[0.5, 0.01, 0.5], [0.5, 0.5, 0.01]]
+    assert stats["train_eligibility_active_features_25mv_mean"] == 2.0
+    assert stats["train_eligibility_active_features_250mv_mean"] == 2.0
+    assert stats["train_eligibility_active_features_500mv_mean"] == 0.0
+    assert stats["train_eligibility_pairwise_cosine_mean"] == pytest.approx(0.519896, abs=1e-6)
+
+
 def test_multiclass_block_sequence_can_use_common_score_mass_descent() -> None:
     netlist = seq.generate_netlist(
         train_records=_target0_records(1),

@@ -408,6 +408,28 @@ def test_multiclass_block_sequence_can_use_contrast_score_mass_descent() -> None
     assert ".meas tran c0_errdiff_1" in netlist
 
 
+def test_multiclass_block_sequence_can_use_low_gain_contrast_score_mass_descent() -> None:
+    netlist = seq.generate_netlist(
+        train_records=_target0_records(1),
+        eval_records=_target0_records(1),
+        error_mode="low-gain-contrast-score-mass-descent",
+    )
+
+    assert "\nB" not in netlist
+    assert "Vscore_contrast_ref score_contrast_ref 0 0.6" in netlist
+    assert "Mc0_scoreamp_score_p c0_score_amp c0_score c0_scoreamp_score_i vdd PMOS" in netlist
+    assert "Cscore_common score_common 0 4f IC=1.2" in netlist
+    assert "Rscore_common_c0 score_common c0_score_amp 10000000" in netlist
+    assert "Cc0_score_contrast c0_score_contrast 0 10f IC=0.6" in netlist
+    assert "Mc0_score_contrast_up_v vdd c0_score_amp c0_score_contrast_up 0 NREL W=192u" in netlist
+    assert "Mc0_score_contrast_dn_v c0_score_contrast score_common c0_score_contrast_dn 0 NREL W=24u" in netlist
+    assert "Mmass_nt1_score mass_nt1_a c1_score_contrast mass_nt1_s 0 NSENSE W=128u" in netlist
+    assert "Cc1_errn c1_errn 0 0.5f IC=0" in netlist
+    assert "Mc1_f0_gvn_e c1_f0_gvn_a c1_errn c1_f0_gvn_d 0 NSENSE" in netlist
+    assert ".meas tran c0_score_contrast_1" in netlist
+    assert ".meas tran c0_errdiff_1" in netlist
+
+
 def test_multiclass_block_sequence_can_use_contrast_gated_score_mass_descent() -> None:
     netlist = seq.generate_netlist(
         train_records=_target0_records(1),

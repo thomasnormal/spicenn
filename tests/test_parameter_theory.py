@@ -189,3 +189,59 @@ def test_multiclass_readout_sizing_rejects_invalid_global_scales() -> None:
             class_count=1,
             effective_readout_fan_in=8.0,
         )
+
+
+def test_class_evidence_normalizer_sizing_derives_writer_domain_defaults() -> None:
+    sizing = theory.derive_class_evidence_normalizer_sizing(
+        class_count=3,
+        normalized_score_delta_v=4.86e-3,
+        contrast_window_ns=2.0,
+        mass_window_ns=0.5,
+        error_window_ns=0.7,
+        target_error_v=0.32,
+        score_common_cap_f=4.0,
+        contrast_cap_f=10.0,
+        error_drive_scale=1.0,
+    )
+
+    assert sizing.class_count == 3
+    assert sizing.score_common_resistance_ohm == pytest.approx(1.0e7)
+    assert sizing.score_common_tau_ns == pytest.approx(40.0)
+    assert sizing.contrast_observable_ratio == pytest.approx(0.486)
+    assert sizing.mass_cap_f == pytest.approx(0.5)
+    assert sizing.error_cap_f == pytest.approx(0.5)
+    assert sizing.mass_width_u == pytest.approx(128.0)
+    assert sizing.target_error_width_u == pytest.approx(128.0)
+    assert sizing.nontarget_error_width_u == pytest.approx(64.0)
+    assert theory.one_vs_rest_target_balance_ratio(
+        sizing.class_count,
+        sizing.target_error_width_u,
+        sizing.nontarget_error_width_u,
+    ) == pytest.approx(1.0)
+
+    slower = theory.derive_class_evidence_normalizer_sizing(
+        class_count=3,
+        normalized_score_delta_v=4.86e-3,
+        contrast_window_ns=2.0,
+        mass_window_ns=0.5,
+        error_window_ns=0.7,
+        error_drive_scale=0.5,
+    )
+
+    assert slower.mass_width_u == pytest.approx(64.0)
+    assert slower.target_error_width_u == pytest.approx(64.0)
+    assert slower.nontarget_error_width_u == pytest.approx(32.0)
+
+
+def test_class_evidence_normalizer_sizing_rejects_invisible_contrast() -> None:
+    with pytest.raises(ValueError, match="normalized_score_delta_v"):
+        theory.derive_class_evidence_normalizer_sizing(
+            class_count=3,
+            normalized_score_delta_v=0.0,
+        )
+    with pytest.raises(ValueError, match="contrast_observable_ratio"):
+        theory.derive_class_evidence_normalizer_sizing(
+            class_count=3,
+            normalized_score_delta_v=0.1e-3,
+            min_writer_gate_v=0.01,
+        )

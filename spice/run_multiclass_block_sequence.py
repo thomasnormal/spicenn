@@ -8,6 +8,7 @@ from typing import Any
 
 import numpy as np
 
+from parameter_theory import derive_class_evidence_normalizer_sizing
 from datasets import dataset_records, parse_counted_mnist_dataset
 from run_device_mnist01_scalar_training import sanitize_tag
 from run_device_sequential_training import mos_models, run_netlist
@@ -48,6 +49,7 @@ ERROR_MODES = (
     "score-mass-descent",
     "common-score-mass-descent",
     "contrast-score-mass-descent",
+    "low-gain-contrast-score-mass-descent",
     "contrast-gated-score-mass-descent",
     "target-contrast-score-mass-descent",
     "common-score-mass-pairwise-descent",
@@ -757,13 +759,16 @@ def generate_netlist(
     uses_target_ref_score = error_mode == "target-ref-score-nontarget"
     uses_common_score_mass = error_mode == "common-score-mass-descent"
     uses_contrast_score_mass = error_mode == "contrast-score-mass-descent"
+    uses_low_gain_contrast_score_mass = error_mode == "low-gain-contrast-score-mass-descent"
     uses_contrast_gated_score_mass = error_mode == "contrast-gated-score-mass-descent"
     uses_target_contrast_score_mass = error_mode == "target-contrast-score-mass-descent"
     uses_common_score_mass_pairwise = error_mode == "common-score-mass-pairwise-descent"
     uses_pairwise_score_competition = error_mode == "pairwise-score-competition-descent"
     uses_score_common_gate = uses_common_ref_score or uses_raw_common_ref_score
     uses_score_common_gate_nodes = uses_score_common_gate or uses_common_score_mass or uses_common_score_mass_pairwise
-    uses_score_contrast_nodes = uses_contrast_score_mass or uses_contrast_gated_score_mass
+    uses_score_contrast_nodes = (
+        uses_contrast_score_mass or uses_low_gain_contrast_score_mass or uses_contrast_gated_score_mass
+    )
     uses_amplified_competitive = error_mode == "amplified-score-competitive"
     uses_amplified_pairwise = error_mode == "amplified-score-pairwise"
     uses_amplified_binary = error_mode == "amplified-score-binary-descent"
@@ -781,6 +786,7 @@ def generate_netlist(
         or uses_score_mass
         or uses_common_score_mass
         or uses_contrast_score_mass
+        or uses_low_gain_contrast_score_mass
         or uses_contrast_gated_score_mass
         or uses_target_contrast_score_mass
         or uses_common_score_mass_pairwise
@@ -811,6 +817,7 @@ def generate_netlist(
             or uses_score_mass
             or uses_common_score_mass
             or uses_contrast_score_mass
+            or uses_low_gain_contrast_score_mass
             or uses_contrast_gated_score_mass
             or uses_target_contrast_score_mass
             or uses_common_score_mass_pairwise
@@ -823,6 +830,15 @@ def generate_netlist(
     acc_end_ns = 12.8 if uses_late_restored_gate else 11.0
     apply_start_ns = 13.0 if uses_late_restored_gate else 12.0
     apply_end_ns = 13.1 if uses_late_restored_gate else 12.1
+    low_gain_contrast_sizing = (
+        derive_class_evidence_normalizer_sizing(
+            class_count=class_count,
+            normalized_score_delta_v=4.86e-3,
+            error_drive_scale=score_mass_error_width / 32.0,
+        )
+        if uses_low_gain_contrast_score_mass
+        else None
+    )
 
     lines = [
         "* Continuous multiclass block sequence: split-rail hidden features and class-local readout updates.",
@@ -871,6 +887,7 @@ def generate_netlist(
         uses_score_mass
         or uses_common_score_mass
         or uses_contrast_score_mass
+        or uses_low_gain_contrast_score_mass
         or uses_contrast_gated_score_mass
         or uses_target_contrast_score_mass
         or uses_common_score_mass_pairwise
@@ -888,6 +905,7 @@ def generate_netlist(
         or uses_target_ref_score
         or uses_score_mass
         or uses_contrast_score_mass
+        or uses_low_gain_contrast_score_mass
         or uses_contrast_gated_score_mass
         or uses_target_contrast_score_mass
         or uses_common_score_mass_pairwise
@@ -1008,7 +1026,7 @@ def generate_netlist(
                 pullup_width_u=192.0,
                 pulldown_width_u=6.0,
             )
-        elif uses_contrast_score_mass or uses_contrast_gated_score_mass:
+        elif uses_contrast_score_mass or uses_low_gain_contrast_score_mass or uses_contrast_gated_score_mass:
             lines += class_local_score_contrast_lines(class_idx=class_idx)
             if uses_contrast_gated_score_mass:
                 lines += class_local_score_common_gate_lines(
@@ -1050,9 +1068,17 @@ def generate_netlist(
         or uses_common_score_mass
         or uses_common_score_mass_pairwise
         or uses_contrast_score_mass
+        or uses_low_gain_contrast_score_mass
         or uses_contrast_gated_score_mass
     ):
-        lines += shared_score_common_reference_lines(class_count=class_count)
+        lines += shared_score_common_reference_lines(
+            class_count=class_count,
+            resistance_ohm=(
+                low_gain_contrast_sizing.score_common_resistance_ohm
+                if low_gain_contrast_sizing is not None
+                else 20000.0
+            ),
+        )
     if uses_target_ref_score or uses_target_contrast_score_mass:
         lines += shared_label_score_reference_lines(class_count=class_count)
     if uses_score_mass:
@@ -1079,6 +1105,15 @@ def generate_netlist(
             error_width_u=4.0 * score_mass_error_width,
             mass_capacitance_f=0.5,
             error_capacitance_f=0.5,
+        )
+    if uses_low_gain_contrast_score_mass:
+        lines += shared_score_mass_error_lines(
+            class_count=class_count,
+            score_input_template="c{class_idx}_score_contrast",
+            sum_width_u=low_gain_contrast_sizing.mass_width_u,
+            error_width_u=low_gain_contrast_sizing.target_error_width_u,
+            mass_capacitance_f=low_gain_contrast_sizing.mass_cap_f,
+            error_capacitance_f=low_gain_contrast_sizing.error_cap_f,
         )
     if uses_contrast_gated_score_mass:
         lines += shared_score_mass_error_lines(
@@ -1236,6 +1271,14 @@ def generate_netlist(
                     negative_error_node=class_node(class_idx, "errn"),
                 )
             elif uses_contrast_score_mass:
+                gradient_lines = class_local_error_rail_gradient_lines(
+                    class_idx=class_idx,
+                    feature_idx=feature,
+                    activation_node=f"elig{feature}",
+                    positive_error_node=class_node(class_idx, "errp"),
+                    negative_error_node=class_node(class_idx, "errn"),
+                )
+            elif uses_low_gain_contrast_score_mass:
                 gradient_lines = class_local_error_rail_gradient_lines(
                     class_idx=class_idx,
                     feature_idx=feature,
@@ -1412,6 +1455,7 @@ def generate_netlist(
                 uses_score_mass
                 or uses_common_score_mass
                 or uses_contrast_score_mass
+                or uses_low_gain_contrast_score_mass
                 or uses_contrast_gated_score_mass
                 or uses_target_contrast_score_mass
                 or uses_common_score_mass_pairwise
@@ -1421,6 +1465,7 @@ def generate_netlist(
                     uses_score_mass
                     or uses_common_score_mass
                     or uses_contrast_score_mass
+                    or uses_low_gain_contrast_score_mass
                     or uses_contrast_gated_score_mass
                     or uses_target_contrast_score_mass
                     or uses_common_score_mass_pairwise
@@ -1645,6 +1690,7 @@ def run_case(args: argparse.Namespace) -> dict[str, Any]:
             if args.error_mode
             in {
                 "common-score-mass-descent",
+                "low-gain-contrast-score-mass-descent",
                 "contrast-gated-score-mass-descent",
                 "target-contrast-score-mass-descent",
                 "common-score-mass-pairwise-descent",

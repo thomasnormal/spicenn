@@ -64,6 +64,35 @@ error_drive_scale
 score_tau_scale
 ```
 
+For the class-evidence normalizer, the same rule applies. The local circuit
+values are derived from the required handoff:
+
+```text
+low-common score delta
+  -> observable contrast cap delta
+  -> writer-domain err+/err- rails
+```
+
+The derived profile sets:
+
+```text
+score_common_resistance = target score-common tau / score_common_cap
+mass/error capacitance  = required C for the target writer rail step
+target error width      = anchor error width * error_drive_scale
+nontarget error width   = target error width / (class_count - 1)
+```
+
+So Bayesian search should normally see only the high-level scales:
+
+```text
+error_drive_scale
+target margin / dead-zone scale
+learning_rate_scale
+```
+
+and not individual common-reference resistors, score-mass capacitors, or
+target/non-target width ratios.
+
 ## Signal Representation Contract
 
 The circuit should distinguish the mathematical sign of a value from the

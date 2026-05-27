@@ -389,6 +389,24 @@ class MulticlassReadoutSizing:
     output_cap_f: float
 
 
+@dataclass(frozen=True)
+class ClassEvidenceNormalizerSizing:
+    """Derived local sizes for score-centering to writer-domain error rails."""
+
+    class_count: int
+    normalized_score_delta_v: float
+    score_common_resistance_ohm: float
+    score_common_tau_ns: float
+    contrast_observable_ratio: float
+    score_common_cap_f: float
+    contrast_cap_f: float
+    mass_cap_f: float
+    error_cap_f: float
+    mass_width_u: float
+    target_error_width_u: float
+    nontarget_error_width_u: float
+
+
 def derive_multiclass_readout_sizing(
     *,
     class_count: int,
@@ -467,4 +485,99 @@ def derive_multiclass_readout_sizing(
         residual_output_width_u=residual_output_width_u,
         score_cap_f=score_cap_f,
         output_cap_f=output_to_score_cap_ratio * score_cap_f,
+    )
+
+
+def derive_class_evidence_normalizer_sizing(
+    *,
+    class_count: int,
+    normalized_score_delta_v: float,
+    contrast_window_ns: float = 2.0,
+    mass_window_ns: float = 0.5,
+    error_window_ns: float = 0.7,
+    target_error_v: float = 0.32,
+    min_writer_gate_v: float = 0.01,
+    score_common_cap_f: float = 4.0,
+    contrast_cap_f: float = 10.0,
+    anchor_score_common_tau_ns: float = 40.0,
+    anchor_mass_cap_f: float = 0.5,
+    anchor_error_cap_f: float = 0.5,
+    anchor_mass_width_u: float = 128.0,
+    anchor_error_width_u: float = 128.0,
+    error_drive_scale: float = 1.0,
+) -> ClassEvidenceNormalizerSizing:
+    """Derive local class-evidence normalizer sizes from circuit constraints.
+
+    The normalizer bridges low-common score evidence into writer-domain rails.
+    These defaults encode the successful low-level primitive constraints:
+
+    * common-reference loading must be slow relative to the contrast window so
+      millivolt score separation is not shorted away;
+    * score-mass and error caps are sized for a writer-useful rail voltage, not
+      for final classification directly;
+    * non-target error width is scaled by ``1 / (class_count - 1)`` so a
+      balanced one-vs-rest epoch is not class-count biased.
+
+    Bayesian search should normally tune ``error_drive_scale`` and high-level
+    margins around this profile, not the individual local widths/capacitances.
+    """
+    if class_count < 2:
+        raise ValueError("class_count must be at least two.")
+    for name, value in [
+        ("normalized_score_delta_v", normalized_score_delta_v),
+        ("contrast_window_ns", contrast_window_ns),
+        ("mass_window_ns", mass_window_ns),
+        ("error_window_ns", error_window_ns),
+        ("target_error_v", target_error_v),
+        ("min_writer_gate_v", min_writer_gate_v),
+        ("score_common_cap_f", score_common_cap_f),
+        ("contrast_cap_f", contrast_cap_f),
+        ("anchor_score_common_tau_ns", anchor_score_common_tau_ns),
+        ("anchor_mass_cap_f", anchor_mass_cap_f),
+        ("anchor_error_cap_f", anchor_error_cap_f),
+        ("anchor_mass_width_u", anchor_mass_width_u),
+        ("anchor_error_width_u", anchor_error_width_u),
+        ("error_drive_scale", error_drive_scale),
+    ]:
+        _require_positive(name, float(value))
+
+    contrast_observable_ratio = normalized_score_delta_v / min_writer_gate_v
+    if contrast_observable_ratio < 0.25:
+        raise ValueError("contrast_observable_ratio is too small for a writer-domain normalizer.")
+
+    score_common_resistance_ohm = rc_resistance_for_tau_ohm(anchor_score_common_tau_ns, score_common_cap_f)
+    mass_cap_f = required_cap_ff_for_step(
+        target_error_v * anchor_mass_cap_f / max(mass_window_ns, 1e-30),
+        mass_window_ns,
+        target_error_v,
+    )
+    error_cap_f = required_cap_ff_for_step(
+        target_error_v * anchor_error_cap_f / max(error_window_ns, 1e-30),
+        error_window_ns,
+        target_error_v,
+    )
+    mass_width_u = anchor_mass_width_u * error_drive_scale
+    target_error_width_u = anchor_error_width_u * error_drive_scale
+    nontarget_error_width_u = target_error_width_u / (class_count - 1)
+
+    if not one_vs_rest_width_ratio_is_balanced(
+        class_count,
+        target_error_width_u,
+        nontarget_error_width_u,
+    ):
+        raise AssertionError("derived normalizer error widths should be one-vs-rest balanced")
+
+    return ClassEvidenceNormalizerSizing(
+        class_count=class_count,
+        normalized_score_delta_v=normalized_score_delta_v,
+        score_common_resistance_ohm=score_common_resistance_ohm,
+        score_common_tau_ns=rc_tau_ns(score_common_resistance_ohm, score_common_cap_f),
+        contrast_observable_ratio=contrast_observable_ratio,
+        score_common_cap_f=score_common_cap_f,
+        contrast_cap_f=contrast_cap_f,
+        mass_cap_f=mass_cap_f,
+        error_cap_f=error_cap_f,
+        mass_width_u=mass_width_u,
+        target_error_width_u=target_error_width_u,
+        nontarget_error_width_u=nontarget_error_width_u,
     )

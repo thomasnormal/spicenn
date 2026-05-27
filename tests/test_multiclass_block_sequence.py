@@ -1216,6 +1216,25 @@ def test_multiclass_block_sequence_can_use_label_rail_descent_for_live_gradient_
     assert "Vapply apply" not in netlist
 
 
+def test_multiclass_block_sequence_parameterizes_live_readout_update_width() -> None:
+    netlist = seq.generate_netlist(
+        train_records=_two_class_one_hot_records(),
+        eval_records=_two_class_one_hot_records(),
+        class_count=2,
+        feature_count=2,
+        readout_update_mode="live",
+        error_mode="label-rail-descent",
+        readout_update_width_u=0.125,
+    )
+
+    assert "Mc0_f0_live_pos_up_e vwhi_ref elig0 c0_f0_live_pos_up 0 NSENSE W=0.125u L=180n" in netlist
+    assert "Mc0_f0_live_pos_up_d c0_f0_live_pos_up c0_errp c0_vwp0 0 NSENSE W=0.125u L=180n" in netlist
+    assert "Mc0_f0_live_neg_up_d c0_f0_live_neg_up c0_errn c0_vwn0 0 NSENSE W=0.125u L=180n" in netlist
+    assert "W=0.5u L=180n" not in "\n".join(
+        line for line in netlist.splitlines() if "_live_" in line
+    )
+
+
 def test_multiclass_block_sequence_can_gate_nontarget_with_restored_winner() -> None:
     netlist = seq.generate_netlist(
         train_records=_target0_records(1),
@@ -1300,6 +1319,10 @@ def test_multiclass_block_sequence_validation() -> None:
         )
     with pytest.raises(ValueError, match="readout-update-mode"):
         seq.main_for_test(["--readout-update-mode", "live", "--error-mode", "score-gated-nontarget"])
+    with pytest.raises(ValueError, match="readout_update_width_u"):
+        seq.generate_netlist(train_records=records, eval_records=records, readout_update_mode="live", readout_update_width_u=0)
+    with pytest.raises(ValueError, match="readout-update-width"):
+        seq.main_for_test(["--readout-update-width", "0"])
     with pytest.raises(ValueError, match="hidden_update_mode"):
         seq.generate_netlist(train_records=records, eval_records=records, hidden_update_mode="missing")
     with pytest.raises(ValueError, match="hidden_direct_readout_gate_mode"):

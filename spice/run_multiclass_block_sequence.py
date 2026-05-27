@@ -1090,6 +1090,7 @@ def generate_netlist(
     normalizer_error_clock_high: float = 1.2,
     error_mode: str = "label-descent",
     readout_update_mode: str = "sampled",
+    readout_update_width_u: float = 0.5,
     hidden_update_mode: str = "none",
     hidden_credit_width_u: float = 8.0,
     hidden_credit_capacitance_f: float = 12.0,
@@ -1140,6 +1141,7 @@ def generate_netlist(
         "pairwise_margin_target_v": pairwise_margin_target_v,
         "pairwise_margin_error_drive_scale": pairwise_margin_error_drive_scale,
         "normalizer_error_clock_high": normalizer_error_clock_high,
+        "readout_update_width_u": readout_update_width_u,
         "hidden_credit_width_u": hidden_credit_width_u,
         "hidden_credit_capacitance_f": hidden_credit_capacitance_f,
         "hidden_credit_shunt_resistance_ohm": hidden_credit_shunt_resistance_ohm,
@@ -2159,6 +2161,7 @@ def generate_netlist(
                     activation_node=activation_node,
                     positive_descent_node=positive_descent_node,
                     negative_descent_node=negative_descent_node,
+                    width_u=readout_update_width_u,
                 )
             else:
                 readout_update_lines = [
@@ -2967,6 +2970,7 @@ def run_case(args: argparse.Namespace) -> dict[str, Any]:
         normalizer_error_clock_high=args.normalizer_error_clock_high,
         error_mode=args.error_mode,
         readout_update_mode=args.readout_update_mode,
+        readout_update_width_u=args.readout_update_width,
         hidden_update_mode=args.hidden_update_mode,
         hidden_credit_width_u=args.hidden_credit_width,
         hidden_credit_capacitance_f=args.hidden_credit_capacitance_f,
@@ -3103,6 +3107,7 @@ def run_case(args: argparse.Namespace) -> dict[str, Any]:
         ),
         "error_mode": args.error_mode,
         "readout_update_mode": args.readout_update_mode,
+        "readout_update_width_u": args.readout_update_width if args.readout_update_mode == "live" else None,
         "hidden_update_mode": args.hidden_update_mode,
         "hidden_credit_width_u": args.hidden_credit_width if args.hidden_update_mode != "none" else None,
         "hidden_credit_capacitance_f": args.hidden_credit_capacitance_f if args.hidden_update_mode != "none" else None,
@@ -3253,6 +3258,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
     ap.add_argument("--normalizer-error-clock-high", type=float, default=1.2)
     ap.add_argument("--error-mode", choices=ERROR_MODES, default="label-descent")
     ap.add_argument("--readout-update-mode", choices=READOUT_UPDATE_MODES, default="sampled")
+    ap.add_argument("--readout-update-width", type=float, default=0.5)
     ap.add_argument("--hidden-update-mode", choices=HIDDEN_UPDATE_MODES, default="none")
     ap.add_argument("--hidden-credit-width", type=float, default=8.0)
     ap.add_argument("--hidden-credit-capacitance-f", type=float, default=12.0)
@@ -3319,6 +3325,8 @@ def validate_args(args: argparse.Namespace) -> None:
         and args.error_mode not in ERROR_RAIL_DESCENT_MODES
     ):
         raise ValueError("live readout-update-mode requires label-descent or error-rail descent modes")
+    if args.readout_update_width <= 0.0:
+        raise ValueError("readout-update-width must be positive")
     if args.hidden_update_mode != "none" and args.error_mode not in ERROR_RAIL_DESCENT_MODES:
         raise ValueError("hidden-update-mode requires an error-rail descent mode")
     if args.class_bias_mode not in CLASS_BIAS_MODES:

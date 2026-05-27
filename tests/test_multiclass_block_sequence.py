@@ -603,6 +603,100 @@ def test_multiclass_block_sequence_summarizes_projection_alignment() -> None:
     assert stats["final_eval_signed_projection_alignment_rows"][1]["projection_prediction"] == 1
 
 
+def test_multiclass_block_sequence_summarizes_physical_readout_replay_alignment() -> None:
+    stats = seq.physical_readout_replay_alignment_stats(
+        [
+            {
+                "cycle": 3,
+                "sequence": "final_eval",
+                "label": 0,
+                "prediction": 0,
+                "score_margin_v": 0.2,
+                "score_c0_v": 0.30,
+                "score_c1_v": 0.10,
+            },
+            {
+                "cycle": 4,
+                "sequence": "final_eval",
+                "label": 1,
+                "prediction": 0,
+                "score_margin_v": -0.1,
+                "score_c0_v": 0.20,
+                "score_c1_v": 0.10,
+            },
+        ],
+        [
+            {
+                "cycle": 3,
+                "label": 0,
+                "prediction": 0,
+                "score_margin_v": 0.4,
+                "score_c0_v": 0.60,
+                "score_c1_v": 0.20,
+            },
+            {
+                "cycle": 4,
+                "label": 1,
+                "prediction": 1,
+                "score_margin_v": 0.1,
+                "score_c0_v": 0.10,
+                "score_c1_v": 0.20,
+            },
+        ],
+        class_count=2,
+    )
+
+    assert stats["final_eval_physical_readout_replay_prediction_agreement"] == pytest.approx(0.5)
+    assert stats["final_eval_physical_readout_replay_score_correlation_mean"] == pytest.approx(0.0)
+    assert stats["final_eval_physical_readout_replay_alignment_rows"][1]["physical_prediction"] == 0
+    assert stats["final_eval_physical_readout_replay_alignment_rows"][1]["replay_prediction"] == 1
+
+
+def test_multiclass_block_sequence_can_generate_physical_readout_replay() -> None:
+    netlist = seq.generate_physical_readout_replay_netlist(
+        activations=[0.85, 0.25],
+        positive_weights=[[0.52, 0.40], [0.40, 0.36]],
+        negative_weights=[[0.36, 0.40], [0.52, 0.40]],
+        readout_forward_mode="diode",
+    )
+
+    assert "\nB" not in netlist
+    assert "* Physical readout replay diagnostic." in netlist
+    assert "Vact0 act0 0 0.85" in netlist
+    assert "Cc0_vwp0 c0_vwp0 0 20f IC=0.52" in netlist
+    assert "Cc1_vwn0 c1_vwn0 0 20f IC=0.52" in netlist
+    assert "Mc0_f0_pos_cond actrow0 c0_vwp0 c0_f0_midp 0 NMOS W=64u L=180n" in netlist
+    assert "Mc0_f0_pos_diode c0_f0_midp c0_f0_midp c0_score 0 NSENSE W=64u L=180n" in netlist
+    assert ".meas tran c0_score FIND V(c0_score) AT=4.50n" in netlist
+    assert ".meas tran c1_score_net PARAM='c1_score-c1_scoren'" in netlist
+
+
+@pytest.mark.ngspice
+def test_multiclass_block_sequence_ngspice_physical_readout_replay_matches_weight_sign(
+    tmp_path: Path,
+    ngspice_path: str,
+) -> None:
+    netlist = seq.generate_physical_readout_replay_netlist(
+        activations=[0.85, 0.25],
+        positive_weights=[[0.54, 0.40], [0.36, 0.40]],
+        negative_weights=[[0.36, 0.40], [0.54, 0.40]],
+        readout_forward_mode="diode",
+        score_sense_mode="voltage",
+    )
+
+    measures = run_netlist(
+        ngspice_path,
+        tmp_path / "physical_readout_replay.cir",
+        netlist,
+        timeout=30.0,
+    )
+    scores = seq.physical_readout_replay_scores(measures, class_count=2)
+
+    assert scores[0] > 1.0e-3
+    assert scores[1] < -1.0e-3
+    assert int(np.argmax(scores)) == 0
+
+
 def test_multiclass_block_sequence_summarizes_readout_matrix_class_bias() -> None:
     stats = seq.readout_weight_matrix_stats(
         final_signed=[
@@ -1786,6 +1880,11 @@ def test_multiclass_block_sequence_validation() -> None:
         seq.main_for_test(["--readout-center-resistance", "-1"])
     with pytest.raises(ValueError, match="readout-center-voltage"):
         seq.main_for_test(["--readout-center-voltage", "1.3"])
+    replay_args = seq.main_for_test(["--physical-readout-replay", "--physical-readout-replay-timeout", "2"])
+    assert replay_args.physical_readout_replay is True
+    assert replay_args.physical_readout_replay_timeout == 2.0
+    with pytest.raises(ValueError, match="physical-readout-replay-timeout"):
+        seq.main_for_test(["--physical-readout-replay-timeout", "0"])
 
 
 def _residual_score_gate_netlist(score: float, scoren: float = 0.0) -> str:

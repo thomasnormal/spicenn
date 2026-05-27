@@ -2863,6 +2863,310 @@ def projection_alignment_stats(
     }
 
 
+def physical_readout_replay_alignment_stats(
+    physical_rows: list[dict[str, Any]],
+    replay_rows: list[dict[str, Any]],
+    *,
+    class_count: int,
+) -> dict[str, Any]:
+    physical_by_cycle = {
+        int(row["cycle"]): row
+        for row in physical_rows
+        if row.get("sequence") == "final_eval"
+    }
+    aligned: list[dict[str, Any]] = []
+    correlations: list[float] = []
+    for replay in replay_rows:
+        physical = physical_by_cycle.get(int(replay["cycle"]))
+        if physical is None:
+            continue
+        physical_scores = np.array(
+            [float(physical[f"score_c{class_idx}_v"]) for class_idx in range(class_count)],
+            dtype=float,
+        )
+        replay_scores = np.array(
+            [float(replay[f"score_c{class_idx}_v"]) for class_idx in range(class_count)],
+            dtype=float,
+        )
+        if float(np.std(physical_scores)) > 0.0 and float(np.std(replay_scores)) > 0.0:
+            correlations.append(float(np.corrcoef(physical_scores, replay_scores)[0, 1]))
+        prediction_agrees = int(physical["prediction"]) == int(replay["prediction"])
+        aligned.append(
+            {
+                "cycle": int(replay["cycle"]),
+                "label": int(replay["label"]),
+                "physical_prediction": int(physical["prediction"]),
+                "replay_prediction": int(replay["prediction"]),
+                "prediction_agrees": prediction_agrees,
+                "physical_margin_v": float(physical["score_margin_v"]),
+                "replay_margin_v": float(replay["score_margin_v"]),
+            }
+        )
+    if not aligned:
+        return {
+            "final_eval_physical_readout_replay_alignment_rows": [],
+            "final_eval_physical_readout_replay_prediction_agreement": None,
+            "final_eval_physical_readout_replay_score_correlation_mean": None,
+        }
+    return {
+        "final_eval_physical_readout_replay_alignment_rows": aligned,
+        "final_eval_physical_readout_replay_prediction_agreement": float(
+            np.mean([bool(row["prediction_agrees"]) for row in aligned])
+        ),
+        "final_eval_physical_readout_replay_score_correlation_mean": (
+            float(np.mean(correlations)) if correlations else None
+        ),
+    }
+
+
+def generate_physical_readout_replay_netlist(
+    *,
+    activations: list[float],
+    positive_weights: list[list[float]],
+    negative_weights: list[list[float]],
+    readout_width_u: float = 64.0,
+    score_capacitance_f: float = 10.0,
+    score_load_resistance: float = 1.0e6,
+    readout_forward_mode: str = "diode",
+    score_sense_mode: str = "voltage",
+    score_mirror_capacitance_f: float = 20.0,
+    score_mirror_diode_width_u: float = 64.0,
+    score_mirror_sink_width_u: float = 4.0,
+    score_mirror_reset_width_u: float = 16.0,
+    measure_ns: float = 4.5,
+) -> str:
+    """Replay a final readout state through the physical score topology.
+
+    This is a diagnostic deck: Python supplies already-measured activation
+    voltages and final weight capacitor ICs after training. It must not be used
+    to intervene between samples in a training transient.
+    """
+    class_count = len(positive_weights)
+    if class_count < 2:
+        raise ValueError("positive_weights must contain at least two classes")
+    if len(negative_weights) != class_count:
+        raise ValueError("positive_weights and negative_weights must have the same class count")
+    feature_count = len(activations)
+    if feature_count <= 0:
+        raise ValueError("activations must be nonempty")
+    if readout_forward_mode not in READOUT_FORWARD_MODES:
+        raise ValueError(f"readout_forward_mode must be one of {READOUT_FORWARD_MODES}")
+    if score_sense_mode not in SCORE_SENSE_MODES:
+        raise ValueError(f"score_sense_mode must be one of {SCORE_SENSE_MODES}")
+    for class_idx, (positive_row, negative_row) in enumerate(zip(positive_weights, negative_weights)):
+        if len(positive_row) != feature_count or len(negative_row) != feature_count:
+            raise ValueError(f"class {class_idx} weight rows must match activation count")
+        if min(*positive_row, *negative_row) < 0.0 or max(*positive_row, *negative_row) > 1.2:
+            raise ValueError("weight ICs must stay within supply rails")
+    if min(activations) < 0.0 or max(activations) > 1.2:
+        raise ValueError("activations must stay within supply rails")
+    for name, value in {
+        "readout_width_u": readout_width_u,
+        "score_capacitance_f": score_capacitance_f,
+        "score_load_resistance": score_load_resistance,
+        "score_mirror_capacitance_f": score_mirror_capacitance_f,
+        "score_mirror_diode_width_u": score_mirror_diode_width_u,
+        "score_mirror_sink_width_u": score_mirror_sink_width_u,
+        "score_mirror_reset_width_u": score_mirror_reset_width_u,
+        "measure_ns": measure_ns,
+    }.items():
+        if value <= 0.0:
+            raise ValueError(f"{name} must be positive")
+
+    lines = [
+        "* Physical readout replay diagnostic.",
+        "* Replays measured activation and final weight state through transistor/passive readout only.",
+        "* No behavioral sources and no training intervention.",
+        ".param VDD=1.2",
+        mos_models(),
+        ".options method=gear reltol=1e-3 abstol=1e-12 vntol=1e-6",
+        "Vdd vdd 0 {VDD}",
+        "Vrst rst 0 PULSE(0 1.2 0.0n 10p 10p 0.55n 20n)",
+        "Vrstn rstn 0 PULSE(1.2 0 0.0n 10p 10p 0.55n 20n)",
+        "Vfwd fwd 0 PULSE(0 1.2 1.0n 10p 10p 3.0n 20n)",
+        "Vfwdn fwdn 0 PULSE(1.2 0 1.0n 10p 10p 3.0n 20n)",
+    ]
+    for feature_idx, activation in enumerate(activations):
+        lines += [
+            f"Vact{feature_idx} act{feature_idx} 0 {activation:.12g}",
+            f"Cactrow{feature_idx} actrow{feature_idx} 0 1f IC=0",
+            f"Ractrow{feature_idx} actrow{feature_idx} 0 1e12",
+            f"Mactrow{feature_idx}_n actrow{feature_idx} fwd act{feature_idx} 0 NMOS W={max(1.0, readout_width_u / 4.0):.6g}u L=180n",
+            f"Mactrow{feature_idx}_p actrow{feature_idx} fwdn act{feature_idx} vdd PMOS W={max(2.0, readout_width_u / 2.0):.6g}u L=180n",
+            f"Mactrow{feature_idx}_rst actrow{feature_idx} rst 0 0 NMOS W=4u L=180n",
+        ]
+    for class_idx in range(class_count):
+        if score_sense_mode == "current-clamp":
+            lines += [
+                f"V{class_node(class_idx, 'score_clamp')} {class_node(class_idx, 'score')} 0 0.10",
+                f"V{class_node(class_idx, 'scoren_clamp')} {class_node(class_idx, 'scoren')} 0 0.10",
+            ]
+        else:
+            lines += [
+                f"C{class_node(class_idx, 'score')} {class_node(class_idx, 'score')} 0 {score_capacitance_f:.12g}f IC=0",
+                f"C{class_node(class_idx, 'scoren')} {class_node(class_idx, 'scoren')} 0 {score_capacitance_f:.12g}f IC=0",
+                f"R{class_node(class_idx, 'score')} {class_node(class_idx, 'score')} 0 {score_load_resistance:.12g}",
+                f"R{class_node(class_idx, 'scoren')} {class_node(class_idx, 'scoren')} 0 {score_load_resistance:.12g}",
+            ]
+        if score_sense_mode == "diode-mirror":
+            lines += [
+                f"M{class_node(class_idx, 'score_diode')} {class_node(class_idx, 'score')} {class_node(class_idx, 'score')} 0 0 NSENSE W={score_mirror_diode_width_u:.6g}u L=180n",
+                f"M{class_node(class_idx, 'scoren_diode')} {class_node(class_idx, 'scoren')} {class_node(class_idx, 'scoren')} 0 0 NSENSE W={score_mirror_diode_width_u:.6g}u L=180n",
+                f"C{class_node(class_idx, 'score_mirror')} {class_node(class_idx, 'score_mirror')} 0 {score_mirror_capacitance_f:.12g}f IC=1.2",
+                f"C{class_node(class_idx, 'scoren_mirror')} {class_node(class_idx, 'scoren_mirror')} 0 {score_mirror_capacitance_f:.12g}f IC=1.2",
+                f"R{class_node(class_idx, 'score_mirror')} {class_node(class_idx, 'score_mirror')} 0 1e12",
+                f"R{class_node(class_idx, 'scoren_mirror')} {class_node(class_idx, 'scoren_mirror')} 0 1e12",
+                f"M{class_node(class_idx, 'score_mirror_rst')} {class_node(class_idx, 'score_mirror')} rstn vdd vdd PMOS W={score_mirror_reset_width_u:.6g}u L=180n",
+                f"M{class_node(class_idx, 'scoren_mirror_rst')} {class_node(class_idx, 'scoren_mirror')} rstn vdd vdd PMOS W={score_mirror_reset_width_u:.6g}u L=180n",
+                f"M{class_node(class_idx, 'score_mirror_sink')} {class_node(class_idx, 'score_mirror')} {class_node(class_idx, 'score')} 0 0 NSENSE W={score_mirror_sink_width_u:.6g}u L=180n",
+                f"M{class_node(class_idx, 'scoren_mirror_sink')} {class_node(class_idx, 'scoren_mirror')} {class_node(class_idx, 'scoren')} 0 0 NSENSE W={score_mirror_sink_width_u:.6g}u L=180n",
+            ]
+        for feature_idx in range(feature_count):
+            lines += signed_store_lines(
+                positive_node=class_node(class_idx, f"vwp{feature_idx}"),
+                negative_node=class_node(class_idx, f"vwn{feature_idx}"),
+                positive_ic=positive_weights[class_idx][feature_idx],
+                negative_ic=negative_weights[class_idx][feature_idx],
+            )
+            lines += class_local_readout_forward_lines(
+                class_idx=class_idx,
+                feature_idx=feature_idx,
+                width_u=readout_width_u,
+                negative_width_u=0.75 * readout_width_u,
+                isolation=readout_forward_mode,
+            )
+    for class_idx in range(class_count):
+        if score_sense_mode == "current-clamp":
+            lines += [
+                f".meas tran c{class_idx}_score FIND I(V{class_node(class_idx, 'score_clamp')}) AT={measure_ns:.2f}n",
+                f".meas tran c{class_idx}_scoren FIND I(V{class_node(class_idx, 'scoren_clamp')}) AT={measure_ns:.2f}n",
+            ]
+        elif score_sense_mode == "diode-mirror":
+            lines += [
+                f".meas tran c{class_idx}_score FIND V({class_node(class_idx, 'score_mirror')}) AT={measure_ns:.2f}n",
+                f".meas tran c{class_idx}_scoren FIND V({class_node(class_idx, 'scoren_mirror')}) AT={measure_ns:.2f}n",
+            ]
+        else:
+            lines += [
+                f".meas tran c{class_idx}_score FIND V({class_node(class_idx, 'score')}) AT={measure_ns:.2f}n",
+                f".meas tran c{class_idx}_scoren FIND V({class_node(class_idx, 'scoren')}) AT={measure_ns:.2f}n",
+            ]
+        lines += [f".meas tran c{class_idx}_score_net PARAM='c{class_idx}_score-c{class_idx}_scoren'"]
+    lines += [
+        ".tran 5p 8n uic",
+        ".control",
+        "run",
+        "quit",
+        ".endc",
+        ".end",
+    ]
+    return "\n".join(lines) + "\n"
+
+
+def physical_readout_replay_scores(
+    measures: dict[str, float],
+    *,
+    class_count: int,
+    score_sense_mode: str = "voltage",
+) -> list[float]:
+    if score_sense_mode not in SCORE_SENSE_MODES:
+        raise ValueError(f"score_sense_mode must be one of {SCORE_SENSE_MODES}")
+    scores = []
+    for class_idx in range(class_count):
+        raw = float(measures[f"c{class_idx}_score"]) - float(measures[f"c{class_idx}_scoren"])
+        scores.append(-raw if score_sense_mode == "diode-mirror" else raw)
+    return scores
+
+
+def physical_readout_replay_projection_stats(
+    measures: dict[str, float],
+    *,
+    labels: list[int],
+    sequence: list[str],
+    class_count: int,
+    total_feature_count: int,
+    final_positive: list[list[float]],
+    final_negative: list[list[float]],
+    spice_bin: str,
+    generated_dir: Any,
+    tag: str,
+    readout_width_u: float,
+    score_capacitance_f: float,
+    score_load_resistance: float,
+    readout_forward_mode: str,
+    score_sense_mode: str,
+    score_mirror_capacitance_f: float,
+    score_mirror_diode_width_u: float,
+    score_mirror_sink_width_u: float,
+    score_mirror_reset_width_u: float,
+    timeout: float,
+) -> dict[str, Any]:
+    """Run post-training final-weight readout replay decks for final eval rows.
+
+    This is intentionally separated from training. It diagnoses whether final
+    measured capacitor state, when replayed through the same transistor readout
+    topology, explains the physical score rows seen in the continuous deck.
+    """
+    rows: list[dict[str, Any]] = []
+    for cycle, seq in enumerate(sequence):
+        if seq != "final_eval":
+            continue
+        keys = [f"act_f{feature}_{cycle}" for feature in range(total_feature_count)]
+        if not all(key in measures for key in keys):
+            continue
+        activations = [float(measures[key]) for key in keys]
+        replay_deck = generate_physical_readout_replay_netlist(
+            activations=activations,
+            positive_weights=final_positive,
+            negative_weights=final_negative,
+            readout_width_u=readout_width_u,
+            score_capacitance_f=score_capacitance_f,
+            score_load_resistance=score_load_resistance,
+            readout_forward_mode=readout_forward_mode,
+            score_sense_mode=score_sense_mode,
+            score_mirror_capacitance_f=score_mirror_capacitance_f,
+            score_mirror_diode_width_u=score_mirror_diode_width_u,
+            score_mirror_sink_width_u=score_mirror_sink_width_u,
+            score_mirror_reset_width_u=score_mirror_reset_width_u,
+        )
+        replay_measures = run_netlist(
+            spice_bin,
+            generated_dir / f"{tag}_physical_readout_replay_cycle{cycle}.cir",
+            replay_deck,
+            timeout=timeout,
+        )
+        scores = physical_readout_replay_scores(
+            replay_measures,
+            class_count=class_count,
+            score_sense_mode=score_sense_mode,
+        )
+        label = int(labels[cycle])
+        prediction = int(np.argmax(scores))
+        margin = float(scores[label] - max(score for idx, score in enumerate(scores) if idx != label))
+        rows.append(
+            {
+                "cycle": cycle,
+                "label": label,
+                "prediction": prediction,
+                "correct": prediction == label,
+                "score_margin_v": margin,
+                **{f"score_c{class_idx}_v": float(scores[class_idx]) for class_idx in range(class_count)},
+            }
+        )
+    if not rows:
+        return {
+            "final_eval_physical_readout_replay_rows": [],
+            "final_eval_physical_readout_replay_accuracy": None,
+            "final_eval_physical_readout_replay_min_margin_v": None,
+        }
+    margins = [float(row["score_margin_v"]) for row in rows]
+    return {
+        "final_eval_physical_readout_replay_rows": rows,
+        "final_eval_physical_readout_replay_accuracy": float(np.mean([bool(row["correct"]) for row in rows])),
+        "final_eval_physical_readout_replay_min_margin_v": float(np.min(margins)),
+    }
+
+
 def readout_weight_matrix_stats(
     *,
     final_signed: list[list[float]],
@@ -3554,6 +3858,36 @@ def run_case(args: argparse.Namespace) -> dict[str, Any]:
         final_positive=final_positive,
         final_negative=final_negative,
     )
+    physical_replay = (
+        physical_readout_replay_projection_stats(
+            measures,
+            labels=labels,
+            sequence=sequence,
+            class_count=args.class_count,
+            total_feature_count=total_feature_count,
+            final_positive=final_positive,
+            final_negative=final_negative,
+            spice_bin=spice_bin,
+            generated_dir=generated,
+            tag=tag,
+            readout_width_u=args.readout_width,
+            score_capacitance_f=args.score_capacitance_f,
+            score_load_resistance=args.score_load_resistance,
+            readout_forward_mode=args.readout_forward_mode,
+            score_sense_mode=args.score_sense_mode,
+            score_mirror_capacitance_f=args.score_mirror_capacitance_f,
+            score_mirror_diode_width_u=args.score_mirror_diode_width,
+            score_mirror_sink_width_u=args.score_mirror_sink_width,
+            score_mirror_reset_width_u=args.score_mirror_reset_width,
+            timeout=args.physical_readout_replay_timeout,
+        )
+        if args.physical_readout_replay
+        else {
+            "final_eval_physical_readout_replay_rows": [],
+            "final_eval_physical_readout_replay_accuracy": None,
+            "final_eval_physical_readout_replay_min_margin_v": None,
+        }
+    )
     csv_path = tables / f"{tag}.csv"
     with csv_path.open("w", newline="") as f:
         writer = csv.DictWriter(
@@ -3770,6 +4104,13 @@ def run_case(args: argparse.Namespace) -> dict[str, Any]:
             class_count=args.class_count,
             prefix="conductance_projection",
         ),
+        "physical_readout_replay_enabled": args.physical_readout_replay,
+        **physical_replay,
+        **physical_readout_replay_alignment_stats(
+            rows,
+            physical_replay["final_eval_physical_readout_replay_rows"],
+            class_count=args.class_count,
+        ),
         **activation_prototype_projection_stats(
             measures,
             labels=labels,
@@ -3885,6 +4226,8 @@ def build_arg_parser() -> argparse.ArgumentParser:
     ap.add_argument("--class-bias-input", type=float, default=0.85)
     ap.add_argument("--readout-center-resistance", type=float, default=0.0)
     ap.add_argument("--readout-center-voltage", type=float, default=0.40)
+    ap.add_argument("--physical-readout-replay", action="store_true")
+    ap.add_argument("--physical-readout-replay-timeout", type=float, default=30.0)
     ap.add_argument("--min-target-signed", type=float, default=10e-3)
     return ap
 
@@ -3892,6 +4235,8 @@ def build_arg_parser() -> argparse.ArgumentParser:
 def validate_args(args: argparse.Namespace) -> None:
     if args.timeout <= 0.0:
         raise ValueError("timeout must be positive")
+    if args.physical_readout_replay_timeout <= 0.0:
+        raise ValueError("physical-readout-replay-timeout must be positive")
     if args.class_count < 2:
         raise ValueError("class-count must be at least 2")
     if args.feature_count <= 0:

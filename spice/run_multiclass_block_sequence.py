@@ -52,7 +52,7 @@ CLASS_BIAS_MODES = ("none", "target-only", "label-descent")
 READOUT_UPDATE_MODES = ("sampled", "live")
 HIDDEN_UPDATE_MODES = ("none", "readout-weighted")
 SCORE_TIMING_MODES = ("late", "early")
-SCORE_SENSE_MODES = ("voltage", "current-clamp")
+SCORE_SENSE_MODES = ("voltage", "current-clamp", "diode-mirror")
 READOUT_FORWARD_MODES = ("direct", "diode")
 ELIGIBILITY_GATE_MODES = ("raw", "competition", "rank", "contrast")
 ERROR_MODES = (
@@ -862,6 +862,10 @@ def generate_netlist(
     readout_width_u: float = 64.0,
     score_capacitance_f: float = 10.0,
     score_load_resistance: float = 1e6,
+    score_mirror_capacitance_f: float = 20.0,
+    score_mirror_diode_width_u: float = 64.0,
+    score_mirror_sink_width_u: float = 4.0,
+    score_mirror_reset_width_u: float = 16.0,
     score_measure_ns: float = 8.5,
     initial_positive: float = 0.40,
     initial_negative: float = 0.40,
@@ -903,6 +907,10 @@ def generate_netlist(
         "readout_width_u": readout_width_u,
         "score_capacitance_f": score_capacitance_f,
         "score_load_resistance": score_load_resistance,
+        "score_mirror_capacitance_f": score_mirror_capacitance_f,
+        "score_mirror_diode_width_u": score_mirror_diode_width_u,
+        "score_mirror_sink_width_u": score_mirror_sink_width_u,
+        "score_mirror_reset_width_u": score_mirror_reset_width_u,
         "score_measure_ns": score_measure_ns,
         "initial_positive": initial_positive,
         "initial_negative": initial_negative,
@@ -944,8 +952,11 @@ def generate_netlist(
         raise ValueError(f"readout_forward_mode must be one of {READOUT_FORWARD_MODES}")
     if eligibility_gate_mode not in ELIGIBILITY_GATE_MODES:
         raise ValueError(f"eligibility_gate_mode must be one of {ELIGIBILITY_GATE_MODES}")
-    if score_sense_mode == "current-clamp" and error_mode != "label-descent":
-        raise ValueError("current-clamp score_sense_mode is only a label-descent readout diagnostic")
+    if score_sense_mode in ("current-clamp", "diode-mirror") and error_mode not in {
+        "label-descent",
+        "label-rail-descent",
+    }:
+        raise ValueError("current-clamp/diode-mirror score_sense_mode is only a label-derived readout diagnostic")
     if hidden_update_mode != "none" and error_mode not in ERROR_RAIL_DESCENT_MODES:
         raise ValueError("hidden_update_mode requires an error-rail descent mode")
     if class_bias_mode not in CLASS_BIAS_MODES:
@@ -1133,6 +1144,11 @@ def generate_netlist(
         "Vvwhi_ref vwhi_ref 0 0.42",
         "Vvwlo_ref vwlo_ref 0 0.28",
         f"Vrst rst 0 {periodic_phase_pwl(cycle_count, start_ns=0.2, end_ns=1.0)}",
+        *(
+            [f"Vrstn rstn 0 {active_low_phase_pwl(cycle_count, start_ns=0.2, end_ns=1.0, active_cycles=set(range(cycle_count)))}"]
+            if score_sense_mode == "diode-mirror"
+            else []
+        ),
         f"Vsamp samp 0 {periodic_phase_pwl(cycle_count, start_ns=2.5, end_ns=3.5)}",
         f"Vsampn sampn 0 {active_low_phase_pwl(cycle_count, start_ns=2.5, end_ns=3.5, active_cycles=set(range(cycle_count)))}",
         *(
@@ -1323,6 +1339,29 @@ def generate_netlist(
             lines += [
                 f"V{class_node(class_idx, 'score_clamp')} {class_node(class_idx, 'score')} 0 0",
                 f"V{class_node(class_idx, 'scoren_clamp')} {class_node(class_idx, 'scoren')} 0 0",
+            ]
+        elif score_sense_mode == "diode-mirror":
+            score = class_node(class_idx, "score")
+            scoren = class_node(class_idx, "scoren")
+            score_mirror = class_node(class_idx, "score_mirror")
+            scoren_mirror = class_node(class_idx, "scoren_mirror")
+            lines += [
+                f"C{score} {score} 0 {score_capacitance_f:.12g}f IC=0",
+                f"C{scoren} {scoren} 0 {score_capacitance_f:.12g}f IC=0",
+                f"R{score} {score} 0 1e12",
+                f"R{scoren} {scoren} 0 1e12",
+                f"M{score}_diode {score} {score} 0 0 NSENSE W={score_mirror_diode_width_u:.6g}u L=180n",
+                f"M{scoren}_diode {scoren} {scoren} 0 0 NSENSE W={score_mirror_diode_width_u:.6g}u L=180n",
+                f"Mreset_{score} {score} rst 0 0 NMOS W=4u L=180n",
+                f"Mreset_{scoren} {scoren} rst 0 0 NMOS W=4u L=180n",
+                f"C{score_mirror} {score_mirror} 0 {score_mirror_capacitance_f:.12g}f IC=1.2",
+                f"C{scoren_mirror} {scoren_mirror} 0 {score_mirror_capacitance_f:.12g}f IC=1.2",
+                f"R{score_mirror} {score_mirror} 0 1e12",
+                f"R{scoren_mirror} {scoren_mirror} 0 1e12",
+                f"M{score_mirror}_rst {score_mirror} rstn vdd vdd PMOS W={score_mirror_reset_width_u:.6g}u L=180n",
+                f"M{scoren_mirror}_rst {scoren_mirror} rstn vdd vdd PMOS W={score_mirror_reset_width_u:.6g}u L=180n",
+                f"M{score_mirror}_sink {score_mirror} {score} 0 0 NSENSE W={score_mirror_sink_width_u:.6g}u L=180n",
+                f"M{scoren_mirror}_sink {scoren_mirror} {scoren} 0 0 NSENSE W={score_mirror_sink_width_u:.6g}u L=180n",
             ]
         else:
             lines += [
@@ -1874,6 +1913,14 @@ def generate_netlist(
                 lines += [
                     f".meas tran c{class_idx}_score_{cycle} FIND I(V{class_node(class_idx, 'score_clamp')}) AT={base + score_measure_ns:.2f}n",
                     f".meas tran c{class_idx}_scoren_{cycle} FIND I(V{class_node(class_idx, 'scoren_clamp')}) AT={base + score_measure_ns:.2f}n",
+                    f".meas tran c{class_idx}_score_net_{cycle} PARAM='c{class_idx}_score_{cycle}-c{class_idx}_scoren_{cycle}'",
+                ]
+            elif score_sense_mode == "diode-mirror":
+                lines += [
+                    f".meas tran c{class_idx}_score_mirror_{cycle} FIND V({class_node(class_idx, 'score_mirror')}) AT={base + score_measure_ns:.2f}n",
+                    f".meas tran c{class_idx}_scoren_mirror_{cycle} FIND V({class_node(class_idx, 'scoren_mirror')}) AT={base + score_measure_ns:.2f}n",
+                    f".meas tran c{class_idx}_score_{cycle} PARAM='1.2-c{class_idx}_score_mirror_{cycle}'",
+                    f".meas tran c{class_idx}_scoren_{cycle} PARAM='1.2-c{class_idx}_scoren_mirror_{cycle}'",
                     f".meas tran c{class_idx}_score_net_{cycle} PARAM='c{class_idx}_score_{cycle}-c{class_idx}_scoren_{cycle}'",
                 ]
             else:
@@ -2428,6 +2475,10 @@ def run_case(args: argparse.Namespace) -> dict[str, Any]:
         readout_width_u=args.readout_width,
         score_capacitance_f=args.score_capacitance_f,
         score_load_resistance=args.score_load_resistance,
+        score_mirror_capacitance_f=args.score_mirror_capacitance_f,
+        score_mirror_diode_width_u=args.score_mirror_diode_width,
+        score_mirror_sink_width_u=args.score_mirror_sink_width,
+        score_mirror_reset_width_u=args.score_mirror_reset_width,
         score_measure_ns=args.score_measure_ns,
         initial_positive=args.initial_positive,
         initial_negative=args.initial_negative,
@@ -2523,6 +2574,18 @@ def run_case(args: argparse.Namespace) -> dict[str, Any]:
         "readout_width_u": args.readout_width,
         "score_capacitance_f": args.score_capacitance_f,
         "score_load_resistance_ohm": args.score_load_resistance,
+        "score_mirror_capacitance_f": (
+            args.score_mirror_capacitance_f if args.score_sense_mode == "diode-mirror" else None
+        ),
+        "score_mirror_diode_width_u": (
+            args.score_mirror_diode_width if args.score_sense_mode == "diode-mirror" else None
+        ),
+        "score_mirror_sink_width_u": (
+            args.score_mirror_sink_width if args.score_sense_mode == "diode-mirror" else None
+        ),
+        "score_mirror_reset_width_u": (
+            args.score_mirror_reset_width if args.score_sense_mode == "diode-mirror" else None
+        ),
         "score_measure_ns": args.score_measure_ns,
         "nontarget_scale": args.nontarget_scale,
         "nontarget_width_scale": args.nontarget_width_scale,
@@ -2650,6 +2713,10 @@ def build_arg_parser() -> argparse.ArgumentParser:
     ap.add_argument("--readout-width", type=float, default=64.0)
     ap.add_argument("--score-capacitance-f", type=float, default=10.0)
     ap.add_argument("--score-load-resistance", type=float, default=1e6)
+    ap.add_argument("--score-mirror-capacitance-f", type=float, default=20.0)
+    ap.add_argument("--score-mirror-diode-width", type=float, default=64.0)
+    ap.add_argument("--score-mirror-sink-width", type=float, default=4.0)
+    ap.add_argument("--score-mirror-reset-width", type=float, default=16.0)
     ap.add_argument("--score-measure-ns", type=float, default=8.5)
     ap.add_argument("--initial-positive", type=float, default=0.40)
     ap.add_argument("--initial-negative", type=float, default=0.40)
@@ -2701,8 +2768,11 @@ def validate_args(args: argparse.Namespace) -> None:
         raise ValueError(f"score-sense-mode must be one of {SCORE_SENSE_MODES}")
     if args.readout_forward_mode not in READOUT_FORWARD_MODES:
         raise ValueError(f"readout-forward-mode must be one of {READOUT_FORWARD_MODES}")
-    if args.score_sense_mode == "current-clamp" and args.error_mode != "label-descent":
-        raise ValueError("current-clamp score-sense-mode is only a label-descent readout diagnostic")
+    if args.score_sense_mode in ("current-clamp", "diode-mirror") and args.error_mode not in {
+        "label-descent",
+        "label-rail-descent",
+    }:
+        raise ValueError("current-clamp/diode-mirror score-sense-mode is only a label-derived readout diagnostic")
     if (
         args.readout_update_mode == "live"
         and args.error_mode != "label-descent"
@@ -2735,6 +2805,14 @@ def validate_args(args: argparse.Namespace) -> None:
         raise ValueError("score-capacitance-f must be positive")
     if args.score_load_resistance <= 0.0:
         raise ValueError("score-load-resistance must be positive")
+    if args.score_mirror_capacitance_f <= 0.0:
+        raise ValueError("score-mirror-capacitance-f must be positive")
+    if args.score_mirror_diode_width <= 0.0:
+        raise ValueError("score-mirror-diode-width must be positive")
+    if args.score_mirror_sink_width <= 0.0:
+        raise ValueError("score-mirror-sink-width must be positive")
+    if args.score_mirror_reset_width <= 0.0:
+        raise ValueError("score-mirror-reset-width must be positive")
     if args.score_measure_ns <= 0.0 or args.score_measure_ns >= CYCLE_NS:
         raise ValueError("score-measure-ns must stay inside the cycle")
     if args.nontarget_scale < 0.0 or args.nontarget_scale > 1.0:

@@ -41,6 +41,12 @@ def test_conductance_readout_primitive_validation() -> None:
         readout.generate_sum_netlist(sum_case="single_positive", readout_negative_width_scale=0.0)
     with pytest.raises(ValueError, match="current_clamp_voltage"):
         readout.generate_sum_netlist(sum_case="single_positive", sense_mode="current-clamp", current_clamp_voltage=0.0)
+    with pytest.raises(ValueError, match="score_mirror_capacitance_f"):
+        readout.generate_sum_netlist(
+            sum_case="single_positive",
+            sense_mode="diode-mirror",
+            score_mirror_capacitance_f=0.0,
+        )
     with pytest.raises(ValueError, match="decision_pullup_width"):
         readout.generate_sum_netlist(sum_case="single_positive", include_decision=True, decision_pullup_width=0.0)
     with pytest.raises(ValueError, match="bias_width"):
@@ -135,6 +141,23 @@ def test_conductance_readout_sum_primitive_emits_current_clamp_probe() -> None:
     assert "Rscore score" not in netlist
     assert "Movneg0_cond actrow0 vwn0 midn0 0 NMOS W=64u L=180n" in netlist
     assert ".meas tran score_current_margin PARAM='score_current-scoren_current'" in netlist
+
+
+def test_conductance_readout_sum_primitive_emits_diode_mirror_sensor() -> None:
+    netlist = readout.generate_sum_netlist(
+        sum_case="single_positive",
+        isolation="diode",
+        sense_mode="diode-mirror",
+        readout_negative_width_scale=1.0,
+    )
+
+    assert "\nB" not in netlist
+    assert "Mscore_diode score score 0 0 NSENSE W=64u L=180n" in netlist
+    assert "Cscore_mirror score_mirror 0 20f IC=1.2" in netlist
+    assert "Vrstn rstn 0 PULSE(1.2 0 0.0n 10p 10p 0.55n 20n)" in netlist
+    assert "Mscore_mirror_rst score_mirror rstn vdd vdd PMOS W=16u L=180n" in netlist
+    assert "Mscore_mirror_sink score_mirror score 0 0 NSENSE W=4u L=180n" in netlist
+    assert ".meas tran score_margin PARAM='scoren_mirror_after-score_mirror_after'" in netlist
 
 
 def test_conductance_readout_sum_primitive_ngspice_direct_floating_is_not_additive(
@@ -350,6 +373,67 @@ def test_conductance_readout_sum_primitive_ngspice_current_clamp_cancels_mixed_s
 
     assert abs(float(mixed["score_current_margin"])) < 0.01 * float(single["score_current_margin"])
     assert float(mixed["score_current_common"]) > 1e-7
+
+
+def test_conductance_readout_sum_primitive_ngspice_diode_mirror_is_additive(
+    tmp_path: Path,
+    ngspice_path: str,
+) -> None:
+    single = _run_sum_case(
+        tmp_path,
+        ngspice_path,
+        "single_positive",
+        isolation="diode",
+        sense_mode="diode-mirror",
+        readout_negative_width_scale=1.0,
+    )
+    double = _run_sum_case(
+        tmp_path,
+        ngspice_path,
+        "two_positive",
+        isolation="diode",
+        sense_mode="diode-mirror",
+        readout_negative_width_scale=1.0,
+    )
+    inactive_extra = _run_sum_case(
+        tmp_path,
+        ngspice_path,
+        "inactive_extra",
+        isolation="diode",
+        sense_mode="diode-mirror",
+        readout_negative_width_scale=1.0,
+    )
+
+    single_margin = float(single["score_margin"])
+    double_margin = float(double["score_margin"])
+    assert single_margin > 0.015
+    assert 1.45 * single_margin < double_margin < 1.65 * single_margin
+    assert abs(float(inactive_extra["score_margin"]) - single_margin) < 0.10 * single_margin
+
+
+def test_conductance_readout_sum_primitive_ngspice_diode_mirror_cancels_mixed_signs(
+    tmp_path: Path,
+    ngspice_path: str,
+) -> None:
+    single = _run_sum_case(
+        tmp_path,
+        ngspice_path,
+        "single_positive",
+        isolation="diode",
+        sense_mode="diode-mirror",
+        readout_negative_width_scale=1.0,
+    )
+    mixed = _run_sum_case(
+        tmp_path,
+        ngspice_path,
+        "mixed_cancel",
+        isolation="diode",
+        sense_mode="diode-mirror",
+        readout_negative_width_scale=1.0,
+    )
+
+    assert abs(float(mixed["score_margin"])) < 0.10 * float(single["score_margin"])
+    assert float(mixed["score_common"]) > 0.015
 
 
 def test_conductance_readout_sum_primitive_ngspice_conductance_bias_shifts_score_without_erasing_delta(

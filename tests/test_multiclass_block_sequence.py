@@ -830,6 +830,28 @@ def test_multiclass_block_sequence_can_use_current_clamp_score_diagnostic() -> N
     assert ".meas tran c0_score_net_0 PARAM='c0_score_0-c0_scoren_0'" in netlist
 
 
+def test_multiclass_block_sequence_can_use_diode_mirror_score_sensor() -> None:
+    netlist = seq.generate_netlist(
+        train_records=_target0_two_feature_records(1),
+        eval_records=_target0_two_feature_records(1),
+        feature_count=2,
+        readout_update_mode="live",
+        error_mode="label-rail-descent",
+        score_sense_mode="diode-mirror",
+    )
+
+    assert "\nB" not in netlist
+    assert "Vrstn rstn 0 PWL(" in netlist
+    assert "Mc0_score_diode c0_score c0_score 0 0 NSENSE W=64u L=180n" in netlist
+    assert "Cc0_score_mirror c0_score_mirror 0 20f IC=1.2" in netlist
+    assert "Mc0_score_mirror_rst c0_score_mirror rstn vdd vdd PMOS W=16u L=180n" in netlist
+    assert "Mc0_score_mirror_sink c0_score_mirror c0_score 0 0 NSENSE W=4u L=180n" in netlist
+    assert "Vc0_score_clamp" not in netlist
+    assert ".meas tran c0_score_mirror_0 FIND V(c0_score_mirror)" in netlist
+    assert ".meas tran c0_score_0 PARAM='1.2-c0_score_mirror_0'" in netlist
+    assert ".meas tran c0_score_net_0 PARAM='c0_score_0-c0_scoren_0'" in netlist
+
+
 def test_multiclass_block_sequence_can_diode_isolate_readout_forward_path() -> None:
     netlist = seq.generate_netlist(
         train_records=_target0_two_feature_records(1),
@@ -1960,6 +1982,41 @@ def test_multiclass_block_sequence_ngspice_label_rail_descent_live_writer(
     assert float(measures["c1_f1_signed_final"]) > 100e-3
     assert float(measures["c0_f1_signed_final"]) < -100e-3
     assert float(measures["c1_f0_signed_final"]) < -100e-3
+
+
+def test_multiclass_block_sequence_ngspice_diode_mirror_score_sensor_reads_live_state(
+    tmp_path: Path,
+    ngspice_path: str,
+) -> None:
+    records = _two_class_one_hot_records()
+    measures = run_netlist(
+        ngspice_path,
+        tmp_path / "multiclass_block_sequence_diode_mirror_score.cir",
+        seq.generate_netlist(
+            train_records=records,
+            eval_records=records,
+            class_count=2,
+            feature_count=2,
+            readout_update_mode="live",
+            hidden_update_mode="readout-weighted",
+            error_mode="label-rail-descent",
+            score_sense_mode="diode-mirror",
+            score_timing_mode="early",
+            score_measure_ns=5.30,
+            readout_forward_mode="diode",
+        ),
+        timeout=60.0,
+    )
+
+    final_predictions = [
+        int(np.argmax([float(measures[f"c{class_idx}_score_net_{cycle}"]) for class_idx in range(2)]))
+        for cycle in range(4, 6)
+    ]
+    assert final_predictions == [0, 1]
+    assert float(measures["c0_score_net_4"]) > float(measures["c1_score_net_4"]) + 1e-3
+    assert float(measures["c1_score_net_5"]) > float(measures["c0_score_net_5"]) + 1e-3
+    assert float(measures["c0_f0_signed_final"]) > 100e-3
+    assert float(measures["c1_f1_signed_final"]) > 100e-3
 
 
 def test_multiclass_block_sequence_ngspice_common_ref_gate_tracks_score_above_class_common(

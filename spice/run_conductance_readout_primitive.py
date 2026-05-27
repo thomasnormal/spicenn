@@ -14,7 +14,7 @@ from run_spice_sweep import ROOT, detect_spice
 READOUT_CASES = ("positive", "negative", "neutral", "inactive")
 SUM_CASES = ("single_positive", "two_positive", "mixed_cancel", "inactive_extra")
 SUM_ISOLATION_MODES = ("direct", "diode")
-SUM_SENSE_MODES = ("voltage", "current-clamp")
+SUM_SENSE_MODES = ("voltage", "current-clamp", "diode-mirror")
 
 
 def readout_values(case: str, *, positive_weight: float, negative_weight: float) -> tuple[float, float, float]:
@@ -113,6 +113,10 @@ def generate_sum_netlist(
     sense_mode: str = "voltage",
     current_clamp_voltage: float = 0.10,
     score_load_resistance: float = 1e9,
+    score_diode_width: float = 64.0,
+    score_mirror_capacitance_f: float = 20.0,
+    score_mirror_reset_width: float = 16.0,
+    score_mirror_sink_width: float = 4.0,
     include_decision: bool = False,
     decision_pullup_width: float = 8.0,
     decision_pulldown_width: float = 12.0,
@@ -135,6 +139,10 @@ def generate_sum_netlist(
         "score_capacitance": score_capacitance,
         "current_clamp_voltage": current_clamp_voltage,
         "score_load_resistance": score_load_resistance,
+        "score_diode_width": score_diode_width,
+        "score_mirror_capacitance_f": score_mirror_capacitance_f,
+        "score_mirror_reset_width": score_mirror_reset_width,
+        "score_mirror_sink_width": score_mirror_sink_width,
         "decision_pullup_width": decision_pullup_width,
         "decision_pulldown_width": decision_pulldown_width,
         "bias_width": bias_width,
@@ -151,6 +159,7 @@ def generate_sum_netlist(
         ".options method=gear reltol=1e-3 abstol=1e-12 vntol=1e-6",
         "Vdd vdd 0 {VDD}",
         "Vrst rst 0 PULSE(0 1.2 0.0n 10p 10p 0.55n 20n)",
+        "Vrstn rstn 0 PULSE(1.2 0 0.0n 10p 10p 0.55n 20n)",
         "Vfwd fwd 0 PULSE(0 1.2 1.0n 10p 10p 3.0n 20n)",
         "Vfwdn fwdn 0 PULSE(1.2 0 1.0n 10p 10p 3.0n 20n)",
     ]
@@ -160,6 +169,25 @@ def generate_sum_netlist(
             "* This diagnoses branch-current additivity; it is not the final on-chip sense circuit.",
             f"Vscore_clamp score 0 {current_clamp_voltage:.12g}",
             f"Vscoren_clamp scoren 0 {current_clamp_voltage:.12g}",
+        ]
+    elif sense_mode == "diode-mirror":
+        lines += [
+            "* Transistor/passive current-to-voltage score sensor.",
+            "* Diode-connected score nodes stay low; mirror capacitors discharge with score current.",
+            f"Cscore score 0 {score_capacitance:.12g} IC=0",
+            f"Cscoren scoren 0 {score_capacitance:.12g} IC=0",
+            "Rscore score 0 1e12",
+            "Rscoren scoren 0 1e12",
+            f"Mscore_diode score score 0 0 NSENSE W={score_diode_width:.6g}u L=180n",
+            f"Mscoren_diode scoren scoren 0 0 NSENSE W={score_diode_width:.6g}u L=180n",
+            f"Cscore_mirror score_mirror 0 {score_mirror_capacitance_f:.12g}f IC=1.2",
+            f"Cscoren_mirror scoren_mirror 0 {score_mirror_capacitance_f:.12g}f IC=1.2",
+            "Rscore_mirror score_mirror 0 1e12",
+            "Rscoren_mirror scoren_mirror 0 1e12",
+            f"Mscore_mirror_rst score_mirror rstn vdd vdd PMOS W={score_mirror_reset_width:.6g}u L=180n",
+            f"Mscoren_mirror_rst scoren_mirror rstn vdd vdd PMOS W={score_mirror_reset_width:.6g}u L=180n",
+            f"Mscore_mirror_sink score_mirror score 0 0 NSENSE W={score_mirror_sink_width:.6g}u L=180n",
+            f"Mscoren_mirror_sink scoren_mirror scoren 0 0 NSENSE W={score_mirror_sink_width:.6g}u L=180n",
         ]
     else:
         lines += [
@@ -234,6 +262,13 @@ def generate_sum_netlist(
             ".meas tran scoren_current FIND I(Vscoren_clamp) AT=4.5n",
             ".meas tran score_current_margin PARAM='score_current-scoren_current'",
             ".meas tran score_current_common PARAM='0.5*(score_current+scoren_current)'",
+        ]
+    elif sense_mode == "diode-mirror":
+        lines += [
+            ".meas tran score_mirror_after FIND V(score_mirror) AT=4.5n",
+            ".meas tran scoren_mirror_after FIND V(scoren_mirror) AT=4.5n",
+            ".meas tran score_margin PARAM='scoren_mirror_after-score_mirror_after'",
+            ".meas tran score_common PARAM='1.2-0.5*(score_mirror_after+scoren_mirror_after)'",
         ]
     else:
         lines += [

@@ -40,6 +40,7 @@ ERROR_MODES = (
     "residual-score-nontarget",
     "amplified-score-nontarget",
     "amplified-score-competitive",
+    "amplified-score-pairwise",
     "pairwise-binary-descent",
     "restored-score-binary-descent",
     "restored-score-nontarget",
@@ -153,6 +154,42 @@ def class_local_pairwise_binary_descent_gradient_lines(
             f"M{prefix}gvp_a vdd {activation_node} {prefix}gvp_a 0 NREL W={width_u:.6g}u L=180n",
             f"M{prefix}gvp_d {prefix}gvp_a {class_node(class_idx, 'targetp')} {prefix}gvp_d 0 NSENSE W={width_u:.6g}u L=180n",
             f"M{prefix}gvp_g {prefix}gvp_d acc {class_node(class_idx, f'gvp{feature_idx}')} 0 NREL W={width_u:.6g}u L=180n",
+        ]
+    return lines
+
+
+def class_local_pairwise_binary_descent_correction_lines(
+    *,
+    class_idx: int,
+    feature_idx: int,
+    activation_node: str,
+    losing_gate_nodes: list[str],
+    winning_gate_nodes: list[str],
+    pairwise_width_u: float = 16.0,
+) -> list[str]:
+    prefix = f"c{class_idx}_f{feature_idx}_"
+    lines: list[str] = []
+    for gate_idx, gate_node in enumerate(losing_gate_nodes):
+        lines += [
+            f"M{prefix}gvp_paircorr{gate_idx}_a vdd {activation_node} {prefix}gvp_paircorr{gate_idx}_a 0 NREL W={pairwise_width_u:.6g}u L=180n",
+            f"M{prefix}gvp_paircorr{gate_idx}_label {prefix}gvp_paircorr{gate_idx}_a {class_node(class_idx, 'targetp')} {prefix}gvp_paircorr{gate_idx}_label 0 NSENSE W={pairwise_width_u:.6g}u L=180n",
+            f"M{prefix}gvp_paircorr{gate_idx}_gate {prefix}gvp_paircorr{gate_idx}_label {gate_node} {prefix}gvp_paircorr{gate_idx}_gate 0 NSENSE W={pairwise_width_u:.6g}u L=180n",
+            f"M{prefix}gvp_paircorr{gate_idx}_g {prefix}gvp_paircorr{gate_idx}_gate acc {class_node(class_idx, f'gvp{feature_idx}')} 0 NREL W={pairwise_width_u:.6g}u L=180n",
+            f"M{prefix}rgp_paircorr{gate_idx}_a {class_node(class_idx, f'rgp{feature_idx}')} {activation_node} {prefix}rgp_paircorr{gate_idx}_a 0 NREL W={pairwise_width_u:.6g}u L=180n",
+            f"M{prefix}rgp_paircorr{gate_idx}_label {prefix}rgp_paircorr{gate_idx}_a {class_node(class_idx, 'targetp')} {prefix}rgp_paircorr{gate_idx}_label 0 NSENSE W={pairwise_width_u:.6g}u L=180n",
+            f"M{prefix}rgp_paircorr{gate_idx}_gate {prefix}rgp_paircorr{gate_idx}_label {gate_node} {prefix}rgp_paircorr{gate_idx}_gate 0 NSENSE W={pairwise_width_u:.6g}u L=180n",
+            f"M{prefix}rgp_paircorr{gate_idx}_acc {prefix}rgp_paircorr{gate_idx}_gate acc 0 0 NREL W={pairwise_width_u:.6g}u L=180n",
+        ]
+    for gate_idx, gate_node in enumerate(winning_gate_nodes):
+        lines += [
+            f"M{prefix}gvn_paircorr{gate_idx}_a vdd {activation_node} {prefix}gvn_paircorr{gate_idx}_a 0 NREL W={pairwise_width_u:.6g}u L=180n",
+            f"M{prefix}gvn_paircorr{gate_idx}_label {prefix}gvn_paircorr{gate_idx}_a {class_node(class_idx, 'targetn')} {prefix}gvn_paircorr{gate_idx}_label 0 NSENSE W={pairwise_width_u:.6g}u L=180n",
+            f"M{prefix}gvn_paircorr{gate_idx}_gate {prefix}gvn_paircorr{gate_idx}_label {gate_node} {prefix}gvn_paircorr{gate_idx}_gate 0 NSENSE W={pairwise_width_u:.6g}u L=180n",
+            f"M{prefix}gvn_paircorr{gate_idx}_g {prefix}gvn_paircorr{gate_idx}_gate acc {class_node(class_idx, f'gvn{feature_idx}')} 0 NREL W={pairwise_width_u:.6g}u L=180n",
+            f"M{prefix}rgn_paircorr{gate_idx}_a {class_node(class_idx, f'rgn{feature_idx}')} {activation_node} {prefix}rgn_paircorr{gate_idx}_a 0 NREL W={pairwise_width_u:.6g}u L=180n",
+            f"M{prefix}rgn_paircorr{gate_idx}_label {prefix}rgn_paircorr{gate_idx}_a {class_node(class_idx, 'targetn')} {prefix}rgn_paircorr{gate_idx}_label 0 NSENSE W={pairwise_width_u:.6g}u L=180n",
+            f"M{prefix}rgn_paircorr{gate_idx}_gate {prefix}rgn_paircorr{gate_idx}_label {gate_node} {prefix}rgn_paircorr{gate_idx}_gate 0 NSENSE W={pairwise_width_u:.6g}u L=180n",
+            f"M{prefix}rgn_paircorr{gate_idx}_acc {prefix}rgn_paircorr{gate_idx}_gate acc 0 0 NREL W={pairwise_width_u:.6g}u L=180n",
         ]
     return lines
 
@@ -392,11 +429,14 @@ def generate_netlist(
     uses_residual_score = error_mode == "residual-score-nontarget"
     uses_amplified_score = error_mode == "amplified-score-nontarget"
     uses_amplified_competitive = error_mode == "amplified-score-competitive"
+    uses_amplified_pairwise = error_mode == "amplified-score-pairwise"
     uses_pairwise_binary = error_mode == "pairwise-binary-descent"
     uses_restored_binary = error_mode == "restored-score-binary-descent"
-    uses_score_preamp = uses_residual_score or uses_amplified_score or uses_amplified_competitive
+    uses_score_preamp = (
+        uses_residual_score or uses_amplified_score or uses_amplified_competitive or uses_amplified_pairwise
+    )
     uses_restored_winner = error_mode == "restored-winner-nontarget"
-    uses_pairwise_decisions = uses_restored_winner or uses_pairwise_binary
+    uses_pairwise_decisions = uses_restored_winner or uses_pairwise_binary or uses_amplified_pairwise
     uses_late_restored_gate = (
         uses_restored_score or uses_restored_binary or uses_pairwise_binary or uses_restored_winner or uses_score_preamp
     )
@@ -570,6 +610,28 @@ def generate_netlist(
                     own_score_gate_node=f"c{class_idx}_score_amp",
                     opponent_score_gate_nodes=[
                         f"c{opponent_idx}_score_amp"
+                        for opponent_idx in range(class_count)
+                        if opponent_idx != class_idx
+                    ],
+                )
+            elif uses_amplified_pairwise:
+                gradient_lines = class_local_residual_score_nontarget_gradient_lines(
+                    class_idx=class_idx,
+                    feature_idx=feature,
+                    activation_node=f"elig{feature}",
+                    score_gate_node=f"c{class_idx}_score_amp",
+                )
+                gradient_lines += class_local_pairwise_binary_descent_correction_lines(
+                    class_idx=class_idx,
+                    feature_idx=feature,
+                    activation_node=f"elig{feature}",
+                    losing_gate_nodes=[
+                        pairwise_decision_node(opponent_idx, class_idx)
+                        for opponent_idx in range(class_count)
+                        if opponent_idx != class_idx
+                    ],
+                    winning_gate_nodes=[
+                        pairwise_decision_node(class_idx, opponent_idx)
                         for opponent_idx in range(class_count)
                         if opponent_idx != class_idx
                     ],

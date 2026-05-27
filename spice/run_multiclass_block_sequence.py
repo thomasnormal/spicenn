@@ -57,6 +57,7 @@ READOUT_FORWARD_MODES = ("direct", "diode")
 ELIGIBILITY_GATE_MODES = ("raw", "competition", "rank", "contrast")
 ERROR_MODES = (
     "label-descent",
+    "label-rail-descent",
     "score-gated-nontarget",
     "residual-score-nontarget",
     "amplified-score-nontarget",
@@ -84,6 +85,7 @@ ERROR_MODES = (
 NORMALIZER_ERROR_MODES = tuple(f"normalizer-{approach}-descent" for approach in NORMALIZATION_APPROACHES)
 
 ERROR_RAIL_DESCENT_MODES = (
+    "label-rail-descent",
     "score-mass-descent",
     "common-score-mass-descent",
     "contrast-score-mass-descent",
@@ -105,6 +107,37 @@ def normalizer_error_approach(error_mode: str) -> str:
 
 def pairwise_decision_node(class_idx: int, opponent_idx: int) -> str:
     return f"c{class_idx}_gt_c{opponent_idx}_decision"
+
+
+def class_local_label_error_rail_lines(
+    *,
+    class_count: int,
+    error_clock_node: str = "scoreerr",
+    reset_node: str = "scoregaterst",
+    error_width_u: float = 32.0,
+    error_capacitance_f: float = 2.0,
+) -> list[str]:
+    if min(error_width_u, error_capacitance_f) <= 0.0:
+        raise ValueError("label error rail widths and capacitances must be positive")
+    lines: list[str] = []
+    for class_idx in range(class_count):
+        errp = class_node(class_idx, "errp")
+        errn = class_node(class_idx, "errn")
+        lines += [
+            f"C{errp} {errp} 0 {error_capacitance_f:.12g}f IC=0",
+            f"C{errn} {errn} 0 {error_capacitance_f:.12g}f IC=0",
+            f"R{errp} {errp} 0 1G",
+            f"R{errn} {errn} 0 1G",
+            f"Mreset_{errp} {errp} {reset_node} 0 0 NMOS W=4u L=180n",
+            f"Mreset_{errn} {errn} {reset_node} 0 0 NMOS W=4u L=180n",
+            f"R{errp}_label {errp}_label 0 1G",
+            f"M{errp}_label vdd {class_node(class_idx, 'targetp')} {errp}_label 0 NSENSE W={error_width_u:.6g}u L=180n",
+            f"M{errp}_clk {errp}_label {error_clock_node} {errp} 0 NSENSE W={error_width_u:.6g}u L=180n",
+            f"R{errn}_label {errn}_label 0 1G",
+            f"M{errn}_label vdd {class_node(class_idx, 'targetn')} {errn}_label 0 NSENSE W={error_width_u:.6g}u L=180n",
+            f"M{errn}_clk {errn}_label {error_clock_node} {errn} 0 NSENSE W={error_width_u:.6g}u L=180n",
+        ]
+    return lines
 
 
 def hidden_credit_node(feature_idx: int, suffix: str) -> str:
@@ -952,6 +985,7 @@ def generate_netlist(
     uses_pairwise_margin_correction = error_mode == "pairwise-margin-correction-descent"
     uses_normalizer_error = error_mode in NORMALIZER_ERROR_MODES
     uses_hidden_update = hidden_update_mode == "readout-weighted"
+    uses_label_rail_descent = error_mode == "label-rail-descent"
     normalizer_approach = normalizer_error_approach(error_mode) if uses_normalizer_error else None
     uses_score_common_gate = uses_common_ref_score or uses_raw_common_ref_score
     uses_score_common_gate_nodes = uses_score_common_gate or uses_common_score_mass or uses_common_score_mass_pairwise
@@ -1005,7 +1039,8 @@ def generate_netlist(
         or uses_normalizer_error
     )
     uses_score_error_clock = (
-        uses_score_mass
+        uses_label_rail_descent
+        or uses_score_mass
         or uses_common_score_mass
         or uses_contrast_score_mass
         or uses_low_gain_contrast_score_mass
@@ -1170,6 +1205,7 @@ def generate_netlist(
         or uses_pairwise_score_competition
         or uses_pairwise_margin_correction
         or uses_normalizer_error
+        or uses_label_rail_descent
     ):
         scoregaterst_start_ns = 0.2 if uses_live_writer else scorepre_start_ns
         scoregaterst_end_ns = 1.0 if uses_live_writer else scorepre_end_ns
@@ -1405,6 +1441,8 @@ def generate_netlist(
         )
     if uses_target_ref_score or uses_target_contrast_score_mass:
         lines += shared_label_score_reference_lines(class_count=class_count)
+    if uses_label_rail_descent:
+        lines += class_local_label_error_rail_lines(class_count=class_count)
     if uses_score_mass:
         lines += shared_score_mass_error_lines(
             class_count=class_count,
@@ -1620,6 +1658,14 @@ def generate_netlist(
                     activation_node=activation_node,
                     positive_gate_node=f"c{class_idx}_decision",
                     negative_gate_node=f"c{class_idx}_decisionn",
+                )
+            elif uses_label_rail_descent:
+                gradient_lines = class_local_error_rail_gradient_lines(
+                    class_idx=class_idx,
+                    feature_idx=feature,
+                    activation_node=activation_node,
+                    positive_error_node=class_node(class_idx, "errp"),
+                    negative_error_node=class_node(class_idx, "errn"),
                 )
             elif uses_score_mass:
                 gradient_lines = class_local_error_rail_gradient_lines(
@@ -1881,6 +1927,7 @@ def generate_netlist(
                 ]
             if (
                 uses_score_mass
+                or uses_label_rail_descent
                 or uses_common_score_mass
                 or uses_contrast_score_mass
                 or uses_low_gain_contrast_score_mass

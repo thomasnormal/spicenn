@@ -938,6 +938,36 @@ def test_multiclass_block_sequence_can_live_update_hidden_weights_from_readout_c
     assert ".meas tran whsigned_f0_final PARAM='whp_f0_final-whn_f0_final'" in netlist
 
 
+def test_multiclass_block_sequence_can_use_label_rail_descent_for_live_gradient_flow() -> None:
+    netlist = seq.generate_netlist(
+        train_records=_two_class_one_hot_records(),
+        eval_records=_two_class_one_hot_records(),
+        class_count=2,
+        feature_count=2,
+        readout_update_mode="live",
+        hidden_update_mode="readout-weighted",
+        error_mode="label-rail-descent",
+        score_timing_mode="early",
+    )
+
+    assert "\nB" not in netlist
+    assert "Vscoreerr scoreerr 0 PWL(" in netlist
+    assert "Vscoregaterst scoregaterst 0 PWL(" in netlist
+    assert "Cc0_errp c0_errp 0 2f IC=0" in netlist
+    assert "Cc0_errn c0_errn 0 2f IC=0" in netlist
+    assert "Mreset_c0_errp c0_errp scoregaterst 0 0 NMOS W=4u L=180n" in netlist
+    assert "Mc0_errp_label vdd c0_targetp c0_errp_label 0 NSENSE W=32u L=180n" in netlist
+    assert "Mc0_errp_clk c0_errp_label scoreerr c0_errp 0 NSENSE W=32u L=180n" in netlist
+    assert "Mc0_errn_label vdd c0_targetn c0_errn_label 0 NSENSE W=32u L=180n" in netlist
+    assert "Mc0_f0_live_pos_up_d c0_f0_live_pos_up c0_errp c0_vwp0 0 NSENSE W=0.5u L=180n" in netlist
+    assert "Mc0_f0_live_neg_up_d c0_f0_live_neg_up c0_errn c0_vwn0 0 NSENSE W=0.5u L=180n" in netlist
+    assert "Mh0_c0_hdp_pv_e vdd c0_errp h0_c0_pv_e 0 NSENSE W=8u L=180n" in netlist
+    assert "Mh0_c0_hdn_pv_w h0_c0_pn_e c0_vwn0 h0_c0_pn_w 0 NSENSE W=8u L=180n" in netlist
+    assert ".meas tran c0_errdiff_2 PARAM='c0_errp_2-c0_errn_2'" in netlist
+    assert "Vacc acc" not in netlist
+    assert "Vapply apply" not in netlist
+
+
 def test_multiclass_block_sequence_can_gate_nontarget_with_restored_winner() -> None:
     netlist = seq.generate_netlist(
         train_records=_target0_records(1),
@@ -1871,6 +1901,50 @@ def test_multiclass_block_sequence_ngspice_live_error_rails_reset_before_eval_wr
         timeout=60.0,
     )
 
+    final_predictions = [
+        int(np.argmax([float(measures[f"c{class_idx}_score_net_{cycle}"]) for class_idx in range(2)]))
+        for cycle in range(4, 6)
+    ]
+    assert final_predictions == [0, 1]
+    for class_idx in range(2):
+        for feature in range(2):
+            assert float(measures[f"c{class_idx}_f{feature}_signed_final"]) == pytest.approx(
+                float(measures[f"c{class_idx}_f{feature}_signed_after_train2"]),
+                abs=2e-6,
+            )
+    assert float(measures["c0_f0_signed_final"]) > 100e-3
+    assert float(measures["c1_f1_signed_final"]) > 100e-3
+    assert float(measures["c0_f1_signed_final"]) < -100e-3
+    assert float(measures["c1_f0_signed_final"]) < -100e-3
+
+
+def test_multiclass_block_sequence_ngspice_label_rail_descent_live_writer(
+    tmp_path: Path,
+    ngspice_path: str,
+) -> None:
+    records = _two_class_one_hot_records()
+    measures = run_netlist(
+        ngspice_path,
+        tmp_path / "multiclass_block_sequence_label_rail_hidden.cir",
+        seq.generate_netlist(
+            train_records=records,
+            eval_records=records,
+            class_count=2,
+            feature_count=2,
+            readout_update_mode="live",
+            hidden_update_mode="readout-weighted",
+            error_mode="label-rail-descent",
+            score_timing_mode="early",
+            score_measure_ns=5.05,
+            readout_forward_mode="diode",
+        ),
+        timeout=60.0,
+    )
+
+    assert float(measures["c0_errdiff_2"]) > 1.0
+    assert float(measures["c1_errdiff_2"]) < -1.0
+    assert float(measures["c0_errdiff_3"]) < -1.0
+    assert float(measures["c1_errdiff_3"]) > 1.0
     final_predictions = [
         int(np.argmax([float(measures[f"c{class_idx}_score_net_{cycle}"]) for class_idx in range(2)]))
         for cycle in range(4, 6)

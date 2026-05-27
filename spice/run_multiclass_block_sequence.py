@@ -2680,12 +2680,101 @@ def readout_weight_matrix_stats(
     signed_features = signed[:, :feature_count]
     common_features = 0.5 * (positive[:, :feature_count] + negative[:, :feature_count])
     signed_class_means = np.mean(signed_features, axis=1)
+    signed_centered_features = signed_features - signed_class_means[:, None]
+    signed_centered_abs = np.abs(signed_centered_features)
     common_class_means = np.mean(common_features, axis=1)
+    signed_class_mean_spread = float(np.max(signed_class_means) - np.min(signed_class_means))
+    signed_centered_abs_mean = float(np.mean(signed_centered_abs))
     return {
         "final_readout_signed_feature_class_means_v": [float(value) for value in signed_class_means],
-        "final_readout_signed_feature_class_mean_spread_v": float(np.max(signed_class_means) - np.min(signed_class_means)),
+        "final_readout_signed_feature_class_mean_spread_v": signed_class_mean_spread,
+        "final_readout_signed_feature_centered_abs_mean_v": signed_centered_abs_mean,
+        "final_readout_signed_feature_centered_abs_max_v": float(np.max(signed_centered_abs)),
+        "final_readout_signed_class_mean_to_feature_centered_abs_ratio": (
+            signed_class_mean_spread / signed_centered_abs_mean if signed_centered_abs_mean > 0.0 else None
+        ),
         "final_readout_common_feature_class_means_v": [float(value) for value in common_class_means],
         "final_readout_common_feature_class_mean_spread_v": float(np.max(common_class_means) - np.min(common_class_means)),
+    }
+
+
+def readout_train_progress_stats(
+    *,
+    train_progress: list[list[list[float]]],
+    train_labels: list[int],
+    feature_count: int,
+    class_count: int,
+    initial_signed_v: float,
+) -> dict[str, Any]:
+    if feature_count <= 0 or class_count <= 0 or not train_progress:
+        return {
+            "train_readout_update_rows": [],
+            "train_readout_signed_feature_class_means_after_each_train_v": [],
+            "train_readout_signed_feature_class_mean_spread_after_each_train_v": [],
+            "train_readout_signed_feature_class_mean_delta_after_each_train_v": [],
+            "train_readout_target_class_feature_mean_delta_by_train_v": [],
+            "train_readout_nontarget_class_feature_mean_delta_by_train_v": [],
+            "train_readout_target_minus_nontarget_delta_by_train_v": [],
+        }
+    progress = [np.array(step, dtype=float)[:, :feature_count] for step in train_progress]
+    previous = np.full((class_count, feature_count), initial_signed_v, dtype=float)
+    rows: list[dict[str, Any]] = []
+    class_means_after: list[list[float]] = []
+    spreads: list[float] = []
+    class_mean_deltas: list[list[float]] = []
+    target_deltas: list[float] = []
+    nontarget_deltas: list[float] = []
+    target_minus_nontarget_deltas: list[float] = []
+    for train_idx, matrix in enumerate(progress):
+        if matrix.shape != (class_count, feature_count):
+            raise ValueError("train_progress shape does not match class_count and feature_count")
+        label = int(train_labels[train_idx]) if train_idx < len(train_labels) else -1
+        class_means = np.mean(matrix, axis=1)
+        delta_means = np.mean(matrix - previous, axis=1)
+        if 0 <= label < class_count:
+            nontarget = [idx for idx in range(class_count) if idx != label]
+            target_delta = float(delta_means[label])
+            nontarget_delta = float(np.mean(delta_means[nontarget])) if nontarget else 0.0
+            target_after = float(class_means[label])
+            nontarget_after = float(np.mean(class_means[nontarget])) if nontarget else 0.0
+        else:
+            target_delta = 0.0
+            nontarget_delta = 0.0
+            target_after = 0.0
+            nontarget_after = 0.0
+        target_minus_nontarget = target_delta - nontarget_delta
+        class_means_list = [float(value) for value in class_means]
+        delta_means_list = [float(value) for value in delta_means]
+        class_means_after.append(class_means_list)
+        spreads.append(float(np.max(class_means) - np.min(class_means)))
+        class_mean_deltas.append(delta_means_list)
+        target_deltas.append(target_delta)
+        nontarget_deltas.append(nontarget_delta)
+        target_minus_nontarget_deltas.append(target_minus_nontarget)
+        rows.append(
+            {
+                "train_index": train_idx + 1,
+                "label": label,
+                "class_feature_mean_after_v": class_means_list,
+                "class_feature_mean_delta_v": delta_means_list,
+                "target_class_feature_mean_after_v": target_after,
+                "nontarget_class_feature_mean_after_v": nontarget_after,
+                "target_class_feature_mean_delta_v": target_delta,
+                "nontarget_class_feature_mean_delta_v": nontarget_delta,
+                "target_minus_nontarget_delta_v": float(target_minus_nontarget),
+            }
+        )
+        previous = matrix
+    return {
+        "train_readout_update_rows": rows,
+        "train_readout_signed_feature_class_means_after_each_train_v": class_means_after,
+        "train_readout_signed_feature_class_mean_spread_after_each_train_v": spreads,
+        "train_readout_signed_feature_class_mean_delta_after_each_train_v": class_mean_deltas,
+        "train_readout_target_class_feature_mean_delta_by_train_v": target_deltas,
+        "train_readout_nontarget_class_feature_mean_delta_by_train_v": nontarget_deltas,
+        "train_readout_target_minus_nontarget_delta_by_train_v": target_minus_nontarget_deltas,
+        "train_readout_target_minus_nontarget_delta_mean_v": float(np.mean(target_minus_nontarget_deltas)),
+        "train_readout_target_minus_nontarget_delta_min_v": float(np.min(target_minus_nontarget_deltas)),
     }
 
 
@@ -3303,6 +3392,13 @@ def run_case(args: argparse.Namespace) -> dict[str, Any]:
             final_positive=final_positive,
             final_negative=final_negative,
             feature_count=feature_count,
+        ),
+        **readout_train_progress_stats(
+            train_progress=train_progress,
+            train_labels=[int(record["label"]) for record in train_records],
+            feature_count=feature_count,
+            class_count=args.class_count,
+            initial_signed_v=args.initial_positive - args.initial_negative,
         ),
         **signed_readout_projection_stats(
             measures,

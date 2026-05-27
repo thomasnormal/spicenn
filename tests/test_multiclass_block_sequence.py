@@ -554,6 +554,11 @@ def test_multiclass_block_sequence_summarizes_readout_matrix_class_bias() -> Non
 
     assert stats["final_readout_signed_feature_class_means_v"] == pytest.approx([-0.09, -0.065, 0.11])
     assert stats["final_readout_signed_feature_class_mean_spread_v"] == pytest.approx(0.20)
+    assert stats["final_readout_signed_feature_centered_abs_mean_v"] == pytest.approx(0.008333333333333333)
+    assert stats["final_readout_signed_feature_centered_abs_max_v"] == pytest.approx(0.01)
+    assert stats["final_readout_signed_class_mean_to_feature_centered_abs_ratio"] == pytest.approx(
+        0.20 / 0.008333333333333333
+    )
     assert stats["final_readout_common_feature_class_means_v"] == pytest.approx([0.325, 0.3125, 0.34])
     assert stats["final_readout_common_feature_class_mean_spread_v"] == pytest.approx(0.0275)
 
@@ -610,6 +615,46 @@ def test_multiclass_block_sequence_summarizes_hidden_weight_progress() -> None:
     assert stats["final_hidden_signed_delta_abs_mean_v"] == pytest.approx(0.05)
     assert stats["final_hidden_signed_delta_min_v"] == pytest.approx(-0.05)
     assert stats["final_hidden_signed_delta_max_v"] == pytest.approx(0.05)
+
+
+def test_multiclass_block_sequence_summarizes_readout_train_progress_by_label() -> None:
+    stats = seq.readout_train_progress_stats(
+        train_progress=[
+            [
+                [0.10, 0.30, 0.95],
+                [-0.05, -0.05, 0.80],
+                [-0.02, -0.02, 0.70],
+            ],
+            [
+                [0.08, 0.28, 0.96],
+                [-0.06, -0.04, 0.81],
+                [0.18, 0.22, 0.71],
+            ],
+        ],
+        train_labels=[0, 2],
+        feature_count=2,
+        class_count=3,
+        initial_signed_v=0.0,
+    )
+
+    np.testing.assert_allclose(
+        stats["train_readout_signed_feature_class_means_after_each_train_v"],
+        [[0.20, -0.05, -0.02], [0.18, -0.05, 0.20]],
+    )
+    assert stats["train_readout_signed_feature_class_mean_spread_after_each_train_v"] == pytest.approx([0.25, 0.25])
+    np.testing.assert_allclose(
+        stats["train_readout_signed_feature_class_mean_delta_after_each_train_v"],
+        [[0.20, -0.05, -0.02], [-0.02, 0.0, 0.22]],
+        atol=1e-12,
+    )
+    assert stats["train_readout_target_class_feature_mean_delta_by_train_v"] == pytest.approx([0.20, 0.22])
+    assert stats["train_readout_nontarget_class_feature_mean_delta_by_train_v"] == pytest.approx([-0.035, -0.01])
+    assert stats["train_readout_target_minus_nontarget_delta_by_train_v"] == pytest.approx([0.235, 0.23])
+    assert stats["train_readout_target_minus_nontarget_delta_mean_v"] == pytest.approx(0.2325)
+    assert stats["train_readout_target_minus_nontarget_delta_min_v"] == pytest.approx(0.23)
+    assert stats["train_readout_update_rows"][1]["label"] == 2
+    assert stats["train_readout_update_rows"][1]["target_class_feature_mean_after_v"] == pytest.approx(0.20)
+    assert stats["train_readout_update_rows"][1]["target_minus_nontarget_delta_v"] == pytest.approx(0.23)
 
 
 def test_multiclass_block_sequence_can_use_common_score_mass_descent() -> None:

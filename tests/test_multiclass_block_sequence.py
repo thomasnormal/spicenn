@@ -3,6 +3,7 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
+import numpy as np
 import pytest
 
 
@@ -17,6 +18,13 @@ def _target0_records(count: int) -> list[dict[str, object]]:
     return [{"label": 0, "inputs": {"x0": 0.85}} for _ in range(count)]
 
 
+def _one_hot_records() -> list[dict[str, object]]:
+    return [
+        {"label": label, "inputs": {f"x{feature}": 0.85 if feature == label else 0.0 for feature in range(3)}}
+        for label in range(3)
+    ]
+
+
 def test_multiclass_block_sequence_emits_single_continuous_deck() -> None:
     netlist = seq.generate_netlist(train_records=_target0_records(2), eval_records=_target0_records(1))
 
@@ -24,8 +32,8 @@ def test_multiclass_block_sequence_emits_single_continuous_deck() -> None:
     assert "Vrow0 row0 0 PWL(" in netlist
     assert "Vacc acc 0 PWL(" in netlist
     assert "Vapplyn applyn 0 PWL(" in netlist
-    assert "Mhidden_pos row0 whp pre_p 0 NMOS" in netlist
-    assert "Melig_n elig0 samp pre_p 0 NMOS" in netlist
+    assert "Mhidden_pos0 row0 whp0 pre_p0 0 NMOS" in netlist
+    assert "Melig0_n elig0 samp pre_p0 0 NMOS" in netlist
     assert "Mc0_f0_pos_cond actrow0 c0_vwp0 c0_score 0 NMOS" in netlist
     assert "Mc1_f0_vwp_dn_g c1_f0_vwp_dn c1_gvn0 vwlo_ref 0 NSENSE" in netlist
     assert "* cycle 0 initial_eval label=0" in netlist
@@ -38,6 +46,8 @@ def test_multiclass_block_sequence_validation() -> None:
     records = _target0_records(1)
     with pytest.raises(ValueError, match="class_count"):
         seq.generate_netlist(train_records=records, eval_records=records, class_count=1)
+    with pytest.raises(ValueError, match="feature_count"):
+        seq.generate_netlist(train_records=records, eval_records=records, feature_count=0)
     with pytest.raises(ValueError, match="nonempty"):
         seq.generate_netlist(train_records=[], eval_records=records)
     with pytest.raises(ValueError, match="valid class"):
@@ -50,6 +60,8 @@ def test_multiclass_block_sequence_validation() -> None:
         seq.main_for_test(["--class-count", "1"])
     with pytest.raises(ValueError, match="target-class"):
         seq.main_for_test(["--class-count", "3", "--target-class", "3"])
+    with pytest.raises(ValueError, match="feature-count"):
+        seq.main_for_test(["--feature-count", "0"])
     with pytest.raises(ValueError, match="train-samples"):
         seq.main_for_test(["--train-samples", "0"])
 
@@ -88,3 +100,37 @@ def test_multiclass_block_sequence_ngspice_persistent_weights_improve_final_marg
     assert c0_after_2 > c0_after_1 + 5e-3
     assert c1_after_1 < -5e-3
     assert c1_after_2 < c1_after_1 - 5e-3
+
+
+def test_multiclass_block_sequence_ngspice_one_hot_multiclass_learning(
+    tmp_path: Path,
+    ngspice_path: str,
+) -> None:
+    measures = run_netlist(
+        ngspice_path,
+        tmp_path / "multiclass_block_sequence_onehot.cir",
+        seq.generate_netlist(
+            train_records=_one_hot_records(),
+            eval_records=_one_hot_records(),
+            class_count=3,
+            feature_count=3,
+        ),
+        timeout=60.0,
+    )
+
+    initial_predictions = [
+        int(np.argmax([float(measures[f"c{class_idx}_score_net_{cycle}"]) for class_idx in range(3)]))
+        for cycle in range(3)
+    ]
+    final_predictions = [
+        int(np.argmax([float(measures[f"c{class_idx}_score_net_{cycle}"]) for class_idx in range(3)]))
+        for cycle in range(6, 9)
+    ]
+
+    assert initial_predictions == [0, 0, 0]
+    assert final_predictions == [0, 1, 2]
+    for class_idx in range(3):
+        assert float(measures[f"c{class_idx}_f{class_idx}_signed_final"]) > 10e-3
+        for feature in range(3):
+            if feature != class_idx:
+                assert float(measures[f"c{class_idx}_f{feature}_signed_final"]) < -10e-3

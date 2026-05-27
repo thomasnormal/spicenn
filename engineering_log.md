@@ -2,6 +2,23 @@
 
 ## 2026-05-27
 
+- Generalized the continuous `multiclass_block_sequence` rung from one feature
+  to multiple row-pulsed split-rail features, with independent
+  `row/pre/act/eligibility/actrow` devices per feature and class-local
+  readout/update capacitors per class-feature pair.  The new ngspice one-hot
+  regression is a more meaningful learning gate than the target-only sequence:
+  a balanced 3-class initial eval starts at chance because all class scores are
+  tied and argmax chooses class 0, then one continuous train pass updates only
+  capacitor state through transistor/passive devices, and final eval predicts
+  `[0, 1, 2]`.  The evidence run
+  `codex_multiclass_block_sequence_onehot` passed under ngspice-42 with
+  accuracy \(0.333\to1.000\), a final minimum score margin of \(0.495\) mV,
+  and a learned signed readout matrix with \(+22.5\) mV on the diagonal and
+  \(-22.5\) mV off-diagonal.  This proves nontrivial synthetic multiclass
+  continuous-transient learning under the intended constraints, while also
+  showing the next problem: the final margins are small, so the next MNIST rung
+  needs either stronger score observability, more training repeats, or a less
+  lossy score sensing/load choice before the margin can survive real features.
 - Added a continuous `multiclass_block_sequence` rung above the one-cycle
   smoke primitive.  It runs initial eval, two train samples, and final eval in
   one ngspice transient; Python supplies only the row PWL input, label rails,

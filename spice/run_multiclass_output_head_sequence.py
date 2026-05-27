@@ -414,6 +414,8 @@ def generate_netlist(
     nontarget_width_scale: float = 1.0,
     error_mode: str = "label-descent",
     writer_mode: str = "sampled",
+    readout_center_resistance: float = 0.0,
+    readout_center_voltage: float = 0.40,
 ) -> str:
     if class_count < 2:
         raise ValueError("class_count must be at least 2")
@@ -427,6 +429,10 @@ def generate_netlist(
         raise ValueError("nontarget_scale must be in [0, 1]")
     if nontarget_width_scale < 0.0 or nontarget_width_scale > 1.0:
         raise ValueError("nontarget_width_scale must be in [0, 1]")
+    if readout_center_resistance < 0.0:
+        raise ValueError("readout_center_resistance must be nonnegative")
+    if readout_center_voltage < 0.0 or readout_center_voltage > 1.2:
+        raise ValueError("readout_center_voltage must stay within supply rails")
     if error_mode not in ERROR_MODES:
         raise ValueError(f"error_mode must be one of {ERROR_MODES}")
     if writer_mode not in WRITER_MODES:
@@ -488,6 +494,8 @@ def generate_netlist(
         f"Vrst rst 0 {periodic_phase_pwl(cycle_count, start_ns=0.2, end_ns=1.0)}",
         f"Vrstscore rstscore 0 {multi_window_phase_pwl(cycle_count, windows=score_reset_windows)}",
     ]
+    if readout_center_resistance > 0.0:
+        lines.append(f"Vreadout_center readout_center 0 {readout_center_voltage:.12g}")
     if writer_mode == "sampled":
         lines += [
             f"Vacc acc 0 {periodic_phase_pwl(cycle_count, start_ns=acc_start_ns, end_ns=acc_end_ns, active_cycles=train_cycles)}",
@@ -574,6 +582,14 @@ def generate_netlist(
                     negative_node=class_node(class_idx, f"vwn{feature}"),
                     positive_ic=initial_positive,
                     negative_ic=initial_negative,
+                ),
+                *(
+                    [
+                        f"R{class_node(class_idx, f'vwp{feature}')}_center {class_node(class_idx, f'vwp{feature}')} readout_center {readout_center_resistance:.12g}",
+                        f"R{class_node(class_idx, f'vwn{feature}')}_center {class_node(class_idx, f'vwn{feature}')} readout_center {readout_center_resistance:.12g}",
+                    ]
+                    if readout_center_resistance > 0.0
+                    else []
                 ),
                 *(
                     class_local_live_label_descent_update_lines(
@@ -751,6 +767,8 @@ def run_case(args: argparse.Namespace) -> dict[str, Any]:
         nontarget_width_scale=args.nontarget_width_scale,
         error_mode=args.error_mode,
         writer_mode=args.writer_mode,
+        readout_center_resistance=args.readout_center_resistance,
+        readout_center_voltage=args.readout_center_voltage,
     )
     path = generated / f"{tag}.cir"
     measures = run_netlist(spice_bin, path, deck, timeout=args.timeout)
@@ -789,6 +807,8 @@ def run_case(args: argparse.Namespace) -> dict[str, Any]:
         "nontarget_width_scale": args.nontarget_width_scale,
         "error_mode": args.error_mode,
         "writer_mode": args.writer_mode,
+        "readout_center_resistance_ohm": args.readout_center_resistance if args.readout_center_resistance > 0.0 else None,
+        "readout_center_voltage_v": args.readout_center_voltage if args.readout_center_resistance > 0.0 else None,
         "train_samples": args.train_samples,
         "eval_samples": args.eval_samples,
         "initial_eval_accuracy": initial_acc,
@@ -824,6 +844,8 @@ def build_arg_parser() -> argparse.ArgumentParser:
     ap.add_argument("--nontarget-width-scale", type=float, default=1.0)
     ap.add_argument("--error-mode", choices=ERROR_MODES, default="label-descent")
     ap.add_argument("--writer-mode", choices=WRITER_MODES, default="sampled")
+    ap.add_argument("--readout-center-resistance", type=float, default=0.0)
+    ap.add_argument("--readout-center-voltage", type=float, default=0.40)
     ap.add_argument("--timeout", type=float, default=120.0)
     return ap
 
@@ -843,6 +865,10 @@ def validate_args(args: argparse.Namespace) -> None:
         raise ValueError("nontarget-scale must be in [0, 1]")
     if args.nontarget_width_scale < 0.0 or args.nontarget_width_scale > 1.0:
         raise ValueError("nontarget-width-scale must be in [0, 1]")
+    if args.readout_center_resistance < 0.0:
+        raise ValueError("readout-center-resistance must be nonnegative")
+    if args.readout_center_voltage < 0.0 or args.readout_center_voltage > 1.2:
+        raise ValueError("readout-center-voltage must stay within supply rails")
     if args.error_mode not in ERROR_MODES:
         raise ValueError(f"error-mode must be one of {ERROR_MODES}")
     if args.writer_mode not in WRITER_MODES:

@@ -115,6 +115,28 @@ def test_multiclass_output_head_sequence_can_use_live_writer_without_gradient_st
     assert "Mc0_f0_live_neg_dn_d c0_f0_live_neg_dn c0_targetn vwlo_ref 0 NSENSE" in netlist
 
 
+def test_multiclass_output_head_sequence_can_add_passive_readout_center_leak_to_live_writer() -> None:
+    records = _one_hot_records()
+    netlist = seq.generate_netlist(
+        train_records=records,
+        eval_records=records,
+        class_count=3,
+        feature_count=3,
+        writer_mode="live",
+        error_mode="live-pairwise-margin-descent",
+        readout_center_resistance=5e6,
+        readout_center_voltage=0.39,
+    )
+
+    assert "\nB" not in netlist
+    assert "Vreadout_center readout_center 0 0.39" in netlist
+    assert "Rc0_vwp0_center c0_vwp0 readout_center 5000000" in netlist
+    assert "Rc0_vwn0_center c0_vwn0 readout_center 5000000" in netlist
+    assert "Rc2_vwp2_center c2_vwp2 readout_center 5000000" in netlist
+    assert "Cc0_gvp0" not in netlist
+    assert "Vapply" not in netlist
+
+
 def test_multiclass_output_head_sequence_can_feed_live_writer_from_normalizer() -> None:
     records = _one_hot_records()
     netlist = seq.generate_netlist(
@@ -171,6 +193,10 @@ def test_multiclass_output_head_sequence_validation() -> None:
         seq.main_for_test(["--nontarget-scale", "1.5"])
     with pytest.raises(ValueError, match="nontarget-width-scale"):
         seq.main_for_test(["--nontarget-width-scale", "1.5"])
+    with pytest.raises(ValueError, match="readout-center-resistance"):
+        seq.main_for_test(["--readout-center-resistance", "-1"])
+    with pytest.raises(ValueError, match="readout-center-voltage"):
+        seq.main_for_test(["--readout-center-voltage", "1.3"])
     with pytest.raises(ValueError, match="nontarget_width_scale"):
         seq.generate_netlist(
             train_records=records,
@@ -178,6 +204,22 @@ def test_multiclass_output_head_sequence_validation() -> None:
             class_count=3,
             feature_count=3,
             nontarget_width_scale=-0.1,
+        )
+    with pytest.raises(ValueError, match="readout_center_resistance"):
+        seq.generate_netlist(
+            train_records=records,
+            eval_records=records,
+            class_count=3,
+            feature_count=3,
+            readout_center_resistance=-1.0,
+        )
+    with pytest.raises(ValueError, match="readout_center_voltage"):
+        seq.generate_netlist(
+            train_records=records,
+            eval_records=records,
+            class_count=3,
+            feature_count=3,
+            readout_center_voltage=1.3,
         )
     with pytest.raises(ValueError, match="initial-positive"):
         seq.main_for_test(["--initial-positive", "1.5"])

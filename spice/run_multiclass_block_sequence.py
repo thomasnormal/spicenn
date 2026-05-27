@@ -40,6 +40,7 @@ ERROR_MODES = (
     "residual-score-nontarget",
     "amplified-score-nontarget",
     "common-ref-score-nontarget",
+    "raw-common-ref-score-nontarget",
     "amplified-score-competitive",
     "amplified-score-pairwise",
     "pairwise-binary-descent",
@@ -225,6 +226,7 @@ def shared_score_common_reference_lines(
     reset_node: str = "scorepre",
     resistance_ohm: float = 20000.0,
     capacitance_f: float = 4.0,
+    source_node_template: str = "c{class_idx}_score_amp",
 ) -> list[str]:
     lines = [
         f"C{common_node} {common_node} 0 {capacitance_f:.12g}f IC=1.2",
@@ -232,8 +234,9 @@ def shared_score_common_reference_lines(
         f"Mprecharge_{common_node} {common_node} {reset_node} vdd vdd PMOS W=4u L=180n",
     ]
     for class_idx in range(class_count):
+        source_node = source_node_template.format(class_idx=class_idx)
         lines.append(
-            f"R{common_node}_c{class_idx} {common_node} c{class_idx}_score_amp {resistance_ohm:.12g}"
+            f"R{common_node}_c{class_idx} {common_node} {source_node} {resistance_ohm:.12g}"
         )
     return lines
 
@@ -242,21 +245,23 @@ def class_local_score_common_gate_lines(
     *,
     class_idx: int,
     common_node: str = "score_common",
+    score_input_node: str | None = None,
     compare_clock: str = "scoredec",
     reset_node: str = "scoregaterst",
     pullup_width_u: float = 48.0,
     pulldown_width_u: float = 12.0,
+    analog_model: str = "NREL",
 ) -> list[str]:
     prefix = f"c{class_idx}_"
     score_gate = class_node(class_idx, "score_common_gate")
-    score_amp = f"{prefix}score_amp"
+    score_input = f"{prefix}score_amp" if score_input_node is None else score_input_node
     return [
         f"C{score_gate} {score_gate} 0 4f IC=0",
         f"R{score_gate} {score_gate} 0 1G",
         f"Mreset_{score_gate} {score_gate} {reset_node} 0 0 NMOS W=4u L=180n",
-        f"M{prefix}score_common_gate_up_v vdd {score_amp} {prefix}score_common_gate_up_i 0 NREL W={pullup_width_u:.6g}u L=180n",
+        f"M{prefix}score_common_gate_up_v vdd {score_input} {prefix}score_common_gate_up_i 0 {analog_model} W={pullup_width_u:.6g}u L=180n",
         f"M{prefix}score_common_gate_up_t {prefix}score_common_gate_up_i {compare_clock} {score_gate} 0 NSENSE W={pullup_width_u:.6g}u L=180n",
-        f"M{prefix}score_common_gate_dn_v {score_gate} {common_node} {prefix}score_common_gate_dn_i 0 NREL W={pulldown_width_u:.6g}u L=180n",
+        f"M{prefix}score_common_gate_dn_v {score_gate} {common_node} {prefix}score_common_gate_dn_i 0 {analog_model} W={pulldown_width_u:.6g}u L=180n",
         f"M{prefix}score_common_gate_dn_t {prefix}score_common_gate_dn_i {compare_clock} 0 0 NSENSE W={pulldown_width_u:.6g}u L=180n",
     ]
 
@@ -473,6 +478,8 @@ def generate_netlist(
     uses_residual_score = error_mode == "residual-score-nontarget"
     uses_amplified_score = error_mode == "amplified-score-nontarget"
     uses_common_ref_score = error_mode == "common-ref-score-nontarget"
+    uses_raw_common_ref_score = error_mode == "raw-common-ref-score-nontarget"
+    uses_score_common_gate = uses_common_ref_score or uses_raw_common_ref_score
     uses_amplified_competitive = error_mode == "amplified-score-competitive"
     uses_amplified_pairwise = error_mode == "amplified-score-pairwise"
     uses_pairwise_binary = error_mode == "pairwise-binary-descent"
@@ -487,7 +494,12 @@ def generate_netlist(
     uses_restored_winner = error_mode == "restored-winner-nontarget"
     uses_pairwise_decisions = uses_restored_winner or uses_pairwise_binary or uses_amplified_pairwise
     uses_late_restored_gate = (
-        uses_restored_score or uses_restored_binary or uses_pairwise_binary or uses_restored_winner or uses_score_preamp
+        uses_restored_score
+        or uses_restored_binary
+        or uses_pairwise_binary
+        or uses_restored_winner
+        or uses_score_preamp
+        or uses_raw_common_ref_score
     )
     target_start_ns = 10.8 if uses_late_restored_gate else 9.0
     target_end_ns = 12.8 if uses_late_restored_gate else 11.0
@@ -524,7 +536,7 @@ def generate_netlist(
             f"Vscoreamp scoreamp 0 {periodic_phase_pwl(cycle_count, start_ns=8.60, end_ns=9.50, active_cycles=train_cycles)}",
             f"Vscoredec scoredec 0 {periodic_phase_pwl(cycle_count, start_ns=9.70, end_ns=10.40, active_cycles=train_cycles)}",
         ]
-    if uses_residual_score or uses_common_ref_score:
+    if uses_residual_score or uses_score_common_gate:
         lines.append(
             f"Vscoregaterst scoregaterst 0 {periodic_phase_pwl(cycle_count, start_ns=8.10, end_ns=8.35, active_cycles=train_cycles)}"
         )
@@ -620,12 +632,23 @@ def generate_netlist(
                 ]
                 if uses_residual_score:
                     lines += class_local_residual_score_gate_lines(class_idx=class_idx)
-                if uses_common_ref_score:
-                    lines += class_local_score_common_gate_lines(class_idx=class_idx)
+        if uses_raw_common_ref_score:
+            lines += class_local_score_common_gate_lines(
+                class_idx=class_idx,
+                score_input_node=class_node(class_idx, "score"),
+                analog_model="NSENSE",
+            )
+        elif uses_common_ref_score:
+            lines += class_local_score_common_gate_lines(class_idx=class_idx)
         if uses_pairwise_decisions:
             for opponent_idx in range(class_idx + 1, class_count):
                 lines += pairwise_winner_lines(class_a=class_idx, class_b=opponent_idx)
-    if uses_common_ref_score:
+    if uses_raw_common_ref_score:
+        lines += shared_score_common_reference_lines(
+            class_count=class_count,
+            source_node_template="c{class_idx}_score",
+        )
+    elif uses_common_ref_score:
         lines += shared_score_common_reference_lines(class_count=class_count)
     for class_idx in range(class_count):
         for feature in range(total_feature_count):
@@ -656,7 +679,7 @@ def generate_netlist(
                     activation_node=f"elig{feature}",
                     score_gate_node=f"c{class_idx}_score_amp",
                 )
-            elif uses_common_ref_score:
+            elif uses_score_common_gate:
                 gradient_lines = class_local_residual_score_nontarget_gradient_lines(
                     class_idx=class_idx,
                     feature_idx=feature,
@@ -810,11 +833,14 @@ def generate_netlist(
                     f".meas tran c{class_idx}_scoren_amp_{cycle} FIND V(c{class_idx}_scoren_amp) AT={base + 9.60:.2f}n",
                     f".meas tran c{class_idx}_score_gain_diff_{cycle} PARAM='c{class_idx}_score_amp_{cycle}-c{class_idx}_scoren_amp_{cycle}'",
                 ]
-            if uses_common_ref_score:
+            if uses_score_common_gate:
+                score_input_measure = (
+                    f"c{class_idx}_score_amp_{cycle}" if uses_common_ref_score else f"c{class_idx}_score_{cycle}"
+                )
                 lines += [
                     f".meas tran score_common_c{class_idx}_{cycle} FIND V(score_common) AT={base + 9.60:.2f}n",
                     f".meas tran c{class_idx}_score_common_gate_{cycle} FIND V({class_node(class_idx, 'score_common_gate')}) AT={base + 10.60:.2f}n",
-                    f".meas tran c{class_idx}_score_above_common_{cycle} PARAM='c{class_idx}_score_amp_{cycle}-score_common_c{class_idx}_{cycle}'",
+                    f".meas tran c{class_idx}_score_above_common_{cycle} PARAM='{score_input_measure}-score_common_c{class_idx}_{cycle}'",
                 ]
             if uses_residual_score:
                 lines += [

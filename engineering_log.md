@@ -44,6 +44,17 @@
   through the row/synapse path and depended on the stored weight gate.  The
   primitive now has explicit MOS reset devices for `pre_p`, `pre_n`, `hdp`,
   and `hdn`, which is the right local contract for continuous MNIST sequencing.
+- Fixed the next row-conductance learning bug: the writer used `pre_p` as its
+  eligibility gate, so an initially negative signed weight (`wp < wn`) produced
+  a strong negative forward margin but almost no positive correction because
+  `pre_p` was near zero.  The primitive now samples the row/input waveform onto
+  an `elig` capacitor during forward and uses that held input eligibility in
+  the transistor writer stacks.  A new ngspice regression proves
+  `wp=0.30, wn=0.55` still receives a positive signed update under a positive
+  error rail.  Because the stronger eligibility made the old 3 ns writer pulse
+  rail-saturating, the default apply aperture is now 50 ps; the sequence tests
+  still prove positive updates persist and opposite-sign updates reverse the
+  signed state without Python intervention.
 - Added an experimental residual-score nontarget mode to the continuous
   split-rail multiclass block sequence.  The low-level regression now proves a
   transistor/passive low-common-mode PMOS score preamp plus weak analog

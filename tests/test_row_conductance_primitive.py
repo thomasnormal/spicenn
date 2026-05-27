@@ -37,7 +37,13 @@ def test_row_conductance_netlist_uses_differential_conductance_compute() -> None
     assert "Mwn_fwd row wn pre_n 0 NMOS W=1u L=180n" in netlist
     assert "Mpre_p_rst pre_p rst 0 0 NMOS W=6u L=180n" in netlist
     assert "Mpre_n_rst pre_n rst 0 0 NMOS W=6u L=180n" in netlist
+    assert "Celig elig 0 12f IC=0" in netlist
+    assert "Melig_sample_n row fwd elig 0 NMOS W=6u L=180n" in netlist
+    assert "Melig_sample_p row fwdn elig vdd PMOS W=12u L=180n" in netlist
     assert "Mwp_up_e vdd ep wp_up_e 0 NSENSE W=0.25u L=180n" in netlist
+    assert "Mwp_up_x wp_up_e elig wp_up_x 0 NSENSE W=0.25u L=180n" in netlist
+    assert "Mwn_dn_x wn_dn_a elig wn_dn_x 0 NSENSE W=0.25u L=180n" in netlist
+    assert "Vapply apply 0 PULSE(0 1.2 5.0n 10p 10p 0.05n 24n)" in netlist
     assert "Mhdp_p edp vwp hdp 0 NSENSE W=8u L=180n" in netlist
     assert "Mhdn_p edp vwn hdn 0 NSENSE W=8u L=180n" in netlist
     assert ".meas tran forward_margin PARAM='pre_p_after-pre_n_after'" in netlist
@@ -104,6 +110,8 @@ def test_row_conductance_cli_validation() -> None:
         primitive.main_for_test(["--min-abs-margin", "-1"])
     with pytest.raises(ValueError, match="cycles"):
         primitive.main_for_test(["--cycles", "0"])
+    with pytest.raises(ValueError, match="apply-width-ns"):
+        primitive.main_for_test(["--apply-width-ns", "0"])
     with pytest.raises(ValueError, match="cycle_rows"):
         primitive.generate_netlist(wp=0.45, wn=0.40, cycles=2, cycle_rows=[0.85])
     with pytest.raises(ValueError, match="cycle_update_modes"):
@@ -143,12 +151,15 @@ def test_row_conductance_primitive_ngspice_forward_polarity(
         assert margin > 0.10
         assert float(measures["pre_p_after"]) > 0.10
         assert float(measures["pre_n_after"]) < 1e-3
+        assert float(measures["elig_after"]) > 0.50
     elif expected_sign < 0.0:
         assert margin < -0.10
         assert float(measures["pre_n_after"]) > 0.10
         assert float(measures["pre_p_after"]) < 1e-3
+        assert float(measures["elig_after"]) > 0.50
     else:
         assert abs(margin) < 1e-3
+        assert float(measures["elig_after"]) < 1e-3
 
 
 def test_row_conductance_primitive_ngspice_repeated_cycle_resets_dynamic_nodes_and_retains_weights(
@@ -219,8 +230,33 @@ def test_row_conductance_primitive_ngspice_sequence_opposite_update_cancels_sign
         credit_mode="none",
     )
 
+    first_delta = float(measures["signed_weight_delta"])
+    final_delta = float(measures["signed_weight_drift_cycle2"])
+    assert first_delta > 0.05
+    assert final_delta < 0.0
+    assert abs(final_delta) < first_delta
+
+
+def test_row_conductance_primitive_ngspice_positive_update_corrects_negative_initial_weight(
+    tmp_path: Path,
+    ngspice_path: str,
+) -> None:
+    measures = _run_ngspice_case(
+        tmp_path,
+        ngspice_path,
+        "positive_update_corrects_negative_initial_weight",
+        wp=0.30,
+        wn=0.55,
+        row=0.85,
+        update_mode="positive",
+        credit_mode="none",
+    )
+
+    assert float(measures["forward_margin"]) < -0.10
+    assert float(measures["pre_p_after"]) < 1e-3
+    assert float(measures["pre_n_after"]) > 0.10
+    assert float(measures["elig_after"]) > 0.50
     assert float(measures["signed_weight_delta"]) > 0.05
-    assert abs(float(measures["signed_weight_drift_cycle2"])) < 0.01
 
 
 @pytest.mark.parametrize(

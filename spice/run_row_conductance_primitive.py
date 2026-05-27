@@ -80,6 +80,7 @@ def generate_netlist(
     syn_width: float = 1.0,
     row_drive_width: float = 12.0,
     update_width: float = 0.25,
+    apply_width_ns: float = 0.05,
     credit_width: float = 8.0,
     cycles: int = 1,
     cycle_rows: list[float] | tuple[float, ...] | None = None,
@@ -103,6 +104,7 @@ def generate_netlist(
         "syn_width": syn_width,
         "row_drive_width": row_drive_width,
         "update_width": update_width,
+        "apply_width_ns": apply_width_ns,
         "credit_width": credit_width,
     }.items():
         if value <= 0.0:
@@ -146,7 +148,7 @@ def generate_netlist(
         f"Vrow_src row_src 0 {row_source}",
         f"Vep ep 0 {ep_source}",
         f"Ven en 0 {en_source}",
-        "Vapply apply 0 PULSE(0 1.2 5.0n 10p 10p 3.0n 24n)",
+        f"Vapply apply 0 PULSE(0 1.2 5.0n 10p 10p {apply_width_ns:.12g}n 24n)",
         f"Vedp edp 0 PULSE(0 {edp:.12g} 11.0n 10p 10p 4.0n 24n)",
         f"Vedn edn 0 PULSE(0 {edn:.12g} 11.0n 10p 10p 4.0n 24n)",
         f"Cwp wp 0 20f IC={wp:.12g}",
@@ -159,10 +161,12 @@ def generate_netlist(
         "Rvwn vwn 0 1e15",
         "Cpre_p pre_p 0 20f IC=0",
         "Cpre_n pre_n 0 20f IC=0",
+        "Celig elig 0 12f IC=0",
         "Chdp hdp 0 12f IC=0",
         "Chdn hdn 0 12f IC=0",
         "Rpre_p pre_p 0 1G",
         "Rpre_n pre_n 0 1G",
+        "Relig elig 0 1G",
         "Rhdp hdp 0 1G",
         "Rhdn hdn 0 1G",
         "",
@@ -173,25 +177,28 @@ def generate_netlist(
         "Rrow row 0 1e12",
         f"Mpre_p_rst pre_p rst 0 0 NMOS W={max(2.0, row_drive_width / 2.0):.6g}u L=180n",
         f"Mpre_n_rst pre_n rst 0 0 NMOS W={max(2.0, row_drive_width / 2.0):.6g}u L=180n",
+        f"Melig_rst elig rst 0 0 NMOS W={max(2.0, row_drive_width / 2.0):.6g}u L=180n",
         f"Mhdp_rst hdp rst 0 0 NMOS W={max(2.0, row_drive_width / 2.0):.6g}u L=180n",
         f"Mhdn_rst hdn rst 0 0 NMOS W={max(2.0, row_drive_width / 2.0):.6g}u L=180n",
         "",
         "* Forward signed conductance pair: row current/charge sums onto differential pre rails.",
         f"Mwp_fwd row wp pre_p 0 NMOS W={syn_width:.6g}u L=180n",
         f"Mwn_fwd row wn pre_n 0 NMOS W={syn_width:.6g}u L=180n",
+        f"Melig_sample_n row fwd elig 0 NMOS W={max(2.0, row_drive_width / 2.0):.6g}u L=180n",
+        f"Melig_sample_p row fwdn elig vdd PMOS W={max(4.0, row_drive_width):.6g}u L=180n",
         "",
-        "* Local update writer. Eligibility is the held pre rail; positive error raises wp/lowers wn, negative error does the opposite.",
+        "* Local update writer. Eligibility is the held row/input rail; positive error raises wp/lowers wn, negative error does the opposite.",
         f"Mwp_up_e vdd ep wp_up_e 0 NSENSE W={update_width:.6g}u L=180n",
-        f"Mwp_up_x wp_up_e pre_p wp_up_x 0 NSENSE W={update_width:.6g}u L=180n",
+        f"Mwp_up_x wp_up_e elig wp_up_x 0 NSENSE W={update_width:.6g}u L=180n",
         f"Mwp_up_a wp_up_x apply wp 0 NREL W={update_width:.6g}u L=180n",
         f"Mwn_dn_a wn apply wn_dn_a 0 NREL W={update_width:.6g}u L=180n",
-        f"Mwn_dn_x wn_dn_a pre_p wn_dn_x 0 NSENSE W={update_width:.6g}u L=180n",
+        f"Mwn_dn_x wn_dn_a elig wn_dn_x 0 NSENSE W={update_width:.6g}u L=180n",
         f"Mwn_dn_e wn_dn_x ep 0 0 NSENSE W={update_width:.6g}u L=180n",
         f"Mwn_up_e vdd en wn_up_e 0 NSENSE W={update_width:.6g}u L=180n",
-        f"Mwn_up_x wn_up_e pre_p wn_up_x 0 NSENSE W={update_width:.6g}u L=180n",
+        f"Mwn_up_x wn_up_e elig wn_up_x 0 NSENSE W={update_width:.6g}u L=180n",
         f"Mwn_up_a wn_up_x apply wn 0 NREL W={update_width:.6g}u L=180n",
         f"Mwp_dn_a wp apply wp_dn_a 0 NREL W={update_width:.6g}u L=180n",
-        f"Mwp_dn_x wp_dn_a pre_p wp_dn_x 0 NSENSE W={update_width:.6g}u L=180n",
+        f"Mwp_dn_x wp_dn_a elig wp_dn_x 0 NSENSE W={update_width:.6g}u L=180n",
         f"Mwp_dn_e wp_dn_x en 0 0 NSENSE W={update_width:.6g}u L=180n",
         "",
         "* Latch-free analog backward credit through readout conductance pair.",
@@ -201,6 +208,7 @@ def generate_netlist(
         f"Mhdn_n edn vwp hdn 0 NSENSE W={credit_width:.6g}u L=180n",
         ".meas tran pre_p_after FIND V(pre_p) AT=4.5n",
         ".meas tran pre_n_after FIND V(pre_n) AT=4.5n",
+        ".meas tran elig_after FIND V(elig) AT=4.5n",
         ".meas tran forward_margin PARAM='pre_p_after-pre_n_after'",
         ".meas tran wp_before FIND V(wp) AT=4.5n",
         ".meas tran wn_before FIND V(wn) AT=4.5n",
@@ -365,6 +373,7 @@ def run_cases(args: argparse.Namespace) -> dict[str, Any]:
                 syn_width=args.syn_width,
                 row_drive_width=args.row_drive_width,
                 update_width=args.update_width,
+                apply_width_ns=args.apply_width_ns,
                 credit_width=args.credit_width,
                 cycles=args.cycles,
             ),
@@ -415,6 +424,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
     ap.add_argument("--syn-width", type=float, default=1.0)
     ap.add_argument("--row-drive-width", type=float, default=12.0)
     ap.add_argument("--update-width", type=float, default=0.25)
+    ap.add_argument("--apply-width-ns", type=float, default=0.05)
     ap.add_argument("--credit-width", type=float, default=8.0)
     ap.add_argument("--min-abs-margin", type=float, default=1e-3)
     ap.add_argument("--cycles", type=int, default=1)
@@ -424,7 +434,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
 def validate_args(args: argparse.Namespace) -> None:
     if args.timeout <= 0.0:
         raise ValueError("timeout must be positive")
-    for name in ["syn_width", "row_drive_width", "update_width", "credit_width"]:
+    for name in ["syn_width", "row_drive_width", "update_width", "apply_width_ns", "credit_width"]:
         if getattr(args, name) <= 0.0:
             raise ValueError(f"{name.replace('_', '-')} must be positive")
     if args.min_abs_margin < 0.0:

@@ -555,19 +555,26 @@ centered: the score-net-at-decision margin was about \(37.4\) mV, the
 \(\code{decision\_diff}\) class means were approximately \(+39.6\) mV and
 \(-106.5\) mV, and the worst fixed-threshold margin was about \(11.8\) mV.
 
-A correlated 16-train/16-eval screen with the same target topology, centered
-reference, and \(25\) ps transient print step also reached final hardware
-accuracy \(1.0\), with about \(37.3\) mV score-net-at-decision margin and a
-worst fixed-threshold margin near \(5.75\) mV.  That screen intentionally
-skipped initial evaluation, so it is scale evidence rather than a nontrivial
-learning proof.  A full 16/16 promotion is therefore the next active
-diagnostic: it tests whether the same centered path keeps the \(0.5\rightarrow
-1.0\) learning claim when the baseline is measured, while also stressing
-ngspice runtime and saved-vector memory.
+A full 16-train/16-eval promotion with the same target topology, centered
+reference, and \(25\) ps transient print step has now reached the same fixed
+hardware accuracy endpoint while measuring the baseline.  Initial evaluation
+was \(0.5\), final evaluation was \(1.0\), so the run is a nontrivial-learning
+result rather than only a skipped-baseline screen.  The final
+score-net-at-decision margin was \(37.34\) mV, the
+\(\code{decision\_diff}\) means were approximately \(+26.1\) mV for positives
+and \(-132.5\) mV for negatives, the differential decision class margin was
+\(158.6\) mV, and the worst fixed-zero-threshold margin was \(5.75\) mV.  The
+run completed in about \(2582\) s under ngspice after output-only decks were
+restricted to the measured output/decision nodes.  The compact artifacts are:
+\begin{center}
+\small
+\path{results/tables/codex_target10x10_16t16e_outref025_full_tran25_save_summary.json}
+\end{center}
+and the corresponding CSV table.
 
 The main conclusion has changed.  The immediate blocker is no longer the
 existence of a transistor/passive learning path for the binary target-shape
-rung; that path now exists at 8/8 and screens well at 16/16.  The next
+rung; that path now exists at 16/16.  The next
 engineering bottlenecks are (1) simulator throughput and memory for longer
 continuous diagnostics, (2) seed/order/reference robustness at target shape,
 and then (3) extending the same circuit discipline from binary MNIST01 toward

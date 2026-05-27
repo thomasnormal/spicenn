@@ -42,6 +42,7 @@ from run_spice_sweep import ROOT, detect_spice
 SCENARIOS = ("target-repeat", "one-hot", "mnist")
 CLASS_BIAS_MODES = ("none", "target-only", "label-descent")
 READOUT_UPDATE_MODES = ("sampled", "live")
+SCORE_TIMING_MODES = ("late", "early")
 ERROR_MODES = (
     "label-descent",
     "score-gated-nontarget",
@@ -753,6 +754,7 @@ def generate_netlist(
     normalizer_error_clock_high: float = 1.2,
     error_mode: str = "label-descent",
     readout_update_mode: str = "sampled",
+    score_timing_mode: str = "late",
     class_bias_mode: str = "none",
     class_bias_input: float = 0.85,
     readout_center_resistance: float = 0.0,
@@ -798,6 +800,8 @@ def generate_netlist(
         raise ValueError(f"error_mode must be one of {ERROR_MODES}")
     if readout_update_mode not in READOUT_UPDATE_MODES:
         raise ValueError(f"readout_update_mode must be one of {READOUT_UPDATE_MODES}")
+    if score_timing_mode not in SCORE_TIMING_MODES:
+        raise ValueError(f"score_timing_mode must be one of {SCORE_TIMING_MODES}")
     if class_bias_mode not in CLASS_BIAS_MODES:
         raise ValueError(f"class_bias_mode must be one of {CLASS_BIAS_MODES}")
     if class_bias_input < 0.0 or class_bias_input > 1.2:
@@ -884,28 +888,62 @@ def generate_netlist(
         or uses_raw_common_ref_score
         or uses_normalizer_error
     )
+    uses_score_error_clock = (
+        uses_score_mass
+        or uses_common_score_mass
+        or uses_contrast_score_mass
+        or uses_low_gain_contrast_score_mass
+        or uses_contrast_gated_score_mass
+        or uses_target_contrast_score_mass
+        or uses_common_score_mass_pairwise
+        or uses_pairwise_score_competition
+        or uses_pairwise_margin_correction
+        or uses_normalizer_error
+    )
+    uses_score_based_target_timing = (
+        uses_target_ref_score
+        or uses_score_error_clock
+    )
+    if score_timing_mode == "early":
+        out_start_ns = 5.0
+        out_end_ns = 5.35
+        scorepre_start_ns = 5.45
+        scorepre_end_ns = 5.70
+        scoreamp_start_ns = 5.95
+        scoreamp_end_ns = 6.75
+        scoredec_start_ns = 6.95
+        scoredec_end_ns = 7.65
+        scoreerr_start_ns = 7.80
+        scoreerr_end_ns = 8.10
+    else:
+        out_start_ns = 5.0
+        out_end_ns = 8.0
+        scorepre_start_ns = 8.10
+        scorepre_end_ns = 8.35
+        scoreamp_start_ns = 8.60
+        scoreamp_end_ns = 9.50
+        scoredec_start_ns = 9.70
+        scoredec_end_ns = 10.40
+        scoreerr_start_ns = 10.73 if uses_contrast_gated_score_mass else 10.45
+        scoreerr_end_ns = 10.79 if uses_contrast_gated_score_mass else 10.75
     target_start_ns = (
-        9.55
-        if (
-            uses_target_ref_score
-            or uses_score_mass
-            or uses_common_score_mass
-            or uses_contrast_score_mass
-            or uses_low_gain_contrast_score_mass
-            or uses_contrast_gated_score_mass
-            or uses_target_contrast_score_mass
-            or uses_common_score_mass_pairwise
-            or uses_pairwise_score_competition
-            or uses_pairwise_margin_correction
-            or uses_normalizer_error
-        )
+        max(0.0, scoredec_start_ns - 0.15)
+        if uses_score_based_target_timing
         else 10.8 if uses_late_restored_gate else 9.0
     )
-    target_end_ns = 12.8 if uses_late_restored_gate else 11.0
-    acc_start_ns = 10.8 if uses_late_restored_gate else 9.0
-    acc_end_ns = 12.8 if uses_late_restored_gate else 11.0
-    apply_start_ns = 13.0 if uses_late_restored_gate else 12.0
-    apply_end_ns = 13.1 if uses_late_restored_gate else 12.1
+    target_end_ns = (
+        max(scoreerr_end_ns + 0.20, target_start_ns + 0.50)
+        if uses_score_based_target_timing
+        else 12.8 if uses_late_restored_gate else 11.0
+    )
+    acc_start_ns = scoreerr_start_ns if uses_score_error_clock else 10.8 if uses_late_restored_gate else 9.0
+    acc_end_ns = target_end_ns if uses_score_error_clock else 12.8 if uses_late_restored_gate else 11.0
+    apply_start_ns = acc_end_ns + 0.20 if uses_score_error_clock else 13.0 if uses_late_restored_gate else 12.0
+    apply_end_ns = apply_start_ns + 0.10
+    score_amp_measure_ns = scoreamp_end_ns + 0.10
+    score_decision_measure_ns = scoredec_end_ns + 0.20
+    score_error_measure_ns = scoreerr_end_ns + 0.03
+    score_mass_measure_ns = max(scorepre_end_ns, scoreerr_start_ns - 0.03)
     low_gain_contrast_sizing = (
         derive_class_evidence_normalizer_sizing(
             class_count=class_count,
@@ -941,8 +979,8 @@ def generate_netlist(
         f"Vrst rst 0 {periodic_phase_pwl(cycle_count, start_ns=0.2, end_ns=1.0)}",
         f"Vsamp samp 0 {periodic_phase_pwl(cycle_count, start_ns=2.5, end_ns=3.5)}",
         f"Vsampn sampn 0 {active_low_phase_pwl(cycle_count, start_ns=2.5, end_ns=3.5, active_cycles=set(range(cycle_count)))}",
-        f"Vout out 0 {periodic_phase_pwl(cycle_count, start_ns=5.0, end_ns=8.0)}",
-        f"Voutn outn 0 {active_low_phase_pwl(cycle_count, start_ns=5.0, end_ns=8.0, active_cycles=set(range(cycle_count)))}",
+        f"Vout out 0 {periodic_phase_pwl(cycle_count, start_ns=out_start_ns, end_ns=out_end_ns)}",
+        f"Voutn outn 0 {active_low_phase_pwl(cycle_count, start_ns=out_start_ns, end_ns=out_end_ns, active_cycles=set(range(cycle_count)))}",
     ]
     if readout_update_mode == "sampled":
         lines += [
@@ -956,38 +994,25 @@ def generate_netlist(
         lines += [
             "Voutref outref 0 0.25",
             *(["Vscore_contrast_ref score_contrast_ref 0 0.6"] if uses_score_contrast_nodes else []),
-            f"Vscorepre scorepre 0 {active_low_phase_pwl(cycle_count, start_ns=8.10, end_ns=8.35, active_cycles=train_cycles)}",
-            f"Vscoreamp scoreamp 0 {periodic_phase_pwl(cycle_count, start_ns=8.60, end_ns=9.50, active_cycles=train_cycles)}",
-            f"Vscoredec scoredec 0 {periodic_phase_pwl(cycle_count, start_ns=9.70, end_ns=10.40, active_cycles=train_cycles)}",
+            f"Vscorepre scorepre 0 {active_low_phase_pwl(cycle_count, start_ns=scorepre_start_ns, end_ns=scorepre_end_ns, active_cycles=train_cycles)}",
+            f"Vscoreamp scoreamp 0 {periodic_phase_pwl(cycle_count, start_ns=scoreamp_start_ns, end_ns=scoreamp_end_ns, active_cycles=train_cycles)}",
+            f"Vscoredec scoredec 0 {periodic_phase_pwl(cycle_count, start_ns=scoredec_start_ns, end_ns=scoredec_end_ns, active_cycles=train_cycles)}",
             *(
                 [
-                    f"Vscoregate scoregate 0 {periodic_phase_pwl(cycle_count, start_ns=10.42, end_ns=10.55, active_cycles=train_cycles)}"
+                    f"Vscoregate scoregate 0 {periodic_phase_pwl(cycle_count, start_ns=scoredec_end_ns + 0.02, end_ns=scoredec_end_ns + 0.15, active_cycles=train_cycles)}"
                 ]
                 if uses_contrast_gated_score_mass
                 else []
             ),
             *(
                 [
-                    f"Vscoremass scoremass 0 {periodic_phase_pwl(cycle_count, start_ns=10.58, end_ns=10.70, active_cycles=train_cycles)}"
+                    f"Vscoremass scoremass 0 {periodic_phase_pwl(cycle_count, start_ns=scoredec_end_ns + 0.18, end_ns=scoredec_end_ns + 0.30, active_cycles=train_cycles)}"
                 ]
                 if uses_contrast_gated_score_mass
                 else []
             ),
         ]
-    if (
-        uses_score_mass
-        or uses_common_score_mass
-        or uses_contrast_score_mass
-        or uses_low_gain_contrast_score_mass
-        or uses_contrast_gated_score_mass
-        or uses_target_contrast_score_mass
-        or uses_common_score_mass_pairwise
-        or uses_pairwise_score_competition
-        or uses_pairwise_margin_correction
-        or uses_normalizer_error
-    ):
-        scoreerr_start_ns = 10.73 if uses_contrast_gated_score_mass else 10.45
-        scoreerr_end_ns = 10.79 if uses_contrast_gated_score_mass else 10.75
+    if uses_score_error_clock:
         scoreerr_high = (
             margin_correction_sizing.error_clock_high_v
             if margin_correction_sizing is not None
@@ -1012,7 +1037,7 @@ def generate_netlist(
         or uses_normalizer_error
     ):
         lines.append(
-            f"Vscoregaterst scoregaterst 0 {periodic_phase_pwl(cycle_count, start_ns=8.10, end_ns=8.35, active_cycles=train_cycles)}"
+            f"Vscoregaterst scoregaterst 0 {periodic_phase_pwl(cycle_count, start_ns=scorepre_start_ns, end_ns=scorepre_end_ns, active_cycles=train_cycles)}"
         )
     for feature in range(total_feature_count):
         row_values = (
@@ -1570,14 +1595,14 @@ def generate_netlist(
                     if opponent_idx == class_idx:
                         continue
                     lines += [
-                        f".meas tran c{class_idx}_gt_c{opponent_idx}_decision_{cycle} FIND V({pairwise_decision_node(class_idx, opponent_idx)}) AT={base + 10.6:.2f}n",
-                        f".meas tran c{class_idx}_gt_c{opponent_idx}_decisionn_{cycle} FIND V({pairwise_decision_node(opponent_idx, class_idx)}) AT={base + 10.6:.2f}n",
+                        f".meas tran c{class_idx}_gt_c{opponent_idx}_decision_{cycle} FIND V({pairwise_decision_node(class_idx, opponent_idx)}) AT={base + score_decision_measure_ns:.2f}n",
+                        f".meas tran c{class_idx}_gt_c{opponent_idx}_decisionn_{cycle} FIND V({pairwise_decision_node(opponent_idx, class_idx)}) AT={base + score_decision_measure_ns:.2f}n",
                         f".meas tran c{class_idx}_gt_c{opponent_idx}_diff_{cycle} PARAM='c{class_idx}_gt_c{opponent_idx}_decision_{cycle}-c{class_idx}_gt_c{opponent_idx}_decisionn_{cycle}'",
                     ]
             if uses_score_preamp:
                 lines += [
-                    f".meas tran c{class_idx}_score_amp_{cycle} FIND V(c{class_idx}_score_amp) AT={base + 9.60:.2f}n",
-                    f".meas tran c{class_idx}_scoren_amp_{cycle} FIND V(c{class_idx}_scoren_amp) AT={base + 9.60:.2f}n",
+                    f".meas tran c{class_idx}_score_amp_{cycle} FIND V(c{class_idx}_score_amp) AT={base + score_amp_measure_ns:.2f}n",
+                    f".meas tran c{class_idx}_scoren_amp_{cycle} FIND V(c{class_idx}_scoren_amp) AT={base + score_amp_measure_ns:.2f}n",
                     f".meas tran c{class_idx}_score_gain_diff_{cycle} PARAM='c{class_idx}_score_amp_{cycle}-c{class_idx}_scoren_amp_{cycle}'",
                 ]
             if uses_score_common_gate_nodes or uses_score_contrast_nodes:
@@ -1587,25 +1612,25 @@ def generate_netlist(
                     else f"c{class_idx}_score_amp_{cycle}"
                 )
                 lines += [
-                    f".meas tran score_common_c{class_idx}_{cycle} FIND V(score_common) AT={base + 9.60:.2f}n",
+                    f".meas tran score_common_c{class_idx}_{cycle} FIND V(score_common) AT={base + score_amp_measure_ns:.2f}n",
                     f".meas tran c{class_idx}_score_above_common_{cycle} PARAM='{score_input_measure}-score_common_c{class_idx}_{cycle}'",
                 ]
                 if uses_score_common_gate_nodes:
                     lines.append(
-                        f".meas tran c{class_idx}_score_common_gate_{cycle} FIND V({class_node(class_idx, 'score_common_gate')}) AT={base + 10.60:.2f}n"
+                        f".meas tran c{class_idx}_score_common_gate_{cycle} FIND V({class_node(class_idx, 'score_common_gate')}) AT={base + score_decision_measure_ns:.2f}n"
                     )
                 if uses_score_contrast_nodes:
                     lines.append(
-                        f".meas tran c{class_idx}_score_contrast_{cycle} FIND V({class_node(class_idx, 'score_contrast')}) AT={base + 10.60:.2f}n"
+                        f".meas tran c{class_idx}_score_contrast_{cycle} FIND V({class_node(class_idx, 'score_contrast')}) AT={base + score_decision_measure_ns:.2f}n"
                     )
                     if uses_contrast_gated_score_mass:
                         lines.append(
-                            f".meas tran c{class_idx}_score_contrast_gate_{cycle} FIND V({class_node(class_idx, 'score_contrast_gate')}) AT={base + 10.72:.2f}n"
+                            f".meas tran c{class_idx}_score_contrast_gate_{cycle} FIND V({class_node(class_idx, 'score_contrast_gate')}) AT={base + score_error_measure_ns:.2f}n"
                         )
             if uses_target_ref_score or uses_target_contrast_score_mass:
                 lines += [
-                    f".meas tran target_score_ref_c{class_idx}_{cycle} FIND V(target_score_ref) AT={base + 10.60:.2f}n",
-                    f".meas tran c{class_idx}_score_target_gate_{cycle} FIND V({class_node(class_idx, 'score_target_gate')}) AT={base + 10.60:.2f}n",
+                    f".meas tran target_score_ref_c{class_idx}_{cycle} FIND V(target_score_ref) AT={base + score_decision_measure_ns:.2f}n",
+                    f".meas tran c{class_idx}_score_target_gate_{cycle} FIND V({class_node(class_idx, 'score_target_gate')}) AT={base + score_decision_measure_ns:.2f}n",
                     f".meas tran c{class_idx}_score_above_target_{cycle} PARAM='c{class_idx}_score_amp_{cycle}-target_score_ref_c{class_idx}_{cycle}'",
                 ]
             if (
@@ -1629,18 +1654,17 @@ def generate_netlist(
                     or uses_target_contrast_score_mass
                     or uses_common_score_mass_pairwise
                 ):
-                    mass_measure_ns = base + (10.72 if uses_contrast_gated_score_mass else 10.42)
                     lines.append(
-                        f".meas tran score_nontarget_mass_c{class_idx}_{cycle} FIND V(score_nontarget_mass) AT={mass_measure_ns:.2f}n"
+                        f".meas tran score_nontarget_mass_c{class_idx}_{cycle} FIND V(score_nontarget_mass) AT={base + score_mass_measure_ns:.2f}n"
                     )
                 lines += [
-                    f".meas tran c{class_idx}_errp_{cycle} FIND V({class_node(class_idx, 'errp')}) AT={base + 10.78:.2f}n",
-                    f".meas tran c{class_idx}_errn_{cycle} FIND V({class_node(class_idx, 'errn')}) AT={base + 10.78:.2f}n",
+                    f".meas tran c{class_idx}_errp_{cycle} FIND V({class_node(class_idx, 'errp')}) AT={base + score_error_measure_ns:.2f}n",
+                    f".meas tran c{class_idx}_errn_{cycle} FIND V({class_node(class_idx, 'errn')}) AT={base + score_error_measure_ns:.2f}n",
                     f".meas tran c{class_idx}_errdiff_{cycle} PARAM='c{class_idx}_errp_{cycle}-c{class_idx}_errn_{cycle}'",
                 ]
             if uses_residual_score:
                 lines += [
-                    f".meas tran c{class_idx}_score_gate_{cycle} FIND V({class_node(class_idx, 'score_gate')}) AT={base + 10.60:.2f}n",
+                    f".meas tran c{class_idx}_score_gate_{cycle} FIND V({class_node(class_idx, 'score_gate')}) AT={base + score_decision_measure_ns:.2f}n",
                 ]
         if seq == "train":
             train_seen += 1
@@ -1821,6 +1845,7 @@ def run_case(args: argparse.Namespace) -> dict[str, Any]:
         normalizer_error_clock_high=args.normalizer_error_clock_high,
         error_mode=args.error_mode,
         readout_update_mode=args.readout_update_mode,
+        score_timing_mode=args.score_timing_mode,
         class_bias_mode=args.class_bias_mode,
         class_bias_input=args.class_bias_input,
         readout_center_resistance=args.readout_center_resistance,
@@ -1914,6 +1939,7 @@ def run_case(args: argparse.Namespace) -> dict[str, Any]:
         ),
         "error_mode": args.error_mode,
         "readout_update_mode": args.readout_update_mode,
+        "score_timing_mode": args.score_timing_mode,
         "target_class": args.target_class if args.scenario == "target-repeat" else None,
         "train_samples": len(train_records),
         "eval_samples": len(eval_records),
@@ -1979,6 +2005,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
     ap.add_argument("--normalizer-error-clock-high", type=float, default=1.2)
     ap.add_argument("--error-mode", choices=ERROR_MODES, default="label-descent")
     ap.add_argument("--readout-update-mode", choices=READOUT_UPDATE_MODES, default="sampled")
+    ap.add_argument("--score-timing-mode", choices=SCORE_TIMING_MODES, default="late")
     ap.add_argument("--class-bias-mode", choices=CLASS_BIAS_MODES, default="none")
     ap.add_argument("--class-bias-input", type=float, default=0.85)
     ap.add_argument("--readout-center-resistance", type=float, default=0.0)
@@ -2000,6 +2027,8 @@ def validate_args(args: argparse.Namespace) -> None:
         raise ValueError(f"error-mode must be one of {ERROR_MODES}")
     if args.readout_update_mode not in READOUT_UPDATE_MODES:
         raise ValueError(f"readout-update-mode must be one of {READOUT_UPDATE_MODES}")
+    if args.score_timing_mode not in SCORE_TIMING_MODES:
+        raise ValueError(f"score-timing-mode must be one of {SCORE_TIMING_MODES}")
     if (
         args.readout_update_mode == "live"
         and args.error_mode != "label-descent"

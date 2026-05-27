@@ -615,6 +615,30 @@ def test_multiclass_block_sequence_can_sample_score_during_early_differential_wi
     assert ".meas tran c0_score_2 FIND V(c0_score) AT=37.20n" in netlist
 
 
+def test_multiclass_block_sequence_can_move_score_error_timing_to_early_window() -> None:
+    netlist = seq.generate_netlist(
+        train_records=_target0_records(1),
+        eval_records=_target0_records(1),
+        readout_update_mode="live",
+        error_mode="pairwise-margin-correction-descent",
+        score_timing_mode="early",
+        score_measure_ns=5.2,
+    )
+
+    assert "Vout out 0 PWL(0n 0 4.99n 0 5n 1.2 5.35n 1.2" in netlist
+    assert "Vscorepre scorepre 0 PWL(" in netlist
+    assert "21.45n 0 21.7n 0" in netlist
+    assert "Vscoreamp scoreamp 0 PWL(" in netlist
+    assert "21.95n 1.2 22.75n 1.2" in netlist
+    assert "Vscoredec scoredec 0 PWL(" in netlist
+    assert "22.95n 1.2 23.65n 1.2" in netlist
+    assert "Vscoreerr scoreerr 0 PWL(" in netlist
+    assert "23.8n 0.45 24.1n 0.45" in netlist
+    assert ".meas tran c0_gt_c1_decision_1 FIND V(c0_gt_c1_decision) AT=23.85n" in netlist
+    assert ".meas tran c0_errp_1 FIND V(c0_errp) AT=24.13n" in netlist
+    assert "Vapply" not in netlist
+
+
 def test_multiclass_block_sequence_can_gate_nontarget_with_restored_winner() -> None:
     netlist = seq.generate_netlist(
         train_records=_target0_records(1),
@@ -687,6 +711,8 @@ def test_multiclass_block_sequence_validation() -> None:
         )
     with pytest.raises(ValueError, match="readout-update-mode"):
         seq.main_for_test(["--readout-update-mode", "live", "--error-mode", "score-gated-nontarget"])
+    with pytest.raises(ValueError, match="score_timing_mode"):
+        seq.generate_netlist(train_records=records, eval_records=records, score_timing_mode="missing")
     with pytest.raises(ValueError, match="class_bias_mode"):
         seq.generate_netlist(train_records=records, eval_records=records, class_bias_mode="missing")
     with pytest.raises(ValueError, match="class-bias-input"):

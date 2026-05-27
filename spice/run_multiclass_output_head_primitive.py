@@ -37,9 +37,25 @@ def class_local_readout_forward_lines(
     feature_idx: int,
     width_u: float = 64.0,
     negative_width_u: float = 48.0,
+    isolation: str = "direct",
 ) -> list[str]:
+    if isolation not in ("direct", "diode"):
+        raise ValueError("isolation must be one of ('direct', 'diode')")
     prefix = f"c{class_idx}_f{feature_idx}_"
     actrow = f"actrow{feature_idx}"
+    if isolation == "diode":
+        midp = f"{prefix}midp"
+        midn = f"{prefix}midn"
+        return [
+            f"C{midp} {midp} 0 0.1f IC=0",
+            f"C{midn} {midn} 0 0.1f IC=0",
+            f"R{midp} {midp} 0 1G",
+            f"R{midn} {midn} 0 1G",
+            f"M{prefix}pos_cond {actrow} {class_node(class_idx, f'vwp{feature_idx}')} {midp} 0 NMOS W={width_u:.6g}u L=180n",
+            f"M{prefix}pos_diode {midp} {midp} {class_node(class_idx, 'score')} 0 NSENSE W={width_u:.6g}u L=180n",
+            f"M{prefix}neg_cond {actrow} {class_node(class_idx, f'vwn{feature_idx}')} {midn} 0 NMOS W={negative_width_u:.6g}u L=180n",
+            f"M{prefix}neg_diode {midn} {midn} {class_node(class_idx, 'scoren')} 0 NSENSE W={negative_width_u:.6g}u L=180n",
+        ]
     return [
         f"M{prefix}pos_cond {actrow} {class_node(class_idx, f'vwp{feature_idx}')} {class_node(class_idx, 'score')} 0 NMOS W={width_u:.6g}u L=180n",
         f"M{prefix}neg_cond {actrow} {class_node(class_idx, f'vwn{feature_idx}')} {class_node(class_idx, 'scoren')} 0 NMOS W={negative_width_u:.6g}u L=180n",

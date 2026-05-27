@@ -52,6 +52,7 @@ CLASS_BIAS_MODES = ("none", "target-only", "label-descent")
 READOUT_UPDATE_MODES = ("sampled", "live")
 SCORE_TIMING_MODES = ("late", "early")
 SCORE_SENSE_MODES = ("voltage", "current-clamp")
+READOUT_FORWARD_MODES = ("direct", "diode")
 ELIGIBILITY_GATE_MODES = ("raw", "competition", "rank", "contrast")
 ERROR_MODES = (
     "label-descent",
@@ -766,6 +767,7 @@ def generate_netlist(
     readout_update_mode: str = "sampled",
     score_timing_mode: str = "late",
     score_sense_mode: str = "voltage",
+    readout_forward_mode: str = "direct",
     eligibility_gate_mode: str = "raw",
     eligibility_contrast_common_resistance_ohm: float = 1.0e6,
     eligibility_contrast_common_capacitance_f: float = 1.0,
@@ -820,6 +822,8 @@ def generate_netlist(
         raise ValueError(f"score_timing_mode must be one of {SCORE_TIMING_MODES}")
     if score_sense_mode not in SCORE_SENSE_MODES:
         raise ValueError(f"score_sense_mode must be one of {SCORE_SENSE_MODES}")
+    if readout_forward_mode not in READOUT_FORWARD_MODES:
+        raise ValueError(f"readout_forward_mode must be one of {READOUT_FORWARD_MODES}")
     if eligibility_gate_mode not in ELIGIBILITY_GATE_MODES:
         raise ValueError(f"eligibility_gate_mode must be one of {ELIGIBILITY_GATE_MODES}")
     if score_sense_mode == "current-clamp" and error_mode != "label-descent":
@@ -1656,7 +1660,12 @@ def generate_netlist(
                     if readout_center_resistance > 0.0
                     else []
                 ),
-                *class_local_readout_forward_lines(class_idx=class_idx, feature_idx=feature, width_u=readout_width_u),
+                *class_local_readout_forward_lines(
+                    class_idx=class_idx,
+                    feature_idx=feature,
+                    width_u=readout_width_u,
+                    isolation=readout_forward_mode,
+                ),
                 *readout_update_lines,
             ]
     train_seen = 0
@@ -2239,6 +2248,7 @@ def run_case(args: argparse.Namespace) -> dict[str, Any]:
         readout_update_mode=args.readout_update_mode,
         score_timing_mode=args.score_timing_mode,
         score_sense_mode=args.score_sense_mode,
+        readout_forward_mode=args.readout_forward_mode,
         eligibility_gate_mode=args.eligibility_gate_mode,
         eligibility_contrast_common_resistance_ohm=args.eligibility_contrast_common_resistance,
         eligibility_contrast_common_capacitance_f=args.eligibility_contrast_common_capacitance_f,
@@ -2345,6 +2355,7 @@ def run_case(args: argparse.Namespace) -> dict[str, Any]:
         "readout_update_mode": args.readout_update_mode,
         "score_timing_mode": args.score_timing_mode,
         "score_sense_mode": args.score_sense_mode,
+        "readout_forward_mode": args.readout_forward_mode,
         "eligibility_gate_mode": args.eligibility_gate_mode,
         "eligibility_contrast_common_resistance_ohm": (
             args.eligibility_contrast_common_resistance if args.eligibility_gate_mode == "contrast" else None
@@ -2447,6 +2458,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
     ap.add_argument("--readout-update-mode", choices=READOUT_UPDATE_MODES, default="sampled")
     ap.add_argument("--score-timing-mode", choices=SCORE_TIMING_MODES, default="late")
     ap.add_argument("--score-sense-mode", choices=SCORE_SENSE_MODES, default="voltage")
+    ap.add_argument("--readout-forward-mode", choices=READOUT_FORWARD_MODES, default="direct")
     ap.add_argument("--eligibility-gate-mode", choices=ELIGIBILITY_GATE_MODES, default="raw")
     ap.add_argument("--eligibility-contrast-common-resistance", type=float, default=1.0e6)
     ap.add_argument("--eligibility-contrast-common-capacitance-f", type=float, default=1.0)
@@ -2475,6 +2487,8 @@ def validate_args(args: argparse.Namespace) -> None:
         raise ValueError(f"score-timing-mode must be one of {SCORE_TIMING_MODES}")
     if args.score_sense_mode not in SCORE_SENSE_MODES:
         raise ValueError(f"score-sense-mode must be one of {SCORE_SENSE_MODES}")
+    if args.readout_forward_mode not in READOUT_FORWARD_MODES:
+        raise ValueError(f"readout-forward-mode must be one of {READOUT_FORWARD_MODES}")
     if args.score_sense_mode == "current-clamp" and args.error_mode != "label-descent":
         raise ValueError("current-clamp score-sense-mode is only a label-descent readout diagnostic")
     if (

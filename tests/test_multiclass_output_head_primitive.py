@@ -29,7 +29,22 @@ def test_multiclass_output_head_primitive_emits_class_local_nodes() -> None:
     assert " targetp " not in netlist
 
 
+def test_multiclass_output_head_readout_emitter_can_diode_isolate_score_branch() -> None:
+    lines = head.class_local_readout_forward_lines(class_idx=2, feature_idx=3, isolation="diode")
+    netlist = "\n".join(lines)
+
+    assert "\nB" not in netlist
+    assert "Cc2_f3_midp c2_f3_midp 0 0.1f IC=0" in netlist
+    assert "Rc2_f3_midn c2_f3_midn 0 1G" in netlist
+    assert "Mc2_f3_pos_cond actrow3 c2_vwp3 c2_f3_midp 0 NMOS W=64u L=180n" in netlist
+    assert "Mc2_f3_pos_diode c2_f3_midp c2_f3_midp c2_score 0 NSENSE W=64u L=180n" in netlist
+    assert "Mc2_f3_neg_diode c2_f3_midn c2_f3_midn c2_scoren 0 NSENSE W=48u L=180n" in netlist
+    assert "actrow3 c2_vwp3 c2_score 0 NMOS" not in netlist
+
+
 def test_multiclass_output_head_primitive_validation() -> None:
+    with pytest.raises(ValueError, match="isolation"):
+        head.class_local_readout_forward_lines(class_idx=0, feature_idx=0, isolation="missing")
     with pytest.raises(ValueError, match="class_count"):
         head.generate_netlist(class_count=1)
     with pytest.raises(ValueError, match="target_class"):

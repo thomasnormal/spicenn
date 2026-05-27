@@ -821,6 +821,23 @@ def test_multiclass_block_sequence_can_use_current_clamp_score_diagnostic() -> N
     assert ".meas tran c0_score_net_0 PARAM='c0_score_0-c0_scoren_0'" in netlist
 
 
+def test_multiclass_block_sequence_can_diode_isolate_readout_forward_path() -> None:
+    netlist = seq.generate_netlist(
+        train_records=_target0_two_feature_records(1),
+        eval_records=_target0_two_feature_records(1),
+        feature_count=2,
+        readout_forward_mode="diode",
+    )
+
+    assert "\nB" not in netlist
+    assert "Cc0_f0_midp c0_f0_midp 0 0.1f IC=0" in netlist
+    assert "Rc0_f1_midn c0_f1_midn 0 1G" in netlist
+    assert "Mc0_f0_pos_cond actrow0 c0_vwp0 c0_f0_midp 0 NMOS" in netlist
+    assert "Mc0_f0_pos_diode c0_f0_midp c0_f0_midp c0_score 0 NSENSE" in netlist
+    assert "Mc0_f1_neg_diode c0_f1_midn c0_f1_midn c0_scoren 0 NSENSE" in netlist
+    assert "Mc0_f0_pos_cond actrow0 c0_vwp0 c0_score 0 NMOS" not in netlist
+
+
 def test_multiclass_block_sequence_can_tune_contrast_gate_common_reference() -> None:
     netlist = seq.generate_netlist(
         train_records=_target0_two_feature_records(1),
@@ -958,6 +975,10 @@ def test_multiclass_block_sequence_validation() -> None:
         seq.generate_netlist(train_records=records, eval_records=records, score_timing_mode="missing")
     with pytest.raises(ValueError, match="score_sense_mode"):
         seq.generate_netlist(train_records=records, eval_records=records, score_sense_mode="missing")
+    with pytest.raises(ValueError, match="readout_forward_mode"):
+        seq.generate_netlist(train_records=records, eval_records=records, readout_forward_mode="missing")
+    with pytest.raises(SystemExit):
+        seq.main_for_test(["--readout-forward-mode", "missing"])
     with pytest.raises(ValueError, match="current-clamp"):
         seq.generate_netlist(
             train_records=records,

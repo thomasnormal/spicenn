@@ -16,6 +16,7 @@ UPDATE_MODES = ("none", "positive", "negative")
 READOUT_WRITER_TOPOLOGIES = ("rail", "bounded-ref")
 GRADIENT_GATE_TOPOLOGIES = ("direct", "restored")
 GRADIENT_NORMALIZATIONS = ("none", "shared-shunt", "shared-gate-shunt")
+LIVE_UPDATE_MODES = ("none", "positive", "negative")
 
 
 def update_rails(mode: str, *, amplitude: float) -> tuple[float, float]:
@@ -153,6 +154,99 @@ def generate_netlist(
         ".meas tran common_after PARAM='0.5*(vwp_after+vwn_after)'",
         ".meas tran common_delta PARAM='common_after-common_before'",
         ".tran 5p 12n uic",
+        ".control",
+        "run",
+        "quit",
+        ".endc",
+        ".end",
+    ]
+    return "\n".join(lines) + "\n"
+
+
+def generate_live_update_netlist(
+    *,
+    update_mode: str,
+    vwp: float = 0.36,
+    vwn: float = 0.34,
+    positive_ref: float = 0.48,
+    negative_ref: float = 0.22,
+    eligibility_amplitude: float = 1.2,
+    descent_amplitude: float = 1.2,
+    update_width: float = 1.0,
+    update_window_ns: float = 2.0,
+    weight_cap_f: float = 20.0,
+) -> str:
+    """Generate a direct coincident eligibility x descent update primitive.
+
+    This is the gradient-flow target primitive: it has no gvp/gvn gradient
+    storage nodes and no later apply phase. Weight capacitors move during the
+    same window where eligibility and class descent rails overlap.
+    """
+    if update_mode not in LIVE_UPDATE_MODES:
+        raise ValueError(f"update_mode must be one of {LIVE_UPDATE_MODES}")
+    for name, value in {
+        "vwp": vwp,
+        "vwn": vwn,
+        "positive_ref": positive_ref,
+        "negative_ref": negative_ref,
+        "eligibility_amplitude": eligibility_amplitude,
+        "descent_amplitude": descent_amplitude,
+        "update_width": update_width,
+        "update_window_ns": update_window_ns,
+        "weight_cap_f": weight_cap_f,
+    }.items():
+        if value < 0.0:
+            raise ValueError(f"{name} must be nonnegative")
+    if max(vwp, vwn, positive_ref, negative_ref, eligibility_amplitude, descent_amplitude) > 1.2:
+        raise ValueError("voltages must stay within supply rails")
+    if positive_ref <= negative_ref:
+        raise ValueError("positive_ref must exceed negative_ref")
+    if update_width <= 0.0:
+        raise ValueError("update_width must be positive")
+    if update_window_ns <= 0.0:
+        raise ValueError("update_window_ns must be positive")
+    if weight_cap_f <= 0.0:
+        raise ValueError("weight_cap_f must be positive")
+    dp, dn = update_rails(update_mode, amplitude=descent_amplitude)
+    stop_ns = 6.0 + update_window_ns
+    lines = [
+        "* Direct live readout update primitive.",
+        "* Eligibility and descent rails overlap and directly move persistent weights.",
+        "* No gradient-storage capacitors, restored-gradient gates, or separate apply phase.",
+        ".param VDD=1.2",
+        mos_models(),
+        ".options method=gear reltol=1e-3 abstol=1e-12 vntol=1e-6",
+        "Vdd vdd 0 {VDD}",
+        f"Vvwhi_ref vwhi_ref 0 {positive_ref:.12g}",
+        f"Vvwlo_ref vwlo_ref 0 {negative_ref:.12g}",
+        f"Velig elig 0 PULSE(0 {eligibility_amplitude:.12g} 1.0n 10p 10p {update_window_ns:.12g}n 30n)",
+        f"Vdp dp 0 PULSE(0 {dp:.12g} 1.0n 10p 10p {update_window_ns:.12g}n 30n)",
+        f"Vdn dn 0 PULSE(0 {dn:.12g} 1.0n 10p 10p {update_window_ns:.12g}n 30n)",
+        f"Cvwp vwp0 0 {weight_cap_f:.12g}f IC={vwp:.12g}",
+        f"Cvwn vwn0 0 {weight_cap_f:.12g}f IC={vwn:.12g}",
+        "Rvwp vwp0 0 1e15",
+        "Rvwn vwn0 0 1e15",
+        "* Positive descent raises vwp and lowers vwn while eligibility is present.",
+        f"Mlive_pos_up_e vwhi_ref elig live_pos_up 0 NSENSE W={update_width:.6g}u L=180n",
+        f"Mlive_pos_up_d live_pos_up dp vwp0 0 NSENSE W={update_width:.6g}u L=180n",
+        f"Mlive_pos_dn_e vwn0 elig live_pos_dn 0 NSENSE W={update_width:.6g}u L=180n",
+        f"Mlive_pos_dn_d live_pos_dn dp vwlo_ref 0 NSENSE W={update_width:.6g}u L=180n",
+        "* Negative descent raises vwn and lowers vwp while eligibility is present.",
+        f"Mlive_neg_up_e vwhi_ref elig live_neg_up 0 NSENSE W={update_width:.6g}u L=180n",
+        f"Mlive_neg_up_d live_neg_up dn vwn0 0 NSENSE W={update_width:.6g}u L=180n",
+        f"Mlive_neg_dn_e vwp0 elig live_neg_dn 0 NSENSE W={update_width:.6g}u L=180n",
+        f"Mlive_neg_dn_d live_neg_dn dn vwlo_ref 0 NSENSE W={update_width:.6g}u L=180n",
+        ".meas tran vwp_before FIND V(vwp0) AT=0.9n",
+        ".meas tran vwn_before FIND V(vwn0) AT=0.9n",
+        f".meas tran vwp_after FIND V(vwp0) AT={stop_ns:.12g}n",
+        f".meas tran vwn_after FIND V(vwn0) AT={stop_ns:.12g}n",
+        ".meas tran signed_before PARAM='vwp_before-vwn_before'",
+        ".meas tran signed_after PARAM='vwp_after-vwn_after'",
+        ".meas tran signed_delta PARAM='signed_after-signed_before'",
+        ".meas tran common_before PARAM='0.5*(vwp_before+vwn_before)'",
+        ".meas tran common_after PARAM='0.5*(vwp_after+vwn_after)'",
+        ".meas tran common_delta PARAM='common_after-common_before'",
+        f".tran 5p {stop_ns + 1.0:.12g}n uic",
         ".control",
         "run",
         "quit",

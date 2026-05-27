@@ -123,6 +123,20 @@ def test_readout_writer_primitive_keeps_legacy_rail_writer_available() -> None:
     assert "Mvwp0_dn_g vwp0_dn gvn0 0 0 NSENSE W=0.2u L=180n" in netlist
 
 
+def test_readout_writer_live_update_primitive_has_no_gradient_storage_or_apply_phase() -> None:
+    netlist = writer.generate_live_update_netlist(update_mode="positive", update_width=0.5)
+
+    assert "\nB" not in netlist
+    assert "Cgvp" not in netlist
+    assert "Cgvn" not in netlist
+    assert "Crgp" not in netlist
+    assert "Crgn" not in netlist
+    assert "Vapply" not in netlist
+    assert "Mlive_pos_up_e vwhi_ref elig live_pos_up 0 NSENSE W=0.5u" in netlist
+    assert "Mlive_pos_up_d live_pos_up dp vwp0 0 NSENSE W=0.5u" in netlist
+    assert "Mlive_neg_dn_d live_neg_dn dn vwlo_ref 0 NSENSE W=0.5u" in netlist
+
+
 def test_readout_writer_primitive_classification() -> None:
     assert writer.classify_sign(0.05, 1.0, min_abs_delta=0.01) == "aligned"
     assert writer.classify_sign(-0.05, -1.0, min_abs_delta=0.01) == "aligned"
@@ -152,6 +166,14 @@ def test_readout_writer_primitive_validation() -> None:
         writer.main_for_test(["--gate-amplitude", "1.3"])
     with pytest.raises(ValueError, match="gate-restore-width"):
         writer.main_for_test(["--gate-restore-width", "0"])
+    with pytest.raises(ValueError, match="update_mode"):
+        writer.generate_live_update_netlist(update_mode="bad")
+    with pytest.raises(ValueError, match="positive_ref"):
+        writer.generate_live_update_netlist(update_mode="positive", positive_ref=0.2, negative_ref=0.3)
+    with pytest.raises(ValueError, match="voltages"):
+        writer.generate_live_update_netlist(update_mode="positive", descent_amplitude=1.3)
+    with pytest.raises(ValueError, match="update_width"):
+        writer.generate_live_update_netlist(update_mode="positive", update_width=0.0)
 
 
 @pytest.mark.parametrize(
@@ -184,6 +206,93 @@ def test_readout_writer_primitive_ngspice_sign_and_common_mode(
     else:
         assert abs(signed_delta) < 1e-3
     assert common_delta < 0.05
+
+
+@pytest.mark.parametrize(
+    ("mode", "expected_sign"),
+    [
+        ("positive", 1.0),
+        ("negative", -1.0),
+        ("none", 0.0),
+    ],
+)
+def test_readout_writer_live_update_ngspice_sign_and_no_apply_storage(
+    tmp_path: Path,
+    ngspice_path: str,
+    mode: str,
+    expected_sign: float,
+) -> None:
+    netlist = writer.generate_live_update_netlist(update_mode=mode, update_width=0.5)
+    measures = run_netlist(
+        ngspice_path,
+        tmp_path / f"readout_writer_live_{mode}.cir",
+        netlist,
+        timeout=20.0,
+    )
+
+    assert "Cgvp" not in netlist
+    assert "Vapply" not in netlist
+    signed_delta = float(measures["signed_delta"])
+    common_delta = abs(float(measures["common_delta"]))
+    if expected_sign > 0.0:
+        assert signed_delta > 0.20
+    elif expected_sign < 0.0:
+        assert signed_delta < -0.20
+    else:
+        assert abs(signed_delta) < 1e-3
+    assert common_delta < 1e-3
+
+
+def test_readout_writer_live_update_ngspice_descent_amplitude_is_monotonic(
+    tmp_path: Path,
+    ngspice_path: str,
+) -> None:
+    amplitudes = [0.30, 0.45, 0.60]
+    deltas = []
+    for amplitude in amplitudes:
+        measures = run_netlist(
+            ngspice_path,
+            tmp_path / f"readout_writer_live_descent_{amplitude:.2f}.cir",
+            writer.generate_live_update_netlist(
+                update_mode="positive",
+                descent_amplitude=amplitude,
+                update_width=0.5,
+            ),
+            timeout=20.0,
+        )
+        deltas.append(float(measures["signed_delta"]))
+
+    assert deltas[0] > 0.05
+    assert deltas[0] < deltas[1] < deltas[2]
+
+
+def test_readout_writer_live_update_ngspice_requires_coincident_eligibility(
+    tmp_path: Path,
+    ngspice_path: str,
+) -> None:
+    absent = run_netlist(
+        ngspice_path,
+        tmp_path / "readout_writer_live_no_eligibility.cir",
+        writer.generate_live_update_netlist(
+            update_mode="positive",
+            eligibility_amplitude=0.0,
+            update_width=0.5,
+        ),
+        timeout=20.0,
+    )
+    present = run_netlist(
+        ngspice_path,
+        tmp_path / "readout_writer_live_with_eligibility.cir",
+        writer.generate_live_update_netlist(
+            update_mode="positive",
+            eligibility_amplitude=0.60,
+            update_width=0.5,
+        ),
+        timeout=20.0,
+    )
+
+    assert abs(float(absent["signed_delta"])) < 1e-3
+    assert float(present["signed_delta"]) > 0.20
 
 
 def test_readout_writer_primitive_ngspice_weak_error_starves_default_writer(

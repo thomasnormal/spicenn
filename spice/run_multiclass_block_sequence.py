@@ -51,6 +51,7 @@ SCENARIOS = ("target-repeat", "one-hot", "mnist")
 CLASS_BIAS_MODES = ("none", "target-only", "label-descent")
 READOUT_UPDATE_MODES = ("sampled", "live")
 SCORE_TIMING_MODES = ("late", "early")
+SCORE_SENSE_MODES = ("voltage", "current-clamp")
 ELIGIBILITY_GATE_MODES = ("raw", "competition", "rank", "contrast")
 ERROR_MODES = (
     "label-descent",
@@ -764,6 +765,7 @@ def generate_netlist(
     error_mode: str = "label-descent",
     readout_update_mode: str = "sampled",
     score_timing_mode: str = "late",
+    score_sense_mode: str = "voltage",
     eligibility_gate_mode: str = "raw",
     eligibility_contrast_common_resistance_ohm: float = 1.0e6,
     eligibility_contrast_common_capacitance_f: float = 1.0,
@@ -816,8 +818,12 @@ def generate_netlist(
         raise ValueError(f"readout_update_mode must be one of {READOUT_UPDATE_MODES}")
     if score_timing_mode not in SCORE_TIMING_MODES:
         raise ValueError(f"score_timing_mode must be one of {SCORE_TIMING_MODES}")
+    if score_sense_mode not in SCORE_SENSE_MODES:
+        raise ValueError(f"score_sense_mode must be one of {SCORE_SENSE_MODES}")
     if eligibility_gate_mode not in ELIGIBILITY_GATE_MODES:
         raise ValueError(f"eligibility_gate_mode must be one of {ELIGIBILITY_GATE_MODES}")
+    if score_sense_mode == "current-clamp" and error_mode != "label-descent":
+        raise ValueError("current-clamp score_sense_mode is only a label-descent readout diagnostic")
     if class_bias_mode not in CLASS_BIAS_MODES:
         raise ValueError(f"class_bias_mode must be one of {CLASS_BIAS_MODES}")
     if class_bias_input < 0.0 or class_bias_input > 1.2:
@@ -1163,13 +1169,21 @@ def generate_netlist(
         lines += [
             f"V{class_node(class_idx, 'targetp')} {class_node(class_idx, 'targetp')} 0 {windowed_pwl(targetp_values, start_ns=target_start_ns, end_ns=target_end_ns)}",
             f"V{class_node(class_idx, 'targetn')} {class_node(class_idx, 'targetn')} 0 {width_scaled_windowed_pwl(targetn_values, start_ns=target_start_ns, end_ns=target_end_ns, width_scale=nontarget_width_scale)}",
-            f"C{class_node(class_idx, 'score')} {class_node(class_idx, 'score')} 0 {score_capacitance_f:.12g}f IC=0",
-            f"C{class_node(class_idx, 'scoren')} {class_node(class_idx, 'scoren')} 0 {score_capacitance_f:.12g}f IC=0",
-            f"R{class_node(class_idx, 'score')} {class_node(class_idx, 'score')} 0 {score_load_resistance:.12g}",
-            f"R{class_node(class_idx, 'scoren')} {class_node(class_idx, 'scoren')} 0 {score_load_resistance:.12g}",
-            f"Mreset_{class_node(class_idx, 'score')} {class_node(class_idx, 'score')} rst 0 0 NMOS W=4u L=180n",
-            f"Mreset_{class_node(class_idx, 'scoren')} {class_node(class_idx, 'scoren')} rst 0 0 NMOS W=4u L=180n",
         ]
+        if score_sense_mode == "current-clamp":
+            lines += [
+                f"V{class_node(class_idx, 'score_clamp')} {class_node(class_idx, 'score')} 0 0",
+                f"V{class_node(class_idx, 'scoren_clamp')} {class_node(class_idx, 'scoren')} 0 0",
+            ]
+        else:
+            lines += [
+                f"C{class_node(class_idx, 'score')} {class_node(class_idx, 'score')} 0 {score_capacitance_f:.12g}f IC=0",
+                f"C{class_node(class_idx, 'scoren')} {class_node(class_idx, 'scoren')} 0 {score_capacitance_f:.12g}f IC=0",
+                f"R{class_node(class_idx, 'score')} {class_node(class_idx, 'score')} 0 {score_load_resistance:.12g}",
+                f"R{class_node(class_idx, 'scoren')} {class_node(class_idx, 'scoren')} 0 {score_load_resistance:.12g}",
+                f"Mreset_{class_node(class_idx, 'score')} {class_node(class_idx, 'score')} rst 0 0 NMOS W=4u L=180n",
+                f"Mreset_{class_node(class_idx, 'scoren')} {class_node(class_idx, 'scoren')} rst 0 0 NMOS W=4u L=180n",
+            ]
         if uses_restored_score or uses_restored_binary or uses_score_preamp:
             prefix = f"c{class_idx}_"
             lines += [
@@ -1667,11 +1681,18 @@ def generate_netlist(
             f".meas tran elig_{cycle} PARAM='elig_f0_{cycle}'",
         ]
         for class_idx in range(class_count):
-            lines += [
-                f".meas tran c{class_idx}_score_{cycle} FIND V({class_node(class_idx, 'score')}) AT={base + score_measure_ns:.2f}n",
-                f".meas tran c{class_idx}_scoren_{cycle} FIND V({class_node(class_idx, 'scoren')}) AT={base + score_measure_ns:.2f}n",
-                f".meas tran c{class_idx}_score_net_{cycle} PARAM='c{class_idx}_score_{cycle}-c{class_idx}_scoren_{cycle}'",
-            ]
+            if score_sense_mode == "current-clamp":
+                lines += [
+                    f".meas tran c{class_idx}_score_{cycle} FIND I(V{class_node(class_idx, 'score_clamp')}) AT={base + score_measure_ns:.2f}n",
+                    f".meas tran c{class_idx}_scoren_{cycle} FIND I(V{class_node(class_idx, 'scoren_clamp')}) AT={base + score_measure_ns:.2f}n",
+                    f".meas tran c{class_idx}_score_net_{cycle} PARAM='c{class_idx}_score_{cycle}-c{class_idx}_scoren_{cycle}'",
+                ]
+            else:
+                lines += [
+                    f".meas tran c{class_idx}_score_{cycle} FIND V({class_node(class_idx, 'score')}) AT={base + score_measure_ns:.2f}n",
+                    f".meas tran c{class_idx}_scoren_{cycle} FIND V({class_node(class_idx, 'scoren')}) AT={base + score_measure_ns:.2f}n",
+                    f".meas tran c{class_idx}_score_net_{cycle} PARAM='c{class_idx}_score_{cycle}-c{class_idx}_scoren_{cycle}'",
+                ]
             if uses_pairwise_decisions:
                 for opponent_idx in range(class_count):
                     if opponent_idx == class_idx:
@@ -1870,6 +1891,60 @@ def signed_readout_projection_stats(
         "final_eval_signed_projection_accuracy": float(np.mean([bool(row["correct"]) for row in rows])),
         "final_eval_signed_projection_min_margin_v2": float(np.min(margins)),
         "final_eval_signed_projection_mean_abs_score_v2": float(np.mean(score_values)),
+    }
+
+
+def conductance_readout_projection_stats(
+    measures: dict[str, float],
+    *,
+    labels: list[int],
+    sequence: list[str],
+    class_count: int,
+    total_feature_count: int,
+    final_positive: list[list[float]],
+    final_negative: list[list[float]],
+    positive_vto: float = 0.35,
+    negative_width_scale: float = 48.0 / 64.0,
+) -> dict[str, Any]:
+    """Approximate the physical NMOS conductance readout from final gate rails."""
+    positive = np.maximum(np.array(final_positive, dtype=float) - positive_vto, 0.0)
+    negative = negative_width_scale * np.maximum(np.array(final_negative, dtype=float) - positive_vto, 0.0)
+    weight_matrix = positive - negative
+    rows: list[dict[str, Any]] = []
+    for cycle, seq in enumerate(sequence):
+        if seq != "final_eval":
+            continue
+        keys = [f"act_f{feature}_{cycle}" for feature in range(total_feature_count)]
+        if not all(key in measures for key in keys):
+            continue
+        acts = np.array([float(measures[key]) for key in keys], dtype=float)
+        scores = weight_matrix @ acts
+        label = int(labels[cycle])
+        prediction = int(np.argmax(scores))
+        margin = float(scores[label] - max(score for idx, score in enumerate(scores) if idx != label))
+        rows.append(
+            {
+                "cycle": cycle,
+                "label": label,
+                "prediction": prediction,
+                "correct": prediction == label,
+                "score_margin_v2": margin,
+                **{f"score_c{class_idx}_v2": float(scores[class_idx]) for class_idx in range(class_count)},
+            }
+        )
+    if not rows:
+        return {
+            "final_eval_conductance_projection_rows": [],
+            "final_eval_conductance_projection_accuracy": None,
+            "final_eval_conductance_projection_min_margin_v2": None,
+            "final_eval_conductance_projection_active_weights": None,
+        }
+    margins = [float(row["score_margin_v2"]) for row in rows]
+    return {
+        "final_eval_conductance_projection_rows": rows,
+        "final_eval_conductance_projection_accuracy": float(np.mean([bool(row["correct"]) for row in rows])),
+        "final_eval_conductance_projection_min_margin_v2": float(np.min(margins)),
+        "final_eval_conductance_projection_active_weights": int(np.count_nonzero(np.abs(weight_matrix) > 0.0)),
     }
 
 
@@ -2163,6 +2238,7 @@ def run_case(args: argparse.Namespace) -> dict[str, Any]:
         error_mode=args.error_mode,
         readout_update_mode=args.readout_update_mode,
         score_timing_mode=args.score_timing_mode,
+        score_sense_mode=args.score_sense_mode,
         eligibility_gate_mode=args.eligibility_gate_mode,
         eligibility_contrast_common_resistance_ohm=args.eligibility_contrast_common_resistance,
         eligibility_contrast_common_capacitance_f=args.eligibility_contrast_common_capacitance_f,
@@ -2177,6 +2253,14 @@ def run_case(args: argparse.Namespace) -> dict[str, Any]:
     final_margins = [float(row["score_margin_v"]) for row in rows if row["sequence"] == "final_eval"]
     final_signed = [
         [float(measures[f"c{class_idx}_f{feature}_signed_final"]) for feature in range(total_feature_count)]
+        for class_idx in range(args.class_count)
+    ]
+    final_positive = [
+        [float(measures[f"c{class_idx}_f{feature}_vwp_final"]) for feature in range(total_feature_count)]
+        for class_idx in range(args.class_count)
+    ]
+    final_negative = [
+        [float(measures[f"c{class_idx}_f{feature}_vwn_final"]) for feature in range(total_feature_count)]
         for class_idx in range(args.class_count)
     ]
     train_progress = []
@@ -2260,6 +2344,7 @@ def run_case(args: argparse.Namespace) -> dict[str, Any]:
         "error_mode": args.error_mode,
         "readout_update_mode": args.readout_update_mode,
         "score_timing_mode": args.score_timing_mode,
+        "score_sense_mode": args.score_sense_mode,
         "eligibility_gate_mode": args.eligibility_gate_mode,
         "eligibility_contrast_common_resistance_ohm": (
             args.eligibility_contrast_common_resistance if args.eligibility_gate_mode == "contrast" else None
@@ -2277,6 +2362,8 @@ def run_case(args: argparse.Namespace) -> dict[str, Any]:
         "final_eval_min_margin_v": final_margin,
         "margin_improvement_v": final_margin - initial_margin,
         "final_signed_matrix_v": final_signed,
+        "final_positive_matrix_v": final_positive,
+        "final_negative_matrix_v": final_negative,
         "signed_after_each_train_v": train_progress,
         **signed_readout_projection_stats(
             measures,
@@ -2285,6 +2372,15 @@ def run_case(args: argparse.Namespace) -> dict[str, Any]:
             class_count=args.class_count,
             total_feature_count=total_feature_count,
             final_signed=final_signed,
+        ),
+        **conductance_readout_projection_stats(
+            measures,
+            labels=labels,
+            sequence=sequence,
+            class_count=args.class_count,
+            total_feature_count=total_feature_count,
+            final_positive=final_positive,
+            final_negative=final_negative,
         ),
         **activation_prototype_projection_stats(
             measures,
@@ -2350,6 +2446,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
     ap.add_argument("--error-mode", choices=ERROR_MODES, default="label-descent")
     ap.add_argument("--readout-update-mode", choices=READOUT_UPDATE_MODES, default="sampled")
     ap.add_argument("--score-timing-mode", choices=SCORE_TIMING_MODES, default="late")
+    ap.add_argument("--score-sense-mode", choices=SCORE_SENSE_MODES, default="voltage")
     ap.add_argument("--eligibility-gate-mode", choices=ELIGIBILITY_GATE_MODES, default="raw")
     ap.add_argument("--eligibility-contrast-common-resistance", type=float, default=1.0e6)
     ap.add_argument("--eligibility-contrast-common-capacitance-f", type=float, default=1.0)
@@ -2376,6 +2473,10 @@ def validate_args(args: argparse.Namespace) -> None:
         raise ValueError(f"readout-update-mode must be one of {READOUT_UPDATE_MODES}")
     if args.score_timing_mode not in SCORE_TIMING_MODES:
         raise ValueError(f"score-timing-mode must be one of {SCORE_TIMING_MODES}")
+    if args.score_sense_mode not in SCORE_SENSE_MODES:
+        raise ValueError(f"score-sense-mode must be one of {SCORE_SENSE_MODES}")
+    if args.score_sense_mode == "current-clamp" and args.error_mode != "label-descent":
+        raise ValueError("current-clamp score-sense-mode is only a label-descent readout diagnostic")
     if (
         args.readout_update_mode == "live"
         and args.error_mode != "label-descent"

@@ -432,6 +432,37 @@ def test_multiclass_block_sequence_summarizes_final_signed_projection() -> None:
     assert stats["final_eval_signed_projection_mean_abs_score_v2"] == pytest.approx(0.165)
 
 
+def test_multiclass_block_sequence_summarizes_conductance_projection() -> None:
+    measures = {
+        "act_f0_2": 1.0,
+        "act_f1_2": 0.5,
+        "act_f0_3": 0.4,
+        "act_f1_3": 1.0,
+    }
+
+    stats = seq.conductance_readout_projection_stats(
+        measures,
+        labels=[0, 1, 0, 1],
+        sequence=["initial_eval", "train", "final_eval", "final_eval"],
+        class_count=2,
+        total_feature_count=2,
+        final_positive=[
+            [0.50, 0.34],
+            [0.34, 0.52],
+        ],
+        final_negative=[
+            [0.34, 0.36],
+            [0.37, 0.34],
+        ],
+        positive_vto=0.35,
+        negative_width_scale=0.75,
+    )
+
+    assert stats["final_eval_conductance_projection_accuracy"] == 1.0
+    assert stats["final_eval_conductance_projection_min_margin_v2"] == pytest.approx(0.07625)
+    assert stats["final_eval_conductance_projection_active_weights"] == 4
+
+
 def test_multiclass_block_sequence_summarizes_activation_prototype_projection() -> None:
     measures = {
         "act_f0_0": 0.9,
@@ -771,6 +802,25 @@ def test_multiclass_block_sequence_can_contrast_gate_live_writer_with_feature_co
     assert "Mc0_f0_live_pos_up_e vwhi_ref egate0 c0_f0_live_pos_up 0 NSENSE" in netlist
 
 
+def test_multiclass_block_sequence_can_use_current_clamp_score_diagnostic() -> None:
+    netlist = seq.generate_netlist(
+        train_records=_target0_two_feature_records(1),
+        eval_records=_target0_two_feature_records(1),
+        feature_count=2,
+        readout_update_mode="live",
+        error_mode="label-descent",
+        score_sense_mode="current-clamp",
+    )
+
+    assert "\nB" not in netlist
+    assert "Vc0_score_clamp c0_score 0 0" in netlist
+    assert "Vc0_scoren_clamp c0_scoren 0 0" in netlist
+    assert "Cc0_score" not in netlist
+    assert "Mreset_c0_score" not in netlist
+    assert ".meas tran c0_score_0 FIND I(Vc0_score_clamp)" in netlist
+    assert ".meas tran c0_score_net_0 PARAM='c0_score_0-c0_scoren_0'" in netlist
+
+
 def test_multiclass_block_sequence_can_tune_contrast_gate_common_reference() -> None:
     netlist = seq.generate_netlist(
         train_records=_target0_two_feature_records(1),
@@ -906,6 +956,15 @@ def test_multiclass_block_sequence_validation() -> None:
         seq.main_for_test(["--readout-update-mode", "live", "--error-mode", "score-gated-nontarget"])
     with pytest.raises(ValueError, match="score_timing_mode"):
         seq.generate_netlist(train_records=records, eval_records=records, score_timing_mode="missing")
+    with pytest.raises(ValueError, match="score_sense_mode"):
+        seq.generate_netlist(train_records=records, eval_records=records, score_sense_mode="missing")
+    with pytest.raises(ValueError, match="current-clamp"):
+        seq.generate_netlist(
+            train_records=records,
+            eval_records=records,
+            score_sense_mode="current-clamp",
+            error_mode="pairwise-margin-correction-descent",
+        )
     with pytest.raises(ValueError, match="class_bias_mode"):
         seq.generate_netlist(train_records=records, eval_records=records, class_bias_mode="missing")
     with pytest.raises(ValueError, match="class-bias-input"):

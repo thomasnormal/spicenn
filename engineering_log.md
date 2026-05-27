@@ -55,6 +55,13 @@
   rail-saturating, the default apply aperture is now 50 ps; the sequence tests
   still prove positive updates persist and opposite-sign updates reverse the
   signed state without Python intervention.
+- Tightened the same sampled-eligibility primitive with two more ngspice
+  checks.  A positive error with `row=0` now leaves `elig` near zero and moves
+  the signed weight by less than `1 mV`, while a larger row amplitude produces
+  both a larger sampled eligibility voltage and a larger signed update.  These
+  are still small-cell Level-1 MOS guarantees, but they make the local update
+  contract closer to the intended product form `input x error`, rather than
+  just a sign-only writer smoke.
 - Added an experimental residual-score nontarget mode to the continuous
   split-rail multiclass block sequence.  The low-level regression now proves a
   transistor/passive low-common-mode PMOS score preamp plus weak analog

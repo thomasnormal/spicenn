@@ -259,6 +259,57 @@ def test_row_conductance_primitive_ngspice_positive_update_corrects_negative_ini
     assert float(measures["signed_weight_delta"]) > 0.05
 
 
+def test_row_conductance_primitive_ngspice_update_respects_input_dead_zone(
+    tmp_path: Path,
+    ngspice_path: str,
+) -> None:
+    measures = _run_ngspice_case(
+        tmp_path,
+        ngspice_path,
+        "positive_update_zero_row_dead_zone",
+        wp=0.45,
+        wn=0.40,
+        row=0.0,
+        update_mode="positive",
+        credit_mode="none",
+    )
+
+    assert abs(float(measures["forward_margin"])) < 1e-3
+    assert float(measures["elig_after"]) < 1e-3
+    assert abs(float(measures["signed_weight_delta"])) < 1e-3
+
+
+def test_row_conductance_primitive_ngspice_update_magnitude_tracks_input_amplitude(
+    tmp_path: Path,
+    ngspice_path: str,
+) -> None:
+    low = _run_ngspice_case(
+        tmp_path,
+        ngspice_path,
+        "positive_update_low_row",
+        wp=0.45,
+        wn=0.40,
+        row=0.45,
+        update_mode="positive",
+        credit_mode="none",
+    )
+    high = _run_ngspice_case(
+        tmp_path,
+        ngspice_path,
+        "positive_update_high_row",
+        wp=0.45,
+        wn=0.40,
+        row=0.85,
+        update_mode="positive",
+        credit_mode="none",
+    )
+
+    assert float(low["elig_after"]) > 0.20
+    assert float(high["elig_after"]) > float(low["elig_after"]) + 0.20
+    assert float(low["signed_weight_delta"]) > 0.005
+    assert float(high["signed_weight_delta"]) > float(low["signed_weight_delta"]) + 0.03
+
+
 @pytest.mark.parametrize(
     ("mode", "expected_sign"),
     [

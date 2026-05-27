@@ -57,6 +57,7 @@ SCORE_SENSE_MODES = ("voltage", "current-clamp", "diode-mirror")
 READOUT_FORWARD_MODES = ("direct", "diode")
 ELIGIBILITY_GATE_MODES = ("raw", "competition", "rank", "contrast")
 ELIGIBILITY_SOURCE_MODES = ("pre-p", "act-raw", "act")
+READOUT_UPDATE_ELIGIBILITY_MODES = ("restored", "hybrid")
 HIDDEN_CREDIT_ACTIVATION_MODELS = ("NREL", "NMOS", "NSENSE")
 HIDDEN_DIRECT_READOUT_GATE_MODES = ("raw", "differential-excess", "restored-excess")
 HIDDEN_DIRECT_OUTPUT_STAGES = ("nmos-pass", "pmos-pullup", "pmos-bounded", "pmos-complementary")
@@ -1238,7 +1239,12 @@ def generate_netlist(
     readout_forward_mode: str = "direct",
     eligibility_gate_mode: str = "raw",
     eligibility_source_mode: str = "pre-p",
+    readout_update_eligibility_mode: str = "restored",
     readout_update_eligibility_ref: float = 1.2,
+    readout_update_eligibility_pgate_capacitance_f: float = 2.0,
+    readout_update_eligibility_discharge_width_u: float = 16.0,
+    readout_update_eligibility_restore_width_u: float = 16.0,
+    readout_update_eligibility_pass_width_u: float = 16.0,
     eligibility_contrast_common_resistance_ohm: float = 1.0e6,
     eligibility_contrast_common_capacitance_f: float = 1.0,
     class_bias_mode: str = "none",
@@ -1282,6 +1288,10 @@ def generate_netlist(
         "hidden_direct_low_ref": hidden_direct_low_ref,
         "hidden_direct_complement_width_scale": hidden_direct_complement_width_scale,
         "readout_update_eligibility_ref": readout_update_eligibility_ref,
+        "readout_update_eligibility_pgate_capacitance_f": readout_update_eligibility_pgate_capacitance_f,
+        "readout_update_eligibility_discharge_width_u": readout_update_eligibility_discharge_width_u,
+        "readout_update_eligibility_restore_width_u": readout_update_eligibility_restore_width_u,
+        "readout_update_eligibility_pass_width_u": readout_update_eligibility_pass_width_u,
         "eligibility_contrast_common_resistance_ohm": eligibility_contrast_common_resistance_ohm,
         "eligibility_contrast_common_capacitance_f": eligibility_contrast_common_capacitance_f,
     }.items():
@@ -1335,6 +1345,8 @@ def generate_netlist(
         raise ValueError(f"eligibility_gate_mode must be one of {ELIGIBILITY_GATE_MODES}")
     if eligibility_source_mode not in ELIGIBILITY_SOURCE_MODES:
         raise ValueError(f"eligibility_source_mode must be one of {ELIGIBILITY_SOURCE_MODES}")
+    if readout_update_eligibility_mode not in READOUT_UPDATE_ELIGIBILITY_MODES:
+        raise ValueError(f"readout_update_eligibility_mode must be one of {READOUT_UPDATE_ELIGIBILITY_MODES}")
     if score_sense_mode in ("current-clamp", "diode-mirror") and error_mode not in {
         "label-descent",
         "label-rail-descent",
@@ -1391,6 +1403,10 @@ def generate_netlist(
     uses_stored_hidden_credit_update = hidden_update_mode == "readout-weighted"
     uses_direct_hidden_update = hidden_update_mode == "direct-readout-weighted"
     uses_hidden_update = uses_stored_hidden_credit_update or uses_direct_hidden_update
+    uses_gated_eligibility = eligibility_gate_mode in ("competition", "rank", "contrast")
+    uses_hybrid_readout_eligibility = (
+        uses_gated_eligibility and readout_update_eligibility_mode == "hybrid"
+    )
     uses_label_rail_descent = error_mode == "label-rail-descent"
     normalizer_approach = normalizer_error_approach(error_mode) if uses_normalizer_error else None
     uses_score_common_gate = uses_common_ref_score or uses_raw_common_ref_score
@@ -1574,7 +1590,15 @@ def generate_netlist(
         ),
         *(
             [f"Vrelsamp relsamp 0 {periodic_phase_pwl(cycle_count, start_ns=4.82, end_ns=5.05, active_cycles=train_cycles)}"]
-            if eligibility_gate_mode in ("competition", "rank", "contrast")
+            if uses_gated_eligibility and not uses_hybrid_readout_eligibility
+            else []
+        ),
+        *(
+            [
+                f"Vrelpass relpass 0 {periodic_phase_pwl(cycle_count, start_ns=4.82, end_ns=4.93, active_cycles=train_cycles)}",
+                f"Vrelboost relboost 0 {periodic_phase_pwl(cycle_count, start_ns=4.95, end_ns=5.35, active_cycles=train_cycles)}",
+            ]
+            if uses_hybrid_readout_eligibility
             else []
         ),
         f"Vout out 0 {periodic_phase_pwl(cycle_count, start_ns=out_start_ns, end_ns=out_end_ns)}",
@@ -1770,7 +1794,9 @@ def generate_netlist(
                 f"M{hxelg}_pass_clk {mid} hxsamp xelig{feature} 0 NSENSE W=16u L=180n",
                 f"M{hxelg}_pass_gate {hxelg} {egate} {mid} 0 NSENSE W=16u L=180n",
             ]
-    if eligibility_gate_mode in ("competition", "rank", "contrast"):
+    if uses_gated_eligibility:
+        readout_restore_clock = "relboost" if uses_hybrid_readout_eligibility else "relsamp"
+        readout_pass_clock = "relpass" if uses_hybrid_readout_eligibility else "relsamp"
         for feature in range(feature_count):
             relig = readout_update_eligibility_node(feature)
             egate = eligibility_gate_node(feature)
@@ -1778,15 +1804,22 @@ def generate_netlist(
             mid_elig = f"{relig}_pgate_elig"
             mid_gate = f"{relig}_pgate_gate"
             lines += [
-                f"C{pgate} {pgate} 0 2f IC=1.2",
+                f"C{pgate} {pgate} 0 {readout_update_eligibility_pgate_capacitance_f:.12g}f IC=1.2",
                 f"R{pgate} {pgate} vdd 50000",
                 f"R{mid_elig} {mid_elig} 0 1G",
                 f"R{mid_gate} {mid_gate} 0 1G",
-                f"M{relig}_pgate_dis_elig {pgate} elig{feature} {mid_elig} 0 NREL W=16u L=180n",
-                f"M{relig}_pgate_dis_gate {mid_elig} {egate} {mid_gate} 0 NSENSE W=16u L=180n",
-                f"M{relig}_pgate_dis_clk {mid_gate} relsamp 0 0 NSENSE W=16u L=180n",
-                f"M{relig}_restore_p {relig} {pgate} relig_ref relig_ref PMOS W=16u L=180n",
+                f"M{relig}_pgate_dis_elig {pgate} elig{feature} {mid_elig} 0 NREL W={readout_update_eligibility_discharge_width_u:.6g}u L=180n",
+                f"M{relig}_pgate_dis_gate {mid_elig} {egate} {mid_gate} 0 NSENSE W={readout_update_eligibility_discharge_width_u:.6g}u L=180n",
+                f"M{relig}_pgate_dis_clk {mid_gate} {readout_restore_clock} 0 0 NSENSE W={readout_update_eligibility_discharge_width_u:.6g}u L=180n",
+                f"M{relig}_restore_p {relig} {pgate} relig_ref relig_ref PMOS W={readout_update_eligibility_restore_width_u:.6g}u L=180n",
             ]
+            if readout_update_eligibility_mode == "hybrid":
+                pass_mid = f"{relig}_pass_mid"
+                lines += [
+                    f"R{pass_mid} {pass_mid} 0 1G",
+                    f"M{relig}_pass_clk {pass_mid} {readout_pass_clock} elig{feature} 0 NSENSE W={readout_update_eligibility_pass_width_u:.6g}u L=180n",
+                    f"M{relig}_pass_gate {relig} {egate} {pass_mid} 0 NSENSE W={readout_update_eligibility_pass_width_u:.6g}u L=180n",
+                ]
     for class_idx in range(class_count):
         targetp_values = [
             target_high if cycle in train_cycles and labels[cycle] == class_idx else 0.0 for cycle in range(cycle_count)
@@ -3313,7 +3346,12 @@ def run_case(args: argparse.Namespace) -> dict[str, Any]:
         readout_forward_mode=args.readout_forward_mode,
         eligibility_gate_mode=args.eligibility_gate_mode,
         eligibility_source_mode=args.eligibility_source_mode,
+        readout_update_eligibility_mode=args.readout_update_eligibility_mode,
         readout_update_eligibility_ref=args.readout_update_eligibility_ref,
+        readout_update_eligibility_pgate_capacitance_f=args.readout_update_eligibility_pgate_capacitance_f,
+        readout_update_eligibility_discharge_width_u=args.readout_update_eligibility_discharge_width,
+        readout_update_eligibility_restore_width_u=args.readout_update_eligibility_restore_width,
+        readout_update_eligibility_pass_width_u=args.readout_update_eligibility_pass_width,
         eligibility_contrast_common_resistance_ohm=args.eligibility_contrast_common_resistance,
         eligibility_contrast_common_capacitance_f=args.eligibility_contrast_common_capacitance_f,
         class_bias_mode=args.class_bias_mode,
@@ -3482,8 +3520,33 @@ def run_case(args: argparse.Namespace) -> dict[str, Any]:
         "readout_forward_mode": args.readout_forward_mode,
         "eligibility_gate_mode": args.eligibility_gate_mode,
         "eligibility_source_mode": args.eligibility_source_mode,
+        "readout_update_eligibility_mode": (
+            args.readout_update_eligibility_mode
+            if args.eligibility_gate_mode in ("competition", "rank", "contrast")
+            else None
+        ),
         "readout_update_eligibility_ref": (
             args.readout_update_eligibility_ref
+            if args.eligibility_gate_mode in ("competition", "rank", "contrast")
+            else None
+        ),
+        "readout_update_eligibility_pgate_capacitance_f": (
+            args.readout_update_eligibility_pgate_capacitance_f
+            if args.eligibility_gate_mode in ("competition", "rank", "contrast")
+            else None
+        ),
+        "readout_update_eligibility_discharge_width_u": (
+            args.readout_update_eligibility_discharge_width
+            if args.eligibility_gate_mode in ("competition", "rank", "contrast")
+            else None
+        ),
+        "readout_update_eligibility_restore_width_u": (
+            args.readout_update_eligibility_restore_width
+            if args.eligibility_gate_mode in ("competition", "rank", "contrast")
+            else None
+        ),
+        "readout_update_eligibility_pass_width_u": (
+            args.readout_update_eligibility_pass_width
             if args.eligibility_gate_mode in ("competition", "rank", "contrast")
             else None
         ),
@@ -3639,7 +3702,12 @@ def build_arg_parser() -> argparse.ArgumentParser:
     ap.add_argument("--readout-forward-mode", choices=READOUT_FORWARD_MODES, default="direct")
     ap.add_argument("--eligibility-gate-mode", choices=ELIGIBILITY_GATE_MODES, default="raw")
     ap.add_argument("--eligibility-source-mode", choices=ELIGIBILITY_SOURCE_MODES, default="pre-p")
+    ap.add_argument("--readout-update-eligibility-mode", choices=READOUT_UPDATE_ELIGIBILITY_MODES, default="restored")
     ap.add_argument("--readout-update-eligibility-ref", type=float, default=1.2)
+    ap.add_argument("--readout-update-eligibility-pgate-capacitance-f", type=float, default=2.0)
+    ap.add_argument("--readout-update-eligibility-discharge-width", type=float, default=16.0)
+    ap.add_argument("--readout-update-eligibility-restore-width", type=float, default=16.0)
+    ap.add_argument("--readout-update-eligibility-pass-width", type=float, default=16.0)
     ap.add_argument("--eligibility-contrast-common-resistance", type=float, default=1.0e6)
     ap.add_argument("--eligibility-contrast-common-capacitance-f", type=float, default=1.0)
     ap.add_argument("--class-bias-mode", choices=CLASS_BIAS_MODES, default="none")
@@ -3708,6 +3776,14 @@ def validate_args(args: argparse.Namespace) -> None:
         raise ValueError("readout-center-voltage must stay within supply rails")
     if args.readout_update_eligibility_ref <= 0.0 or args.readout_update_eligibility_ref > 1.2:
         raise ValueError("readout-update-eligibility-ref must stay in (0, 1.2]")
+    if args.readout_update_eligibility_pgate_capacitance_f <= 0.0:
+        raise ValueError("readout-update-eligibility-pgate-capacitance-f must be positive")
+    if args.readout_update_eligibility_discharge_width <= 0.0:
+        raise ValueError("readout-update-eligibility-discharge-width must be positive")
+    if args.readout_update_eligibility_restore_width <= 0.0:
+        raise ValueError("readout-update-eligibility-restore-width must be positive")
+    if args.readout_update_eligibility_pass_width <= 0.0:
+        raise ValueError("readout-update-eligibility-pass-width must be positive")
     if args.readout_width <= 0.0:
         raise ValueError("readout-width must be positive")
     if args.score_capacitance_f <= 0.0:

@@ -12,6 +12,11 @@ from parameter_theory import derive_class_evidence_normalizer_sizing, derive_mul
 from datasets import dataset_records, parse_counted_mnist_dataset
 from run_device_mnist01_scalar_training import sanitize_tag
 from run_device_sequential_training import mos_models, run_netlist
+from run_normalization_subcircuits import (
+    APPROACHES as NORMALIZATION_APPROACHES,
+    normalization_subcircuits,
+    spice_subckt_name,
+)
 from run_multiclass_output_head_primitive import (
     class_local_bounded_update_lines,
     class_local_label_descent_gradient_lines,
@@ -55,11 +60,19 @@ ERROR_MODES = (
     "common-score-mass-pairwise-descent",
     "pairwise-score-competition-descent",
     "pairwise-margin-correction-descent",
+    *(f"normalizer-{approach}-descent" for approach in NORMALIZATION_APPROACHES),
     "pairwise-binary-descent",
     "restored-score-binary-descent",
     "restored-score-nontarget",
     "restored-winner-nontarget",
 )
+NORMALIZER_ERROR_MODES = tuple(f"normalizer-{approach}-descent" for approach in NORMALIZATION_APPROACHES)
+
+
+def normalizer_error_approach(error_mode: str) -> str:
+    if error_mode not in NORMALIZER_ERROR_MODES:
+        raise ValueError(f"error_mode must be one of {NORMALIZER_ERROR_MODES}")
+    return error_mode.removeprefix("normalizer-").removesuffix("-descent")
 
 
 def pairwise_decision_node(class_idx: int, opponent_idx: int) -> str:
@@ -794,6 +807,8 @@ def generate_netlist(
     uses_common_score_mass_pairwise = error_mode == "common-score-mass-pairwise-descent"
     uses_pairwise_score_competition = error_mode == "pairwise-score-competition-descent"
     uses_pairwise_margin_correction = error_mode == "pairwise-margin-correction-descent"
+    uses_normalizer_error = error_mode in NORMALIZER_ERROR_MODES
+    normalizer_approach = normalizer_error_approach(error_mode) if uses_normalizer_error else None
     uses_score_common_gate = uses_common_ref_score or uses_raw_common_ref_score
     uses_score_common_gate_nodes = uses_score_common_gate or uses_common_score_mass or uses_common_score_mass_pairwise
     uses_score_contrast_nodes = (
@@ -822,6 +837,7 @@ def generate_netlist(
         or uses_common_score_mass_pairwise
         or uses_pairwise_score_competition
         or uses_pairwise_margin_correction
+        or uses_normalizer_error
     )
     uses_restored_winner = error_mode == "restored-winner-nontarget"
     uses_pairwise_decisions = (
@@ -842,6 +858,7 @@ def generate_netlist(
         or uses_common_score_mass_pairwise
         or uses_score_preamp
         or uses_raw_common_ref_score
+        or uses_normalizer_error
     )
     target_start_ns = (
         9.55
@@ -856,6 +873,7 @@ def generate_netlist(
             or uses_common_score_mass_pairwise
             or uses_pairwise_score_competition
             or uses_pairwise_margin_correction
+            or uses_normalizer_error
         )
         else 10.8 if uses_late_restored_gate else 9.0
     )
@@ -937,6 +955,7 @@ def generate_netlist(
         or uses_common_score_mass_pairwise
         or uses_pairwise_score_competition
         or uses_pairwise_margin_correction
+        or uses_normalizer_error
     ):
         scoreerr_start_ns = 10.73 if uses_contrast_gated_score_mass else 10.45
         scoreerr_end_ns = 10.79 if uses_contrast_gated_score_mass else 10.75
@@ -956,6 +975,7 @@ def generate_netlist(
         or uses_common_score_mass_pairwise
         or uses_pairwise_score_competition
         or uses_pairwise_margin_correction
+        or uses_normalizer_error
     ):
         lines.append(
             f"Vscoregaterst scoregaterst 0 {periodic_phase_pwl(cycle_count, start_ns=8.10, end_ns=8.35, active_cycles=train_cycles)}"
@@ -1211,6 +1231,24 @@ def generate_netlist(
             error_width_u=score_mass_error_width,
             error_capacitance_f=0.5,
         )
+    if uses_normalizer_error:
+        lines += [
+            normalization_subcircuits(approaches=(normalizer_approach,)),
+            (
+                "Xscore_normalizer "
+                + " ".join(class_node(class_idx, "score") for class_idx in range(class_count))
+                + " "
+                + " ".join(class_node(class_idx, "targetp") for class_idx in range(class_count))
+                + " "
+                + " ".join(class_node(class_idx, "targetn") for class_idx in range(class_count))
+                + " scoreerr scoregaterst "
+                + " ".join(
+                    f"{class_node(class_idx, 'errp')} {class_node(class_idx, 'errn')}"
+                    for class_idx in range(class_count)
+                )
+                + f" vdd 0 {spice_subckt_name(normalizer_approach)}"
+            ),
+        ]
     for class_idx in range(class_count):
         for feature in range(total_feature_count):
             if error_mode == "score-gated-nontarget":
@@ -1359,6 +1397,14 @@ def generate_netlist(
                     negative_error_node=class_node(class_idx, "errn"),
                 )
             elif uses_pairwise_score_competition or uses_pairwise_margin_correction:
+                gradient_lines = class_local_error_rail_gradient_lines(
+                    class_idx=class_idx,
+                    feature_idx=feature,
+                    activation_node=f"elig{feature}",
+                    positive_error_node=class_node(class_idx, "errp"),
+                    negative_error_node=class_node(class_idx, "errn"),
+                )
+            elif uses_normalizer_error:
                 gradient_lines = class_local_error_rail_gradient_lines(
                     class_idx=class_idx,
                     feature_idx=feature,
@@ -1517,6 +1563,7 @@ def generate_netlist(
                 or uses_common_score_mass_pairwise
                 or uses_pairwise_score_competition
                 or uses_pairwise_margin_correction
+                or uses_normalizer_error
             ):
                 if (
                     uses_score_mass

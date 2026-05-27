@@ -299,6 +299,27 @@ def test_multiclass_block_sequence_can_use_score_mass_descent() -> None:
     assert ".meas tran c0_errdiff_1" in netlist
 
 
+def test_multiclass_block_sequence_can_use_normalizer_current_sum_descent() -> None:
+    netlist = seq.generate_netlist(
+        train_records=_target0_records(1),
+        eval_records=_target0_records(1),
+        error_mode="normalizer-current-sum-descent",
+    )
+
+    assert "\nB" not in netlist
+    assert ".subckt norm_current_sum s0 s1 s2 tp0 tp1 tp2 tn0 tn1 tn2 phi rst" in netlist
+    assert "Msg0_amp_p sg0 s0 sg0_i vdd PMOS W=1u L=180n" in netlist
+    assert (
+        "Xscore_normalizer c0_score c1_score c2_score "
+        "c0_targetp c1_targetp c2_targetp c0_targetn c1_targetn c2_targetn "
+        "scoreerr scoregaterst c0_errp c0_errn c1_errp c1_errn c2_errp c2_errn vdd 0 norm_current_sum"
+        in netlist
+    )
+    assert "Mc0_f0_gvp_e c0_f0_gvp_a c0_errp c0_f0_gvp_d 0 NSENSE" in netlist
+    assert "Mc1_f0_gvn_e c1_f0_gvn_a c1_errn c1_f0_gvn_d 0 NSENSE" in netlist
+    assert ".meas tran c0_errdiff_1" in netlist
+
+
 def test_multiclass_block_sequence_can_use_common_score_mass_descent() -> None:
     netlist = seq.generate_netlist(
         train_records=_target0_records(1),

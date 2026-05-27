@@ -189,6 +189,31 @@ that each candidate is electrically active at the right scale and sign, so later
 end-to-end experiments can compare a small number of higher-level choices
 instead of retuning local device widths.
 
+The continuous multiclass block can instantiate the same library with:
+
+```text
+error_mode = normalizer-<approach>-descent
+```
+
+where `<approach>` is one of the ten primitive names.  The block-level
+integration deliberately reuses the subcircuit instead of copying its internals:
+
+```text
+class score capacitors
+targetp/targetn rails
+scoreerr/scoregaterst phases
+  -> norm_<approach>
+  -> c<i>_errp / c<i>_errn
+  -> existing local readout writer
+```
+
+The first plugged-in controls (`current-sum` and `soft-wta`) both learn the
+one-hot continuous transient but do not yet improve the real
+`mnist3fixed8_12` plateau.  That means the reusable interface is electrically
+valid, while the best next experiment should compare approaches with a sharper
+normalizer-specific diagnostic rather than treating the first two as solved
+training paths.
+
 ## Signal Representation Contract
 
 The circuit should distinguish the mathematical sign of a value from the

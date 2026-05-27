@@ -53,6 +53,21 @@
   the immediate integrated candidate concrete: isolated row-conductance
   readout, symmetric branches, and a finite passive score load, followed by a
   centering/decision stage rather than a floating score capacitor.
+- Added an ngspice regression for the low-common-mode PMOS score preamp at the
+  actual passive-readout voltage scale.  With `score/scoren` at
+  `44 mV/0 mV`, `44 mV/44 mV`, and `0 mV/44 mV`,
+  `score-diff-low-gain` resolves positive and negative cases strongly while
+  keeping the equal-score case within a `10 mV` decision dead zone.  Focused
+  regression with the conductance-readout and block structural tests passed
+  with 23 tests.  Integrated smokes show the mixed picture: a strict
+  continuous 2-train/2-eval run with row-pulsed split-rail hidden forward,
+  symmetric isolated conductance readout, passive `30 kOhm` score loads, and
+  `score-diff-low-gain-latched` reached fixed-zero-threshold final accuracy
+  `1.0`; the same configuration on a 4-train/4-eval slice with initial eval
+  stayed at `0.75 -> 0.75` and remained separable only with a shifted
+  threshold.  Conclusion: the low-gain decision stage improves centering for
+  tiny/passive score rails, but the next blocker is update/error alignment in
+  the integrated training path, not just the final decision latch.
 - Added `contrast-score-mass-descent` to the continuous multiclass block
   sequence.  The mode converts class score evidence into a centered analog
   `cX_score_contrast` rail by charging from the class-local score preamp and

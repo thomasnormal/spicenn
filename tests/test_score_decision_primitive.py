@@ -498,6 +498,52 @@ def test_score_decision_primitive_ngspice_low_gain_resolves_low_common_mode_scor
     assert float(low_negative["decision_diff"]) < -0.05
 
 
+def test_score_decision_primitive_ngspice_low_gain_centers_passive_readout_range(
+    tmp_path: Path,
+    ngspice_path: str,
+) -> None:
+    passive_positive = run_netlist(
+        ngspice_path,
+        tmp_path / "score_decision_low_gain_passive_positive.cir",
+        decision.generate_netlist(
+            score_case="neutral",
+            score=0.044,
+            scoren=0.0,
+            decision_topology="score-diff-low-gain",
+        ),
+        timeout=20.0,
+    )
+    passive_neutral = run_netlist(
+        ngspice_path,
+        tmp_path / "score_decision_low_gain_passive_neutral.cir",
+        decision.generate_netlist(
+            score_case="neutral",
+            score=0.044,
+            scoren=0.044,
+            decision_topology="score-diff-low-gain",
+        ),
+        timeout=20.0,
+    )
+    passive_negative = run_netlist(
+        ngspice_path,
+        tmp_path / "score_decision_low_gain_passive_negative.cir",
+        decision.generate_netlist(
+            score_case="neutral",
+            score=0.0,
+            scoren=0.044,
+            decision_topology="score-diff-low-gain",
+        ),
+        timeout=20.0,
+    )
+
+    assert float(passive_positive["score_gain_diff"]) > 0.035
+    assert float(passive_positive["decision_diff"]) > 0.05
+    assert abs(float(passive_neutral["score_gain_diff"])) < 1e-3
+    assert abs(float(passive_neutral["decision_diff"])) < 0.01
+    assert float(passive_negative["score_gain_diff"]) < -0.035
+    assert float(passive_negative["decision_diff"]) < -0.05
+
+
 def test_score_decision_primitive_ngspice_low_gain_ref_recenters_shifted_margin(
     tmp_path: Path,
     ngspice_path: str,

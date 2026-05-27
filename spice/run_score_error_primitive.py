@@ -19,6 +19,13 @@ ERROR_CASES = (
     "neutral",
 )
 ERROR_TOPOLOGIES = ("competition", "binary-descent", "label-descent")
+MULTICLASS_CASES = (
+    "target1_high_wrong0",
+    "target1_low_wrong0",
+    "target0_clear",
+    "target2_wrong1",
+    "neutral",
+)
 
 
 def case_values(case: str, *, score_center: float, score_delta: float) -> tuple[float, float, float]:
@@ -173,6 +180,106 @@ def generate_netlist(
     return "\n".join(lines) + "\n"
 
 
+def multiclass_scores(case: str) -> tuple[tuple[float, float, float], int | None]:
+    if case == "target1_high_wrong0":
+        return (0.75, 0.45, 0.15), 1
+    if case == "target1_low_wrong0":
+        return (0.75, 0.15, 0.45), 1
+    if case == "target0_clear":
+        return (0.75, 0.25, 0.15), 0
+    if case == "target2_wrong1":
+        return (0.15, 0.75, 0.35), 2
+    if case == "neutral":
+        return (0.25, 0.25, 0.25), None
+    raise ValueError(f"multiclass case must be one of {MULTICLASS_CASES}")
+
+
+def generate_multiclass_netlist(
+    *,
+    case: str,
+    class_count: int = 3,
+    score_values: tuple[float, ...] | None = None,
+    target_class: int | None = None,
+    sum_width: float = 32.0,
+    error_width: float = 32.0,
+    mass_capacitance_f: float = 8.0,
+    error_capacitance_f: float = 8.0,
+) -> str:
+    if class_count != 3:
+        raise ValueError("class_count must currently be 3")
+    if case not in MULTICLASS_CASES:
+        raise ValueError(f"case must be one of {MULTICLASS_CASES}")
+    if min(sum_width, error_width, mass_capacitance_f, error_capacitance_f) <= 0.0:
+        raise ValueError("widths and capacitances must be positive")
+    default_scores, default_target = multiclass_scores(case)
+    scores = default_scores if score_values is None else tuple(float(value) for value in score_values)
+    target = default_target if target_class is None else target_class
+    if len(scores) != class_count:
+        raise ValueError("score_values must have class_count entries")
+    if target is not None and (target < 0 or target >= class_count):
+        raise ValueError("target_class must be a valid class index")
+    if min(scores) < 0.0 or max(scores) > 1.2:
+        raise ValueError("score rails must stay within supply rails")
+    lines = [
+        "* Multiclass score/error primitive smoke.",
+        "* Tests score rails + one-hot label -> target-positive/nontarget-negative error rails.",
+        "* nontarget_mass is a physical current-mode sum of labeled nontarget score rails.",
+        "* No behavioral sources.",
+        ".param VDD=1.2",
+        mos_models(),
+        ".options method=gear reltol=1e-3 abstol=1e-12 vntol=1e-6",
+        "Vdd vdd 0 {VDD}",
+        "Vrst rst 0 PULSE(0 1.2 0.0n 10p 10p 0.45n 10n)",
+        "Vsum sumclk 0 PULSE(0 1.2 1.0n 10p 10p 1.2n 10n)",
+        "Verr err 0 PULSE(0 1.2 2.4n 10p 10p 1.6n 10n)",
+        f"Cnontarget_mass nontarget_mass 0 {mass_capacitance_f:.12g}f IC=0",
+        "Rnontarget_mass nontarget_mass 0 1G",
+        "Mreset_nontarget_mass nontarget_mass rst 0 0 NMOS W=4u L=180n",
+    ]
+    for class_idx, score in enumerate(scores):
+        targetp = 1.2 if target == class_idx else 0.0
+        targetn = 1.2 if target is not None and target != class_idx else 0.0
+        lines += [
+            f"Vscore{class_idx} score{class_idx} 0 {score:.12g}",
+            f"Vtargetp{class_idx} targetp{class_idx} 0 {targetp:.12g}",
+            f"Vtargetn{class_idx} targetn{class_idx} 0 {targetn:.12g}",
+            f"Cdp{class_idx} dp{class_idx} 0 {error_capacitance_f:.12g}f IC=0",
+            f"Cdn{class_idx} dn{class_idx} 0 {error_capacitance_f:.12g}f IC=0",
+            f"Rdp{class_idx} dp{class_idx} 0 1G",
+            f"Rdn{class_idx} dn{class_idx} 0 1G",
+            f"Mreset_dp{class_idx} dp{class_idx} rst 0 0 NMOS W=4u L=180n",
+            f"Mreset_dn{class_idx} dn{class_idx} rst 0 0 NMOS W=4u L=180n",
+            f"Rmass_nt{class_idx}_a mass_nt{class_idx}_a 0 1G",
+            f"Rmass_nt{class_idx}_s mass_nt{class_idx}_s 0 1G",
+            f"Mmass_nt{class_idx}_label vdd targetn{class_idx} mass_nt{class_idx}_a 0 NSENSE W={sum_width:.6g}u L=180n",
+            f"Mmass_nt{class_idx}_score mass_nt{class_idx}_a score{class_idx} mass_nt{class_idx}_s 0 NSENSE W={sum_width:.6g}u L=180n",
+            f"Mmass_nt{class_idx}_clk mass_nt{class_idx}_s sumclk nontarget_mass 0 NSENSE W={sum_width:.6g}u L=180n",
+            f"Rdp{class_idx}_a dp{class_idx}_a 0 1G",
+            f"Rdp{class_idx}_m dp{class_idx}_m 0 1G",
+            f"Mdp{class_idx}_label vdd targetp{class_idx} dp{class_idx}_a 0 NSENSE W={error_width:.6g}u L=180n",
+            f"Mdp{class_idx}_mass dp{class_idx}_a nontarget_mass dp{class_idx}_m 0 NSENSE W={error_width:.6g}u L=180n",
+            f"Mdp{class_idx}_clk dp{class_idx}_m err dp{class_idx} 0 NSENSE W={error_width:.6g}u L=180n",
+            f"Rdn{class_idx}_a dn{class_idx}_a 0 1G",
+            f"Rdn{class_idx}_s dn{class_idx}_s 0 1G",
+            f"Mdn{class_idx}_label vdd targetn{class_idx} dn{class_idx}_a 0 NSENSE W={error_width:.6g}u L=180n",
+            f"Mdn{class_idx}_score dn{class_idx}_a score{class_idx} dn{class_idx}_s 0 NSENSE W={error_width:.6g}u L=180n",
+            f"Mdn{class_idx}_clk dn{class_idx}_s err dn{class_idx} 0 NSENSE W={error_width:.6g}u L=180n",
+            f".meas tran dp{class_idx}_after FIND V(dp{class_idx}) AT=4.5n",
+            f".meas tran dn{class_idx}_after FIND V(dn{class_idx}) AT=4.5n",
+            f".meas tran err{class_idx}_diff PARAM='dp{class_idx}_after-dn{class_idx}_after'",
+        ]
+    lines += [
+        ".meas tran nontarget_mass_after FIND V(nontarget_mass) AT=2.35n",
+        ".tran 2p 5n uic",
+        ".control",
+        "run",
+        "quit",
+        ".endc",
+        ".end",
+    ]
+    return "\n".join(lines) + "\n"
+
+
 def expected_raw_sign(case: str) -> float:
     if case in {"target_positive_score_negative", "target_positive_score_positive"}:
         return 1.0
@@ -231,6 +338,25 @@ def classify_row(row: dict[str, Any], *, min_abs_margin: float) -> dict[str, str
             min_abs_margin=min_abs_margin,
         )
     return classifications
+
+
+def expected_multiclass_signs(case: str) -> tuple[float, float, float]:
+    _, target = multiclass_scores(case)
+    if target is None:
+        return (0.0, 0.0, 0.0)
+    return tuple(1.0 if class_idx == target else -1.0 for class_idx in range(3))
+
+
+def classify_multiclass_row(row: dict[str, Any], *, min_abs_margin: float) -> dict[str, str]:
+    expected = expected_multiclass_signs(str(row["multiclass_case"]))
+    return {
+        f"err{class_idx}_classification": classify_sign(
+            float(row[f"err{class_idx}_diff"]),
+            expected[class_idx],
+            min_abs_margin=min_abs_margin,
+        )
+        for class_idx in range(3)
+    }
 
 
 def run_cases(args: argparse.Namespace) -> dict[str, Any]:
@@ -294,6 +420,64 @@ def run_cases(args: argparse.Namespace) -> dict[str, Any]:
     return summary
 
 
+def run_multiclass_cases(args: argparse.Namespace) -> dict[str, Any]:
+    generated = ROOT / "spice/generated"
+    tables = ROOT / "results/tables"
+    generated.mkdir(parents=True, exist_ok=True)
+    tables.mkdir(parents=True, exist_ok=True)
+    tag = sanitize_tag(args.tag)
+    spice_bin, version = detect_spice(args.spice_bin)
+    rows: list[dict[str, Any]] = []
+    start = time.perf_counter()
+    for case in MULTICLASS_CASES:
+        path = generated / f"{tag}_{sanitize_tag(case)}.cir"
+        measures = run_netlist(
+            spice_bin,
+            path,
+            generate_multiclass_netlist(
+                case=case,
+                sum_width=args.multiclass_sum_width,
+                error_width=args.multiclass_error_width,
+            ),
+            timeout=args.timeout,
+        )
+        row = {"multiclass_case": case, **measures}
+        row.update(classify_multiclass_row(row, min_abs_margin=args.min_abs_margin))
+        rows.append(row)
+    csv_path = tables / f"{tag}.csv"
+    fieldnames = sorted({key for row in rows for key in row})
+    with csv_path.open("w", newline="") as f:
+        writer = csv.DictWriter(f, fieldnames=fieldnames)
+        writer.writeheader()
+        writer.writerows(rows)
+    classification_counts: dict[str, dict[str, int]] = {}
+    for row in rows:
+        for key, value in row.items():
+            if key.endswith("_classification"):
+                counts = classification_counts.setdefault(key, {})
+                cls = str(value)
+                counts[cls] = counts.get(cls, 0) + 1
+    passed = all(
+        str(value) in {"aligned", "dead_zone"}
+        for row in rows
+        for key, value in row.items()
+        if key.endswith("_classification")
+    )
+    summary = {
+        "simulator": version,
+        "architecture": "multiclass_score_error_primitive",
+        "model_level": "ngspice built-in LEVEL=1 MOS models; not a foundry PDK.",
+        "cases": len(rows),
+        "passed": passed,
+        "classification_counts": classification_counts,
+        "csv": str(csv_path),
+        "wall_time_s": time.perf_counter() - start,
+    }
+    summary_path = tables / f"{tag}_summary.json"
+    summary_path.write_text(json.dumps(summary, indent=2) + "\n")
+    return summary
+
+
 def build_arg_parser() -> argparse.ArgumentParser:
     ap = argparse.ArgumentParser()
     ap.add_argument("--spice-bin", default=None)
@@ -305,6 +489,9 @@ def build_arg_parser() -> argparse.ArgumentParser:
     ap.add_argument("--error-restore-width", type=float, default=7.0)
     ap.add_argument("--error-topology", choices=ERROR_TOPOLOGIES, default="competition")
     ap.add_argument("--min-abs-margin", type=float, default=25e-3)
+    ap.add_argument("--multiclass", action="store_true")
+    ap.add_argument("--multiclass-sum-width", type=float, default=32.0)
+    ap.add_argument("--multiclass-error-width", type=float, default=32.0)
     return ap
 
 
@@ -317,6 +504,10 @@ def validate_args(args: argparse.Namespace) -> None:
         raise ValueError("error-restore-width must be positive")
     if args.min_abs_margin < 0.0:
         raise ValueError("min-abs-margin must be nonnegative")
+    if args.multiclass_sum_width <= 0.0:
+        raise ValueError("multiclass-sum-width must be positive")
+    if args.multiclass_error_width <= 0.0:
+        raise ValueError("multiclass-error-width must be positive")
 
 
 def main_for_test(argv: list[str]) -> argparse.Namespace:
@@ -328,7 +519,10 @@ def main_for_test(argv: list[str]) -> argparse.Namespace:
 def main() -> None:
     args = build_arg_parser().parse_args()
     validate_args(args)
-    print(json.dumps(run_cases(args), indent=2))
+    if args.multiclass:
+        print(json.dumps(run_multiclass_cases(args), indent=2))
+    else:
+        print(json.dumps(run_cases(args), indent=2))
 
 
 if __name__ == "__main__":

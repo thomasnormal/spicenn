@@ -60,6 +60,10 @@ def test_score_error_primitive_validation() -> None:
         error.main_for_test(["--timeout", "0"])
     with pytest.raises(ValueError, match="error-restore-width"):
         error.main_for_test(["--error-restore-width", "0"])
+    with pytest.raises(ValueError, match="multiclass-sum-width"):
+        error.main_for_test(["--multiclass-sum-width", "0"])
+    with pytest.raises(ValueError, match="multiclass-error-width"):
+        error.main_for_test(["--multiclass-error-width", "0"])
 
 
 @pytest.mark.parametrize(
@@ -262,3 +266,120 @@ def test_score_error_primitive_ngspice_label_descent_neutral_stays_small(
     measures = _run_ngspice_case(tmp_path, ngspice_path, "neutral", restore_error=False, error_topology="label-descent")
 
     assert abs(float(measures["raw_error_diff"])) < 0.025
+
+
+def test_score_error_primitive_emits_multiclass_nontarget_mass_error_motif() -> None:
+    netlist = error.generate_multiclass_netlist(case="target1_high_wrong0")
+
+    assert "\nB" not in netlist
+    assert "Cnontarget_mass nontarget_mass 0 8f IC=0" in netlist
+    assert "Vtargetp1 targetp1 0 1.2" in netlist
+    assert "Vtargetn0 targetn0 0 1.2" in netlist
+    assert "Vtargetn1 targetn1 0 0" in netlist
+    assert "Mmass_nt0_label vdd targetn0 mass_nt0_a 0 NSENSE W=32u" in netlist
+    assert "Mmass_nt0_score mass_nt0_a score0 mass_nt0_s 0 NSENSE W=32u" in netlist
+    assert "Mdp1_mass dp1_a nontarget_mass dp1_m 0 NSENSE W=32u" in netlist
+    assert "Mdn0_score dn0_a score0 dn0_s 0 NSENSE W=32u" in netlist
+    assert ".meas tran err1_diff PARAM='dp1_after-dn1_after'" in netlist
+
+
+def test_score_error_primitive_multiclass_validation() -> None:
+    with pytest.raises(ValueError, match="case"):
+        error.generate_multiclass_netlist(case="bad")
+    with pytest.raises(ValueError, match="class_count"):
+        error.generate_multiclass_netlist(case="neutral", class_count=4)
+    with pytest.raises(ValueError, match="score_values"):
+        error.generate_multiclass_netlist(case="neutral", score_values=(0.1, 0.2))
+    with pytest.raises(ValueError, match="score rails"):
+        error.generate_multiclass_netlist(case="neutral", score_values=(0.1, 0.2, 1.3))
+    with pytest.raises(ValueError, match="target_class"):
+        error.generate_multiclass_netlist(case="neutral", target_class=3)
+
+
+def _run_multiclass_case(tmp_path: Path, ngspice_path: str, case: str) -> dict[str, float]:
+    return run_netlist(
+        ngspice_path,
+        tmp_path / f"score_error_multiclass_{case}.cir",
+        error.generate_multiclass_netlist(case=case),
+        timeout=20.0,
+    )
+
+
+def test_score_error_primitive_ngspice_multiclass_target_gets_nontarget_mass_positive_credit(
+    tmp_path: Path,
+    ngspice_path: str,
+) -> None:
+    high_wrong = _run_multiclass_case(tmp_path, ngspice_path, "target1_high_wrong0")
+    low_wrong = _run_multiclass_case(tmp_path, ngspice_path, "target1_low_wrong0")
+
+    assert float(high_wrong["nontarget_mass_after"]) > 0.20
+    assert float(high_wrong["err1_diff"]) > 0.025
+    assert float(low_wrong["err1_diff"]) > float(high_wrong["err1_diff"]) - 5e-3
+
+
+def test_score_error_primitive_ngspice_multiclass_nontarget_negative_credit_tracks_score(
+    tmp_path: Path,
+    ngspice_path: str,
+) -> None:
+    measures = _run_multiclass_case(tmp_path, ngspice_path, "target1_high_wrong0")
+
+    assert float(measures["err0_diff"]) < -0.025
+    assert float(measures["err2_diff"]) < -0.005
+    assert abs(float(measures["err1_diff"])) > abs(float(measures["err2_diff"]))
+    assert abs(float(measures["err0_diff"])) > abs(float(measures["err2_diff"]))
+
+
+def test_score_error_primitive_ngspice_multiclass_clear_target_has_smaller_positive_pressure(
+    tmp_path: Path,
+    ngspice_path: str,
+) -> None:
+    clear = _run_multiclass_case(tmp_path, ngspice_path, "target0_clear")
+    wrong = _run_multiclass_case(tmp_path, ngspice_path, "target1_high_wrong0")
+
+    assert float(clear["err0_diff"]) > 0.0
+    assert float(clear["err0_diff"]) < float(wrong["err1_diff"])
+    assert float(clear["err1_diff"]) < -0.005
+    assert float(clear["err2_diff"]) < -0.001
+
+
+def test_score_error_primitive_ngspice_multiclass_neutral_no_label_stays_quiet(
+    tmp_path: Path,
+    ngspice_path: str,
+) -> None:
+    measures = _run_multiclass_case(tmp_path, ngspice_path, "neutral")
+
+    assert float(measures["nontarget_mass_after"]) < 1e-3
+    for class_idx in range(3):
+        assert abs(float(measures[f"err{class_idx}_diff"])) < 1e-3
+
+
+def test_score_error_primitive_multiclass_summary_runner(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def fake_detect_spice(spice_bin):
+        return "/usr/bin/ngspice", "fake-ngspice"
+
+    def fake_run_netlist(spice_bin, path, deck, *, timeout):
+        assert "\nB" not in deck
+        if "target1_high_wrong0" in str(path):
+            return {"err0_diff": -0.08, "err1_diff": 0.06, "err2_diff": -0.02, "nontarget_mass_after": 0.3}
+        if "target1_low_wrong0" in str(path):
+            return {"err0_diff": -0.08, "err1_diff": 0.07, "err2_diff": -0.04, "nontarget_mass_after": 0.3}
+        if "target0_clear" in str(path):
+            return {"err0_diff": 0.03, "err1_diff": -0.02, "err2_diff": -0.01, "nontarget_mass_after": 0.1}
+        if "target2_wrong1" in str(path):
+            return {"err0_diff": -0.01, "err1_diff": -0.08, "err2_diff": 0.06, "nontarget_mass_after": 0.3}
+        return {"err0_diff": 0.0, "err1_diff": 0.0, "err2_diff": 0.0, "nontarget_mass_after": 0.0}
+
+    monkeypatch.setattr(error, "ROOT", tmp_path)
+    monkeypatch.setattr(error, "detect_spice", fake_detect_spice)
+    monkeypatch.setattr(error, "run_netlist", fake_run_netlist)
+
+    args = error.main_for_test(["--multiclass", "--tag", "unit_multiclass_error", "--min-abs-margin", "0.005"])
+    summary = error.run_multiclass_cases(args)
+
+    assert summary["architecture"] == "multiclass_score_error_primitive"
+    assert summary["passed"] is True
+    assert summary["cases"] == len(error.MULTICLASS_CASES)
+    assert (tmp_path / "results/tables/unit_multiclass_error_summary.json").exists()

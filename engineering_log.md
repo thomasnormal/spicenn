@@ -2,6 +2,23 @@
 
 ## 2026-05-27
 
+- Added a continuous `multiclass_block_sequence` rung above the one-cycle
+  smoke primitive.  It runs initial eval, two train samples, and final eval in
+  one ngspice transient; Python supplies only the row PWL input, label rails,
+  clocks, and measurements while class-local readout capacitors persist across
+  cycles.  Starting the signed readout pair at a readable neutral common-mode
+  (`0.40/0.40`) is important: a lower `0.34/0.34` neutral start can create a
+  mathematically signed weight after update whose positive rail remains below
+  the NMOS read threshold, so the score path stays off.  The apply pulse also
+  had to be shortened to 100 ps for an incremental update; the original 2 ns
+  pulse saturated the bounded-ref writer on the first sample.  The evidence
+  run `codex_multiclass_block_sequence` passed under ngspice-42 with a final
+  eval margin improvement from \(0.0\) to \(77.8\) mV and signed readout
+  progression of target class \(+22.5\) mV after one train sample and
+  \(+44.6\) mV after two samples, with nontarget classes moving symmetrically
+  negative.  This proves persistent, accumulating class-local updates in a
+  continuous split-rail block transient, but it is still a synthetic
+  one-feature/one-target rung rather than MNIST learning.
 - Added a low-level ngspice-backed `multiclass_block_smoke` primitive for the
   current main path: row-pulsed hidden conductance into split `pre_p/pre_n`,
   sampled activation/eligibility capacitors, class-local differential readout

@@ -1,0 +1,90 @@
+from __future__ import annotations
+
+import sys
+from pathlib import Path
+
+import pytest
+
+
+SPICE_DIR = Path(__file__).resolve().parents[1] / "spice"
+sys.path.insert(0, str(SPICE_DIR))
+
+import run_multiclass_block_sequence as seq  # noqa: E402
+from run_device_sequential_training import run_netlist  # noqa: E402
+
+
+def _target0_records(count: int) -> list[dict[str, object]]:
+    return [{"label": 0, "inputs": {"x0": 0.85}} for _ in range(count)]
+
+
+def test_multiclass_block_sequence_emits_single_continuous_deck() -> None:
+    netlist = seq.generate_netlist(train_records=_target0_records(2), eval_records=_target0_records(1))
+
+    assert "\nB" not in netlist
+    assert "Vrow0 row0 0 PWL(" in netlist
+    assert "Vacc acc 0 PWL(" in netlist
+    assert "Vapplyn applyn 0 PWL(" in netlist
+    assert "Mhidden_pos row0 whp pre_p 0 NMOS" in netlist
+    assert "Melig_n elig0 samp pre_p 0 NMOS" in netlist
+    assert "Mc0_f0_pos_cond actrow0 c0_vwp0 c0_score 0 NMOS" in netlist
+    assert "Mc1_f0_vwp_dn_g c1_f0_vwp_dn c1_gvn0 vwlo_ref 0 NSENSE" in netlist
+    assert "* cycle 0 initial_eval label=0" in netlist
+    assert "* cycle 1 train label=0" in netlist
+    assert "* cycle 2 train label=0" in netlist
+    assert "* cycle 3 final_eval label=0" in netlist
+
+
+def test_multiclass_block_sequence_validation() -> None:
+    records = _target0_records(1)
+    with pytest.raises(ValueError, match="class_count"):
+        seq.generate_netlist(train_records=records, eval_records=records, class_count=1)
+    with pytest.raises(ValueError, match="nonempty"):
+        seq.generate_netlist(train_records=[], eval_records=records)
+    with pytest.raises(ValueError, match="valid class"):
+        seq.generate_netlist(train_records=[{"label": 3, "inputs": {"x0": 0.85}}], eval_records=records)
+    with pytest.raises(ValueError, match="inputs\\['x0'\\]"):
+        seq.generate_netlist(train_records=[{"label": 0, "inputs": {}}], eval_records=records)
+    with pytest.raises(ValueError, match="supply rails"):
+        seq.generate_netlist(train_records=[{"label": 0, "inputs": {"x0": 1.3}}], eval_records=records)
+    with pytest.raises(ValueError, match="class-count"):
+        seq.main_for_test(["--class-count", "1"])
+    with pytest.raises(ValueError, match="target-class"):
+        seq.main_for_test(["--class-count", "3", "--target-class", "3"])
+    with pytest.raises(ValueError, match="train-samples"):
+        seq.main_for_test(["--train-samples", "0"])
+
+
+def test_multiclass_block_sequence_ngspice_persistent_weights_improve_final_margin(
+    tmp_path: Path,
+    ngspice_path: str,
+) -> None:
+    measures = run_netlist(
+        ngspice_path,
+        tmp_path / "multiclass_block_sequence.cir",
+        seq.generate_netlist(train_records=_target0_records(2), eval_records=_target0_records(1)),
+        timeout=40.0,
+    )
+
+    initial_margin = float(measures["c0_score_net_0"]) - max(
+        float(measures["c1_score_net_0"]),
+        float(measures["c2_score_net_0"]),
+    )
+    final_margin = float(measures["c0_score_net_3"]) - max(
+        float(measures["c1_score_net_3"]),
+        float(measures["c2_score_net_3"]),
+    )
+
+    assert abs(initial_margin) < 1e-3
+    assert final_margin > initial_margin + 2e-3
+    assert float(measures["pre_margin_1"]) > 20e-3
+    assert float(measures["act_1"]) > 20e-3
+    assert float(measures["elig_1"]) > 20e-3
+
+    c0_after_1 = float(measures["c0_signed_after_train1"])
+    c0_after_2 = float(measures["c0_signed_after_train2"])
+    c1_after_1 = float(measures["c1_signed_after_train1"])
+    c1_after_2 = float(measures["c1_signed_after_train2"])
+    assert c0_after_1 > 5e-3
+    assert c0_after_2 > c0_after_1 + 5e-3
+    assert c1_after_1 < -5e-3
+    assert c1_after_2 < c1_after_1 - 5e-3

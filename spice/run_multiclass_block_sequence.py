@@ -35,6 +35,11 @@ from run_multiclass_output_head_sequence import (
     width_scaled_windowed_pwl,
     windowed_pwl,
 )
+from run_feature_eligibility_competition_primitive import (
+    feature_loss_suppression_lines,
+    gate_node as eligibility_gate_node,
+    pairwise_feature_winner_lines,
+)
 from run_score_decision_primitive import low_gain_preamp_lines, low_gain_ref_decision_lines, low_gain_ref_state_lines
 from run_spice_sweep import ROOT, detect_spice
 
@@ -43,6 +48,7 @@ SCENARIOS = ("target-repeat", "one-hot", "mnist")
 CLASS_BIAS_MODES = ("none", "target-only", "label-descent")
 READOUT_UPDATE_MODES = ("sampled", "live")
 SCORE_TIMING_MODES = ("late", "early")
+ELIGIBILITY_GATE_MODES = ("raw", "competition")
 ERROR_MODES = (
     "label-descent",
     "score-gated-nontarget",
@@ -755,6 +761,7 @@ def generate_netlist(
     error_mode: str = "label-descent",
     readout_update_mode: str = "sampled",
     score_timing_mode: str = "late",
+    eligibility_gate_mode: str = "raw",
     class_bias_mode: str = "none",
     class_bias_input: float = 0.85,
     readout_center_resistance: float = 0.0,
@@ -802,6 +809,8 @@ def generate_netlist(
         raise ValueError(f"readout_update_mode must be one of {READOUT_UPDATE_MODES}")
     if score_timing_mode not in SCORE_TIMING_MODES:
         raise ValueError(f"score_timing_mode must be one of {SCORE_TIMING_MODES}")
+    if eligibility_gate_mode not in ELIGIBILITY_GATE_MODES:
+        raise ValueError(f"eligibility_gate_mode must be one of {ELIGIBILITY_GATE_MODES}")
     if class_bias_mode not in CLASS_BIAS_MODES:
         raise ValueError(f"class_bias_mode must be one of {CLASS_BIAS_MODES}")
     if class_bias_input < 0.0 or class_bias_input > 1.2:
@@ -972,6 +981,11 @@ def generate_netlist(
         "* No behavioral sources.",
         ".param VDD=1.2",
         mos_models(),
+        *(
+            [".model NHIGH NMOS LEVEL=1 VTO=0.75 KP=220u LAMBDA=0.03 GAMMA=0.20 PHI=0.60"]
+            if eligibility_gate_mode == "competition"
+            else []
+        ),
         ".options method=gear reltol=1e-3 abstol=1e-12 vntol=1e-6",
         "Vdd vdd 0 {VDD}",
         "Vvwhi_ref vwhi_ref 0 0.42",
@@ -979,6 +993,15 @@ def generate_netlist(
         f"Vrst rst 0 {periodic_phase_pwl(cycle_count, start_ns=0.2, end_ns=1.0)}",
         f"Vsamp samp 0 {periodic_phase_pwl(cycle_count, start_ns=2.5, end_ns=3.5)}",
         f"Vsampn sampn 0 {active_low_phase_pwl(cycle_count, start_ns=2.5, end_ns=3.5, active_cycles=set(range(cycle_count)))}",
+        *(
+            [
+                f"Veligpre eligpre 0 {periodic_phase_pwl(cycle_count, start_ns=3.55, end_ns=target_end_ns + 0.20, active_cycles=train_cycles)}",
+                f"Veligdec eligdec 0 {periodic_phase_pwl(cycle_count, start_ns=3.65, end_ns=4.35, active_cycles=train_cycles)}",
+                f"Veliggate eliggate 0 {periodic_phase_pwl(cycle_count, start_ns=4.45, end_ns=4.75, active_cycles=train_cycles)}",
+            ]
+            if eligibility_gate_mode == "competition"
+            else []
+        ),
         f"Vout out 0 {periodic_phase_pwl(cycle_count, start_ns=out_start_ns, end_ns=out_end_ns)}",
         f"Voutn outn 0 {active_low_phase_pwl(cycle_count, start_ns=out_start_ns, end_ns=out_end_ns, active_cycles=set(range(cycle_count)))}",
     ]
@@ -1080,6 +1103,23 @@ def generate_netlist(
             f"Mactrow{feature}_n actrow{feature} out act{feature} 0 NMOS W=16u L=180n",
             f"Mactrow{feature}_p actrow{feature} outn act{feature} vdd PMOS W=32u L=180n",
         ]
+    if eligibility_gate_mode == "competition":
+        for feature_a in range(feature_count):
+            for feature_b in range(feature_a + 1, feature_count):
+                lines += pairwise_feature_winner_lines(
+                    feature_a=feature_a,
+                    feature_b=feature_b,
+                    decision_clock_node="eligdec",
+                    reset_node="eligpre",
+                    width_u=32.0,
+                )
+        lines += feature_loss_suppression_lines(
+            feature_count=feature_count,
+            gate_clock_node="eliggate",
+            reset_node="eligpre",
+            gate_capacitance_f=8.0,
+            loss_width_u=32.0,
+        )
     for class_idx in range(class_count):
         targetp_values = [
             target_high if cycle in train_cycles and labels[cycle] == class_idx else 0.0 for cycle in range(cycle_count)
@@ -1310,52 +1350,57 @@ def generate_netlist(
         ]
     for class_idx in range(class_count):
         for feature in range(total_feature_count):
+            activation_node = (
+                eligibility_gate_node(feature)
+                if eligibility_gate_mode == "competition" and feature < feature_count
+                else f"elig{feature}"
+            )
             if error_mode == "score-gated-nontarget":
                 gradient_lines = class_local_score_gated_nontarget_gradient_lines(
                     class_idx=class_idx,
                     feature_idx=feature,
-                    activation_node=f"elig{feature}",
+                    activation_node=activation_node,
                 )
             elif uses_restored_score:
                 gradient_lines = class_local_restored_score_nontarget_gradient_lines(
                     class_idx=class_idx,
                     feature_idx=feature,
-                    activation_node=f"elig{feature}",
+                    activation_node=activation_node,
                     score_gate_node=f"c{class_idx}_decision",
                 )
             elif uses_residual_score:
                 gradient_lines = class_local_residual_score_nontarget_gradient_lines(
                     class_idx=class_idx,
                     feature_idx=feature,
-                    activation_node=f"elig{feature}",
+                    activation_node=activation_node,
                     score_gate_node=class_node(class_idx, "score_gate"),
                 )
             elif uses_amplified_score:
                 gradient_lines = class_local_residual_score_nontarget_gradient_lines(
                     class_idx=class_idx,
                     feature_idx=feature,
-                    activation_node=f"elig{feature}",
+                    activation_node=activation_node,
                     score_gate_node=f"c{class_idx}_score_amp",
                 )
             elif uses_score_common_gate:
                 gradient_lines = class_local_residual_score_nontarget_gradient_lines(
                     class_idx=class_idx,
                     feature_idx=feature,
-                    activation_node=f"elig{feature}",
+                    activation_node=activation_node,
                     score_gate_node=class_node(class_idx, "score_common_gate"),
                 )
             elif uses_target_ref_score:
                 gradient_lines = class_local_residual_score_nontarget_gradient_lines(
                     class_idx=class_idx,
                     feature_idx=feature,
-                    activation_node=f"elig{feature}",
+                    activation_node=activation_node,
                     score_gate_node=class_node(class_idx, "score_target_gate"),
                 )
             elif uses_amplified_competitive:
                 gradient_lines = class_local_amplified_score_competitive_gradient_lines(
                     class_idx=class_idx,
                     feature_idx=feature,
-                    activation_node=f"elig{feature}",
+                    activation_node=activation_node,
                     own_score_gate_node=f"c{class_idx}_score_amp",
                     opponent_score_gate_nodes=[
                         f"c{opponent_idx}_score_amp"
@@ -1367,13 +1412,13 @@ def generate_netlist(
                 gradient_lines = class_local_residual_score_nontarget_gradient_lines(
                     class_idx=class_idx,
                     feature_idx=feature,
-                    activation_node=f"elig{feature}",
+                    activation_node=activation_node,
                     score_gate_node=f"c{class_idx}_score_amp",
                 )
                 gradient_lines += class_local_pairwise_binary_descent_correction_lines(
                     class_idx=class_idx,
                     feature_idx=feature,
-                    activation_node=f"elig{feature}",
+                    activation_node=activation_node,
                     losing_gate_nodes=[
                         pairwise_decision_node(opponent_idx, class_idx)
                         for opponent_idx in range(class_count)
@@ -1389,13 +1434,13 @@ def generate_netlist(
                 gradient_lines = class_local_residual_score_nontarget_gradient_lines(
                     class_idx=class_idx,
                     feature_idx=feature,
-                    activation_node=f"elig{feature}",
+                    activation_node=activation_node,
                     score_gate_node=f"c{class_idx}_score_amp",
                 )
                 gradient_lines += class_local_restored_score_binary_correction_lines(
                     class_idx=class_idx,
                     feature_idx=feature,
-                    activation_node=f"elig{feature}",
+                    activation_node=activation_node,
                     positive_gate_node=f"c{class_idx}_decision",
                     negative_gate_node=f"c{class_idx}_decisionn",
                 )
@@ -1403,7 +1448,7 @@ def generate_netlist(
                 gradient_lines = class_local_error_rail_gradient_lines(
                     class_idx=class_idx,
                     feature_idx=feature,
-                    activation_node=f"elig{feature}",
+                    activation_node=activation_node,
                     positive_error_node=class_node(class_idx, "errp"),
                     negative_error_node=class_node(class_idx, "errn"),
                 )
@@ -1411,7 +1456,7 @@ def generate_netlist(
                 gradient_lines = class_local_error_rail_gradient_lines(
                     class_idx=class_idx,
                     feature_idx=feature,
-                    activation_node=f"elig{feature}",
+                    activation_node=activation_node,
                     positive_error_node=class_node(class_idx, "errp"),
                     negative_error_node=class_node(class_idx, "errn"),
                 )
@@ -1419,7 +1464,7 @@ def generate_netlist(
                 gradient_lines = class_local_error_rail_gradient_lines(
                     class_idx=class_idx,
                     feature_idx=feature,
-                    activation_node=f"elig{feature}",
+                    activation_node=activation_node,
                     positive_error_node=class_node(class_idx, "errp"),
                     negative_error_node=class_node(class_idx, "errn"),
                 )
@@ -1427,7 +1472,7 @@ def generate_netlist(
                 gradient_lines = class_local_error_rail_gradient_lines(
                     class_idx=class_idx,
                     feature_idx=feature,
-                    activation_node=f"elig{feature}",
+                    activation_node=activation_node,
                     positive_error_node=class_node(class_idx, "errp"),
                     negative_error_node=class_node(class_idx, "errn"),
                 )
@@ -1435,7 +1480,7 @@ def generate_netlist(
                 gradient_lines = class_local_error_rail_gradient_lines(
                     class_idx=class_idx,
                     feature_idx=feature,
-                    activation_node=f"elig{feature}",
+                    activation_node=activation_node,
                     positive_error_node=class_node(class_idx, "errp"),
                     negative_error_node=class_node(class_idx, "errn"),
                 )
@@ -1443,7 +1488,7 @@ def generate_netlist(
                 gradient_lines = class_local_error_rail_gradient_lines(
                     class_idx=class_idx,
                     feature_idx=feature,
-                    activation_node=f"elig{feature}",
+                    activation_node=activation_node,
                     positive_error_node=class_node(class_idx, "errp"),
                     negative_error_node=class_node(class_idx, "errn"),
                 )
@@ -1451,7 +1496,7 @@ def generate_netlist(
                 gradient_lines = class_local_error_rail_gradient_lines(
                     class_idx=class_idx,
                     feature_idx=feature,
-                    activation_node=f"elig{feature}",
+                    activation_node=activation_node,
                     positive_error_node=class_node(class_idx, "errp"),
                     negative_error_node=class_node(class_idx, "errn"),
                 )
@@ -1459,7 +1504,7 @@ def generate_netlist(
                 gradient_lines = class_local_error_rail_gradient_lines(
                     class_idx=class_idx,
                     feature_idx=feature,
-                    activation_node=f"elig{feature}",
+                    activation_node=activation_node,
                     positive_error_node=class_node(class_idx, "errp"),
                     negative_error_node=class_node(class_idx, "errn"),
                 )
@@ -1467,7 +1512,7 @@ def generate_netlist(
                 gradient_lines = class_local_error_rail_gradient_lines(
                     class_idx=class_idx,
                     feature_idx=feature,
-                    activation_node=f"elig{feature}",
+                    activation_node=activation_node,
                     positive_error_node=class_node(class_idx, "errp"),
                     negative_error_node=class_node(class_idx, "errn"),
                 )
@@ -1475,7 +1520,7 @@ def generate_netlist(
                 gradient_lines = class_local_restored_score_binary_descent_gradient_lines(
                     class_idx=class_idx,
                     feature_idx=feature,
-                    activation_node=f"elig{feature}",
+                    activation_node=activation_node,
                     positive_gate_node=f"c{class_idx}_decision",
                     negative_gate_node=f"c{class_idx}_decisionn",
                 )
@@ -1483,7 +1528,7 @@ def generate_netlist(
                 gradient_lines = class_local_pairwise_binary_descent_gradient_lines(
                     class_idx=class_idx,
                     feature_idx=feature,
-                    activation_node=f"elig{feature}",
+                    activation_node=activation_node,
                     losing_gate_nodes=[
                         pairwise_decision_node(opponent_idx, class_idx)
                         for opponent_idx in range(class_count)
@@ -1499,7 +1544,7 @@ def generate_netlist(
                 gradient_lines = class_local_multi_gate_nontarget_gradient_lines(
                     class_idx=class_idx,
                     feature_idx=feature,
-                    activation_node=f"elig{feature}",
+                    activation_node=activation_node,
                     gate_nodes=[
                         pairwise_decision_node(class_idx, opponent_idx)
                         for opponent_idx in range(class_count)
@@ -1510,13 +1555,13 @@ def generate_netlist(
                 gradient_lines = class_local_label_descent_gradient_lines(
                     class_idx=class_idx,
                     feature_idx=feature,
-                    activation_node=f"elig{feature}",
+                    activation_node=activation_node,
                 )
             if bias_feature is not None and feature == bias_feature and class_bias_mode == "target-only":
                 gradient_lines = class_local_target_only_gradient_lines(
                     class_idx=class_idx,
                     feature_idx=feature,
-                    activation_node=f"elig{feature}",
+                    activation_node=activation_node,
                 )
             if readout_update_mode == "live":
                 positive_descent_node = (
@@ -1531,7 +1576,7 @@ def generate_netlist(
                 readout_update_lines = class_local_live_label_descent_update_lines(
                     class_idx=class_idx,
                     feature_idx=feature,
-                    activation_node=f"elig{feature}",
+                    activation_node=activation_node,
                     positive_descent_node=positive_descent_node,
                     negative_descent_node=negative_descent_node,
                 )
@@ -1579,6 +1624,11 @@ def generate_netlist(
                 f".meas tran act_f{feature}_{cycle} FIND V(act{feature}) AT={base + 4.5:.2f}n",
                 f".meas tran elig_f{feature}_{cycle} FIND V(elig{feature}) AT={base + 4.5:.2f}n",
             ]
+        if eligibility_gate_mode == "competition":
+            for feature in range(feature_count):
+                lines.append(
+                    f".meas tran egate_f{feature}_{cycle} FIND V({eligibility_gate_node(feature)}) AT={base + 4.85:.2f}n"
+                )
         lines += [
             f".meas tran pre_margin_{cycle} PARAM='pre_margin_f0_{cycle}'",
             f".meas tran act_{cycle} PARAM='act_f0_{cycle}'",
@@ -1816,6 +1866,36 @@ def eligibility_stats(
     }
 
 
+def eligibility_gate_stats(
+    measures: dict[str, float],
+    *,
+    sequence: list[str],
+    feature_count: int,
+) -> dict[str, Any]:
+    rows: list[list[float]] = []
+    active_600mv: list[int] = []
+    for cycle, seq in enumerate(sequence):
+        if seq != "train":
+            continue
+        keys = [f"egate_f{feature}_{cycle}" for feature in range(feature_count)]
+        if not all(key in measures for key in keys):
+            continue
+        values = [float(measures[key]) for key in keys]
+        rows.append(values)
+        active_600mv.append(sum(value > 600e-3 for value in values))
+    if not rows:
+        return {
+            "train_eligibility_gate_rows_v": [],
+            "train_eligibility_gate_active_features_600mv_mean": None,
+            "train_eligibility_gate_active_features_600mv_max": None,
+        }
+    return {
+        "train_eligibility_gate_rows_v": rows,
+        "train_eligibility_gate_active_features_600mv_mean": float(np.mean(active_600mv)),
+        "train_eligibility_gate_active_features_600mv_max": int(np.max(active_600mv)),
+    }
+
+
 def run_case(args: argparse.Namespace) -> dict[str, Any]:
     generated = ROOT / "spice/generated"
     tables = ROOT / "results/tables"
@@ -1892,6 +1972,7 @@ def run_case(args: argparse.Namespace) -> dict[str, Any]:
         error_mode=args.error_mode,
         readout_update_mode=args.readout_update_mode,
         score_timing_mode=args.score_timing_mode,
+        eligibility_gate_mode=args.eligibility_gate_mode,
         class_bias_mode=args.class_bias_mode,
         class_bias_input=args.class_bias_input,
         readout_center_resistance=args.readout_center_resistance,
@@ -1986,6 +2067,7 @@ def run_case(args: argparse.Namespace) -> dict[str, Any]:
         "error_mode": args.error_mode,
         "readout_update_mode": args.readout_update_mode,
         "score_timing_mode": args.score_timing_mode,
+        "eligibility_gate_mode": args.eligibility_gate_mode,
         "target_class": args.target_class if args.scenario == "target-repeat" else None,
         "train_samples": len(train_records),
         "eval_samples": len(eval_records),
@@ -1999,6 +2081,7 @@ def run_case(args: argparse.Namespace) -> dict[str, Any]:
         "signed_after_each_train_v": train_progress,
         **error_rail_stats(measures, labels=labels, sequence=sequence, class_count=args.class_count),
         **eligibility_stats(measures, sequence=sequence, total_feature_count=total_feature_count),
+        **eligibility_gate_stats(measures, sequence=sequence, feature_count=feature_count),
         "passed": (
             accuracy(rows, "final_eval") > accuracy(rows, "initial_eval")
             if args.scenario == "mnist"
@@ -2053,6 +2136,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
     ap.add_argument("--error-mode", choices=ERROR_MODES, default="label-descent")
     ap.add_argument("--readout-update-mode", choices=READOUT_UPDATE_MODES, default="sampled")
     ap.add_argument("--score-timing-mode", choices=SCORE_TIMING_MODES, default="late")
+    ap.add_argument("--eligibility-gate-mode", choices=ELIGIBILITY_GATE_MODES, default="raw")
     ap.add_argument("--class-bias-mode", choices=CLASS_BIAS_MODES, default="none")
     ap.add_argument("--class-bias-input", type=float, default=0.85)
     ap.add_argument("--readout-center-resistance", type=float, default=0.0)

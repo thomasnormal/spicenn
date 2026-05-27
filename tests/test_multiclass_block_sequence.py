@@ -18,6 +18,10 @@ def _target0_records(count: int) -> list[dict[str, object]]:
     return [{"label": 0, "inputs": {"x0": 0.85}} for _ in range(count)]
 
 
+def _target0_two_feature_records(count: int) -> list[dict[str, object]]:
+    return [{"label": 0, "inputs": {"x0": 0.85, "x1": 0.25}} for _ in range(count)]
+
+
 def _one_hot_records() -> list[dict[str, object]]:
     return [
         {"label": label, "inputs": {f"x{feature}": 0.85 if feature == label else 0.0 for feature in range(3)}}
@@ -377,6 +381,27 @@ def test_multiclass_block_sequence_summarizes_train_eligibility_overlap() -> Non
     assert stats["train_eligibility_pairwise_cosine_mean"] == pytest.approx(0.519896, abs=1e-6)
 
 
+def test_multiclass_block_sequence_summarizes_train_eligibility_gate_activity() -> None:
+    measures = {
+        "egate_f0_1": 1.1,
+        "egate_f1_1": 0.02,
+        "egate_f2_1": 0.03,
+        "egate_f0_2": 0.1,
+        "egate_f1_2": 1.0,
+        "egate_f2_2": 0.9,
+    }
+
+    stats = seq.eligibility_gate_stats(
+        measures,
+        sequence=["initial_eval", "train", "train"],
+        feature_count=3,
+    )
+
+    assert stats["train_eligibility_gate_rows_v"] == [[1.1, 0.02, 0.03], [0.1, 1.0, 0.9]]
+    assert stats["train_eligibility_gate_active_features_600mv_mean"] == 1.5
+    assert stats["train_eligibility_gate_active_features_600mv_max"] == 2
+
+
 def test_multiclass_block_sequence_can_use_common_score_mass_descent() -> None:
     netlist = seq.generate_netlist(
         train_records=_target0_records(1),
@@ -624,6 +649,38 @@ def test_multiclass_block_sequence_can_use_live_readout_update_without_gradient_
     assert "Mc0_f0_live_pos_up_e vwhi_ref elig0 c0_f0_live_pos_up 0 NSENSE" in netlist
     assert "Mc0_f0_live_pos_up_d c0_f0_live_pos_up c0_errp c0_vwp0 0 NSENSE" in netlist
     assert "Mc0_f0_live_neg_dn_d c0_f0_live_neg_dn c0_errn vwlo_ref 0 NSENSE" in netlist
+
+
+def test_multiclass_block_sequence_can_gate_live_writer_with_feature_competition() -> None:
+    netlist = seq.generate_netlist(
+        train_records=_target0_two_feature_records(1),
+        eval_records=_target0_two_feature_records(1),
+        feature_count=2,
+        readout_update_mode="live",
+        error_mode="pairwise-margin-correction-descent",
+        eligibility_gate_mode="competition",
+    )
+
+    assert "\nB" not in netlist
+    assert "Vacc acc" not in netlist
+    assert "Veligpre eligpre 0 PWL(" in netlist
+    assert "Veligdec eligdec 0 PWL(" in netlist
+    assert "Veliggate eliggate 0 PWL(" in netlist
+    assert "Ce0_gt_e1_decision e0_gt_e1_decision 0 12f IC=1.2" in netlist
+    assert "Mprecharge_e0_gt_e1_decision e0_gt_e1_decision eligpre vdd vdd PMOS" in netlist
+    assert "Me1_loss_to_e0_mid_dec egate1 e0_gt_e1_decision e1_loss_to_e0_mid 0 NHIGH" in netlist
+    assert ".meas tran egate_f0_1 FIND V(egate0) AT=20.85n" in netlist
+    assert "Mc0_f0_live_pos_up_e vwhi_ref egate0 c0_f0_live_pos_up 0 NSENSE" in netlist
+    assert "Mc0_f1_live_pos_up_e vwhi_ref egate1 c0_f1_live_pos_up 0 NSENSE" in netlist
+
+
+def test_multiclass_block_sequence_eligibility_gate_mode_validation() -> None:
+    with pytest.raises(ValueError, match="eligibility_gate_mode"):
+        seq.generate_netlist(
+            train_records=_target0_records(1),
+            eval_records=_target0_records(1),
+            eligibility_gate_mode="missing",
+        )
 
 
 def test_multiclass_block_sequence_can_sample_score_during_early_differential_window() -> None:

@@ -110,6 +110,21 @@ def test_multiclass_block_sequence_can_use_restored_score_binary_descent() -> No
     assert "Mc0_f0_gvn_score" not in netlist
 
 
+def test_multiclass_block_sequence_can_use_pairwise_binary_descent() -> None:
+    netlist = seq.generate_netlist(
+        train_records=_target0_records(1),
+        eval_records=_target0_records(1),
+        error_mode="pairwise-binary-descent",
+    )
+
+    assert "\nB" not in netlist
+    assert "Cc0_gt_c1_decision c0_gt_c1_decision 0 20f IC=1.2" in netlist
+    assert "Mc0_f0_gvp_pair0_gate c0_f0_gvp_pair0_label c1_gt_c0_decision c0_f0_gvp_pair0_gate 0 NSENSE" in netlist
+    assert "Mc0_f0_gvn_pair0_gate c0_f0_gvn_pair0_label c0_gt_c1_decision c0_f0_gvn_pair0_gate 0 NSENSE" in netlist
+    assert "Mc0_f0_rgp_pair0_acc c0_f0_rgp_pair0_gate acc 0 0 NREL" in netlist
+    assert "Mc0_f0_rgn_pair0_acc c0_f0_rgn_pair0_gate acc 0 0 NREL" in netlist
+
+
 def test_multiclass_block_sequence_can_use_residual_score_nontarget_gate() -> None:
     netlist = seq.generate_netlist(
         train_records=_target0_records(1),
@@ -426,6 +441,69 @@ def _restored_score_binary_descent_netlist(
     return "\n".join(lines)
 
 
+def _pairwise_binary_descent_netlist(
+    *,
+    targetp: float,
+    targetn: float,
+    losing_gate: float,
+    winning_gate: float,
+) -> str:
+    lines = [
+        "* Low-level pairwise binary-descent gradient primitive.",
+        ".param VDD=1.2",
+        seq.mos_models(),
+        ".options method=gear reltol=1e-3 abstol=1e-12 vntol=1e-6",
+        "Vdd vdd 0 {VDD}",
+        "Vvwhi_ref vwhi_ref 0 0.42",
+        "Vvwlo_ref vwlo_ref 0 0.28",
+        "Velig elig0 0 0.85",
+        f"Vtargetp c0_targetp 0 PULSE(0 {targetp:.12g} 1n 10p 10p 2n 20n)",
+        f"Vtargetn c0_targetn 0 PULSE(0 {targetn:.12g} 1n 10p 10p 2n 20n)",
+        f"Vlosing losing_gate 0 {losing_gate:.12g}",
+        f"Vwinning winning_gate 0 {winning_gate:.12g}",
+        "Vacc acc 0 PULSE(0 1.2 1n 10p 10p 2n 20n)",
+        "Vapply apply 0 PULSE(0 1.2 4n 10p 10p 0.1n 20n)",
+        "Vapplyn applyn 0 PULSE(1.2 0 4n 10p 10p 0.1n 20n)",
+        "Cc0_gvp0 c0_gvp0 0 2f IC=0",
+        "Cc0_gvn0 c0_gvn0 0 2f IC=0",
+        "Cc0_rgp0 c0_rgp0 0 4f IC=1.2",
+        "Cc0_rgn0 c0_rgn0 0 4f IC=1.2",
+        "Rc0_gvp0 c0_gvp0 0 1G",
+        "Rc0_gvn0 c0_gvn0 0 1G",
+        "Rc0_rgp0 c0_rgp0 vdd 50k",
+        "Rc0_rgn0 c0_rgn0 vdd 50k",
+        *seq.signed_store_lines(
+            positive_node=seq.class_node(0, "vwp0"),
+            negative_node=seq.class_node(0, "vwn0"),
+            positive_ic=0.40,
+            negative_ic=0.40,
+        ),
+        *seq.class_local_pairwise_binary_descent_gradient_lines(
+            class_idx=0,
+            feature_idx=0,
+            activation_node="elig0",
+            losing_gate_nodes=["losing_gate"],
+            winning_gate_nodes=["winning_gate"],
+        ),
+        *seq.class_local_bounded_update_lines(class_idx=0, feature_idx=0),
+        ".meas tran gvp_after FIND V(c0_gvp0) AT=3.5n",
+        ".meas tran gvn_after FIND V(c0_gvn0) AT=3.5n",
+        ".meas tran rgp_after FIND V(c0_rgp0) AT=3.5n",
+        ".meas tran rgn_after FIND V(c0_rgn0) AT=3.5n",
+        ".meas tran vwp_after FIND V(c0_vwp0) AT=5.5n",
+        ".meas tran vwn_after FIND V(c0_vwn0) AT=5.5n",
+        ".meas tran signed_after PARAM='vwp_after-vwn_after'",
+        ".tran 2p 6n uic",
+        ".control",
+        "run",
+        "quit",
+        ".endc",
+        ".end",
+        "",
+    ]
+    return "\n".join(lines)
+
+
 def _readout_center_leak_netlist(resistance: float = 5e6) -> str:
     lines = [
         "* Low-level passive readout center leak primitive.",
@@ -537,6 +615,37 @@ def test_multiclass_block_sequence_ngspice_restored_binary_descent_gates_target_
     assert float(target_miss["signed_after"]) > float(target_already_wins["signed_after"]) + 1e-3
     assert float(false_positive["gvn_after"]) > float(target_already_wins["gvn_after"]) + 10e-3
     assert float(false_positive["signed_after"]) < float(target_already_wins["signed_after"]) - 1e-3
+
+
+def test_multiclass_block_sequence_ngspice_pairwise_binary_descent_gates_loss_and_win(
+    tmp_path: Path,
+    ngspice_path: str,
+) -> None:
+    target_losing = run_netlist(
+        ngspice_path,
+        tmp_path / "pairwise_binary_target_losing.cir",
+        _pairwise_binary_descent_netlist(targetp=1.1, targetn=0.0, losing_gate=1.2, winning_gate=0.0),
+        timeout=20.0,
+    )
+    target_winning = run_netlist(
+        ngspice_path,
+        tmp_path / "pairwise_binary_target_winning.cir",
+        _pairwise_binary_descent_netlist(targetp=1.1, targetn=0.0, losing_gate=0.0, winning_gate=1.2),
+        timeout=20.0,
+    )
+    nontarget_winning = run_netlist(
+        ngspice_path,
+        tmp_path / "pairwise_binary_nontarget_winning.cir",
+        _pairwise_binary_descent_netlist(targetp=0.0, targetn=1.1, losing_gate=0.0, winning_gate=1.2),
+        timeout=20.0,
+    )
+
+    assert float(target_losing["gvp_after"]) > float(target_winning["gvp_after"]) + 5e-3
+    assert float(target_losing["rgp_after"]) < float(target_winning["rgp_after"]) - 10e-6
+    assert float(target_losing["signed_after"]) > float(target_winning["signed_after"]) + 1e-3
+    assert float(nontarget_winning["gvn_after"]) > float(target_winning["gvn_after"]) + 5e-3
+    assert float(nontarget_winning["rgn_after"]) < float(target_winning["rgn_after"]) - 10e-6
+    assert float(nontarget_winning["signed_after"]) < float(target_winning["signed_after"]) - 1e-3
 
 
 def test_multiclass_block_sequence_ngspice_passive_readout_center_leak_reduces_signed_state(
@@ -752,6 +861,34 @@ def test_multiclass_block_sequence_ngspice_restored_score_binary_descent_keeps_o
         for feature in range(3):
             if feature != class_idx:
                 assert float(measures[f"c{class_idx}_f{feature}_signed_final"]) < -10e-3
+
+
+def test_multiclass_block_sequence_ngspice_pairwise_binary_descent_keeps_one_hot_predictions(
+    tmp_path: Path,
+    ngspice_path: str,
+) -> None:
+    measures = run_netlist(
+        ngspice_path,
+        tmp_path / "multiclass_block_sequence_onehot_pairwise_binary.cir",
+        seq.generate_netlist(
+            train_records=_one_hot_records(),
+            eval_records=_one_hot_records(),
+            class_count=3,
+            feature_count=3,
+            score_capacitance_f=5.0,
+            error_mode="pairwise-binary-descent",
+        ),
+        timeout=100.0,
+    )
+
+    final_predictions = [
+        int(np.argmax([float(measures[f"c{class_idx}_score_net_{cycle}"]) for class_idx in range(3)]))
+        for cycle in range(6, 9)
+    ]
+    assert final_predictions == [0, 1, 2]
+    assert float(measures["c0_f1_signed_final"]) < -10e-3
+    assert float(measures["c1_f1_signed_final"]) > 10e-3
+    assert float(measures["c2_f2_signed_final"]) > 10e-3
 
 
 def test_multiclass_block_sequence_ngspice_restored_winner_blocks_nonwinning_nontargets(

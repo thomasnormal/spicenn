@@ -1464,6 +1464,17 @@ def test_block_netlist_can_emit_conductance_row_readout_topology() -> None:
             score_mode="single-ended",
             readout_forward_topology="conductance-row",
         )
+    with pytest.raises(ValueError, match="readout_negative_forward_scale"):
+        block.block_netlist(
+            [sample],
+            weights,
+            image_size=image_size,
+            block_size=2,
+            stride=2,
+            channels=1,
+            training_enabled=True,
+            readout_negative_forward_scale=0.0,
+        )
 
 
 def test_block_netlist_can_emit_isolated_conductance_row_readout_with_score_load() -> None:
@@ -1524,6 +1535,24 @@ def test_block_netlist_can_emit_isolated_conductance_row_readout_with_score_load
             score_mode="single-ended",
             readout_forward_topology="conductance-row-isolated",
         )
+
+    symmetric_netlist = block.block_netlist(
+        [sample],
+        weights,
+        image_size=image_size,
+        block_size=2,
+        stride=2,
+        channels=1,
+        training_enabled=True,
+        score_mode="differential",
+        forward_phase_mode="split-hidden-output",
+        readout_forward_topology="conductance-row-isolated",
+        readout_weight_gate_model="switch",
+        readout_negative_forward_scale=1.0,
+    )
+
+    assert "Movneg3_cond actrow3 vwn3 read_midn3 0 NMOS W=64u L=180n" in symmetric_netlist
+    assert "Movneg3_diode read_midn3 read_midn3 scoren 0 NSENSE W=64u L=180n" in symmetric_netlist
 
 
 def test_block_netlist_split_rail_has_no_per_pixel_hidden_stack_conditioning_nodes() -> None:

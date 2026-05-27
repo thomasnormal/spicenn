@@ -20,6 +20,24 @@
   current-sense score stage that preserves this current-mode additivity inside
   the strict training runner, not more tuning of the floating voltage score
   capacitor.
+- Exposed the same positive/negative readout-branch symmetry as an integrated
+  block-runner knob, `--readout-negative-forward-scale`, preserving the
+  historical `0.75` default but allowing current-mode screens to set the
+  negative conductance branch width equal to the positive branch.  Structural
+  regressions prove the isolated conductance-row topology emits symmetric
+  `Movneg*_cond` and diode-isolation widths when the scale is `1.0`, and
+  invalid nonpositive scales are rejected.  A tiny strict continuous
+  `4x4 b2 stride2 c1`, 2-train/2-eval smoke with row-pulsed split-rail hidden
+  forward, isolated conductance-row readout, `30 kOhm` score loads, symmetric
+  readout branches, latch-free readout-weighted hidden credit, bounded-ref
+  writer, and no Python weight transfer converged under ngspice and preserved
+  the fully-on-device contract.  It did not demonstrate learning
+  (`final_eval_accuracy=0.5`) but did produce a separable-yet-uncentered
+  final decision signal (`decision_diff_best_threshold_accuracy=1.0`,
+  fixed-threshold negative margin about `-2.2 mV`).  This is consistent with
+  the low-level finding: the current-style readout can separate evidence, but
+  the integrated path still needs an on-chip centering/current-sense stage
+  before scaling.
 - Added `contrast-score-mass-descent` to the continuous multiclass block
   sequence.  The mode converts class score evidence into a centered analog
   `cX_score_contrast` rail by charging from the class-local score preamp and

@@ -821,6 +821,7 @@ def block_netlist(
     hidden_stack_parasitic_capacitance: float = 0.0,
     hidden_activation_model: str = "nrel",
     readout_forward_width: float = 64.0,
+    readout_negative_forward_scale: float = 0.75,
     readout_forward_model: str = "nrel",
     readout_forward_topology: str = "stacked",
     readout_weight_gate_model: str = "same",
@@ -987,6 +988,8 @@ def block_netlist(
         raise ValueError("hidden_stack_parasitic_capacitance must be nonnegative")
     if readout_forward_width <= 0.0:
         raise ValueError("readout_forward_width must be positive")
+    if readout_negative_forward_scale <= 0.0:
+        raise ValueError("readout_negative_forward_scale must be positive")
     if readout_forward_topology not in READOUT_FORWARD_TOPOLOGIES:
         raise ValueError(f"readout_forward_topology must be one of {READOUT_FORWARD_TOPOLOGIES}")
     if readout_forward_topology in {"conductance-row", "conductance-row-isolated"} and score_mode != "differential":
@@ -1105,7 +1108,7 @@ def block_netlist(
     hidden_writer_uses_sampled_input = input_waveform_mode == "row-pulsed"
     hidden_neg_width = max(0.5, hidden_forward_width * 0.75)
     hidden_forward_phase_width = max(hidden_forward_width, hidden_forward_width * block_len)
-    readout_negative_forward_width = max(0.5, readout_forward_width * 0.75)
+    readout_negative_forward_width = max(0.5, readout_forward_width * readout_negative_forward_scale)
     cycle_ns = CYCLE_NS * phase_time_scale
     stop = len(samples) * cycle_ns
     phase_schedule = block_phase_schedule(
@@ -3196,6 +3199,7 @@ def run_device_sequence(
     hidden_stack_parasitic_capacitance: float,
     hidden_activation_model: str,
     readout_forward_width: float,
+    readout_negative_forward_scale: float,
     readout_forward_model: str,
     readout_forward_topology: str,
     readout_weight_gate_model: str,
@@ -3290,6 +3294,7 @@ def run_device_sequence(
         hidden_stack_parasitic_capacitance=hidden_stack_parasitic_capacitance,
         hidden_activation_model=hidden_activation_model,
         readout_forward_width=readout_forward_width,
+        readout_negative_forward_scale=readout_negative_forward_scale,
         readout_forward_model=readout_forward_model,
         readout_forward_topology=readout_forward_topology,
         readout_weight_gate_model=readout_weight_gate_model,
@@ -3462,6 +3467,15 @@ def main() -> None:
     ap.add_argument("--hidden-activation-model", choices=HIDDEN_ACTIVATION_MODELS, default="nrel")
     ap.add_argument("--hidden-polarity-init", choices=HIDDEN_POLARITY_INITS, default="ink")
     ap.add_argument("--readout-forward-width", type=float, default=64.0)
+    ap.add_argument(
+        "--readout-negative-forward-scale",
+        type=float,
+        default=0.75,
+        help=(
+            "Width scale for negative readout conductance branches relative to --readout-forward-width. "
+            "The historical voltage-mode default is 0.75; current-mode symmetry experiments can use 1.0."
+        ),
+    )
     ap.add_argument("--readout-forward-model", choices=READOUT_FORWARD_MODELS, default="nrel")
     ap.add_argument(
         "--readout-forward-topology",
@@ -3703,6 +3717,8 @@ def main() -> None:
         raise ValueError("state-ic-mismatch-sigma must be nonnegative")
     if args.readout_weight_init_sigma < 0.0:
         raise ValueError("readout-weight-init-sigma must be nonnegative")
+    if args.readout_negative_forward_scale <= 0.0:
+        raise ValueError("readout-negative-forward-scale must be positive")
     if args.readout_gradient_restore_width <= 0.0:
         raise ValueError("readout-gradient-restore-width must be positive")
     if args.readout_weight_update_low_floor < 0.0 or args.readout_weight_update_low_floor > VDD_VALUE:
@@ -3819,6 +3835,7 @@ def main() -> None:
         "hidden_stack_parasitic_capacitance": args.hidden_stack_parasitic_capacitance,
         "hidden_activation_model": args.hidden_activation_model,
         "readout_forward_width": args.readout_forward_width,
+        "readout_negative_forward_scale": args.readout_negative_forward_scale,
         "readout_forward_model": args.readout_forward_model,
         "readout_forward_topology": args.readout_forward_topology,
         "readout_weight_gate_model": args.readout_weight_gate_model,
@@ -4086,6 +4103,7 @@ def main() -> None:
         "hidden_activation_model": args.hidden_activation_model,
         "hidden_polarity_init": args.hidden_polarity_init,
         "readout_forward_width": args.readout_forward_width,
+        "readout_negative_forward_scale": args.readout_negative_forward_scale,
         "readout_forward_model": args.readout_forward_model,
         "readout_forward_topology": args.readout_forward_topology,
         "readout_weight_gate_model": args.readout_weight_gate_model,

@@ -39,6 +39,7 @@ ERROR_MODES = (
     "score-gated-nontarget",
     "residual-score-nontarget",
     "amplified-score-nontarget",
+    "amplified-score-competitive",
     "restored-score-nontarget",
     "restored-winner-nontarget",
 )
@@ -158,6 +159,38 @@ def class_local_residual_score_nontarget_gradient_lines(
     ]
 
 
+def class_local_amplified_score_competitive_gradient_lines(
+    *,
+    class_idx: int,
+    feature_idx: int,
+    activation_node: str,
+    own_score_gate_node: str,
+    opponent_score_gate_nodes: list[str],
+    width_u: float = 24.0,
+    boost_width_u: float = 192.0,
+) -> list[str]:
+    prefix = f"c{class_idx}_f{feature_idx}_"
+    lines = class_local_residual_score_nontarget_gradient_lines(
+        class_idx=class_idx,
+        feature_idx=feature_idx,
+        activation_node=activation_node,
+        score_gate_node=own_score_gate_node,
+        width_u=width_u,
+    )
+    for opponent_idx, opponent_gate in enumerate(opponent_score_gate_nodes):
+        lines += [
+            f"M{prefix}gvp_comp{opponent_idx}_a vdd {activation_node} {prefix}gvp_comp{opponent_idx}_a 0 NREL W={boost_width_u:.6g}u L=180n",
+            f"M{prefix}gvp_comp{opponent_idx}_label {prefix}gvp_comp{opponent_idx}_a {class_node(class_idx, 'targetp')} {prefix}gvp_comp{opponent_idx}_label 0 NSENSE W={boost_width_u:.6g}u L=180n",
+            f"M{prefix}gvp_comp{opponent_idx}_score {prefix}gvp_comp{opponent_idx}_label {opponent_gate} {prefix}gvp_comp{opponent_idx}_score 0 NSENSE W={boost_width_u:.6g}u L=180n",
+            f"M{prefix}gvp_comp{opponent_idx}_g {prefix}gvp_comp{opponent_idx}_score acc {class_node(class_idx, f'gvp{feature_idx}')} 0 NREL W={boost_width_u:.6g}u L=180n",
+            f"M{prefix}rgp_comp{opponent_idx}_a {class_node(class_idx, f'rgp{feature_idx}')} {activation_node} {prefix}rgp_comp{opponent_idx}_a 0 NREL W={boost_width_u:.6g}u L=180n",
+            f"M{prefix}rgp_comp{opponent_idx}_label {prefix}rgp_comp{opponent_idx}_a {class_node(class_idx, 'targetp')} {prefix}rgp_comp{opponent_idx}_label 0 NSENSE W={boost_width_u:.6g}u L=180n",
+            f"M{prefix}rgp_comp{opponent_idx}_score {prefix}rgp_comp{opponent_idx}_label {opponent_gate} {prefix}rgp_comp{opponent_idx}_score 0 NSENSE W={boost_width_u:.6g}u L=180n",
+            f"M{prefix}rgp_comp{opponent_idx}_acc {prefix}rgp_comp{opponent_idx}_score acc 0 0 NREL W={boost_width_u:.6g}u L=180n",
+        ]
+    return lines
+
+
 def class_local_target_only_gradient_lines(
     *,
     class_idx: int,
@@ -232,6 +265,8 @@ def generate_netlist(
     error_mode: str = "label-descent",
     class_bias_mode: str = "none",
     class_bias_input: float = 0.85,
+    readout_center_resistance: float = 0.0,
+    readout_center_voltage: float = 0.40,
 ) -> str:
     if class_count < 2:
         raise ValueError("class_count must be at least 2")
@@ -252,6 +287,10 @@ def generate_netlist(
     }.items():
         if value <= 0.0:
             raise ValueError(f"{name} must be positive")
+    if readout_center_resistance < 0.0:
+        raise ValueError("readout_center_resistance must be nonnegative")
+    if readout_center_voltage < 0.0 or readout_center_voltage > 1.2:
+        raise ValueError("readout_center_voltage must stay within supply rails")
     if nontarget_scale < 0.0 or nontarget_scale > 1.0:
         raise ValueError("nontarget_scale must be in [0, 1]")
     if nontarget_width_scale < 0.0 or nontarget_width_scale > 1.0:
@@ -280,7 +319,8 @@ def generate_netlist(
     uses_restored_score = error_mode == "restored-score-nontarget"
     uses_residual_score = error_mode == "residual-score-nontarget"
     uses_amplified_score = error_mode == "amplified-score-nontarget"
-    uses_score_preamp = uses_residual_score or uses_amplified_score
+    uses_amplified_competitive = error_mode == "amplified-score-competitive"
+    uses_score_preamp = uses_residual_score or uses_amplified_score or uses_amplified_competitive
     uses_restored_winner = error_mode == "restored-winner-nontarget"
     uses_late_restored_gate = uses_restored_score or uses_restored_winner or uses_score_preamp
     target_start_ns = 10.8 if uses_late_restored_gate else 9.0
@@ -309,6 +349,8 @@ def generate_netlist(
         f"Vapply apply 0 {periodic_phase_pwl(cycle_count, start_ns=apply_start_ns, end_ns=apply_end_ns, active_cycles=train_cycles)}",
         f"Vapplyn applyn 0 {active_low_phase_pwl(cycle_count, start_ns=apply_start_ns, end_ns=apply_end_ns, active_cycles=train_cycles)}",
     ]
+    if readout_center_resistance > 0.0:
+        lines.append(f"Vreadout_center readout_center 0 {readout_center_voltage:.12g}")
     if uses_late_restored_gate:
         lines += [
             "Voutref outref 0 0.25",
@@ -443,6 +485,18 @@ def generate_netlist(
                     activation_node=f"elig{feature}",
                     score_gate_node=f"c{class_idx}_score_amp",
                 )
+            elif uses_amplified_competitive:
+                gradient_lines = class_local_amplified_score_competitive_gradient_lines(
+                    class_idx=class_idx,
+                    feature_idx=feature,
+                    activation_node=f"elig{feature}",
+                    own_score_gate_node=f"c{class_idx}_score_amp",
+                    opponent_score_gate_nodes=[
+                        f"c{opponent_idx}_score_amp"
+                        for opponent_idx in range(class_count)
+                        if opponent_idx != class_idx
+                    ],
+                )
             elif uses_restored_winner:
                 gradient_lines = class_local_multi_gate_nontarget_gradient_lines(
                     class_idx=class_idx,
@@ -482,6 +536,14 @@ def generate_netlist(
                     negative_node=class_node(class_idx, f"vwn{feature}"),
                     positive_ic=initial_positive,
                     negative_ic=initial_negative,
+                ),
+                *(
+                    [
+                        f"R{class_node(class_idx, f'vwp{feature}')}_center {class_node(class_idx, f'vwp{feature}')} readout_center {readout_center_resistance:.12g}",
+                        f"R{class_node(class_idx, f'vwn{feature}')}_center {class_node(class_idx, f'vwn{feature}')} readout_center {readout_center_resistance:.12g}",
+                    ]
+                    if readout_center_resistance > 0.0
+                    else []
                 ),
                 *class_local_readout_forward_lines(class_idx=class_idx, feature_idx=feature, width_u=readout_width_u),
                 *gradient_lines,
@@ -662,6 +724,8 @@ def run_case(args: argparse.Namespace) -> dict[str, Any]:
         error_mode=args.error_mode,
         class_bias_mode=args.class_bias_mode,
         class_bias_input=args.class_bias_input,
+        readout_center_resistance=args.readout_center_resistance,
+        readout_center_voltage=args.readout_center_voltage,
     )
     measures = run_netlist(spice_bin, path, deck, timeout=args.timeout)
     rows = rows_from_measures(all_records, measures, sequence=sequence, class_count=args.class_count)
@@ -713,6 +777,8 @@ def run_case(args: argparse.Namespace) -> dict[str, Any]:
         "total_feature_count": total_feature_count,
         "class_bias_mode": args.class_bias_mode,
         "class_bias_input": args.class_bias_input if args.class_bias_mode != "none" else None,
+        "readout_center_resistance_ohm": args.readout_center_resistance if args.readout_center_resistance > 0.0 else None,
+        "readout_center_voltage_v": args.readout_center_voltage if args.readout_center_resistance > 0.0 else None,
         "readout_width_u": args.readout_width,
         "score_capacitance_f": args.score_capacitance_f,
         "score_load_resistance_ohm": args.score_load_resistance,
@@ -777,6 +843,8 @@ def build_arg_parser() -> argparse.ArgumentParser:
     ap.add_argument("--error-mode", choices=ERROR_MODES, default="label-descent")
     ap.add_argument("--class-bias-mode", choices=CLASS_BIAS_MODES, default="none")
     ap.add_argument("--class-bias-input", type=float, default=0.85)
+    ap.add_argument("--readout-center-resistance", type=float, default=0.0)
+    ap.add_argument("--readout-center-voltage", type=float, default=0.40)
     ap.add_argument("--min-target-signed", type=float, default=10e-3)
     return ap
 
@@ -806,6 +874,10 @@ def validate_args(args: argparse.Namespace) -> None:
         raise ValueError("input-value must stay within supply rails")
     if args.class_bias_input < 0.0 or args.class_bias_input > 1.2:
         raise ValueError("class-bias-input must stay within supply rails")
+    if args.readout_center_resistance < 0.0:
+        raise ValueError("readout-center-resistance must be nonnegative")
+    if args.readout_center_voltage < 0.0 or args.readout_center_voltage > 1.2:
+        raise ValueError("readout-center-voltage must stay within supply rails")
     if args.readout_width <= 0.0:
         raise ValueError("readout-width must be positive")
     if args.score_capacitance_f <= 0.0:

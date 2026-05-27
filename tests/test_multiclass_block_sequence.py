@@ -130,6 +130,23 @@ def test_multiclass_block_sequence_can_use_amplified_score_nontarget_gate() -> N
     assert "Mc1_dec_low_gain_ref_tail" not in netlist
 
 
+def test_multiclass_block_sequence_can_use_amplified_score_competitive_target_boost() -> None:
+    netlist = seq.generate_netlist(
+        train_records=_target0_records(1),
+        eval_records=_target0_records(1),
+        error_mode="amplified-score-competitive",
+    )
+
+    assert "\nB" not in netlist
+    assert "Mc0_f0_gvn_score c0_f0_gvn_label c0_score_amp c0_f0_gvn_d 0 NSENSE" in netlist
+    assert "Mc0_f0_gvp_comp0_score c0_f0_gvp_comp0_label c1_score_amp c0_f0_gvp_comp0_score 0 NSENSE" in netlist
+    assert "Mc0_f0_rgp_comp0_acc c0_f0_rgp_comp0_score acc 0 0 NREL" in netlist
+    assert "Mc0_f0_gvp_comp1_score c0_f0_gvp_comp1_label c2_score_amp c0_f0_gvp_comp1_score 0 NSENSE" in netlist
+    assert "Mc1_f0_gvp_comp0_score c1_f0_gvp_comp0_label c0_score_amp c1_f0_gvp_comp0_score 0 NSENSE" in netlist
+    assert "Mc1_f0_gvp_comp1_score c1_f0_gvp_comp1_label c2_score_amp c1_f0_gvp_comp1_score 0 NSENSE" in netlist
+    assert "Mc0_dec_low_gain_ref_tail" not in netlist
+
+
 def test_multiclass_block_sequence_can_add_target_only_class_bias_row() -> None:
     netlist = seq.generate_netlist(
         train_records=_target0_records(1),
@@ -146,6 +163,22 @@ def test_multiclass_block_sequence_can_add_target_only_class_bias_row() -> None:
     assert "Mc0_f1_gvn_d" not in netlist
     assert "Mc0_f1_rgn_res" not in netlist
     assert ".meas tran c0_f1_signed_final" in netlist
+
+
+def test_multiclass_block_sequence_can_add_passive_readout_center_leak() -> None:
+    netlist = seq.generate_netlist(
+        train_records=_target0_records(1),
+        eval_records=_target0_records(1),
+        feature_count=1,
+        readout_center_resistance=7e6,
+        readout_center_voltage=0.39,
+    )
+
+    assert "\nB" not in netlist
+    assert "Vreadout_center readout_center 0 0.39" in netlist
+    assert "Rc0_vwp0_center c0_vwp0 readout_center 7000000" in netlist
+    assert "Rc0_vwn0_center c0_vwn0 readout_center 7000000" in netlist
+    assert "Rc2_vwp0_center c2_vwp0 readout_center 7000000" in netlist
 
 
 def test_multiclass_block_sequence_can_gate_nontarget_with_restored_winner() -> None:
@@ -205,6 +238,10 @@ def test_multiclass_block_sequence_validation() -> None:
         seq.generate_netlist(train_records=records, eval_records=records, class_bias_mode="missing")
     with pytest.raises(ValueError, match="class-bias-input"):
         seq.main_for_test(["--class-bias-input", "1.3"])
+    with pytest.raises(ValueError, match="readout-center-resistance"):
+        seq.main_for_test(["--readout-center-resistance", "-1"])
+    with pytest.raises(ValueError, match="readout-center-voltage"):
+        seq.main_for_test(["--readout-center-voltage", "1.3"])
 
 
 def _residual_score_gate_netlist(score: float, scoren: float = 0.0) -> str:
@@ -233,6 +270,91 @@ def _residual_score_gate_netlist(score: float, scoren: float = 0.0) -> str:
         ".meas tran score_gain_diff PARAM='score_amp_after-scoren_amp_after'",
         ".meas tran score_gate_after FIND V(c0_score_gate) AT=5.5n",
         ".tran 2p 6n uic",
+        ".control",
+        "run",
+        "quit",
+        ".endc",
+        ".end",
+        "",
+    ]
+    return "\n".join(lines)
+
+
+def _competitive_target_boost_netlist(opponent_gate: float) -> str:
+    lines = [
+        "* Low-level amplified-score competitive target boost primitive.",
+        ".param VDD=1.2",
+        seq.mos_models(),
+        ".options method=gear reltol=1e-3 abstol=1e-12 vntol=1e-6",
+        "Vdd vdd 0 {VDD}",
+        "Vvwhi_ref vwhi_ref 0 0.42",
+        "Vvwlo_ref vwlo_ref 0 0.28",
+        "Velig elig0 0 0.85",
+        "Vtargetp c0_targetp 0 PULSE(0 1.1 1n 10p 10p 2n 20n)",
+        "Vtargetn c0_targetn 0 0",
+        "Vacc acc 0 PULSE(0 1.2 1n 10p 10p 2n 20n)",
+        "Vapply apply 0 PULSE(0 1.2 4n 10p 10p 0.1n 20n)",
+        "Vapplyn applyn 0 PULSE(1.2 0 4n 10p 10p 0.1n 20n)",
+        "Vown_score_amp c0_score_amp 0 0.05",
+        f"Vopp_score_amp opp_score_amp 0 {opponent_gate:.12g}",
+        "Cc0_gvp0 c0_gvp0 0 2f IC=0",
+        "Cc0_gvn0 c0_gvn0 0 2f IC=0",
+        "Cc0_rgp0 c0_rgp0 0 4f IC=1.2",
+        "Cc0_rgn0 c0_rgn0 0 4f IC=1.2",
+        "Rc0_gvp0 c0_gvp0 0 1G",
+        "Rc0_gvn0 c0_gvn0 0 1G",
+        "Rc0_rgp0 c0_rgp0 vdd 50k",
+        "Rc0_rgn0 c0_rgn0 vdd 50k",
+        *seq.signed_store_lines(
+            positive_node=seq.class_node(0, "vwp0"),
+            negative_node=seq.class_node(0, "vwn0"),
+            positive_ic=0.40,
+            negative_ic=0.40,
+        ),
+        *seq.class_local_amplified_score_competitive_gradient_lines(
+            class_idx=0,
+            feature_idx=0,
+            activation_node="elig0",
+            own_score_gate_node="c0_score_amp",
+            opponent_score_gate_nodes=["opp_score_amp"],
+        ),
+        *seq.class_local_bounded_update_lines(class_idx=0, feature_idx=0),
+        ".meas tran gvp_after FIND V(c0_gvp0) AT=3.5n",
+        ".meas tran rgp_after FIND V(c0_rgp0) AT=3.5n",
+        ".meas tran vwp_after FIND V(c0_vwp0) AT=5.5n",
+        ".meas tran vwn_after FIND V(c0_vwn0) AT=5.5n",
+        ".meas tran signed_after PARAM='vwp_after-vwn_after'",
+        ".tran 2p 6n uic",
+        ".control",
+        "run",
+        "quit",
+        ".endc",
+        ".end",
+        "",
+    ]
+    return "\n".join(lines)
+
+
+def _readout_center_leak_netlist(resistance: float = 5e6) -> str:
+    lines = [
+        "* Low-level passive readout center leak primitive.",
+        ".param VDD=1.2",
+        seq.mos_models(),
+        ".options method=gear reltol=1e-3 abstol=1e-12 vntol=1e-6",
+        "Vdd vdd 0 {VDD}",
+        "Vreadout_center readout_center 0 0.40",
+        *seq.signed_store_lines(
+            positive_node=seq.class_node(0, "vwp0"),
+            negative_node=seq.class_node(0, "vwn0"),
+            positive_ic=0.52,
+            negative_ic=0.25,
+        ),
+        f"R{seq.class_node(0, 'vwp0')}_center {seq.class_node(0, 'vwp0')} readout_center {resistance:.12g}",
+        f"R{seq.class_node(0, 'vwn0')}_center {seq.class_node(0, 'vwn0')} readout_center {resistance:.12g}",
+        ".meas tran vwp_after FIND V(c0_vwp0) AT=20n",
+        ".meas tran vwn_after FIND V(c0_vwn0) AT=20n",
+        ".meas tran signed_after PARAM='vwp_after-vwn_after'",
+        ".tran 5p 22n uic",
         ".control",
         "run",
         "quit",
@@ -273,6 +395,50 @@ def test_multiclass_block_sequence_ngspice_residual_score_gate_is_monotonic_low_
     assert float(medium["score_gate_after"]) > float(neutral["score_gate_after"]) + 1e-3
     assert float(high["score_gate_after"]) > float(medium["score_gate_after"]) + 3e-3
     assert float(high["score_gate_after"]) < 0.08
+
+
+def test_multiclass_block_sequence_ngspice_competitive_target_boost_strengthens_positive_write(
+    tmp_path: Path,
+    ngspice_path: str,
+) -> None:
+    low = run_netlist(
+        ngspice_path,
+        tmp_path / "competitive_target_boost_low.cir",
+        _competitive_target_boost_netlist(0.0),
+        timeout=20.0,
+    )
+    high = run_netlist(
+        ngspice_path,
+        tmp_path / "competitive_target_boost_high.cir",
+        _competitive_target_boost_netlist(1.0),
+        timeout=20.0,
+    )
+
+    assert float(high["gvp_after"]) > float(low["gvp_after"]) + 5e-3
+    assert float(high["rgp_after"]) < float(low["rgp_after"]) - 10e-6
+    assert float(high["signed_after"]) > float(low["signed_after"]) + 1e-3
+
+
+def test_multiclass_block_sequence_ngspice_passive_readout_center_leak_reduces_signed_state(
+    tmp_path: Path,
+    ngspice_path: str,
+) -> None:
+    weak = run_netlist(
+        ngspice_path,
+        tmp_path / "readout_center_leak_weak.cir",
+        _readout_center_leak_netlist(1e12),
+        timeout=20.0,
+    )
+    strong = run_netlist(
+        ngspice_path,
+        tmp_path / "readout_center_leak_strong.cir",
+        _readout_center_leak_netlist(5e6),
+        timeout=20.0,
+    )
+
+    assert float(strong["vwp_after"]) < float(weak["vwp_after"]) - 10e-3
+    assert float(strong["vwn_after"]) > float(weak["vwn_after"]) + 10e-3
+    assert float(strong["signed_after"]) < float(weak["signed_after"]) - 20e-3
 
 
 def test_multiclass_block_sequence_ngspice_amplified_score_gate_depresses_one_hot_off_diagonal(

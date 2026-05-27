@@ -75,6 +75,27 @@ def test_multiclass_block_sequence_emits_single_continuous_deck() -> None:
     assert "* cycle 3 final_eval label=0" in netlist
 
 
+def test_multiclass_block_sequence_defaults_score_measure_to_timing_window() -> None:
+    records = _target0_records(1)
+
+    late_netlist = seq.generate_netlist(train_records=records, eval_records=records)
+    early_netlist = seq.generate_netlist(
+        train_records=records,
+        eval_records=records,
+        score_timing_mode="early",
+    )
+    explicit_netlist = seq.generate_netlist(
+        train_records=records,
+        eval_records=records,
+        score_timing_mode="early",
+        score_measure_ns=5.05,
+    )
+
+    assert ".meas tran c0_score_0 FIND V(c0_score) AT=8.50n" in late_netlist
+    assert ".meas tran c0_score_0 FIND V(c0_score) AT=5.30n" in early_netlist
+    assert ".meas tran c0_score_0 FIND V(c0_score) AT=5.05n" in explicit_netlist
+
+
 def test_multiclass_block_sequence_can_sample_differential_activation_as_eligibility() -> None:
     netlist = seq.generate_netlist(
         train_records=_target0_records(1),

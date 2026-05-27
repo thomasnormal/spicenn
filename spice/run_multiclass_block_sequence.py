@@ -264,6 +264,14 @@ def effective_readout_update_eligibility_capacitance(
     return 20.0
 
 
+def effective_score_measure_time_ns(*, score_timing_mode: str, requested_measure_ns: float | None) -> float:
+    if requested_measure_ns is not None:
+        return requested_measure_ns
+    if score_timing_mode == "early":
+        return 5.30
+    return 8.50
+
+
 def hidden_readout_weighted_credit_lines(
     *,
     class_count: int,
@@ -1222,7 +1230,7 @@ def generate_netlist(
     score_mirror_diode_width_u: float = 64.0,
     score_mirror_sink_width_u: float = 4.0,
     score_mirror_reset_width_u: float = 16.0,
-    score_measure_ns: float = 8.5,
+    score_measure_ns: float | None = None,
     initial_positive: float = 0.40,
     initial_negative: float = 0.40,
     initial_readout_states: dict[tuple[int, int], tuple[float, float]] | None = None,
@@ -1285,7 +1293,6 @@ def generate_netlist(
         "score_mirror_diode_width_u": score_mirror_diode_width_u,
         "score_mirror_sink_width_u": score_mirror_sink_width_u,
         "score_mirror_reset_width_u": score_mirror_reset_width_u,
-        "score_measure_ns": score_measure_ns,
         "initial_positive": initial_positive,
         "initial_negative": initial_negative,
         "target_high": target_high,
@@ -1313,7 +1320,7 @@ def generate_netlist(
     }.items():
         if value <= 0.0:
             raise ValueError(f"{name} must be positive")
-    if score_measure_ns >= CYCLE_NS:
+    if score_measure_ns is not None and (score_measure_ns <= 0.0 or score_measure_ns >= CYCLE_NS):
         raise ValueError("score_measure_ns must be inside the cycle")
     if readout_center_resistance < 0.0:
         raise ValueError("readout_center_resistance must be nonnegative")
@@ -1540,6 +1547,10 @@ def generate_netlist(
     score_decision_measure_ns = scoredec_end_ns + 0.20
     score_error_measure_ns = scoreerr_end_ns + 0.03
     score_mass_measure_ns = max(scorepre_end_ns, scoreerr_start_ns - 0.03)
+    effective_score_measure_ns = effective_score_measure_time_ns(
+        score_timing_mode=score_timing_mode,
+        requested_measure_ns=score_measure_ns,
+    )
     readout_eligibility_measure_ns = 5.38 if uses_hybrid_readout_eligibility else 5.08
     readout_eligibility_update_measure_ns = max(readout_eligibility_measure_ns, acc_start_ns + 0.03)
     low_gain_contrast_sizing = (
@@ -2507,22 +2518,22 @@ def generate_netlist(
         for class_idx in range(class_count):
             if score_sense_mode == "current-clamp":
                 lines += [
-                    f".meas tran c{class_idx}_score_{cycle} FIND I(V{class_node(class_idx, 'score_clamp')}) AT={base + score_measure_ns:.2f}n",
-                    f".meas tran c{class_idx}_scoren_{cycle} FIND I(V{class_node(class_idx, 'scoren_clamp')}) AT={base + score_measure_ns:.2f}n",
+                    f".meas tran c{class_idx}_score_{cycle} FIND I(V{class_node(class_idx, 'score_clamp')}) AT={base + effective_score_measure_ns:.2f}n",
+                    f".meas tran c{class_idx}_scoren_{cycle} FIND I(V{class_node(class_idx, 'scoren_clamp')}) AT={base + effective_score_measure_ns:.2f}n",
                     f".meas tran c{class_idx}_score_net_{cycle} PARAM='c{class_idx}_score_{cycle}-c{class_idx}_scoren_{cycle}'",
                 ]
             elif score_sense_mode == "diode-mirror":
                 lines += [
-                    f".meas tran c{class_idx}_score_mirror_{cycle} FIND V({class_node(class_idx, 'score_mirror')}) AT={base + score_measure_ns:.2f}n",
-                    f".meas tran c{class_idx}_scoren_mirror_{cycle} FIND V({class_node(class_idx, 'scoren_mirror')}) AT={base + score_measure_ns:.2f}n",
+                    f".meas tran c{class_idx}_score_mirror_{cycle} FIND V({class_node(class_idx, 'score_mirror')}) AT={base + effective_score_measure_ns:.2f}n",
+                    f".meas tran c{class_idx}_scoren_mirror_{cycle} FIND V({class_node(class_idx, 'scoren_mirror')}) AT={base + effective_score_measure_ns:.2f}n",
                     f".meas tran c{class_idx}_score_{cycle} PARAM='1.2-c{class_idx}_score_mirror_{cycle}'",
                     f".meas tran c{class_idx}_scoren_{cycle} PARAM='1.2-c{class_idx}_scoren_mirror_{cycle}'",
                     f".meas tran c{class_idx}_score_net_{cycle} PARAM='c{class_idx}_score_{cycle}-c{class_idx}_scoren_{cycle}'",
                 ]
             else:
                 lines += [
-                    f".meas tran c{class_idx}_score_{cycle} FIND V({class_node(class_idx, 'score')}) AT={base + score_measure_ns:.2f}n",
-                    f".meas tran c{class_idx}_scoren_{cycle} FIND V({class_node(class_idx, 'scoren')}) AT={base + score_measure_ns:.2f}n",
+                    f".meas tran c{class_idx}_score_{cycle} FIND V({class_node(class_idx, 'score')}) AT={base + effective_score_measure_ns:.2f}n",
+                    f".meas tran c{class_idx}_scoren_{cycle} FIND V({class_node(class_idx, 'scoren')}) AT={base + effective_score_measure_ns:.2f}n",
                     f".meas tran c{class_idx}_score_net_{cycle} PARAM='c{class_idx}_score_{cycle}-c{class_idx}_scoren_{cycle}'",
                 ]
             if uses_pairwise_decisions:
@@ -3516,7 +3527,10 @@ def run_case(args: argparse.Namespace) -> dict[str, Any]:
         "score_mirror_reset_width_u": (
             args.score_mirror_reset_width if args.score_sense_mode == "diode-mirror" else None
         ),
-        "score_measure_ns": args.score_measure_ns,
+        "score_measure_ns": effective_score_measure_time_ns(
+            score_timing_mode=args.score_timing_mode,
+            requested_measure_ns=args.score_measure_ns,
+        ),
         "nontarget_scale": args.nontarget_scale,
         "nontarget_width_scale": args.nontarget_width_scale,
         "score_mass_sum_width_u": args.score_mass_sum_width if "score-mass" in args.error_mode else None,
@@ -3749,7 +3763,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
     ap.add_argument("--score-mirror-diode-width", type=float, default=64.0)
     ap.add_argument("--score-mirror-sink-width", type=float, default=4.0)
     ap.add_argument("--score-mirror-reset-width", type=float, default=16.0)
-    ap.add_argument("--score-measure-ns", type=float, default=8.5)
+    ap.add_argument("--score-measure-ns", type=float, default=None)
     ap.add_argument("--initial-positive", type=float, default=0.40)
     ap.add_argument("--initial-negative", type=float, default=0.40)
     ap.add_argument("--nontarget-scale", type=float, default=1.0)
@@ -3889,7 +3903,7 @@ def validate_args(args: argparse.Namespace) -> None:
         raise ValueError("score-mirror-sink-width must be positive")
     if args.score_mirror_reset_width <= 0.0:
         raise ValueError("score-mirror-reset-width must be positive")
-    if args.score_measure_ns <= 0.0 or args.score_measure_ns >= CYCLE_NS:
+    if args.score_measure_ns is not None and (args.score_measure_ns <= 0.0 or args.score_measure_ns >= CYCLE_NS):
         raise ValueError("score-measure-ns must stay inside the cycle")
     if args.nontarget_scale < 0.0 or args.nontarget_scale > 1.0:
         raise ValueError("nontarget-scale must be in [0, 1]")

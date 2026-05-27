@@ -73,6 +73,8 @@ def _block_argv(args: argparse.Namespace, *, approach: str, scenario: str, child
         args.hidden_direct_readout_gate_mode,
         "--hidden-direct-output-stage",
         args.hidden_direct_output_stage,
+        "--hidden-direct-high-ref",
+        str(args.hidden_direct_high_ref),
         "--score-timing-mode",
         args.score_timing_mode,
         "--readout-forward-mode",
@@ -297,6 +299,9 @@ def run_screen(args: argparse.Namespace) -> dict[str, Any]:
         "hidden_direct_output_stage": (
             args.hidden_direct_output_stage if args.hidden_update_mode == "direct-readout-weighted" else None
         ),
+        "hidden_direct_high_ref": (
+            args.hidden_direct_high_ref if args.hidden_update_mode == "direct-readout-weighted" else None
+        ),
         "score_timing_mode": args.score_timing_mode,
         "readout_forward_mode": args.readout_forward_mode,
         "eligibility_source_mode": args.eligibility_source_mode,
@@ -348,6 +353,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
         choices=seq.HIDDEN_DIRECT_OUTPUT_STAGES,
         default="nmos-pass",
     )
+    ap.add_argument("--hidden-direct-high-ref", type=float, default=1.05)
     ap.add_argument("--score-timing-mode", choices=seq.SCORE_TIMING_MODES, default="late")
     ap.add_argument("--readout-forward-mode", choices=seq.READOUT_FORWARD_MODES, default="direct")
     ap.add_argument("--eligibility-source-mode", choices=seq.ELIGIBILITY_SOURCE_MODES, default="pre-p")
@@ -387,6 +393,8 @@ def main_for_test(argv: list[str]) -> argparse.Namespace:
         )
     if args.hidden_direct_output_stage not in seq.HIDDEN_DIRECT_OUTPUT_STAGES:
         raise ValueError(f"hidden-direct-output-stage must be one of {seq.HIDDEN_DIRECT_OUTPUT_STAGES}")
+    if args.hidden_direct_high_ref <= 0.0 or args.hidden_direct_high_ref > 1.2:
+        raise ValueError("hidden-direct-high-ref must stay in (0, 1.2]")
     return args
 
 

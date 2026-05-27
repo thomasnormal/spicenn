@@ -1991,6 +1991,11 @@ def _hidden_direct_readout_weighted_writer_netlist(
     vwn: float,
     whp: float = 0.45,
     whn: float = 0.40,
+    readout_high_ref: float = 1.05,
+    readout_low_ref: float = 0.15,
+    hidden_high_ref: float = 1.05,
+    errp: float | str = "PULSE(0 1.2 1n 10p 10p 4n 20n)",
+    errn: float | str = 0.0,
     width_u: float = 8.0,
     readout_gate_mode: str = "differential-excess",
     output_stage: str = "nmos-pass",
@@ -2001,11 +2006,12 @@ def _hidden_direct_readout_weighted_writer_netlist(
         seq.mos_models(),
         ".options method=gear reltol=1e-3 abstol=1e-12 vntol=1e-6",
         "Vdd vdd 0 {VDD}",
-        "Vwhi vwhi_ref 0 1.05",
-        "Vwlo vwlo_ref 0 0.15",
+        f"Vwhi vwhi_ref 0 {readout_high_ref:.12g}",
+        f"Vwlo vwlo_ref 0 {readout_low_ref:.12g}",
+        f"Vhwhi hidden_whi_ref 0 {hidden_high_ref:.12g}",
         "Vrst rst 0 PULSE(1.2 0 0.1n 10p 10p 9n 20n)",
-        "Verrp c0_errp 0 PULSE(0 1.2 1n 10p 10p 4n 20n)",
-        "Verrn c0_errn 0 0",
+        f"Verrp c0_errp 0 {errp if isinstance(errp, str) else f'{errp:.12g}'}",
+        f"Verrn c0_errn 0 {errn if isinstance(errn, str) else f'{errn:.12g}'}",
         "Vact act0 0 1.2",
         "Vxelig xelig0 0 1.2",
         f"Cc0_vwp0 c0_vwp0 0 20f IC={vwp:.12g}",
@@ -2025,6 +2031,9 @@ def _hidden_direct_readout_weighted_writer_netlist(
             width_u=width_u,
             readout_gate_mode=readout_gate_mode,
             output_stage=output_stage,
+            high_ref_node=(
+                "hidden_whi_ref" if output_stage == "pmos-bounded" else "vwhi_ref"
+            ),
         ),
         *(
             [
@@ -2221,6 +2230,49 @@ def test_multiclass_block_sequence_ngspice_direct_hidden_writer_pmos_stage_moves
     assert float(pmos_pullup["signed_after"]) > float(nmos_pass["signed_after"]) + 20e-3
     assert float(pmos_pullup["signed_after"]) > 0.30
     assert float(neutral_pmos["signed_after"]) > 0.75
+
+
+def test_multiclass_block_sequence_ngspice_direct_hidden_writer_bounded_pmos_uses_hidden_reference(
+    tmp_path: Path,
+    ngspice_path: str,
+) -> None:
+    moderate = run_netlist(
+        ngspice_path,
+        tmp_path / "direct_hidden_writer_moderate_pmos_bounded_integrated_refs.cir",
+        _hidden_direct_readout_weighted_writer_netlist(
+            vwp=0.40,
+            vwn=0.28,
+            readout_high_ref=0.42,
+            readout_low_ref=0.28,
+            hidden_high_ref=1.05,
+            width_u=0.125,
+            readout_gate_mode="restored-excess",
+            output_stage="pmos-bounded",
+        ),
+        timeout=20.0,
+    )
+    neutral = run_netlist(
+        ngspice_path,
+        tmp_path / "direct_hidden_writer_neutral_pmos_bounded_integrated_refs.cir",
+        _hidden_direct_readout_weighted_writer_netlist(
+            vwp=0.40,
+            vwn=0.40,
+            whp=1.0,
+            whn=0.2,
+            readout_high_ref=0.42,
+            readout_low_ref=0.28,
+            hidden_high_ref=1.05,
+            width_u=0.125,
+            readout_gate_mode="restored-excess",
+            output_stage="pmos-bounded",
+        ),
+        timeout=20.0,
+    )
+
+    assert float(moderate["signed_after"]) > 0.30
+    assert float(moderate["whp_after"]) < 1.06
+    assert float(moderate["whn_after"]) == pytest.approx(0.40, abs=5e-3)
+    assert float(neutral["signed_after"]) > 0.75
 
 
 def test_multiclass_block_sequence_ngspice_live_error_rails_reset_before_eval_writer(

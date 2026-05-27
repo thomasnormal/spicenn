@@ -1210,6 +1210,14 @@ def test_multiclass_block_sequence_validation() -> None:
             error_mode="pairwise-margin-correction-descent",
             hidden_direct_readout_gate_mode="missing",
         )
+    with pytest.raises(ValueError, match="hidden_direct_output_stage"):
+        seq.generate_netlist(
+            train_records=records,
+            eval_records=records,
+            hidden_update_mode="direct-readout-weighted",
+            error_mode="pairwise-margin-correction-descent",
+            hidden_direct_output_stage="missing",
+        )
     with pytest.raises(ValueError, match="hidden_credit_activation_model"):
         seq.generate_netlist(
             train_records=records,
@@ -1983,6 +1991,9 @@ def _hidden_direct_readout_weighted_writer_netlist(
     vwn: float,
     whp: float = 0.45,
     whn: float = 0.40,
+    width_u: float = 8.0,
+    readout_gate_mode: str = "differential-excess",
+    output_stage: str = "nmos-pass",
 ) -> str:
     lines = [
         "* Low-level direct readout-weighted hidden writer primitive.",
@@ -2011,10 +2022,18 @@ def _hidden_direct_readout_weighted_writer_netlist(
             error_positive_nodes=["c0_errp"],
             error_negative_nodes=["c0_errn"],
             eligibility_node="xelig0",
-            width_u=8.0,
+            width_u=width_u,
+            readout_gate_mode=readout_gate_mode,
+            output_stage=output_stage,
         ),
-        ".meas tran vdiff_p FIND V(h0_c0_direct_vdiff_p) AT=5n",
-        ".meas tran vdiff_n FIND V(h0_c0_direct_vdiff_n) AT=5n",
+        *(
+            [
+                ".meas tran vdiff_p FIND V(h0_c0_direct_vdiff_p) AT=5n",
+                ".meas tran vdiff_n FIND V(h0_c0_direct_vdiff_n) AT=5n",
+            ]
+            if readout_gate_mode in ("differential-excess", "restored-excess")
+            else []
+        ),
         ".meas tran whp_after FIND V(whp0) AT=8n",
         ".meas tran whn_after FIND V(whn0) AT=8n",
         ".meas tran signed_after PARAM='whp_after-whn_after'",
@@ -2160,6 +2179,48 @@ def test_multiclass_block_sequence_ngspice_direct_hidden_writer_preserves_existi
     assert abs(float(neutral["vdiff_p"]) - float(neutral["vdiff_n"])) < 20e-3
     assert max(float(neutral["vdiff_p"]), float(neutral["vdiff_n"])) < 0.20
     assert float(neutral["signed_after"]) > 0.75
+
+
+def test_multiclass_block_sequence_ngspice_direct_hidden_writer_pmos_stage_moves_moderate_credit(
+    tmp_path: Path,
+    ngspice_path: str,
+) -> None:
+    nmos_pass = run_netlist(
+        ngspice_path,
+        tmp_path / "direct_hidden_writer_moderate_nmos_pass.cir",
+        _hidden_direct_readout_weighted_writer_netlist(vwp=0.40, vwn=0.28, width_u=8.0),
+        timeout=20.0,
+    )
+    pmos_pullup = run_netlist(
+        ngspice_path,
+        tmp_path / "direct_hidden_writer_moderate_pmos_pullup.cir",
+        _hidden_direct_readout_weighted_writer_netlist(
+            vwp=0.40,
+            vwn=0.28,
+            width_u=0.125,
+            readout_gate_mode="restored-excess",
+            output_stage="pmos-pullup",
+        ),
+        timeout=20.0,
+    )
+    neutral_pmos = run_netlist(
+        ngspice_path,
+        tmp_path / "direct_hidden_writer_neutral_existing_state_pmos_pullup.cir",
+        _hidden_direct_readout_weighted_writer_netlist(
+            vwp=0.40,
+            vwn=0.40,
+            whp=1.0,
+            whn=0.2,
+            width_u=0.125,
+            readout_gate_mode="restored-excess",
+            output_stage="pmos-pullup",
+        ),
+        timeout=20.0,
+    )
+
+    assert float(pmos_pullup["signed_after"]) > float(nmos_pass["signed_after"]) + 20e-3
+    assert float(pmos_pullup["signed_after"]) > 0.30
+    assert float(neutral_pmos["signed_after"]) > 0.75
 
 
 def test_multiclass_block_sequence_ngspice_live_error_rails_reset_before_eval_writer(

@@ -71,6 +71,8 @@ def _block_argv(args: argparse.Namespace, *, approach: str, scenario: str, child
         str(args.hidden_update_width),
         "--hidden-direct-readout-gate-mode",
         args.hidden_direct_readout_gate_mode,
+        "--hidden-direct-output-stage",
+        args.hidden_direct_output_stage,
         "--score-timing-mode",
         args.score_timing_mode,
         "--readout-forward-mode",
@@ -292,6 +294,9 @@ def run_screen(args: argparse.Namespace) -> dict[str, Any]:
         "hidden_direct_readout_gate_mode": (
             args.hidden_direct_readout_gate_mode if args.hidden_update_mode == "direct-readout-weighted" else None
         ),
+        "hidden_direct_output_stage": (
+            args.hidden_direct_output_stage if args.hidden_update_mode == "direct-readout-weighted" else None
+        ),
         "score_timing_mode": args.score_timing_mode,
         "readout_forward_mode": args.readout_forward_mode,
         "eligibility_source_mode": args.eligibility_source_mode,
@@ -338,6 +343,11 @@ def build_arg_parser() -> argparse.ArgumentParser:
         choices=seq.HIDDEN_DIRECT_READOUT_GATE_MODES,
         default="differential-excess",
     )
+    ap.add_argument(
+        "--hidden-direct-output-stage",
+        choices=seq.HIDDEN_DIRECT_OUTPUT_STAGES,
+        default="nmos-pass",
+    )
     ap.add_argument("--score-timing-mode", choices=seq.SCORE_TIMING_MODES, default="late")
     ap.add_argument("--readout-forward-mode", choices=seq.READOUT_FORWARD_MODES, default="direct")
     ap.add_argument("--eligibility-source-mode", choices=seq.ELIGIBILITY_SOURCE_MODES, default="pre-p")
@@ -375,6 +385,8 @@ def main_for_test(argv: list[str]) -> argparse.Namespace:
         raise ValueError(
             f"hidden-direct-readout-gate-mode must be one of {seq.HIDDEN_DIRECT_READOUT_GATE_MODES}"
         )
+    if args.hidden_direct_output_stage not in seq.HIDDEN_DIRECT_OUTPUT_STAGES:
+        raise ValueError(f"hidden-direct-output-stage must be one of {seq.HIDDEN_DIRECT_OUTPUT_STAGES}")
     return args
 
 

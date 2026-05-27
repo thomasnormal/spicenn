@@ -57,7 +57,8 @@ READOUT_FORWARD_MODES = ("direct", "diode")
 ELIGIBILITY_GATE_MODES = ("raw", "competition", "rank", "contrast")
 ELIGIBILITY_SOURCE_MODES = ("pre-p", "act-raw", "act")
 HIDDEN_CREDIT_ACTIVATION_MODELS = ("NREL", "NMOS", "NSENSE")
-HIDDEN_DIRECT_READOUT_GATE_MODES = ("raw", "differential-excess")
+HIDDEN_DIRECT_READOUT_GATE_MODES = ("raw", "differential-excess", "restored-excess")
+HIDDEN_DIRECT_OUTPUT_STAGES = ("nmos-pass", "pmos-pullup")
 DEFAULT_HIDDEN_POSITIVE = 1.00
 DEFAULT_HIDDEN_NEGATIVE = 0.20
 ERROR_MODES = (
@@ -242,6 +243,7 @@ def hidden_direct_readout_weighted_update_lines(
     excess_width_u: float = 1.0,
     reset_node: str = "rst",
     readout_gate_mode: str = "differential-excess",
+    output_stage: str = "nmos-pass",
 ) -> list[str]:
     if min(width_u, internal_capacitance_f, excess_width_u) <= 0.0:
         raise ValueError("direct hidden update width, internal capacitance, and excess width must be positive")
@@ -249,6 +251,8 @@ def hidden_direct_readout_weighted_update_lines(
         raise ValueError(f"activation_model must be one of {HIDDEN_CREDIT_ACTIVATION_MODELS}")
     if readout_gate_mode not in HIDDEN_DIRECT_READOUT_GATE_MODES:
         raise ValueError(f"readout_gate_mode must be one of {HIDDEN_DIRECT_READOUT_GATE_MODES}")
+    if output_stage not in HIDDEN_DIRECT_OUTPUT_STAGES:
+        raise ValueError(f"output_stage must be one of {HIDDEN_DIRECT_OUTPUT_STAGES}")
     whp = f"whp{feature_idx}"
     whn = f"whn{feature_idx}"
     act = f"act{feature_idx}"
@@ -263,60 +267,123 @@ def hidden_direct_readout_weighted_update_lines(
             pos_gate = vwp
             neg_gate = vwn
         else:
-            pos_gate = f"{prefix}vdiff_p"
-            neg_gate = f"{prefix}vdiff_n"
-            pos_mid = f"{pos_gate}_mid"
-            neg_mid = f"{neg_gate}_mid"
+            diff_pos_gate = f"{prefix}vdiff_p"
+            diff_neg_gate = f"{prefix}vdiff_n"
+            pos_gate = diff_pos_gate
+            neg_gate = diff_neg_gate
+            pos_mid = f"{diff_pos_gate}_mid"
+            neg_mid = f"{diff_neg_gate}_mid"
             lines += [
-                f"C{pos_gate} {pos_gate} 0 2f IC=0",
-                f"C{neg_gate} {neg_gate} 0 2f IC=0",
-                f"R{pos_gate} {pos_gate} 0 1G",
-                f"R{neg_gate} {neg_gate} 0 1G",
-                f"M{pos_gate}_rst {pos_gate} {reset_node} 0 0 NMOS W=4u L=180n",
-                f"M{neg_gate}_rst {neg_gate} {reset_node} 0 0 NMOS W=4u L=180n",
+                f"C{diff_pos_gate} {diff_pos_gate} 0 2f IC=0",
+                f"C{diff_neg_gate} {diff_neg_gate} 0 2f IC=0",
+                f"R{diff_pos_gate} {diff_pos_gate} 0 1G",
+                f"R{diff_neg_gate} {diff_neg_gate} 0 1G",
+                f"M{diff_pos_gate}_rst {diff_pos_gate} {reset_node} 0 0 NMOS W=4u L=180n",
+                f"M{diff_neg_gate}_rst {diff_neg_gate} {reset_node} 0 0 NMOS W=4u L=180n",
                 f"R{pos_mid} {pos_mid} 0 1G",
                 f"R{neg_mid} {neg_mid} 0 1G",
-                f"M{pos_gate}_up0 vdd {vwp} {pos_mid} 0 NSENSE W={excess_width_u:.6g}u L=180n",
-                f"M{pos_gate}_up1 {pos_mid} {vwp} {pos_gate} 0 NSENSE W={excess_width_u:.6g}u L=180n",
-                f"M{pos_gate}_dn {pos_gate} {vwn} 0 0 NSENSE W={excess_width_u:.6g}u L=180n",
-                f"M{neg_gate}_up0 vdd {vwn} {neg_mid} 0 NSENSE W={excess_width_u:.6g}u L=180n",
-                f"M{neg_gate}_up1 {neg_mid} {vwn} {neg_gate} 0 NSENSE W={excess_width_u:.6g}u L=180n",
-                f"M{neg_gate}_dn {neg_gate} {vwp} 0 0 NSENSE W={excess_width_u:.6g}u L=180n",
+                f"M{diff_pos_gate}_up0 vdd {vwp} {pos_mid} 0 NSENSE W={excess_width_u:.6g}u L=180n",
+                f"M{diff_pos_gate}_up1 {pos_mid} {vwp} {diff_pos_gate} 0 NSENSE W={excess_width_u:.6g}u L=180n",
+                f"M{diff_pos_gate}_dn {diff_pos_gate} {vwn} 0 0 NSENSE W={excess_width_u:.6g}u L=180n",
+                f"M{diff_neg_gate}_up0 vdd {vwn} {neg_mid} 0 NSENSE W={excess_width_u:.6g}u L=180n",
+                f"M{diff_neg_gate}_up1 {neg_mid} {vwn} {diff_neg_gate} 0 NSENSE W={excess_width_u:.6g}u L=180n",
+                f"M{diff_neg_gate}_dn {diff_neg_gate} {vwp} 0 0 NSENSE W={excess_width_u:.6g}u L=180n",
             ]
-        positive_terms = ((errp, pos_gate, "pv"), (errn, neg_gate, "nv"))
-        negative_terms = ((errp, neg_gate, "pn"), (errn, pos_gate, "nn"))
-        for err, weight, suffix in positive_terms:
+            if readout_gate_mode == "restored-excess":
+                pos_gate = f"{prefix}rexcess_p"
+                neg_gate = f"{prefix}rexcess_n"
+                pos_mid = f"{pos_gate}_mid"
+                neg_mid = f"{neg_gate}_mid"
+                lines += [
+                    f"C{pos_gate} {pos_gate} 0 2f IC=0",
+                    f"C{neg_gate} {neg_gate} 0 2f IC=0",
+                    f"R{pos_gate} {pos_gate} 0 1G",
+                    f"R{neg_gate} {neg_gate} 0 1G",
+                    f"M{pos_gate}_rst {pos_gate} {reset_node} 0 0 NMOS W=4u L=180n",
+                    f"M{neg_gate}_rst {neg_gate} {reset_node} 0 0 NMOS W=4u L=180n",
+                    f"R{pos_mid} {pos_mid} 0 1G",
+                    f"R{neg_mid} {neg_mid} 0 1G",
+                    f"M{pos_gate}_up0 vdd {diff_pos_gate} {pos_mid} 0 NSENSE W={excess_width_u:.6g}u L=180n",
+                    f"M{pos_gate}_up1 {pos_mid} {diff_pos_gate} {pos_gate} 0 NSENSE W={excess_width_u:.6g}u L=180n",
+                    f"M{pos_gate}_dn {pos_gate} {diff_neg_gate} 0 0 NSENSE W={4.0 * excess_width_u:.6g}u L=180n",
+                    f"M{neg_gate}_up0 vdd {diff_neg_gate} {neg_mid} 0 NSENSE W={excess_width_u:.6g}u L=180n",
+                    f"M{neg_gate}_up1 {neg_mid} {diff_neg_gate} {neg_gate} 0 NSENSE W={excess_width_u:.6g}u L=180n",
+                    f"M{neg_gate}_dn {neg_gate} {diff_pos_gate} 0 0 NSENSE W={4.0 * excess_width_u:.6g}u L=180n",
+                ]
+        positive_terms = ((errp, pos_gate, neg_gate, "pv"), (errn, neg_gate, pos_gate, "nv"))
+        negative_terms = ((errp, neg_gate, pos_gate, "pn"), (errn, pos_gate, neg_gate, "nn"))
+        for err, weight, anti_weight, suffix in positive_terms:
             up0 = f"{prefix}{suffix}_pup0"
             up1 = f"{prefix}{suffix}_pup1"
             up2 = f"{prefix}{suffix}_pup2"
-            lines += [
-                f"R{up0} {up0} 0 1G",
-                f"R{up1} {up1} 0 1G",
-                f"R{up2} {up2} 0 1G",
-                f"C{up0} {up0} 0 {internal_capacitance_f:.12g}f IC=0",
-                f"C{up1} {up1} 0 {internal_capacitance_f:.12g}f IC=0",
-                f"C{up2} {up2} 0 {internal_capacitance_f:.12g}f IC=0",
-                f"M{prefix}{suffix}_pup_e vwhi_ref {eligibility_node} {up0} 0 NSENSE W={width_u:.6g}u L=180n",
-                f"M{prefix}{suffix}_pup_a {up0} {act} {up1} 0 {activation_model} W={width_u:.6g}u L=180n",
-                f"M{prefix}{suffix}_pup_r {up1} {err} {up2} 0 NSENSE W={width_u:.6g}u L=180n",
-                f"M{prefix}{suffix}_pup_w {up2} {weight} {whp} 0 NSENSE W={width_u:.6g}u L=180n",
-            ]
-        for err, weight, suffix in negative_terms:
+            if output_stage == "nmos-pass":
+                lines += [
+                    f"R{up0} {up0} 0 1G",
+                    f"R{up1} {up1} 0 1G",
+                    f"R{up2} {up2} 0 1G",
+                    f"C{up0} {up0} 0 {internal_capacitance_f:.12g}f IC=0",
+                    f"C{up1} {up1} 0 {internal_capacitance_f:.12g}f IC=0",
+                    f"C{up2} {up2} 0 {internal_capacitance_f:.12g}f IC=0",
+                    f"M{prefix}{suffix}_pup_e vwhi_ref {eligibility_node} {up0} 0 NSENSE W={width_u:.6g}u L=180n",
+                    f"M{prefix}{suffix}_pup_a {up0} {act} {up1} 0 {activation_model} W={width_u:.6g}u L=180n",
+                    f"M{prefix}{suffix}_pup_r {up1} {err} {up2} 0 NSENSE W={width_u:.6g}u L=180n",
+                    f"M{prefix}{suffix}_pup_w {up2} {weight} {whp} 0 NSENSE W={width_u:.6g}u L=180n",
+                ]
+            else:
+                pgate = f"{prefix}{suffix}_pup_gate"
+                lines += [
+                    f"R{pgate} {pgate} 0 1G",
+                    f"R{up0} {up0} 0 1G",
+                    f"R{up1} {up1} 0 1G",
+                    f"R{up2} {up2} 0 1G",
+                    f"C{pgate} {pgate} 0 {internal_capacitance_f:.12g}f IC=1.05",
+                    f"C{up0} {up0} 0 {internal_capacitance_f:.12g}f IC=0",
+                    f"C{up1} {up1} 0 {internal_capacitance_f:.12g}f IC=0",
+                    f"C{up2} {up2} 0 {internal_capacitance_f:.12g}f IC=0",
+                    f"M{prefix}{suffix}_pup_gate_rst vwhi_ref {reset_node} {pgate} 0 NSENSE W=4u L=180n",
+                    f"M{prefix}{suffix}_pup_gate_hold vwhi_ref {anti_weight} {pgate} 0 NSENSE W={width_u:.6g}u L=180n",
+                    f"M{prefix}{suffix}_pup_e {pgate} {eligibility_node} {up0} 0 NSENSE W={width_u:.6g}u L=180n",
+                    f"M{prefix}{suffix}_pup_a {up0} {act} {up1} 0 {activation_model} W={width_u:.6g}u L=180n",
+                    f"M{prefix}{suffix}_pup_r {up1} {err} {up2} 0 NSENSE W={width_u:.6g}u L=180n",
+                    f"M{prefix}{suffix}_pup_w {up2} {weight} 0 0 NSENSE W={width_u:.6g}u L=180n",
+                    f"M{prefix}{suffix}_pup_pmos {whp} {pgate} vwhi_ref vdd PMOS W={width_u:.6g}u L=180n",
+                ]
+        for err, weight, anti_weight, suffix in negative_terms:
             up0 = f"{prefix}{suffix}_nup0"
             up1 = f"{prefix}{suffix}_nup1"
             up2 = f"{prefix}{suffix}_nup2"
-            lines += [
-                f"R{up0} {up0} 0 1G",
-                f"R{up1} {up1} 0 1G",
-                f"R{up2} {up2} 0 1G",
-                f"C{up0} {up0} 0 {internal_capacitance_f:.12g}f IC=0",
-                f"C{up1} {up1} 0 {internal_capacitance_f:.12g}f IC=0",
-                f"C{up2} {up2} 0 {internal_capacitance_f:.12g}f IC=0",
-                f"M{prefix}{suffix}_nup_e vwhi_ref {eligibility_node} {up0} 0 NSENSE W={width_u:.6g}u L=180n",
-                f"M{prefix}{suffix}_nup_a {up0} {act} {up1} 0 {activation_model} W={width_u:.6g}u L=180n",
-                f"M{prefix}{suffix}_nup_r {up1} {err} {up2} 0 NSENSE W={width_u:.6g}u L=180n",
-                f"M{prefix}{suffix}_nup_w {up2} {weight} {whn} 0 NSENSE W={width_u:.6g}u L=180n",
-            ]
+            if output_stage == "nmos-pass":
+                lines += [
+                    f"R{up0} {up0} 0 1G",
+                    f"R{up1} {up1} 0 1G",
+                    f"R{up2} {up2} 0 1G",
+                    f"C{up0} {up0} 0 {internal_capacitance_f:.12g}f IC=0",
+                    f"C{up1} {up1} 0 {internal_capacitance_f:.12g}f IC=0",
+                    f"C{up2} {up2} 0 {internal_capacitance_f:.12g}f IC=0",
+                    f"M{prefix}{suffix}_nup_e vwhi_ref {eligibility_node} {up0} 0 NSENSE W={width_u:.6g}u L=180n",
+                    f"M{prefix}{suffix}_nup_a {up0} {act} {up1} 0 {activation_model} W={width_u:.6g}u L=180n",
+                    f"M{prefix}{suffix}_nup_r {up1} {err} {up2} 0 NSENSE W={width_u:.6g}u L=180n",
+                    f"M{prefix}{suffix}_nup_w {up2} {weight} {whn} 0 NSENSE W={width_u:.6g}u L=180n",
+                ]
+            else:
+                ngate = f"{prefix}{suffix}_nup_gate"
+                lines += [
+                    f"R{ngate} {ngate} 0 1G",
+                    f"R{up0} {up0} 0 1G",
+                    f"R{up1} {up1} 0 1G",
+                    f"R{up2} {up2} 0 1G",
+                    f"C{ngate} {ngate} 0 {internal_capacitance_f:.12g}f IC=1.05",
+                    f"C{up0} {up0} 0 {internal_capacitance_f:.12g}f IC=0",
+                    f"C{up1} {up1} 0 {internal_capacitance_f:.12g}f IC=0",
+                    f"C{up2} {up2} 0 {internal_capacitance_f:.12g}f IC=0",
+                    f"M{prefix}{suffix}_nup_gate_rst vwhi_ref {reset_node} {ngate} 0 NSENSE W=4u L=180n",
+                    f"M{prefix}{suffix}_nup_gate_hold vwhi_ref {anti_weight} {ngate} 0 NSENSE W={width_u:.6g}u L=180n",
+                    f"M{prefix}{suffix}_nup_e {ngate} {eligibility_node} {up0} 0 NSENSE W={width_u:.6g}u L=180n",
+                    f"M{prefix}{suffix}_nup_a {up0} {act} {up1} 0 {activation_model} W={width_u:.6g}u L=180n",
+                    f"M{prefix}{suffix}_nup_r {up1} {err} {up2} 0 NSENSE W={width_u:.6g}u L=180n",
+                    f"M{prefix}{suffix}_nup_w {up2} {weight} 0 0 NSENSE W={width_u:.6g}u L=180n",
+                    f"M{prefix}{suffix}_nup_pmos {whn} {ngate} vwhi_ref vdd PMOS W={width_u:.6g}u L=180n",
+                ]
     return lines
 
 
@@ -990,6 +1057,7 @@ def generate_netlist(
     hidden_credit_activation_model: str = "NREL",
     hidden_update_width_u: float = 0.25,
     hidden_direct_readout_gate_mode: str = "differential-excess",
+    hidden_direct_output_stage: str = "nmos-pass",
     score_timing_mode: str = "late",
     score_sense_mode: str = "voltage",
     readout_forward_mode: str = "direct",
@@ -1058,6 +1126,8 @@ def generate_netlist(
         raise ValueError(f"hidden_credit_activation_model must be one of {HIDDEN_CREDIT_ACTIVATION_MODELS}")
     if hidden_direct_readout_gate_mode not in HIDDEN_DIRECT_READOUT_GATE_MODES:
         raise ValueError(f"hidden_direct_readout_gate_mode must be one of {HIDDEN_DIRECT_READOUT_GATE_MODES}")
+    if hidden_direct_output_stage not in HIDDEN_DIRECT_OUTPUT_STAGES:
+        raise ValueError(f"hidden_direct_output_stage must be one of {HIDDEN_DIRECT_OUTPUT_STAGES}")
     if score_timing_mode not in SCORE_TIMING_MODES:
         raise ValueError(f"score_timing_mode must be one of {SCORE_TIMING_MODES}")
     if score_sense_mode not in SCORE_SENSE_MODES:
@@ -1743,6 +1813,7 @@ def generate_netlist(
                 width_u=hidden_update_width_u,
                 activation_model=hidden_credit_activation_model,
                 readout_gate_mode=hidden_direct_readout_gate_mode,
+                output_stage=hidden_direct_output_stage,
             )
     for class_idx in range(class_count):
         for feature in range(total_feature_count):
@@ -2713,6 +2784,7 @@ def run_case(args: argparse.Namespace) -> dict[str, Any]:
         hidden_credit_activation_model=args.hidden_credit_activation_model,
         hidden_update_width_u=args.hidden_update_width,
         hidden_direct_readout_gate_mode=args.hidden_direct_readout_gate_mode,
+        hidden_direct_output_stage=args.hidden_direct_output_stage,
         score_timing_mode=args.score_timing_mode,
         score_sense_mode=args.score_sense_mode,
         readout_forward_mode=args.readout_forward_mode,
@@ -2851,6 +2923,9 @@ def run_case(args: argparse.Namespace) -> dict[str, Any]:
         "hidden_direct_readout_gate_mode": (
             args.hidden_direct_readout_gate_mode if args.hidden_update_mode == "direct-readout-weighted" else None
         ),
+        "hidden_direct_output_stage": (
+            args.hidden_direct_output_stage if args.hidden_update_mode == "direct-readout-weighted" else None
+        ),
         "score_timing_mode": args.score_timing_mode,
         "score_sense_mode": args.score_sense_mode,
         "readout_forward_mode": args.readout_forward_mode,
@@ -2978,6 +3053,11 @@ def build_arg_parser() -> argparse.ArgumentParser:
         choices=HIDDEN_DIRECT_READOUT_GATE_MODES,
         default="differential-excess",
     )
+    ap.add_argument(
+        "--hidden-direct-output-stage",
+        choices=HIDDEN_DIRECT_OUTPUT_STAGES,
+        default="nmos-pass",
+    )
     ap.add_argument("--score-timing-mode", choices=SCORE_TIMING_MODES, default="late")
     ap.add_argument("--score-sense-mode", choices=SCORE_SENSE_MODES, default="voltage")
     ap.add_argument("--readout-forward-mode", choices=READOUT_FORWARD_MODES, default="direct")
@@ -3087,6 +3167,8 @@ def validate_args(args: argparse.Namespace) -> None:
         raise ValueError("hidden-update-width must be positive")
     if args.hidden_direct_readout_gate_mode not in HIDDEN_DIRECT_READOUT_GATE_MODES:
         raise ValueError(f"hidden-direct-readout-gate-mode must be one of {HIDDEN_DIRECT_READOUT_GATE_MODES}")
+    if args.hidden_direct_output_stage not in HIDDEN_DIRECT_OUTPUT_STAGES:
+        raise ValueError(f"hidden-direct-output-stage must be one of {HIDDEN_DIRECT_OUTPUT_STAGES}")
     if args.eligibility_contrast_common_resistance <= 0.0:
         raise ValueError("eligibility-contrast-common-resistance must be positive")
     if args.eligibility_contrast_common_capacitance_f <= 0.0:

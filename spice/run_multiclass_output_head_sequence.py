@@ -56,6 +56,36 @@ def windowed_pwl(
     return pwl(points)
 
 
+def width_scaled_windowed_pwl(
+    cycle_values: list[float],
+    *,
+    start_ns: float,
+    end_ns: float,
+    width_scale: float,
+    cycle_ns: float = CYCLE_NS,
+) -> str:
+    if width_scale < 0.0 or width_scale > 1.0:
+        raise ValueError("width_scale must be in [0, 1]")
+    if width_scale >= 1.0:
+        return windowed_pwl(cycle_values, start_ns=start_ns, end_ns=end_ns, cycle_ns=cycle_ns)
+    points: list[tuple[float, float]] = [(0.0, 0.0)]
+    scaled_end_ns = start_ns + (end_ns - start_ns) * width_scale
+    for cycle, value in enumerate(cycle_values):
+        base = cycle * cycle_ns
+        if abs(value) < 1e-15 or scaled_end_ns <= start_ns:
+            points += [(base + start_ns - 0.01, 0.0), (base + end_ns + 0.01, 0.0)]
+            continue
+        points += [
+            (base + start_ns - 0.01, 0.0),
+            (base + start_ns, value),
+            (base + scaled_end_ns, value),
+            (base + scaled_end_ns + 0.01, 0.0),
+            (base + end_ns + 0.01, 0.0),
+        ]
+    points.append((len(cycle_values) * cycle_ns, 0.0))
+    return pwl(points)
+
+
 def multi_windowed_pwl(
     cycle_values: list[float],
     *,
@@ -211,6 +241,7 @@ def generate_netlist(
     initial_negative: float = 0.34,
     target_high: float = 1.1,
     nontarget_scale: float = 0.5,
+    nontarget_width_scale: float = 1.0,
     error_mode: str = "label-descent",
 ) -> str:
     if class_count < 2:
@@ -223,6 +254,8 @@ def generate_netlist(
         raise ValueError("voltages must stay within supply rails")
     if nontarget_scale < 0.0 or nontarget_scale > 1.0:
         raise ValueError("nontarget_scale must be in [0, 1]")
+    if nontarget_width_scale < 0.0 or nontarget_width_scale > 1.0:
+        raise ValueError("nontarget_width_scale must be in [0, 1]")
     if error_mode not in ERROR_MODES:
         raise ValueError(f"error_mode must be one of {ERROR_MODES}")
 
@@ -285,7 +318,7 @@ def generate_netlist(
         ]
         lines += [
             f"V{class_node(class_idx, 'targetp')} {class_node(class_idx, 'targetp')} 0 {windowed_pwl(targetp_values, start_ns=update_signal_start_ns, end_ns=update_signal_end_ns)}",
-            f"V{class_node(class_idx, 'targetn')} {class_node(class_idx, 'targetn')} 0 {windowed_pwl(targetn_values, start_ns=update_signal_start_ns, end_ns=update_signal_end_ns)}",
+            f"V{class_node(class_idx, 'targetn')} {class_node(class_idx, 'targetn')} 0 {width_scaled_windowed_pwl(targetn_values, start_ns=update_signal_start_ns, end_ns=update_signal_end_ns, width_scale=nontarget_width_scale)}",
             f"C{class_node(class_idx, 'score')} {class_node(class_idx, 'score')} 0 10f IC=0",
             f"C{class_node(class_idx, 'scoren')} {class_node(class_idx, 'scoren')} 0 10f IC=0",
             f"R{class_node(class_idx, 'score')} {class_node(class_idx, 'score')} 0 1e6",
@@ -448,6 +481,7 @@ def run_case(args: argparse.Namespace) -> dict[str, Any]:
         class_count=class_count,
         feature_count=args.feature_count,
         nontarget_scale=args.nontarget_scale,
+        nontarget_width_scale=args.nontarget_width_scale,
         error_mode=args.error_mode,
     )
     path = generated / f"{tag}.cir"
@@ -471,6 +505,7 @@ def run_case(args: argparse.Namespace) -> dict[str, Any]:
         "class_count": class_count,
         "feature_count": args.feature_count,
         "nontarget_scale": args.nontarget_scale,
+        "nontarget_width_scale": args.nontarget_width_scale,
         "error_mode": args.error_mode,
         "train_samples": args.train_samples,
         "eval_samples": args.eval_samples,
@@ -500,6 +535,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
     ap.add_argument("--eval-samples", type=int, default=3)
     ap.add_argument("--feature-count", type=int, default=8)
     ap.add_argument("--nontarget-scale", type=float, default=0.5)
+    ap.add_argument("--nontarget-width-scale", type=float, default=1.0)
     ap.add_argument("--error-mode", choices=ERROR_MODES, default="label-descent")
     ap.add_argument("--timeout", type=float, default=120.0)
     return ap
@@ -514,6 +550,8 @@ def validate_args(args: argparse.Namespace) -> None:
         raise ValueError("feature-count must be positive")
     if args.nontarget_scale < 0.0 or args.nontarget_scale > 1.0:
         raise ValueError("nontarget-scale must be in [0, 1]")
+    if args.nontarget_width_scale < 0.0 or args.nontarget_width_scale > 1.0:
+        raise ValueError("nontarget-width-scale must be in [0, 1]")
     if args.error_mode not in ERROR_MODES:
         raise ValueError(f"error-mode must be one of {ERROR_MODES}")
     if parse_counted_mnist_dataset(args.dataset) is None:

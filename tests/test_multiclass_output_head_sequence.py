@@ -76,6 +76,25 @@ def test_multiclass_output_head_sequence_can_restore_score_before_nontarget_upda
     assert "52.55n 1.2 54.25n 1.2" in netlist
 
 
+def test_multiclass_output_head_sequence_can_scale_nontarget_pulse_width() -> None:
+    records = _one_hot_records()
+    netlist = seq.generate_netlist(
+        train_records=records,
+        eval_records=records,
+        class_count=3,
+        feature_count=3,
+        nontarget_scale=1.0,
+        nontarget_width_scale=0.25,
+    )
+    c0_targetn = next(line for line in netlist.splitlines() if line.startswith("Vc0_targetn "))
+
+    assert "Vc0_targetp c0_targetp 0 PWL(" in netlist
+    assert "49.8n 1.1 52.2n 1.1" in netlist
+    assert "Vc0_targetn c0_targetn 0 PWL(" in netlist
+    assert "81.8n 1.1 82.4n 1.1 82.41n 0" in c0_targetn
+    assert "81.8n 1.1 84.2n 1.1" not in c0_targetn
+
+
 def test_multiclass_output_head_sequence_validation() -> None:
     records = _one_hot_records()
     with pytest.raises(ValueError, match="class_count"):
@@ -86,6 +105,16 @@ def test_multiclass_output_head_sequence_validation() -> None:
         seq.main_for_test(["--dataset", "mnist01fixed8_16"])
     with pytest.raises(ValueError, match="nontarget-scale"):
         seq.main_for_test(["--nontarget-scale", "1.5"])
+    with pytest.raises(ValueError, match="nontarget-width-scale"):
+        seq.main_for_test(["--nontarget-width-scale", "1.5"])
+    with pytest.raises(ValueError, match="nontarget_width_scale"):
+        seq.generate_netlist(
+            train_records=records,
+            eval_records=records,
+            class_count=3,
+            feature_count=3,
+            nontarget_width_scale=-0.1,
+        )
     with pytest.raises(ValueError, match="error_mode"):
         seq.generate_netlist(
             train_records=records,

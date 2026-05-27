@@ -21,6 +21,19 @@
   produced essentially the same weights and accuracy, which shows the restored
   score rail is now acting as a hard gate; the remaining problem is the
   multiclass competitive/update rule, not raw score-gate weakness alone.
+- Added nontarget pulse-width scaling to the continuous multiclass output
+  sequence so smaller negative pressure can be represented by pulse time
+  instead of relying on MOS gate-voltage scaling near threshold.  The netlist
+  generator now exposes `--nontarget-width-scale`, the focused ngspice
+  regression suite passes 33 tests, and the diagnostic runs show this is a
+  useful control but not the missing learning mechanism.  At width scale 0.5,
+  restored-score `mnist3fixed8_12` still stayed at \(0.333\to0.333\) with
+  \(-8.456\) mV final minimum margin; increasing continuous exposure to 9 train
+  / 3 eval samples with full-width nontarget pulses also stayed at
+  \(0.333\to0.333\).  A 0.25-width pulse hit an ngspice timestep failure in the
+  nontarget gradient stack late in the transient, so sharper pulse chopping
+  needs gentler shaping or better isolation before it is a reliable tuning
+  axis.
 
 ## 2026-05-25
 

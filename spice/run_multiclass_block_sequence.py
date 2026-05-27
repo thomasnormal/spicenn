@@ -48,6 +48,7 @@ ERROR_MODES = (
     "score-mass-descent",
     "common-score-mass-descent",
     "contrast-score-mass-descent",
+    "contrast-gated-score-mass-descent",
     "target-contrast-score-mass-descent",
     "common-score-mass-pairwise-descent",
     "pairwise-score-competition-descent",
@@ -756,12 +757,13 @@ def generate_netlist(
     uses_target_ref_score = error_mode == "target-ref-score-nontarget"
     uses_common_score_mass = error_mode == "common-score-mass-descent"
     uses_contrast_score_mass = error_mode == "contrast-score-mass-descent"
+    uses_contrast_gated_score_mass = error_mode == "contrast-gated-score-mass-descent"
     uses_target_contrast_score_mass = error_mode == "target-contrast-score-mass-descent"
     uses_common_score_mass_pairwise = error_mode == "common-score-mass-pairwise-descent"
     uses_pairwise_score_competition = error_mode == "pairwise-score-competition-descent"
     uses_score_common_gate = uses_common_ref_score or uses_raw_common_ref_score
     uses_score_common_gate_nodes = uses_score_common_gate or uses_common_score_mass or uses_common_score_mass_pairwise
-    uses_score_contrast_nodes = uses_contrast_score_mass
+    uses_score_contrast_nodes = uses_contrast_score_mass or uses_contrast_gated_score_mass
     uses_amplified_competitive = error_mode == "amplified-score-competitive"
     uses_amplified_pairwise = error_mode == "amplified-score-pairwise"
     uses_amplified_binary = error_mode == "amplified-score-binary-descent"
@@ -779,6 +781,7 @@ def generate_netlist(
         or uses_score_mass
         or uses_common_score_mass
         or uses_contrast_score_mass
+        or uses_contrast_gated_score_mass
         or uses_target_contrast_score_mass
         or uses_common_score_mass_pairwise
         or uses_pairwise_score_competition
@@ -808,6 +811,7 @@ def generate_netlist(
             or uses_score_mass
             or uses_common_score_mass
             or uses_contrast_score_mass
+            or uses_contrast_gated_score_mass
             or uses_target_contrast_score_mass
             or uses_common_score_mass_pairwise
             or uses_pairwise_score_competition
@@ -848,17 +852,34 @@ def generate_netlist(
             f"Vscorepre scorepre 0 {active_low_phase_pwl(cycle_count, start_ns=8.10, end_ns=8.35, active_cycles=train_cycles)}",
             f"Vscoreamp scoreamp 0 {periodic_phase_pwl(cycle_count, start_ns=8.60, end_ns=9.50, active_cycles=train_cycles)}",
             f"Vscoredec scoredec 0 {periodic_phase_pwl(cycle_count, start_ns=9.70, end_ns=10.40, active_cycles=train_cycles)}",
+            *(
+                [
+                    f"Vscoregate scoregate 0 {periodic_phase_pwl(cycle_count, start_ns=10.42, end_ns=10.55, active_cycles=train_cycles)}"
+                ]
+                if uses_contrast_gated_score_mass
+                else []
+            ),
+            *(
+                [
+                    f"Vscoremass scoremass 0 {periodic_phase_pwl(cycle_count, start_ns=10.58, end_ns=10.70, active_cycles=train_cycles)}"
+                ]
+                if uses_contrast_gated_score_mass
+                else []
+            ),
         ]
     if (
         uses_score_mass
         or uses_common_score_mass
         or uses_contrast_score_mass
+        or uses_contrast_gated_score_mass
         or uses_target_contrast_score_mass
         or uses_common_score_mass_pairwise
         or uses_pairwise_score_competition
     ):
+        scoreerr_start_ns = 10.73 if uses_contrast_gated_score_mass else 10.45
+        scoreerr_end_ns = 10.79 if uses_contrast_gated_score_mass else 10.75
         lines.append(
-            f"Vscoreerr scoreerr 0 {periodic_phase_pwl(cycle_count, start_ns=10.45, end_ns=10.75, active_cycles=train_cycles)}"
+            f"Vscoreerr scoreerr 0 {periodic_phase_pwl(cycle_count, start_ns=scoreerr_start_ns, end_ns=scoreerr_end_ns, active_cycles=train_cycles)}"
         )
     if (
         uses_residual_score
@@ -867,6 +888,7 @@ def generate_netlist(
         or uses_target_ref_score
         or uses_score_mass
         or uses_contrast_score_mass
+        or uses_contrast_gated_score_mass
         or uses_target_contrast_score_mass
         or uses_common_score_mass_pairwise
         or uses_pairwise_score_competition
@@ -986,8 +1008,18 @@ def generate_netlist(
                 pullup_width_u=192.0,
                 pulldown_width_u=6.0,
             )
-        elif uses_contrast_score_mass:
+        elif uses_contrast_score_mass or uses_contrast_gated_score_mass:
             lines += class_local_score_contrast_lines(class_idx=class_idx)
+            if uses_contrast_gated_score_mass:
+                lines += class_local_score_common_gate_lines(
+                    class_idx=class_idx,
+                    common_node="score_contrast_ref",
+                    score_input_node=class_node(class_idx, "score_contrast"),
+                    output_node=class_node(class_idx, "score_contrast_gate"),
+                    compare_clock="scoregate",
+                    pullup_width_u=192.0,
+                    pulldown_width_u=24.0,
+                )
         elif uses_target_ref_score:
             lines += class_local_score_common_gate_lines(
                 class_idx=class_idx,
@@ -1013,7 +1045,13 @@ def generate_netlist(
             class_count=class_count,
             source_node_template="c{class_idx}_score",
         )
-    elif uses_common_ref_score or uses_common_score_mass or uses_common_score_mass_pairwise or uses_contrast_score_mass:
+    elif (
+        uses_common_ref_score
+        or uses_common_score_mass
+        or uses_common_score_mass_pairwise
+        or uses_contrast_score_mass
+        or uses_contrast_gated_score_mass
+    ):
         lines += shared_score_common_reference_lines(class_count=class_count)
     if uses_target_ref_score or uses_target_contrast_score_mass:
         lines += shared_label_score_reference_lines(class_count=class_count)
@@ -1037,6 +1075,16 @@ def generate_netlist(
         lines += shared_score_mass_error_lines(
             class_count=class_count,
             score_input_template="c{class_idx}_score_contrast",
+            sum_width_u=4.0 * score_mass_sum_width,
+            error_width_u=4.0 * score_mass_error_width,
+            mass_capacitance_f=0.5,
+            error_capacitance_f=0.5,
+        )
+    if uses_contrast_gated_score_mass:
+        lines += shared_score_mass_error_lines(
+            class_count=class_count,
+            score_input_template="c{class_idx}_score_contrast_gate",
+            mass_clock_node="scoremass",
             sum_width_u=4.0 * score_mass_sum_width,
             error_width_u=4.0 * score_mass_error_width,
             mass_capacitance_f=0.5,
@@ -1195,6 +1243,14 @@ def generate_netlist(
                     positive_error_node=class_node(class_idx, "errp"),
                     negative_error_node=class_node(class_idx, "errn"),
                 )
+            elif uses_contrast_gated_score_mass:
+                gradient_lines = class_local_error_rail_gradient_lines(
+                    class_idx=class_idx,
+                    feature_idx=feature,
+                    activation_node=f"elig{feature}",
+                    positive_error_node=class_node(class_idx, "errp"),
+                    negative_error_node=class_node(class_idx, "errn"),
+                )
             elif uses_target_contrast_score_mass:
                 gradient_lines = class_local_error_rail_gradient_lines(
                     class_idx=class_idx,
@@ -1342,6 +1398,10 @@ def generate_netlist(
                     lines.append(
                         f".meas tran c{class_idx}_score_contrast_{cycle} FIND V({class_node(class_idx, 'score_contrast')}) AT={base + 10.60:.2f}n"
                     )
+                    if uses_contrast_gated_score_mass:
+                        lines.append(
+                            f".meas tran c{class_idx}_score_contrast_gate_{cycle} FIND V({class_node(class_idx, 'score_contrast_gate')}) AT={base + 10.72:.2f}n"
+                        )
             if uses_target_ref_score or uses_target_contrast_score_mass:
                 lines += [
                     f".meas tran target_score_ref_c{class_idx}_{cycle} FIND V(target_score_ref) AT={base + 10.60:.2f}n",
@@ -1352,6 +1412,7 @@ def generate_netlist(
                 uses_score_mass
                 or uses_common_score_mass
                 or uses_contrast_score_mass
+                or uses_contrast_gated_score_mass
                 or uses_target_contrast_score_mass
                 or uses_common_score_mass_pairwise
                 or uses_pairwise_score_competition
@@ -1360,11 +1421,13 @@ def generate_netlist(
                     uses_score_mass
                     or uses_common_score_mass
                     or uses_contrast_score_mass
+                    or uses_contrast_gated_score_mass
                     or uses_target_contrast_score_mass
                     or uses_common_score_mass_pairwise
                 ):
+                    mass_measure_ns = base + (10.72 if uses_contrast_gated_score_mass else 10.42)
                     lines.append(
-                        f".meas tran score_nontarget_mass_c{class_idx}_{cycle} FIND V(score_nontarget_mass) AT={base + 10.42:.2f}n"
+                        f".meas tran score_nontarget_mass_c{class_idx}_{cycle} FIND V(score_nontarget_mass) AT={mass_measure_ns:.2f}n"
                     )
                 lines += [
                     f".meas tran c{class_idx}_errp_{cycle} FIND V({class_node(class_idx, 'errp')}) AT={base + 10.78:.2f}n",
@@ -1580,7 +1643,12 @@ def run_case(args: argparse.Namespace) -> dict[str, Any]:
         "score_mass_common_internal_gain": (
             4.0
             if args.error_mode
-            in {"common-score-mass-descent", "target-contrast-score-mass-descent", "common-score-mass-pairwise-descent"}
+            in {
+                "common-score-mass-descent",
+                "contrast-gated-score-mass-descent",
+                "target-contrast-score-mass-descent",
+                "common-score-mass-pairwise-descent",
+            }
             else None
         ),
         "error_mode": args.error_mode,

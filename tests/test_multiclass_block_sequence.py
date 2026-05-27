@@ -408,6 +408,26 @@ def test_multiclass_block_sequence_can_use_contrast_score_mass_descent() -> None
     assert ".meas tran c0_errdiff_1" in netlist
 
 
+def test_multiclass_block_sequence_can_use_contrast_gated_score_mass_descent() -> None:
+    netlist = seq.generate_netlist(
+        train_records=_target0_records(1),
+        eval_records=_target0_records(1),
+        error_mode="contrast-gated-score-mass-descent",
+    )
+
+    assert "\nB" not in netlist
+    assert "Vscore_contrast_ref score_contrast_ref 0 0.6" in netlist
+    assert "Vscoregate scoregate 0 PWL" in netlist
+    assert "Cc0_score_contrast c0_score_contrast 0 10f IC=0.6" in netlist
+    assert "Cc0_score_contrast_gate c0_score_contrast_gate 0 4f IC=0" in netlist
+    assert "Mc0_score_common_gate_up_v vdd c0_score_contrast c0_score_common_gate_up_i 0 NREL W=192u" in netlist
+    assert "Mc0_score_common_gate_dn_v c0_score_contrast_gate score_contrast_ref c0_score_common_gate_dn_i 0 NREL W=24u" in netlist
+    assert "Mc0_score_common_gate_up_t c0_score_common_gate_up_i scoregate c0_score_contrast_gate 0 NSENSE W=192u" in netlist
+    assert "Mmass_nt1_score mass_nt1_a c1_score_contrast_gate mass_nt1_s 0 NSENSE W=128u" in netlist
+    assert ".meas tran c0_score_contrast_1" in netlist
+    assert ".meas tran c0_errdiff_1" in netlist
+
+
 def test_multiclass_block_sequence_can_add_target_only_class_bias_row() -> None:
     netlist = seq.generate_netlist(
         train_records=_target0_records(1),
@@ -709,16 +729,19 @@ def _score_mass_descent_netlist(
     target_class: int,
     common_centered: bool = False,
     contrast_centered: bool = False,
+    contrast_gated_centered: bool = False,
     target_centered: bool = False,
     pairwise_hybrid: bool = False,
 ) -> str:
-    if sum(bool(value) for value in (common_centered, contrast_centered, target_centered)) > 1:
+    if sum(bool(value) for value in (common_centered, contrast_centered, contrast_gated_centered, target_centered)) > 1:
         raise ValueError("score centering modes are mutually exclusive")
     if pairwise_hybrid and not common_centered:
         raise ValueError("pairwise_hybrid currently uses common_centered score mass")
     score_suffix = (
         "score_target_gate"
         if target_centered
+        else "score_contrast_gate"
+        if contrast_gated_centered
         else "score_contrast"
         if contrast_centered
         else "score_common_gate"
@@ -740,7 +763,9 @@ def _score_mass_descent_netlist(
         "Vscoregaterst scoregaterst 0 PULSE(1.2 0 0.4n 10p 10p 8n 20n)",
         "Vscoreamp scoreamp 0 PULSE(0 1.2 0.7n 10p 10p 1.0n 20n)",
         "Vscoredec scoredec 0 PULSE(0 1.2 1.0n 10p 10p 1.2n 20n)",
-        "Vscoreerr scoreerr 0 PULSE(0 1.2 2.4n 10p 10p 0.8n 20n)",
+        "Vscoregate scoregate 0 PULSE(0 1.2 2.25n 10p 10p 0.12n 20n)",
+        "Vscoremass scoremass 0 PULSE(0 1.2 2.4n 10p 10p 0.3n 20n)",
+        "Vscoreerr scoreerr 0 PULSE(0 1.2 2.9n 10p 10p 0.3n 20n)",
         "Vacc acc 0 PULSE(0 1.2 3.4n 10p 10p 1.4n 20n)",
         "Vapply apply 0 PULSE(0 1.2 5.2n 10p 10p 0.2n 20n)",
         "Vapplyn applyn 0 PULSE(1.2 0 5.2n 10p 10p 0.2n 20n)",
@@ -779,6 +804,26 @@ def _score_mass_descent_netlist(
                 for line in seq.class_local_score_contrast_lines(class_idx=class_idx)
             ],
         ]
+    if contrast_gated_centered:
+        lines += [
+            *seq.shared_score_common_reference_lines(class_count=3),
+            *[
+                line
+                for class_idx in range(3)
+                for line in (
+                    *seq.class_local_score_contrast_lines(class_idx=class_idx),
+                    *seq.class_local_score_common_gate_lines(
+                        class_idx=class_idx,
+                        common_node="score_contrast_ref",
+                        score_input_node=seq.class_node(class_idx, "score_contrast"),
+                        output_node=seq.class_node(class_idx, "score_contrast_gate"),
+                        compare_clock="scoregate",
+                        pullup_width_u=192.0,
+                        pulldown_width_u=24.0,
+                    ),
+                )
+            ],
+        ]
     if target_centered:
         lines += [
             *seq.shared_label_score_reference_lines(class_count=3),
@@ -797,10 +842,11 @@ def _score_mass_descent_netlist(
     lines += seq.shared_score_mass_error_lines(
         class_count=3,
         score_input_template=f"c{{class_idx}}_{score_suffix}",
-        sum_width_u=128.0 if (common_centered or contrast_centered or target_centered) else 32.0,
-        error_width_u=128.0 if (common_centered or contrast_centered or target_centered) else 32.0,
-        mass_capacitance_f=0.5 if (common_centered or contrast_centered or target_centered) else 8.0,
-        error_capacitance_f=0.5 if (common_centered or contrast_centered or target_centered) else 8.0,
+        mass_clock_node="scoremass" if contrast_gated_centered else "scoredec",
+        sum_width_u=128.0 if (common_centered or contrast_centered or contrast_gated_centered or target_centered) else 32.0,
+        error_width_u=128.0 if (common_centered or contrast_centered or contrast_gated_centered or target_centered) else 32.0,
+        mass_capacitance_f=0.5 if (common_centered or contrast_centered or contrast_gated_centered or target_centered) else 8.0,
+        error_capacitance_f=0.5 if (common_centered or contrast_centered or contrast_gated_centered or target_centered) else 8.0,
     )
     if pairwise_hybrid:
         lines += [
@@ -843,7 +889,7 @@ def _score_mass_descent_netlist(
                 [
                     f".meas tran c{class_idx}_score_gate_after FIND V({score_nodes[class_idx]}) AT=2.35n",
                 ]
-                if common_centered or contrast_centered or target_centered
+                if common_centered or contrast_centered or contrast_gated_centered or target_centered
                 else []
             ),
             *(
@@ -862,8 +908,9 @@ def _score_mass_descent_netlist(
             f".meas tran c{class_idx}_vwn_after FIND V({seq.class_node(class_idx, 'vwn0')}) AT=6.0n",
             f".meas tran c{class_idx}_signed_after PARAM='c{class_idx}_vwp_after-c{class_idx}_vwn_after'",
         ]
+    mass_measure_time_ns = 2.75 if contrast_gated_centered else 2.35
     lines += [
-        ".meas tran score_nontarget_mass_after FIND V(score_nontarget_mass) AT=2.35n",
+        f".meas tran score_nontarget_mass_after FIND V(score_nontarget_mass) AT={mass_measure_time_ns:.2f}n",
         ".tran 2p 7n uic",
         ".control",
         "run",

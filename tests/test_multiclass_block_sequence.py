@@ -130,6 +130,24 @@ def test_multiclass_block_sequence_can_use_amplified_score_nontarget_gate() -> N
     assert "Mc1_dec_low_gain_ref_tail" not in netlist
 
 
+def test_multiclass_block_sequence_can_add_target_only_class_bias_row() -> None:
+    netlist = seq.generate_netlist(
+        train_records=_target0_records(1),
+        eval_records=_target0_records(1),
+        feature_count=1,
+        class_bias_mode="target-only",
+    )
+
+    assert "\nB" not in netlist
+    assert "Vrow1 row1 0 PWL(" in netlist
+    assert "Mhidden_pos1 row1 whp1 pre_p1 0 NMOS" in netlist
+    assert "Mc0_f1_pos_cond actrow1 c0_vwp1 c0_score 0 NMOS" in netlist
+    assert "Mc0_f1_gvp_d c0_f1_gvp_a c0_targetp c0_f1_gvp_d 0 NSENSE" in netlist
+    assert "Mc0_f1_gvn_d" not in netlist
+    assert "Mc0_f1_rgn_res" not in netlist
+    assert ".meas tran c0_f1_signed_final" in netlist
+
+
 def test_multiclass_block_sequence_can_gate_nontarget_with_restored_winner() -> None:
     netlist = seq.generate_netlist(
         train_records=_target0_records(1),
@@ -183,6 +201,10 @@ def test_multiclass_block_sequence_validation() -> None:
         seq.generate_netlist(train_records=records, eval_records=records, nontarget_width_scale=1.1)
     with pytest.raises(ValueError, match="error_mode"):
         seq.generate_netlist(train_records=records, eval_records=records, error_mode="missing")
+    with pytest.raises(ValueError, match="class_bias_mode"):
+        seq.generate_netlist(train_records=records, eval_records=records, class_bias_mode="missing")
+    with pytest.raises(ValueError, match="class-bias-input"):
+        seq.main_for_test(["--class-bias-input", "1.3"])
 
 
 def _residual_score_gate_netlist(score: float, scoren: float = 0.0) -> str:
@@ -283,6 +305,32 @@ def test_multiclass_block_sequence_ngspice_amplified_score_gate_depresses_one_ho
         for feature in range(3):
             if feature != class_idx:
                 assert float(measures[f"c{class_idx}_f{feature}_signed_final"]) < -10e-3
+
+
+def test_multiclass_block_sequence_ngspice_target_only_bias_updates_target_class(
+    tmp_path: Path,
+    ngspice_path: str,
+) -> None:
+    measures = run_netlist(
+        ngspice_path,
+        tmp_path / "multiclass_block_sequence_target_only_bias.cir",
+        seq.generate_netlist(
+            train_records=_target0_records(1),
+            eval_records=_target0_records(1),
+            feature_count=1,
+            class_bias_mode="target-only",
+        ),
+        timeout=60.0,
+    )
+
+    assert float(measures["c0_f1_signed_final"]) > 10e-3
+    assert abs(float(measures["c1_f1_signed_final"])) < 1e-3
+    assert abs(float(measures["c2_f1_signed_final"])) < 1e-3
+    final_margin = float(measures["c0_score_net_2"]) - max(
+        float(measures["c1_score_net_2"]),
+        float(measures["c2_score_net_2"]),
+    )
+    assert final_margin > 2e-3
 
 
 def test_multiclass_block_sequence_ngspice_nontarget_scale_removes_negative_off_diagonal_updates(

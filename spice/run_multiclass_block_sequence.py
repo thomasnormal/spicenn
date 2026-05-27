@@ -33,6 +33,7 @@ from run_spice_sweep import ROOT, detect_spice
 
 
 SCENARIOS = ("target-repeat", "one-hot", "mnist")
+CLASS_BIAS_MODES = ("none", "target-only")
 ERROR_MODES = (
     "label-descent",
     "score-gated-nontarget",
@@ -157,6 +158,22 @@ def class_local_residual_score_nontarget_gradient_lines(
     ]
 
 
+def class_local_target_only_gradient_lines(
+    *,
+    class_idx: int,
+    feature_idx: int,
+    activation_node: str,
+    width_u: float = 24.0,
+) -> list[str]:
+    prefix = f"c{class_idx}_f{feature_idx}_"
+    return [
+        f"M{prefix}gvp_a vdd {activation_node} {prefix}gvp_a 0 NREL W={width_u:.6g}u L=180n",
+        f"M{prefix}gvp_d {prefix}gvp_a {class_node(class_idx, 'targetp')} {prefix}gvp_d 0 NSENSE W={width_u:.6g}u L=180n",
+        f"M{prefix}gvp_g {prefix}gvp_d acc {class_node(class_idx, f'gvp{feature_idx}')} 0 NREL W={width_u:.6g}u L=180n",
+        f"M{prefix}rgp_pd {class_node(class_idx, f'rgp{feature_idx}')} {class_node(class_idx, f'gvp{feature_idx}')} 0 0 NSENSE W=16u L=180n",
+    ]
+
+
 def records_to_feature_matrix(records: list[dict[str, Any]], feature_count: int) -> list[list[float]]:
     if feature_count <= 0:
         raise ValueError("feature_count must be positive")
@@ -213,6 +230,8 @@ def generate_netlist(
     nontarget_scale: float = 1.0,
     nontarget_width_scale: float = 1.0,
     error_mode: str = "label-descent",
+    class_bias_mode: str = "none",
+    class_bias_input: float = 0.85,
 ) -> str:
     if class_count < 2:
         raise ValueError("class_count must be at least 2")
@@ -239,6 +258,10 @@ def generate_netlist(
         raise ValueError("nontarget_width_scale must be in [0, 1]")
     if error_mode not in ERROR_MODES:
         raise ValueError(f"error_mode must be one of {ERROR_MODES}")
+    if class_bias_mode not in CLASS_BIAS_MODES:
+        raise ValueError(f"class_bias_mode must be one of {CLASS_BIAS_MODES}")
+    if class_bias_input < 0.0 or class_bias_input > 1.2:
+        raise ValueError("class_bias_input must stay within supply rails")
     if max(hidden_positive, hidden_negative, initial_positive, initial_negative, target_high) > 1.2:
         raise ValueError("voltages must stay within supply rails")
 
@@ -249,6 +272,9 @@ def generate_netlist(
     if any(label < 0 or label >= class_count for label in labels):
         raise ValueError("record labels must be valid class indices")
     features = records_to_feature_matrix(all_records, feature_count)
+    has_class_bias = class_bias_mode != "none"
+    bias_feature = feature_count if has_class_bias else None
+    total_feature_count = feature_count + (1 if has_class_bias else 0)
     cycle_count = len(all_records)
     stop_ns = cycle_count * CYCLE_NS
     uses_restored_score = error_mode == "restored-score-nontarget"
@@ -294,8 +320,12 @@ def generate_netlist(
         lines.append(
             f"Vscoregaterst scoregaterst 0 {periodic_phase_pwl(cycle_count, start_ns=8.10, end_ns=8.35, active_cycles=train_cycles)}"
         )
-    for feature in range(feature_count):
-        row_values = [float(row[feature]) for row in features]
+    for feature in range(total_feature_count):
+        row_values = (
+            [class_bias_input] * cycle_count
+            if bias_feature is not None and feature == bias_feature
+            else [float(row[feature]) for row in features]
+        )
         lines += [
             f"Vrow{feature} row{feature} 0 {windowed_pwl(row_values, start_ns=1.1, end_ns=4.0)}",
             f"Cwhp{feature} whp{feature} 0 20f IC={hidden_positive:.12g}",
@@ -385,7 +415,7 @@ def generate_netlist(
         if uses_restored_winner:
             for opponent_idx in range(class_idx + 1, class_count):
                 lines += pairwise_winner_lines(class_a=class_idx, class_b=opponent_idx)
-        for feature in range(feature_count):
+        for feature in range(total_feature_count):
             if error_mode == "score-gated-nontarget":
                 gradient_lines = class_local_score_gated_nontarget_gradient_lines(
                     class_idx=class_idx,
@@ -430,6 +460,12 @@ def generate_netlist(
                     feature_idx=feature,
                     activation_node=f"elig{feature}",
                 )
+            if bias_feature is not None and feature == bias_feature and class_bias_mode == "target-only":
+                gradient_lines = class_local_target_only_gradient_lines(
+                    class_idx=class_idx,
+                    feature_idx=feature,
+                    activation_node=f"elig{feature}",
+                )
             lines += [
                 f"C{class_node(class_idx, f'gvp{feature}')} {class_node(class_idx, f'gvp{feature}')} 0 2f IC=0",
                 f"C{class_node(class_idx, f'gvn{feature}')} {class_node(class_idx, f'gvn{feature}')} 0 2f IC=0",
@@ -454,7 +490,7 @@ def generate_netlist(
     train_seen = 0
     for cycle, (record, seq) in enumerate(zip(all_records, sequence)):
         base = cycle * CYCLE_NS
-        for feature in range(feature_count):
+        for feature in range(total_feature_count):
             lines += [
                 f".meas tran pre_p_f{feature}_{cycle} FIND V(pre_p{feature}) AT={base + 3.2:.2f}n",
                 f".meas tran pre_n_f{feature}_{cycle} FIND V(pre_n{feature}) AT={base + 3.2:.2f}n",
@@ -495,7 +531,7 @@ def generate_netlist(
         if seq == "train":
             train_seen += 1
             for class_idx in range(class_count):
-                for feature in range(feature_count):
+                for feature in range(total_feature_count):
                     lines += [
                         f".meas tran c{class_idx}_f{feature}_vwp_after_train{train_seen} FIND V({class_node(class_idx, f'vwp{feature}')}) AT={base + 15.0:.2f}n",
                         f".meas tran c{class_idx}_f{feature}_vwn_after_train{train_seen} FIND V({class_node(class_idx, f'vwn{feature}')}) AT={base + 15.0:.2f}n",
@@ -506,7 +542,7 @@ def generate_netlist(
                 ]
         lines.append(f"* cycle {cycle} {seq} label={int(record['label'])}")
     for class_idx in range(class_count):
-        for feature in range(feature_count):
+        for feature in range(total_feature_count):
             lines += [
                 f".meas tran c{class_idx}_f{feature}_vwp_final FIND V({class_node(class_idx, f'vwp{feature}')}) AT={stop_ns - 0.5:.2f}n",
                 f".meas tran c{class_idx}_f{feature}_vwn_final FIND V({class_node(class_idx, f'vwn{feature}')}) AT={stop_ns - 0.5:.2f}n",
@@ -608,6 +644,7 @@ def run_case(args: argparse.Namespace) -> dict[str, Any]:
         raise ValueError(f"scenario must be one of {SCENARIOS}")
     all_records = eval_records + train_records + eval_records
     sequence = ["initial_eval"] * len(eval_records) + ["train"] * len(train_records) + ["final_eval"] * len(eval_records)
+    total_feature_count = feature_count + (1 if args.class_bias_mode != "none" else 0)
     start = time.perf_counter()
     path = generated / f"{tag}.cir"
     deck = generate_netlist(
@@ -623,13 +660,15 @@ def run_case(args: argparse.Namespace) -> dict[str, Any]:
         nontarget_scale=args.nontarget_scale,
         nontarget_width_scale=args.nontarget_width_scale,
         error_mode=args.error_mode,
+        class_bias_mode=args.class_bias_mode,
+        class_bias_input=args.class_bias_input,
     )
     measures = run_netlist(spice_bin, path, deck, timeout=args.timeout)
     rows = rows_from_measures(all_records, measures, sequence=sequence, class_count=args.class_count)
     initial_margins = [float(row["score_margin_v"]) for row in rows if row["sequence"] == "initial_eval"]
     final_margins = [float(row["score_margin_v"]) for row in rows if row["sequence"] == "final_eval"]
     final_signed = [
-        [float(measures[f"c{class_idx}_f{feature}_signed_final"]) for feature in range(feature_count)]
+        [float(measures[f"c{class_idx}_f{feature}_signed_final"]) for feature in range(total_feature_count)]
         for class_idx in range(args.class_count)
     ]
     train_progress = []
@@ -637,6 +676,11 @@ def run_case(args: argparse.Namespace) -> dict[str, Any]:
         train_progress.append(
             [
                 [float(measures[f"c{class_idx}_f{feature}_signed_after_train{train_idx}"]) for feature in range(feature_count)]
+                + (
+                    [float(measures[f"c{class_idx}_f{feature_count}_signed_after_train{train_idx}"])]
+                    if args.class_bias_mode != "none"
+                    else []
+                )
                 for class_idx in range(args.class_count)
             ]
         )
@@ -666,6 +710,9 @@ def run_case(args: argparse.Namespace) -> dict[str, Any]:
         "seed": args.seed if args.scenario == "mnist" else None,
         "class_count": args.class_count,
         "feature_count": feature_count,
+        "total_feature_count": total_feature_count,
+        "class_bias_mode": args.class_bias_mode,
+        "class_bias_input": args.class_bias_input if args.class_bias_mode != "none" else None,
         "readout_width_u": args.readout_width,
         "score_capacitance_f": args.score_capacitance_f,
         "score_load_resistance_ohm": args.score_load_resistance,
@@ -728,6 +775,8 @@ def build_arg_parser() -> argparse.ArgumentParser:
     ap.add_argument("--nontarget-scale", type=float, default=1.0)
     ap.add_argument("--nontarget-width-scale", type=float, default=1.0)
     ap.add_argument("--error-mode", choices=ERROR_MODES, default="label-descent")
+    ap.add_argument("--class-bias-mode", choices=CLASS_BIAS_MODES, default="none")
+    ap.add_argument("--class-bias-input", type=float, default=0.85)
     ap.add_argument("--min-target-signed", type=float, default=10e-3)
     return ap
 
@@ -743,6 +792,8 @@ def validate_args(args: argparse.Namespace) -> None:
         raise ValueError(f"scenario must be one of {SCENARIOS}")
     if args.error_mode not in ERROR_MODES:
         raise ValueError(f"error-mode must be one of {ERROR_MODES}")
+    if args.class_bias_mode not in CLASS_BIAS_MODES:
+        raise ValueError(f"class-bias-mode must be one of {CLASS_BIAS_MODES}")
     if args.scenario == "mnist" and parse_counted_mnist_dataset(args.dataset) is None:
         raise ValueError("dataset must be a counted multiclass MNIST dataset")
     if args.target_class < 0 or args.target_class >= args.class_count:
@@ -753,6 +804,8 @@ def validate_args(args: argparse.Namespace) -> None:
         raise ValueError("train-repeats and eval-repeats must be positive")
     if args.input_value < 0.0 or args.input_value > 1.2:
         raise ValueError("input-value must stay within supply rails")
+    if args.class_bias_input < 0.0 or args.class_bias_input > 1.2:
+        raise ValueError("class-bias-input must stay within supply rails")
     if args.readout_width <= 0.0:
         raise ValueError("readout-width must be positive")
     if args.score_capacitance_f <= 0.0:

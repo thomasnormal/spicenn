@@ -36,6 +36,22 @@
   and `0.75` barely change the 12-sample result, so the next target should be
   class-evidence centering/normalization or a better competitive target, not
   simply weaker nontarget pulse timing.
+- Added an opt-in target-only class-bias row to the same continuous
+  multiclass block sequence.  This is implemented as an extra always-on
+  row-pulsed split-rail feature, with class-local capacitor readout weights
+  and the existing bounded transistor/passive writer; the only special case is
+  that the bias feature receives target potentiation but no nontarget
+  depression.  A new ngspice regression proves the target class's bias
+  capacitor moves while nontarget class bias capacitors stay near neutral in a
+  target-repeat sequence.  On `mnist3fixed8_6` with
+  `amplified-score-nontarget`, the bias row keeps the nontrivial
+  `0.333 -> 0.667` result but improves the final minimum margin from about
+  `-20.7 mV` to `-1.13 mV`.  On the harder `mnist3fixed8_12` 6-train/6-eval
+  probe it improves from `0.333 -> 0.333` to `0.333 -> 0.500`, with final
+  minimum margin `-0.582 mV`.  This is the first improvement on the 12-sample
+  multiclass split-rail rung, but the remaining negative margin says the next
+  step still needs physical class-evidence centering/normalization rather than
+  a claim of robust learning.
 - Added a restored winner-gated nontarget mode to the continuous split-rail
   multiclass block sequence.  The first pairwise winner attempt reused the
   low-gain referenced decision cell, but ngspice showed both sides stayed near

@@ -209,6 +209,51 @@ def test_conductance_readout_sum_primitive_ngspice_mid_load_is_additive_and_latc
     assert abs(float(inactive_extra["score_margin"]) - single_margin) < 5e-3
 
 
+def test_conductance_readout_sum_primitive_ngspice_symmetric_passive_load_tracks_current_summing(
+    tmp_path: Path,
+    ngspice_path: str,
+) -> None:
+    single = _run_sum_case(
+        tmp_path,
+        ngspice_path,
+        "single_positive",
+        isolation="diode",
+        score_load_resistance=3e4,
+        readout_negative_width_scale=1.0,
+    )
+    double = _run_sum_case(
+        tmp_path,
+        ngspice_path,
+        "two_positive",
+        isolation="diode",
+        score_load_resistance=3e4,
+        readout_negative_width_scale=1.0,
+    )
+    inactive_extra = _run_sum_case(
+        tmp_path,
+        ngspice_path,
+        "inactive_extra",
+        isolation="diode",
+        score_load_resistance=3e4,
+        readout_negative_width_scale=1.0,
+    )
+    mixed = _run_sum_case(
+        tmp_path,
+        ngspice_path,
+        "mixed_cancel",
+        isolation="diode",
+        score_load_resistance=3e4,
+        readout_negative_width_scale=1.0,
+    )
+
+    single_margin = float(single["score_margin"])
+    double_margin = float(double["score_margin"])
+    assert single_margin > 0.035
+    assert 1.9 * single_margin < double_margin < 2.1 * single_margin
+    assert abs(float(inactive_extra["score_margin"]) - single_margin) < 0.01 * single_margin
+    assert abs(float(mixed["score_margin"])) < 0.01 * single_margin
+
+
 @pytest.mark.parametrize(
     ("case", "expected"),
     [

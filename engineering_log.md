@@ -38,6 +38,21 @@
   the low-level finding: the current-style readout can separate evidence, but
   the integrated path still needs an on-chip centering/current-sense stage
   before scaling.
+- Locked down the first non-ideal current-mode readout candidate at primitive
+  level: diode-isolated conductance-row branches, symmetric positive/negative
+  branch widths, and a passive `30 kOhm` load from each score rail to ground.
+  This is a real transistor/passive score load, not the ideal `current-clamp`
+  probe.  The new ngspice regression proves the passive load tracks the
+  current-summing behavior: `single_positive` produces more than `35 mV`,
+  `two_positive` lands within `1.9x--2.1x` of the single-feature margin,
+  `inactive_extra` changes the margin by less than 1%, and `mixed_cancel`
+  cancels to less than 1% of the single-feature margin.  Focused regression
+  `python3 -m pytest tests/test_conductance_readout_primitive.py
+  tests/test_device_mnist01_block_training.py::test_block_netlist_can_emit_isolated_conductance_row_readout_with_score_load
+  tests/test_ngspice_availability.py -q` passed with 22 tests.  This makes
+  the immediate integrated candidate concrete: isolated row-conductance
+  readout, symmetric branches, and a finite passive score load, followed by a
+  centering/decision stage rather than a floating score capacitor.
 - Added `contrast-score-mass-descent` to the continuous multiclass block
   sequence.  The mode converts class score evidence into a centered analog
   `cX_score_contrast` rail by charging from the class-local score preamp and

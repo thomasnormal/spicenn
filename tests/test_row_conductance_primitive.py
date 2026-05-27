@@ -35,12 +35,27 @@ def test_row_conductance_netlist_uses_differential_conductance_compute() -> None
     assert "Mrow_p row fwdn row_src vdd PMOS W=24u L=180n" in netlist
     assert "Mwp_fwd row wp pre_p 0 NMOS W=1u L=180n" in netlist
     assert "Mwn_fwd row wn pre_n 0 NMOS W=1u L=180n" in netlist
+    assert "Mpre_p_rst pre_p rst 0 0 NMOS W=6u L=180n" in netlist
+    assert "Mpre_n_rst pre_n rst 0 0 NMOS W=6u L=180n" in netlist
     assert "Mwp_up_e vdd ep wp_up_e 0 NSENSE W=0.25u L=180n" in netlist
     assert "Mhdp_p edp vwp hdp 0 NSENSE W=8u L=180n" in netlist
     assert "Mhdn_p edp vwn hdn 0 NSENSE W=8u L=180n" in netlist
     assert ".meas tran forward_margin PARAM='pre_p_after-pre_n_after'" in netlist
     assert ".meas tran signed_weight_delta PARAM='signed_weight_after-signed_weight_before'" in netlist
     assert ".meas tran hidden_credit_margin PARAM='hdp_after-hdn_after'" in netlist
+
+    sequence = primitive.generate_netlist(
+        wp=0.45,
+        wn=0.40,
+        cycles=2,
+        cycle_rows=[0.85, 0.0],
+        cycle_update_modes=["positive", "none"],
+    )
+    assert "\nB" not in sequence
+    assert "Vrow_src row_src 0 PWL(" in sequence
+    assert "Vep ep 0 PWL(" in sequence
+    assert "Ven en 0 PWL(" in sequence
+    assert "25.01n 0" in sequence
 
 
 def test_row_conductance_classification_tracks_expected_signs() -> None:
@@ -89,6 +104,10 @@ def test_row_conductance_cli_validation() -> None:
         primitive.main_for_test(["--min-abs-margin", "-1"])
     with pytest.raises(ValueError, match="cycles"):
         primitive.main_for_test(["--cycles", "0"])
+    with pytest.raises(ValueError, match="cycle_rows"):
+        primitive.generate_netlist(wp=0.45, wn=0.40, cycles=2, cycle_rows=[0.85])
+    with pytest.raises(ValueError, match="cycle_update_modes"):
+        primitive.generate_netlist(wp=0.45, wn=0.40, cycles=2, cycle_update_modes=["positive", "bad"])
 
 
 @pytest.mark.parametrize(
@@ -155,6 +174,53 @@ def test_row_conductance_primitive_ngspice_repeated_cycle_resets_dynamic_nodes_a
     assert float(measures["pre_p_after_cycle2"]) > 0.10
     assert float(measures["pre_n_after_cycle2"]) < 1e-3
     assert abs(float(measures["signed_weight_drift_cycle2"])) < 1e-3
+
+
+def test_row_conductance_primitive_ngspice_sequence_update_persists_across_next_sample(
+    tmp_path: Path,
+    ngspice_path: str,
+) -> None:
+    measures = _run_ngspice_case(
+        tmp_path,
+        ngspice_path,
+        "sequence_positive_then_hold",
+        wp=0.45,
+        wn=0.40,
+        cycles=2,
+        cycle_rows=[0.85, 0.85],
+        cycle_update_modes=["positive", "none"],
+        update_mode="none",
+        credit_mode="none",
+    )
+
+    first_delta = float(measures["signed_weight_delta"])
+    final_delta = float(measures["signed_weight_drift_cycle2"])
+    assert first_delta > 0.05
+    assert abs(final_delta - first_delta) < 2e-3
+    assert float(measures["pre_p_after_cycle2_reset"]) < 1e-3
+    assert float(measures["pre_n_after_cycle2_reset"]) < 1e-3
+    assert float(measures["forward_margin_cycle2"]) > 0.03
+
+
+def test_row_conductance_primitive_ngspice_sequence_opposite_update_cancels_signed_state(
+    tmp_path: Path,
+    ngspice_path: str,
+) -> None:
+    measures = _run_ngspice_case(
+        tmp_path,
+        ngspice_path,
+        "sequence_positive_then_negative",
+        wp=0.45,
+        wn=0.40,
+        cycles=2,
+        cycle_rows=[0.85, 0.85],
+        cycle_update_modes=["positive", "negative"],
+        update_mode="none",
+        credit_mode="none",
+    )
+
+    assert float(measures["signed_weight_delta"]) > 0.05
+    assert abs(float(measures["signed_weight_drift_cycle2"])) < 0.01
 
 
 @pytest.mark.parametrize(

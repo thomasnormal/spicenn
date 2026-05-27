@@ -33,6 +33,17 @@
   guarantee for the strict continuous-training path: dynamic neuron state can
   be reset between samples without Python intervention while capacitor-stored
   weight state persists.
+- Added per-cycle row/error rails to the same row-conductance primitive so a
+  single ngspice transient can represent a tiny batch-1 training sequence
+  instead of repeating one identical sample.  The first sequence regression
+  applies a positive update in cycle 1 and no update in cycle 2; the signed
+  `wp-wn` change persists into the second sample while dynamic `pre_p/pre_n`
+  reset between samples.  The second applies a positive update followed by a
+  negative update and checks that the signed state nearly cancels.  This test
+  exposed a real circuit issue: the old dynamic reset was mostly indirect
+  through the row/synapse path and depended on the stored weight gate.  The
+  primitive now has explicit MOS reset devices for `pre_p`, `pre_n`, `hdp`,
+  and `hdn`, which is the right local contract for continuous MNIST sequencing.
 - Added an experimental residual-score nontarget mode to the continuous
   split-rail multiclass block sequence.  The low-level regression now proves a
   transistor/passive low-common-mode PMOS score preamp plus weak analog

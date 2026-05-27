@@ -13,6 +13,8 @@ from run_spice_sweep import ROOT, detect_spice
 
 UPDATE_MODES = ("none", "positive", "negative")
 CREDIT_MODES = ("none", "positive", "negative")
+PERIOD_NS = 24.0
+EDGE_NS = 0.01
 
 
 def update_rails(mode: str) -> tuple[float, float]:
@@ -35,6 +37,37 @@ def credit_rails(mode: str) -> tuple[float, float]:
     raise ValueError(f"credit mode must be one of {CREDIT_MODES}")
 
 
+def pwl(points: list[tuple[float, float]]) -> str:
+    compact: list[tuple[float, float]] = []
+    for time_ns, value in sorted(points):
+        if compact and abs(compact[-1][0] - time_ns) < 1e-15:
+            compact[-1] = (time_ns, value)
+        else:
+            compact.append((time_ns, value))
+    return "PWL(" + " ".join(f"{time_ns:.12g}n {value:.12g}" for time_ns, value in compact) + ")"
+
+
+def cycle_window_pwl(
+    values: list[float],
+    *,
+    start_ns: float,
+    end_ns: float,
+    period_ns: float = PERIOD_NS,
+    edge_ns: float = EDGE_NS,
+) -> str:
+    points: list[tuple[float, float]] = [(0.0, 0.0)]
+    for cycle, value in enumerate(values):
+        base = period_ns * cycle
+        points += [
+            (base + start_ns, 0.0),
+            (base + start_ns + edge_ns, value),
+            (base + end_ns, value),
+            (base + end_ns + edge_ns, 0.0),
+        ]
+    points.append((period_ns * (len(values) - 1) + 18.0, 0.0))
+    return pwl(points)
+
+
 def generate_netlist(
     *,
     wp: float,
@@ -49,6 +82,8 @@ def generate_netlist(
     update_width: float = 0.25,
     credit_width: float = 8.0,
     cycles: int = 1,
+    cycle_rows: list[float] | tuple[float, ...] | None = None,
+    cycle_update_modes: list[str] | tuple[str, ...] | None = None,
 ) -> str:
     if update_mode not in UPDATE_MODES:
         raise ValueError(f"update_mode must be one of {UPDATE_MODES}")
@@ -56,6 +91,14 @@ def generate_netlist(
         raise ValueError(f"credit_mode must be one of {CREDIT_MODES}")
     if cycles < 1:
         raise ValueError("cycles must be at least 1")
+    if cycle_rows is not None and len(cycle_rows) != cycles:
+        raise ValueError("cycle_rows length must match cycles")
+    if cycle_update_modes is not None and len(cycle_update_modes) != cycles:
+        raise ValueError("cycle_update_modes length must match cycles")
+    if cycle_update_modes is not None:
+        bad_modes = sorted(set(cycle_update_modes) - set(UPDATE_MODES))
+        if bad_modes:
+            raise ValueError(f"cycle_update_modes entries must be one of {UPDATE_MODES}: {bad_modes}")
     for name, value in {
         "syn_width": syn_width,
         "row_drive_width": row_drive_width,
@@ -64,11 +107,31 @@ def generate_netlist(
     }.items():
         if value <= 0.0:
             raise ValueError(f"{name} must be positive")
+    per_cycle_rows = list(cycle_rows) if cycle_rows is not None else [row] * cycles
+    per_cycle_update_modes = list(cycle_update_modes) if cycle_update_modes is not None else [update_mode] * cycles
     ep, en = update_rails(update_mode)
+    ep_values = [update_rails(mode)[0] for mode in per_cycle_update_modes]
+    en_values = [update_rails(mode)[1] for mode in per_cycle_update_modes]
     edp, edn = credit_rails(credit_mode)
     rwp = wp if readout_wp is None else readout_wp
     rwn = wn if readout_wn is None else readout_wn
-    stop_ns = 18.0 + 24.0 * (cycles - 1)
+    uses_cycle_sources = cycle_rows is not None or cycle_update_modes is not None
+    row_source = (
+        cycle_window_pwl(per_cycle_rows, start_ns=1.0, end_ns=4.05)
+        if uses_cycle_sources
+        else f"PULSE(0 {row:.12g} 1.0n 10p 10p 3.05n 24n)"
+    )
+    ep_source = (
+        cycle_window_pwl(ep_values, start_ns=5.0, end_ns=8.0)
+        if uses_cycle_sources
+        else f"PULSE(0 {ep:.12g} 5.0n 10p 10p 3.0n 24n)"
+    )
+    en_source = (
+        cycle_window_pwl(en_values, start_ns=5.0, end_ns=8.0)
+        if uses_cycle_sources
+        else f"PULSE(0 {en:.12g} 5.0n 10p 10p 3.0n 24n)"
+    )
+    stop_ns = 18.0 + PERIOD_NS * (cycles - 1)
     lines = [
         "* Row-pulsed differential conductance primitive smoke.",
         "* The compute path is row -> conductance(weight gate) -> capacitive rails.",
@@ -80,9 +143,9 @@ def generate_netlist(
         "Vrst rst 0 PULSE(0 1.2 0.0n 10p 10p 0.55n 24n)",
         "Vfwd fwd 0 PULSE(0 1.2 1.0n 10p 10p 3.0n 24n)",
         "Vfwdn fwdn 0 PULSE(1.2 0 1.0n 10p 10p 3.0n 24n)",
-        f"Vrow_src row_src 0 PULSE(0 {row:.12g} 1.0n 10p 10p 3.05n 24n)",
-        f"Vep ep 0 PULSE(0 {ep:.12g} 5.0n 10p 10p 3.0n 24n)",
-        f"Ven en 0 PULSE(0 {en:.12g} 5.0n 10p 10p 3.0n 24n)",
+        f"Vrow_src row_src 0 {row_source}",
+        f"Vep ep 0 {ep_source}",
+        f"Ven en 0 {en_source}",
         "Vapply apply 0 PULSE(0 1.2 5.0n 10p 10p 3.0n 24n)",
         f"Vedp edp 0 PULSE(0 {edp:.12g} 11.0n 10p 10p 4.0n 24n)",
         f"Vedn edn 0 PULSE(0 {edn:.12g} 11.0n 10p 10p 4.0n 24n)",
@@ -108,6 +171,10 @@ def generate_netlist(
         f"Mrow_p row fwdn row_src vdd PMOS W={2.0 * row_drive_width:.6g}u L=180n",
         f"Mrow_rst row rst 0 0 NMOS W={max(1.0, row_drive_width / 3.0):.6g}u L=180n",
         "Rrow row 0 1e12",
+        f"Mpre_p_rst pre_p rst 0 0 NMOS W={max(2.0, row_drive_width / 2.0):.6g}u L=180n",
+        f"Mpre_n_rst pre_n rst 0 0 NMOS W={max(2.0, row_drive_width / 2.0):.6g}u L=180n",
+        f"Mhdp_rst hdp rst 0 0 NMOS W={max(2.0, row_drive_width / 2.0):.6g}u L=180n",
+        f"Mhdn_rst hdn rst 0 0 NMOS W={max(2.0, row_drive_width / 2.0):.6g}u L=180n",
         "",
         "* Forward signed conductance pair: row current/charge sums onto differential pre rails.",
         f"Mwp_fwd row wp pre_p 0 NMOS W={syn_width:.6g}u L=180n",

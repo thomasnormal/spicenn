@@ -58,7 +58,7 @@ ELIGIBILITY_GATE_MODES = ("raw", "competition", "rank", "contrast")
 ELIGIBILITY_SOURCE_MODES = ("pre-p", "act-raw", "act")
 HIDDEN_CREDIT_ACTIVATION_MODELS = ("NREL", "NMOS", "NSENSE")
 HIDDEN_DIRECT_READOUT_GATE_MODES = ("raw", "differential-excess", "restored-excess")
-HIDDEN_DIRECT_OUTPUT_STAGES = ("nmos-pass", "pmos-pullup", "pmos-bounded")
+HIDDEN_DIRECT_OUTPUT_STAGES = ("nmos-pass", "pmos-pullup", "pmos-bounded", "pmos-complementary")
 DEFAULT_HIDDEN_POSITIVE = 1.00
 DEFAULT_HIDDEN_NEGATIVE = 0.20
 ERROR_MODES = (
@@ -246,11 +246,18 @@ def hidden_direct_readout_weighted_update_lines(
     output_stage: str = "nmos-pass",
     high_ref_node: str = "vwhi_ref",
     high_ref_voltage: float = 1.05,
+    low_ref_node: str = "vwlo_ref",
+    low_ref_voltage: float = 0.15,
+    complement_width_scale: float = 0.0625,
 ) -> list[str]:
     if min(width_u, internal_capacitance_f, excess_width_u) <= 0.0:
         raise ValueError("direct hidden update width, internal capacitance, and excess width must be positive")
     if high_ref_voltage <= 0.0 or high_ref_voltage > 1.2:
         raise ValueError("direct hidden high reference must stay in (0, 1.2]")
+    if low_ref_voltage < 0.0 or low_ref_voltage > 1.2:
+        raise ValueError("direct hidden low reference must stay within supply rails")
+    if complement_width_scale <= 0.0:
+        raise ValueError("direct hidden complementary width scale must be positive")
     if activation_model not in HIDDEN_CREDIT_ACTIVATION_MODELS:
         raise ValueError(f"activation_model must be one of {HIDDEN_CREDIT_ACTIVATION_MODELS}")
     if readout_gate_mode not in HIDDEN_DIRECT_READOUT_GATE_MODES:
@@ -334,8 +341,9 @@ def hidden_direct_readout_weighted_update_lines(
                     f"M{prefix}{suffix}_pup_w {up2} {weight} {whp} 0 NSENSE W={width_u:.6g}u L=180n",
                 ]
             else:
-                pmos_ref_node = high_ref_node if output_stage == "pmos-bounded" else "vwhi_ref"
-                pmos_ref_ic = high_ref_voltage if output_stage == "pmos-bounded" else 1.05
+                uses_hidden_ref = output_stage in ("pmos-bounded", "pmos-complementary")
+                pmos_ref_node = high_ref_node if uses_hidden_ref else "vwhi_ref"
+                pmos_ref_ic = high_ref_voltage if uses_hidden_ref else 1.05
                 pgate = f"{prefix}{suffix}_pup_gate"
                 lines += [
                     f"R{pgate} {pgate} 0 1G",
@@ -354,6 +362,15 @@ def hidden_direct_readout_weighted_update_lines(
                     f"M{prefix}{suffix}_pup_w {up2} {weight} 0 0 NSENSE W={width_u:.6g}u L=180n",
                     f"M{prefix}{suffix}_pup_pmos {whp} {pgate} {pmos_ref_node} vdd PMOS W={width_u:.6g}u L=180n",
                 ]
+                if output_stage == "pmos-complementary":
+                    dgate = f"{prefix}{suffix}_ndn_gate"
+                    lines += [
+                        f"R{dgate} {dgate} 0 1G",
+                        f"C{dgate} {dgate} 0 {internal_capacitance_f:.12g}f IC=0",
+                        f"M{prefix}{suffix}_ndn_gate_rst {dgate} {reset_node} 0 0 NMOS W=4u L=180n",
+                        f"M{prefix}{suffix}_ndn_gate_inv {dgate} {pgate} {pmos_ref_node} vdd PMOS W={complement_width_scale * width_u:.6g}u L=180n",
+                        f"M{prefix}{suffix}_ndn_direct {whn} {dgate} {low_ref_node} 0 NSENSE W={complement_width_scale * width_u:.6g}u L=180n",
+                    ]
         for err, weight, anti_weight, suffix in negative_terms:
             up0 = f"{prefix}{suffix}_nup0"
             up1 = f"{prefix}{suffix}_nup1"
@@ -372,8 +389,9 @@ def hidden_direct_readout_weighted_update_lines(
                     f"M{prefix}{suffix}_nup_w {up2} {weight} {whn} 0 NSENSE W={width_u:.6g}u L=180n",
                 ]
             else:
-                pmos_ref_node = high_ref_node if output_stage == "pmos-bounded" else "vwhi_ref"
-                pmos_ref_ic = high_ref_voltage if output_stage == "pmos-bounded" else 1.05
+                uses_hidden_ref = output_stage in ("pmos-bounded", "pmos-complementary")
+                pmos_ref_node = high_ref_node if uses_hidden_ref else "vwhi_ref"
+                pmos_ref_ic = high_ref_voltage if uses_hidden_ref else 1.05
                 ngate = f"{prefix}{suffix}_nup_gate"
                 lines += [
                     f"R{ngate} {ngate} 0 1G",
@@ -392,6 +410,15 @@ def hidden_direct_readout_weighted_update_lines(
                     f"M{prefix}{suffix}_nup_w {up2} {weight} 0 0 NSENSE W={width_u:.6g}u L=180n",
                     f"M{prefix}{suffix}_nup_pmos {whn} {ngate} {pmos_ref_node} vdd PMOS W={width_u:.6g}u L=180n",
                 ]
+                if output_stage == "pmos-complementary":
+                    dgate = f"{prefix}{suffix}_pdn_gate"
+                    lines += [
+                        f"R{dgate} {dgate} 0 1G",
+                        f"C{dgate} {dgate} 0 {internal_capacitance_f:.12g}f IC=0",
+                        f"M{prefix}{suffix}_pdn_gate_rst {dgate} {reset_node} 0 0 NMOS W=4u L=180n",
+                        f"M{prefix}{suffix}_pdn_gate_inv {dgate} {ngate} {pmos_ref_node} vdd PMOS W={complement_width_scale * width_u:.6g}u L=180n",
+                        f"M{prefix}{suffix}_pdn_direct {whp} {dgate} {low_ref_node} 0 NSENSE W={complement_width_scale * width_u:.6g}u L=180n",
+                    ]
     return lines
 
 
@@ -1067,6 +1094,8 @@ def generate_netlist(
     hidden_direct_readout_gate_mode: str = "differential-excess",
     hidden_direct_output_stage: str = "nmos-pass",
     hidden_direct_high_ref: float = 1.05,
+    hidden_direct_low_ref: float = 0.15,
+    hidden_direct_complement_width_scale: float = 0.0625,
     score_timing_mode: str = "late",
     score_sense_mode: str = "voltage",
     readout_forward_mode: str = "direct",
@@ -1111,6 +1140,8 @@ def generate_netlist(
         "hidden_credit_shunt_resistance_ohm": hidden_credit_shunt_resistance_ohm,
         "hidden_update_width_u": hidden_update_width_u,
         "hidden_direct_high_ref": hidden_direct_high_ref,
+        "hidden_direct_low_ref": hidden_direct_low_ref,
+        "hidden_direct_complement_width_scale": hidden_direct_complement_width_scale,
         "eligibility_contrast_common_resistance_ohm": eligibility_contrast_common_resistance_ohm,
         "eligibility_contrast_common_capacitance_f": eligibility_contrast_common_capacitance_f,
     }.items():
@@ -1124,6 +1155,10 @@ def generate_netlist(
         raise ValueError("readout_center_voltage must stay within supply rails")
     if hidden_direct_high_ref <= 0.0 or hidden_direct_high_ref > 1.2:
         raise ValueError("hidden_direct_high_ref must stay in (0, 1.2]")
+    if hidden_direct_low_ref < 0.0 or hidden_direct_low_ref > 1.2:
+        raise ValueError("hidden_direct_low_ref must stay within supply rails")
+    if hidden_direct_complement_width_scale <= 0.0:
+        raise ValueError("hidden_direct_complement_width_scale must be positive")
     if nontarget_scale < 0.0 or nontarget_scale > 1.0:
         raise ValueError("nontarget_scale must be in [0, 1]")
     if nontarget_width_scale < 0.0 or nontarget_width_scale > 1.0:
@@ -1344,6 +1379,7 @@ def generate_netlist(
         "Vvwhi_ref vwhi_ref 0 0.42",
         "Vvwlo_ref vwlo_ref 0 0.28",
         f"Vhidden_whi_ref hidden_whi_ref 0 {hidden_direct_high_ref:.12g}",
+        f"Vhidden_wlo_ref hidden_wlo_ref 0 {hidden_direct_low_ref:.12g}",
         f"Vrst rst 0 {periodic_phase_pwl(cycle_count, start_ns=0.2, end_ns=1.0)}",
         *(
             [f"Vrstn rstn 0 {active_low_phase_pwl(cycle_count, start_ns=0.2, end_ns=1.0, active_cycles=set(range(cycle_count)))}"]
@@ -1829,10 +1865,13 @@ def generate_netlist(
                 output_stage=hidden_direct_output_stage,
                 high_ref_node=(
                     "hidden_whi_ref"
-                    if hidden_direct_output_stage == "pmos-bounded"
+                    if hidden_direct_output_stage in ("pmos-bounded", "pmos-complementary")
                     else "vwhi_ref"
                 ),
                 high_ref_voltage=hidden_direct_high_ref,
+                low_ref_node="hidden_wlo_ref",
+                low_ref_voltage=hidden_direct_low_ref,
+                complement_width_scale=hidden_direct_complement_width_scale,
             )
     for class_idx in range(class_count):
         for feature in range(total_feature_count):
@@ -2805,6 +2844,8 @@ def run_case(args: argparse.Namespace) -> dict[str, Any]:
         hidden_direct_readout_gate_mode=args.hidden_direct_readout_gate_mode,
         hidden_direct_output_stage=args.hidden_direct_output_stage,
         hidden_direct_high_ref=args.hidden_direct_high_ref,
+        hidden_direct_low_ref=args.hidden_direct_low_ref,
+        hidden_direct_complement_width_scale=args.hidden_direct_complement_width_scale,
         score_timing_mode=args.score_timing_mode,
         score_sense_mode=args.score_sense_mode,
         readout_forward_mode=args.readout_forward_mode,
@@ -2949,6 +2990,14 @@ def run_case(args: argparse.Namespace) -> dict[str, Any]:
         "hidden_direct_high_ref": (
             args.hidden_direct_high_ref if args.hidden_update_mode == "direct-readout-weighted" else None
         ),
+        "hidden_direct_low_ref": (
+            args.hidden_direct_low_ref if args.hidden_update_mode == "direct-readout-weighted" else None
+        ),
+        "hidden_direct_complement_width_scale": (
+            args.hidden_direct_complement_width_scale
+            if args.hidden_update_mode == "direct-readout-weighted"
+            else None
+        ),
         "score_timing_mode": args.score_timing_mode,
         "score_sense_mode": args.score_sense_mode,
         "readout_forward_mode": args.readout_forward_mode,
@@ -3082,6 +3131,8 @@ def build_arg_parser() -> argparse.ArgumentParser:
         default="nmos-pass",
     )
     ap.add_argument("--hidden-direct-high-ref", type=float, default=1.05)
+    ap.add_argument("--hidden-direct-low-ref", type=float, default=0.15)
+    ap.add_argument("--hidden-direct-complement-width-scale", type=float, default=0.0625)
     ap.add_argument("--score-timing-mode", choices=SCORE_TIMING_MODES, default="late")
     ap.add_argument("--score-sense-mode", choices=SCORE_SENSE_MODES, default="voltage")
     ap.add_argument("--readout-forward-mode", choices=READOUT_FORWARD_MODES, default="direct")
@@ -3195,6 +3246,10 @@ def validate_args(args: argparse.Namespace) -> None:
         raise ValueError(f"hidden-direct-output-stage must be one of {HIDDEN_DIRECT_OUTPUT_STAGES}")
     if args.hidden_direct_high_ref <= 0.0 or args.hidden_direct_high_ref > 1.2:
         raise ValueError("hidden-direct-high-ref must stay in (0, 1.2]")
+    if args.hidden_direct_low_ref < 0.0 or args.hidden_direct_low_ref > 1.2:
+        raise ValueError("hidden-direct-low-ref must stay within supply rails")
+    if args.hidden_direct_complement_width_scale <= 0.0:
+        raise ValueError("hidden-direct-complement-width-scale must be positive")
     if args.eligibility_contrast_common_resistance <= 0.0:
         raise ValueError("eligibility-contrast-common-resistance must be positive")
     if args.eligibility_contrast_common_capacitance_f <= 0.0:

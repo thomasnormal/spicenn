@@ -1994,6 +1994,7 @@ def _hidden_direct_readout_weighted_writer_netlist(
     readout_high_ref: float = 1.05,
     readout_low_ref: float = 0.15,
     hidden_high_ref: float = 1.05,
+    hidden_low_ref: float = 0.15,
     errp: float | str = "PULSE(0 1.2 1n 10p 10p 4n 20n)",
     errn: float | str = 0.0,
     width_u: float = 8.0,
@@ -2009,6 +2010,7 @@ def _hidden_direct_readout_weighted_writer_netlist(
         f"Vwhi vwhi_ref 0 {readout_high_ref:.12g}",
         f"Vwlo vwlo_ref 0 {readout_low_ref:.12g}",
         f"Vhwhi hidden_whi_ref 0 {hidden_high_ref:.12g}",
+        f"Vhwlo hidden_wlo_ref 0 {hidden_low_ref:.12g}",
         "Vrst rst 0 PULSE(1.2 0 0.1n 10p 10p 9n 20n)",
         f"Verrp c0_errp 0 {errp if isinstance(errp, str) else f'{errp:.12g}'}",
         f"Verrn c0_errn 0 {errn if isinstance(errn, str) else f'{errn:.12g}'}",
@@ -2032,8 +2034,11 @@ def _hidden_direct_readout_weighted_writer_netlist(
             readout_gate_mode=readout_gate_mode,
             output_stage=output_stage,
             high_ref_node=(
-                "hidden_whi_ref" if output_stage == "pmos-bounded" else "vwhi_ref"
+                "hidden_whi_ref"
+                if output_stage in ("pmos-bounded", "pmos-complementary")
+                else "vwhi_ref"
             ),
+            low_ref_node="hidden_wlo_ref",
         ),
         *(
             [
@@ -2047,6 +2052,84 @@ def _hidden_direct_readout_weighted_writer_netlist(
         ".meas tran whn_after FIND V(whn0) AT=8n",
         ".meas tran signed_after PARAM='whp_after-whn_after'",
         ".tran 2p 10n uic",
+        ".control",
+        "run",
+        "quit",
+        ".endc",
+        ".end",
+        "",
+    ]
+    return "\n".join(lines)
+
+
+def _hidden_direct_readout_weighted_two_update_netlist(
+    *,
+    first_errp: float = 1.2,
+    first_errn: float = 0.0,
+    second_errp: float = 0.0,
+    second_errn: float = 1.2,
+    vwp: float = 0.40,
+    vwn: float = 0.28,
+    whp: float = 0.45,
+    whn: float = 0.40,
+    width_u: float = 0.125,
+    complement_width_scale: float = 0.0625,
+    output_stage: str = "pmos-complementary",
+) -> str:
+    def pulse(level: float, start_ns: float) -> str:
+        if level <= 0.0:
+            return "0"
+        return f"PULSE(0 {level:.12g} {start_ns:.12g}n 10p 10p 4n 20n)"
+
+    lines = [
+        "* Two live direct hidden updates without Python state intervention.",
+        ".param VDD=1.2",
+        seq.mos_models(),
+        ".options method=gear reltol=1e-3 abstol=1e-12 vntol=1e-6",
+        "Vdd vdd 0 {VDD}",
+        "Vwhi vwhi_ref 0 0.42",
+        "Vwlo vwlo_ref 0 0.28",
+        "Vhwhi hidden_whi_ref 0 1.05",
+        "Vhwlo hidden_wlo_ref 0 0.15",
+        "Vrst rst 0 PWL(0 1.2 0.1n 1.2 0.12n 0 9n 0 10n 1.2 10.1n 1.2 10.12n 0 20n 0)",
+        f"Verrp0 c0_errp 0 {pulse(first_errp, 1.0)}",
+        f"Verrn0 c0_errn 0 {pulse(first_errn, 1.0)}",
+        f"Verrp1 c1_errp 0 {pulse(second_errp, 11.0)}",
+        f"Verrn1 c1_errn 0 {pulse(second_errn, 11.0)}",
+        "Vact act0 0 1.2",
+        "Vxelig xelig0 0 1.2",
+        f"Cc0_vwp0 c0_vwp0 0 20f IC={vwp:.12g}",
+        f"Cc0_vwn0 c0_vwn0 0 20f IC={vwn:.12g}",
+        f"Cc1_vwp0 c1_vwp0 0 20f IC={vwp:.12g}",
+        f"Cc1_vwn0 c1_vwn0 0 20f IC={vwn:.12g}",
+        f"Cwhp0 whp0 0 20f IC={whp:.12g}",
+        f"Cwhn0 whn0 0 20f IC={whn:.12g}",
+        "Rc0_vwp0 c0_vwp0 0 1e15",
+        "Rc0_vwn0 c0_vwn0 0 1e15",
+        "Rc1_vwp0 c1_vwp0 0 1e15",
+        "Rc1_vwn0 c1_vwn0 0 1e15",
+        "Rwhp0 whp0 0 1e15",
+        "Rwhn0 whn0 0 1e15",
+        *seq.hidden_direct_readout_weighted_update_lines(
+            class_count=2,
+            feature_idx=0,
+            error_positive_nodes=["c0_errp", "c1_errp"],
+            error_negative_nodes=["c0_errn", "c1_errn"],
+            eligibility_node="xelig0",
+            width_u=width_u,
+            readout_gate_mode="restored-excess",
+            output_stage=output_stage,
+            high_ref_node="hidden_whi_ref",
+            low_ref_node="hidden_wlo_ref",
+            complement_width_scale=complement_width_scale,
+        ),
+        ".meas tran whp_after_first FIND V(whp0) AT=8n",
+        ".meas tran whn_after_first FIND V(whn0) AT=8n",
+        ".meas tran signed_after_first PARAM='whp_after_first-whn_after_first'",
+        ".meas tran whp_after FIND V(whp0) AT=18n",
+        ".meas tran whn_after FIND V(whn0) AT=18n",
+        ".meas tran signed_after PARAM='whp_after-whn_after'",
+        ".tran 2p 20n uic",
         ".control",
         "run",
         "quit",
@@ -2273,6 +2356,23 @@ def test_multiclass_block_sequence_ngspice_direct_hidden_writer_bounded_pmos_use
     assert float(moderate["whp_after"]) < 1.06
     assert float(moderate["whn_after"]) == pytest.approx(0.40, abs=5e-3)
     assert float(neutral["signed_after"]) > 0.75
+
+
+def test_multiclass_block_sequence_ngspice_complementary_pmos_hidden_writer_does_not_raise_both_rails(
+    tmp_path: Path,
+    ngspice_path: str,
+) -> None:
+    measures = run_netlist(
+        ngspice_path,
+        tmp_path / "direct_hidden_writer_two_update_complementary.cir",
+        _hidden_direct_readout_weighted_two_update_netlist(),
+        timeout=30.0,
+    )
+
+    assert float(measures["signed_after_first"]) > 0.30
+    assert float(measures["whp_after"]) < 0.45
+    assert float(measures["whn_after"]) > 0.40
+    assert float(measures["signed_after"]) < -0.10
 
 
 def test_multiclass_block_sequence_ngspice_live_error_rails_reset_before_eval_writer(

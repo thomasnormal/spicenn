@@ -75,6 +75,10 @@ def _block_argv(args: argparse.Namespace, *, approach: str, scenario: str, child
         args.hidden_direct_output_stage,
         "--hidden-direct-high-ref",
         str(args.hidden_direct_high_ref),
+        "--hidden-direct-low-ref",
+        str(args.hidden_direct_low_ref),
+        "--hidden-direct-complement-width-scale",
+        str(args.hidden_direct_complement_width_scale),
         "--score-timing-mode",
         args.score_timing_mode,
         "--readout-forward-mode",
@@ -302,6 +306,14 @@ def run_screen(args: argparse.Namespace) -> dict[str, Any]:
         "hidden_direct_high_ref": (
             args.hidden_direct_high_ref if args.hidden_update_mode == "direct-readout-weighted" else None
         ),
+        "hidden_direct_low_ref": (
+            args.hidden_direct_low_ref if args.hidden_update_mode == "direct-readout-weighted" else None
+        ),
+        "hidden_direct_complement_width_scale": (
+            args.hidden_direct_complement_width_scale
+            if args.hidden_update_mode == "direct-readout-weighted"
+            else None
+        ),
         "score_timing_mode": args.score_timing_mode,
         "readout_forward_mode": args.readout_forward_mode,
         "eligibility_source_mode": args.eligibility_source_mode,
@@ -354,6 +366,8 @@ def build_arg_parser() -> argparse.ArgumentParser:
         default="nmos-pass",
     )
     ap.add_argument("--hidden-direct-high-ref", type=float, default=1.05)
+    ap.add_argument("--hidden-direct-low-ref", type=float, default=0.15)
+    ap.add_argument("--hidden-direct-complement-width-scale", type=float, default=0.0625)
     ap.add_argument("--score-timing-mode", choices=seq.SCORE_TIMING_MODES, default="late")
     ap.add_argument("--readout-forward-mode", choices=seq.READOUT_FORWARD_MODES, default="direct")
     ap.add_argument("--eligibility-source-mode", choices=seq.ELIGIBILITY_SOURCE_MODES, default="pre-p")
@@ -395,6 +409,10 @@ def main_for_test(argv: list[str]) -> argparse.Namespace:
         raise ValueError(f"hidden-direct-output-stage must be one of {seq.HIDDEN_DIRECT_OUTPUT_STAGES}")
     if args.hidden_direct_high_ref <= 0.0 or args.hidden_direct_high_ref > 1.2:
         raise ValueError("hidden-direct-high-ref must stay in (0, 1.2]")
+    if args.hidden_direct_low_ref < 0.0 or args.hidden_direct_low_ref > 1.2:
+        raise ValueError("hidden-direct-low-ref must stay within supply rails")
+    if args.hidden_direct_complement_width_scale <= 0.0:
+        raise ValueError("hidden-direct-complement-width-scale must be positive")
     return args
 
 

@@ -40,6 +40,21 @@ def test_multiclass_output_head_sequence_emits_continuous_train_and_eval_deck() 
     assert "* cycle 6 final_eval label=0" in netlist
 
 
+def test_multiclass_output_head_sequence_can_gate_nontarget_update_with_score() -> None:
+    records = _one_hot_records()
+    netlist = seq.generate_netlist(
+        train_records=records,
+        eval_records=records,
+        class_count=3,
+        feature_count=3,
+        error_mode="score-gated-nontarget",
+    )
+
+    assert "Vrstscore rstscore 0 PWL(" in netlist
+    assert "Mc2_f1_gvn_score c2_f1_gvn_label c2_score c2_f1_gvn_d 0 NSENSE" in netlist
+    assert "Mc2_f1_gvn_d c2_f1_gvn_a c2_targetn" not in netlist
+
+
 def test_multiclass_output_head_sequence_validation() -> None:
     records = _one_hot_records()
     with pytest.raises(ValueError, match="class_count"):
@@ -50,6 +65,14 @@ def test_multiclass_output_head_sequence_validation() -> None:
         seq.main_for_test(["--dataset", "mnist01fixed8_16"])
     with pytest.raises(ValueError, match="nontarget-scale"):
         seq.main_for_test(["--nontarget-scale", "1.5"])
+    with pytest.raises(ValueError, match="error_mode"):
+        seq.generate_netlist(
+            train_records=records,
+            eval_records=records,
+            class_count=3,
+            feature_count=3,
+            error_mode="bad",
+        )
 
 
 def test_multiclass_output_head_sequence_balanced_split_covers_each_class() -> None:
@@ -61,6 +84,19 @@ def test_multiclass_output_head_sequence_balanced_split_covers_each_class() -> N
     assert [record["label"] for record in eval_] == [0, 1, 2]
     with pytest.raises(ValueError, match="divisible"):
         seq.balanced_train_eval_split(records, class_count=3, train_samples=4, eval_samples=3)
+
+
+def test_multiclass_output_head_sequence_extracts_final_signed_weight_matrix() -> None:
+    measures = {
+        f"c{class_idx}_f{feature}_signed_final": class_idx + 0.1 * feature
+        for class_idx in range(2)
+        for feature in range(3)
+    }
+
+    assert seq.final_signed_weight_matrix(measures, class_count=2, feature_count=3) == [
+        [0.0, 0.1, 0.2],
+        [1.0, 1.1, 1.2],
+    ]
 
 
 def test_multiclass_output_head_sequence_ngspice_learns_one_hot_sequence(

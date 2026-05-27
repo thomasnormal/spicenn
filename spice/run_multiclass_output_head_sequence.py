@@ -22,6 +22,7 @@ from run_spice_sweep import ROOT, detect_spice
 
 
 CYCLE_NS = 16.0
+ERROR_MODES = ("label-descent", "score-gated-nontarget")
 
 
 def pwl(points: list[tuple[float, float]]) -> str:
@@ -52,6 +53,36 @@ def windowed_pwl(
         ]
     points.append((len(cycle_values) * cycle_ns, 0.0))
     return pwl(points)
+
+
+def multi_windowed_pwl(
+    cycle_values: list[float],
+    *,
+    windows: list[tuple[float, float]],
+    cycle_ns: float = CYCLE_NS,
+) -> str:
+    points: list[tuple[float, float]] = [(0.0, 0.0)]
+    for cycle, value in enumerate(cycle_values):
+        base = cycle * cycle_ns
+        for start_ns, end_ns in windows:
+            points += [
+                (base + start_ns - 0.01, 0.0),
+                (base + start_ns, value),
+                (base + end_ns, value),
+                (base + end_ns + 0.01, 0.0),
+            ]
+    points.append((len(cycle_values) * cycle_ns, 0.0))
+    return pwl(points)
+
+
+def multi_window_phase_pwl(
+    cycle_count: int,
+    *,
+    windows: list[tuple[float, float]],
+    high: float = 1.2,
+    cycle_ns: float = CYCLE_NS,
+) -> str:
+    return multi_windowed_pwl([high] * cycle_count, windows=windows, cycle_ns=cycle_ns)
 
 
 def periodic_phase_pwl(
@@ -126,6 +157,27 @@ def balanced_train_eval_split(
     return train, eval_
 
 
+def class_local_score_gated_nontarget_gradient_lines(
+    *,
+    class_idx: int,
+    feature_idx: int,
+    activation_node: str,
+    width_u: float = 24.0,
+) -> list[str]:
+    prefix = f"c{class_idx}_f{feature_idx}_"
+    return [
+        f"M{prefix}gvp_a vdd {activation_node} {prefix}gvp_a 0 NREL W={width_u:.6g}u L=180n",
+        f"M{prefix}gvp_d {prefix}gvp_a {class_node(class_idx, 'targetp')} {prefix}gvp_d 0 NSENSE W={width_u:.6g}u L=180n",
+        f"M{prefix}gvp_g {prefix}gvp_d acc {class_node(class_idx, f'gvp{feature_idx}')} 0 NREL W={width_u:.6g}u L=180n",
+        f"M{prefix}gvn_a vdd {activation_node} {prefix}gvn_a 0 NREL W={width_u:.6g}u L=180n",
+        f"M{prefix}gvn_label {prefix}gvn_a {class_node(class_idx, 'targetn')} {prefix}gvn_label 0 NSENSE W={width_u:.6g}u L=180n",
+        f"M{prefix}gvn_score {prefix}gvn_label {class_node(class_idx, 'score')} {prefix}gvn_d 0 NSENSE W={width_u:.6g}u L=180n",
+        f"M{prefix}gvn_g {prefix}gvn_d acc {class_node(class_idx, f'gvn{feature_idx}')} 0 NREL W={width_u:.6g}u L=180n",
+        f"M{prefix}rgp_pd {class_node(class_idx, f'rgp{feature_idx}')} {class_node(class_idx, f'gvp{feature_idx}')} 0 0 NSENSE W=16u L=180n",
+        f"M{prefix}rgn_pd {class_node(class_idx, f'rgn{feature_idx}')} {class_node(class_idx, f'gvn{feature_idx}')} 0 0 NSENSE W=16u L=180n",
+    ]
+
+
 def generate_netlist(
     *,
     train_records: list[dict[str, Any]],
@@ -136,6 +188,7 @@ def generate_netlist(
     initial_negative: float = 0.34,
     target_high: float = 1.1,
     nontarget_scale: float = 0.5,
+    error_mode: str = "label-descent",
 ) -> str:
     if class_count < 2:
         raise ValueError("class_count must be at least 2")
@@ -147,6 +200,8 @@ def generate_netlist(
         raise ValueError("voltages must stay within supply rails")
     if nontarget_scale < 0.0 or nontarget_scale > 1.0:
         raise ValueError("nontarget_scale must be in [0, 1]")
+    if error_mode not in ERROR_MODES:
+        raise ValueError(f"error_mode must be one of {ERROR_MODES}")
 
     all_records = eval_records + train_records + eval_records
     sequence = ["initial_eval"] * len(eval_records) + ["train"] * len(train_records) + ["final_eval"] * len(eval_records)
@@ -172,12 +227,14 @@ def generate_netlist(
         f"Vapply apply 0 {periodic_phase_pwl(cycle_count, start_ns=5.0, end_ns=7.0, active_cycles=train_cycles)}",
         f"Vapplyn applyn 0 {active_low_phase_pwl(cycle_count, start_ns=5.0, end_ns=7.0, active_cycles=train_cycles)}",
         f"Vrst rst 0 {periodic_phase_pwl(cycle_count, start_ns=0.2, end_ns=1.0)}",
+        f"Vrstscore rstscore 0 {multi_window_phase_pwl(cycle_count, windows=[(0.2, 1.0), (7.4, 8.0)])}",
     ]
     for feature in range(feature_count):
         act_values = [float(value) for value in features[:, feature]]
+        actrow_windows = [(1.05, 1.65), (9.0, 12.0)] if error_mode == "score-gated-nontarget" else [(9.0, 12.0)]
         lines += [
             f"Vact{feature} act{feature} 0 {windowed_pwl(act_values, start_ns=1.8, end_ns=4.2)}",
-            f"Vactrow{feature} actrow{feature} 0 {windowed_pwl(act_values, start_ns=9.0, end_ns=12.0)}",
+            f"Vactrow{feature} actrow{feature} 0 {multi_windowed_pwl(act_values, windows=actrow_windows)}",
         ]
     for class_idx in range(class_count):
         targetp_values = [
@@ -194,8 +251,8 @@ def generate_netlist(
             f"C{class_node(class_idx, 'scoren')} {class_node(class_idx, 'scoren')} 0 10f IC=0",
             f"R{class_node(class_idx, 'score')} {class_node(class_idx, 'score')} 0 1e6",
             f"R{class_node(class_idx, 'scoren')} {class_node(class_idx, 'scoren')} 0 1e6",
-            f"Mreset_{class_node(class_idx, 'score')} {class_node(class_idx, 'score')} rst 0 0 NMOS W=4u L=180n",
-            f"Mreset_{class_node(class_idx, 'scoren')} {class_node(class_idx, 'scoren')} rst 0 0 NMOS W=4u L=180n",
+            f"Mreset_{class_node(class_idx, 'score')} {class_node(class_idx, 'score')} rstscore 0 0 NMOS W=4u L=180n",
+            f"Mreset_{class_node(class_idx, 'scoren')} {class_node(class_idx, 'scoren')} rstscore 0 0 NMOS W=4u L=180n",
         ]
         for feature in range(feature_count):
             for node in ("gvp", "gvn"):
@@ -216,10 +273,18 @@ def generate_netlist(
                     positive_ic=initial_positive,
                     negative_ic=initial_negative,
                 ),
-                *class_local_label_descent_gradient_lines(
-                    class_idx=class_idx,
-                    feature_idx=feature,
-                    activation_node=f"act{feature}",
+                *(
+                    class_local_score_gated_nontarget_gradient_lines(
+                        class_idx=class_idx,
+                        feature_idx=feature,
+                        activation_node=f"act{feature}",
+                    )
+                    if error_mode == "score-gated-nontarget"
+                    else class_local_label_descent_gradient_lines(
+                        class_idx=class_idx,
+                        feature_idx=feature,
+                        activation_node=f"act{feature}",
+                    )
                 ),
                 *class_local_bounded_update_lines(class_idx=class_idx, feature_idx=feature),
                 *class_local_readout_forward_lines(class_idx=class_idx, feature_idx=feature),
@@ -284,6 +349,13 @@ def accuracy(rows: list[dict[str, Any]], sequence: str) -> float:
     return float(np.mean([bool(row["correct"]) for row in selected]))
 
 
+def final_signed_weight_matrix(measures: dict[str, float], *, class_count: int, feature_count: int) -> list[list[float]]:
+    return [
+        [float(measures[f"c{class_idx}_f{feature}_signed_final"]) for feature in range(feature_count)]
+        for class_idx in range(class_count)
+    ]
+
+
 def run_case(args: argparse.Namespace) -> dict[str, Any]:
     generated = ROOT / "spice/generated"
     tables = ROOT / "results/tables"
@@ -311,12 +383,16 @@ def run_case(args: argparse.Namespace) -> dict[str, Any]:
         class_count=class_count,
         feature_count=args.feature_count,
         nontarget_scale=args.nontarget_scale,
+        error_mode=args.error_mode,
     )
     path = generated / f"{tag}.cir"
     measures = run_netlist(spice_bin, path, deck, timeout=args.timeout)
     rows = rows_from_measures(all_records, measures, sequence=sequence, class_count=class_count)
     initial_acc = accuracy(rows, "initial_eval")
     final_acc = accuracy(rows, "final_eval")
+    final_signed = final_signed_weight_matrix(measures, class_count=class_count, feature_count=args.feature_count)
+    final_signed_sums = [float(sum(row)) for row in final_signed]
+    final_signed_spread = float(max(final_signed_sums) - min(final_signed_sums)) if final_signed_sums else 0.0
     csv_path = tables / f"{tag}.csv"
     with csv_path.open("w", newline="") as f:
         writer = csv.DictWriter(f, fieldnames=["cycle", "sequence", "label", "prediction", "correct", "score_margin_v"])
@@ -330,12 +406,16 @@ def run_case(args: argparse.Namespace) -> dict[str, Any]:
         "class_count": class_count,
         "feature_count": args.feature_count,
         "nontarget_scale": args.nontarget_scale,
+        "error_mode": args.error_mode,
         "train_samples": args.train_samples,
         "eval_samples": args.eval_samples,
         "initial_eval_accuracy": initial_acc,
         "final_eval_accuracy": final_acc,
         "nontrivial_learning_met": final_acc > initial_acc,
         "final_eval_min_margin_v": min(final_margins) if final_margins else None,
+        "final_signed_weight_sums_by_class_v": final_signed_sums,
+        "final_signed_weight_sum_spread_v": final_signed_spread,
+        "final_signed_weight_matrix_v": final_signed,
         "csv": str(csv_path),
         "wall_time_s": time.perf_counter() - start,
     }
@@ -355,6 +435,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
     ap.add_argument("--eval-samples", type=int, default=3)
     ap.add_argument("--feature-count", type=int, default=8)
     ap.add_argument("--nontarget-scale", type=float, default=0.5)
+    ap.add_argument("--error-mode", choices=ERROR_MODES, default="label-descent")
     ap.add_argument("--timeout", type=float, default=120.0)
     return ap
 
@@ -368,6 +449,8 @@ def validate_args(args: argparse.Namespace) -> None:
         raise ValueError("feature-count must be positive")
     if args.nontarget_scale < 0.0 or args.nontarget_scale > 1.0:
         raise ValueError("nontarget-scale must be in [0, 1]")
+    if args.error_mode not in ERROR_MODES:
+        raise ValueError(f"error-mode must be one of {ERROR_MODES}")
     if parse_counted_mnist_dataset(args.dataset) is None:
         raise ValueError("dataset must be a counted multiclass MNIST dataset")
 

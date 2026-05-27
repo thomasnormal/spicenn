@@ -1081,6 +1081,68 @@ def test_multiclass_block_sequence_can_directly_update_hidden_weights_from_reado
     assert ".meas tran whsigned_f0_final PARAM='whp_f0_final-whn_f0_final'" in netlist
 
 
+def test_multiclass_block_sequence_can_gate_direct_hidden_updates_with_feature_gate() -> None:
+    netlist = seq.generate_netlist(
+        train_records=_target0_two_feature_records(1),
+        eval_records=_target0_two_feature_records(1),
+        feature_count=2,
+        readout_update_mode="live",
+        hidden_update_mode="direct-readout-weighted",
+        hidden_credit_activation_model="NMOS",
+        error_mode="pairwise-margin-correction-descent",
+        score_timing_mode="early",
+        eligibility_gate_mode="competition",
+    )
+
+    assert "\nB" not in netlist
+    assert "Vhxsamp hxsamp 0 PWL(" in netlist
+    assert "Cxelig0 xelig0 0 20f IC=0" in netlist
+    assert "Chxelig0 hxelig0 0 20f IC=0" in netlist
+    assert "Mhxelig0_pass_clk hxelig0_pass_mid hxsamp xelig0 0 NSENSE W=16u L=180n" in netlist
+    assert "Mhxelig0_pass_gate hxelig0 egate0 hxelig0_pass_mid 0 NSENSE W=16u L=180n" in netlist
+    assert ".meas tran hxelig_f0_1 FIND V(hxelig0)" in netlist
+    assert "Mh0_c0_direct_pv_pup_e vwhi_ref hxelig0 h0_c0_direct_pv_pup0 0 NSENSE" in netlist
+    assert "Mh0_c0_direct_pv_pup_e vwhi_ref xelig0 h0_c0_direct_pv_pup0 0 NSENSE" not in netlist
+
+
+@pytest.mark.ngspice
+def test_multiclass_block_sequence_ngspice_gates_direct_hidden_update_eligibility(
+    tmp_path: Path,
+    ngspice_path: str,
+) -> None:
+    records = _target0_two_feature_records(1)
+    netlist = seq.generate_netlist(
+        train_records=records,
+        eval_records=records,
+        feature_count=2,
+        readout_update_mode="live",
+        hidden_update_mode="direct-readout-weighted",
+        hidden_credit_activation_model="NMOS",
+        hidden_direct_readout_gate_mode="raw",
+        error_mode="label-rail-descent",
+        score_timing_mode="early",
+        eligibility_gate_mode="competition",
+        eligibility_source_mode="act",
+        score_sense_mode="diode-mirror",
+        readout_forward_mode="diode",
+        nontarget_scale=0.0,
+    )
+
+    measures = run_netlist(
+        ngspice_path,
+        tmp_path / "direct_hidden_gated_eligibility.cir",
+        netlist,
+        timeout=60.0,
+    )
+
+    assert float(measures["egate_f0_1"]) > 1.0
+    assert float(measures["egate_f1_1"]) < 0.05
+    assert float(measures["xelig_f0_1"]) > 0.70
+    assert float(measures["xelig_f1_1"]) > 0.20
+    assert float(measures["hxelig_f0_1"]) > 0.30
+    assert float(measures["hxelig_f1_1"]) < 0.05
+
+
 def test_multiclass_block_sequence_can_use_raw_direct_hidden_readout_gates() -> None:
     records = _one_hot_records()
     netlist = seq.generate_netlist(

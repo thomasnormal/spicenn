@@ -150,6 +150,10 @@ def hidden_credit_node(feature_idx: int, suffix: str) -> str:
     return f"h{feature_idx}_{suffix}"
 
 
+def hidden_update_eligibility_node(feature_idx: int) -> str:
+    return f"hxelig{feature_idx}"
+
+
 def hidden_readout_weighted_credit_lines(
     *,
     class_count: int,
@@ -1402,6 +1406,11 @@ def generate_netlist(
             if eligibility_gate_mode == "contrast"
             else []
         ),
+        *(
+            [f"Vhxsamp hxsamp 0 {periodic_phase_pwl(cycle_count, start_ns=4.82, end_ns=5.05, active_cycles=train_cycles)}"]
+            if uses_hidden_update and eligibility_gate_mode in ("competition", "rank", "contrast")
+            else []
+        ),
         f"Vout out 0 {periodic_phase_pwl(cycle_count, start_ns=out_start_ns, end_ns=out_end_ns)}",
         f"Voutn outn 0 {active_low_phase_pwl(cycle_count, start_ns=out_start_ns, end_ns=out_end_ns, active_cycles=set(range(cycle_count)))}",
     ]
@@ -1494,6 +1503,15 @@ def generate_netlist(
                     f"Cxelig{feature} xelig{feature} 0 20f IC=0",
                     f"Rxelig{feature} xelig{feature} 0 1G",
                     f"Mxelig{feature}_rst xelig{feature} rst 0 0 NMOS W=4u L=180n",
+                    *(
+                        [
+                            f"C{hidden_update_eligibility_node(feature)} {hidden_update_eligibility_node(feature)} 0 20f IC=0",
+                            f"R{hidden_update_eligibility_node(feature)} {hidden_update_eligibility_node(feature)} 0 1G",
+                            f"M{hidden_update_eligibility_node(feature)}_rst {hidden_update_eligibility_node(feature)} rst 0 0 NMOS W=4u L=180n",
+                        ]
+                        if eligibility_gate_mode in ("competition", "rank", "contrast") and feature < feature_count
+                        else []
+                    ),
                 ]
                 if uses_hidden_update
                 else []
@@ -1567,6 +1585,16 @@ def generate_netlist(
                 gate_capacitance_f=8.0,
                 loss_width_u=32.0,
             )
+    if uses_hidden_update and eligibility_gate_mode in ("competition", "rank", "contrast"):
+        for feature in range(feature_count):
+            hxelg = hidden_update_eligibility_node(feature)
+            egate = eligibility_gate_node(feature)
+            mid = f"{hxelg}_pass_mid"
+            lines += [
+                f"R{mid} {mid} 0 1G",
+                f"M{hxelg}_pass_clk {mid} hxsamp xelig{feature} 0 NSENSE W=16u L=180n",
+                f"M{hxelg}_pass_gate {hxelg} {egate} {mid} 0 NSENSE W=16u L=180n",
+            ]
     for class_idx in range(class_count):
         targetp_values = [
             target_high if cycle in train_cycles and labels[cycle] == class_idx else 0.0 for cycle in range(cycle_count)
@@ -1832,6 +1860,11 @@ def generate_netlist(
         error_positive_nodes = [class_node(class_idx, "errp") for class_idx in range(class_count)]
         error_negative_nodes = [class_node(class_idx, "errn") for class_idx in range(class_count)]
         for feature in range(feature_count):
+            hidden_eligibility_node = (
+                hidden_update_eligibility_node(feature)
+                if eligibility_gate_mode in ("competition", "rank", "contrast")
+                else f"xelig{feature}"
+            )
             lines += hidden_readout_weighted_credit_lines(
                 class_count=class_count,
                 feature_idx=feature,
@@ -1844,7 +1877,7 @@ def generate_netlist(
             )
             lines += hidden_live_weight_update_lines(
                 feature_idx=feature,
-                eligibility_node=f"xelig{feature}",
+                eligibility_node=hidden_eligibility_node,
                 positive_credit_node=hidden_credit_node(feature, "hdp"),
                 negative_credit_node=hidden_credit_node(feature, "hdn"),
                 width_u=hidden_update_width_u,
@@ -1853,12 +1886,17 @@ def generate_netlist(
         error_positive_nodes = [class_node(class_idx, "errp") for class_idx in range(class_count)]
         error_negative_nodes = [class_node(class_idx, "errn") for class_idx in range(class_count)]
         for feature in range(feature_count):
+            hidden_eligibility_node = (
+                hidden_update_eligibility_node(feature)
+                if eligibility_gate_mode in ("competition", "rank", "contrast")
+                else f"xelig{feature}"
+            )
             lines += hidden_direct_readout_weighted_update_lines(
                 class_count=class_count,
                 feature_idx=feature,
                 error_positive_nodes=error_positive_nodes,
                 error_negative_nodes=error_negative_nodes,
-                eligibility_node=f"xelig{feature}",
+                eligibility_node=hidden_eligibility_node,
                 width_u=hidden_update_width_u,
                 activation_model=hidden_credit_activation_model,
                 readout_gate_mode=hidden_direct_readout_gate_mode,
@@ -2162,9 +2200,19 @@ def generate_netlist(
                 f".meas tran act_f{feature}_{cycle} FIND V(act{feature}) AT={base + 4.5:.2f}n",
                 f".meas tran elig_f{feature}_{cycle} FIND V(elig{feature}) AT={base + 4.5:.2f}n",
             ]
-            if uses_stored_hidden_credit_update and feature < feature_count:
+            if uses_hidden_update and feature < feature_count:
                 lines += [
                     f".meas tran xelig_f{feature}_{cycle} FIND V(xelig{feature}) AT={base + 4.5:.2f}n",
+                    *(
+                        [
+                            f".meas tran hxelig_f{feature}_{cycle} FIND V({hidden_update_eligibility_node(feature)}) AT={base + 5.08:.2f}n"
+                        ]
+                        if eligibility_gate_mode in ("competition", "rank", "contrast")
+                        else []
+                    ),
+                ]
+            if uses_stored_hidden_credit_update and feature < feature_count:
+                lines += [
                     f".meas tran hdp_f{feature}_{cycle} FIND V({hidden_credit_node(feature, 'hdp')}) AT={base + score_error_measure_ns:.2f}n",
                     f".meas tran hdn_f{feature}_{cycle} FIND V({hidden_credit_node(feature, 'hdn')}) AT={base + score_error_measure_ns:.2f}n",
                     f".meas tran hcredit_f{feature}_{cycle} PARAM='hdp_f{feature}_{cycle}-hdn_f{feature}_{cycle}'",
@@ -2684,6 +2732,44 @@ def eligibility_gate_stats(
     }
 
 
+def hidden_update_eligibility_stats(
+    measures: dict[str, float],
+    *,
+    sequence: list[str],
+    feature_count: int,
+) -> dict[str, Any]:
+    rows: list[list[float]] = []
+    active_25mv: list[int] = []
+    active_250mv: list[int] = []
+    active_500mv: list[int] = []
+    for cycle, seq in enumerate(sequence):
+        if seq != "train":
+            continue
+        keys = [f"hxelig_f{feature}_{cycle}" for feature in range(feature_count)]
+        if not all(key in measures for key in keys):
+            continue
+        values = [float(measures[key]) for key in keys]
+        rows.append(values)
+        active_25mv.append(sum(value > 25e-3 for value in values))
+        active_250mv.append(sum(value > 250e-3 for value in values))
+        active_500mv.append(sum(value > 500e-3 for value in values))
+    if not rows:
+        return {
+            "train_hidden_update_eligibility_rows_v": [],
+            "train_hidden_update_eligibility_active_features_25mv_mean": None,
+            "train_hidden_update_eligibility_active_features_250mv_mean": None,
+            "train_hidden_update_eligibility_active_features_500mv_mean": None,
+            "train_hidden_update_eligibility_max_v": None,
+        }
+    return {
+        "train_hidden_update_eligibility_rows_v": rows,
+        "train_hidden_update_eligibility_active_features_25mv_mean": float(np.mean(active_25mv)),
+        "train_hidden_update_eligibility_active_features_250mv_mean": float(np.mean(active_250mv)),
+        "train_hidden_update_eligibility_active_features_500mv_mean": float(np.mean(active_500mv)),
+        "train_hidden_update_eligibility_max_v": float(np.max(rows)),
+    }
+
+
 def hidden_credit_stats(
     measures: dict[str, float],
     *,
@@ -3050,6 +3136,7 @@ def run_case(args: argparse.Namespace) -> dict[str, Any]:
         **error_rail_stats(measures, labels=labels, sequence=sequence, class_count=args.class_count),
         **eligibility_stats(measures, sequence=sequence, total_feature_count=total_feature_count),
         **eligibility_gate_stats(measures, sequence=sequence, feature_count=feature_count),
+        **hidden_update_eligibility_stats(measures, sequence=sequence, feature_count=feature_count),
         **hidden_credit_stats(measures, sequence=sequence, feature_count=feature_count),
         **hidden_weight_progress_stats(
             measures,

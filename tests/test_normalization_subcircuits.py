@@ -91,6 +91,75 @@ def test_normalization_subcircuit_ngspice_target_pressure_tracks_nontarget_mass(
     assert float(wrong["e1_diff"]) >= float(clear["e1_diff"]) - 1e-3
 
 
+@pytest.mark.parametrize("approach", norm.APPROACHES)
+def test_normalization_subcircuit_ngspice_is_class_permutation_symmetric(
+    tmp_path: Path,
+    ngspice_path: str,
+    approach: str,
+) -> None:
+    for target_class in range(3):
+        wrong_class = (target_class + 1) % 3
+        other_class = (target_class + 2) % 3
+        scores = [0.0045, 0.0045, 0.0045]
+        scores[target_class] = 0.0015
+        scores[wrong_class] = 0.0075
+        scores[other_class] = 0.0045
+
+        measures = run_netlist(
+            ngspice_path,
+            tmp_path / f"normalizer_{approach}_target{target_class}_wrong{wrong_class}.cir",
+            norm.generate_netlist(
+                approach=approach,
+                case="target1_low_wrong0",
+                score_values=tuple(scores),
+                target_class=target_class,
+            ),
+            timeout=30.0,
+        )
+
+        assert float(measures[f"e{target_class}_diff"]) > 0.02
+        assert float(measures[f"e{wrong_class}_diff"]) < -0.02
+        assert float(measures[f"e{other_class}_diff"]) < -0.02
+
+
+@pytest.mark.parametrize("approach", norm.APPROACHES)
+def test_normalization_subcircuit_ngspice_preserves_direction_across_score_common_mode(
+    tmp_path: Path,
+    ngspice_path: str,
+    approach: str,
+) -> None:
+    low_scores = (0.0075, 0.0015, 0.0045)
+    high_scores = tuple(score + 0.04 for score in low_scores)
+
+    low = run_netlist(
+        ngspice_path,
+        tmp_path / f"normalizer_{approach}_low_common.cir",
+        norm.generate_netlist(
+            approach=approach,
+            case="target1_low_wrong0",
+            score_values=low_scores,
+            target_class=1,
+        ),
+        timeout=30.0,
+    )
+    high = run_netlist(
+        ngspice_path,
+        tmp_path / f"normalizer_{approach}_high_common.cir",
+        norm.generate_netlist(
+            approach=approach,
+            case="target1_low_wrong0",
+            score_values=high_scores,
+            target_class=1,
+        ),
+        timeout=30.0,
+    )
+
+    for measures in (low, high):
+        assert float(measures["e1_diff"]) > 0.02
+        assert float(measures["e0_diff"]) < -0.02
+        assert float(measures["e2_diff"]) < -0.02
+
+
 def test_normalization_subcircuit_summary_runner(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

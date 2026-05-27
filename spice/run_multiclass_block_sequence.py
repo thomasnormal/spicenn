@@ -43,6 +43,7 @@ ERROR_MODES = (
     "raw-common-ref-score-nontarget",
     "amplified-score-competitive",
     "amplified-score-pairwise",
+    "amplified-score-binary-descent",
     "pairwise-binary-descent",
     "restored-score-binary-descent",
     "restored-score-nontarget",
@@ -194,6 +195,36 @@ def class_local_pairwise_binary_descent_correction_lines(
             f"M{prefix}rgn_paircorr{gate_idx}_acc {prefix}rgn_paircorr{gate_idx}_gate acc 0 0 NREL W={pairwise_width_u:.6g}u L=180n",
         ]
     return lines
+
+
+def class_local_restored_score_binary_correction_lines(
+    *,
+    class_idx: int,
+    feature_idx: int,
+    activation_node: str,
+    positive_gate_node: str,
+    negative_gate_node: str,
+    width_u: float = 16.0,
+) -> list[str]:
+    prefix = f"c{class_idx}_f{feature_idx}_"
+    return [
+        f"M{prefix}gvp_bincorr_a vdd {activation_node} {prefix}gvp_bincorr_a 0 NREL W={width_u:.6g}u L=180n",
+        f"M{prefix}gvp_bincorr_label {prefix}gvp_bincorr_a {class_node(class_idx, 'targetp')} {prefix}gvp_bincorr_label 0 NSENSE W={width_u:.6g}u L=180n",
+        f"M{prefix}gvp_bincorr_gate {prefix}gvp_bincorr_label {negative_gate_node} {prefix}gvp_bincorr_gate 0 NSENSE W={width_u:.6g}u L=180n",
+        f"M{prefix}gvp_bincorr_g {prefix}gvp_bincorr_gate acc {class_node(class_idx, f'gvp{feature_idx}')} 0 NREL W={width_u:.6g}u L=180n",
+        f"M{prefix}rgp_bincorr_a {class_node(class_idx, f'rgp{feature_idx}')} {activation_node} {prefix}rgp_bincorr_a 0 NREL W={width_u:.6g}u L=180n",
+        f"M{prefix}rgp_bincorr_label {prefix}rgp_bincorr_a {class_node(class_idx, 'targetp')} {prefix}rgp_bincorr_label 0 NSENSE W={width_u:.6g}u L=180n",
+        f"M{prefix}rgp_bincorr_gate {prefix}rgp_bincorr_label {negative_gate_node} {prefix}rgp_bincorr_gate 0 NSENSE W={width_u:.6g}u L=180n",
+        f"M{prefix}rgp_bincorr_acc {prefix}rgp_bincorr_gate acc 0 0 NREL W={width_u:.6g}u L=180n",
+        f"M{prefix}gvn_bincorr_a vdd {activation_node} {prefix}gvn_bincorr_a 0 NREL W={width_u:.6g}u L=180n",
+        f"M{prefix}gvn_bincorr_label {prefix}gvn_bincorr_a {class_node(class_idx, 'targetn')} {prefix}gvn_bincorr_label 0 NSENSE W={width_u:.6g}u L=180n",
+        f"M{prefix}gvn_bincorr_gate {prefix}gvn_bincorr_label {positive_gate_node} {prefix}gvn_bincorr_gate 0 NSENSE W={width_u:.6g}u L=180n",
+        f"M{prefix}gvn_bincorr_g {prefix}gvn_bincorr_gate acc {class_node(class_idx, f'gvn{feature_idx}')} 0 NREL W={width_u:.6g}u L=180n",
+        f"M{prefix}rgn_bincorr_a {class_node(class_idx, f'rgn{feature_idx}')} {activation_node} {prefix}rgn_bincorr_a 0 NREL W={width_u:.6g}u L=180n",
+        f"M{prefix}rgn_bincorr_label {prefix}rgn_bincorr_a {class_node(class_idx, 'targetn')} {prefix}rgn_bincorr_label 0 NSENSE W={width_u:.6g}u L=180n",
+        f"M{prefix}rgn_bincorr_gate {prefix}rgn_bincorr_label {positive_gate_node} {prefix}rgn_bincorr_gate 0 NSENSE W={width_u:.6g}u L=180n",
+        f"M{prefix}rgn_bincorr_acc {prefix}rgn_bincorr_gate acc 0 0 NREL W={width_u:.6g}u L=180n",
+    ]
 
 
 def class_local_residual_score_gate_lines(
@@ -482,6 +513,7 @@ def generate_netlist(
     uses_score_common_gate = uses_common_ref_score or uses_raw_common_ref_score
     uses_amplified_competitive = error_mode == "amplified-score-competitive"
     uses_amplified_pairwise = error_mode == "amplified-score-pairwise"
+    uses_amplified_binary = error_mode == "amplified-score-binary-descent"
     uses_pairwise_binary = error_mode == "pairwise-binary-descent"
     uses_restored_binary = error_mode == "restored-score-binary-descent"
     uses_score_preamp = (
@@ -490,6 +522,7 @@ def generate_netlist(
         or uses_common_ref_score
         or uses_amplified_competitive
         or uses_amplified_pairwise
+        or uses_amplified_binary
     )
     uses_restored_winner = error_mode == "restored-winner-nontarget"
     uses_pairwise_decisions = uses_restored_winner or uses_pairwise_binary or uses_amplified_pairwise
@@ -604,7 +637,7 @@ def generate_netlist(
             lines += [
                 *low_gain_ref_state_lines(prefix=prefix, reset_node="scorepre"),
             ]
-            if uses_restored_score or uses_restored_binary:
+            if uses_restored_score or uses_restored_binary or uses_amplified_binary:
                 lines += [
                     f"C{prefix}decision {prefix}decision 0 20f IC=0",
                     f"C{prefix}decisionn {prefix}decisionn 0 20f IC=0",
@@ -719,6 +752,20 @@ def generate_netlist(
                         for opponent_idx in range(class_count)
                         if opponent_idx != class_idx
                     ],
+                )
+            elif uses_amplified_binary:
+                gradient_lines = class_local_residual_score_nontarget_gradient_lines(
+                    class_idx=class_idx,
+                    feature_idx=feature,
+                    activation_node=f"elig{feature}",
+                    score_gate_node=f"c{class_idx}_score_amp",
+                )
+                gradient_lines += class_local_restored_score_binary_correction_lines(
+                    class_idx=class_idx,
+                    feature_idx=feature,
+                    activation_node=f"elig{feature}",
+                    positive_gate_node=f"c{class_idx}_decision",
+                    negative_gate_node=f"c{class_idx}_decisionn",
                 )
             elif uses_restored_binary:
                 gradient_lines = class_local_restored_score_binary_descent_gradient_lines(

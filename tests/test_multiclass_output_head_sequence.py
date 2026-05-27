@@ -95,6 +95,26 @@ def test_multiclass_output_head_sequence_can_scale_nontarget_pulse_width() -> No
     assert "81.8n 1.1 84.2n 1.1" not in c0_targetn
 
 
+def test_multiclass_output_head_sequence_can_use_live_writer_without_gradient_storage() -> None:
+    records = _one_hot_records()
+    netlist = seq.generate_netlist(
+        train_records=records,
+        eval_records=records,
+        class_count=3,
+        feature_count=3,
+        writer_mode="live",
+    )
+
+    assert "\nB" not in netlist
+    assert "Vapply" not in netlist
+    assert "Vacc acc" not in netlist
+    assert "Cc0_gvp0" not in netlist
+    assert "Cc0_rgp0" not in netlist
+    assert "Mc0_f0_live_pos_up_e vwhi_ref act0 c0_f0_live_pos_up 0 NSENSE" in netlist
+    assert "Mc0_f0_live_pos_up_d c0_f0_live_pos_up c0_targetp c0_vwp0 0 NSENSE" in netlist
+    assert "Mc0_f0_live_neg_dn_d c0_f0_live_neg_dn c0_targetn vwlo_ref 0 NSENSE" in netlist
+
+
 def test_multiclass_output_head_sequence_validation() -> None:
     records = _one_hot_records()
     with pytest.raises(ValueError, match="class_count"):
@@ -124,6 +144,23 @@ def test_multiclass_output_head_sequence_validation() -> None:
             class_count=3,
             feature_count=3,
             error_mode="bad",
+        )
+    with pytest.raises(ValueError, match="writer_mode"):
+        seq.generate_netlist(
+            train_records=records,
+            eval_records=records,
+            class_count=3,
+            feature_count=3,
+            writer_mode="bad",
+        )
+    with pytest.raises(ValueError, match="live writer_mode"):
+        seq.generate_netlist(
+            train_records=records,
+            eval_records=records,
+            class_count=3,
+            feature_count=3,
+            writer_mode="live",
+            error_mode="score-gated-nontarget",
         )
 
 
@@ -213,6 +250,35 @@ def test_multiclass_output_head_sequence_ngspice_restored_score_mode_keeps_one_h
     )
     rows = seq.rows_from_measures(all_records, measures, sequence=sequence, class_count=3)
 
+    assert seq.accuracy(rows, "initial_eval") < 1.0
+    assert seq.accuracy(rows, "final_eval") == 1.0
+    assert min(row["score_margin_v"] for row in rows if row["sequence"] == "final_eval") > 1e-3
+
+
+def test_multiclass_output_head_sequence_ngspice_live_writer_learns_one_hot_sequence(
+    tmp_path: Path,
+    ngspice_path: str,
+) -> None:
+    records = _one_hot_records()
+    all_records = records + records + records
+    sequence = ["initial_eval"] * 3 + ["train"] * 3 + ["final_eval"] * 3
+    netlist = seq.generate_netlist(
+        train_records=records,
+        eval_records=records,
+        class_count=3,
+        feature_count=3,
+        writer_mode="live",
+    )
+    measures = run_netlist(
+        ngspice_path,
+        tmp_path / "multiclass_output_head_sequence_live.cir",
+        netlist,
+        timeout=20.0,
+    )
+    rows = seq.rows_from_measures(all_records, measures, sequence=sequence, class_count=3)
+
+    assert "Cc0_gvp0" not in netlist
+    assert "Vapply" not in netlist
     assert seq.accuracy(rows, "initial_eval") < 1.0
     assert seq.accuracy(rows, "final_eval") == 1.0
     assert min(row["score_margin_v"] for row in rows if row["sequence"] == "final_eval") > 1e-3

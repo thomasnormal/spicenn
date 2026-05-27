@@ -24,6 +24,7 @@ from run_spice_sweep import ROOT, detect_spice
 
 CYCLE_NS = 16.0
 ERROR_MODES = ("label-descent", "score-gated-nontarget", "restored-score-nontarget")
+WRITER_MODES = ("sampled", "live")
 
 
 def pwl(points: list[tuple[float, float]]) -> str:
@@ -231,6 +232,30 @@ def class_local_restored_score_nontarget_gradient_lines(
     ]
 
 
+def class_local_live_label_descent_update_lines(
+    *,
+    class_idx: int,
+    feature_idx: int,
+    activation_node: str,
+    width_u: float = 0.5,
+) -> list[str]:
+    prefix = f"c{class_idx}_f{feature_idx}_live_"
+    vwp = class_node(class_idx, f"vwp{feature_idx}")
+    vwn = class_node(class_idx, f"vwn{feature_idx}")
+    targetp = class_node(class_idx, "targetp")
+    targetn = class_node(class_idx, "targetn")
+    return [
+        f"M{prefix}pos_up_e vwhi_ref {activation_node} {prefix}pos_up 0 NSENSE W={width_u:.6g}u L=180n",
+        f"M{prefix}pos_up_d {prefix}pos_up {targetp} {vwp} 0 NSENSE W={width_u:.6g}u L=180n",
+        f"M{prefix}pos_dn_e {vwn} {activation_node} {prefix}pos_dn 0 NSENSE W={width_u:.6g}u L=180n",
+        f"M{prefix}pos_dn_d {prefix}pos_dn {targetp} vwlo_ref 0 NSENSE W={width_u:.6g}u L=180n",
+        f"M{prefix}neg_up_e vwhi_ref {activation_node} {prefix}neg_up 0 NSENSE W={width_u:.6g}u L=180n",
+        f"M{prefix}neg_up_d {prefix}neg_up {targetn} {vwn} 0 NSENSE W={width_u:.6g}u L=180n",
+        f"M{prefix}neg_dn_e {vwp} {activation_node} {prefix}neg_dn 0 NSENSE W={width_u:.6g}u L=180n",
+        f"M{prefix}neg_dn_d {prefix}neg_dn {targetn} vwlo_ref 0 NSENSE W={width_u:.6g}u L=180n",
+    ]
+
+
 def generate_netlist(
     *,
     train_records: list[dict[str, Any]],
@@ -243,6 +268,7 @@ def generate_netlist(
     nontarget_scale: float = 0.5,
     nontarget_width_scale: float = 1.0,
     error_mode: str = "label-descent",
+    writer_mode: str = "sampled",
 ) -> str:
     if class_count < 2:
         raise ValueError("class_count must be at least 2")
@@ -258,6 +284,10 @@ def generate_netlist(
         raise ValueError("nontarget_width_scale must be in [0, 1]")
     if error_mode not in ERROR_MODES:
         raise ValueError(f"error_mode must be one of {ERROR_MODES}")
+    if writer_mode not in WRITER_MODES:
+        raise ValueError(f"writer_mode must be one of {WRITER_MODES}")
+    if writer_mode == "live" and error_mode != "label-descent":
+        raise ValueError("live writer_mode currently supports label-descent only")
 
     all_records = eval_records + train_records + eval_records
     sequence = ["initial_eval"] * len(eval_records) + ["train"] * len(train_records) + ["final_eval"] * len(eval_records)
@@ -288,12 +318,15 @@ def generate_netlist(
         "Vdd vdd 0 {VDD}",
         "Vvwhi_ref vwhi_ref 0 0.42",
         "Vvwlo_ref vwlo_ref 0 0.28",
-        f"Vacc acc 0 {periodic_phase_pwl(cycle_count, start_ns=acc_start_ns, end_ns=acc_end_ns, active_cycles=train_cycles)}",
-        f"Vapply apply 0 {periodic_phase_pwl(cycle_count, start_ns=apply_start_ns, end_ns=apply_end_ns, active_cycles=train_cycles)}",
-        f"Vapplyn applyn 0 {active_low_phase_pwl(cycle_count, start_ns=apply_start_ns, end_ns=apply_end_ns, active_cycles=train_cycles)}",
         f"Vrst rst 0 {periodic_phase_pwl(cycle_count, start_ns=0.2, end_ns=1.0)}",
         f"Vrstscore rstscore 0 {multi_window_phase_pwl(cycle_count, windows=score_reset_windows)}",
     ]
+    if writer_mode == "sampled":
+        lines += [
+            f"Vacc acc 0 {periodic_phase_pwl(cycle_count, start_ns=acc_start_ns, end_ns=acc_end_ns, active_cycles=train_cycles)}",
+            f"Vapply apply 0 {periodic_phase_pwl(cycle_count, start_ns=apply_start_ns, end_ns=apply_end_ns, active_cycles=train_cycles)}",
+            f"Vapplyn applyn 0 {active_low_phase_pwl(cycle_count, start_ns=apply_start_ns, end_ns=apply_end_ns, active_cycles=train_cycles)}",
+        ]
     if uses_restored_score:
         lines += [
             "Voutref outref 0 0.25",
@@ -346,17 +379,18 @@ def generate_netlist(
                 ),
             ]
         for feature in range(feature_count):
-            for node in ("gvp", "gvn"):
-                lines += [
-                    f"C{class_node(class_idx, f'{node}{feature}')} {class_node(class_idx, f'{node}{feature}')} 0 2f IC=0",
-                    f"R{class_node(class_idx, f'{node}{feature}')} {class_node(class_idx, f'{node}{feature}')} 0 1G",
-                    f"Mreset_{class_node(class_idx, f'{node}{feature}')} {class_node(class_idx, f'{node}{feature}')} rst 0 0 NMOS W=4u L=180n",
-                ]
-            for node in ("rgp", "rgn"):
-                lines += [
-                    f"C{class_node(class_idx, f'{node}{feature}')} {class_node(class_idx, f'{node}{feature}')} 0 4f IC=1.2",
-                    f"R{class_node(class_idx, f'{node}{feature}')} {class_node(class_idx, f'{node}{feature}')} vdd 50k",
-                ]
+            if writer_mode == "sampled":
+                for node in ("gvp", "gvn"):
+                    lines += [
+                        f"C{class_node(class_idx, f'{node}{feature}')} {class_node(class_idx, f'{node}{feature}')} 0 2f IC=0",
+                        f"R{class_node(class_idx, f'{node}{feature}')} {class_node(class_idx, f'{node}{feature}')} 0 1G",
+                        f"Mreset_{class_node(class_idx, f'{node}{feature}')} {class_node(class_idx, f'{node}{feature}')} rst 0 0 NMOS W=4u L=180n",
+                    ]
+                for node in ("rgp", "rgn"):
+                    lines += [
+                        f"C{class_node(class_idx, f'{node}{feature}')} {class_node(class_idx, f'{node}{feature}')} 0 4f IC=1.2",
+                        f"R{class_node(class_idx, f'{node}{feature}')} {class_node(class_idx, f'{node}{feature}')} vdd 50k",
+                    ]
             lines += [
                 *signed_store_lines(
                     positive_node=class_node(class_idx, f"vwp{feature}"),
@@ -365,26 +399,34 @@ def generate_netlist(
                     negative_ic=initial_negative,
                 ),
                 *(
-                    class_local_score_gated_nontarget_gradient_lines(
+                    class_local_live_label_descent_update_lines(
                         class_idx=class_idx,
                         feature_idx=feature,
                         activation_node=f"act{feature}",
                     )
-                    if error_mode == "score-gated-nontarget"
-                    else class_local_restored_score_nontarget_gradient_lines(
-                        class_idx=class_idx,
-                        feature_idx=feature,
-                        activation_node=f"act{feature}",
-                        score_gate_node=f"c{class_idx}_decision",
-                    )
-                    if uses_restored_score
-                    else class_local_label_descent_gradient_lines(
-                        class_idx=class_idx,
-                        feature_idx=feature,
-                        activation_node=f"act{feature}",
+                    if writer_mode == "live"
+                    else (
+                        class_local_score_gated_nontarget_gradient_lines(
+                            class_idx=class_idx,
+                            feature_idx=feature,
+                            activation_node=f"act{feature}",
+                        )
+                        if error_mode == "score-gated-nontarget"
+                        else class_local_restored_score_nontarget_gradient_lines(
+                            class_idx=class_idx,
+                            feature_idx=feature,
+                            activation_node=f"act{feature}",
+                            score_gate_node=f"c{class_idx}_decision",
+                        )
+                        if uses_restored_score
+                        else class_local_label_descent_gradient_lines(
+                            class_idx=class_idx,
+                            feature_idx=feature,
+                            activation_node=f"act{feature}",
+                        )
                     )
                 ),
-                *class_local_bounded_update_lines(class_idx=class_idx, feature_idx=feature),
+                *(class_local_bounded_update_lines(class_idx=class_idx, feature_idx=feature) if writer_mode == "sampled" else []),
                 *class_local_readout_forward_lines(class_idx=class_idx, feature_idx=feature),
             ]
     for cycle, (record, seq) in enumerate(zip(all_records, sequence)):
@@ -493,6 +535,7 @@ def run_case(args: argparse.Namespace) -> dict[str, Any]:
         nontarget_scale=args.nontarget_scale,
         nontarget_width_scale=args.nontarget_width_scale,
         error_mode=args.error_mode,
+        writer_mode=args.writer_mode,
     )
     path = generated / f"{tag}.cir"
     measures = run_netlist(spice_bin, path, deck, timeout=args.timeout)
@@ -530,6 +573,7 @@ def run_case(args: argparse.Namespace) -> dict[str, Any]:
         "nontarget_scale": args.nontarget_scale,
         "nontarget_width_scale": args.nontarget_width_scale,
         "error_mode": args.error_mode,
+        "writer_mode": args.writer_mode,
         "train_samples": args.train_samples,
         "eval_samples": args.eval_samples,
         "initial_eval_accuracy": initial_acc,
@@ -564,6 +608,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
     ap.add_argument("--nontarget-scale", type=float, default=0.5)
     ap.add_argument("--nontarget-width-scale", type=float, default=1.0)
     ap.add_argument("--error-mode", choices=ERROR_MODES, default="label-descent")
+    ap.add_argument("--writer-mode", choices=WRITER_MODES, default="sampled")
     ap.add_argument("--timeout", type=float, default=120.0)
     return ap
 
@@ -585,6 +630,10 @@ def validate_args(args: argparse.Namespace) -> None:
         raise ValueError("nontarget-width-scale must be in [0, 1]")
     if args.error_mode not in ERROR_MODES:
         raise ValueError(f"error-mode must be one of {ERROR_MODES}")
+    if args.writer_mode not in WRITER_MODES:
+        raise ValueError(f"writer-mode must be one of {WRITER_MODES}")
+    if args.writer_mode == "live" and args.error_mode != "label-descent":
+        raise ValueError("live writer-mode currently supports label-descent only")
     if parse_counted_mnist_dataset(args.dataset) is None:
         raise ValueError("dataset must be a counted multiclass MNIST dataset")
 

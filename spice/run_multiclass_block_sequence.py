@@ -1238,6 +1238,7 @@ def generate_netlist(
     readout_forward_mode: str = "direct",
     eligibility_gate_mode: str = "raw",
     eligibility_source_mode: str = "pre-p",
+    readout_update_eligibility_ref: float = 1.2,
     eligibility_contrast_common_resistance_ohm: float = 1.0e6,
     eligibility_contrast_common_capacitance_f: float = 1.0,
     class_bias_mode: str = "none",
@@ -1280,6 +1281,7 @@ def generate_netlist(
         "hidden_direct_high_ref": hidden_direct_high_ref,
         "hidden_direct_low_ref": hidden_direct_low_ref,
         "hidden_direct_complement_width_scale": hidden_direct_complement_width_scale,
+        "readout_update_eligibility_ref": readout_update_eligibility_ref,
         "eligibility_contrast_common_resistance_ohm": eligibility_contrast_common_resistance_ohm,
         "eligibility_contrast_common_capacitance_f": eligibility_contrast_common_capacitance_f,
     }.items():
@@ -1291,6 +1293,8 @@ def generate_netlist(
         raise ValueError("readout_center_resistance must be nonnegative")
     if readout_center_voltage < 0.0 or readout_center_voltage > 1.2:
         raise ValueError("readout_center_voltage must stay within supply rails")
+    if readout_update_eligibility_ref <= 0.0 or readout_update_eligibility_ref > 1.2:
+        raise ValueError("readout_update_eligibility_ref must stay in (0, 1.2]")
     if initial_readout_states is not None:
         for (class_idx, feature_idx), (positive_ic, negative_ic) in initial_readout_states.items():
             if class_idx < 0 or class_idx >= class_count:
@@ -1545,6 +1549,11 @@ def generate_netlist(
         f"Vsamp samp 0 {periodic_phase_pwl(cycle_count, start_ns=2.5, end_ns=3.5)}",
         f"Vsampn sampn 0 {active_low_phase_pwl(cycle_count, start_ns=2.5, end_ns=3.5, active_cycles=set(range(cycle_count)))}",
         *(
+            [f"Vrelig_ref relig_ref 0 {readout_update_eligibility_ref:.12g}"]
+            if eligibility_gate_mode in ("competition", "rank", "contrast")
+            else []
+        ),
+        *(
             [
                 f"Veligpre eligpre 0 {periodic_phase_pwl(cycle_count, start_ns=3.55, end_ns=target_end_ns + 0.20, active_cycles=train_cycles)}",
                 f"Veligdec eligdec 0 {periodic_phase_pwl(cycle_count, start_ns=3.65, end_ns=4.35, active_cycles=train_cycles)}",
@@ -1776,7 +1785,7 @@ def generate_netlist(
                 f"M{relig}_pgate_dis_elig {pgate} elig{feature} {mid_elig} 0 NREL W=16u L=180n",
                 f"M{relig}_pgate_dis_gate {mid_elig} {egate} {mid_gate} 0 NSENSE W=16u L=180n",
                 f"M{relig}_pgate_dis_clk {mid_gate} relsamp 0 0 NSENSE W=16u L=180n",
-                f"M{relig}_restore_p {relig} {pgate} vdd vdd PMOS W=16u L=180n",
+                f"M{relig}_restore_p {relig} {pgate} relig_ref relig_ref PMOS W=16u L=180n",
             ]
     for class_idx in range(class_count):
         targetp_values = [
@@ -3304,6 +3313,7 @@ def run_case(args: argparse.Namespace) -> dict[str, Any]:
         readout_forward_mode=args.readout_forward_mode,
         eligibility_gate_mode=args.eligibility_gate_mode,
         eligibility_source_mode=args.eligibility_source_mode,
+        readout_update_eligibility_ref=args.readout_update_eligibility_ref,
         eligibility_contrast_common_resistance_ohm=args.eligibility_contrast_common_resistance,
         eligibility_contrast_common_capacitance_f=args.eligibility_contrast_common_capacitance_f,
         class_bias_mode=args.class_bias_mode,
@@ -3472,6 +3482,11 @@ def run_case(args: argparse.Namespace) -> dict[str, Any]:
         "readout_forward_mode": args.readout_forward_mode,
         "eligibility_gate_mode": args.eligibility_gate_mode,
         "eligibility_source_mode": args.eligibility_source_mode,
+        "readout_update_eligibility_ref": (
+            args.readout_update_eligibility_ref
+            if args.eligibility_gate_mode in ("competition", "rank", "contrast")
+            else None
+        ),
         "eligibility_contrast_common_resistance_ohm": (
             args.eligibility_contrast_common_resistance if args.eligibility_gate_mode == "contrast" else None
         ),
@@ -3624,6 +3639,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
     ap.add_argument("--readout-forward-mode", choices=READOUT_FORWARD_MODES, default="direct")
     ap.add_argument("--eligibility-gate-mode", choices=ELIGIBILITY_GATE_MODES, default="raw")
     ap.add_argument("--eligibility-source-mode", choices=ELIGIBILITY_SOURCE_MODES, default="pre-p")
+    ap.add_argument("--readout-update-eligibility-ref", type=float, default=1.2)
     ap.add_argument("--eligibility-contrast-common-resistance", type=float, default=1.0e6)
     ap.add_argument("--eligibility-contrast-common-capacitance-f", type=float, default=1.0)
     ap.add_argument("--class-bias-mode", choices=CLASS_BIAS_MODES, default="none")
@@ -3690,6 +3706,8 @@ def validate_args(args: argparse.Namespace) -> None:
         raise ValueError("readout-center-resistance must be nonnegative")
     if args.readout_center_voltage < 0.0 or args.readout_center_voltage > 1.2:
         raise ValueError("readout-center-voltage must stay within supply rails")
+    if args.readout_update_eligibility_ref <= 0.0 or args.readout_update_eligibility_ref > 1.2:
+        raise ValueError("readout-update-eligibility-ref must stay in (0, 1.2]")
     if args.readout_width <= 0.0:
         raise ValueError("readout-width must be positive")
     if args.score_capacitance_f <= 0.0:

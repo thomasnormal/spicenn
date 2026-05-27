@@ -1299,14 +1299,43 @@ def test_multiclass_block_sequence_uses_sampled_gated_readout_eligibility() -> N
     )
 
     assert "Vrelsamp relsamp 0 PWL(" in netlist
+    assert "Vrelig_ref relig_ref 0 1.2" in netlist
     assert "Crelig0 relig0 0 20f IC=0" in netlist
     assert "Crelig0_pgate relig0_pgate 0 2f IC=1.2" in netlist
     assert "Mrelig0_pgate_dis_elig relig0_pgate elig0 relig0_pgate_elig 0 NREL W=16u L=180n" in netlist
     assert "Mrelig0_pgate_dis_gate relig0_pgate_elig egate0 relig0_pgate_gate 0 NSENSE W=16u L=180n" in netlist
     assert "Mrelig0_pgate_dis_clk relig0_pgate_gate relsamp 0 0 NSENSE W=16u L=180n" in netlist
-    assert "Mrelig0_restore_p relig0 relig0_pgate vdd vdd PMOS W=16u L=180n" in netlist
+    assert "Mrelig0_restore_p relig0 relig0_pgate relig_ref relig_ref PMOS W=16u L=180n" in netlist
     assert "Mc0_f0_live_pos_up_e vwhi_ref relig0 c0_f0_live_pos_up 0 NSENSE W=0.5u L=180n" in netlist
     assert "Mc0_f0_live_pos_up_e vwhi_ref egate0" not in netlist
+
+
+@pytest.mark.ngspice
+def test_multiclass_block_sequence_ngspice_bounds_gated_readout_eligibility_ref(
+    tmp_path: Path,
+    ngspice_path: str,
+) -> None:
+    records = _target0_two_feature_records(1)
+    netlist = seq.generate_netlist(
+        train_records=records,
+        eval_records=records,
+        feature_count=2,
+        readout_update_mode="live",
+        error_mode="label-rail-descent",
+        eligibility_gate_mode="competition",
+        eligibility_source_mode="act",
+        readout_update_eligibility_ref=0.65,
+    )
+
+    measures = run_netlist(
+        ngspice_path,
+        tmp_path / "bounded_readout_eligibility_ref.cir",
+        netlist,
+        timeout=60.0,
+    )
+
+    assert 0.45 < float(measures["relig_f0_1"]) < 0.75
+    assert float(measures["relig_f1_1"]) < 0.05
 
 
 def test_multiclass_block_sequence_can_use_raw_direct_hidden_readout_gates() -> None:
@@ -1463,6 +1492,10 @@ def test_multiclass_block_sequence_validation() -> None:
         seq.generate_netlist(train_records=records, eval_records=records, readout_update_mode="live", readout_update_width_u=0)
     with pytest.raises(ValueError, match="readout-update-width"):
         seq.main_for_test(["--readout-update-width", "0"])
+    with pytest.raises(ValueError, match="readout_update_eligibility_ref"):
+        seq.generate_netlist(train_records=records, eval_records=records, readout_update_eligibility_ref=0)
+    with pytest.raises(ValueError, match="readout-update-eligibility-ref"):
+        seq.main_for_test(["--readout-update-eligibility-ref", "1.3"])
     with pytest.raises(ValueError, match="hidden_update_mode"):
         seq.generate_netlist(train_records=records, eval_records=records, hidden_update_mode="missing")
     with pytest.raises(ValueError, match="hidden_direct_readout_gate_mode"):

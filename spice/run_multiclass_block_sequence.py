@@ -50,6 +50,7 @@ from run_spice_sweep import ROOT, detect_spice
 SCENARIOS = ("target-repeat", "one-hot", "mnist")
 CLASS_BIAS_MODES = ("none", "target-only", "label-descent")
 READOUT_UPDATE_MODES = ("sampled", "live")
+HIDDEN_UPDATE_MODES = ("none", "readout-weighted")
 SCORE_TIMING_MODES = ("late", "early")
 SCORE_SENSE_MODES = ("voltage", "current-clamp")
 READOUT_FORWARD_MODES = ("direct", "diode")
@@ -104,6 +105,83 @@ def normalizer_error_approach(error_mode: str) -> str:
 
 def pairwise_decision_node(class_idx: int, opponent_idx: int) -> str:
     return f"c{class_idx}_gt_c{opponent_idx}_decision"
+
+
+def hidden_credit_node(feature_idx: int, suffix: str) -> str:
+    return f"h{feature_idx}_{suffix}"
+
+
+def hidden_readout_weighted_credit_lines(
+    *,
+    class_count: int,
+    feature_idx: int,
+    error_positive_nodes: list[str],
+    error_negative_nodes: list[str],
+    width_u: float = 8.0,
+) -> list[str]:
+    hdp = hidden_credit_node(feature_idx, "hdp")
+    hdn = hidden_credit_node(feature_idx, "hdn")
+    lines = [
+        f"C{hdp} {hdp} 0 12f IC=0",
+        f"C{hdn} {hdn} 0 12f IC=0",
+        f"R{hdp} {hdp} 0 1G",
+        f"R{hdn} {hdn} 0 1G",
+        f"Mreset_{hdp} {hdp} rst 0 0 NMOS W=4u L=180n",
+        f"Mreset_{hdn} {hdn} rst 0 0 NMOS W=4u L=180n",
+    ]
+    for class_idx in range(class_count):
+        errp = error_positive_nodes[class_idx]
+        errn = error_negative_nodes[class_idx]
+        vwp = class_node(class_idx, f"vwp{feature_idx}")
+        vwn = class_node(class_idx, f"vwn{feature_idx}")
+        act = f"act{feature_idx}"
+        prefix = f"h{feature_idx}_c{class_idx}_"
+        lines += [
+            f"R{prefix}pv_e {prefix}pv_e 0 1G",
+            f"R{prefix}pv_w {prefix}pv_w 0 1G",
+            f"M{prefix}hdp_pv_e vdd {errp} {prefix}pv_e 0 NSENSE W={width_u:.6g}u L=180n",
+            f"M{prefix}hdp_pv_w {prefix}pv_e {vwp} {prefix}pv_w 0 NSENSE W={width_u:.6g}u L=180n",
+            f"M{prefix}hdp_pv_a {prefix}pv_w {act} {hdp} 0 NREL W={width_u:.6g}u L=180n",
+            f"R{prefix}pn_e {prefix}pn_e 0 1G",
+            f"R{prefix}pn_w {prefix}pn_w 0 1G",
+            f"M{prefix}hdn_pv_e vdd {errp} {prefix}pn_e 0 NSENSE W={width_u:.6g}u L=180n",
+            f"M{prefix}hdn_pv_w {prefix}pn_e {vwn} {prefix}pn_w 0 NSENSE W={width_u:.6g}u L=180n",
+            f"M{prefix}hdn_pv_a {prefix}pn_w {act} {hdn} 0 NREL W={width_u:.6g}u L=180n",
+            f"R{prefix}nv_e {prefix}nv_e 0 1G",
+            f"R{prefix}nv_w {prefix}nv_w 0 1G",
+            f"M{prefix}hdp_nv_e vdd {errn} {prefix}nv_e 0 NSENSE W={width_u:.6g}u L=180n",
+            f"M{prefix}hdp_nv_w {prefix}nv_e {vwn} {prefix}nv_w 0 NSENSE W={width_u:.6g}u L=180n",
+            f"M{prefix}hdp_nv_a {prefix}nv_w {act} {hdp} 0 NREL W={width_u:.6g}u L=180n",
+            f"R{prefix}nn_e {prefix}nn_e 0 1G",
+            f"R{prefix}nn_w {prefix}nn_w 0 1G",
+            f"M{prefix}hdn_nv_e vdd {errn} {prefix}nn_e 0 NSENSE W={width_u:.6g}u L=180n",
+            f"M{prefix}hdn_nv_w {prefix}nn_e {vwp} {prefix}nn_w 0 NSENSE W={width_u:.6g}u L=180n",
+            f"M{prefix}hdn_nv_a {prefix}nn_w {act} {hdn} 0 NREL W={width_u:.6g}u L=180n",
+        ]
+    return lines
+
+
+def hidden_live_weight_update_lines(
+    *,
+    feature_idx: int,
+    eligibility_node: str,
+    positive_credit_node: str,
+    negative_credit_node: str,
+    width_u: float = 0.25,
+) -> list[str]:
+    whp = f"whp{feature_idx}"
+    whn = f"whn{feature_idx}"
+    prefix = f"h{feature_idx}_live_"
+    return [
+        f"M{prefix}pos_up_e vwhi_ref {eligibility_node} {prefix}pos_up 0 NSENSE W={width_u:.6g}u L=180n",
+        f"M{prefix}pos_up_d {prefix}pos_up {positive_credit_node} {whp} 0 NSENSE W={width_u:.6g}u L=180n",
+        f"M{prefix}pos_dn_e {whn} {eligibility_node} {prefix}pos_dn 0 NSENSE W={width_u:.6g}u L=180n",
+        f"M{prefix}pos_dn_d {prefix}pos_dn {positive_credit_node} vwlo_ref 0 NSENSE W={width_u:.6g}u L=180n",
+        f"M{prefix}neg_up_e vwhi_ref {eligibility_node} {prefix}neg_up 0 NSENSE W={width_u:.6g}u L=180n",
+        f"M{prefix}neg_up_d {prefix}neg_up {negative_credit_node} {whn} 0 NSENSE W={width_u:.6g}u L=180n",
+        f"M{prefix}neg_dn_e {whp} {eligibility_node} {prefix}neg_dn 0 NSENSE W={width_u:.6g}u L=180n",
+        f"M{prefix}neg_dn_d {prefix}neg_dn {negative_credit_node} vwlo_ref 0 NSENSE W={width_u:.6g}u L=180n",
+    ]
 
 
 def pairwise_winner_lines(
@@ -765,6 +843,9 @@ def generate_netlist(
     normalizer_error_clock_high: float = 1.2,
     error_mode: str = "label-descent",
     readout_update_mode: str = "sampled",
+    hidden_update_mode: str = "none",
+    hidden_credit_width_u: float = 8.0,
+    hidden_update_width_u: float = 0.25,
     score_timing_mode: str = "late",
     score_sense_mode: str = "voltage",
     readout_forward_mode: str = "direct",
@@ -799,6 +880,8 @@ def generate_netlist(
         "pairwise_margin_target_v": pairwise_margin_target_v,
         "pairwise_margin_error_drive_scale": pairwise_margin_error_drive_scale,
         "normalizer_error_clock_high": normalizer_error_clock_high,
+        "hidden_credit_width_u": hidden_credit_width_u,
+        "hidden_update_width_u": hidden_update_width_u,
         "eligibility_contrast_common_resistance_ohm": eligibility_contrast_common_resistance_ohm,
         "eligibility_contrast_common_capacitance_f": eligibility_contrast_common_capacitance_f,
     }.items():
@@ -818,6 +901,8 @@ def generate_netlist(
         raise ValueError(f"error_mode must be one of {ERROR_MODES}")
     if readout_update_mode not in READOUT_UPDATE_MODES:
         raise ValueError(f"readout_update_mode must be one of {READOUT_UPDATE_MODES}")
+    if hidden_update_mode not in HIDDEN_UPDATE_MODES:
+        raise ValueError(f"hidden_update_mode must be one of {HIDDEN_UPDATE_MODES}")
     if score_timing_mode not in SCORE_TIMING_MODES:
         raise ValueError(f"score_timing_mode must be one of {SCORE_TIMING_MODES}")
     if score_sense_mode not in SCORE_SENSE_MODES:
@@ -828,6 +913,8 @@ def generate_netlist(
         raise ValueError(f"eligibility_gate_mode must be one of {ELIGIBILITY_GATE_MODES}")
     if score_sense_mode == "current-clamp" and error_mode != "label-descent":
         raise ValueError("current-clamp score_sense_mode is only a label-descent readout diagnostic")
+    if hidden_update_mode != "none" and error_mode not in ERROR_RAIL_DESCENT_MODES:
+        raise ValueError("hidden_update_mode requires an error-rail descent mode")
     if class_bias_mode not in CLASS_BIAS_MODES:
         raise ValueError(f"class_bias_mode must be one of {CLASS_BIAS_MODES}")
     if class_bias_input < 0.0 or class_bias_input > 1.2:
@@ -862,6 +949,7 @@ def generate_netlist(
     uses_pairwise_score_competition = error_mode == "pairwise-score-competition-descent"
     uses_pairwise_margin_correction = error_mode == "pairwise-margin-correction-descent"
     uses_normalizer_error = error_mode in NORMALIZER_ERROR_MODES
+    uses_hidden_update = hidden_update_mode == "readout-weighted"
     normalizer_approach = normalizer_error_approach(error_mode) if uses_normalizer_error else None
     uses_score_common_gate = uses_common_ref_score or uses_raw_common_ref_score
     uses_score_common_gate_nodes = uses_score_common_gate or uses_common_score_mass or uses_common_score_mass_pairwise
@@ -1101,6 +1189,15 @@ def generate_netlist(
             f"Cact_raw{feature} act_raw{feature} 0 20f IC=0",
             f"Cact_store{feature} act{feature} 0 20f IC=0",
             f"Celig{feature} elig{feature} 0 20f IC=0",
+            *(
+                [
+                    f"Cxelig{feature} xelig{feature} 0 20f IC=0",
+                    f"Rxelig{feature} xelig{feature} 0 1G",
+                    f"Mxelig{feature}_rst xelig{feature} rst 0 0 NMOS W=4u L=180n",
+                ]
+                if uses_hidden_update
+                else []
+            ),
             f"Cactrow{feature} actrow{feature} 0 1f IC=0",
             f"Rpre_p{feature} pre_p{feature} 0 1G",
             f"Rpre_n{feature} pre_n{feature} 0 1G",
@@ -1122,6 +1219,14 @@ def generate_netlist(
             f"Mact_store{feature}_p act{feature} sampn act_raw{feature} vdd PMOS W=32u L=180n",
             f"Melig{feature}_n elig{feature} samp pre_p{feature} 0 NMOS W=16u L=180n",
             f"Melig{feature}_p elig{feature} sampn pre_p{feature} vdd PMOS W=32u L=180n",
+            *(
+                [
+                    f"Mxelig{feature}_n xelig{feature} samp row{feature} 0 NMOS W=16u L=180n",
+                    f"Mxelig{feature}_p xelig{feature} sampn row{feature} vdd PMOS W=32u L=180n",
+                ]
+                if uses_hidden_update
+                else []
+            ),
             f"Mactrow{feature}_n actrow{feature} out act{feature} 0 NMOS W=16u L=180n",
             f"Mactrow{feature}_p actrow{feature} outn act{feature} vdd PMOS W=32u L=180n",
         ]
@@ -1398,6 +1503,24 @@ def generate_netlist(
                 + f" vdd 0 {spice_subckt_name(normalizer_approach)}"
             ),
         ]
+    if uses_hidden_update:
+        error_positive_nodes = [class_node(class_idx, "errp") for class_idx in range(class_count)]
+        error_negative_nodes = [class_node(class_idx, "errn") for class_idx in range(class_count)]
+        for feature in range(feature_count):
+            lines += hidden_readout_weighted_credit_lines(
+                class_count=class_count,
+                feature_idx=feature,
+                error_positive_nodes=error_positive_nodes,
+                error_negative_nodes=error_negative_nodes,
+                width_u=hidden_credit_width_u,
+            )
+            lines += hidden_live_weight_update_lines(
+                feature_idx=feature,
+                eligibility_node=f"xelig{feature}",
+                positive_credit_node=hidden_credit_node(feature, "hdp"),
+                negative_credit_node=hidden_credit_node(feature, "hdn"),
+                width_u=hidden_update_width_u,
+            )
     for class_idx in range(class_count):
         for feature in range(total_feature_count):
             activation_node = (
@@ -1679,6 +1802,13 @@ def generate_netlist(
                 f".meas tran act_f{feature}_{cycle} FIND V(act{feature}) AT={base + 4.5:.2f}n",
                 f".meas tran elig_f{feature}_{cycle} FIND V(elig{feature}) AT={base + 4.5:.2f}n",
             ]
+            if uses_hidden_update and feature < feature_count:
+                lines += [
+                    f".meas tran xelig_f{feature}_{cycle} FIND V(xelig{feature}) AT={base + 4.5:.2f}n",
+                    f".meas tran hdp_f{feature}_{cycle} FIND V({hidden_credit_node(feature, 'hdp')}) AT={base + score_error_measure_ns:.2f}n",
+                    f".meas tran hdn_f{feature}_{cycle} FIND V({hidden_credit_node(feature, 'hdn')}) AT={base + score_error_measure_ns:.2f}n",
+                    f".meas tran hcredit_f{feature}_{cycle} PARAM='hdp_f{feature}_{cycle}-hdn_f{feature}_{cycle}'",
+                ]
         if eligibility_gate_mode in ("competition", "rank", "contrast"):
             for feature in range(feature_count):
                 lines.append(
@@ -1780,6 +1910,13 @@ def generate_netlist(
                 ]
         if seq == "train":
             train_seen += 1
+            if uses_hidden_update:
+                for feature in range(feature_count):
+                    lines += [
+                        f".meas tran whp_f{feature}_after_train{train_seen} FIND V(whp{feature}) AT={base + 15.0:.2f}n",
+                        f".meas tran whn_f{feature}_after_train{train_seen} FIND V(whn{feature}) AT={base + 15.0:.2f}n",
+                        f".meas tran whsigned_f{feature}_after_train{train_seen} PARAM='whp_f{feature}_after_train{train_seen}-whn_f{feature}_after_train{train_seen}'",
+                    ]
             for class_idx in range(class_count):
                 for feature in range(total_feature_count):
                     lines += [
@@ -1799,6 +1936,13 @@ def generate_netlist(
                 f".meas tran c{class_idx}_f{feature}_signed_final PARAM='c{class_idx}_f{feature}_vwp_final-c{class_idx}_f{feature}_vwn_final'",
             ]
         lines += [f".meas tran c{class_idx}_signed_final PARAM='c{class_idx}_f0_signed_final'"]
+    if uses_hidden_update:
+        for feature in range(feature_count):
+            lines += [
+                f".meas tran whp_f{feature}_final FIND V(whp{feature}) AT={stop_ns - 0.5:.2f}n",
+                f".meas tran whn_f{feature}_final FIND V(whn{feature}) AT={stop_ns - 0.5:.2f}n",
+                f".meas tran whsigned_f{feature}_final PARAM='whp_f{feature}_final-whn_f{feature}_final'",
+            ]
     lines += [
         f".tran 5p {stop_ns:.2f}n uic",
         ".control",
@@ -2246,6 +2390,9 @@ def run_case(args: argparse.Namespace) -> dict[str, Any]:
         normalizer_error_clock_high=args.normalizer_error_clock_high,
         error_mode=args.error_mode,
         readout_update_mode=args.readout_update_mode,
+        hidden_update_mode=args.hidden_update_mode,
+        hidden_credit_width_u=args.hidden_credit_width,
+        hidden_update_width_u=args.hidden_update_width,
         score_timing_mode=args.score_timing_mode,
         score_sense_mode=args.score_sense_mode,
         readout_forward_mode=args.readout_forward_mode,
@@ -2273,6 +2420,11 @@ def run_case(args: argparse.Namespace) -> dict[str, Any]:
         [float(measures[f"c{class_idx}_f{feature}_vwn_final"]) for feature in range(total_feature_count)]
         for class_idx in range(args.class_count)
     ]
+    final_hidden_signed = (
+        [float(measures[f"whsigned_f{feature}_final"]) for feature in range(feature_count)]
+        if args.hidden_update_mode != "none"
+        else None
+    )
     train_progress = []
     for train_idx in range(1, len(train_records) + 1):
         train_progress.append(
@@ -2353,6 +2505,9 @@ def run_case(args: argparse.Namespace) -> dict[str, Any]:
         ),
         "error_mode": args.error_mode,
         "readout_update_mode": args.readout_update_mode,
+        "hidden_update_mode": args.hidden_update_mode,
+        "hidden_credit_width_u": args.hidden_credit_width if args.hidden_update_mode != "none" else None,
+        "hidden_update_width_u": args.hidden_update_width if args.hidden_update_mode != "none" else None,
         "score_timing_mode": args.score_timing_mode,
         "score_sense_mode": args.score_sense_mode,
         "readout_forward_mode": args.readout_forward_mode,
@@ -2375,6 +2530,7 @@ def run_case(args: argparse.Namespace) -> dict[str, Any]:
         "final_signed_matrix_v": final_signed,
         "final_positive_matrix_v": final_positive,
         "final_negative_matrix_v": final_negative,
+        "final_hidden_signed_v": final_hidden_signed,
         "signed_after_each_train_v": train_progress,
         **signed_readout_projection_stats(
             measures,
@@ -2456,6 +2612,9 @@ def build_arg_parser() -> argparse.ArgumentParser:
     ap.add_argument("--normalizer-error-clock-high", type=float, default=1.2)
     ap.add_argument("--error-mode", choices=ERROR_MODES, default="label-descent")
     ap.add_argument("--readout-update-mode", choices=READOUT_UPDATE_MODES, default="sampled")
+    ap.add_argument("--hidden-update-mode", choices=HIDDEN_UPDATE_MODES, default="none")
+    ap.add_argument("--hidden-credit-width", type=float, default=8.0)
+    ap.add_argument("--hidden-update-width", type=float, default=0.25)
     ap.add_argument("--score-timing-mode", choices=SCORE_TIMING_MODES, default="late")
     ap.add_argument("--score-sense-mode", choices=SCORE_SENSE_MODES, default="voltage")
     ap.add_argument("--readout-forward-mode", choices=READOUT_FORWARD_MODES, default="direct")
@@ -2483,6 +2642,8 @@ def validate_args(args: argparse.Namespace) -> None:
         raise ValueError(f"error-mode must be one of {ERROR_MODES}")
     if args.readout_update_mode not in READOUT_UPDATE_MODES:
         raise ValueError(f"readout-update-mode must be one of {READOUT_UPDATE_MODES}")
+    if args.hidden_update_mode not in HIDDEN_UPDATE_MODES:
+        raise ValueError(f"hidden-update-mode must be one of {HIDDEN_UPDATE_MODES}")
     if args.score_timing_mode not in SCORE_TIMING_MODES:
         raise ValueError(f"score-timing-mode must be one of {SCORE_TIMING_MODES}")
     if args.score_sense_mode not in SCORE_SENSE_MODES:
@@ -2497,6 +2658,8 @@ def validate_args(args: argparse.Namespace) -> None:
         and args.error_mode not in ERROR_RAIL_DESCENT_MODES
     ):
         raise ValueError("live readout-update-mode requires label-descent or error-rail descent modes")
+    if args.hidden_update_mode != "none" and args.error_mode not in ERROR_RAIL_DESCENT_MODES:
+        raise ValueError("hidden-update-mode requires an error-rail descent mode")
     if args.class_bias_mode not in CLASS_BIAS_MODES:
         raise ValueError(f"class-bias-mode must be one of {CLASS_BIAS_MODES}")
     if args.scenario == "mnist" and parse_counted_mnist_dataset(args.dataset) is None:
@@ -2539,6 +2702,10 @@ def validate_args(args: argparse.Namespace) -> None:
         raise ValueError("pairwise-margin-error-drive-scale must be positive")
     if args.normalizer_error_clock_high <= 0.0 or args.normalizer_error_clock_high > 1.2:
         raise ValueError("normalizer-error-clock-high must stay in (0, 1.2]")
+    if args.hidden_credit_width <= 0.0:
+        raise ValueError("hidden-credit-width must be positive")
+    if args.hidden_update_width <= 0.0:
+        raise ValueError("hidden-update-width must be positive")
     if args.eligibility_contrast_common_resistance <= 0.0:
         raise ValueError("eligibility-contrast-common-resistance must be positive")
     if args.eligibility_contrast_common_capacitance_f <= 0.0:

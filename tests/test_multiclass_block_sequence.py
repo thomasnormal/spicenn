@@ -899,6 +899,36 @@ def test_multiclass_block_sequence_can_move_score_error_timing_to_early_window()
     assert "Vapply" not in netlist
 
 
+def test_multiclass_block_sequence_can_live_update_hidden_weights_from_readout_credit() -> None:
+    netlist = seq.generate_netlist(
+        train_records=_target0_records(1),
+        eval_records=_target0_records(1),
+        readout_update_mode="live",
+        hidden_update_mode="readout-weighted",
+        hidden_credit_width_u=7.5,
+        hidden_update_width_u=0.2,
+        error_mode="pairwise-margin-correction-descent",
+        score_timing_mode="early",
+    )
+
+    assert "\nB" not in netlist
+    assert "Cxelig0 xelig0 0 20f IC=0" in netlist
+    assert "Mxelig0_n xelig0 samp row0 0 NMOS" in netlist
+    assert "Ch0_hdp h0_hdp 0 12f IC=0" in netlist
+    assert "Ch0_hdn h0_hdn 0 12f IC=0" in netlist
+    assert "Mh0_c0_hdp_pv_e vdd c0_errp h0_c0_pv_e 0 NSENSE W=7.5u" in netlist
+    assert "Mh0_c0_hdp_pv_w h0_c0_pv_e c0_vwp0 h0_c0_pv_w 0 NSENSE W=7.5u" in netlist
+    assert "Mh0_c0_hdp_pv_a h0_c0_pv_w act0 h0_hdp 0 NREL W=7.5u" in netlist
+    assert "Mh0_c0_hdn_pv_w h0_c0_pn_e c0_vwn0 h0_c0_pn_w 0 NSENSE W=7.5u" in netlist
+    assert "Mh0_c0_hdp_nv_w h0_c0_nv_e c0_vwn0 h0_c0_nv_w 0 NSENSE W=7.5u" in netlist
+    assert "Mh0_c0_hdn_nv_w h0_c0_nn_e c0_vwp0 h0_c0_nn_w 0 NSENSE W=7.5u" in netlist
+    assert "Mh0_live_pos_up_e vwhi_ref xelig0 h0_live_pos_up 0 NSENSE W=0.2u" in netlist
+    assert "Mh0_live_pos_up_d h0_live_pos_up h0_hdp whp0 0 NSENSE W=0.2u" in netlist
+    assert "Mh0_live_neg_up_d h0_live_neg_up h0_hdn whn0 0 NSENSE W=0.2u" in netlist
+    assert ".meas tran hcredit_f0_1 PARAM='hdp_f0_1-hdn_f0_1'" in netlist
+    assert ".meas tran whsigned_f0_final PARAM='whp_f0_final-whn_f0_final'" in netlist
+
+
 def test_multiclass_block_sequence_can_gate_nontarget_with_restored_winner() -> None:
     netlist = seq.generate_netlist(
         train_records=_target0_records(1),
@@ -971,6 +1001,14 @@ def test_multiclass_block_sequence_validation() -> None:
         )
     with pytest.raises(ValueError, match="readout-update-mode"):
         seq.main_for_test(["--readout-update-mode", "live", "--error-mode", "score-gated-nontarget"])
+    with pytest.raises(ValueError, match="hidden_update_mode"):
+        seq.generate_netlist(train_records=records, eval_records=records, hidden_update_mode="missing")
+    with pytest.raises(ValueError, match="hidden-update-mode"):
+        seq.main_for_test(["--hidden-update-mode", "readout-weighted", "--error-mode", "label-descent"])
+    with pytest.raises(ValueError, match="hidden-credit-width"):
+        seq.main_for_test(["--hidden-credit-width", "0"])
+    with pytest.raises(ValueError, match="hidden-update-width"):
+        seq.main_for_test(["--hidden-update-width", "0"])
     with pytest.raises(ValueError, match="score_timing_mode"):
         seq.generate_netlist(train_records=records, eval_records=records, score_timing_mode="missing")
     with pytest.raises(ValueError, match="score_sense_mode"):
@@ -1668,6 +1706,58 @@ def _readout_center_leak_netlist(resistance: float = 5e6) -> str:
     return "\n".join(lines)
 
 
+def _hidden_readout_weighted_writer_netlist(*, vwp: float, vwn: float) -> str:
+    lines = [
+        "* Low-level readout-weighted hidden-credit to live hidden-writer primitive.",
+        ".param VDD=1.2",
+        seq.mos_models(),
+        ".options method=gear reltol=1e-3 abstol=1e-12 vntol=1e-6",
+        "Vdd vdd 0 {VDD}",
+        "Vwhi vwhi_ref 0 1.05",
+        "Vwlo vwlo_ref 0 0.15",
+        "Vrst rst 0 PULSE(1.2 0 0.1n 10p 10p 9n 20n)",
+        "Verrp c0_errp 0 PULSE(0 1.2 1n 10p 10p 4n 20n)",
+        "Verrn c0_errn 0 0",
+        "Vact act0 0 1.2",
+        "Vxelig xelig0 0 1.2",
+        f"Cc0_vwp0 c0_vwp0 0 20f IC={vwp:.12g}",
+        f"Cc0_vwn0 c0_vwn0 0 20f IC={vwn:.12g}",
+        "Cwhp0 whp0 0 20f IC=0.45",
+        "Cwhn0 whn0 0 20f IC=0.40",
+        "Rc0_vwp0 c0_vwp0 0 1e15",
+        "Rc0_vwn0 c0_vwn0 0 1e15",
+        "Rwhp0 whp0 0 1e15",
+        "Rwhn0 whn0 0 1e15",
+        *seq.hidden_readout_weighted_credit_lines(
+            class_count=1,
+            feature_idx=0,
+            error_positive_nodes=["c0_errp"],
+            error_negative_nodes=["c0_errn"],
+            width_u=8.0,
+        ),
+        *seq.hidden_live_weight_update_lines(
+            feature_idx=0,
+            eligibility_node="xelig0",
+            positive_credit_node="h0_hdp",
+            negative_credit_node="h0_hdn",
+            width_u=0.25,
+        ),
+        ".meas tran hdp FIND V(h0_hdp) AT=5n",
+        ".meas tran hdn FIND V(h0_hdn) AT=5n",
+        ".meas tran whp_after FIND V(whp0) AT=8n",
+        ".meas tran whn_after FIND V(whn0) AT=8n",
+        ".meas tran signed_after PARAM='whp_after-whn_after'",
+        ".tran 2p 10n uic",
+        ".control",
+        "run",
+        "quit",
+        ".endc",
+        ".end",
+        "",
+    ]
+    return "\n".join(lines)
+
+
 def test_multiclass_block_sequence_ngspice_residual_score_gate_is_monotonic_low_floor(
     tmp_path: Path,
     ngspice_path: str,
@@ -1720,6 +1810,33 @@ def test_multiclass_block_sequence_ngspice_competitive_target_boost_strengthens_
     assert float(high["gvp_after"]) > float(low["gvp_after"]) + 5e-3
     assert float(high["rgp_after"]) < float(low["rgp_after"]) - 10e-6
     assert float(high["signed_after"]) > float(low["signed_after"]) + 1e-3
+
+
+def test_multiclass_block_sequence_ngspice_hidden_credit_drives_live_hidden_writer(
+    tmp_path: Path,
+    ngspice_path: str,
+) -> None:
+    positive = run_netlist(
+        ngspice_path,
+        tmp_path / "hidden_credit_writer_positive.cir",
+        _hidden_readout_weighted_writer_netlist(vwp=1.0, vwn=0.05),
+        timeout=20.0,
+    )
+    negative = run_netlist(
+        ngspice_path,
+        tmp_path / "hidden_credit_writer_negative.cir",
+        _hidden_readout_weighted_writer_netlist(vwp=0.05, vwn=1.0),
+        timeout=20.0,
+    )
+
+    assert float(positive["hdp"]) > float(positive["hdn"]) + 0.5
+    assert float(positive["signed_after"]) > 0.5
+    assert float(positive["whp_after"]) > 0.80
+    assert float(positive["whn_after"]) < 0.20
+    assert float(negative["hdn"]) > float(negative["hdp"]) + 0.5
+    assert float(negative["signed_after"]) < -0.5
+    assert float(negative["whn_after"]) > 0.80
+    assert float(negative["whp_after"]) < 0.20
 
 
 def test_multiclass_block_sequence_ngspice_common_ref_gate_tracks_score_above_class_common(
@@ -2887,6 +3004,8 @@ def test_multiclass_block_sequence_mnist_scenario_uses_counted_records(monkeypat
         for class_idx in range(3):
             for feature in range(8):
                 measures[f"c{class_idx}_f{feature}_signed_final"] = 0.01
+                measures[f"c{class_idx}_f{feature}_vwp_final"] = 0.405
+                measures[f"c{class_idx}_f{feature}_vwn_final"] = 0.395
         for train_idx in range(1, 4):
             for class_idx in range(3):
                 for feature in range(8):

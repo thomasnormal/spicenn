@@ -2,6 +2,24 @@
 
 ## 2026-05-27
 
+- Extended the conductance-row readout primitive with a `current-clamp`
+  sense mode that holds `score/scoren` at a low virtual-ground diagnostic
+  voltage and measures `I(Vscore_clamp)` / `I(Vscoren_clamp)`.  This is not
+  the final on-chip sense circuit, but it cleanly separates the row-conductance
+  synapse from the floating score-node problem.  Ngspice regressions now show
+  that with diode-isolated branches and symmetric positive/negative branch
+  widths, the readout currents are almost exactly additive (`two_positive`
+  within 5% of `2x single_positive`), inactive extra branches do not shunt the
+  active contribution, and mixed positive/negative features cancel to within
+  1% of the single-feature current.  Focused regression:
+  `python3 -m pytest tests/test_conductance_readout_primitive.py
+  tests/test_device_mnist01_block_training.py::test_block_netlist_can_emit_isolated_conductance_row_readout_with_score_load
+  tests/test_multiclass_score_contrast_primitive.py
+  tests/test_ngspice_availability.py -q` passed with 28 tests.  The next
+  circuit target is therefore a transistor/passive virtual-ground or
+  current-sense score stage that preserves this current-mode additivity inside
+  the strict training runner, not more tuning of the floating voltage score
+  capacitor.
 - Added `contrast-score-mass-descent` to the continuous multiclass block
   sequence.  The mode converts class score evidence into a centered analog
   `cX_score_contrast` rail by charging from the class-local score preamp and

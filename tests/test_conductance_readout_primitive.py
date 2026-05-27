@@ -31,8 +31,16 @@ def test_conductance_readout_primitive_validation() -> None:
         readout.generate_sum_netlist(sum_case="bad")
     with pytest.raises(ValueError, match="isolation"):
         readout.generate_sum_netlist(sum_case="single_positive", isolation="bad")
+    with pytest.raises(ValueError, match="sense_mode"):
+        readout.generate_sum_netlist(sum_case="single_positive", sense_mode="bad")
+    with pytest.raises(ValueError, match="current-clamp"):
+        readout.generate_sum_netlist(sum_case="single_positive", sense_mode="current-clamp", include_decision=True)
     with pytest.raises(ValueError, match="readout_width"):
         readout.generate_netlist(readout_case="positive", readout_width=0.0)
+    with pytest.raises(ValueError, match="readout_negative_width_scale"):
+        readout.generate_sum_netlist(sum_case="single_positive", readout_negative_width_scale=0.0)
+    with pytest.raises(ValueError, match="current_clamp_voltage"):
+        readout.generate_sum_netlist(sum_case="single_positive", sense_mode="current-clamp", current_clamp_voltage=0.0)
     with pytest.raises(ValueError, match="decision_pullup_width"):
         readout.generate_sum_netlist(sum_case="single_positive", include_decision=True, decision_pullup_width=0.0)
     with pytest.raises(ValueError, match="bias_width"):
@@ -93,6 +101,8 @@ def _run_sum_case(
     *,
     isolation: str = "direct",
     score_load_resistance: float = 1e9,
+    sense_mode: str = "voltage",
+    readout_negative_width_scale: float = 0.75,
 ) -> dict[str, float]:
     return run_netlist(
         ngspice_path,
@@ -102,10 +112,29 @@ def _run_sum_case(
             positive_weight=0.50,
             negative_weight=0.34,
             isolation=isolation,
+            sense_mode=sense_mode,
+            readout_negative_width_scale=readout_negative_width_scale,
             score_load_resistance=score_load_resistance,
         ),
         timeout=20.0,
     )
+
+
+def test_conductance_readout_sum_primitive_emits_current_clamp_probe() -> None:
+    netlist = readout.generate_sum_netlist(
+        sum_case="single_positive",
+        isolation="diode",
+        sense_mode="current-clamp",
+        readout_negative_width_scale=1.0,
+    )
+
+    assert "\nB" not in netlist
+    assert "Vscore_clamp score 0 0.1" in netlist
+    assert "Vscoren_clamp scoren 0 0.1" in netlist
+    assert "Cscore score" not in netlist
+    assert "Rscore score" not in netlist
+    assert "Movneg0_cond actrow0 vwn0 midn0 0 NMOS W=64u L=180n" in netlist
+    assert ".meas tran score_current_margin PARAM='score_current-scoren_current'" in netlist
 
 
 def test_conductance_readout_sum_primitive_ngspice_direct_floating_is_not_additive(
@@ -215,6 +244,67 @@ def test_conductance_readout_sum_primitive_ngspice_mid_load_drives_score_latch(
         assert abs(float(measures["score_margin"])) < 2e-3
         # The regenerative decision latch is not a neutral dead-zone detector.
         assert abs(decision_diff) > 0.05
+
+
+def test_conductance_readout_sum_primitive_ngspice_current_clamp_is_additive(
+    tmp_path: Path,
+    ngspice_path: str,
+) -> None:
+    single = _run_sum_case(
+        tmp_path,
+        ngspice_path,
+        "single_positive",
+        isolation="diode",
+        sense_mode="current-clamp",
+        readout_negative_width_scale=1.0,
+    )
+    double = _run_sum_case(
+        tmp_path,
+        ngspice_path,
+        "two_positive",
+        isolation="diode",
+        sense_mode="current-clamp",
+        readout_negative_width_scale=1.0,
+    )
+    inactive_extra = _run_sum_case(
+        tmp_path,
+        ngspice_path,
+        "inactive_extra",
+        isolation="diode",
+        sense_mode="current-clamp",
+        readout_negative_width_scale=1.0,
+    )
+
+    single_margin = float(single["score_current_margin"])
+    double_margin = float(double["score_current_margin"])
+    assert single_margin > 1e-7
+    assert 1.95 * single_margin < double_margin < 2.05 * single_margin
+    assert abs(float(inactive_extra["score_current_margin"]) - single_margin) < 0.02 * single_margin
+
+
+def test_conductance_readout_sum_primitive_ngspice_current_clamp_cancels_mixed_signs(
+    tmp_path: Path,
+    ngspice_path: str,
+) -> None:
+    single = _run_sum_case(
+        tmp_path,
+        ngspice_path,
+        "single_positive",
+        isolation="diode",
+        sense_mode="current-clamp",
+        readout_negative_width_scale=1.0,
+    )
+    mixed = _run_sum_case(
+        tmp_path,
+        ngspice_path,
+        "mixed_cancel",
+        isolation="diode",
+        sense_mode="current-clamp",
+        readout_negative_width_scale=1.0,
+    )
+
+    assert abs(float(mixed["score_current_margin"])) < 0.01 * float(single["score_current_margin"])
+    assert float(mixed["score_current_common"]) > 1e-7
 
 
 def test_conductance_readout_sum_primitive_ngspice_conductance_bias_shifts_score_without_erasing_delta(

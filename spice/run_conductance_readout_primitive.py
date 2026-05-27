@@ -14,6 +14,7 @@ from run_spice_sweep import ROOT, detect_spice
 READOUT_CASES = ("positive", "negative", "neutral", "inactive")
 SUM_CASES = ("single_positive", "two_positive", "mixed_cancel", "inactive_extra")
 SUM_ISOLATION_MODES = ("direct", "diode")
+SUM_SENSE_MODES = ("voltage", "current-clamp")
 
 
 def readout_values(case: str, *, positive_weight: float, negative_weight: float) -> tuple[float, float, float]:
@@ -106,8 +107,11 @@ def generate_sum_netlist(
     positive_weight: float = 0.50,
     negative_weight: float = 0.34,
     readout_width: float = 64.0,
+    readout_negative_width_scale: float = 0.75,
     score_capacitance: float = 10e-15,
     isolation: str = "direct",
+    sense_mode: str = "voltage",
+    current_clamp_voltage: float = 0.10,
     score_load_resistance: float = 1e9,
     include_decision: bool = False,
     decision_pullup_width: float = 8.0,
@@ -121,9 +125,15 @@ def generate_sum_netlist(
         raise ValueError(f"sum_case must be one of {SUM_CASES}")
     if isolation not in SUM_ISOLATION_MODES:
         raise ValueError(f"isolation must be one of {SUM_ISOLATION_MODES}")
+    if sense_mode not in SUM_SENSE_MODES:
+        raise ValueError(f"sense_mode must be one of {SUM_SENSE_MODES}")
+    if sense_mode == "current-clamp" and include_decision:
+        raise ValueError("current-clamp sense_mode does not expose voltage rails to the decision latch")
     for name, value in {
         "readout_width": readout_width,
+        "readout_negative_width_scale": readout_negative_width_scale,
         "score_capacitance": score_capacitance,
+        "current_clamp_voltage": current_clamp_voltage,
         "score_load_resistance": score_load_resistance,
         "decision_pullup_width": decision_pullup_width,
         "decision_pulldown_width": decision_pulldown_width,
@@ -143,11 +153,21 @@ def generate_sum_netlist(
         "Vrst rst 0 PULSE(0 1.2 0.0n 10p 10p 0.55n 20n)",
         "Vfwd fwd 0 PULSE(0 1.2 1.0n 10p 10p 3.0n 20n)",
         "Vfwdn fwdn 0 PULSE(1.2 0 1.0n 10p 10p 3.0n 20n)",
-        f"Cscore score 0 {score_capacitance:.12g} IC=0",
-        f"Cscoren scoren 0 {score_capacitance:.12g} IC=0",
-        f"Rscore score 0 {score_load_resistance:.12g}",
-        f"Rscoren scoren 0 {score_load_resistance:.12g}",
     ]
+    if sense_mode == "current-clamp":
+        lines += [
+            "* Ideal low-impedance current probe for virtual-ground readout characterization.",
+            "* This diagnoses branch-current additivity; it is not the final on-chip sense circuit.",
+            f"Vscore_clamp score 0 {current_clamp_voltage:.12g}",
+            f"Vscoren_clamp scoren 0 {current_clamp_voltage:.12g}",
+        ]
+    else:
+        lines += [
+            f"Cscore score 0 {score_capacitance:.12g} IC=0",
+            f"Cscoren scoren 0 {score_capacitance:.12g} IC=0",
+            f"Rscore score 0 {score_load_resistance:.12g}",
+            f"Rscoren scoren 0 {score_load_resistance:.12g}",
+        ]
     if include_score_bias:
         lines += [
             f"Cobp obp 0 20f IC={bias_positive_weight:.12g}",
@@ -195,7 +215,7 @@ def generate_sum_netlist(
         if isolation == "direct":
             lines += [
                 f"Movpos{index}_cond actrow{index} vwp{index} score 0 NMOS W={readout_width:.6g}u L=180n",
-                f"Movneg{index}_cond actrow{index} vwn{index} scoren 0 NMOS W={0.75 * readout_width:.6g}u L=180n",
+                f"Movneg{index}_cond actrow{index} vwn{index} scoren 0 NMOS W={readout_negative_width_scale * readout_width:.6g}u L=180n",
             ]
         else:
             lines += [
@@ -205,23 +225,33 @@ def generate_sum_netlist(
                 f"Rmidn{index} midn{index} 0 1G",
                 f"Movpos{index}_cond actrow{index} vwp{index} midp{index} 0 NMOS W={readout_width:.6g}u L=180n",
                 f"Movpos{index}_diode midp{index} midp{index} score 0 NSENSE W={readout_width:.6g}u L=180n",
-                f"Movneg{index}_cond actrow{index} vwn{index} midn{index} 0 NMOS W={0.75 * readout_width:.6g}u L=180n",
-                f"Movneg{index}_diode midn{index} midn{index} scoren 0 NSENSE W={0.75 * readout_width:.6g}u L=180n",
+                f"Movneg{index}_cond actrow{index} vwn{index} midn{index} 0 NMOS W={readout_negative_width_scale * readout_width:.6g}u L=180n",
+                f"Movneg{index}_diode midn{index} midn{index} scoren 0 NSENSE W={readout_negative_width_scale * readout_width:.6g}u L=180n",
             ]
+    if sense_mode == "current-clamp":
+        lines += [
+            ".meas tran score_current FIND I(Vscore_clamp) AT=4.5n",
+            ".meas tran scoren_current FIND I(Vscoren_clamp) AT=4.5n",
+            ".meas tran score_current_margin PARAM='score_current-scoren_current'",
+            ".meas tran score_current_common PARAM='0.5*(score_current+scoren_current)'",
+        ]
+    else:
+        lines += [
+            ".meas tran score_after FIND V(score) AT=4.5n",
+            ".meas tran scoren_after FIND V(scoren) AT=4.5n",
+            ".meas tran score_margin PARAM='score_after-scoren_after'",
+            ".meas tran score_common PARAM='0.5*(score_after+scoren_after)'",
+            *(
+                [
+                    ".meas tran decisionn_after FIND V(decisionn) AT=4.5n",
+                    ".meas tran decision_after FIND V(decision) AT=4.5n",
+                    ".meas tran decision_diff PARAM='decision_after-decisionn_after'",
+                ]
+                if include_decision
+                else []
+            ),
+        ]
     lines += [
-        ".meas tran score_after FIND V(score) AT=4.5n",
-        ".meas tran scoren_after FIND V(scoren) AT=4.5n",
-        ".meas tran score_margin PARAM='score_after-scoren_after'",
-        ".meas tran score_common PARAM='0.5*(score_after+scoren_after)'",
-        *(
-            [
-                ".meas tran decisionn_after FIND V(decisionn) AT=4.5n",
-                ".meas tran decision_after FIND V(decision) AT=4.5n",
-                ".meas tran decision_diff PARAM='decision_after-decisionn_after'",
-            ]
-            if include_decision
-            else []
-        ),
         ".tran 5p 8n uic",
         ".control",
         "run",

@@ -517,6 +517,32 @@ def test_multiclass_block_sequence_summarizes_conductance_projection() -> None:
     assert stats["final_eval_conductance_projection_active_weights"] == 4
 
 
+def test_multiclass_block_sequence_summarizes_readout_matrix_class_bias() -> None:
+    stats = seq.readout_weight_matrix_stats(
+        final_signed=[
+            [-0.08, -0.10, 0.12],
+            [-0.06, -0.07, 0.11],
+            [0.10, 0.12, 0.10],
+        ],
+        final_positive=[
+            [0.28, 0.28, 0.40],
+            [0.28, 0.28, 0.40],
+            [0.39, 0.40, 0.40],
+        ],
+        final_negative=[
+            [0.36, 0.38, 0.28],
+            [0.34, 0.35, 0.29],
+            [0.29, 0.28, 0.30],
+        ],
+        feature_count=2,
+    )
+
+    assert stats["final_readout_signed_feature_class_means_v"] == pytest.approx([-0.09, -0.065, 0.11])
+    assert stats["final_readout_signed_feature_class_mean_spread_v"] == pytest.approx(0.20)
+    assert stats["final_readout_common_feature_class_means_v"] == pytest.approx([0.325, 0.3125, 0.34])
+    assert stats["final_readout_common_feature_class_mean_spread_v"] == pytest.approx(0.0275)
+
+
 def test_multiclass_block_sequence_summarizes_activation_prototype_projection() -> None:
     measures = {
         "act_f0_0": 0.9,

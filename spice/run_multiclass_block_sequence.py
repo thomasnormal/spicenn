@@ -2535,6 +2535,35 @@ def conductance_readout_projection_stats(
     }
 
 
+def readout_weight_matrix_stats(
+    *,
+    final_signed: list[list[float]],
+    final_positive: list[list[float]],
+    final_negative: list[list[float]],
+    feature_count: int,
+) -> dict[str, Any]:
+    signed = np.array(final_signed, dtype=float)
+    positive = np.array(final_positive, dtype=float)
+    negative = np.array(final_negative, dtype=float)
+    if feature_count <= 0 or signed.size == 0:
+        return {
+            "final_readout_signed_feature_class_means_v": [],
+            "final_readout_signed_feature_class_mean_spread_v": None,
+            "final_readout_common_feature_class_means_v": [],
+            "final_readout_common_feature_class_mean_spread_v": None,
+        }
+    signed_features = signed[:, :feature_count]
+    common_features = 0.5 * (positive[:, :feature_count] + negative[:, :feature_count])
+    signed_class_means = np.mean(signed_features, axis=1)
+    common_class_means = np.mean(common_features, axis=1)
+    return {
+        "final_readout_signed_feature_class_means_v": [float(value) for value in signed_class_means],
+        "final_readout_signed_feature_class_mean_spread_v": float(np.max(signed_class_means) - np.min(signed_class_means)),
+        "final_readout_common_feature_class_means_v": [float(value) for value in common_class_means],
+        "final_readout_common_feature_class_mean_spread_v": float(np.max(common_class_means) - np.min(common_class_means)),
+    }
+
+
 def activation_prototype_projection_stats(
     measures: dict[str, float],
     *,
@@ -3126,6 +3155,12 @@ def run_case(args: argparse.Namespace) -> dict[str, Any]:
         "final_negative_matrix_v": final_negative,
         "final_hidden_signed_v": final_hidden_signed,
         "signed_after_each_train_v": train_progress,
+        **readout_weight_matrix_stats(
+            final_signed=final_signed,
+            final_positive=final_positive,
+            final_negative=final_negative,
+            feature_count=feature_count,
+        ),
         **signed_readout_projection_stats(
             measures,
             labels=labels,

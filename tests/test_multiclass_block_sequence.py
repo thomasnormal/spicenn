@@ -95,6 +95,24 @@ def test_multiclass_block_sequence_can_restore_score_before_nontarget_gate() -> 
     assert "Mc1_scoreamp_score_p c1_score_amp c1_score c1_scoreamp_score_i vdd PMOS" in netlist
 
 
+def test_multiclass_block_sequence_can_use_residual_score_nontarget_gate() -> None:
+    netlist = seq.generate_netlist(
+        train_records=_target0_records(1),
+        eval_records=_target0_records(1),
+        error_mode="residual-score-nontarget",
+    )
+
+    assert "\nB" not in netlist
+    assert "Vscoregaterst scoregaterst 0 PWL(" in netlist
+    assert "Cc1_score_gate c1_score_gate 0 4f IC=0" in netlist
+    assert "Mc1_score_gate_up_v vdd c1_score_amp c1_score_gate_up_i 0 NREL W=12u" in netlist
+    assert "Mc1_score_gate_dn_v c1_score_gate c1_scoren_amp c1_score_gate_dn_i 0 NREL W=24u" in netlist
+    assert "Mc1_f0_gvn_score c1_f0_gvn_label c1_score_gate c1_f0_gvn_d 0 NSENSE" in netlist
+    assert "Mc1_f0_rgn_res_score c1_f0_rgn_res_label c1_score_gate c1_f0_rgn_res_score 0 NSENSE" in netlist
+    assert "Mc1_f0_rgn_res_acc c1_f0_rgn_res_score acc 0 0 NREL" in netlist
+    assert "Mc1_dec_low_gain_ref_tail" not in netlist
+
+
 def test_multiclass_block_sequence_can_gate_nontarget_with_restored_winner() -> None:
     netlist = seq.generate_netlist(
         train_records=_target0_records(1),
@@ -148,6 +166,74 @@ def test_multiclass_block_sequence_validation() -> None:
         seq.generate_netlist(train_records=records, eval_records=records, nontarget_width_scale=1.1)
     with pytest.raises(ValueError, match="error_mode"):
         seq.generate_netlist(train_records=records, eval_records=records, error_mode="missing")
+
+
+def _residual_score_gate_netlist(score: float, scoren: float = 0.0) -> str:
+    lines = [
+        "* Low-level residual score nontarget gate primitive.",
+        ".param VDD=1.2",
+        seq.mos_models(),
+        ".options method=gear reltol=1e-3 abstol=1e-12 vntol=1e-6",
+        "Vdd vdd 0 {VDD}",
+        f"Vscore c0_score 0 {score:.12g}",
+        f"Vscoren c0_scoren 0 {scoren:.12g}",
+        "Vscorepre scorepre 0 PULSE(0 1.2 0.8n 10p 10p 8n 10n)",
+        "Vscoregaterst scoregaterst 0 PULSE(1.2 0 0.8n 10p 10p 8n 10n)",
+        "Vscoreamp scoreamp 0 PULSE(0 1.2 1.0n 10p 10p 2.0n 10n)",
+        "Vscoredec scoredec 0 PULSE(0 1.2 3.2n 10p 10p 2.0n 10n)",
+        *seq.low_gain_ref_state_lines(prefix="c0_", reset_node="scorepre"),
+        *seq.low_gain_preamp_lines(
+            prefix="c0_",
+            score_node="c0_score",
+            scoren_node="c0_scoren",
+            amp_clock_node="scoreamp",
+        ),
+        *seq.class_local_residual_score_gate_lines(class_idx=0),
+        ".meas tran score_amp_after FIND V(c0_score_amp) AT=3.1n",
+        ".meas tran scoren_amp_after FIND V(c0_scoren_amp) AT=3.1n",
+        ".meas tran score_gain_diff PARAM='score_amp_after-scoren_amp_after'",
+        ".meas tran score_gate_after FIND V(c0_score_gate) AT=5.5n",
+        ".tran 2p 6n uic",
+        ".control",
+        "run",
+        "quit",
+        ".endc",
+        ".end",
+        "",
+    ]
+    return "\n".join(lines)
+
+
+def test_multiclass_block_sequence_ngspice_residual_score_gate_is_monotonic_low_floor(
+    tmp_path: Path,
+    ngspice_path: str,
+) -> None:
+    neutral = run_netlist(
+        ngspice_path,
+        tmp_path / "residual_score_gate_neutral.cir",
+        _residual_score_gate_netlist(0.0),
+        timeout=20.0,
+    )
+    medium = run_netlist(
+        ngspice_path,
+        tmp_path / "residual_score_gate_medium.cir",
+        _residual_score_gate_netlist(0.02),
+        timeout=20.0,
+    )
+    high = run_netlist(
+        ngspice_path,
+        tmp_path / "residual_score_gate_high.cir",
+        _residual_score_gate_netlist(0.10),
+        timeout=20.0,
+    )
+
+    assert abs(float(neutral["score_gain_diff"])) < 1e-6
+    assert float(medium["score_gain_diff"]) > 10e-3
+    assert float(high["score_gain_diff"]) > float(medium["score_gain_diff"]) + 20e-3
+    assert 0.015 < float(neutral["score_gate_after"]) < 0.05
+    assert float(medium["score_gate_after"]) > float(neutral["score_gate_after"]) + 1e-3
+    assert float(high["score_gate_after"]) > float(medium["score_gate_after"]) + 3e-3
+    assert float(high["score_gate_after"]) < 0.08
 
 
 def test_multiclass_block_sequence_ngspice_nontarget_scale_removes_negative_off_diagonal_updates(

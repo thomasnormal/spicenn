@@ -2,6 +2,26 @@
 
 ## 2026-05-27
 
+- Added an experimental residual-score nontarget mode to the continuous
+  split-rail multiclass block sequence.  The low-level regression now proves a
+  transistor/passive low-common-mode PMOS score preamp plus weak analog
+  score-gate stage is monotonic on ngspice: neutral score evidence leaves the
+  gate near the NSENSE threshold, while larger score evidence raises it without
+  restoring to a full rail.  The integrated mode uses that `cX_score_gate` to
+  gate nontarget pressure and also pulls the restored negative writer gate
+  through an activation/label/score/acc transistor stack, avoiding any
+  behavioral error bucket or Python-side weight update.
+- The residual-score mode is not yet the MNIST fix.  It keeps synthetic
+  one-hot learning working (`0.333 -> 1.000`) but mostly behaves like
+  target-only potentiation because the residual nontarget rail is still too
+  weak at the bounded writer.  `mnist3fixed8_6` stayed at
+  `0.333 -> 0.333` with `-0.735 mV` final minimum margin, and
+  `mnist3fixed8_12` with 6 train / 6 eval stayed at `0.333 -> 0.333` with
+  `-0.540 mV` final minimum margin.  The useful conclusion is narrower but
+  concrete: analog score-derived error rails are feasible and regression
+  covered, but the next circuit target needs stronger physical residual
+  conversion or a different competitive update path before nontarget class
+  evidence can shape the readout weights.
 - Added a restored winner-gated nontarget mode to the continuous split-rail
   multiclass block sequence.  The first pairwise winner attempt reused the
   low-gain referenced decision cell, but ngspice showed both sides stayed near

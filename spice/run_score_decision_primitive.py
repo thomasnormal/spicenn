@@ -54,6 +54,27 @@ def low_gain_ref_state_lines(
     ]
 
 
+def low_gain_preamp_lines(
+    *,
+    prefix: str = "",
+    score_node: str = "score",
+    scoren_node: str = "scoren",
+    amp_clock_node: str = "amp",
+    gain_input_width: float = 1.0,
+    gain_tail_width: float = 8.0,
+) -> list[str]:
+    score_amp = prefixed(prefix, "score_amp")
+    scoren_amp = prefixed(prefix, "scoren_amp")
+    score_amp_i = prefixed(prefix, "scoreamp_score_i")
+    scoren_amp_i = prefixed(prefix, "scoreamp_scoren_i")
+    return [
+        f"M{prefix}scoreamp_score_p {score_amp} {score_node} {score_amp_i} vdd PMOS W={gain_input_width:.6g}u L=180n",
+        f"M{prefix}scoreamp_score_tail {score_amp_i} {amp_clock_node} 0 0 NMOS W={gain_tail_width:.6g}u L=180n",
+        f"M{prefix}scoreamp_scoren_p {scoren_amp} {scoren_node} {scoren_amp_i} vdd PMOS W={gain_input_width:.6g}u L=180n",
+        f"M{prefix}scoreamp_scoren_tail {scoren_amp_i} {amp_clock_node} 0 0 NMOS W={gain_tail_width:.6g}u L=180n",
+    ]
+
+
 def low_gain_ref_decision_lines(
     *,
     prefix: str = "",
@@ -71,17 +92,19 @@ def low_gain_ref_decision_lines(
 ) -> list[str]:
     score_amp = prefixed(prefix, "score_amp")
     scoren_amp = prefixed(prefix, "scoren_amp")
-    score_amp_i = prefixed(prefix, "scoreamp_score_i")
-    scoren_amp_i = prefixed(prefix, "scoreamp_scoren_i")
     decision = prefixed(prefix, "decision") if decision_node is None else decision_node
     decisionn = prefixed(prefix, "decisionn") if decisionn_node is None else decisionn_node
     dec_src = prefixed(prefix, "dec_src")
     return [
         "* Low-common-mode PMOS-input preamp followed by a referenced binary latch.",
-        f"M{prefix}scoreamp_score_p {score_amp} {score_node} {score_amp_i} vdd PMOS W={gain_input_width:.6g}u L=180n",
-        f"M{prefix}scoreamp_score_tail {score_amp_i} {amp_clock_node} 0 0 NMOS W={gain_tail_width:.6g}u L=180n",
-        f"M{prefix}scoreamp_scoren_p {scoren_amp} {scoren_node} {scoren_amp_i} vdd PMOS W={gain_input_width:.6g}u L=180n",
-        f"M{prefix}scoreamp_scoren_tail {scoren_amp_i} {amp_clock_node} 0 0 NMOS W={gain_tail_width:.6g}u L=180n",
+        *low_gain_preamp_lines(
+            prefix=prefix,
+            score_node=score_node,
+            scoren_node=scoren_node,
+            amp_clock_node=amp_clock_node,
+            gain_input_width=gain_input_width,
+            gain_tail_width=gain_tail_width,
+        ),
         "* Positive class wins only when score_amp beats scoren_amp plus the physical outref current.",
         f"M{prefix}dec_low_gain_ref_p {decision} {decisionn} vdd vdd PMOS W={pullup_width:.6g}u L=180n",
         f"M{prefix}decn_low_gain_ref_p {decisionn} {decision} vdd vdd PMOS W={pullup_width:.6g}u L=180n",

@@ -674,6 +674,23 @@ def test_multiclass_block_sequence_can_gate_live_writer_with_feature_competition
     assert "Mc0_f1_live_pos_up_e vwhi_ref egate1 c0_f1_live_pos_up 0 NSENSE" in netlist
 
 
+def test_multiclass_block_sequence_can_rank_gate_live_writer_with_feature_competition() -> None:
+    netlist = seq.generate_netlist(
+        train_records=_target0_two_feature_records(1),
+        eval_records=_target0_two_feature_records(1),
+        feature_count=2,
+        readout_update_mode="live",
+        error_mode="pairwise-margin-correction-descent",
+        eligibility_gate_mode="rank",
+    )
+
+    assert "\nB" not in netlist
+    assert "Cegate0 egate0 0 50f IC=0" in netlist
+    assert "Me1_rank_loss_to_e0_mid_dec egate1 e0_gt_e1_decision e1_rank_loss_to_e0_mid 0 NHIGH W=0.5u" in netlist
+    assert "Me1_loss_to_e0_mid_dec" not in netlist
+    assert "Mc0_f0_live_pos_up_e vwhi_ref egate0 c0_f0_live_pos_up 0 NSENSE" in netlist
+
+
 def test_multiclass_block_sequence_eligibility_gate_mode_validation() -> None:
     with pytest.raises(ValueError, match="eligibility_gate_mode"):
         seq.generate_netlist(

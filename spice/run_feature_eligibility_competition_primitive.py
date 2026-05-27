@@ -93,6 +93,34 @@ def feature_loss_suppression_lines(
     return lines
 
 
+def feature_rank_suppression_lines(
+    *,
+    feature_count: int,
+    gate_clock_node: str = "eliggate",
+    reset_node: str = "rst",
+    gate_capacitance_f: float = 20.0,
+    loss_width_u: float = 0.75,
+) -> list[str]:
+    lines: list[str] = []
+    for feature_idx in range(feature_count):
+        gate = gate_node(feature_idx)
+        lines += [
+            f"C{gate} {gate} 0 {gate_capacitance_f:.12g}f IC=0",
+            f"R{gate} {gate} 0 1G",
+            f"Mprecharge_{gate} {gate} {reset_node} vdd vdd PMOS W=4u L=180n",
+        ]
+        for opponent_idx in range(feature_count):
+            if opponent_idx == feature_idx:
+                continue
+            loss_mid = f"e{feature_idx}_rank_loss_to_e{opponent_idx}_mid"
+            loss_decision = decision_node(opponent_idx, feature_idx)
+            lines += [
+                f"M{loss_mid}_dec {gate} {loss_decision} {loss_mid} 0 NHIGH W={loss_width_u:.6g}u L=180n",
+                f"M{loss_mid}_clk {loss_mid} {gate_clock_node} 0 0 NMOS W={loss_width_u:.6g}u L=180n",
+            ]
+    return lines
+
+
 def values_for_case(case: str, eligibility_values: tuple[float, ...] | None = None) -> tuple[float, ...]:
     if eligibility_values is not None:
         values = tuple(float(value) for value in eligibility_values)
@@ -111,12 +139,18 @@ def generate_netlist(
     *,
     case: str = "one_hot0",
     eligibility_values: tuple[float, ...] | None = None,
+    gate_mode: str = "hard",
     pairwise_width_u: float = 64.0,
     gate_loss_width_u: float = 32.0,
     gate_capacitance_f: float = 8.0,
 ) -> str:
+    if gate_mode not in ("hard", "rank"):
+        raise ValueError("gate_mode must be hard or rank")
     if min(pairwise_width_u, gate_loss_width_u, gate_capacitance_f) <= 0.0:
         raise ValueError("widths and capacitances must be positive")
+    if gate_mode == "rank":
+        gate_loss_width_u = 0.50 if gate_loss_width_u == 32.0 else gate_loss_width_u
+        gate_capacitance_f = 50.0 if gate_capacitance_f == 8.0 else gate_capacitance_f
     values = values_for_case(case, eligibility_values)
     feature_count = len(values)
     lines = [
@@ -141,11 +175,18 @@ def generate_netlist(
                 feature_b=feature_b,
                 width_u=pairwise_width_u,
             )
-    lines += feature_loss_suppression_lines(
-        feature_count=feature_count,
-        gate_capacitance_f=gate_capacitance_f,
-        loss_width_u=gate_loss_width_u,
-    )
+    if gate_mode == "rank":
+        lines += feature_rank_suppression_lines(
+            feature_count=feature_count,
+            gate_capacitance_f=gate_capacitance_f,
+            loss_width_u=gate_loss_width_u,
+        )
+    else:
+        lines += feature_loss_suppression_lines(
+            feature_count=feature_count,
+            gate_capacitance_f=gate_capacitance_f,
+            loss_width_u=gate_loss_width_u,
+        )
     for idx in range(feature_count):
         lines.append(f".meas tran {gate_node(idx)}_after FIND V({gate_node(idx)}) AT=4.80n")
         for opponent_idx in range(feature_count):
@@ -194,6 +235,7 @@ def run_cases(args: argparse.Namespace) -> dict[str, Any]:
             path,
             generate_netlist(
                 case=case,
+                gate_mode=args.gate_mode,
                 pairwise_width_u=args.pairwise_width,
                 gate_loss_width_u=args.gate_loss_width,
                 gate_capacitance_f=args.gate_capacitance_f,
@@ -228,6 +270,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--tag", default="feature_eligibility_competition")
     parser.add_argument("--spice-bin", default=None)
+    parser.add_argument("--gate-mode", choices=("hard", "rank"), default="hard")
     parser.add_argument("--pairwise-width", type=float, default=64.0)
     parser.add_argument("--gate-loss-width", type=float, default=32.0)
     parser.add_argument("--gate-capacitance-f", type=float, default=8.0)

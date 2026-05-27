@@ -32,6 +32,8 @@ def test_feature_eligibility_competition_primitive_emits_pairwise_loss_suppressi
 def test_feature_eligibility_competition_primitive_validation() -> None:
     with pytest.raises(ValueError, match="case"):
         featcomp.generate_netlist(case="missing")
+    with pytest.raises(ValueError, match="gate_mode"):
+        featcomp.generate_netlist(case="one_hot0", gate_mode="missing")
     with pytest.raises(ValueError, match="at least two"):
         featcomp.generate_netlist(eligibility_values=(0.1,))
     with pytest.raises(ValueError, match="supply rails"):
@@ -42,6 +44,19 @@ def test_feature_eligibility_competition_primitive_validation() -> None:
         featcomp.main_for_test(["--pairwise-width", "0"])
     with pytest.raises(ValueError, match="max-active"):
         featcomp.main_for_test(["--max-active", "-1"])
+
+
+def test_feature_eligibility_competition_primitive_emits_rank_preserving_gate() -> None:
+    netlist = featcomp.generate_netlist(
+        case="unique_dense0",
+        gate_mode="rank",
+        gate_loss_width_u=0.50,
+        gate_capacitance_f=50.0,
+    )
+
+    assert "\nB" not in netlist
+    assert "Cegate0 egate0 0 50f IC=0" in netlist
+    assert "Me0_rank_loss_to_e1_mid_dec egate0 e1_gt_e0_decision e0_rank_loss_to_e1_mid 0 NHIGH W=0.5u" in netlist
 
 
 @pytest.mark.parametrize(
@@ -127,3 +142,50 @@ def test_feature_eligibility_competition_ngspice_fixed8_like_rows_are_sparsified
     gates = _gates(measures, feature_count)
     assert sum(value > 0.60 for value in gates) <= 2
     assert max(gates) - min(gates) > 0.20
+
+
+def test_feature_eligibility_competition_ngspice_rank_gate_preserves_multiple_features(
+    tmp_path: Path,
+    ngspice_path: str,
+) -> None:
+    measures = run_netlist(
+        ngspice_path,
+        tmp_path / "feature_competition_rank_fixed8_like2.cir",
+        featcomp.generate_netlist(
+            case="fixed8_like2",
+            gate_mode="rank",
+            gate_loss_width_u=0.50,
+            gate_capacitance_f=50.0,
+        ),
+        timeout=60.0,
+    )
+
+    gates = _gates(measures, 9)
+    active = sum(value > 0.60 for value in gates)
+    assert 1 <= active <= 3
+    assert max(gates[idx] for idx in (1, 4, 6, 7, 8)) > 1.0
+    assert min(gates) < max(gates) - 0.25
+
+
+def test_feature_eligibility_competition_ngspice_rank_gate_tracks_unique_dense_order(
+    tmp_path: Path,
+    ngspice_path: str,
+) -> None:
+    measures = run_netlist(
+        ngspice_path,
+        tmp_path / "feature_competition_rank_unique_dense0.cir",
+        featcomp.generate_netlist(
+            case="unique_dense0",
+            gate_mode="rank",
+            gate_loss_width_u=0.50,
+            gate_capacitance_f=50.0,
+        ),
+        timeout=30.0,
+    )
+
+    gates = _gates(measures, 5)
+    assert gates[0] > 0.90
+    assert gates[3] > 0.30
+    assert gates[1] > gates[2]
+    assert gates[4] < 0.15
+    assert gates[2] < 0.15

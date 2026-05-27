@@ -37,6 +37,7 @@ from run_multiclass_output_head_sequence import (
 )
 from run_feature_eligibility_competition_primitive import (
     feature_loss_suppression_lines,
+    feature_rank_suppression_lines,
     gate_node as eligibility_gate_node,
     pairwise_feature_winner_lines,
 )
@@ -48,7 +49,7 @@ SCENARIOS = ("target-repeat", "one-hot", "mnist")
 CLASS_BIAS_MODES = ("none", "target-only", "label-descent")
 READOUT_UPDATE_MODES = ("sampled", "live")
 SCORE_TIMING_MODES = ("late", "early")
-ELIGIBILITY_GATE_MODES = ("raw", "competition")
+ELIGIBILITY_GATE_MODES = ("raw", "competition", "rank")
 ERROR_MODES = (
     "label-descent",
     "score-gated-nontarget",
@@ -983,7 +984,7 @@ def generate_netlist(
         mos_models(),
         *(
             [".model NHIGH NMOS LEVEL=1 VTO=0.75 KP=220u LAMBDA=0.03 GAMMA=0.20 PHI=0.60"]
-            if eligibility_gate_mode == "competition"
+            if eligibility_gate_mode in ("competition", "rank")
             else []
         ),
         ".options method=gear reltol=1e-3 abstol=1e-12 vntol=1e-6",
@@ -999,7 +1000,7 @@ def generate_netlist(
                 f"Veligdec eligdec 0 {periodic_phase_pwl(cycle_count, start_ns=3.65, end_ns=4.35, active_cycles=train_cycles)}",
                 f"Veliggate eliggate 0 {periodic_phase_pwl(cycle_count, start_ns=4.45, end_ns=4.75, active_cycles=train_cycles)}",
             ]
-            if eligibility_gate_mode == "competition"
+            if eligibility_gate_mode in ("competition", "rank")
             else []
         ),
         f"Vout out 0 {periodic_phase_pwl(cycle_count, start_ns=out_start_ns, end_ns=out_end_ns)}",
@@ -1103,7 +1104,7 @@ def generate_netlist(
             f"Mactrow{feature}_n actrow{feature} out act{feature} 0 NMOS W=16u L=180n",
             f"Mactrow{feature}_p actrow{feature} outn act{feature} vdd PMOS W=32u L=180n",
         ]
-    if eligibility_gate_mode == "competition":
+    if eligibility_gate_mode in ("competition", "rank"):
         for feature_a in range(feature_count):
             for feature_b in range(feature_a + 1, feature_count):
                 lines += pairwise_feature_winner_lines(
@@ -1113,13 +1114,22 @@ def generate_netlist(
                     reset_node="eligpre",
                     width_u=32.0,
                 )
-        lines += feature_loss_suppression_lines(
-            feature_count=feature_count,
-            gate_clock_node="eliggate",
-            reset_node="eligpre",
-            gate_capacitance_f=8.0,
-            loss_width_u=32.0,
-        )
+        if eligibility_gate_mode == "rank":
+            lines += feature_rank_suppression_lines(
+                feature_count=feature_count,
+                gate_clock_node="eliggate",
+                reset_node="eligpre",
+                gate_capacitance_f=50.0,
+                loss_width_u=0.50,
+            )
+        else:
+            lines += feature_loss_suppression_lines(
+                feature_count=feature_count,
+                gate_clock_node="eliggate",
+                reset_node="eligpre",
+                gate_capacitance_f=8.0,
+                loss_width_u=32.0,
+            )
     for class_idx in range(class_count):
         targetp_values = [
             target_high if cycle in train_cycles and labels[cycle] == class_idx else 0.0 for cycle in range(cycle_count)
@@ -1352,7 +1362,7 @@ def generate_netlist(
         for feature in range(total_feature_count):
             activation_node = (
                 eligibility_gate_node(feature)
-                if eligibility_gate_mode == "competition" and feature < feature_count
+                if eligibility_gate_mode in ("competition", "rank") and feature < feature_count
                 else f"elig{feature}"
             )
             if error_mode == "score-gated-nontarget":
@@ -1624,7 +1634,7 @@ def generate_netlist(
                 f".meas tran act_f{feature}_{cycle} FIND V(act{feature}) AT={base + 4.5:.2f}n",
                 f".meas tran elig_f{feature}_{cycle} FIND V(elig{feature}) AT={base + 4.5:.2f}n",
             ]
-        if eligibility_gate_mode == "competition":
+        if eligibility_gate_mode in ("competition", "rank"):
             for feature in range(feature_count):
                 lines.append(
                     f".meas tran egate_f{feature}_{cycle} FIND V({eligibility_gate_node(feature)}) AT={base + 4.85:.2f}n"

@@ -77,6 +77,8 @@ def generate_netlist(
     hidden_negative: float = 0.20,
     hidden_width_u: float = 1.0,
     readout_width_u: float = 64.0,
+    score_capacitance_f: float = 10.0,
+    score_load_resistance: float = 1e6,
     initial_positive: float = 0.40,
     initial_negative: float = 0.40,
     target_high: float = 1.1,
@@ -92,6 +94,8 @@ def generate_netlist(
         "hidden_negative": hidden_negative,
         "hidden_width_u": hidden_width_u,
         "readout_width_u": readout_width_u,
+        "score_capacitance_f": score_capacitance_f,
+        "score_load_resistance": score_load_resistance,
         "initial_positive": initial_positive,
         "initial_negative": initial_negative,
         "target_high": target_high,
@@ -178,10 +182,10 @@ def generate_netlist(
         lines += [
             f"V{class_node(class_idx, 'targetp')} {class_node(class_idx, 'targetp')} 0 {windowed_pwl(targetp_values, start_ns=9.0, end_ns=11.0)}",
             f"V{class_node(class_idx, 'targetn')} {class_node(class_idx, 'targetn')} 0 {windowed_pwl(targetn_values, start_ns=9.0, end_ns=11.0)}",
-            f"C{class_node(class_idx, 'score')} {class_node(class_idx, 'score')} 0 10f IC=0",
-            f"C{class_node(class_idx, 'scoren')} {class_node(class_idx, 'scoren')} 0 10f IC=0",
-            f"R{class_node(class_idx, 'score')} {class_node(class_idx, 'score')} 0 1e6",
-            f"R{class_node(class_idx, 'scoren')} {class_node(class_idx, 'scoren')} 0 1e6",
+            f"C{class_node(class_idx, 'score')} {class_node(class_idx, 'score')} 0 {score_capacitance_f:.12g}f IC=0",
+            f"C{class_node(class_idx, 'scoren')} {class_node(class_idx, 'scoren')} 0 {score_capacitance_f:.12g}f IC=0",
+            f"R{class_node(class_idx, 'score')} {class_node(class_idx, 'score')} 0 {score_load_resistance:.12g}",
+            f"R{class_node(class_idx, 'scoren')} {class_node(class_idx, 'scoren')} 0 {score_load_resistance:.12g}",
             f"Mreset_{class_node(class_idx, 'score')} {class_node(class_idx, 'score')} rst 0 0 NMOS W=4u L=180n",
             f"Mreset_{class_node(class_idx, 'scoren')} {class_node(class_idx, 'scoren')} rst 0 0 NMOS W=4u L=180n",
         ]
@@ -341,6 +345,9 @@ def run_case(args: argparse.Namespace) -> dict[str, Any]:
         eval_records=eval_records,
         class_count=args.class_count,
         feature_count=feature_count,
+        readout_width_u=args.readout_width,
+        score_capacitance_f=args.score_capacitance_f,
+        score_load_resistance=args.score_load_resistance,
         initial_positive=args.initial_positive,
         initial_negative=args.initial_negative,
     )
@@ -384,6 +391,9 @@ def run_case(args: argparse.Namespace) -> dict[str, Any]:
         "scenario": args.scenario,
         "class_count": args.class_count,
         "feature_count": feature_count,
+        "readout_width_u": args.readout_width,
+        "score_capacitance_f": args.score_capacitance_f,
+        "score_load_resistance_ohm": args.score_load_resistance,
         "target_class": args.target_class if args.scenario == "target-repeat" else None,
         "train_samples": len(train_records),
         "eval_samples": len(eval_records),
@@ -425,6 +435,9 @@ def build_arg_parser() -> argparse.ArgumentParser:
     ap.add_argument("--train-repeats", type=int, default=1)
     ap.add_argument("--eval-repeats", type=int, default=1)
     ap.add_argument("--input-value", type=float, default=0.85)
+    ap.add_argument("--readout-width", type=float, default=64.0)
+    ap.add_argument("--score-capacitance-f", type=float, default=10.0)
+    ap.add_argument("--score-load-resistance", type=float, default=1e6)
     ap.add_argument("--initial-positive", type=float, default=0.40)
     ap.add_argument("--initial-negative", type=float, default=0.40)
     ap.add_argument("--min-target-signed", type=float, default=10e-3)
@@ -448,6 +461,12 @@ def validate_args(args: argparse.Namespace) -> None:
         raise ValueError("train-repeats and eval-repeats must be positive")
     if args.input_value < 0.0 or args.input_value > 1.2:
         raise ValueError("input-value must stay within supply rails")
+    if args.readout_width <= 0.0:
+        raise ValueError("readout-width must be positive")
+    if args.score_capacitance_f <= 0.0:
+        raise ValueError("score-capacitance-f must be positive")
+    if args.score_load_resistance <= 0.0:
+        raise ValueError("score-load-resistance must be positive")
     if min(args.initial_positive, args.initial_negative) <= 0.0:
         raise ValueError("initial-positive and initial-negative must be positive")
     if max(args.initial_positive, args.initial_negative) > 1.2:

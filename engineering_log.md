@@ -2,6 +2,18 @@
 
 ## 2026-05-27
 
+- Added explicit score-observability controls to the continuous multiclass
+  block sequence.  The generator now exposes class score capacitance, score
+  load resistance, and readout width as first-class parameters instead of
+  requiring ad hoc deck edits.  A focused ngspice regression compares the
+  default one-hot learner against a lower score capacitance and verifies the
+  smaller score cap improves the final margin by more than \(3\times\).  The
+  evidence run `codex_multiclass_block_sequence_onehot_scorecap5` keeps the
+  same continuous one-pass transistor-only learning behavior and learned
+  signed matrix, while improving final minimum margin from the previous
+  \(0.495\) mV to \(2.08\) mV with 5 fF score capacitors.  This is still a
+  small synthetic margin, but it gives the next MNIST rung a tunable,
+  regression-covered score node instead of a hidden hard-coded 10 fF choice.
 - Generalized the continuous `multiclass_block_sequence` rung from one feature
   to multiple row-pulsed split-rail features, with independent
   `row/pre/act/eligibility/actrow` devices per feature and class-local

@@ -33,9 +33,24 @@ def test_multiclass_score_contrast_primitive_emits_physical_contrast_caps() -> N
     assert ".meas tran contrast_spread PARAM='contrast0_after-contrast2_after'" in netlist
 
 
+def test_multiclass_score_contrast_primitive_emits_low_gain_score_normalizer() -> None:
+    netlist = contrast.generate_netlist(case="low_common", input_stage="low-gain")
+
+    assert "\nB" not in netlist
+    assert "Vscore_raw0 score_raw0 0 0.0075" in netlist
+    assert "Cscore0 score0 0 8f IC=1.2" in netlist
+    assert "Mprecharge_score0 score0 rstfn vdd vdd PMOS W=4u L=180n" in netlist
+    assert "Mscore0_amp_p score0 score_raw0 score0_amp_i vdd PMOS W=1u L=180n" in netlist
+    assert "Mscore0_amp_tail score0_amp_i amp 0 0 NMOS W=8u L=180n" in netlist
+    assert "Rscore_common_c0 score_common score0 10000000" in netlist
+    assert ".meas tran score0_norm_after FIND V(score0)" in netlist
+
+
 def test_multiclass_score_contrast_primitive_validation() -> None:
     with pytest.raises(ValueError, match="case"):
         contrast.generate_netlist(case="bad")
+    with pytest.raises(ValueError, match="input_stage"):
+        contrast.generate_netlist(case="flat", input_stage="bad")
     with pytest.raises(ValueError, match="class_count"):
         contrast.generate_netlist(case="flat", class_count=4)
     with pytest.raises(ValueError, match="score_values"):
@@ -93,6 +108,39 @@ def test_multiclass_score_contrast_primitive_ngspice_raw_low_common_is_quiet(
     assert abs(float(measures["contrast_spread"])) < 1e-3
 
 
+def test_multiclass_score_contrast_primitive_ngspice_low_gain_recovers_low_common_ordering(
+    tmp_path: Path,
+    ngspice_path: str,
+) -> None:
+    measures = run_netlist(
+        ngspice_path,
+        tmp_path / "score_contrast_low_common_low_gain.cir",
+        contrast.generate_netlist(case="low_common", input_stage="low-gain"),
+        timeout=20.0,
+    )
+
+    assert float(measures["score0_norm_after"]) > float(measures["score1_norm_after"]) + 0.002
+    assert float(measures["score1_norm_after"]) > float(measures["score2_norm_after"]) + 0.002
+    assert float(measures["contrast0_after"]) > float(measures["contrast1_after"]) + 0.001
+    assert float(measures["contrast1_after"]) > float(measures["contrast2_after"]) + 0.001
+    assert float(measures["contrast_spread"]) > 0.003
+
+
+def test_multiclass_score_contrast_primitive_ngspice_low_gain_flat_scores_have_dead_zone(
+    tmp_path: Path,
+    ngspice_path: str,
+) -> None:
+    measures = run_netlist(
+        ngspice_path,
+        tmp_path / "score_contrast_flat_low_gain.cir",
+        contrast.generate_netlist(case="flat", score_values=(0.0045, 0.0045, 0.0045), input_stage="low-gain"),
+        timeout=20.0,
+    )
+
+    assert abs(float(measures["score0_norm_after"]) - float(measures["score2_norm_after"])) < 1e-3
+    assert abs(float(measures["contrast_spread"])) < 1e-3
+
+
 def test_multiclass_score_contrast_primitive_summary_runner(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -120,3 +168,31 @@ def test_multiclass_score_contrast_primitive_summary_runner(
     assert summary["passed"] is True
     assert summary["classification_counts"]["ordered"] == 3
     assert (tmp_path / "results/tables/unit_score_contrast_summary.json").exists()
+
+
+def test_multiclass_score_contrast_primitive_low_gain_summary_counts_low_common_as_ordered(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def fake_detect_spice(spice_bin):
+        return "/usr/bin/ngspice", "fake-ngspice"
+
+    def fake_run_netlist(spice_bin, path, deck, *, timeout):
+        assert "\nB" not in deck
+        name = str(path)
+        if "flat" in name:
+            return {"contrast_spread": 0.0, "contrast_0_1_margin": 0.0, "contrast_1_2_margin": 0.0}
+        return {"contrast_spread": 0.012, "contrast_0_1_margin": 0.006, "contrast_1_2_margin": 0.006}
+
+    monkeypatch.setattr(contrast, "ROOT", tmp_path)
+    monkeypatch.setattr(contrast, "detect_spice", fake_detect_spice)
+    monkeypatch.setattr(contrast, "run_netlist", fake_run_netlist)
+
+    args = contrast.main_for_test(
+        ["--tag", "unit_score_contrast_low_gain", "--input-stage", "low-gain", "--min-margin", "0.003"]
+    )
+    summary = contrast.run_cases(args)
+
+    assert summary["input_stage"] == "low-gain"
+    assert summary["passed"] is True
+    assert summary["classification_counts"]["ordered"] == 4

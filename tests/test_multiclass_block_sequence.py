@@ -113,6 +113,23 @@ def test_multiclass_block_sequence_can_use_residual_score_nontarget_gate() -> No
     assert "Mc1_dec_low_gain_ref_tail" not in netlist
 
 
+def test_multiclass_block_sequence_can_use_amplified_score_nontarget_gate() -> None:
+    netlist = seq.generate_netlist(
+        train_records=_target0_records(1),
+        eval_records=_target0_records(1),
+        error_mode="amplified-score-nontarget",
+    )
+
+    assert "\nB" not in netlist
+    assert "Vscoregaterst" not in netlist
+    assert "Cc1_score_gate" not in netlist
+    assert "Mc1_score_gate_up_v" not in netlist
+    assert "Mc1_f0_gvn_score c1_f0_gvn_label c1_score_amp c1_f0_gvn_d 0 NSENSE" in netlist
+    assert "Mc1_f0_rgn_res_score c1_f0_rgn_res_label c1_score_amp c1_f0_rgn_res_score 0 NSENSE" in netlist
+    assert "Mc1_scoreamp_score_p c1_score_amp c1_score c1_scoreamp_score_i vdd PMOS" in netlist
+    assert "Mc1_dec_low_gain_ref_tail" not in netlist
+
+
 def test_multiclass_block_sequence_can_gate_nontarget_with_restored_winner() -> None:
     netlist = seq.generate_netlist(
         train_records=_target0_records(1),
@@ -234,6 +251,38 @@ def test_multiclass_block_sequence_ngspice_residual_score_gate_is_monotonic_low_
     assert float(medium["score_gate_after"]) > float(neutral["score_gate_after"]) + 1e-3
     assert float(high["score_gate_after"]) > float(medium["score_gate_after"]) + 3e-3
     assert float(high["score_gate_after"]) < 0.08
+
+
+def test_multiclass_block_sequence_ngspice_amplified_score_gate_depresses_one_hot_off_diagonal(
+    tmp_path: Path,
+    ngspice_path: str,
+) -> None:
+    measures = run_netlist(
+        ngspice_path,
+        tmp_path / "multiclass_block_sequence_onehot_amplified_score.cir",
+        seq.generate_netlist(
+            train_records=_one_hot_records(),
+            eval_records=_one_hot_records(),
+            class_count=3,
+            feature_count=3,
+            score_capacitance_f=5.0,
+            error_mode="amplified-score-nontarget",
+        ),
+        timeout=80.0,
+    )
+
+    final_predictions = [
+        int(np.argmax([float(measures[f"c{class_idx}_score_net_{cycle}"]) for class_idx in range(3)]))
+        for cycle in range(6, 9)
+    ]
+    assert final_predictions == [0, 1, 2]
+    assert float(measures["c1_score_amp_3"]) > 0.40
+    assert float(measures["c1_score_amp_3"]) < 0.50
+    for class_idx in range(3):
+        assert float(measures[f"c{class_idx}_f{class_idx}_signed_final"]) > 10e-3
+        for feature in range(3):
+            if feature != class_idx:
+                assert float(measures[f"c{class_idx}_f{feature}_signed_final"]) < -10e-3
 
 
 def test_multiclass_block_sequence_ngspice_nontarget_scale_removes_negative_off_diagonal_updates(

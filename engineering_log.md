@@ -22,6 +22,20 @@
   covered, but the next circuit target needs stronger physical residual
   conversion or a different competitive update path before nontarget class
   evidence can shape the readout weights.
+- Added `amplified-score-nontarget` as the stronger A/B point for that
+  conversion.  Instead of the weak residual gate capacitor, this mode uses the
+  low-common-mode PMOS preamp output (`cX_score_amp`) directly as the analog
+  nontarget gate, still with transistor/passive activation, label, score, and
+  accumulation stacks and no behavioral learning source.  The new ngspice
+  regression proves the one-hot sequence now gets real off-diagonal
+  depression again, with the preamp gate staying analog rather than rail
+  restored.  Evidence: one-hot improves `0.333 -> 1.000` with `2.08 mV` final
+  margin; `mnist3fixed8_6` improves `0.333 -> 0.667` but still has a
+  `-20.7 mV` final minimum margin; `mnist3fixed8_12` remains at
+  `0.333 -> 0.333` with `-19.6 mV` final minimum margin.  Width scales `0.5`
+  and `0.75` barely change the 12-sample result, so the next target should be
+  class-evidence centering/normalization or a better competitive target, not
+  simply weaker nontarget pulse timing.
 - Added a restored winner-gated nontarget mode to the continuous split-rail
   multiclass block sequence.  The first pairwise winner attempt reused the
   low-gain referenced decision cell, but ngspice showed both sides stayed near

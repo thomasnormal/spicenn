@@ -37,6 +37,7 @@ ERROR_MODES = (
     "label-descent",
     "score-gated-nontarget",
     "residual-score-nontarget",
+    "amplified-score-nontarget",
     "restored-score-nontarget",
     "restored-winner-nontarget",
 )
@@ -252,8 +253,10 @@ def generate_netlist(
     stop_ns = cycle_count * CYCLE_NS
     uses_restored_score = error_mode == "restored-score-nontarget"
     uses_residual_score = error_mode == "residual-score-nontarget"
+    uses_amplified_score = error_mode == "amplified-score-nontarget"
+    uses_score_preamp = uses_residual_score or uses_amplified_score
     uses_restored_winner = error_mode == "restored-winner-nontarget"
-    uses_late_restored_gate = uses_restored_score or uses_restored_winner or uses_residual_score
+    uses_late_restored_gate = uses_restored_score or uses_restored_winner or uses_score_preamp
     target_start_ns = 10.8 if uses_late_restored_gate else 9.0
     target_end_ns = 12.8 if uses_late_restored_gate else 11.0
     acc_start_ns = 10.8 if uses_late_restored_gate else 9.0
@@ -346,7 +349,7 @@ def generate_netlist(
             f"Mreset_{class_node(class_idx, 'score')} {class_node(class_idx, 'score')} rst 0 0 NMOS W=4u L=180n",
             f"Mreset_{class_node(class_idx, 'scoren')} {class_node(class_idx, 'scoren')} rst 0 0 NMOS W=4u L=180n",
         ]
-        if uses_restored_score or uses_residual_score:
+        if uses_restored_score or uses_score_preamp:
             prefix = f"c{class_idx}_"
             lines += [
                 *low_gain_ref_state_lines(prefix=prefix, reset_node="scorepre"),
@@ -376,8 +379,9 @@ def generate_netlist(
                         scoren_node=class_node(class_idx, "scoren"),
                         amp_clock_node="scoreamp",
                     ),
-                    *class_local_residual_score_gate_lines(class_idx=class_idx),
                 ]
+                if uses_residual_score:
+                    lines += class_local_residual_score_gate_lines(class_idx=class_idx)
         if uses_restored_winner:
             for opponent_idx in range(class_idx + 1, class_count):
                 lines += pairwise_winner_lines(class_a=class_idx, class_b=opponent_idx)
@@ -401,6 +405,13 @@ def generate_netlist(
                     feature_idx=feature,
                     activation_node=f"elig{feature}",
                     score_gate_node=class_node(class_idx, "score_gate"),
+                )
+            elif uses_amplified_score:
+                gradient_lines = class_local_residual_score_nontarget_gradient_lines(
+                    class_idx=class_idx,
+                    feature_idx=feature,
+                    activation_node=f"elig{feature}",
+                    score_gate_node=f"c{class_idx}_score_amp",
                 )
             elif uses_restored_winner:
                 gradient_lines = class_local_multi_gate_nontarget_gradient_lines(
@@ -471,11 +482,14 @@ def generate_netlist(
                         f".meas tran c{class_idx}_gt_c{opponent_idx}_decisionn_{cycle} FIND V({pairwise_decision_node(opponent_idx, class_idx)}) AT={base + 10.6:.2f}n",
                         f".meas tran c{class_idx}_gt_c{opponent_idx}_diff_{cycle} PARAM='c{class_idx}_gt_c{opponent_idx}_decision_{cycle}-c{class_idx}_gt_c{opponent_idx}_decisionn_{cycle}'",
                     ]
-            if uses_residual_score:
+            if uses_score_preamp:
                 lines += [
                     f".meas tran c{class_idx}_score_amp_{cycle} FIND V(c{class_idx}_score_amp) AT={base + 9.60:.2f}n",
                     f".meas tran c{class_idx}_scoren_amp_{cycle} FIND V(c{class_idx}_scoren_amp) AT={base + 9.60:.2f}n",
                     f".meas tran c{class_idx}_score_gain_diff_{cycle} PARAM='c{class_idx}_score_amp_{cycle}-c{class_idx}_scoren_amp_{cycle}'",
+                ]
+            if uses_residual_score:
+                lines += [
                     f".meas tran c{class_idx}_score_gate_{cycle} FIND V({class_node(class_idx, 'score_gate')}) AT={base + 10.60:.2f}n",
                 ]
         if seq == "train":

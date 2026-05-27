@@ -46,11 +46,33 @@ def test_multiclass_score_contrast_primitive_emits_low_gain_score_normalizer() -
     assert ".meas tran score0_norm_after FIND V(score0)" in netlist
 
 
+def test_multiclass_score_contrast_primitive_emits_low_gain_score_mass_error_stage() -> None:
+    netlist = contrast.generate_netlist(
+        case="low_common",
+        input_stage="low-gain",
+        error_stage="score-mass",
+        target_class=1,
+    )
+
+    assert "\nB" not in netlist
+    assert "Vtargetp1 targetp1 0 1.2" in netlist
+    assert "Vtargetn0 targetn0 0 1.2" in netlist
+    assert "Cscore_nontarget_mass score_nontarget_mass 0 0.5f IC=0" in netlist
+    assert "Mmass_nt0_score mass_nt0_a contrast0 mass_nt0_s 0 NSENSE W=128u" in netlist
+    assert "Mdp1_mass dp1_a score_nontarget_mass dp1_m 0 NSENSE W=128u" in netlist
+    assert "Mdn0_score dn0_a contrast0 dn0_s 0 NSENSE W=128u" in netlist
+    assert ".meas tran err1_diff PARAM='dp1_after-dn1_after'" in netlist
+
+
 def test_multiclass_score_contrast_primitive_validation() -> None:
     with pytest.raises(ValueError, match="case"):
         contrast.generate_netlist(case="bad")
     with pytest.raises(ValueError, match="input_stage"):
         contrast.generate_netlist(case="flat", input_stage="bad")
+    with pytest.raises(ValueError, match="error_stage"):
+        contrast.generate_netlist(case="flat", error_stage="bad")
+    with pytest.raises(ValueError, match="target_class"):
+        contrast.generate_netlist(case="flat", error_stage="score-mass", target_class=4)
     with pytest.raises(ValueError, match="class_count"):
         contrast.generate_netlist(case="flat", class_count=4)
     with pytest.raises(ValueError, match="score_values"):
@@ -139,6 +161,29 @@ def test_multiclass_score_contrast_primitive_ngspice_low_gain_flat_scores_have_d
 
     assert abs(float(measures["score0_norm_after"]) - float(measures["score2_norm_after"])) < 1e-3
     assert abs(float(measures["contrast_spread"])) < 1e-3
+
+
+def test_multiclass_score_contrast_primitive_ngspice_low_gain_score_mass_drives_writer_scale_errors(
+    tmp_path: Path,
+    ngspice_path: str,
+) -> None:
+    measures = run_netlist(
+        ngspice_path,
+        tmp_path / "score_contrast_low_gain_score_mass.cir",
+        contrast.generate_netlist(
+            case="low_common",
+            input_stage="low-gain",
+            error_stage="score-mass",
+            target_class=1,
+        ),
+        timeout=20.0,
+    )
+
+    assert float(measures["contrast_spread"]) > 0.003
+    assert float(measures["score_nontarget_mass_after"]) > 0.08
+    assert float(measures["err1_diff"]) > 0.08
+    assert float(measures["err0_diff"]) < -0.08
+    assert float(measures["err2_diff"]) < -0.08
 
 
 def test_multiclass_score_contrast_primitive_summary_runner(

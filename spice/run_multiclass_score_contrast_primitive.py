@@ -19,6 +19,7 @@ CONTRAST_CASES = (
     "low_common",
 )
 INPUT_STAGES = ("direct", "low-gain")
+ERROR_STAGES = ("none", "score-mass")
 
 
 def case_scores(case: str) -> tuple[float, float, float]:
@@ -41,6 +42,8 @@ def generate_netlist(
     score_values: tuple[float, ...] | None = None,
     class_count: int = 3,
     input_stage: str = "direct",
+    error_stage: str = "none",
+    target_class: int | None = None,
     common_resistance_ohm: float | None = None,
     common_capacitance_f: float = 4.0,
     contrast_capacitance_f: float = 10.0,
@@ -50,6 +53,10 @@ def generate_netlist(
     gain_capacitance_f: float = 8.0,
     gain_input_width_u: float = 1.0,
     gain_tail_width_u: float = 8.0,
+    mass_width_u: float = 128.0,
+    error_width_u: float = 128.0,
+    mass_capacitance_f: float = 0.5,
+    error_capacitance_f: float = 0.5,
 ) -> str:
     if class_count != 3:
         raise ValueError("class_count must currently be 3")
@@ -57,6 +64,12 @@ def generate_netlist(
         raise ValueError(f"case must be one of {CONTRAST_CASES}")
     if input_stage not in INPUT_STAGES:
         raise ValueError(f"input_stage must be one of {INPUT_STAGES}")
+    if error_stage not in ERROR_STAGES:
+        raise ValueError(f"error_stage must be one of {ERROR_STAGES}")
+    if target_class is not None and (target_class < 0 or target_class >= class_count):
+        raise ValueError("target_class must be a valid class index")
+    if error_stage != "none" and target_class is None:
+        raise ValueError("target_class is required when error_stage is enabled")
     if common_resistance_ohm is None:
         # The low-gain preamp produces millivolt-scale class separation. A
         # 20 kOhm common-average network, useful for the already-amplified
@@ -76,6 +89,10 @@ def generate_netlist(
         "gain_capacitance_f": gain_capacitance_f,
         "gain_input_width_u": gain_input_width_u,
         "gain_tail_width_u": gain_tail_width_u,
+        "mass_width_u": mass_width_u,
+        "error_width_u": error_width_u,
+        "mass_capacitance_f": mass_capacitance_f,
+        "error_capacitance_f": error_capacitance_f,
     }.items():
         if value <= 0.0:
             raise ValueError(f"{name} must be positive")
@@ -92,6 +109,8 @@ def generate_netlist(
         score_common_measure = "2.55n"
         contrast_measure = "4.9n"
         stop_time = "5.5n"
+    if error_stage == "score-mass":
+        stop_time = "7n"
 
     lines = [
         "* Multiclass analog score-contrast primitive smoke.",
@@ -105,12 +124,28 @@ def generate_netlist(
         f"Cscore_common score_common 0 {common_capacitance_f:.12g}f IC=0",
         "Rscore_common_leak score_common 0 1G",
     ]
+    if error_stage == "score-mass":
+        lines += [
+            "Vrsterr rsterr 0 PULSE(0 1.2 0.0n 10p 10p 0.45n 10n)",
+            "Verrmass errmass 0 PULSE(0 1.2 5.10n 10p 10p 0.50n 10n)",
+            "Verr err 0 PULSE(0 1.2 5.80n 10p 10p 0.70n 10n)",
+            f"Cscore_nontarget_mass score_nontarget_mass 0 {mass_capacitance_f:.12g}f IC=0",
+            "Rscore_nontarget_mass score_nontarget_mass 0 1G",
+            "Mreset_score_nontarget_mass score_nontarget_mass rsterr 0 0 NMOS W=4u L=180n",
+        ]
     if input_stage == "low-gain":
         lines += [
             "Vrstfn rstfn 0 PULSE(0 1.2 0.8n 10p 10p 8n 10n)",
             "Vamp amp 0 PULSE(0 1.2 1.0n 10p 10p 1.2n 10n)",
         ]
     for class_idx, score in enumerate(scores):
+        targetp = 1.2 if target_class == class_idx else 0.0
+        targetn = 1.2 if target_class is not None and target_class != class_idx else 0.0
+        if error_stage == "score-mass":
+            lines += [
+                f"Vtargetp{class_idx} targetp{class_idx} 0 {targetp:.12g}",
+                f"Vtargetn{class_idx} targetn{class_idx} 0 {targetn:.12g}",
+            ]
         if input_stage == "direct":
             score_node = f"score{class_idx}"
             score_lines = [f"Vscore{class_idx} score{class_idx} 0 {score:.12g}"]
@@ -145,11 +180,43 @@ def generate_netlist(
             f".meas tran score{class_idx}_norm_after FIND V({score_node}) AT={score_common_measure}",
             f".meas tran contrast{class_idx}_after FIND V(contrast{class_idx}) AT={contrast_measure}",
         ]
+        if error_stage == "score-mass":
+            lines += [
+                f"Cdp{class_idx} dp{class_idx} 0 {error_capacitance_f:.12g}f IC=0",
+                f"Cdn{class_idx} dn{class_idx} 0 {error_capacitance_f:.12g}f IC=0",
+                f"Rdp{class_idx} dp{class_idx} 0 1G",
+                f"Rdn{class_idx} dn{class_idx} 0 1G",
+                f"Mreset_dp{class_idx} dp{class_idx} rsterr 0 0 NMOS W=4u L=180n",
+                f"Mreset_dn{class_idx} dn{class_idx} rsterr 0 0 NMOS W=4u L=180n",
+                f"Rmass_nt{class_idx}_a mass_nt{class_idx}_a 0 1G",
+                f"Rmass_nt{class_idx}_s mass_nt{class_idx}_s 0 1G",
+                f"Mmass_nt{class_idx}_label vdd targetn{class_idx} mass_nt{class_idx}_a 0 NSENSE W={mass_width_u:.6g}u L=180n",
+                f"Mmass_nt{class_idx}_score mass_nt{class_idx}_a contrast{class_idx} mass_nt{class_idx}_s 0 NSENSE W={mass_width_u:.6g}u L=180n",
+                f"Mmass_nt{class_idx}_clk mass_nt{class_idx}_s errmass score_nontarget_mass 0 NSENSE W={mass_width_u:.6g}u L=180n",
+                f"Rdp{class_idx}_a dp{class_idx}_a 0 1G",
+                f"Rdp{class_idx}_m dp{class_idx}_m 0 1G",
+                f"Mdp{class_idx}_label vdd targetp{class_idx} dp{class_idx}_a 0 NSENSE W={error_width_u:.6g}u L=180n",
+                f"Mdp{class_idx}_mass dp{class_idx}_a score_nontarget_mass dp{class_idx}_m 0 NSENSE W={error_width_u:.6g}u L=180n",
+                f"Mdp{class_idx}_clk dp{class_idx}_m err dp{class_idx} 0 NSENSE W={error_width_u:.6g}u L=180n",
+                f"Rdn{class_idx}_a dn{class_idx}_a 0 1G",
+                f"Rdn{class_idx}_s dn{class_idx}_s 0 1G",
+                f"Mdn{class_idx}_label vdd targetn{class_idx} dn{class_idx}_a 0 NSENSE W={error_width_u:.6g}u L=180n",
+                f"Mdn{class_idx}_score dn{class_idx}_a contrast{class_idx} dn{class_idx}_s 0 NSENSE W={error_width_u:.6g}u L=180n",
+                f"Mdn{class_idx}_clk dn{class_idx}_s err dn{class_idx} 0 NSENSE W={error_width_u:.6g}u L=180n",
+                f".meas tran dp{class_idx}_after FIND V(dp{class_idx}) AT=6.65n",
+                f".meas tran dn{class_idx}_after FIND V(dn{class_idx}) AT=6.65n",
+                f".meas tran err{class_idx}_diff PARAM='dp{class_idx}_after-dn{class_idx}_after'",
+            ]
     lines += [
         f".meas tran score_common_after FIND V(score_common) AT={score_common_measure}",
         ".meas tran contrast_0_1_margin PARAM='contrast0_after-contrast1_after'",
         ".meas tran contrast_1_2_margin PARAM='contrast1_after-contrast2_after'",
         ".meas tran contrast_spread PARAM='contrast0_after-contrast2_after'",
+        *(
+            [".meas tran score_nontarget_mass_after FIND V(score_nontarget_mass) AT=5.75n"]
+            if error_stage == "score-mass"
+            else []
+        ),
         f".tran 2p {stop_time} uic",
         ".control",
         "run",
@@ -191,6 +258,8 @@ def run_cases(args: argparse.Namespace) -> dict[str, Any]:
             generate_netlist(
                 case=case,
                 input_stage=args.input_stage,
+                error_stage=args.error_stage,
+                target_class=args.target_class,
                 common_resistance_ohm=args.common_resistance,
                 common_capacitance_f=args.common_capacitance_f,
                 contrast_capacitance_f=args.contrast_capacitance_f,
@@ -199,6 +268,10 @@ def run_cases(args: argparse.Namespace) -> dict[str, Any]:
                 gain_capacitance_f=args.gain_capacitance_f,
                 gain_input_width_u=args.gain_input_width,
                 gain_tail_width_u=args.gain_tail_width,
+                mass_width_u=args.mass_width,
+                error_width_u=args.error_width,
+                mass_capacitance_f=args.mass_capacitance_f,
+                error_capacitance_f=args.error_capacitance_f,
             ),
             timeout=args.timeout,
         )
@@ -220,6 +293,7 @@ def run_cases(args: argparse.Namespace) -> dict[str, Any]:
         "simulator": version,
         "architecture": "multiclass_score_contrast_primitive",
         "input_stage": args.input_stage,
+        "error_stage": args.error_stage,
         "model_level": "ngspice built-in LEVEL=1 MOS models; not a foundry PDK.",
         "cases": len(rows),
         "passed": passed,
@@ -238,6 +312,8 @@ def build_arg_parser() -> argparse.ArgumentParser:
     ap.add_argument("--tag", default="multiclass_score_contrast_primitive")
     ap.add_argument("--timeout", type=float, default=30.0)
     ap.add_argument("--input-stage", choices=INPUT_STAGES, default="direct")
+    ap.add_argument("--error-stage", choices=ERROR_STAGES, default="none")
+    ap.add_argument("--target-class", type=int, default=1)
     ap.add_argument("--common-resistance", type=float, default=None)
     ap.add_argument("--common-capacitance-f", type=float, default=4.0)
     ap.add_argument("--contrast-capacitance-f", type=float, default=10.0)
@@ -246,6 +322,10 @@ def build_arg_parser() -> argparse.ArgumentParser:
     ap.add_argument("--gain-capacitance-f", type=float, default=8.0)
     ap.add_argument("--gain-input-width", type=float, default=1.0)
     ap.add_argument("--gain-tail-width", type=float, default=8.0)
+    ap.add_argument("--mass-width", type=float, default=128.0)
+    ap.add_argument("--error-width", type=float, default=128.0)
+    ap.add_argument("--mass-capacitance-f", type=float, default=0.5)
+    ap.add_argument("--error-capacitance-f", type=float, default=0.5)
     ap.add_argument("--min-margin", type=float, default=0.005)
     return ap
 
@@ -261,9 +341,15 @@ def validate_args(args: argparse.Namespace) -> None:
         "gain_capacitance_f",
         "gain_input_width",
         "gain_tail_width",
+        "mass_width",
+        "error_width",
+        "mass_capacitance_f",
+        "error_capacitance_f",
     ):
         if getattr(args, name) <= 0.0:
             raise ValueError(f"{name.replace('_', '-')} must be positive")
+    if args.target_class < 0 or args.target_class >= 3:
+        raise ValueError("target-class must be in [0, 2]")
     if args.common_resistance is not None and args.common_resistance <= 0.0:
         raise ValueError("common-resistance must be positive")
     if args.min_margin < 0.0:

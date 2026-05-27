@@ -553,6 +553,56 @@ def test_multiclass_block_sequence_summarizes_conductance_projection() -> None:
     assert stats["final_eval_conductance_projection_active_weights"] == 4
 
 
+def test_multiclass_block_sequence_summarizes_projection_alignment() -> None:
+    stats = seq.projection_alignment_stats(
+        [
+            {
+                "cycle": 0,
+                "sequence": "final_eval",
+                "label": 0,
+                "prediction": 0,
+                "score_margin_v": 0.2,
+                "score_c0_v": 0.30,
+                "score_c1_v": 0.10,
+            },
+            {
+                "cycle": 1,
+                "sequence": "final_eval",
+                "label": 1,
+                "prediction": 0,
+                "score_margin_v": -0.1,
+                "score_c0_v": 0.20,
+                "score_c1_v": 0.10,
+            },
+        ],
+        [
+            {
+                "cycle": 0,
+                "label": 0,
+                "prediction": 0,
+                "score_margin_v2": 0.4,
+                "score_c0_v2": 0.60,
+                "score_c1_v2": 0.20,
+            },
+            {
+                "cycle": 1,
+                "label": 1,
+                "prediction": 1,
+                "score_margin_v2": 0.1,
+                "score_c0_v2": 0.10,
+                "score_c1_v2": 0.20,
+            },
+        ],
+        class_count=2,
+        prefix="signed_projection",
+    )
+
+    assert stats["final_eval_signed_projection_prediction_agreement"] == pytest.approx(0.5)
+    assert stats["final_eval_signed_projection_score_correlation_mean"] == pytest.approx(0.0)
+    assert stats["final_eval_signed_projection_alignment_rows"][1]["physical_prediction"] == 0
+    assert stats["final_eval_signed_projection_alignment_rows"][1]["projection_prediction"] == 1
+
+
 def test_multiclass_block_sequence_summarizes_readout_matrix_class_bias() -> None:
     stats = seq.readout_weight_matrix_stats(
         final_signed=[

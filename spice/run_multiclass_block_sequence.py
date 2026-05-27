@@ -2806,6 +2806,63 @@ def conductance_readout_projection_stats(
     }
 
 
+def projection_alignment_stats(
+    physical_rows: list[dict[str, Any]],
+    projection_rows: list[dict[str, Any]],
+    *,
+    class_count: int,
+    prefix: str,
+) -> dict[str, Any]:
+    physical_by_cycle = {
+        int(row["cycle"]): row
+        for row in physical_rows
+        if row.get("sequence") == "final_eval"
+    }
+    aligned: list[dict[str, Any]] = []
+    correlations: list[float] = []
+    for projection in projection_rows:
+        physical = physical_by_cycle.get(int(projection["cycle"]))
+        if physical is None:
+            continue
+        physical_scores = np.array(
+            [float(physical[f"score_c{class_idx}_v"]) for class_idx in range(class_count)],
+            dtype=float,
+        )
+        projection_scores = np.array(
+            [float(projection[f"score_c{class_idx}_v2"]) for class_idx in range(class_count)],
+            dtype=float,
+        )
+        if float(np.std(physical_scores)) > 0.0 and float(np.std(projection_scores)) > 0.0:
+            correlations.append(float(np.corrcoef(physical_scores, projection_scores)[0, 1]))
+        prediction_agrees = int(physical["prediction"]) == int(projection["prediction"])
+        aligned.append(
+            {
+                "cycle": int(projection["cycle"]),
+                "label": int(projection["label"]),
+                "physical_prediction": int(physical["prediction"]),
+                "projection_prediction": int(projection["prediction"]),
+                "prediction_agrees": prediction_agrees,
+                "physical_margin_v": float(physical["score_margin_v"]),
+                "projection_margin_v2": float(projection["score_margin_v2"]),
+            }
+        )
+    if not aligned:
+        return {
+            f"final_eval_{prefix}_alignment_rows": [],
+            f"final_eval_{prefix}_prediction_agreement": None,
+            f"final_eval_{prefix}_score_correlation_mean": None,
+        }
+    return {
+        f"final_eval_{prefix}_alignment_rows": aligned,
+        f"final_eval_{prefix}_prediction_agreement": float(
+            np.mean([bool(row["prediction_agrees"]) for row in aligned])
+        ),
+        f"final_eval_{prefix}_score_correlation_mean": (
+            float(np.mean(correlations)) if correlations else None
+        ),
+    }
+
+
 def readout_weight_matrix_stats(
     *,
     final_signed: list[list[float]],
@@ -3480,6 +3537,23 @@ def run_case(args: argparse.Namespace) -> dict[str, Any]:
                 for class_idx in range(args.class_count)
             ]
         )
+    signed_projection = signed_readout_projection_stats(
+        measures,
+        labels=labels,
+        sequence=sequence,
+        class_count=args.class_count,
+        total_feature_count=total_feature_count,
+        final_signed=final_signed,
+    )
+    conductance_projection = conductance_readout_projection_stats(
+        measures,
+        labels=labels,
+        sequence=sequence,
+        class_count=args.class_count,
+        total_feature_count=total_feature_count,
+        final_positive=final_positive,
+        final_negative=final_negative,
+    )
     csv_path = tables / f"{tag}.csv"
     with csv_path.open("w", newline="") as f:
         writer = csv.DictWriter(
@@ -3682,22 +3756,19 @@ def run_case(args: argparse.Namespace) -> dict[str, Any]:
             class_count=args.class_count,
             initial_signed_v=args.initial_positive - args.initial_negative,
         ),
-        **signed_readout_projection_stats(
-            measures,
-            labels=labels,
-            sequence=sequence,
+        **signed_projection,
+        **projection_alignment_stats(
+            rows,
+            signed_projection["final_eval_signed_projection_rows"],
             class_count=args.class_count,
-            total_feature_count=total_feature_count,
-            final_signed=final_signed,
+            prefix="signed_projection",
         ),
-        **conductance_readout_projection_stats(
-            measures,
-            labels=labels,
-            sequence=sequence,
+        **conductance_projection,
+        **projection_alignment_stats(
+            rows,
+            conductance_projection["final_eval_conductance_projection_rows"],
             class_count=args.class_count,
-            total_feature_count=total_feature_count,
-            final_positive=final_positive,
-            final_negative=final_negative,
+            prefix="conductance_projection",
         ),
         **activation_prototype_projection_stats(
             measures,

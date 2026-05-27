@@ -1078,6 +1078,7 @@ def generate_netlist(
     score_measure_ns: float = 8.5,
     initial_positive: float = 0.40,
     initial_negative: float = 0.40,
+    initial_readout_states: dict[tuple[int, int], tuple[float, float]] | None = None,
     target_high: float = 1.1,
     nontarget_scale: float = 1.0,
     nontarget_width_scale: float = 1.0,
@@ -1157,6 +1158,14 @@ def generate_netlist(
         raise ValueError("readout_center_resistance must be nonnegative")
     if readout_center_voltage < 0.0 or readout_center_voltage > 1.2:
         raise ValueError("readout_center_voltage must stay within supply rails")
+    if initial_readout_states is not None:
+        for (class_idx, feature_idx), (positive_ic, negative_ic) in initial_readout_states.items():
+            if class_idx < 0 or class_idx >= class_count:
+                raise ValueError("initial_readout_states class index is out of range")
+            if feature_idx < 0 or feature_idx >= feature_count + (1 if class_bias_mode != "none" else 0):
+                raise ValueError("initial_readout_states feature index is out of range")
+            if min(positive_ic, negative_ic) < 0.0 or max(positive_ic, negative_ic) > 1.2:
+                raise ValueError("initial_readout_states values must stay within supply rails")
     if hidden_direct_high_ref <= 0.0 or hidden_direct_high_ref > 1.2:
         raise ValueError("hidden_direct_high_ref must stay in (0, 1.2]")
     if hidden_direct_low_ref < 0.0 or hidden_direct_low_ref > 1.2:
@@ -2170,8 +2179,16 @@ def generate_netlist(
                 *signed_store_lines(
                     positive_node=class_node(class_idx, f"vwp{feature}"),
                     negative_node=class_node(class_idx, f"vwn{feature}"),
-                    positive_ic=initial_positive,
-                    negative_ic=initial_negative,
+                    positive_ic=(
+                        initial_readout_states.get((class_idx, feature), (initial_positive, initial_negative))[0]
+                        if initial_readout_states is not None
+                        else initial_positive
+                    ),
+                    negative_ic=(
+                        initial_readout_states.get((class_idx, feature), (initial_positive, initial_negative))[1]
+                        if initial_readout_states is not None
+                        else initial_negative
+                    ),
                 ),
                 *(
                     [

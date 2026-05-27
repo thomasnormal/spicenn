@@ -1245,6 +1245,18 @@ def test_multiclass_block_sequence_validation() -> None:
         seq.main_for_test(["--score-mass-error-width", "0"])
     with pytest.raises(ValueError, match="score-mass-pairwise-error-scale"):
         seq.main_for_test(["--score-mass-pairwise-error-scale", "0"])
+    with pytest.raises(ValueError, match="initial_readout_states class index"):
+        seq.generate_netlist(
+            train_records=records,
+            eval_records=records,
+            initial_readout_states={(3, 0): (0.4, 0.4)},
+        )
+    with pytest.raises(ValueError, match="initial_readout_states values"):
+        seq.generate_netlist(
+            train_records=records,
+            eval_records=records,
+            initial_readout_states={(0, 0): (1.3, 0.4)},
+        )
     with pytest.raises(ValueError, match="nontarget_scale"):
         seq.generate_netlist(train_records=records, eval_records=records, nontarget_scale=-0.1)
     with pytest.raises(ValueError, match="nontarget_width_scale"):
@@ -3477,6 +3489,45 @@ def test_multiclass_block_sequence_ngspice_pairwise_margin_correction_improves_o
     assert float(measures["c2_errdiff_1"]) < -0.25
     assert float(measures["c1_f0_signed_final"]) > 10e-3
     assert final_margin > initial_margin + 10e-3
+
+
+def test_multiclass_block_sequence_ngspice_live_pairwise_margin_corrects_wrong_winner(
+    tmp_path: Path,
+    ngspice_path: str,
+) -> None:
+    records = [{"label": 1, "inputs": {"x0": 0.85}}]
+    measures = run_netlist(
+        ngspice_path,
+        tmp_path / "multiclass_block_sequence_one_sample_live_wrong0_margin.cir",
+        seq.generate_netlist(
+            train_records=records,
+            eval_records=records,
+            class_count=3,
+            feature_count=1,
+            score_capacitance_f=5.0,
+            error_mode="pairwise-margin-correction-descent",
+            readout_update_mode="live",
+            initial_readout_states={
+                (0, 0): (0.48, 0.28),
+                (1, 0): (0.40, 0.40),
+                (2, 0): (0.34, 0.40),
+            },
+        ),
+        timeout=80.0,
+    )
+
+    initial_scores = [float(measures[f"c{class_idx}_score_net_0"]) for class_idx in range(3)]
+    final_scores = [float(measures[f"c{class_idx}_score_net_2"]) for class_idx in range(3)]
+    initial_margin = initial_scores[1] - max(initial_scores[0], initial_scores[2])
+    final_margin = final_scores[1] - max(final_scores[0], final_scores[2])
+
+    assert initial_scores[0] > initial_scores[1] + 50e-3
+    assert float(measures["c1_errdiff_1"]) > 0.35
+    assert float(measures["c0_errdiff_1"]) < -0.35
+    assert float(measures["c1_f0_signed_final"]) > 0.10
+    assert float(measures["c0_f0_signed_final"]) < -0.05
+    assert final_margin > initial_margin + 100e-3
+    assert final_scores[1] > final_scores[0] + 50e-3
 
 
 def test_multiclass_block_sequence_ngspice_restored_winner_blocks_nonwinning_nontargets(

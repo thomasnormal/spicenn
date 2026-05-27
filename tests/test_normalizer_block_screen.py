@@ -27,6 +27,8 @@ def test_normalizer_block_screen_builds_block_args() -> None:
             "3",
             "--score-capacitance-f",
             "7",
+            "--normalizer-error-clock-high",
+            "0.45",
         ]
     )
 
@@ -38,6 +40,8 @@ def test_normalizer_block_screen_builds_block_args() -> None:
     assert "mnist" in argv
     assert "--score-capacitance-f" in argv
     assert "7.0" in argv
+    assert "--normalizer-error-clock-high" in argv
+    assert "0.45" in argv
 
 
 def test_normalizer_block_screen_validation() -> None:
@@ -47,6 +51,8 @@ def test_normalizer_block_screen_validation() -> None:
         screen.main_for_test(["--train-samples", "0"])
     with pytest.raises(ValueError, match="score-capacitance"):
         screen.main_for_test(["--score-capacitance-f", "0"])
+    with pytest.raises(ValueError, match="normalizer-error-clock-high"):
+        screen.main_for_test(["--normalizer-error-clock-high", "0"])
 
 
 def test_normalizer_block_screen_summary_runner(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

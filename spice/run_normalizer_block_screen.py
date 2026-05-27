@@ -53,6 +53,8 @@ def _block_argv(args: argparse.Namespace, *, approach: str, scenario: str, child
         str(args.initial_positive),
         "--initial-negative",
         str(args.initial_negative),
+        "--normalizer-error-clock-high",
+        str(args.normalizer_error_clock_high),
     ]
     if scenario == "one-hot":
         argv += [
@@ -203,6 +205,7 @@ def run_screen(args: argparse.Namespace) -> dict[str, Any]:
         "eval_samples": args.eval_samples if args.scenario in {"mnist", "both"} else None,
         "class_bias_mode": args.class_bias_mode if args.scenario in {"mnist", "both"} else None,
         "score_capacitance_f": args.score_capacitance_f,
+        "normalizer_error_clock_high": args.normalizer_error_clock_high,
         "csv": str(csv_path),
         "by_scenario": by_scenario,
         "wall_time_s": time.perf_counter() - start,
@@ -233,6 +236,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
     ap.add_argument("--readout-width", type=float, default=64.0)
     ap.add_argument("--initial-positive", type=float, default=0.40)
     ap.add_argument("--initial-negative", type=float, default=0.40)
+    ap.add_argument("--normalizer-error-clock-high", type=float, default=1.2)
     ap.add_argument("--keep-going", action=argparse.BooleanOptionalAction, default=True)
     return ap
 
@@ -253,6 +257,8 @@ def main_for_test(argv: list[str]) -> argparse.Namespace:
         raise ValueError("readout-width must be positive")
     if min(args.initial_positive, args.initial_negative) <= 0.0:
         raise ValueError("initial weight rails must be positive")
+    if args.normalizer_error_clock_high <= 0.0 or args.normalizer_error_clock_high > 1.2:
+        raise ValueError("normalizer-error-clock-high must stay in (0, 1.2]")
     return args
 
 

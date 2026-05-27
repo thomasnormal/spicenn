@@ -320,6 +320,17 @@ def test_multiclass_block_sequence_can_use_normalizer_current_sum_descent() -> N
     assert ".meas tran c0_errdiff_1" in netlist
 
 
+def test_multiclass_block_sequence_can_bound_normalizer_error_clock() -> None:
+    netlist = seq.generate_netlist(
+        train_records=_target0_records(1),
+        eval_records=_target0_records(1),
+        error_mode="normalizer-current-sum-descent",
+        normalizer_error_clock_high=0.45,
+    )
+
+    assert "26.45n 0.45" in netlist
+
+
 def test_multiclass_block_sequence_reduces_train_error_rail_stats() -> None:
     measures = {
         "c0_errdiff_1": -0.2,

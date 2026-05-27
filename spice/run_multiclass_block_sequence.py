@@ -734,6 +734,7 @@ def generate_netlist(
     score_mass_pairwise_error_scale: float = 0.0625,
     pairwise_margin_target_v: float = 1.0e-3,
     pairwise_margin_error_drive_scale: float = 1.0,
+    normalizer_error_clock_high: float = 1.2,
     error_mode: str = "label-descent",
     class_bias_mode: str = "none",
     class_bias_input: float = 0.85,
@@ -761,6 +762,7 @@ def generate_netlist(
         "score_mass_pairwise_error_scale": score_mass_pairwise_error_scale,
         "pairwise_margin_target_v": pairwise_margin_target_v,
         "pairwise_margin_error_drive_scale": pairwise_margin_error_drive_scale,
+        "normalizer_error_clock_high": normalizer_error_clock_high,
     }.items():
         if value <= 0.0:
             raise ValueError(f"{name} must be positive")
@@ -959,8 +961,13 @@ def generate_netlist(
     ):
         scoreerr_start_ns = 10.73 if uses_contrast_gated_score_mass else 10.45
         scoreerr_end_ns = 10.79 if uses_contrast_gated_score_mass else 10.75
+        scoreerr_high = (
+            margin_correction_sizing.error_clock_high_v
+            if margin_correction_sizing is not None
+            else normalizer_error_clock_high if uses_normalizer_error else 1.2
+        )
         lines.append(
-            f"Vscoreerr scoreerr 0 {periodic_phase_pwl(cycle_count, start_ns=scoreerr_start_ns, end_ns=scoreerr_end_ns, active_cycles=train_cycles, high=(margin_correction_sizing.error_clock_high_v if margin_correction_sizing is not None else 1.2))}"
+            f"Vscoreerr scoreerr 0 {periodic_phase_pwl(cycle_count, start_ns=scoreerr_start_ns, end_ns=scoreerr_end_ns, active_cycles=train_cycles, high=scoreerr_high)}"
         )
     if (
         uses_residual_score
@@ -1762,6 +1769,7 @@ def run_case(args: argparse.Namespace) -> dict[str, Any]:
         score_mass_pairwise_error_scale=args.score_mass_pairwise_error_scale,
         pairwise_margin_target_v=args.pairwise_margin_target_v,
         pairwise_margin_error_drive_scale=args.pairwise_margin_error_drive_scale,
+        normalizer_error_clock_high=args.normalizer_error_clock_high,
         error_mode=args.error_mode,
         class_bias_mode=args.class_bias_mode,
         class_bias_input=args.class_bias_input,
@@ -1838,6 +1846,9 @@ def run_case(args: argparse.Namespace) -> dict[str, Any]:
             if args.error_mode == "pairwise-margin-correction-descent"
             else None
         ),
+        "normalizer_error_clock_high": (
+            args.normalizer_error_clock_high if args.error_mode in NORMALIZER_ERROR_MODES else None
+        ),
         "score_mass_common_internal_gain": (
             4.0
             if args.error_mode
@@ -1912,6 +1923,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
     ap.add_argument("--score-mass-pairwise-error-scale", type=float, default=0.0625)
     ap.add_argument("--pairwise-margin-target-v", type=float, default=1.0e-3)
     ap.add_argument("--pairwise-margin-error-drive-scale", type=float, default=1.0)
+    ap.add_argument("--normalizer-error-clock-high", type=float, default=1.2)
     ap.add_argument("--error-mode", choices=ERROR_MODES, default="label-descent")
     ap.add_argument("--class-bias-mode", choices=CLASS_BIAS_MODES, default="none")
     ap.add_argument("--class-bias-input", type=float, default=0.85)
@@ -1970,6 +1982,8 @@ def validate_args(args: argparse.Namespace) -> None:
         raise ValueError("pairwise-margin-target-v must be positive")
     if args.pairwise_margin_error_drive_scale <= 0.0:
         raise ValueError("pairwise-margin-error-drive-scale must be positive")
+    if args.normalizer_error_clock_high <= 0.0 or args.normalizer_error_clock_high > 1.2:
+        raise ValueError("normalizer-error-clock-high must stay in (0, 1.2]")
     if min(args.initial_positive, args.initial_negative) <= 0.0:
         raise ValueError("initial-positive and initial-negative must be positive")
     if max(args.initial_positive, args.initial_negative) > 1.2:

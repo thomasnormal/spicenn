@@ -986,6 +986,26 @@ def test_multiclass_block_sequence_can_live_update_hidden_weights_from_readout_c
     assert ".meas tran whsigned_f0_final PARAM='whp_f0_final-whn_f0_final'" in netlist
 
 
+def test_multiclass_block_sequence_can_size_hidden_credit_storage() -> None:
+    netlist = seq.generate_netlist(
+        train_records=_target0_records(1),
+        eval_records=_target0_records(1),
+        readout_update_mode="live",
+        hidden_update_mode="readout-weighted",
+        hidden_credit_capacitance_f=50.0,
+        hidden_credit_shunt_resistance_ohm=250000.0,
+        hidden_credit_activation_model="NMOS",
+        error_mode="pairwise-margin-correction-descent",
+        score_timing_mode="early",
+    )
+
+    assert "Ch0_hdp h0_hdp 0 50f IC=0" in netlist
+    assert "Ch0_hdn h0_hdn 0 50f IC=0" in netlist
+    assert "Rh0_hdp h0_hdp 0 250000" in netlist
+    assert "Rh0_hdn h0_hdn 0 250000" in netlist
+    assert "Mh0_c0_hdp_pv_a h0_c0_pv_w act0 h0_hdp 0 NMOS W=8u" in netlist
+
+
 def test_multiclass_block_sequence_can_use_label_rail_descent_for_live_gradient_flow() -> None:
     netlist = seq.generate_netlist(
         train_records=_two_class_one_hot_records(),
@@ -1090,10 +1110,22 @@ def test_multiclass_block_sequence_validation() -> None:
         seq.main_for_test(["--readout-update-mode", "live", "--error-mode", "score-gated-nontarget"])
     with pytest.raises(ValueError, match="hidden_update_mode"):
         seq.generate_netlist(train_records=records, eval_records=records, hidden_update_mode="missing")
+    with pytest.raises(ValueError, match="hidden_credit_activation_model"):
+        seq.generate_netlist(
+            train_records=records,
+            eval_records=records,
+            hidden_update_mode="readout-weighted",
+            error_mode="pairwise-margin-correction-descent",
+            hidden_credit_activation_model="missing",
+        )
     with pytest.raises(ValueError, match="hidden-update-mode"):
         seq.main_for_test(["--hidden-update-mode", "readout-weighted", "--error-mode", "label-descent"])
     with pytest.raises(ValueError, match="hidden-credit-width"):
         seq.main_for_test(["--hidden-credit-width", "0"])
+    with pytest.raises(ValueError, match="hidden-credit-capacitance-f"):
+        seq.main_for_test(["--hidden-credit-capacitance-f", "0"])
+    with pytest.raises(ValueError, match="hidden-credit-shunt-resistance"):
+        seq.main_for_test(["--hidden-credit-shunt-resistance", "0"])
     with pytest.raises(ValueError, match="hidden-update-width"):
         seq.main_for_test(["--hidden-update-width", "0"])
     with pytest.raises(ValueError, match="score_timing_mode"):

@@ -61,6 +61,12 @@ def _block_argv(args: argparse.Namespace, *, approach: str, scenario: str, child
         args.hidden_update_mode,
         "--hidden-credit-width",
         str(args.hidden_credit_width),
+        "--hidden-credit-capacitance-f",
+        str(args.hidden_credit_capacitance_f),
+        "--hidden-credit-shunt-resistance",
+        str(args.hidden_credit_shunt_resistance),
+        "--hidden-credit-activation-model",
+        args.hidden_credit_activation_model,
         "--hidden-update-width",
         str(args.hidden_update_width),
         "--score-timing-mode",
@@ -249,6 +255,13 @@ def run_screen(args: argparse.Namespace) -> dict[str, Any]:
         "readout_update_mode": args.readout_update_mode,
         "hidden_update_mode": args.hidden_update_mode,
         "hidden_credit_width": args.hidden_credit_width if args.hidden_update_mode != "none" else None,
+        "hidden_credit_capacitance_f": args.hidden_credit_capacitance_f if args.hidden_update_mode != "none" else None,
+        "hidden_credit_shunt_resistance": (
+            args.hidden_credit_shunt_resistance if args.hidden_update_mode != "none" else None
+        ),
+        "hidden_credit_activation_model": (
+            args.hidden_credit_activation_model if args.hidden_update_mode != "none" else None
+        ),
         "hidden_update_width": args.hidden_update_width if args.hidden_update_mode != "none" else None,
         "score_timing_mode": args.score_timing_mode,
         "readout_forward_mode": args.readout_forward_mode,
@@ -287,6 +300,9 @@ def build_arg_parser() -> argparse.ArgumentParser:
     ap.add_argument("--readout-update-mode", choices=seq.READOUT_UPDATE_MODES, default="sampled")
     ap.add_argument("--hidden-update-mode", choices=seq.HIDDEN_UPDATE_MODES, default="none")
     ap.add_argument("--hidden-credit-width", type=float, default=8.0)
+    ap.add_argument("--hidden-credit-capacitance-f", type=float, default=12.0)
+    ap.add_argument("--hidden-credit-shunt-resistance", type=float, default=1.0e9)
+    ap.add_argument("--hidden-credit-activation-model", choices=seq.HIDDEN_CREDIT_ACTIVATION_MODELS, default="NREL")
     ap.add_argument("--hidden-update-width", type=float, default=0.25)
     ap.add_argument("--score-timing-mode", choices=seq.SCORE_TIMING_MODES, default="late")
     ap.add_argument("--readout-forward-mode", choices=seq.READOUT_FORWARD_MODES, default="direct")
@@ -315,6 +331,10 @@ def main_for_test(argv: list[str]) -> argparse.Namespace:
         raise ValueError("normalizer-error-clock-high must stay in (0, 1.2]")
     if args.hidden_credit_width <= 0.0:
         raise ValueError("hidden-credit-width must be positive")
+    if args.hidden_credit_capacitance_f <= 0.0:
+        raise ValueError("hidden-credit-capacitance-f must be positive")
+    if args.hidden_credit_shunt_resistance <= 0.0:
+        raise ValueError("hidden-credit-shunt-resistance must be positive")
     if args.hidden_update_width <= 0.0:
         raise ValueError("hidden-update-width must be positive")
     return args

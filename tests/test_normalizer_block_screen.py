@@ -36,6 +36,12 @@ def test_normalizer_block_screen_builds_block_args() -> None:
             "readout-weighted",
             "--hidden-credit-width",
             "6",
+            "--hidden-credit-capacitance-f",
+            "50",
+            "--hidden-credit-shunt-resistance",
+            "250000",
+            "--hidden-credit-activation-model",
+            "NMOS",
             "--hidden-update-width",
             "0.2",
             "--score-timing-mode",
@@ -63,6 +69,12 @@ def test_normalizer_block_screen_builds_block_args() -> None:
     assert "readout-weighted" in argv
     assert "--hidden-credit-width" in argv
     assert "6.0" in argv
+    assert "--hidden-credit-capacitance-f" in argv
+    assert "50.0" in argv
+    assert "--hidden-credit-shunt-resistance" in argv
+    assert "250000.0" in argv
+    assert "--hidden-credit-activation-model" in argv
+    assert "NMOS" in argv
     assert "--hidden-update-width" in argv
     assert "0.2" in argv
     assert "--score-timing-mode" in argv
@@ -84,6 +96,10 @@ def test_normalizer_block_screen_validation() -> None:
         screen.main_for_test(["--normalizer-error-clock-high", "0"])
     with pytest.raises(ValueError, match="hidden-credit-width"):
         screen.main_for_test(["--hidden-credit-width", "0"])
+    with pytest.raises(ValueError, match="hidden-credit-capacitance-f"):
+        screen.main_for_test(["--hidden-credit-capacitance-f", "0"])
+    with pytest.raises(ValueError, match="hidden-credit-shunt-resistance"):
+        screen.main_for_test(["--hidden-credit-shunt-resistance", "0"])
     with pytest.raises(ValueError, match="hidden-update-width"):
         screen.main_for_test(["--hidden-update-width", "0"])
 
@@ -126,6 +142,9 @@ def test_normalizer_block_screen_summary_runner(tmp_path: Path, monkeypatch: pyt
     assert summary["by_scenario"]["one-hot"]["passed_count"] == len(screen.APPROACHES)
     assert summary["readout_update_mode"] == "sampled"
     assert summary["hidden_update_mode"] == "none"
+    assert summary["hidden_credit_capacitance_f"] is None
+    assert summary["hidden_credit_shunt_resistance"] is None
+    assert summary["hidden_credit_activation_model"] is None
     assert summary["eligibility_source_mode"] == "pre-p"
     assert (tmp_path / "results/tables/unit_screen_summary.json").exists()
 

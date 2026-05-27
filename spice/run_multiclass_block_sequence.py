@@ -56,6 +56,7 @@ SCORE_SENSE_MODES = ("voltage", "current-clamp", "diode-mirror")
 READOUT_FORWARD_MODES = ("direct", "diode")
 ELIGIBILITY_GATE_MODES = ("raw", "competition", "rank", "contrast")
 ELIGIBILITY_SOURCE_MODES = ("pre-p", "act-raw", "act")
+HIDDEN_CREDIT_ACTIVATION_MODELS = ("NREL", "NMOS", "NSENSE")
 ERROR_MODES = (
     "label-descent",
     "label-rail-descent",
@@ -152,14 +153,21 @@ def hidden_readout_weighted_credit_lines(
     error_positive_nodes: list[str],
     error_negative_nodes: list[str],
     width_u: float = 8.0,
+    capacitance_f: float = 12.0,
+    shunt_resistance_ohm: float = 1.0e9,
+    activation_model: str = "NREL",
 ) -> list[str]:
+    if min(width_u, capacitance_f, shunt_resistance_ohm) <= 0.0:
+        raise ValueError("hidden credit width, capacitance, and shunt resistance must be positive")
+    if activation_model not in HIDDEN_CREDIT_ACTIVATION_MODELS:
+        raise ValueError(f"activation_model must be one of {HIDDEN_CREDIT_ACTIVATION_MODELS}")
     hdp = hidden_credit_node(feature_idx, "hdp")
     hdn = hidden_credit_node(feature_idx, "hdn")
     lines = [
-        f"C{hdp} {hdp} 0 12f IC=0",
-        f"C{hdn} {hdn} 0 12f IC=0",
-        f"R{hdp} {hdp} 0 1G",
-        f"R{hdn} {hdn} 0 1G",
+        f"C{hdp} {hdp} 0 {capacitance_f:.12g}f IC=0",
+        f"C{hdn} {hdn} 0 {capacitance_f:.12g}f IC=0",
+        f"R{hdp} {hdp} 0 {shunt_resistance_ohm:.12g}",
+        f"R{hdn} {hdn} 0 {shunt_resistance_ohm:.12g}",
         f"Mreset_{hdp} {hdp} rst 0 0 NMOS W=4u L=180n",
         f"Mreset_{hdn} {hdn} rst 0 0 NMOS W=4u L=180n",
     ]
@@ -175,22 +183,22 @@ def hidden_readout_weighted_credit_lines(
             f"R{prefix}pv_w {prefix}pv_w 0 1G",
             f"M{prefix}hdp_pv_e vdd {errp} {prefix}pv_e 0 NSENSE W={width_u:.6g}u L=180n",
             f"M{prefix}hdp_pv_w {prefix}pv_e {vwp} {prefix}pv_w 0 NSENSE W={width_u:.6g}u L=180n",
-            f"M{prefix}hdp_pv_a {prefix}pv_w {act} {hdp} 0 NREL W={width_u:.6g}u L=180n",
+            f"M{prefix}hdp_pv_a {prefix}pv_w {act} {hdp} 0 {activation_model} W={width_u:.6g}u L=180n",
             f"R{prefix}pn_e {prefix}pn_e 0 1G",
             f"R{prefix}pn_w {prefix}pn_w 0 1G",
             f"M{prefix}hdn_pv_e vdd {errp} {prefix}pn_e 0 NSENSE W={width_u:.6g}u L=180n",
             f"M{prefix}hdn_pv_w {prefix}pn_e {vwn} {prefix}pn_w 0 NSENSE W={width_u:.6g}u L=180n",
-            f"M{prefix}hdn_pv_a {prefix}pn_w {act} {hdn} 0 NREL W={width_u:.6g}u L=180n",
+            f"M{prefix}hdn_pv_a {prefix}pn_w {act} {hdn} 0 {activation_model} W={width_u:.6g}u L=180n",
             f"R{prefix}nv_e {prefix}nv_e 0 1G",
             f"R{prefix}nv_w {prefix}nv_w 0 1G",
             f"M{prefix}hdp_nv_e vdd {errn} {prefix}nv_e 0 NSENSE W={width_u:.6g}u L=180n",
             f"M{prefix}hdp_nv_w {prefix}nv_e {vwn} {prefix}nv_w 0 NSENSE W={width_u:.6g}u L=180n",
-            f"M{prefix}hdp_nv_a {prefix}nv_w {act} {hdp} 0 NREL W={width_u:.6g}u L=180n",
+            f"M{prefix}hdp_nv_a {prefix}nv_w {act} {hdp} 0 {activation_model} W={width_u:.6g}u L=180n",
             f"R{prefix}nn_e {prefix}nn_e 0 1G",
             f"R{prefix}nn_w {prefix}nn_w 0 1G",
             f"M{prefix}hdn_nv_e vdd {errn} {prefix}nn_e 0 NSENSE W={width_u:.6g}u L=180n",
             f"M{prefix}hdn_nv_w {prefix}nn_e {vwp} {prefix}nn_w 0 NSENSE W={width_u:.6g}u L=180n",
-            f"M{prefix}hdn_nv_a {prefix}nn_w {act} {hdn} 0 NREL W={width_u:.6g}u L=180n",
+            f"M{prefix}hdn_nv_a {prefix}nn_w {act} {hdn} 0 {activation_model} W={width_u:.6g}u L=180n",
         ]
     return lines
 
@@ -883,6 +891,9 @@ def generate_netlist(
     readout_update_mode: str = "sampled",
     hidden_update_mode: str = "none",
     hidden_credit_width_u: float = 8.0,
+    hidden_credit_capacitance_f: float = 12.0,
+    hidden_credit_shunt_resistance_ohm: float = 1.0e9,
+    hidden_credit_activation_model: str = "NREL",
     hidden_update_width_u: float = 0.25,
     score_timing_mode: str = "late",
     score_sense_mode: str = "voltage",
@@ -924,6 +935,8 @@ def generate_netlist(
         "pairwise_margin_error_drive_scale": pairwise_margin_error_drive_scale,
         "normalizer_error_clock_high": normalizer_error_clock_high,
         "hidden_credit_width_u": hidden_credit_width_u,
+        "hidden_credit_capacitance_f": hidden_credit_capacitance_f,
+        "hidden_credit_shunt_resistance_ohm": hidden_credit_shunt_resistance_ohm,
         "hidden_update_width_u": hidden_update_width_u,
         "eligibility_contrast_common_resistance_ohm": eligibility_contrast_common_resistance_ohm,
         "eligibility_contrast_common_capacitance_f": eligibility_contrast_common_capacitance_f,
@@ -946,6 +959,8 @@ def generate_netlist(
         raise ValueError(f"readout_update_mode must be one of {READOUT_UPDATE_MODES}")
     if hidden_update_mode not in HIDDEN_UPDATE_MODES:
         raise ValueError(f"hidden_update_mode must be one of {HIDDEN_UPDATE_MODES}")
+    if hidden_credit_activation_model not in HIDDEN_CREDIT_ACTIVATION_MODELS:
+        raise ValueError(f"hidden_credit_activation_model must be one of {HIDDEN_CREDIT_ACTIVATION_MODELS}")
     if score_timing_mode not in SCORE_TIMING_MODES:
         raise ValueError(f"score_timing_mode must be one of {SCORE_TIMING_MODES}")
     if score_sense_mode not in SCORE_SENSE_MODES:
@@ -1605,6 +1620,9 @@ def generate_netlist(
                 error_positive_nodes=error_positive_nodes,
                 error_negative_nodes=error_negative_nodes,
                 width_u=hidden_credit_width_u,
+                capacitance_f=hidden_credit_capacitance_f,
+                shunt_resistance_ohm=hidden_credit_shunt_resistance_ohm,
+                activation_model=hidden_credit_activation_model,
             )
             lines += hidden_live_weight_update_lines(
                 feature_idx=feature,
@@ -2505,6 +2523,9 @@ def run_case(args: argparse.Namespace) -> dict[str, Any]:
         readout_update_mode=args.readout_update_mode,
         hidden_update_mode=args.hidden_update_mode,
         hidden_credit_width_u=args.hidden_credit_width,
+        hidden_credit_capacitance_f=args.hidden_credit_capacitance_f,
+        hidden_credit_shunt_resistance_ohm=args.hidden_credit_shunt_resistance,
+        hidden_credit_activation_model=args.hidden_credit_activation_model,
         hidden_update_width_u=args.hidden_update_width,
         score_timing_mode=args.score_timing_mode,
         score_sense_mode=args.score_sense_mode,
@@ -2633,6 +2654,13 @@ def run_case(args: argparse.Namespace) -> dict[str, Any]:
         "readout_update_mode": args.readout_update_mode,
         "hidden_update_mode": args.hidden_update_mode,
         "hidden_credit_width_u": args.hidden_credit_width if args.hidden_update_mode != "none" else None,
+        "hidden_credit_capacitance_f": args.hidden_credit_capacitance_f if args.hidden_update_mode != "none" else None,
+        "hidden_credit_shunt_resistance_ohm": (
+            args.hidden_credit_shunt_resistance if args.hidden_update_mode != "none" else None
+        ),
+        "hidden_credit_activation_model": (
+            args.hidden_credit_activation_model if args.hidden_update_mode != "none" else None
+        ),
         "hidden_update_width_u": args.hidden_update_width if args.hidden_update_mode != "none" else None,
         "score_timing_mode": args.score_timing_mode,
         "score_sense_mode": args.score_sense_mode,
@@ -2745,6 +2773,9 @@ def build_arg_parser() -> argparse.ArgumentParser:
     ap.add_argument("--readout-update-mode", choices=READOUT_UPDATE_MODES, default="sampled")
     ap.add_argument("--hidden-update-mode", choices=HIDDEN_UPDATE_MODES, default="none")
     ap.add_argument("--hidden-credit-width", type=float, default=8.0)
+    ap.add_argument("--hidden-credit-capacitance-f", type=float, default=12.0)
+    ap.add_argument("--hidden-credit-shunt-resistance", type=float, default=1.0e9)
+    ap.add_argument("--hidden-credit-activation-model", choices=HIDDEN_CREDIT_ACTIVATION_MODELS, default="NREL")
     ap.add_argument("--hidden-update-width", type=float, default=0.25)
     ap.add_argument("--score-timing-mode", choices=SCORE_TIMING_MODES, default="late")
     ap.add_argument("--score-sense-mode", choices=SCORE_SENSE_MODES, default="voltage")
@@ -2847,6 +2878,10 @@ def validate_args(args: argparse.Namespace) -> None:
         raise ValueError("normalizer-error-clock-high must stay in (0, 1.2]")
     if args.hidden_credit_width <= 0.0:
         raise ValueError("hidden-credit-width must be positive")
+    if args.hidden_credit_capacitance_f <= 0.0:
+        raise ValueError("hidden-credit-capacitance-f must be positive")
+    if args.hidden_credit_shunt_resistance <= 0.0:
+        raise ValueError("hidden-credit-shunt-resistance must be positive")
     if args.hidden_update_width <= 0.0:
         raise ValueError("hidden-update-width must be positive")
     if args.eligibility_contrast_common_resistance <= 0.0:

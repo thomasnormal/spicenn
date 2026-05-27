@@ -47,6 +47,7 @@ ERROR_MODES = (
     "amplified-score-binary-descent",
     "score-mass-descent",
     "common-score-mass-descent",
+    "target-contrast-score-mass-descent",
     "pairwise-binary-descent",
     "restored-score-binary-descent",
     "restored-score-nontarget",
@@ -614,6 +615,7 @@ def generate_netlist(
     uses_raw_common_ref_score = error_mode == "raw-common-ref-score-nontarget"
     uses_target_ref_score = error_mode == "target-ref-score-nontarget"
     uses_common_score_mass = error_mode == "common-score-mass-descent"
+    uses_target_contrast_score_mass = error_mode == "target-contrast-score-mass-descent"
     uses_score_common_gate = uses_common_ref_score or uses_raw_common_ref_score
     uses_score_common_gate_nodes = uses_score_common_gate or uses_common_score_mass
     uses_amplified_competitive = error_mode == "amplified-score-competitive"
@@ -632,6 +634,7 @@ def generate_netlist(
         or uses_target_ref_score
         or uses_score_mass
         or uses_common_score_mass
+        or uses_target_contrast_score_mass
     )
     uses_restored_winner = error_mode == "restored-winner-nontarget"
     uses_pairwise_decisions = uses_restored_winner or uses_pairwise_binary or uses_amplified_pairwise
@@ -643,7 +646,11 @@ def generate_netlist(
         or uses_score_preamp
         or uses_raw_common_ref_score
     )
-    target_start_ns = 9.55 if (uses_target_ref_score or uses_score_mass or uses_common_score_mass) else 10.8 if uses_late_restored_gate else 9.0
+    target_start_ns = (
+        9.55
+        if (uses_target_ref_score or uses_score_mass or uses_common_score_mass or uses_target_contrast_score_mass)
+        else 10.8 if uses_late_restored_gate else 9.0
+    )
     target_end_ns = 12.8 if uses_late_restored_gate else 11.0
     acc_start_ns = 10.8 if uses_late_restored_gate else 9.0
     acc_end_ns = 12.8 if uses_late_restored_gate else 11.0
@@ -678,11 +685,17 @@ def generate_netlist(
             f"Vscoreamp scoreamp 0 {periodic_phase_pwl(cycle_count, start_ns=8.60, end_ns=9.50, active_cycles=train_cycles)}",
             f"Vscoredec scoredec 0 {periodic_phase_pwl(cycle_count, start_ns=9.70, end_ns=10.40, active_cycles=train_cycles)}",
         ]
-    if uses_score_mass or uses_common_score_mass:
+    if uses_score_mass or uses_common_score_mass or uses_target_contrast_score_mass:
         lines.append(
             f"Vscoreerr scoreerr 0 {periodic_phase_pwl(cycle_count, start_ns=10.45, end_ns=10.75, active_cycles=train_cycles)}"
         )
-    if uses_residual_score or uses_score_common_gate_nodes or uses_target_ref_score or uses_score_mass:
+    if (
+        uses_residual_score
+        or uses_score_common_gate_nodes
+        or uses_target_ref_score
+        or uses_score_mass
+        or uses_target_contrast_score_mass
+    ):
         lines.append(
             f"Vscoregaterst scoregaterst 0 {periodic_phase_pwl(cycle_count, start_ns=8.10, end_ns=8.35, active_cycles=train_cycles)}"
         )
@@ -798,6 +811,14 @@ def generate_netlist(
                 common_node="target_score_ref",
                 output_node=class_node(class_idx, "score_target_gate"),
             )
+        elif uses_target_contrast_score_mass:
+            lines += class_local_score_common_gate_lines(
+                class_idx=class_idx,
+                common_node="target_score_ref",
+                output_node=class_node(class_idx, "score_target_gate"),
+                pullup_width_u=192.0,
+                pulldown_width_u=6.0,
+            )
         if uses_pairwise_decisions:
             for opponent_idx in range(class_idx + 1, class_count):
                 lines += pairwise_winner_lines(class_a=class_idx, class_b=opponent_idx)
@@ -808,7 +829,7 @@ def generate_netlist(
         )
     elif uses_common_ref_score or uses_common_score_mass:
         lines += shared_score_common_reference_lines(class_count=class_count)
-    if uses_target_ref_score:
+    if uses_target_ref_score or uses_target_contrast_score_mass:
         lines += shared_label_score_reference_lines(class_count=class_count)
     if uses_score_mass:
         lines += shared_score_mass_error_lines(
@@ -821,6 +842,15 @@ def generate_netlist(
         lines += shared_score_mass_error_lines(
             class_count=class_count,
             score_input_template="c{class_idx}_score_common_gate",
+            sum_width_u=4.0 * score_mass_sum_width,
+            error_width_u=4.0 * score_mass_error_width,
+            mass_capacitance_f=0.5,
+            error_capacitance_f=0.5,
+        )
+    if uses_target_contrast_score_mass:
+        lines += shared_score_mass_error_lines(
+            class_count=class_count,
+            score_input_template="c{class_idx}_score_target_gate",
             sum_width_u=4.0 * score_mass_sum_width,
             error_width_u=4.0 * score_mass_error_width,
             mass_capacitance_f=0.5,
@@ -926,6 +956,14 @@ def generate_netlist(
                     negative_error_node=class_node(class_idx, "errn"),
                 )
             elif uses_common_score_mass:
+                gradient_lines = class_local_error_rail_gradient_lines(
+                    class_idx=class_idx,
+                    feature_idx=feature,
+                    activation_node=f"elig{feature}",
+                    positive_error_node=class_node(class_idx, "errp"),
+                    negative_error_node=class_node(class_idx, "errn"),
+                )
+            elif uses_target_contrast_score_mass:
                 gradient_lines = class_local_error_rail_gradient_lines(
                     class_idx=class_idx,
                     feature_idx=feature,
@@ -1057,13 +1095,13 @@ def generate_netlist(
                     f".meas tran c{class_idx}_score_common_gate_{cycle} FIND V({class_node(class_idx, 'score_common_gate')}) AT={base + 10.60:.2f}n",
                     f".meas tran c{class_idx}_score_above_common_{cycle} PARAM='{score_input_measure}-score_common_c{class_idx}_{cycle}'",
                 ]
-            if uses_target_ref_score:
+            if uses_target_ref_score or uses_target_contrast_score_mass:
                 lines += [
                     f".meas tran target_score_ref_c{class_idx}_{cycle} FIND V(target_score_ref) AT={base + 10.60:.2f}n",
                     f".meas tran c{class_idx}_score_target_gate_{cycle} FIND V({class_node(class_idx, 'score_target_gate')}) AT={base + 10.60:.2f}n",
                     f".meas tran c{class_idx}_score_above_target_{cycle} PARAM='c{class_idx}_score_amp_{cycle}-target_score_ref_c{class_idx}_{cycle}'",
                 ]
-            if uses_score_mass or uses_common_score_mass:
+            if uses_score_mass or uses_common_score_mass or uses_target_contrast_score_mass:
                 lines += [
                     f".meas tran score_nontarget_mass_c{class_idx}_{cycle} FIND V(score_nontarget_mass) AT={base + 10.42:.2f}n",
                     f".meas tran c{class_idx}_errp_{cycle} FIND V({class_node(class_idx, 'errp')}) AT={base + 10.78:.2f}n",
@@ -1272,7 +1310,9 @@ def run_case(args: argparse.Namespace) -> dict[str, Any]:
         "nontarget_width_scale": args.nontarget_width_scale,
         "score_mass_sum_width_u": args.score_mass_sum_width if "score-mass" in args.error_mode else None,
         "score_mass_error_width_u": args.score_mass_error_width if "score-mass" in args.error_mode else None,
-        "score_mass_common_internal_gain": 4.0 if args.error_mode == "common-score-mass-descent" else None,
+        "score_mass_common_internal_gain": (
+            4.0 if args.error_mode in {"common-score-mass-descent", "target-contrast-score-mass-descent"} else None
+        ),
         "error_mode": args.error_mode,
         "target_class": args.target_class if args.scenario == "target-repeat" else None,
         "train_samples": len(train_records),

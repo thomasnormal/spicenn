@@ -320,6 +320,27 @@ def test_multiclass_block_sequence_can_use_common_score_mass_descent() -> None:
     assert ".meas tran c1_errdiff_1" in netlist
 
 
+def test_multiclass_block_sequence_can_use_target_contrast_score_mass_descent() -> None:
+    netlist = seq.generate_netlist(
+        train_records=_target0_records(1),
+        eval_records=_target0_records(1),
+        error_mode="target-contrast-score-mass-descent",
+    )
+
+    assert "\nB" not in netlist
+    assert "Ctarget_score_ref target_score_ref 0 4f IC=0" in netlist
+    assert "Mtarget_score_ref_sel_c0 target_score_ref c0_targetp c0_score_amp 0 NSENSE W=24u" in netlist
+    assert "Cc1_score_target_gate c1_score_target_gate 0 4f IC=0" in netlist
+    assert "Mc1_score_common_gate_up_v vdd c1_score_amp c1_score_common_gate_up_i 0 NREL W=192u" in netlist
+    assert "Mc1_score_common_gate_dn_v c1_score_target_gate target_score_ref c1_score_common_gate_dn_i 0 NREL W=6u" in netlist
+    assert "Mmass_nt1_score mass_nt1_a c1_score_target_gate mass_nt1_s 0 NSENSE W=128u" in netlist
+    assert "Cc1_errn c1_errn 0 0.5f IC=0" in netlist
+    assert "Mc1_errn_score c1_errn_a c1_score_target_gate c1_errn_s 0 NSENSE W=128u" in netlist
+    assert "Mc1_f0_gvn_e c1_f0_gvn_a c1_errn c1_f0_gvn_d 0 NSENSE" in netlist
+    assert ".meas tran c1_score_target_gate_1" in netlist
+    assert ".meas tran c1_errdiff_1" in netlist
+
+
 def test_multiclass_block_sequence_can_add_target_only_class_bias_row() -> None:
     netlist = seq.generate_netlist(
         train_records=_target0_records(1),
@@ -618,8 +639,12 @@ def _score_mass_descent_netlist(
     *,
     target_class: int,
     common_centered: bool = False,
+    target_centered: bool = False,
 ) -> str:
-    score_nodes = [f"c{class_idx}_score_common_gate" if common_centered else f"c{class_idx}_score_amp" for class_idx in range(3)]
+    if common_centered and target_centered:
+        raise ValueError("common_centered and target_centered are mutually exclusive")
+    score_suffix = "score_target_gate" if target_centered else "score_common_gate" if common_centered else "score_amp"
+    score_nodes = [f"c{class_idx}_{score_suffix}" for class_idx in range(3)]
     lines = [
         "* Low-level multiclass score-mass descent writer primitive.",
         ".param VDD=1.2",
@@ -658,9 +683,28 @@ def _score_mass_descent_netlist(
                 for line in seq.class_local_score_common_gate_lines(class_idx=class_idx)
             ],
         ]
+    if target_centered:
+        lines += [
+            *seq.shared_label_score_reference_lines(class_count=3),
+            *[
+                line
+                for class_idx in range(3)
+                for line in seq.class_local_score_common_gate_lines(
+                    class_idx=class_idx,
+                    common_node="target_score_ref",
+                    output_node=seq.class_node(class_idx, "score_target_gate"),
+                    pullup_width_u=192.0,
+                    pulldown_width_u=6.0,
+                )
+            ],
+        ]
     lines += seq.shared_score_mass_error_lines(
         class_count=3,
-        score_input_template="c{class_idx}_score_common_gate" if common_centered else "c{class_idx}_score_amp",
+        score_input_template=f"c{{class_idx}}_{score_suffix}",
+        sum_width_u=128.0 if (common_centered or target_centered) else 32.0,
+        error_width_u=128.0 if (common_centered or target_centered) else 32.0,
+        mass_capacitance_f=0.5 if (common_centered or target_centered) else 8.0,
+        error_capacitance_f=0.5 if (common_centered or target_centered) else 8.0,
     )
     for class_idx in range(3):
         lines += [
@@ -690,7 +734,7 @@ def _score_mass_descent_netlist(
                 [
                     f".meas tran c{class_idx}_score_gate_after FIND V({score_nodes[class_idx]}) AT=2.35n",
                 ]
-                if common_centered
+                if common_centered or target_centered
                 else []
             ),
             f".meas tran c{class_idx}_errp_after FIND V({seq.class_node(class_idx, 'errp')}) AT=3.25n",
@@ -1182,6 +1226,26 @@ def test_multiclass_block_sequence_ngspice_common_score_mass_uses_centered_class
     assert abs(float(measures["c0_signed_after"])) < 1e-6
 
 
+def test_multiclass_block_sequence_ngspice_target_contrast_score_mass_uses_label_reference(
+    tmp_path: Path,
+    ngspice_path: str,
+) -> None:
+    measures = run_netlist(
+        ngspice_path,
+        tmp_path / "target_contrast_score_mass_descent_high_wrong0.cir",
+        _score_mass_descent_netlist((0.75, 0.45, 0.15), target_class=1, target_centered=True),
+        timeout=20.0,
+    )
+
+    assert float(measures["c0_score_gate_after"]) > float(measures["c1_score_gate_after"]) + 10e-3
+    assert float(measures["c1_score_gate_after"]) > float(measures["c2_score_gate_after"]) + 5e-3
+    assert float(measures["score_nontarget_mass_after"]) > 0.05
+    assert float(measures["c1_errdiff"]) > 0.01
+    assert float(measures["c0_errdiff"]) < -0.01
+    assert abs(float(measures["c2_errdiff"])) < abs(float(measures["c0_errdiff"]))
+    assert float(measures["c1_signed_after"]) > 1e-6
+
+
 def test_multiclass_block_sequence_ngspice_restored_binary_descent_gates_target_miss_and_false_positive(
     tmp_path: Path,
     ngspice_path: str,
@@ -1615,6 +1679,35 @@ def test_multiclass_block_sequence_ngspice_common_score_mass_keeps_one_hot_predi
     assert final_predictions == [0, 1, 2]
     assert float(measures["score_nontarget_mass_c0_4"]) > 1e-3
     assert abs(float(measures["c0_score_above_common_4"])) > 1e-6
+    for class_idx in range(3):
+        assert float(measures[f"c{class_idx}_f{class_idx}_signed_final"]) > 1e-3
+
+
+def test_multiclass_block_sequence_ngspice_target_contrast_score_mass_keeps_one_hot_predictions(
+    tmp_path: Path,
+    ngspice_path: str,
+) -> None:
+    measures = run_netlist(
+        ngspice_path,
+        tmp_path / "multiclass_block_sequence_onehot_target_contrast_score_mass.cir",
+        seq.generate_netlist(
+            train_records=_one_hot_records(),
+            eval_records=_one_hot_records(),
+            class_count=3,
+            feature_count=3,
+            score_capacitance_f=5.0,
+            error_mode="target-contrast-score-mass-descent",
+        ),
+        timeout=100.0,
+    )
+
+    final_predictions = [
+        int(np.argmax([float(measures[f"c{class_idx}_score_net_{cycle}"]) for class_idx in range(3)]))
+        for cycle in range(6, 9)
+    ]
+    assert final_predictions == [0, 1, 2]
+    assert float(measures["score_nontarget_mass_c0_4"]) > 1e-3
+    assert abs(float(measures["c0_score_above_target_4"])) > 1e-6
     for class_idx in range(3):
         assert float(measures[f"c{class_idx}_f{class_idx}_signed_final"]) > 1e-3
 

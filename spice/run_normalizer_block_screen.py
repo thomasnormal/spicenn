@@ -67,6 +67,8 @@ def _block_argv(args: argparse.Namespace, *, approach: str, scenario: str, child
         args.score_timing_mode,
         "--readout-forward-mode",
         args.readout_forward_mode,
+        "--eligibility-source-mode",
+        args.eligibility_source_mode,
     ]
     if scenario == "one-hot":
         argv += [
@@ -250,6 +252,7 @@ def run_screen(args: argparse.Namespace) -> dict[str, Any]:
         "hidden_update_width": args.hidden_update_width if args.hidden_update_mode != "none" else None,
         "score_timing_mode": args.score_timing_mode,
         "readout_forward_mode": args.readout_forward_mode,
+        "eligibility_source_mode": args.eligibility_source_mode,
         "csv": str(csv_path),
         "by_scenario": by_scenario,
         "wall_time_s": time.perf_counter() - start,
@@ -287,6 +290,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
     ap.add_argument("--hidden-update-width", type=float, default=0.25)
     ap.add_argument("--score-timing-mode", choices=seq.SCORE_TIMING_MODES, default="late")
     ap.add_argument("--readout-forward-mode", choices=seq.READOUT_FORWARD_MODES, default="direct")
+    ap.add_argument("--eligibility-source-mode", choices=seq.ELIGIBILITY_SOURCE_MODES, default="pre-p")
     ap.add_argument("--keep-going", action=argparse.BooleanOptionalAction, default=True)
     return ap
 

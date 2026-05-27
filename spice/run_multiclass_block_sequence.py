@@ -55,6 +55,7 @@ SCORE_TIMING_MODES = ("late", "early")
 SCORE_SENSE_MODES = ("voltage", "current-clamp", "diode-mirror")
 READOUT_FORWARD_MODES = ("direct", "diode")
 ELIGIBILITY_GATE_MODES = ("raw", "competition", "rank", "contrast")
+ELIGIBILITY_SOURCE_MODES = ("pre-p", "act-raw", "act")
 ERROR_MODES = (
     "label-descent",
     "label-rail-descent",
@@ -887,6 +888,7 @@ def generate_netlist(
     score_sense_mode: str = "voltage",
     readout_forward_mode: str = "direct",
     eligibility_gate_mode: str = "raw",
+    eligibility_source_mode: str = "pre-p",
     eligibility_contrast_common_resistance_ohm: float = 1.0e6,
     eligibility_contrast_common_capacitance_f: float = 1.0,
     class_bias_mode: str = "none",
@@ -952,6 +954,8 @@ def generate_netlist(
         raise ValueError(f"readout_forward_mode must be one of {READOUT_FORWARD_MODES}")
     if eligibility_gate_mode not in ELIGIBILITY_GATE_MODES:
         raise ValueError(f"eligibility_gate_mode must be one of {ELIGIBILITY_GATE_MODES}")
+    if eligibility_source_mode not in ELIGIBILITY_SOURCE_MODES:
+        raise ValueError(f"eligibility_source_mode must be one of {ELIGIBILITY_SOURCE_MODES}")
     if score_sense_mode in ("current-clamp", "diode-mirror") and error_mode not in {
         "label-descent",
         "label-rail-descent",
@@ -1234,6 +1238,13 @@ def generate_netlist(
             if bias_feature is not None and feature == bias_feature
             else [float(row[feature]) for row in features]
         )
+        eligibility_source_node = (
+            f"act_raw{feature}"
+            if eligibility_source_mode == "act-raw"
+            else f"act{feature}"
+            if eligibility_source_mode == "act"
+            else f"pre_p{feature}"
+        )
         lines += [
             f"Vrow{feature} row{feature} 0 {windowed_pwl(row_values, start_ns=1.1, end_ns=4.0)}",
             f"Cwhp{feature} whp{feature} 0 20f IC={hidden_positive:.12g}",
@@ -1273,8 +1284,8 @@ def generate_netlist(
             f"Mact{feature}_n act_raw{feature} pre_n{feature} 0 0 NREL W=24u L=180n",
             f"Mact_store{feature}_n act{feature} samp act_raw{feature} 0 NMOS W=16u L=180n",
             f"Mact_store{feature}_p act{feature} sampn act_raw{feature} vdd PMOS W=32u L=180n",
-            f"Melig{feature}_n elig{feature} samp pre_p{feature} 0 NMOS W=16u L=180n",
-            f"Melig{feature}_p elig{feature} sampn pre_p{feature} vdd PMOS W=32u L=180n",
+            f"Melig{feature}_n elig{feature} samp {eligibility_source_node} 0 NMOS W=16u L=180n",
+            f"Melig{feature}_p elig{feature} sampn {eligibility_source_node} vdd PMOS W=32u L=180n",
             *(
                 [
                     f"Mxelig{feature}_n xelig{feature} samp row{feature} 0 NMOS W=16u L=180n",
@@ -2499,6 +2510,7 @@ def run_case(args: argparse.Namespace) -> dict[str, Any]:
         score_sense_mode=args.score_sense_mode,
         readout_forward_mode=args.readout_forward_mode,
         eligibility_gate_mode=args.eligibility_gate_mode,
+        eligibility_source_mode=args.eligibility_source_mode,
         eligibility_contrast_common_resistance_ohm=args.eligibility_contrast_common_resistance,
         eligibility_contrast_common_capacitance_f=args.eligibility_contrast_common_capacitance_f,
         class_bias_mode=args.class_bias_mode,
@@ -2626,6 +2638,7 @@ def run_case(args: argparse.Namespace) -> dict[str, Any]:
         "score_sense_mode": args.score_sense_mode,
         "readout_forward_mode": args.readout_forward_mode,
         "eligibility_gate_mode": args.eligibility_gate_mode,
+        "eligibility_source_mode": args.eligibility_source_mode,
         "eligibility_contrast_common_resistance_ohm": (
             args.eligibility_contrast_common_resistance if args.eligibility_gate_mode == "contrast" else None
         ),
@@ -2737,6 +2750,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
     ap.add_argument("--score-sense-mode", choices=SCORE_SENSE_MODES, default="voltage")
     ap.add_argument("--readout-forward-mode", choices=READOUT_FORWARD_MODES, default="direct")
     ap.add_argument("--eligibility-gate-mode", choices=ELIGIBILITY_GATE_MODES, default="raw")
+    ap.add_argument("--eligibility-source-mode", choices=ELIGIBILITY_SOURCE_MODES, default="pre-p")
     ap.add_argument("--eligibility-contrast-common-resistance", type=float, default=1.0e6)
     ap.add_argument("--eligibility-contrast-common-capacitance-f", type=float, default=1.0)
     ap.add_argument("--class-bias-mode", choices=CLASS_BIAS_MODES, default="none")

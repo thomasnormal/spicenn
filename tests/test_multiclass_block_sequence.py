@@ -60,6 +60,32 @@ def test_multiclass_block_sequence_emits_single_continuous_deck() -> None:
     assert "* cycle 3 final_eval label=0" in netlist
 
 
+def test_multiclass_block_sequence_can_sample_differential_activation_as_eligibility() -> None:
+    netlist = seq.generate_netlist(
+        train_records=_target0_records(1),
+        eval_records=_target0_records(1),
+        eligibility_source_mode="act-raw",
+    )
+
+    assert "\nB" not in netlist
+    assert "Melig0_n elig0 samp act_raw0 0 NMOS W=16u L=180n" in netlist
+    assert "Melig0_p elig0 sampn act_raw0 vdd PMOS W=32u L=180n" in netlist
+    assert "Melig0_n elig0 samp pre_p0 0 NMOS" not in netlist
+
+
+def test_multiclass_block_sequence_can_sample_stored_activation_as_eligibility() -> None:
+    netlist = seq.generate_netlist(
+        train_records=_target0_records(1),
+        eval_records=_target0_records(1),
+        eligibility_source_mode="act",
+    )
+
+    assert "\nB" not in netlist
+    assert "Melig0_n elig0 samp act0 0 NMOS W=16u L=180n" in netlist
+    assert "Melig0_p elig0 sampn act0 vdd PMOS W=32u L=180n" in netlist
+    assert "Melig0_n elig0 samp pre_p0 0 NMOS" not in netlist
+
+
 def test_multiclass_block_sequence_can_scale_nontarget_pressure() -> None:
     netlist = seq.generate_netlist(
         train_records=[

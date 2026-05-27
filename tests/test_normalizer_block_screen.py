@@ -42,6 +42,8 @@ def test_normalizer_block_screen_builds_block_args() -> None:
             "early",
             "--readout-forward-mode",
             "diode",
+            "--eligibility-source-mode",
+            "act-raw",
         ]
     )
 
@@ -67,6 +69,8 @@ def test_normalizer_block_screen_builds_block_args() -> None:
     assert "early" in argv
     assert "--readout-forward-mode" in argv
     assert "diode" in argv
+    assert "--eligibility-source-mode" in argv
+    assert "act-raw" in argv
 
 
 def test_normalizer_block_screen_validation() -> None:
@@ -122,6 +126,7 @@ def test_normalizer_block_screen_summary_runner(tmp_path: Path, monkeypatch: pyt
     assert summary["by_scenario"]["one-hot"]["passed_count"] == len(screen.APPROACHES)
     assert summary["readout_update_mode"] == "sampled"
     assert summary["hidden_update_mode"] == "none"
+    assert summary["eligibility_source_mode"] == "pre-p"
     assert (tmp_path / "results/tables/unit_screen_summary.json").exists()
 
     with (tmp_path / "results/tables/unit_screen.csv").open() as f:

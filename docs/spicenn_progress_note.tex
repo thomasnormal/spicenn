@@ -590,6 +590,7 @@ The current score-error family includes
 \[
   \code{score-mass-descent},\qquad
   \code{common-score-mass-descent},\qquad
+  \code{contrast-score-mass-descent},\qquad
   \code{target-contrast-score-mass-descent},
 \]
 and a pairwise score-competition primitive.  The score-mass modes build
@@ -598,6 +599,19 @@ rails, then route the existing readout writer through those rails.  The
 pairwise primitive uses low-common-mode class-vs-class score comparators and
 PMOS supply-blocked error stacks so that near ties generate bounded correction
 pressure rather than a random full-rail sign latch.
+
+The \code{contrast-score-mass-descent} branch adds an intermediate analog
+contrast rail per class.  Each \(\code{cX\_score\_contrast}\) capacitor is
+reset to a mid reference, charged by the class-local score preamp, and
+discharged by the shared score-common reference.  The existing score-mass
+network then treats those contrast rails as its class evidence source.  This is
+still a transistor/passive path: the contrast node is a capacitor driven by MOS
+charge/discharge devices, not a behavioral subtractor.  Its one-hot control is
+useful, reaching \(0.333\to1.000\), but the real
+\(\code{mnist3fixed8\_12}\) 6-train/6-eval probe stayed at
+\(0.333\to0.333\) with about \(-0.523\) mV final minimum margin.  The result
+supports analog contrast rails as infrastructure, but not as the missing
+multiclass learning mechanism by itself.
 
 The newest blended mode,
 \[

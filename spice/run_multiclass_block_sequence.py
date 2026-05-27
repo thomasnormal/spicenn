@@ -83,6 +83,7 @@ ERROR_MODES = (
     "common-score-mass-pairwise-descent",
     "pairwise-score-competition-descent",
     "pairwise-margin-correction-descent",
+    "pairwise-margin-winner-descent",
     "pairwise-margin-centered-descent",
     "pairwise-margin-centered-gain-descent",
     *(f"normalizer-{approach}-descent" for approach in NORMALIZATION_APPROACHES),
@@ -104,6 +105,7 @@ ERROR_RAIL_DESCENT_MODES = (
     "common-score-mass-pairwise-descent",
     "pairwise-score-competition-descent",
     "pairwise-margin-correction-descent",
+    "pairwise-margin-winner-descent",
     "pairwise-margin-centered-descent",
     "pairwise-margin-centered-gain-descent",
     *NORMALIZER_ERROR_MODES,
@@ -240,6 +242,10 @@ def hidden_credit_node(feature_idx: int, suffix: str) -> str:
 
 def hidden_update_eligibility_node(feature_idx: int) -> str:
     return f"hxelig{feature_idx}"
+
+
+def readout_update_eligibility_node(feature_idx: int) -> str:
+    return f"relig{feature_idx}"
 
 
 def hidden_readout_weighted_credit_lines(
@@ -964,6 +970,7 @@ def pairwise_score_competition_error_lines(
     create_error_nodes: bool = True,
     positive_suffix: str = "errp",
     negative_suffix: str = "errn",
+    strongest_opponent_only: bool = False,
 ) -> list[str]:
     if min(error_width_u, error_capacitance_f) <= 0.0:
         raise ValueError("pairwise competition error widths and capacitances must be positive")
@@ -990,6 +997,8 @@ def pairwise_score_competition_error_lines(
             errn = class_node(opponent_idx, negative_suffix)
             targetp = class_node(target_idx, "targetp")
             prefix = f"t{target_idx}_o{opponent_idx}_"
+            errp_drive = f"{prefix}errp_w"
+            errn_drive = f"{prefix}errn_w"
             lines += [
                 f"R{prefix}errp_sup {prefix}errp_sup 0 1G",
                 f"R{prefix}errp_t {prefix}errp_t 0 1G",
@@ -1000,7 +1009,6 @@ def pairwise_score_competition_error_lines(
                 f"M{prefix}errp_sup {prefix}errp_sup {opposite_decision} vdd vdd PMOS W={error_width_u:.6g}u L=180n",
                 f"M{prefix}errp_label {prefix}errp_sup {targetp} {prefix}errp_t 0 NSENSE W={error_width_u:.6g}u L=180n",
                 f"M{prefix}errp_win {prefix}errp_t {decision} {prefix}errp_w 0 NSENSE W={error_width_u:.6g}u L=180n",
-                f"M{prefix}errp_clk {prefix}errp_w {error_clock_node} {errp} 0 NSENSE W={error_width_u:.6g}u L=180n",
                 f"R{prefix}errn_sup {prefix}errn_sup 0 1G",
                 f"R{prefix}errn_t {prefix}errn_t 0 1G",
                 f"R{prefix}errn_w {prefix}errn_w 0 1G",
@@ -1010,7 +1018,27 @@ def pairwise_score_competition_error_lines(
                 f"M{prefix}errn_sup {prefix}errn_sup {opposite_decision} vdd vdd PMOS W={error_width_u:.6g}u L=180n",
                 f"M{prefix}errn_label {prefix}errn_sup {targetp} {prefix}errn_t 0 NSENSE W={error_width_u:.6g}u L=180n",
                 f"M{prefix}errn_win {prefix}errn_t {decision} {prefix}errn_w 0 NSENSE W={error_width_u:.6g}u L=180n",
-                f"M{prefix}errn_clk {prefix}errn_w {error_clock_node} {errn} 0 NSENSE W={error_width_u:.6g}u L=180n",
+            ]
+            if strongest_opponent_only:
+                for other_idx in range(class_count):
+                    if other_idx in (target_idx, opponent_idx):
+                        continue
+                    strongest_gate = pairwise_decision_node(opponent_idx, other_idx)
+                    next_errp = f"{prefix}errp_strong{other_idx}"
+                    next_errn = f"{prefix}errn_strong{other_idx}"
+                    lines += [
+                        f"R{next_errp} {next_errp} 0 1G",
+                        f"R{next_errn} {next_errn} 0 1G",
+                        f"C{next_errp} {next_errp} 0 0.1f IC=0",
+                        f"C{next_errn} {next_errn} 0 0.1f IC=0",
+                        f"M{prefix}errp_strong{other_idx} {errp_drive} {strongest_gate} {next_errp} 0 NSENSE W={error_width_u:.6g}u L=180n",
+                        f"M{prefix}errn_strong{other_idx} {errn_drive} {strongest_gate} {next_errn} 0 NSENSE W={error_width_u:.6g}u L=180n",
+                    ]
+                    errp_drive = next_errp
+                    errn_drive = next_errn
+            lines += [
+                f"M{prefix}errp_clk {errp_drive} {error_clock_node} {errp} 0 NSENSE W={error_width_u:.6g}u L=180n",
+                f"M{prefix}errn_clk {errn_drive} {error_clock_node} {errn} 0 NSENSE W={error_width_u:.6g}u L=180n",
             ]
     return lines
 
@@ -1346,6 +1374,7 @@ def generate_netlist(
     uses_pairwise_score_competition = error_mode == "pairwise-score-competition-descent"
     uses_pairwise_margin_correction = error_mode in (
         "pairwise-margin-correction-descent",
+        "pairwise-margin-winner-descent",
         "pairwise-margin-centered-descent",
         "pairwise-margin-centered-gain-descent",
     )
@@ -1534,6 +1563,11 @@ def generate_netlist(
             if uses_hidden_update and eligibility_gate_mode in ("competition", "rank", "contrast")
             else []
         ),
+        *(
+            [f"Vrelsamp relsamp 0 {periodic_phase_pwl(cycle_count, start_ns=4.82, end_ns=5.05, active_cycles=train_cycles)}"]
+            if eligibility_gate_mode in ("competition", "rank", "contrast")
+            else []
+        ),
         f"Vout out 0 {periodic_phase_pwl(cycle_count, start_ns=out_start_ns, end_ns=out_end_ns)}",
         f"Voutn outn 0 {active_low_phase_pwl(cycle_count, start_ns=out_start_ns, end_ns=out_end_ns, active_cycles=set(range(cycle_count)))}",
     ]
@@ -1639,6 +1673,15 @@ def generate_netlist(
                 if uses_hidden_update
                 else []
             ),
+            *(
+                [
+                    f"C{readout_update_eligibility_node(feature)} {readout_update_eligibility_node(feature)} 0 20f IC=0",
+                    f"R{readout_update_eligibility_node(feature)} {readout_update_eligibility_node(feature)} 0 1G",
+                    f"M{readout_update_eligibility_node(feature)}_rst {readout_update_eligibility_node(feature)} rst 0 0 NMOS W=4u L=180n",
+                ]
+                if eligibility_gate_mode in ("competition", "rank", "contrast") and feature < feature_count
+                else []
+            ),
             f"Cactrow{feature} actrow{feature} 0 1f IC=0",
             f"Rpre_p{feature} pre_p{feature} 0 1G",
             f"Rpre_n{feature} pre_n{feature} 0 1G",
@@ -1717,6 +1760,23 @@ def generate_netlist(
                 f"R{mid} {mid} 0 1G",
                 f"M{hxelg}_pass_clk {mid} hxsamp xelig{feature} 0 NSENSE W=16u L=180n",
                 f"M{hxelg}_pass_gate {hxelg} {egate} {mid} 0 NSENSE W=16u L=180n",
+            ]
+    if eligibility_gate_mode in ("competition", "rank", "contrast"):
+        for feature in range(feature_count):
+            relig = readout_update_eligibility_node(feature)
+            egate = eligibility_gate_node(feature)
+            pgate = f"{relig}_pgate"
+            mid_elig = f"{relig}_pgate_elig"
+            mid_gate = f"{relig}_pgate_gate"
+            lines += [
+                f"C{pgate} {pgate} 0 2f IC=1.2",
+                f"R{pgate} {pgate} vdd 50000",
+                f"R{mid_elig} {mid_elig} 0 1G",
+                f"R{mid_gate} {mid_gate} 0 1G",
+                f"M{relig}_pgate_dis_elig {pgate} elig{feature} {mid_elig} 0 NREL W=16u L=180n",
+                f"M{relig}_pgate_dis_gate {mid_elig} {egate} {mid_gate} 0 NSENSE W=16u L=180n",
+                f"M{relig}_pgate_dis_clk {mid_gate} relsamp 0 0 NSENSE W=16u L=180n",
+                f"M{relig}_restore_p {relig} {pgate} vdd vdd PMOS W=16u L=180n",
             ]
     for class_idx in range(class_count):
         targetp_values = [
@@ -1956,6 +2016,7 @@ def generate_netlist(
             error_capacitance_f=margin_correction_sizing.error_cap_f,
             positive_suffix="errp_raw" if uses_pairwise_margin_centered else "errp",
             negative_suffix="errn_raw" if uses_pairwise_margin_centered else "errn",
+            strongest_opponent_only=error_mode == "pairwise-margin-winner-descent",
         )
         if uses_pairwise_margin_centered:
             lines += class_centered_error_rail_lines(
@@ -2047,7 +2108,7 @@ def generate_netlist(
     for class_idx in range(class_count):
         for feature in range(total_feature_count):
             activation_node = (
-                eligibility_gate_node(feature)
+                readout_update_eligibility_node(feature)
                 if eligibility_gate_mode in ("competition", "rank", "contrast") and feature < feature_count
                 else f"elig{feature}"
             )
@@ -2353,6 +2414,10 @@ def generate_netlist(
                         else []
                     ),
                 ]
+            if eligibility_gate_mode in ("competition", "rank", "contrast") and feature < feature_count:
+                lines.append(
+                    f".meas tran relig_f{feature}_{cycle} FIND V({readout_update_eligibility_node(feature)}) AT={base + 5.08:.2f}n"
+                )
             if uses_stored_hidden_credit_update and feature < feature_count:
                 lines += [
                     f".meas tran hdp_f{feature}_{cycle} FIND V({hidden_credit_node(feature, 'hdp')}) AT={base + score_error_measure_ns:.2f}n",
@@ -3030,6 +3095,44 @@ def hidden_update_eligibility_stats(
     }
 
 
+def readout_update_eligibility_stats(
+    measures: dict[str, float],
+    *,
+    sequence: list[str],
+    feature_count: int,
+) -> dict[str, Any]:
+    rows: list[list[float]] = []
+    active_25mv: list[int] = []
+    active_250mv: list[int] = []
+    active_500mv: list[int] = []
+    for cycle, seq in enumerate(sequence):
+        if seq != "train":
+            continue
+        keys = [f"relig_f{feature}_{cycle}" for feature in range(feature_count)]
+        if not all(key in measures for key in keys):
+            continue
+        values = [float(measures[key]) for key in keys]
+        rows.append(values)
+        active_25mv.append(sum(value > 25e-3 for value in values))
+        active_250mv.append(sum(value > 250e-3 for value in values))
+        active_500mv.append(sum(value > 500e-3 for value in values))
+    if not rows:
+        return {
+            "train_readout_update_eligibility_rows_v": [],
+            "train_readout_update_eligibility_active_features_25mv_mean": None,
+            "train_readout_update_eligibility_active_features_250mv_mean": None,
+            "train_readout_update_eligibility_active_features_500mv_mean": None,
+            "train_readout_update_eligibility_max_v": None,
+        }
+    return {
+        "train_readout_update_eligibility_rows_v": rows,
+        "train_readout_update_eligibility_active_features_25mv_mean": float(np.mean(active_25mv)),
+        "train_readout_update_eligibility_active_features_250mv_mean": float(np.mean(active_250mv)),
+        "train_readout_update_eligibility_active_features_500mv_mean": float(np.mean(active_500mv)),
+        "train_readout_update_eligibility_max_v": float(np.max(rows)),
+    }
+
+
 def hidden_credit_stats(
     measures: dict[str, float],
     *,
@@ -3302,6 +3405,7 @@ def run_case(args: argparse.Namespace) -> dict[str, Any]:
             if args.error_mode
             in (
                 "pairwise-margin-correction-descent",
+                "pairwise-margin-winner-descent",
                 "pairwise-margin-centered-descent",
                 "pairwise-margin-centered-gain-descent",
             )
@@ -3312,6 +3416,7 @@ def run_case(args: argparse.Namespace) -> dict[str, Any]:
             if args.error_mode
             in (
                 "pairwise-margin-correction-descent",
+                "pairwise-margin-winner-descent",
                 "pairwise-margin-centered-descent",
                 "pairwise-margin-centered-gain-descent",
             )
@@ -3427,6 +3532,7 @@ def run_case(args: argparse.Namespace) -> dict[str, Any]:
         **error_rail_stats(measures, labels=labels, sequence=sequence, class_count=args.class_count),
         **eligibility_stats(measures, sequence=sequence, total_feature_count=total_feature_count),
         **eligibility_gate_stats(measures, sequence=sequence, feature_count=feature_count),
+        **readout_update_eligibility_stats(measures, sequence=sequence, feature_count=feature_count),
         **hidden_update_eligibility_stats(measures, sequence=sequence, feature_count=feature_count),
         **hidden_credit_stats(measures, sequence=sequence, feature_count=feature_count),
         **hidden_weight_progress_stats(

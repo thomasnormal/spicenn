@@ -617,6 +617,27 @@ def test_multiclass_block_sequence_summarizes_hidden_weight_progress() -> None:
     assert stats["final_hidden_signed_delta_max_v"] == pytest.approx(0.05)
 
 
+def test_multiclass_block_sequence_summarizes_readout_update_eligibility() -> None:
+    measures = {
+        "relig_f0_1": 0.40,
+        "relig_f1_1": 0.02,
+        "relig_f0_2": 0.30,
+        "relig_f1_2": 0.28,
+    }
+
+    stats = seq.readout_update_eligibility_stats(
+        measures,
+        sequence=["initial_eval", "train", "train"],
+        feature_count=2,
+    )
+
+    assert stats["train_readout_update_eligibility_rows_v"] == [[0.40, 0.02], [0.30, 0.28]]
+    assert stats["train_readout_update_eligibility_active_features_25mv_mean"] == pytest.approx(1.5)
+    assert stats["train_readout_update_eligibility_active_features_250mv_mean"] == pytest.approx(1.5)
+    assert stats["train_readout_update_eligibility_active_features_500mv_mean"] == pytest.approx(0.0)
+    assert stats["train_readout_update_eligibility_max_v"] == pytest.approx(0.40)
+
+
 def test_multiclass_block_sequence_summarizes_readout_train_progress_by_label() -> None:
     stats = seq.readout_train_progress_stats(
         train_progress=[
@@ -1259,8 +1280,33 @@ def test_multiclass_block_sequence_ngspice_gates_direct_hidden_update_eligibilit
     assert float(measures["egate_f1_1"]) < 0.05
     assert float(measures["xelig_f0_1"]) > 0.70
     assert float(measures["xelig_f1_1"]) > 0.20
+    assert float(measures["relig_f0_1"]) > 0.30
+    assert float(measures["relig_f1_1"]) < 0.05
     assert float(measures["hxelig_f0_1"]) > 0.30
     assert float(measures["hxelig_f1_1"]) < 0.05
+
+
+def test_multiclass_block_sequence_uses_sampled_gated_readout_eligibility() -> None:
+    records = _target0_two_feature_records(1)
+    netlist = seq.generate_netlist(
+        train_records=records,
+        eval_records=records,
+        feature_count=2,
+        readout_update_mode="live",
+        error_mode="label-rail-descent",
+        eligibility_gate_mode="competition",
+        eligibility_source_mode="act",
+    )
+
+    assert "Vrelsamp relsamp 0 PWL(" in netlist
+    assert "Crelig0 relig0 0 20f IC=0" in netlist
+    assert "Crelig0_pgate relig0_pgate 0 2f IC=1.2" in netlist
+    assert "Mrelig0_pgate_dis_elig relig0_pgate elig0 relig0_pgate_elig 0 NREL W=16u L=180n" in netlist
+    assert "Mrelig0_pgate_dis_gate relig0_pgate_elig egate0 relig0_pgate_gate 0 NSENSE W=16u L=180n" in netlist
+    assert "Mrelig0_pgate_dis_clk relig0_pgate_gate relsamp 0 0 NSENSE W=16u L=180n" in netlist
+    assert "Mrelig0_restore_p relig0 relig0_pgate vdd vdd PMOS W=16u L=180n" in netlist
+    assert "Mc0_f0_live_pos_up_e vwhi_ref relig0 c0_f0_live_pos_up 0 NSENSE W=0.5u L=180n" in netlist
+    assert "Mc0_f0_live_pos_up_e vwhi_ref egate0" not in netlist
 
 
 def test_multiclass_block_sequence_can_use_raw_direct_hidden_readout_gates() -> None:
@@ -1915,6 +1961,55 @@ def _centered_error_rail_netlist(
         ]
     lines += [
         ".tran 2p 3n uic",
+        ".control",
+        "run",
+        "quit",
+        ".endc",
+        ".end",
+        "",
+    ]
+    return "\n".join(lines)
+
+
+def _pairwise_winner_error_rail_netlist() -> str:
+    decision_values = {
+        seq.pairwise_decision_node(1, 0): 1.2,
+        seq.pairwise_decision_node(0, 1): 0.0,
+        seq.pairwise_decision_node(2, 0): 1.2,
+        seq.pairwise_decision_node(0, 2): 0.0,
+        seq.pairwise_decision_node(1, 2): 1.2,
+        seq.pairwise_decision_node(2, 1): 0.0,
+    }
+    lines = [
+        "* Low-level strongest-impostor pairwise error rail primitive.",
+        ".param VDD=1.2",
+        seq.mos_models(),
+        ".options method=gear reltol=1e-3 abstol=1e-12 vntol=1e-6",
+        "Vdd vdd 0 {VDD}",
+        "Vscoreerr scoreerr 0 1.2",
+        "Vscoregaterst scoregaterst 0 0",
+        "Vtargetp0 c0_targetp 0 1.2",
+        "Vtargetn0 c0_targetn 0 0",
+        "Vtargetp1 c1_targetp 0 0",
+        "Vtargetn1 c1_targetn 0 1.2",
+        "Vtargetp2 c2_targetp 0 0",
+        "Vtargetn2 c2_targetn 0 1.2",
+        *[f"V{name} {name} 0 {value:.12g}" for name, value in decision_values.items()],
+        *seq.pairwise_score_competition_error_lines(
+            class_count=3,
+            error_width_u=32.0,
+            error_capacitance_f=2.0,
+            strongest_opponent_only=True,
+        ),
+    ]
+    for class_idx in range(3):
+        lines += [
+            f".meas tran c{class_idx}_errp_after FIND V({seq.class_node(class_idx, 'errp')}) AT=1.0n",
+            f".meas tran c{class_idx}_errn_after FIND V({seq.class_node(class_idx, 'errn')}) AT=1.0n",
+            f".meas tran c{class_idx}_errdiff PARAM='c{class_idx}_errp_after-c{class_idx}_errn_after'",
+        ]
+    lines += [
+        ".tran 2p 1.5n uic",
         ".control",
         "run",
         "quit",
@@ -2916,6 +3011,22 @@ def test_multiclass_block_sequence_ngspice_gain_restored_centered_error_rails_pr
     assert float(directional["c0_errdiff"]) > 55e-3
     assert float(directional["c1_errdiff"]) < -35e-3
     assert float(directional["c1_errdiff"]) == pytest.approx(float(directional["c2_errdiff"]), abs=20e-3)
+
+
+def test_multiclass_block_sequence_ngspice_pairwise_winner_error_updates_only_strongest_impostor(
+    tmp_path: Path,
+    ngspice_path: str,
+) -> None:
+    measures = run_netlist(
+        ngspice_path,
+        tmp_path / "pairwise_winner_error_rail.cir",
+        _pairwise_winner_error_rail_netlist(),
+        timeout=30.0,
+    )
+
+    assert float(measures["c0_errdiff"]) > 0.20
+    assert float(measures["c1_errdiff"]) < -0.20
+    assert abs(float(measures["c2_errdiff"])) < 25e-3
 
 
 def test_multiclass_block_sequence_ngspice_score_mass_target_pressure_tracks_nontarget_mass(

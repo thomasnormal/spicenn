@@ -195,6 +195,26 @@ def test_multiclass_block_sequence_can_gate_nontarget_with_raw_common_score_refe
     assert ".meas tran c1_score_above_common_1 PARAM='c1_score_1-score_common_c1_1'" in netlist
 
 
+def test_multiclass_block_sequence_can_gate_nontarget_with_label_selected_target_score() -> None:
+    netlist = seq.generate_netlist(
+        train_records=_target0_records(1),
+        eval_records=_target0_records(1),
+        error_mode="target-ref-score-nontarget",
+    )
+
+    assert "\nB" not in netlist
+    assert "Vscoregaterst scoregaterst 0 PWL(" in netlist
+    assert "Vc0_targetp c0_targetp 0 PWL(" in netlist
+    assert "25.55n 1.1" in netlist
+    assert "Ctarget_score_ref target_score_ref 0 4f IC=0" in netlist
+    assert "Mtarget_score_ref_sel_c0 target_score_ref c0_targetp c0_score_amp 0 NSENSE W=24u" in netlist
+    assert "Cc1_score_target_gate c1_score_target_gate 0 4f IC=0" in netlist
+    assert "Mc1_score_common_gate_up_v vdd c1_score_amp c1_score_common_gate_up_i 0 NREL W=48u" in netlist
+    assert "Mc1_score_common_gate_dn_v c1_score_target_gate target_score_ref c1_score_common_gate_dn_i 0 NREL W=12u" in netlist
+    assert "Mc1_f0_gvn_score c1_f0_gvn_label c1_score_target_gate c1_f0_gvn_d 0 NSENSE" in netlist
+    assert ".meas tran c1_score_above_target_1" in netlist
+
+
 def test_multiclass_block_sequence_can_use_amplified_score_competitive_target_boost() -> None:
     netlist = seq.generate_netlist(
         train_records=_target0_records(1),
@@ -488,6 +508,49 @@ def _common_ref_score_gate_netlist(scores: tuple[float, float, float], *, raw_sc
         ".meas tran c0_gate_after FIND V(c0_score_common_gate) AT=3.4n",
         ".meas tran c1_gate_after FIND V(c1_score_common_gate) AT=3.4n",
         ".meas tran c2_gate_after FIND V(c2_score_common_gate) AT=3.4n",
+        ".tran 2p 4n uic",
+        ".control",
+        "run",
+        "quit",
+        ".endc",
+        ".end",
+        "",
+    ]
+    return "\n".join(lines)
+
+
+def _target_ref_score_gate_netlist(scores: tuple[float, float, float], *, target_class: int) -> str:
+    lines = [
+        "* Low-level label-selected target-score reference gate primitive.",
+        ".param VDD=1.2",
+        seq.mos_models(),
+        ".options method=gear reltol=1e-3 abstol=1e-12 vntol=1e-6",
+        "Vdd vdd 0 {VDD}",
+        "Vscorepre scorepre 0 1.2",
+        "Vscoregaterst scoregaterst 0 PULSE(1.2 0 0.4n 10p 10p 8n 20n)",
+        "Vscoredec scoredec 0 PULSE(0 1.2 1.0n 10p 10p 2.0n 20n)",
+        *[
+            f"Vscoreamp{class_idx} c{class_idx}_score_amp 0 {score:.12g}"
+            for class_idx, score in enumerate(scores)
+        ],
+        *[
+            f"Vtargetp{class_idx} c{class_idx}_targetp 0 {1.1 if class_idx == target_class else 0.0:.12g}"
+            for class_idx in range(3)
+        ],
+        *seq.shared_label_score_reference_lines(class_count=3),
+        *[
+            line
+            for class_idx in range(3)
+            for line in seq.class_local_score_common_gate_lines(
+                class_idx=class_idx,
+                common_node="target_score_ref",
+                output_node=seq.class_node(class_idx, "score_target_gate"),
+            )
+        ],
+        ".meas tran target_score_ref_after FIND V(target_score_ref) AT=3.4n",
+        ".meas tran c0_gate_after FIND V(c0_score_target_gate) AT=3.4n",
+        ".meas tran c1_gate_after FIND V(c1_score_target_gate) AT=3.4n",
+        ".meas tran c2_gate_after FIND V(c2_score_target_gate) AT=3.4n",
         ".tran 2p 4n uic",
         ".control",
         "run",
@@ -884,6 +947,24 @@ def test_multiclass_block_sequence_ngspice_raw_common_ref_gate_tracks_raw_score_
     assert float(measures["c0_gate_after"]) > 5e-3
 
 
+def test_multiclass_block_sequence_ngspice_target_ref_gate_tracks_score_above_label_score(
+    tmp_path: Path,
+    ngspice_path: str,
+) -> None:
+    measures = run_netlist(
+        ngspice_path,
+        tmp_path / "target_ref_score_gate.cir",
+        _target_ref_score_gate_netlist((0.75, 0.45, 0.15), target_class=1),
+        timeout=20.0,
+    )
+
+    assert 0.40 < float(measures["target_score_ref_after"]) < 0.48
+    assert float(measures["c0_gate_after"]) > float(measures["c1_gate_after"]) + 10e-3
+    assert float(measures["c1_gate_after"]) > float(measures["c2_gate_after"]) + 5e-3
+    assert float(measures["c0_gate_after"]) > 0.10
+    assert float(measures["c2_gate_after"]) < 0.05
+
+
 def test_multiclass_block_sequence_ngspice_restored_binary_descent_gates_target_miss_and_false_positive(
     tmp_path: Path,
     ngspice_path: str,
@@ -1174,6 +1255,34 @@ def test_multiclass_block_sequence_ngspice_raw_common_ref_score_gate_keeps_one_h
     assert abs(float(measures["c0_score_above_common_4"])) > 1e-6
     for class_idx in range(3):
         assert float(measures[f"c{class_idx}_f{class_idx}_signed_final"]) > 10e-3
+
+
+def test_multiclass_block_sequence_ngspice_target_ref_score_gate_keeps_one_hot_predictions(
+    tmp_path: Path,
+    ngspice_path: str,
+) -> None:
+    measures = run_netlist(
+        ngspice_path,
+        tmp_path / "multiclass_block_sequence_onehot_target_ref_score.cir",
+        seq.generate_netlist(
+            train_records=_one_hot_records(),
+            eval_records=_one_hot_records(),
+            class_count=3,
+            feature_count=3,
+            score_capacitance_f=5.0,
+            error_mode="target-ref-score-nontarget",
+        ),
+        timeout=100.0,
+    )
+
+    final_predictions = [
+        int(np.argmax([float(measures[f"c{class_idx}_score_net_{cycle}"]) for class_idx in range(3)]))
+        for cycle in range(6, 9)
+    ]
+    assert final_predictions == [0, 1, 2]
+    for class_idx in range(3):
+        assert float(measures[f"c{class_idx}_f{class_idx}_signed_final"]) > 10e-3
+    assert abs(float(measures["c0_score_above_target_4"])) > 1e-6
 
 
 def test_multiclass_block_sequence_ngspice_amplified_pairwise_blend_keeps_one_hot_predictions(

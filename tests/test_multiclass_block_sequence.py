@@ -341,6 +341,26 @@ def test_multiclass_block_sequence_can_use_target_contrast_score_mass_descent() 
     assert ".meas tran c1_errdiff_1" in netlist
 
 
+def test_multiclass_block_sequence_can_use_pairwise_score_competition_descent() -> None:
+    netlist = seq.generate_netlist(
+        train_records=_target0_records(1),
+        eval_records=_target0_records(1),
+        error_mode="pairwise-score-competition-descent",
+    )
+
+    assert "\nB" not in netlist
+    assert "Vscoreerr scoreerr 0 PWL(" in netlist
+    assert "Cc0_gt_c1_decision c0_gt_c1_decision 0 4f IC=0" in netlist
+    assert "Mc0_gt_c1_scoreamp_score_p c0_gt_c1_score_amp c0_score c0_gt_c1_scoreamp_score_i vdd PMOS" in netlist
+    assert "Mc0_gt_c1_dec_pair_tail c0_gt_c1_dec_src scoredec 0 0 NMOS W=64u" in netlist
+    assert "Cc1_errp c1_errp 0 0.5f IC=0" in netlist
+    assert "Mt0_o1_errp_sup t0_o1_errp_sup c0_gt_c1_decision vdd vdd PMOS W=32u" in netlist
+    assert "Mt0_o1_errp_win t0_o1_errp_t c1_gt_c0_decision t0_o1_errp_w 0 NSENSE W=32u" in netlist
+    assert "Mc0_f0_gvp_e c0_f0_gvp_a c0_errp c0_f0_gvp_d 0 NSENSE" in netlist
+    assert "Mc1_f0_gvn_e c1_f0_gvn_a c1_errn c1_f0_gvn_d 0 NSENSE" in netlist
+    assert ".meas tran c0_errdiff_1" in netlist
+
+
 def test_multiclass_block_sequence_can_add_target_only_class_bias_row() -> None:
     netlist = seq.generate_netlist(
         train_records=_target0_records(1),

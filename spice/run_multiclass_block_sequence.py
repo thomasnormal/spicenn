@@ -249,6 +249,21 @@ def readout_update_eligibility_node(feature_idx: int) -> str:
     return f"relig{feature_idx}"
 
 
+def effective_readout_update_eligibility_capacitance(
+    *,
+    mode: str,
+    requested_capacitance_f: float | None,
+    uses_gated_eligibility: bool,
+) -> float:
+    if requested_capacitance_f is not None:
+        return requested_capacitance_f
+    if uses_gated_eligibility and mode == "hybrid":
+        # Keep charge sharing from the 20 fF eligibility store below roughly 20%:
+        # Csample <= Celig * droop / (1 - droop) = 20 fF * 0.2 / 0.8 = 5 fF.
+        return 5.0
+    return 20.0
+
+
 def hidden_readout_weighted_credit_lines(
     *,
     class_count: int,
@@ -1240,6 +1255,7 @@ def generate_netlist(
     eligibility_gate_mode: str = "raw",
     eligibility_source_mode: str = "pre-p",
     readout_update_eligibility_mode: str = "restored",
+    readout_update_eligibility_capacitance_f: float | None = None,
     readout_update_eligibility_ref: float = 1.2,
     readout_update_eligibility_pgate_capacitance_f: float = 2.0,
     readout_update_eligibility_discharge_width_u: float = 16.0,
@@ -1347,6 +1363,8 @@ def generate_netlist(
         raise ValueError(f"eligibility_source_mode must be one of {ELIGIBILITY_SOURCE_MODES}")
     if readout_update_eligibility_mode not in READOUT_UPDATE_ELIGIBILITY_MODES:
         raise ValueError(f"readout_update_eligibility_mode must be one of {READOUT_UPDATE_ELIGIBILITY_MODES}")
+    if readout_update_eligibility_capacitance_f is not None and readout_update_eligibility_capacitance_f <= 0.0:
+        raise ValueError("readout_update_eligibility_capacitance_f must be positive")
     if score_sense_mode in ("current-clamp", "diode-mirror") and error_mode not in {
         "label-descent",
         "label-rail-descent",
@@ -1406,6 +1424,11 @@ def generate_netlist(
     uses_gated_eligibility = eligibility_gate_mode in ("competition", "rank", "contrast")
     uses_hybrid_readout_eligibility = (
         uses_gated_eligibility and readout_update_eligibility_mode == "hybrid"
+    )
+    effective_readout_update_eligibility_capacitance_f = effective_readout_update_eligibility_capacitance(
+        mode=readout_update_eligibility_mode,
+        requested_capacitance_f=readout_update_eligibility_capacitance_f,
+        uses_gated_eligibility=uses_gated_eligibility,
     )
     uses_label_rail_descent = error_mode == "label-rail-descent"
     normalizer_approach = normalizer_error_approach(error_mode) if uses_normalizer_error else None
@@ -1710,7 +1733,7 @@ def generate_netlist(
             ),
             *(
                 [
-                    f"C{readout_update_eligibility_node(feature)} {readout_update_eligibility_node(feature)} 0 20f IC=0",
+                    f"C{readout_update_eligibility_node(feature)} {readout_update_eligibility_node(feature)} 0 {effective_readout_update_eligibility_capacitance_f:.12g}f IC=0",
                     f"R{readout_update_eligibility_node(feature)} {readout_update_eligibility_node(feature)} 0 1G",
                     f"M{readout_update_eligibility_node(feature)}_rst {readout_update_eligibility_node(feature)} rst 0 0 NMOS W=4u L=180n",
                 ]
@@ -3399,6 +3422,7 @@ def run_case(args: argparse.Namespace) -> dict[str, Any]:
         eligibility_gate_mode=args.eligibility_gate_mode,
         eligibility_source_mode=args.eligibility_source_mode,
         readout_update_eligibility_mode=args.readout_update_eligibility_mode,
+        readout_update_eligibility_capacitance_f=args.readout_update_eligibility_capacitance_f,
         readout_update_eligibility_ref=args.readout_update_eligibility_ref,
         readout_update_eligibility_pgate_capacitance_f=args.readout_update_eligibility_pgate_capacitance_f,
         readout_update_eligibility_discharge_width_u=args.readout_update_eligibility_discharge_width,
@@ -3574,6 +3598,15 @@ def run_case(args: argparse.Namespace) -> dict[str, Any]:
         "eligibility_source_mode": args.eligibility_source_mode,
         "readout_update_eligibility_mode": (
             args.readout_update_eligibility_mode
+            if args.eligibility_gate_mode in ("competition", "rank", "contrast")
+            else None
+        ),
+        "readout_update_eligibility_capacitance_f": (
+            effective_readout_update_eligibility_capacitance(
+                mode=args.readout_update_eligibility_mode,
+                requested_capacitance_f=args.readout_update_eligibility_capacitance_f,
+                uses_gated_eligibility=args.eligibility_gate_mode in ("competition", "rank", "contrast"),
+            )
             if args.eligibility_gate_mode in ("competition", "rank", "contrast")
             else None
         ),
@@ -3755,6 +3788,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
     ap.add_argument("--eligibility-gate-mode", choices=ELIGIBILITY_GATE_MODES, default="raw")
     ap.add_argument("--eligibility-source-mode", choices=ELIGIBILITY_SOURCE_MODES, default="pre-p")
     ap.add_argument("--readout-update-eligibility-mode", choices=READOUT_UPDATE_ELIGIBILITY_MODES, default="restored")
+    ap.add_argument("--readout-update-eligibility-capacitance-f", type=float, default=None)
     ap.add_argument("--readout-update-eligibility-ref", type=float, default=1.2)
     ap.add_argument("--readout-update-eligibility-pgate-capacitance-f", type=float, default=2.0)
     ap.add_argument("--readout-update-eligibility-discharge-width", type=float, default=16.0)
@@ -3828,6 +3862,11 @@ def validate_args(args: argparse.Namespace) -> None:
         raise ValueError("readout-center-voltage must stay within supply rails")
     if args.readout_update_eligibility_ref <= 0.0 or args.readout_update_eligibility_ref > 1.2:
         raise ValueError("readout-update-eligibility-ref must stay in (0, 1.2]")
+    if (
+        args.readout_update_eligibility_capacitance_f is not None
+        and args.readout_update_eligibility_capacitance_f <= 0.0
+    ):
+        raise ValueError("readout-update-eligibility-capacitance-f must be positive")
     if args.readout_update_eligibility_pgate_capacitance_f <= 0.0:
         raise ValueError("readout-update-eligibility-pgate-capacitance-f must be positive")
     if args.readout_update_eligibility_discharge_width <= 0.0:

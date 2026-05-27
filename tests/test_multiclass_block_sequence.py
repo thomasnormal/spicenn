@@ -1345,11 +1345,52 @@ def test_multiclass_block_sequence_can_use_hybrid_readout_eligibility() -> None:
     assert "Vrelpass relpass 0 PWL(" in netlist
     assert "Vrelboost relboost 0 PWL(" in netlist
     assert "Vrelsamp relsamp 0 PWL(" not in netlist
+    assert "Crelig0 relig0 0 5f IC=0" in netlist
     assert "Crelig0_pgate relig0_pgate 0 20f IC=1.2" in netlist
     assert "Mrelig0_pgate_dis_elig relig0_pgate elig0 relig0_pgate_elig 0 NREL W=0.5u L=180n" in netlist
     assert "Mrelig0_pgate_dis_clk relig0_pgate_gate relboost 0 0 NSENSE W=0.5u L=180n" in netlist
     assert "Mrelig0_pass_clk relig0_pass_mid relpass elig0 0 NSENSE W=8u L=180n" in netlist
     assert "Mrelig0_pass_gate relig0 egate0 relig0_pass_mid 0 NSENSE W=8u L=180n" in netlist
+
+
+@pytest.mark.ngspice
+def test_multiclass_block_sequence_ngspice_hybrid_readout_eligibility_uses_small_sample_cap(
+    tmp_path: Path,
+    ngspice_path: str,
+) -> None:
+    records = _target0_two_feature_records(1)
+    netlist = seq.generate_netlist(
+        train_records=records,
+        eval_records=records,
+        feature_count=2,
+        readout_update_mode="live",
+        hidden_update_mode="direct-readout-weighted",
+        hidden_credit_activation_model="NMOS",
+        hidden_direct_readout_gate_mode="raw",
+        error_mode="label-rail-descent",
+        score_timing_mode="early",
+        eligibility_gate_mode="competition",
+        eligibility_source_mode="act",
+        score_sense_mode="diode-mirror",
+        readout_forward_mode="diode",
+        nontarget_scale=0.0,
+        readout_update_eligibility_mode="hybrid",
+        readout_update_eligibility_pgate_capacitance_f=5.0,
+        readout_update_eligibility_discharge_width_u=0.5,
+        readout_update_eligibility_pass_width_u=8.0,
+    )
+
+    measures = run_netlist(
+        ngspice_path,
+        tmp_path / "hybrid_readout_eligibility_small_sample_cap.cir",
+        netlist,
+        timeout=60.0,
+    )
+
+    assert float(measures["elig_f0_1"]) > 0.40
+    assert float(measures["relig_pgate_f0_1"]) < 0.85
+    assert float(measures["relig_update_f0_1"]) > 0.80
+    assert float(measures["relig_update_f1_1"]) < 0.05
 
 
 @pytest.mark.ngspice
@@ -1605,12 +1646,16 @@ def test_multiclass_block_sequence_validation() -> None:
         seq.main_for_test(["--readout-update-width", "0"])
     with pytest.raises(ValueError, match="readout_update_eligibility_ref"):
         seq.generate_netlist(train_records=records, eval_records=records, readout_update_eligibility_ref=0)
+    with pytest.raises(ValueError, match="readout_update_eligibility_capacitance_f"):
+        seq.generate_netlist(train_records=records, eval_records=records, readout_update_eligibility_capacitance_f=0)
     with pytest.raises(ValueError, match="readout_update_eligibility_mode"):
         seq.generate_netlist(train_records=records, eval_records=records, readout_update_eligibility_mode="missing")
     with pytest.raises(SystemExit):
         seq.main_for_test(["--readout-update-eligibility-mode", "missing"])
     with pytest.raises(ValueError, match="readout-update-eligibility-ref"):
         seq.main_for_test(["--readout-update-eligibility-ref", "1.3"])
+    with pytest.raises(ValueError, match="readout-update-eligibility-capacitance-f"):
+        seq.main_for_test(["--readout-update-eligibility-capacitance-f", "0"])
     with pytest.raises(ValueError, match="hidden_update_mode"):
         seq.generate_netlist(train_records=records, eval_records=records, hidden_update_mode="missing")
     with pytest.raises(ValueError, match="hidden_direct_readout_gate_mode"):

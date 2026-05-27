@@ -136,6 +136,29 @@ def test_multiclass_output_head_sequence_can_feed_live_writer_from_normalizer() 
     assert "Mc0_f0_live_neg_dn_d c0_f0_live_neg_dn c0_errn vwlo_ref 0 NSENSE" in netlist
 
 
+def test_multiclass_output_head_sequence_can_use_live_pairwise_margin_descent() -> None:
+    records = _one_hot_records()
+    netlist = seq.generate_netlist(
+        train_records=records,
+        eval_records=records,
+        class_count=3,
+        feature_count=3,
+        writer_mode="live",
+        error_mode="live-pairwise-margin-descent",
+    )
+
+    assert "\nB" not in netlist
+    assert "Vscoreamp scoreamp 0 PWL(" in netlist
+    assert "Vscoredec scoredec 0 PWL(" in netlist
+    assert "Vscoreerr scoreerr 0 PWL(" in netlist
+    assert "Mmpen_t0_o1_label c0_gt_c1_decision c0_targetp mpen_t0_o1_i 0 NSENSE W=0.25u" in netlist
+    assert "Mlive_pm_t0_o1_errp_sup live_pm_t0_o1_errp_sup c0_gt_c1_decision vdd vdd PMOS W=128u" in netlist
+    assert "Cc0_errp c0_errp 0 0.5f IC=0" in netlist
+    assert "Mc0_f0_live_pos_up_d c0_f0_live_pos_up c0_errp c0_vwp0 0 NSENSE" in netlist
+    assert "Cc0_gvp0" not in netlist
+    assert "Vapply" not in netlist
+
+
 def test_multiclass_output_head_sequence_validation() -> None:
     records = _one_hot_records()
     with pytest.raises(ValueError, match="class_count"):
@@ -191,6 +214,15 @@ def test_multiclass_output_head_sequence_validation() -> None:
             feature_count=3,
             writer_mode="sampled",
             error_mode="normalizer-current-sum-descent",
+        )
+    with pytest.raises(ValueError, match="live pairwise-margin"):
+        seq.generate_netlist(
+            train_records=records,
+            eval_records=records,
+            class_count=3,
+            feature_count=3,
+            writer_mode="sampled",
+            error_mode="live-pairwise-margin-descent",
         )
 
 
@@ -332,6 +364,36 @@ def test_multiclass_output_head_sequence_ngspice_live_normalizer_keeps_one_hot_l
     measures = run_netlist(
         ngspice_path,
         tmp_path / "multiclass_output_head_sequence_live_normalizer.cir",
+        netlist,
+        timeout=30.0,
+    )
+    rows = seq.rows_from_measures(all_records, measures, sequence=sequence, class_count=3)
+
+    assert "Cc0_gvp0" not in netlist
+    assert "Vapply" not in netlist
+    assert seq.accuracy(rows, "initial_eval") < 1.0
+    assert seq.accuracy(rows, "final_eval") == 1.0
+    assert min(row["score_margin_v"] for row in rows if row["sequence"] == "final_eval") > 1e-3
+
+
+def test_multiclass_output_head_sequence_ngspice_live_pairwise_margin_keeps_one_hot_learning(
+    tmp_path: Path,
+    ngspice_path: str,
+) -> None:
+    records = _one_hot_records()
+    all_records = records + records + records
+    sequence = ["initial_eval"] * 3 + ["train"] * 3 + ["final_eval"] * 3
+    netlist = seq.generate_netlist(
+        train_records=records,
+        eval_records=records,
+        class_count=3,
+        feature_count=3,
+        writer_mode="live",
+        error_mode="live-pairwise-margin-descent",
+    )
+    measures = run_netlist(
+        ngspice_path,
+        tmp_path / "multiclass_output_head_sequence_live_pairwise_margin.cir",
         netlist,
         timeout=30.0,
     )

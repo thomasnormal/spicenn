@@ -9,6 +9,7 @@ from typing import Any
 import numpy as np
 
 from datasets import dataset_records, parse_counted_mnist_dataset
+from parameter_theory import derive_multiclass_margin_correction_sizing
 from run_device_mnist01_scalar_training import sanitize_tag
 from run_device_sequential_training import mos_models, run_netlist
 from run_multiclass_output_head_primitive import (
@@ -20,13 +21,19 @@ from run_multiclass_output_head_primitive import (
 )
 from run_normalization_subcircuits import APPROACHES as NORMALIZER_APPROACHES
 from run_normalization_subcircuits import normalization_subcircuits, spice_subckt_name
-from run_score_decision_primitive import low_gain_ref_decision_lines, low_gain_ref_state_lines
+from run_score_decision_primitive import low_gain_preamp_lines, low_gain_ref_decision_lines, low_gain_ref_state_lines
 from run_spice_sweep import ROOT, detect_spice
 
 
 CYCLE_NS = 16.0
 NORMALIZER_ERROR_MODES = tuple(f"normalizer-{approach}-descent" for approach in NORMALIZER_APPROACHES)
-ERROR_MODES = ("label-descent", "score-gated-nontarget", "restored-score-nontarget", *NORMALIZER_ERROR_MODES)
+ERROR_MODES = (
+    "label-descent",
+    "score-gated-nontarget",
+    "restored-score-nontarget",
+    "live-pairwise-margin-descent",
+    *NORMALIZER_ERROR_MODES,
+)
 WRITER_MODES = ("sampled", "live")
 
 
@@ -192,6 +199,79 @@ def balanced_train_eval_split(
     return train, eval_
 
 
+def pairwise_decision_node(class_idx: int, opponent_idx: int) -> str:
+    return f"c{class_idx}_gt_c{opponent_idx}_decision"
+
+
+def pairwise_low_gain_winner_lines(
+    *,
+    class_a: int,
+    class_b: int,
+    amp_clock_node: str = "scoreamp",
+    decision_clock_node: str = "scoredec",
+    reset_node: str = "scorepre",
+    pullup_width: float = 16.0,
+    pulldown_width: float = 64.0,
+    gain_input_width: float = 1.0,
+    gain_tail_width: float = 8.0,
+    gain_capacitance_f: float = 8.0,
+) -> list[str]:
+    prefix = f"c{class_a}_gt_c{class_b}_"
+    node_ab = pairwise_decision_node(class_a, class_b)
+    node_ba = pairwise_decision_node(class_b, class_a)
+    dec_src = f"{prefix}dec_src"
+    return [
+        f"C{node_ab} {node_ab} 0 4f IC=0",
+        f"C{node_ba} {node_ba} 0 4f IC=0",
+        f"R{node_ab} {node_ab} 0 1G",
+        f"R{node_ba} {node_ba} 0 1G",
+        f"Mprecharge_{node_ab} {node_ab} {reset_node} vdd vdd PMOS W=4u L=180n",
+        f"Mprecharge_{node_ba} {node_ba} {reset_node} vdd vdd PMOS W=4u L=180n",
+        *low_gain_ref_state_lines(
+            prefix=prefix,
+            gain_capacitance_f=gain_capacitance_f,
+            reset_node=reset_node,
+        ),
+        *low_gain_preamp_lines(
+            prefix=prefix,
+            score_node=class_node(class_a, "score"),
+            scoren_node=class_node(class_b, "score"),
+            amp_clock_node=amp_clock_node,
+            gain_input_width=gain_input_width,
+            gain_tail_width=gain_tail_width,
+        ),
+        f"M{prefix}dec_pair_p {node_ab} {node_ba} vdd vdd PMOS W={pullup_width:.6g}u L=180n",
+        f"M{prefix}decn_pair_p {node_ba} {node_ab} vdd vdd PMOS W={pullup_width:.6g}u L=180n",
+        f"M{prefix}dec_pair_n {node_ab} {prefix}scoren_amp {dec_src} 0 NSENSE W={pulldown_width:.6g}u L=180n",
+        f"M{prefix}decn_pair_n {node_ba} {prefix}score_amp {dec_src} 0 NSENSE W={pulldown_width:.6g}u L=180n",
+        f"M{prefix}dec_pair_tail {dec_src} {decision_clock_node} 0 0 NMOS W={pulldown_width:.6g}u L=180n",
+    ]
+
+
+def pairwise_target_margin_penalty_lines(
+    *,
+    class_count: int,
+    decision_clock_node: str = "scoredec",
+    penalty_width_u: float = 0.25,
+) -> list[str]:
+    if penalty_width_u <= 0.0:
+        raise ValueError("penalty_width_u must be positive")
+    lines: list[str] = []
+    for target_idx in range(class_count):
+        for opponent_idx in range(class_count):
+            if opponent_idx == target_idx:
+                continue
+            target_wins = pairwise_decision_node(target_idx, opponent_idx)
+            targetp = class_node(target_idx, "targetp")
+            prefix = f"mpen_t{target_idx}_o{opponent_idx}_"
+            lines += [
+                f"R{prefix}i {prefix}i 0 1G",
+                f"M{prefix}label {target_wins} {targetp} {prefix}i 0 NSENSE W={penalty_width_u:.6g}u L=180n",
+                f"M{prefix}clk {prefix}i {decision_clock_node} 0 0 NMOS W={penalty_width_u:.6g}u L=180n",
+            ]
+    return lines
+
+
 def class_local_score_gated_nontarget_gradient_lines(
     *,
     class_idx: int,
@@ -270,6 +350,57 @@ def normalizer_approach_from_error_mode(error_mode: str) -> str | None:
     return approach
 
 
+def pairwise_live_margin_error_lines(
+    *,
+    class_count: int,
+    error_clock_node: str,
+    reset_node: str,
+    error_width_u: float,
+    error_capacitance_f: float,
+) -> list[str]:
+    if min(error_width_u, error_capacitance_f) <= 0.0:
+        raise ValueError("pairwise live margin error sizes must be positive")
+    lines: list[str] = []
+    for class_idx in range(class_count):
+        errp = class_node(class_idx, "errp")
+        errn = class_node(class_idx, "errn")
+        lines += [
+            f"C{errp} {errp} 0 {error_capacitance_f:.12g}f IC=0",
+            f"C{errn} {errn} 0 {error_capacitance_f:.12g}f IC=0",
+            f"R{errp} {errp} 0 1G",
+            f"R{errn} {errn} 0 1G",
+            f"Mreset_{errp} {errp} {reset_node} 0 0 NMOS W=4u L=180n",
+            f"Mreset_{errn} {errn} {reset_node} 0 0 NMOS W=4u L=180n",
+        ]
+    for target_idx in range(class_count):
+        for opponent_idx in range(class_count):
+            if opponent_idx == target_idx:
+                continue
+            decision = pairwise_decision_node(opponent_idx, target_idx)
+            opposite_decision = pairwise_decision_node(target_idx, opponent_idx)
+            errp = class_node(target_idx, "errp")
+            errn = class_node(opponent_idx, "errn")
+            targetp = class_node(target_idx, "targetp")
+            prefix = f"live_pm_t{target_idx}_o{opponent_idx}_"
+            lines += [
+                f"R{prefix}errp_sup {prefix}errp_sup 0 1G",
+                f"R{prefix}errp_t {prefix}errp_t 0 1G",
+                f"R{prefix}errp_w {prefix}errp_w 0 1G",
+                f"M{prefix}errp_sup {prefix}errp_sup {opposite_decision} vdd vdd PMOS W={error_width_u:.6g}u L=180n",
+                f"M{prefix}errp_label {prefix}errp_sup {targetp} {prefix}errp_t 0 NSENSE W={error_width_u:.6g}u L=180n",
+                f"M{prefix}errp_win {prefix}errp_t {decision} {prefix}errp_w 0 NSENSE W={error_width_u:.6g}u L=180n",
+                f"M{prefix}errp_clk {prefix}errp_w {error_clock_node} {errp} 0 NSENSE W={error_width_u:.6g}u L=180n",
+                f"R{prefix}errn_sup {prefix}errn_sup 0 1G",
+                f"R{prefix}errn_t {prefix}errn_t 0 1G",
+                f"R{prefix}errn_w {prefix}errn_w 0 1G",
+                f"M{prefix}errn_sup {prefix}errn_sup {opposite_decision} vdd vdd PMOS W={error_width_u:.6g}u L=180n",
+                f"M{prefix}errn_label {prefix}errn_sup {targetp} {prefix}errn_t 0 NSENSE W={error_width_u:.6g}u L=180n",
+                f"M{prefix}errn_win {prefix}errn_t {decision} {prefix}errn_w 0 NSENSE W={error_width_u:.6g}u L=180n",
+                f"M{prefix}errn_clk {prefix}errn_w {error_clock_node} {errn} 0 NSENSE W={error_width_u:.6g}u L=180n",
+            ]
+    return lines
+
+
 def generate_netlist(
     *,
     train_records: list[dict[str, Any]],
@@ -301,10 +432,13 @@ def generate_netlist(
     if writer_mode not in WRITER_MODES:
         raise ValueError(f"writer_mode must be one of {WRITER_MODES}")
     normalizer_approach = normalizer_approach_from_error_mode(error_mode)
-    if writer_mode == "live" and error_mode != "label-descent" and normalizer_approach is None:
-        raise ValueError("live writer_mode currently supports label-descent and normalizer descent modes only")
+    uses_pairwise_margin = error_mode == "live-pairwise-margin-descent"
+    if writer_mode == "live" and error_mode != "label-descent" and normalizer_approach is None and not uses_pairwise_margin:
+        raise ValueError("live writer_mode currently supports label-descent, pairwise-margin, and normalizer descent modes only")
     if normalizer_approach is not None and (writer_mode != "live" or class_count != 3):
         raise ValueError("normalizer descent currently requires live writer_mode and class_count=3")
+    if uses_pairwise_margin and (writer_mode != "live" or class_count != 3):
+        raise ValueError("live pairwise-margin descent currently requires live writer_mode and class_count=3")
 
     all_records = eval_records + train_records + eval_records
     sequence = ["initial_eval"] * len(eval_records) + ["train"] * len(train_records) + ["final_eval"] * len(eval_records)
@@ -315,15 +449,30 @@ def generate_netlist(
     features = records_to_feature_matrix(all_records, feature_count)
     cycle_count = len(all_records)
     stop_ns = cycle_count * CYCLE_NS
-    uses_early_score = error_mode in {"score-gated-nontarget", "restored-score-nontarget"} or normalizer_approach is not None
+    uses_early_score = (
+        error_mode in {"score-gated-nontarget", "restored-score-nontarget"}
+        or normalizer_approach is not None
+        or uses_pairwise_margin
+    )
     uses_restored_score = error_mode == "restored-score-nontarget"
-    update_signal_start_ns = 4.25 if uses_restored_score else 1.8
-    update_signal_end_ns = 6.35 if uses_restored_score else 4.2
+    uses_pairwise_timing = uses_restored_score or uses_pairwise_margin
+    update_signal_start_ns = 4.25 if uses_pairwise_timing else 1.8
+    update_signal_end_ns = 6.35 if uses_pairwise_timing else 4.2
     acc_start_ns = 4.55 if uses_restored_score else 2.0
     acc_end_ns = 6.25 if uses_restored_score else 4.0
     apply_start_ns = 6.65 if uses_restored_score else 5.0
     apply_end_ns = 8.15 if uses_restored_score else 7.0
     score_reset_windows = [(0.2, 1.0), (8.35, 8.85)] if uses_restored_score else [(0.2, 1.0), (7.4, 8.0)]
+    margin_sizing = (
+        derive_multiclass_margin_correction_sizing(
+            class_count=class_count,
+            target_margin_v=1.0e-3,
+            score_delta_v=1.0e-3,
+            error_drive_scale=1.0,
+        )
+        if uses_pairwise_margin
+        else None
+    )
 
     lines = [
         "* Continuous class-local multiclass output-head training sequence.",
@@ -350,13 +499,18 @@ def generate_netlist(
             f"Vscoreerr scoreerr 0 {periodic_phase_pwl(cycle_count, start_ns=update_signal_start_ns, end_ns=update_signal_end_ns, active_cycles=train_cycles)}",
             f"Vscoregaterst scoregaterst 0 {periodic_phase_pwl(cycle_count, start_ns=0.2, end_ns=1.0)}",
         ]
-    if uses_restored_score:
+    if uses_pairwise_margin:
         lines += [
-            "Voutref outref 0 0.25",
+            f"Vscoreerr scoreerr 0 {periodic_phase_pwl(cycle_count, start_ns=update_signal_start_ns, end_ns=update_signal_end_ns, active_cycles=train_cycles, high=margin_sizing.error_clock_high_v)}",
+        ]
+    if uses_restored_score or uses_pairwise_margin:
+        lines += [
             f"Vscorepre scorepre 0 {active_low_phase_pwl(cycle_count, start_ns=0.2, end_ns=1.0, active_cycles=set(range(cycle_count)))}",
             f"Vscoreamp scoreamp 0 {periodic_phase_pwl(cycle_count, start_ns=1.75, end_ns=3.15, active_cycles=train_cycles)}",
             f"Vscoredec scoredec 0 {periodic_phase_pwl(cycle_count, start_ns=3.45, end_ns=4.15, active_cycles=train_cycles)}",
         ]
+    if uses_restored_score:
+        lines += ["Voutref outref 0 0.25"]
     for feature in range(feature_count):
         act_values = [float(value) for value in features[:, feature]]
         actrow_windows = [(1.05, 1.65), (9.0, 12.0)] if uses_early_score else [(9.0, 12.0)]
@@ -426,8 +580,8 @@ def generate_netlist(
                         class_idx=class_idx,
                         feature_idx=feature,
                         activation_node=f"act{feature}",
-                        positive_descent_node=f"c{class_idx}_errp" if normalizer_approach is not None else None,
-                        negative_descent_node=f"c{class_idx}_errn" if normalizer_approach is not None else None,
+                        positive_descent_node=f"c{class_idx}_errp" if normalizer_approach is not None or uses_pairwise_margin else None,
+                        negative_descent_node=f"c{class_idx}_errn" if normalizer_approach is not None or uses_pairwise_margin else None,
                     )
                     if writer_mode == "live"
                     else (
@@ -454,6 +608,30 @@ def generate_netlist(
                 *(class_local_bounded_update_lines(class_idx=class_idx, feature_idx=feature) if writer_mode == "sampled" else []),
                 *class_local_readout_forward_lines(class_idx=class_idx, feature_idx=feature),
             ]
+    if uses_pairwise_margin:
+        for class_idx in range(class_count):
+            for opponent_idx in range(class_idx + 1, class_count):
+                lines += pairwise_low_gain_winner_lines(
+                    class_a=class_idx,
+                    class_b=opponent_idx,
+                    amp_clock_node="scoreamp",
+                    decision_clock_node="scoredec",
+                    reset_node="scorepre",
+                    pullup_width=margin_sizing.pairwise_pullup_width_u,
+                    pulldown_width=margin_sizing.pairwise_pulldown_width_u,
+                )
+        lines += pairwise_target_margin_penalty_lines(
+            class_count=class_count,
+            decision_clock_node="scoredec",
+            penalty_width_u=margin_sizing.margin_penalty_width_u,
+        )
+        lines += pairwise_live_margin_error_lines(
+            class_count=class_count,
+            error_clock_node="scoreerr",
+            reset_node="rst",
+            error_width_u=margin_sizing.error_width_u,
+            error_capacitance_f=margin_sizing.error_cap_f,
+        )
     if normalizer_approach is not None:
         lines += [
             "Xscore_normalizer "
@@ -670,10 +848,13 @@ def validate_args(args: argparse.Namespace) -> None:
     if args.writer_mode not in WRITER_MODES:
         raise ValueError(f"writer-mode must be one of {WRITER_MODES}")
     normalizer_approach = normalizer_approach_from_error_mode(args.error_mode)
-    if args.writer_mode == "live" and args.error_mode != "label-descent" and normalizer_approach is None:
-        raise ValueError("live writer-mode currently supports label-descent and normalizer descent modes only")
+    uses_pairwise_margin = args.error_mode == "live-pairwise-margin-descent"
+    if args.writer_mode == "live" and args.error_mode != "label-descent" and normalizer_approach is None and not uses_pairwise_margin:
+        raise ValueError("live writer-mode currently supports label-descent, pairwise-margin, and normalizer descent modes only")
     if normalizer_approach is not None and args.writer_mode != "live":
         raise ValueError("normalizer descent currently requires live writer-mode")
+    if uses_pairwise_margin and args.writer_mode != "live":
+        raise ValueError("live pairwise-margin descent currently requires live writer-mode")
     if parse_counted_mnist_dataset(args.dataset) is None:
         raise ValueError("dataset must be a counted multiclass MNIST dataset")
 

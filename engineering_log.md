@@ -2,6 +2,21 @@
 
 ## 2026-05-27
 
+- Added a low-level ngspice-backed `multiclass_block_smoke` primitive for the
+  current main path: row-pulsed hidden conductance into split `pre_p/pre_n`,
+  sampled activation/eligibility capacitors, class-local differential readout
+  scores, and transistor-only bounded class-local readout updates.  The focused
+  regression verifies no behavioral `B` sources, class-local score nodes, a
+  positive hidden pre margin, target-class score win, and target/nontarget
+  signed weight movement in one transient.  The evidence run
+  `codex_multiclass_block_smoke` passed under ngspice-42 with \(524.8\) mV
+  hidden pre margin, \(386.5\) mV stored activation, \(3.0\) mV target score
+  winner margin, \(+20.0\) mV target signed update, and negative nontarget
+  updates.  The experiment also exposed two topology constraints to preserve:
+  a direct row-to-pre conductance loses the dynamic pre state after the row
+  falls, so activation/eligibility must be sampled while the row is valid; and
+  the bounded writer needs a stored pre/eligibility rail here because the
+  stored ReLU-ish activation is too low to drive the NMOS write gate strongly.
 - Added a restored-score nontarget mode to the continuous multiclass output
   sequence.  The new `restored-score-nontarget` path reuses the prefixed
   low-common-mode score decision primitive per class: an early class-local

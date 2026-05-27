@@ -589,3 +589,55 @@ def test_row_conductance_primitive_ngspice_hidden_credit_sequence_respects_later
     assert first_delta > 0.005
     assert float(measures["hidden_credit_margin_cycle2"]) > 0.05
     assert abs(final_delta - first_delta) < 2e-3
+
+
+def test_row_conductance_primitive_ngspice_credit_update_improves_next_forward_margin(
+    tmp_path: Path,
+    ngspice_path: str,
+) -> None:
+    measures = _run_ngspice_case(
+        tmp_path,
+        ngspice_path,
+        "credit_update_improves_next_forward",
+        wp=0.30,
+        wn=0.55,
+        cycles=2,
+        cycle_rows=[0.85, 0.85],
+        cycle_credit_modes=["positive", "none"],
+        update_mode="none",
+        credit_mode="none",
+        readout_wp=0.55,
+        readout_wn=0.30,
+        writer_error_source="hidden_credit",
+    )
+
+    assert float(measures["forward_margin"]) < -0.10
+    assert float(measures["hidden_credit_margin"]) > 0.05
+    assert float(measures["signed_weight_delta"]) > 0.005
+    assert float(measures["forward_margin_cycle2"]) > float(measures["forward_margin"]) + 0.02
+
+
+def test_row_conductance_primitive_ngspice_negative_credit_reduces_next_forward_margin(
+    tmp_path: Path,
+    ngspice_path: str,
+) -> None:
+    measures = _run_ngspice_case(
+        tmp_path,
+        ngspice_path,
+        "negative_credit_reduces_next_forward",
+        wp=0.55,
+        wn=0.30,
+        cycles=2,
+        cycle_rows=[0.85, 0.85],
+        cycle_credit_modes=["negative", "none"],
+        update_mode="none",
+        credit_mode="none",
+        readout_wp=0.55,
+        readout_wn=0.30,
+        writer_error_source="hidden_credit",
+    )
+
+    assert float(measures["forward_margin"]) > 0.10
+    assert float(measures["hidden_credit_margin"]) < -0.05
+    assert float(measures["signed_weight_delta"]) < -0.005
+    assert float(measures["forward_margin_cycle2"]) < float(measures["forward_margin"]) - 0.02

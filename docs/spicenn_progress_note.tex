@@ -581,6 +581,48 @@ and then (3) extending the same circuit discipline from binary MNIST01 toward
 multiclass MNIST without reintroducing behavioral update buckets or unrealistic
 sample ordering.
 
+\subsection{Current Multiclass Error-Rail Status}
+
+The multiclass branch has been testing the same rule: keep all learning rails
+as transistor/passive circuit state, and promote only mechanisms that survive
+low-level ngspice checks before they are used in continuous MNIST transients.
+The current score-error family includes
+\[
+  \code{score-mass-descent},\qquad
+  \code{common-score-mass-descent},\qquad
+  \code{target-contrast-score-mass-descent},
+\]
+and a pairwise score-competition primitive.  The score-mass modes build
+physical \(e^+_k/e^-_k\) rails from class score capacitors and one-hot label
+rails, then route the existing readout writer through those rails.  The
+pairwise primitive uses low-common-mode class-vs-class score comparators and
+PMOS supply-blocked error stacks so that near ties generate bounded correction
+pressure rather than a random full-rail sign latch.
+
+The newest blended mode,
+\[
+  \code{error\_mode=common-score-mass-pairwise-descent},
+\]
+keeps the continuous common-score-mass rails and injects a small pairwise
+mistake correction into the same per-class \(e^+/e^-\) capacitors.  Its
+pairwise branch strength is now an explicit deck parameter
+\(\code{score\_mass\_pairwise\_error\_scale}\), defaulting to \(0.0625\) of
+the score-mass error width.  This keeps the topology tunable without adding a
+second writer family.
+
+The ngspice evidence is mixed.  Low-level and one-hot integrated tests pass:
+the hybrid adds mistake pressure on forced score cases and still trains the
+three-class one-hot control to final predictions \([0,1,2]\).  On the real
+\(\code{mnist3fixed8\_12}\), 6-train/6-eval comparison with target-only class
+bias, however, the hybrid reached the same headline accuracy as common
+score-mass, \(0.333\to0.500\), but worsened the worst final margin to about
+\(-0.588\) mV.  The current best recent multiclass margin therefore remains
+plain common-score-mass at about \(-0.498\) mV.  The conclusion is that
+pairwise correction is useful infrastructure, but simply blending more
+write-side branches is not enough; the next multiclass target should be a
+stronger physical class-contrast or current-normalized score/error stage before
+the writer.
+
 
 \section{State And Update Equations}
 

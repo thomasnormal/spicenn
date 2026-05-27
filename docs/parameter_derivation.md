@@ -105,10 +105,18 @@ The local sizing is derived as:
 
 ```text
 observable_margin_ratio = min(target_margin, score_delta) / score_delta_floor
+margin_penalty_width    = pairwise_pulldown_width * target_margin / score_window
 error_clock_high        = target_writer_rail + sense_threshold
 error_capacitance       = C from I*T/V for the writer rail target
 pairwise widths         = anchored to the measured low-gain comparator family
 ```
+
+In the continuous block this is implemented as a weak physical discharge branch
+on the target-wins pairwise decision node while `targetp` and `scoredec` are
+active. The branch creates the margin/dead-zone without Python-shifting score
+sources. The default writer handoff uses a `0.45 V` score-error clock and
+`0.5 fF` error caps because the one-sample integrated writer test showed lower
+rails were directionally correct but did not move the readout capacitors.
 
 That leaves the intended Bayesian surface at:
 

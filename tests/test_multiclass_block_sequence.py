@@ -361,6 +361,25 @@ def test_multiclass_block_sequence_can_use_pairwise_score_competition_descent() 
     assert ".meas tran c0_errdiff_1" in netlist
 
 
+def test_multiclass_block_sequence_can_use_pairwise_margin_correction_descent() -> None:
+    netlist = seq.generate_netlist(
+        train_records=_target0_records(1),
+        eval_records=_target0_records(1),
+        error_mode="pairwise-margin-correction-descent",
+    )
+
+    assert "\nB" not in netlist
+    assert "Vscoreerr scoreerr 0 PWL(" in netlist
+    assert "26.45n 0.45" in netlist
+    assert "Cc0_gt_c1_decision c0_gt_c1_decision 0 4f IC=0" in netlist
+    assert "Mmpen_t0_o1_label c0_gt_c1_decision c0_targetp mpen_t0_o1_i 0 NSENSE W=0.25u" in netlist
+    assert "Mmpen_t0_o1_clk mpen_t0_o1_i scoredec 0 0 NMOS W=0.25u" in netlist
+    assert "Cc1_errp c1_errp 0 0.5f IC=0" in netlist
+    assert "Mt0_o1_errp_sup t0_o1_errp_sup c0_gt_c1_decision vdd vdd PMOS W=128u" in netlist
+    assert "Mc0_f0_gvp_e c0_f0_gvp_a c0_errp c0_f0_gvp_d 0 NSENSE" in netlist
+    assert ".meas tran c0_errdiff_1" in netlist
+
+
 def test_multiclass_block_sequence_can_use_common_score_mass_pairwise_descent() -> None:
     netlist = seq.generate_netlist(
         train_records=_target0_records(1),
@@ -2184,6 +2203,37 @@ def test_multiclass_block_sequence_ngspice_pairwise_binary_descent_keeps_one_hot
     assert float(measures["c0_f1_signed_final"]) < -10e-3
     assert float(measures["c1_f1_signed_final"]) > 10e-3
     assert float(measures["c2_f2_signed_final"]) > 10e-3
+
+
+def test_multiclass_block_sequence_ngspice_pairwise_margin_correction_improves_one_sample_margin(
+    tmp_path: Path,
+    ngspice_path: str,
+) -> None:
+    records = [{"label": 1, "inputs": {"x0": 0.85}}]
+    measures = run_netlist(
+        ngspice_path,
+        tmp_path / "multiclass_block_sequence_one_sample_pairwise_margin.cir",
+        seq.generate_netlist(
+            train_records=records,
+            eval_records=records,
+            class_count=3,
+            feature_count=1,
+            score_capacitance_f=5.0,
+            error_mode="pairwise-margin-correction-descent",
+        ),
+        timeout=80.0,
+    )
+
+    initial_scores = [float(measures[f"c{class_idx}_score_net_0"]) for class_idx in range(3)]
+    final_scores = [float(measures[f"c{class_idx}_score_net_2"]) for class_idx in range(3)]
+    initial_margin = initial_scores[1] - max(initial_scores[0], initial_scores[2])
+    final_margin = final_scores[1] - max(final_scores[0], final_scores[2])
+
+    assert float(measures["c1_errdiff_1"]) > 0.35
+    assert float(measures["c0_errdiff_1"]) < -0.25
+    assert float(measures["c2_errdiff_1"]) < -0.25
+    assert float(measures["c1_f0_signed_final"]) > 10e-3
+    assert final_margin > initial_margin + 10e-3
 
 
 def test_multiclass_block_sequence_ngspice_restored_winner_blocks_nonwinning_nontargets(

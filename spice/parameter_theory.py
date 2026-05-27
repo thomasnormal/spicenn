@@ -417,6 +417,8 @@ class MulticlassMarginCorrectionSizing:
     observable_margin_ratio: float
     pairwise_pullup_width_u: float
     pairwise_pulldown_width_u: float
+    margin_penalty_width_u: float
+    margin_reference_window_v: float
     error_width_u: float
     error_cap_f: float
     error_window_ns: float
@@ -607,12 +609,13 @@ def derive_multiclass_margin_correction_sizing(
     score_delta_v: float,
     min_observable_score_delta_v: float = 1.0e-3,
     error_window_ns: float = 1.2,
-    target_error_v: float = 0.08,
+    target_error_v: float = 0.43,
     sense_threshold_v: float = 0.02,
-    anchor_error_cap_f: float = 4.0,
+    anchor_error_cap_f: float = 0.5,
     anchor_error_width_u: float = 128.0,
     anchor_pairwise_pullup_width_u: float = 16.0,
     anchor_pairwise_pulldown_width_u: float = 64.0,
+    margin_reference_window_v: float = 0.256,
     error_drive_scale: float = 1.0,
 ) -> MulticlassMarginCorrectionSizing:
     """Derive sizes for a pairwise target-margin correction primitive.
@@ -639,6 +642,7 @@ def derive_multiclass_margin_correction_sizing(
         ("anchor_error_width_u", anchor_error_width_u),
         ("anchor_pairwise_pullup_width_u", anchor_pairwise_pullup_width_u),
         ("anchor_pairwise_pulldown_width_u", anchor_pairwise_pulldown_width_u),
+        ("margin_reference_window_v", margin_reference_window_v),
         ("error_drive_scale", error_drive_scale),
     ]:
         _require_positive(name, float(value))
@@ -653,6 +657,7 @@ def derive_multiclass_margin_correction_sizing(
         target_error_v,
     )
     error_width_u = anchor_error_width_u * error_drive_scale
+    margin_penalty_width_u = anchor_pairwise_pulldown_width_u * target_margin_v / margin_reference_window_v
     error_clock_high_v = min(1.2, target_error_v + sense_threshold_v)
 
     return MulticlassMarginCorrectionSizing(
@@ -662,6 +667,8 @@ def derive_multiclass_margin_correction_sizing(
         observable_margin_ratio=observable_margin_ratio,
         pairwise_pullup_width_u=anchor_pairwise_pullup_width_u,
         pairwise_pulldown_width_u=anchor_pairwise_pulldown_width_u,
+        margin_penalty_width_u=margin_penalty_width_u,
+        margin_reference_window_v=margin_reference_window_v,
         error_width_u=error_width_u,
         error_cap_f=error_cap_f,
         error_window_ns=error_window_ns,

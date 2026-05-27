@@ -18,10 +18,12 @@ def test_multiclass_margin_correction_primitive_emits_margin_shifted_pairwise_wr
 
     assert "\nB" not in netlist
     assert "Vc1_score_raw c1_score_raw 0 0.004" in netlist
-    assert "Vc1_score c1_score 0 0.003" in netlist
+    assert "Vc1_score c1_score 0 0.004" in netlist
     assert "Vc1_targetp c1_targetp 0 1.2" in netlist
     assert "Cc1_gt_c0_decision c1_gt_c0_decision 0 4f IC=0" in netlist
     assert "Mc0_gt_c1_scoreamp_scoren_p c0_gt_c1_scoren_amp c1_score c0_gt_c1_scoreamp_scoren_i vdd PMOS" in netlist
+    assert "Mmpen_t1_o0_label c1_gt_c0_decision c1_targetp mpen_t1_o0_i 0 NSENSE W=0.25u" in netlist
+    assert "Mmpen_t1_o0_clk mpen_t1_o0_i scoredec 0 0 NMOS W=0.25u" in netlist
     assert "Mmt1_o0_errp_win mt1_o0_errp_t c0_gt_c1_decision mt1_o0_errp_w 0 NSENSE W=128u" in netlist
     assert "Mmt1_o0_errn_clk mt1_o0_errn_w scoreerr c0_errn 0 NSENSE W=128u" in netlist
     assert ".meas tran c1_errdiff PARAM='c1_errp_after-c1_errn_after'" in netlist
@@ -74,8 +76,8 @@ def test_multiclass_margin_correction_primitive_ngspice_updates_barely_winning_t
     assert float(measures["c1_errdiff"]) > 0.025
     assert float(measures["c0_errdiff"]) < -0.025
     assert abs(float(measures["c2_errdiff"])) < 0.025
-    assert float(measures["c1_errdiff"]) < 0.15
-    assert float(measures["c0_errdiff"]) > -0.15
+    assert float(measures["c1_errdiff"]) < 0.45
+    assert float(measures["c0_errdiff"]) > -0.45
 
 
 @pytest.mark.parametrize(

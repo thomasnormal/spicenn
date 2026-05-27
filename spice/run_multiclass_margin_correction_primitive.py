@@ -42,12 +42,6 @@ def case_scores(case: str) -> tuple[tuple[float, float, float], int]:
     raise ValueError(f"case must be one of {MARGIN_CASES}")
 
 
-def margin_shifted_scores(scores: tuple[float, ...], target: int, margin_v: float) -> tuple[float, ...]:
-    shifted = list(scores)
-    shifted[target] = max(0.0, shifted[target] - margin_v)
-    return tuple(shifted)
-
-
 def expected_error_signs(
     scores: tuple[float, ...],
     target: int,
@@ -99,6 +93,28 @@ def _target_vs_opponent_error_lines(
     ]
 
 
+def target_margin_penalty_lines(
+    *,
+    target_idx: int,
+    class_count: int,
+    decision_clock: str,
+    width_u: float,
+) -> list[str]:
+    lines: list[str] = []
+    for opponent_idx in range(class_count):
+        if opponent_idx == target_idx:
+            continue
+        target_wins = pairwise_decision_node(target_idx, opponent_idx)
+        targetp = class_node(target_idx, "targetp")
+        prefix = f"mpen_t{target_idx}_o{opponent_idx}_"
+        lines += [
+            f"R{prefix}i {prefix}i 0 1G",
+            f"M{prefix}label {target_wins} {targetp} {prefix}i 0 NSENSE W={width_u:.6g}u L=180n",
+            f"M{prefix}clk {prefix}i {decision_clock} 0 0 NMOS W={width_u:.6g}u L=180n",
+        ]
+    return lines
+
+
 def generate_netlist(
     *,
     case: str,
@@ -133,11 +149,9 @@ def generate_netlist(
     error_cap_f = sizing.error_cap_f if error_capacitance_f is None else float(error_capacitance_f)
     if error_cap_f <= 0.0:
         raise ValueError("error_capacitance_f must be positive")
-    compare_scores = margin_shifted_scores(scores, target, target_margin_v)
-
     lines = [
         "* Multiclass target-margin correction primitive smoke.",
-        "* The target compare rail is shifted down by the analytical margin reference.",
+        "* A weak physical branch penalizes the target-wins decision by the analytical margin reference.",
         "* Pairwise low-gain decisions drive only target-positive and offending-opponent-negative rails.",
         "* Python supplies fixed score/label/clock sources; no behavioral sources.",
         ".param VDD=1.2",
@@ -150,11 +164,11 @@ def generate_netlist(
         "Vscoredec scoredec 0 PULSE(0 1.2 2.10n 10p 10p 1.20n 10n)",
         f"Vscoreerr scoreerr 0 PULSE(0 {sizing.error_clock_high_v:.12g} 3.50n 10p 10p 1.20n 10n)",
     ]
-    for class_idx, (raw_score, compare_score) in enumerate(zip(scores, compare_scores, strict=True)):
+    for class_idx, raw_score in enumerate(scores):
         targetp = 1.2 if class_idx == target else 0.0
         lines += [
             f"V{class_node(class_idx, 'score_raw')} {class_node(class_idx, 'score_raw')} 0 {raw_score:.12g}",
-            f"V{class_node(class_idx, 'score')} {class_node(class_idx, 'score')} 0 {compare_score:.12g}",
+            f"V{class_node(class_idx, 'score')} {class_node(class_idx, 'score')} 0 {raw_score:.12g}",
             f"V{class_node(class_idx, 'targetp')} {class_node(class_idx, 'targetp')} 0 {targetp:.12g}",
             f"C{class_node(class_idx, 'errp')} {class_node(class_idx, 'errp')} 0 {error_cap_f:.12g}f IC=0",
             f"C{class_node(class_idx, 'errn')} {class_node(class_idx, 'errn')} 0 {error_cap_f:.12g}f IC=0",
@@ -174,6 +188,12 @@ def generate_netlist(
                 pullup_width=sizing.pairwise_pullup_width_u,
                 pulldown_width=sizing.pairwise_pulldown_width_u,
             )
+    lines += target_margin_penalty_lines(
+        target_idx=target,
+        class_count=class_count,
+        decision_clock="scoredec",
+        width_u=sizing.margin_penalty_width_u,
+    )
     for opponent_idx in range(class_count):
         if opponent_idx == target:
             continue

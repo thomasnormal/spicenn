@@ -263,8 +263,10 @@ def test_multiclass_margin_correction_sizing_derives_writer_domain_defaults() ->
     assert sizing.observable_margin_ratio == pytest.approx(1.0)
     assert sizing.pairwise_pullup_width_u == pytest.approx(16.0)
     assert sizing.pairwise_pulldown_width_u == pytest.approx(64.0)
+    assert sizing.margin_penalty_width_u == pytest.approx(0.25)
+    assert sizing.margin_reference_window_v == pytest.approx(0.256)
     assert sizing.error_width_u == pytest.approx(64.0)
-    assert sizing.error_cap_f == pytest.approx(4.0)
+    assert sizing.error_cap_f == pytest.approx(0.5)
     assert sizing.error_clock_high_v == pytest.approx(0.10)
 
 

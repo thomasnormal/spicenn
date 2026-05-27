@@ -8,7 +8,7 @@ from typing import Any
 
 import numpy as np
 
-from parameter_theory import derive_class_evidence_normalizer_sizing
+from parameter_theory import derive_class_evidence_normalizer_sizing, derive_multiclass_margin_correction_sizing
 from datasets import dataset_records, parse_counted_mnist_dataset
 from run_device_mnist01_scalar_training import sanitize_tag
 from run_device_sequential_training import mos_models, run_netlist
@@ -54,6 +54,7 @@ ERROR_MODES = (
     "target-contrast-score-mass-descent",
     "common-score-mass-pairwise-descent",
     "pairwise-score-competition-descent",
+    "pairwise-margin-correction-descent",
     "pairwise-binary-descent",
     "restored-score-binary-descent",
     "restored-score-nontarget",
@@ -564,6 +565,30 @@ def pairwise_score_competition_error_lines(
     return lines
 
 
+def pairwise_target_margin_penalty_lines(
+    *,
+    class_count: int,
+    decision_clock_node: str = "scoredec",
+    penalty_width_u: float = 0.25,
+) -> list[str]:
+    if penalty_width_u <= 0.0:
+        raise ValueError("penalty_width_u must be positive")
+    lines: list[str] = []
+    for target_idx in range(class_count):
+        for opponent_idx in range(class_count):
+            if opponent_idx == target_idx:
+                continue
+            target_wins = pairwise_decision_node(target_idx, opponent_idx)
+            targetp = class_node(target_idx, "targetp")
+            prefix = f"mpen_t{target_idx}_o{opponent_idx}_"
+            lines += [
+                f"R{prefix}i {prefix}i 0 1G",
+                f"M{prefix}label {target_wins} {targetp} {prefix}i 0 NSENSE W={penalty_width_u:.6g}u L=180n",
+                f"M{prefix}clk {prefix}i {decision_clock_node} 0 0 NMOS W={penalty_width_u:.6g}u L=180n",
+            ]
+    return lines
+
+
 def class_local_amplified_score_competitive_gradient_lines(
     *,
     class_idx: int,
@@ -764,6 +789,7 @@ def generate_netlist(
     uses_target_contrast_score_mass = error_mode == "target-contrast-score-mass-descent"
     uses_common_score_mass_pairwise = error_mode == "common-score-mass-pairwise-descent"
     uses_pairwise_score_competition = error_mode == "pairwise-score-competition-descent"
+    uses_pairwise_margin_correction = error_mode == "pairwise-margin-correction-descent"
     uses_score_common_gate = uses_common_ref_score or uses_raw_common_ref_score
     uses_score_common_gate_nodes = uses_score_common_gate or uses_common_score_mass or uses_common_score_mass_pairwise
     uses_score_contrast_nodes = (
@@ -791,6 +817,7 @@ def generate_netlist(
         or uses_target_contrast_score_mass
         or uses_common_score_mass_pairwise
         or uses_pairwise_score_competition
+        or uses_pairwise_margin_correction
     )
     uses_restored_winner = error_mode == "restored-winner-nontarget"
     uses_pairwise_decisions = (
@@ -798,6 +825,7 @@ def generate_netlist(
         or uses_pairwise_binary
         or uses_amplified_pairwise
         or uses_pairwise_score_competition
+        or uses_pairwise_margin_correction
         or uses_common_score_mass_pairwise
     )
     uses_late_restored_gate = (
@@ -806,6 +834,7 @@ def generate_netlist(
         or uses_pairwise_binary
         or uses_restored_winner
         or uses_pairwise_score_competition
+        or uses_pairwise_margin_correction
         or uses_common_score_mass_pairwise
         or uses_score_preamp
         or uses_raw_common_ref_score
@@ -822,6 +851,7 @@ def generate_netlist(
             or uses_target_contrast_score_mass
             or uses_common_score_mass_pairwise
             or uses_pairwise_score_competition
+            or uses_pairwise_margin_correction
         )
         else 10.8 if uses_late_restored_gate else 9.0
     )
@@ -837,6 +867,16 @@ def generate_netlist(
             error_drive_scale=score_mass_error_width / 32.0,
         )
         if uses_low_gain_contrast_score_mass
+        else None
+    )
+    margin_correction_sizing = (
+        derive_multiclass_margin_correction_sizing(
+            class_count=class_count,
+            target_margin_v=1.0e-3,
+            score_delta_v=3.0e-3,
+            error_drive_scale=score_mass_error_width / 32.0,
+        )
+        if uses_pairwise_margin_correction
         else None
     )
 
@@ -892,11 +932,12 @@ def generate_netlist(
         or uses_target_contrast_score_mass
         or uses_common_score_mass_pairwise
         or uses_pairwise_score_competition
+        or uses_pairwise_margin_correction
     ):
         scoreerr_start_ns = 10.73 if uses_contrast_gated_score_mass else 10.45
         scoreerr_end_ns = 10.79 if uses_contrast_gated_score_mass else 10.75
         lines.append(
-            f"Vscoreerr scoreerr 0 {periodic_phase_pwl(cycle_count, start_ns=scoreerr_start_ns, end_ns=scoreerr_end_ns, active_cycles=train_cycles)}"
+            f"Vscoreerr scoreerr 0 {periodic_phase_pwl(cycle_count, start_ns=scoreerr_start_ns, end_ns=scoreerr_end_ns, active_cycles=train_cycles, high=(margin_correction_sizing.error_clock_high_v if margin_correction_sizing is not None else 1.2))}"
         )
     if (
         uses_residual_score
@@ -910,6 +951,7 @@ def generate_netlist(
         or uses_target_contrast_score_mass
         or uses_common_score_mass_pairwise
         or uses_pairwise_score_competition
+        or uses_pairwise_margin_correction
     ):
         lines.append(
             f"Vscoregaterst scoregaterst 0 {periodic_phase_pwl(cycle_count, start_ns=8.10, end_ns=8.35, active_cycles=train_cycles)}"
@@ -1054,7 +1096,7 @@ def generate_netlist(
             )
         if uses_pairwise_decisions:
             for opponent_idx in range(class_idx + 1, class_count):
-                if uses_pairwise_score_competition or uses_common_score_mass_pairwise:
+                if uses_pairwise_score_competition or uses_pairwise_margin_correction or uses_common_score_mass_pairwise:
                     lines += pairwise_low_gain_winner_lines(class_a=class_idx, class_b=opponent_idx)
                 else:
                     lines += pairwise_winner_lines(class_a=class_idx, class_b=opponent_idx)
@@ -1148,6 +1190,16 @@ def generate_netlist(
             error_width_u=4.0 * score_mass_error_width,
             mass_capacitance_f=0.5,
             error_capacitance_f=0.5,
+        )
+    if uses_pairwise_margin_correction:
+        lines += pairwise_target_margin_penalty_lines(
+            class_count=class_count,
+            penalty_width_u=margin_correction_sizing.margin_penalty_width_u,
+        )
+        lines += pairwise_score_competition_error_lines(
+            class_count=class_count,
+            error_width_u=margin_correction_sizing.error_width_u,
+            error_capacitance_f=margin_correction_sizing.error_cap_f,
         )
     if uses_pairwise_score_competition:
         lines += pairwise_score_competition_error_lines(
@@ -1302,7 +1354,7 @@ def generate_netlist(
                     positive_error_node=class_node(class_idx, "errp"),
                     negative_error_node=class_node(class_idx, "errn"),
                 )
-            elif uses_pairwise_score_competition:
+            elif uses_pairwise_score_competition or uses_pairwise_margin_correction:
                 gradient_lines = class_local_error_rail_gradient_lines(
                     class_idx=class_idx,
                     feature_idx=feature,
@@ -1460,6 +1512,7 @@ def generate_netlist(
                 or uses_target_contrast_score_mass
                 or uses_common_score_mass_pairwise
                 or uses_pairwise_score_competition
+                or uses_pairwise_margin_correction
             ):
                 if (
                     uses_score_mass

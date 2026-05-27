@@ -1653,6 +1653,44 @@ def accuracy(rows: list[dict[str, Any]], sequence: str) -> float:
     return float(np.mean([bool(row["correct"]) for row in selected]))
 
 
+def error_rail_stats(
+    measures: dict[str, float],
+    *,
+    labels: list[int],
+    sequence: list[str],
+    class_count: int,
+) -> dict[str, Any]:
+    target_values: list[float] = []
+    nontarget_values: list[float] = []
+    rows: list[list[float]] = []
+    for cycle, seq in enumerate(sequence):
+        if seq != "train":
+            continue
+        keys = [f"c{class_idx}_errdiff_{cycle}" for class_idx in range(class_count)]
+        if not all(key in measures for key in keys):
+            continue
+        values = [float(measures[key]) for key in keys]
+        rows.append(values)
+        label = int(labels[cycle])
+        target_values.append(values[label])
+        nontarget_values.extend(value for class_idx, value in enumerate(values) if class_idx != label)
+    if not rows:
+        return {
+            "train_errdiff_rows_v": [],
+            "train_target_errdiff_mean_v": None,
+            "train_target_errdiff_min_v": None,
+            "train_nontarget_errdiff_mean_v": None,
+            "train_nontarget_errdiff_max_v": None,
+        }
+    return {
+        "train_errdiff_rows_v": rows,
+        "train_target_errdiff_mean_v": float(np.mean(target_values)),
+        "train_target_errdiff_min_v": float(np.min(target_values)),
+        "train_nontarget_errdiff_mean_v": float(np.mean(nontarget_values)),
+        "train_nontarget_errdiff_max_v": float(np.max(nontarget_values)),
+    }
+
+
 def run_case(args: argparse.Namespace) -> dict[str, Any]:
     generated = ROOT / "spice/generated"
     tables = ROOT / "results/tables"
@@ -1703,6 +1741,7 @@ def run_case(args: argparse.Namespace) -> dict[str, Any]:
         raise ValueError(f"scenario must be one of {SCENARIOS}")
     all_records = eval_records + train_records + eval_records
     sequence = ["initial_eval"] * len(eval_records) + ["train"] * len(train_records) + ["final_eval"] * len(eval_records)
+    labels = [int(record["label"]) for record in all_records]
     total_feature_count = feature_count + (1 if args.class_bias_mode != "none" else 0)
     start = time.perf_counter()
     path = generated / f"{tag}.cir"
@@ -1823,6 +1862,7 @@ def run_case(args: argparse.Namespace) -> dict[str, Any]:
         "margin_improvement_v": final_margin - initial_margin,
         "final_signed_matrix_v": final_signed,
         "signed_after_each_train_v": train_progress,
+        **error_rail_stats(measures, labels=labels, sequence=sequence, class_count=args.class_count),
         "passed": (
             accuracy(rows, "final_eval") > accuracy(rows, "initial_eval")
             if args.scenario == "mnist"

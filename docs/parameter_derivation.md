@@ -214,6 +214,21 @@ valid, while the best next experiment should compare approaches with a sharper
 normalizer-specific diagnostic rather than treating the first two as solved
 training paths.
 
+The all-candidate fixed8 screen now records train-time error-rail statistics.
+This matters because the first full screen showed:
+
+```text
+different writer-domain error amplitudes
+same final fixed8 plateau
+```
+
+So `error_drive_scale` is not currently the most promising tuning axis.  A
+candidate can produce stronger `errp-errn` rails and still land at the same
+final class margins.  Before using Bayesian optimization on the normalizer
+surface, the next analytical step should measure whether the score/readout
+features are class-separable before the normalizer.  If they are not, tuning
+normalizer gain only amplifies the same weak evidence.
+
 ## Signal Representation Contract
 
 The circuit should distinguish the mathematical sign of a value from the

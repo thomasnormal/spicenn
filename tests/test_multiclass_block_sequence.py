@@ -320,6 +320,29 @@ def test_multiclass_block_sequence_can_use_normalizer_current_sum_descent() -> N
     assert ".meas tran c0_errdiff_1" in netlist
 
 
+def test_multiclass_block_sequence_reduces_train_error_rail_stats() -> None:
+    measures = {
+        "c0_errdiff_1": -0.2,
+        "c1_errdiff_1": 0.4,
+        "c2_errdiff_1": -0.1,
+        "c0_errdiff_2": 0.5,
+        "c1_errdiff_2": -0.3,
+        "c2_errdiff_2": -0.2,
+    }
+    stats = seq.error_rail_stats(
+        measures,
+        labels=[0, 1, 0],
+        sequence=["initial_eval", "train", "train"],
+        class_count=3,
+    )
+
+    assert stats["train_errdiff_rows_v"] == [[-0.2, 0.4, -0.1], [0.5, -0.3, -0.2]]
+    assert stats["train_target_errdiff_min_v"] == pytest.approx(0.4)
+    assert stats["train_target_errdiff_mean_v"] == pytest.approx(0.45)
+    assert stats["train_nontarget_errdiff_max_v"] == pytest.approx(-0.1)
+    assert stats["train_nontarget_errdiff_mean_v"] == pytest.approx(-0.2)
+
+
 def test_multiclass_block_sequence_can_use_common_score_mass_descent() -> None:
     netlist = seq.generate_netlist(
         train_records=_target0_records(1),

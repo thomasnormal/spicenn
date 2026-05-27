@@ -50,7 +50,7 @@ from run_spice_sweep import ROOT, detect_spice
 SCENARIOS = ("target-repeat", "one-hot", "mnist")
 CLASS_BIAS_MODES = ("none", "target-only", "label-descent")
 READOUT_UPDATE_MODES = ("sampled", "live")
-HIDDEN_UPDATE_MODES = ("none", "readout-weighted")
+HIDDEN_UPDATE_MODES = ("none", "readout-weighted", "direct-readout-weighted")
 SCORE_TIMING_MODES = ("late", "early")
 SCORE_SENSE_MODES = ("voltage", "current-clamp", "diode-mirror")
 READOUT_FORWARD_MODES = ("direct", "diode")
@@ -224,6 +224,94 @@ def hidden_live_weight_update_lines(
         f"M{prefix}neg_dn_e {whp} {eligibility_node} {prefix}neg_dn 0 NSENSE W={width_u:.6g}u L=180n",
         f"M{prefix}neg_dn_d {prefix}neg_dn {negative_credit_node} vwlo_ref 0 NSENSE W={width_u:.6g}u L=180n",
     ]
+
+
+def hidden_direct_readout_weighted_update_lines(
+    *,
+    class_count: int,
+    feature_idx: int,
+    error_positive_nodes: list[str],
+    error_negative_nodes: list[str],
+    eligibility_node: str,
+    width_u: float = 0.25,
+    activation_model: str = "NREL",
+    internal_capacitance_f: float = 0.05,
+) -> list[str]:
+    if min(width_u, internal_capacitance_f) <= 0.0:
+        raise ValueError("direct hidden update width and internal capacitance must be positive")
+    if activation_model not in HIDDEN_CREDIT_ACTIVATION_MODELS:
+        raise ValueError(f"activation_model must be one of {HIDDEN_CREDIT_ACTIVATION_MODELS}")
+    whp = f"whp{feature_idx}"
+    whn = f"whn{feature_idx}"
+    act = f"act{feature_idx}"
+    lines: list[str] = []
+    for class_idx in range(class_count):
+        errp = error_positive_nodes[class_idx]
+        errn = error_negative_nodes[class_idx]
+        vwp = class_node(class_idx, f"vwp{feature_idx}")
+        vwn = class_node(class_idx, f"vwn{feature_idx}")
+        prefix = f"h{feature_idx}_c{class_idx}_direct_"
+        positive_terms = ((errp, vwp, "pv"), (errn, vwn, "nv"))
+        negative_terms = ((errp, vwn, "pn"), (errn, vwp, "nn"))
+        for err, weight, suffix in positive_terms:
+            up0 = f"{prefix}{suffix}_pup0"
+            up1 = f"{prefix}{suffix}_pup1"
+            up2 = f"{prefix}{suffix}_pup2"
+            dn0 = f"{prefix}{suffix}_pdn0"
+            dn1 = f"{prefix}{suffix}_pdn1"
+            dn2 = f"{prefix}{suffix}_pdn2"
+            lines += [
+                f"R{up0} {up0} 0 1G",
+                f"R{up1} {up1} 0 1G",
+                f"R{up2} {up2} 0 1G",
+                f"R{dn0} {dn0} 0 1G",
+                f"R{dn1} {dn1} 0 1G",
+                f"R{dn2} {dn2} 0 1G",
+                f"C{up0} {up0} 0 {internal_capacitance_f:.12g}f IC=0",
+                f"C{up1} {up1} 0 {internal_capacitance_f:.12g}f IC=0",
+                f"C{up2} {up2} 0 {internal_capacitance_f:.12g}f IC=0",
+                f"C{dn0} {dn0} 0 {internal_capacitance_f:.12g}f IC=0",
+                f"C{dn1} {dn1} 0 {internal_capacitance_f:.12g}f IC=0",
+                f"C{dn2} {dn2} 0 {internal_capacitance_f:.12g}f IC=0",
+                f"M{prefix}{suffix}_pup_e vwhi_ref {eligibility_node} {up0} 0 NSENSE W={width_u:.6g}u L=180n",
+                f"M{prefix}{suffix}_pup_a {up0} {act} {up1} 0 {activation_model} W={width_u:.6g}u L=180n",
+                f"M{prefix}{suffix}_pup_r {up1} {err} {up2} 0 NSENSE W={width_u:.6g}u L=180n",
+                f"M{prefix}{suffix}_pup_w {up2} {weight} {whp} 0 NSENSE W={width_u:.6g}u L=180n",
+                f"M{prefix}{suffix}_pdn_e {whn} {eligibility_node} {dn0} 0 NSENSE W={width_u:.6g}u L=180n",
+                f"M{prefix}{suffix}_pdn_a {dn0} {act} {dn1} 0 {activation_model} W={width_u:.6g}u L=180n",
+                f"M{prefix}{suffix}_pdn_r {dn1} {err} {dn2} 0 NSENSE W={width_u:.6g}u L=180n",
+                f"M{prefix}{suffix}_pdn_w {dn2} {weight} vwlo_ref 0 NSENSE W={width_u:.6g}u L=180n",
+            ]
+        for err, weight, suffix in negative_terms:
+            up0 = f"{prefix}{suffix}_nup0"
+            up1 = f"{prefix}{suffix}_nup1"
+            up2 = f"{prefix}{suffix}_nup2"
+            dn0 = f"{prefix}{suffix}_ndn0"
+            dn1 = f"{prefix}{suffix}_ndn1"
+            dn2 = f"{prefix}{suffix}_ndn2"
+            lines += [
+                f"R{up0} {up0} 0 1G",
+                f"R{up1} {up1} 0 1G",
+                f"R{up2} {up2} 0 1G",
+                f"R{dn0} {dn0} 0 1G",
+                f"R{dn1} {dn1} 0 1G",
+                f"R{dn2} {dn2} 0 1G",
+                f"C{up0} {up0} 0 {internal_capacitance_f:.12g}f IC=0",
+                f"C{up1} {up1} 0 {internal_capacitance_f:.12g}f IC=0",
+                f"C{up2} {up2} 0 {internal_capacitance_f:.12g}f IC=0",
+                f"C{dn0} {dn0} 0 {internal_capacitance_f:.12g}f IC=0",
+                f"C{dn1} {dn1} 0 {internal_capacitance_f:.12g}f IC=0",
+                f"C{dn2} {dn2} 0 {internal_capacitance_f:.12g}f IC=0",
+                f"M{prefix}{suffix}_nup_e vwhi_ref {eligibility_node} {up0} 0 NSENSE W={width_u:.6g}u L=180n",
+                f"M{prefix}{suffix}_nup_a {up0} {act} {up1} 0 {activation_model} W={width_u:.6g}u L=180n",
+                f"M{prefix}{suffix}_nup_r {up1} {err} {up2} 0 NSENSE W={width_u:.6g}u L=180n",
+                f"M{prefix}{suffix}_nup_w {up2} {weight} {whn} 0 NSENSE W={width_u:.6g}u L=180n",
+                f"M{prefix}{suffix}_ndn_e {whp} {eligibility_node} {dn0} 0 NSENSE W={width_u:.6g}u L=180n",
+                f"M{prefix}{suffix}_ndn_a {dn0} {act} {dn1} 0 {activation_model} W={width_u:.6g}u L=180n",
+                f"M{prefix}{suffix}_ndn_r {dn1} {err} {dn2} 0 NSENSE W={width_u:.6g}u L=180n",
+                f"M{prefix}{suffix}_ndn_w {dn2} {weight} vwlo_ref 0 NSENSE W={width_u:.6g}u L=180n",
+            ]
+    return lines
 
 
 def pairwise_winner_lines(
@@ -1014,7 +1102,9 @@ def generate_netlist(
     uses_pairwise_score_competition = error_mode == "pairwise-score-competition-descent"
     uses_pairwise_margin_correction = error_mode == "pairwise-margin-correction-descent"
     uses_normalizer_error = error_mode in NORMALIZER_ERROR_MODES
-    uses_hidden_update = hidden_update_mode == "readout-weighted"
+    uses_stored_hidden_credit_update = hidden_update_mode == "readout-weighted"
+    uses_direct_hidden_update = hidden_update_mode == "direct-readout-weighted"
+    uses_hidden_update = uses_stored_hidden_credit_update or uses_direct_hidden_update
     uses_label_rail_descent = error_mode == "label-rail-descent"
     normalizer_approach = normalizer_error_approach(error_mode) if uses_normalizer_error else None
     uses_score_common_gate = uses_common_ref_score or uses_raw_common_ref_score
@@ -1610,7 +1700,7 @@ def generate_netlist(
                 + f" vdd 0 {spice_subckt_name(normalizer_approach)}"
             ),
         ]
-    if uses_hidden_update:
+    if uses_stored_hidden_credit_update:
         error_positive_nodes = [class_node(class_idx, "errp") for class_idx in range(class_count)]
         error_negative_nodes = [class_node(class_idx, "errn") for class_idx in range(class_count)]
         for feature in range(feature_count):
@@ -1630,6 +1720,19 @@ def generate_netlist(
                 positive_credit_node=hidden_credit_node(feature, "hdp"),
                 negative_credit_node=hidden_credit_node(feature, "hdn"),
                 width_u=hidden_update_width_u,
+            )
+    if uses_direct_hidden_update:
+        error_positive_nodes = [class_node(class_idx, "errp") for class_idx in range(class_count)]
+        error_negative_nodes = [class_node(class_idx, "errn") for class_idx in range(class_count)]
+        for feature in range(feature_count):
+            lines += hidden_direct_readout_weighted_update_lines(
+                class_count=class_count,
+                feature_idx=feature,
+                error_positive_nodes=error_positive_nodes,
+                error_negative_nodes=error_negative_nodes,
+                eligibility_node=f"xelig{feature}",
+                width_u=hidden_update_width_u,
+                activation_model=hidden_credit_activation_model,
             )
     for class_idx in range(class_count):
         for feature in range(total_feature_count):
@@ -1920,7 +2023,7 @@ def generate_netlist(
                 f".meas tran act_f{feature}_{cycle} FIND V(act{feature}) AT={base + 4.5:.2f}n",
                 f".meas tran elig_f{feature}_{cycle} FIND V(elig{feature}) AT={base + 4.5:.2f}n",
             ]
-            if uses_hidden_update and feature < feature_count:
+            if uses_stored_hidden_credit_update and feature < feature_count:
                 lines += [
                     f".meas tran xelig_f{feature}_{cycle} FIND V(xelig{feature}) AT={base + 4.5:.2f}n",
                     f".meas tran hdp_f{feature}_{cycle} FIND V({hidden_credit_node(feature, 'hdp')}) AT={base + score_error_measure_ns:.2f}n",
@@ -2442,6 +2545,44 @@ def eligibility_gate_stats(
     }
 
 
+def hidden_credit_stats(
+    measures: dict[str, float],
+    *,
+    sequence: list[str],
+    feature_count: int,
+) -> dict[str, Any]:
+    rows: list[list[float]] = []
+    abs_values: list[float] = []
+    positive_values: list[float] = []
+    negative_values: list[float] = []
+    for cycle, seq in enumerate(sequence):
+        if seq != "train":
+            continue
+        keys = [f"hcredit_f{feature}_{cycle}" for feature in range(feature_count)]
+        if not all(key in measures for key in keys):
+            continue
+        values = [float(measures[key]) for key in keys]
+        rows.append(values)
+        abs_values.extend(abs(value) for value in values)
+        positive_values.extend(value for value in values if value > 0.0)
+        negative_values.extend(value for value in values if value < 0.0)
+    if not rows:
+        return {
+            "train_hidden_credit_rows_v": [],
+            "train_hidden_credit_abs_mean_v": None,
+            "train_hidden_credit_abs_max_v": None,
+            "train_hidden_credit_positive_mean_v": None,
+            "train_hidden_credit_negative_mean_v": None,
+        }
+    return {
+        "train_hidden_credit_rows_v": rows,
+        "train_hidden_credit_abs_mean_v": float(np.mean(abs_values)),
+        "train_hidden_credit_abs_max_v": float(np.max(abs_values)),
+        "train_hidden_credit_positive_mean_v": float(np.mean(positive_values)) if positive_values else None,
+        "train_hidden_credit_negative_mean_v": float(np.mean(negative_values)) if negative_values else None,
+    }
+
+
 def run_case(args: argparse.Namespace) -> dict[str, Any]:
     generated = ROOT / "spice/generated"
     tables = ROOT / "results/tables"
@@ -2714,6 +2855,7 @@ def run_case(args: argparse.Namespace) -> dict[str, Any]:
         **error_rail_stats(measures, labels=labels, sequence=sequence, class_count=args.class_count),
         **eligibility_stats(measures, sequence=sequence, total_feature_count=total_feature_count),
         **eligibility_gate_stats(measures, sequence=sequence, feature_count=feature_count),
+        **hidden_credit_stats(measures, sequence=sequence, feature_count=feature_count),
         "passed": (
             accuracy(rows, "final_eval") > accuracy(rows, "initial_eval")
             if args.scenario == "mnist"

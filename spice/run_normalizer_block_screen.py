@@ -134,6 +134,10 @@ def _summary_row(summary: dict[str, Any], *, approach: str, scenario: str, tag: 
         "train_eligibility_active_features_250mv_mean": summary.get("train_eligibility_active_features_250mv_mean"),
         "train_eligibility_active_features_500mv_mean": summary.get("train_eligibility_active_features_500mv_mean"),
         "train_eligibility_pairwise_cosine_mean": summary.get("train_eligibility_pairwise_cosine_mean"),
+        "train_hidden_credit_abs_mean_v": summary.get("train_hidden_credit_abs_mean_v"),
+        "train_hidden_credit_abs_max_v": summary.get("train_hidden_credit_abs_max_v"),
+        "train_hidden_credit_positive_mean_v": summary.get("train_hidden_credit_positive_mean_v"),
+        "train_hidden_credit_negative_mean_v": summary.get("train_hidden_credit_negative_mean_v"),
         "csv": str(summary["csv"]),
         "wall_time_s": float(summary["wall_time_s"]),
     }
@@ -166,6 +170,10 @@ def _failure_row(error: Exception, *, approach: str, scenario: str, tag: str) ->
         "train_eligibility_active_features_250mv_mean": "",
         "train_eligibility_active_features_500mv_mean": "",
         "train_eligibility_pairwise_cosine_mean": "",
+        "train_hidden_credit_abs_mean_v": "",
+        "train_hidden_credit_abs_max_v": "",
+        "train_hidden_credit_positive_mean_v": "",
+        "train_hidden_credit_negative_mean_v": "",
         "csv": "",
         "wall_time_s": "",
     }
@@ -216,6 +224,10 @@ def run_screen(args: argparse.Namespace) -> dict[str, Any]:
         "train_eligibility_active_features_250mv_mean",
         "train_eligibility_active_features_500mv_mean",
         "train_eligibility_pairwise_cosine_mean",
+        "train_hidden_credit_abs_mean_v",
+        "train_hidden_credit_abs_max_v",
+        "train_hidden_credit_positive_mean_v",
+        "train_hidden_credit_negative_mean_v",
         "csv",
         "wall_time_s",
     ]

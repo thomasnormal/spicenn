@@ -438,6 +438,27 @@ def test_multiclass_block_sequence_summarizes_train_eligibility_gate_activity() 
     assert stats["train_eligibility_gate_max_v"] == 1.1
 
 
+def test_multiclass_block_sequence_summarizes_train_hidden_credit() -> None:
+    measures = {
+        "hcredit_f0_1": 0.20,
+        "hcredit_f1_1": -0.10,
+        "hcredit_f0_2": 0.05,
+        "hcredit_f1_2": -0.25,
+    }
+
+    stats = seq.hidden_credit_stats(
+        measures,
+        sequence=["initial_eval", "train", "train"],
+        feature_count=2,
+    )
+
+    assert stats["train_hidden_credit_rows_v"] == [[0.20, -0.10], [0.05, -0.25]]
+    assert stats["train_hidden_credit_abs_mean_v"] == pytest.approx(0.15)
+    assert stats["train_hidden_credit_abs_max_v"] == pytest.approx(0.25)
+    assert stats["train_hidden_credit_positive_mean_v"] == pytest.approx(0.125)
+    assert stats["train_hidden_credit_negative_mean_v"] == pytest.approx(-0.175)
+
+
 def test_multiclass_block_sequence_summarizes_final_signed_projection() -> None:
     measures = {
         "act_f0_2": 0.8,
@@ -1004,6 +1025,32 @@ def test_multiclass_block_sequence_can_size_hidden_credit_storage() -> None:
     assert "Rh0_hdp h0_hdp 0 250000" in netlist
     assert "Rh0_hdn h0_hdn 0 250000" in netlist
     assert "Mh0_c0_hdp_pv_a h0_c0_pv_w act0 h0_hdp 0 NMOS W=8u" in netlist
+
+
+def test_multiclass_block_sequence_can_directly_update_hidden_weights_from_readout_credit() -> None:
+    netlist = seq.generate_netlist(
+        train_records=_target0_records(1),
+        eval_records=_target0_records(1),
+        readout_update_mode="live",
+        hidden_update_mode="direct-readout-weighted",
+        hidden_update_width_u=0.35,
+        hidden_credit_activation_model="NMOS",
+        error_mode="pairwise-margin-correction-descent",
+        score_timing_mode="early",
+    )
+
+    assert "\nB" not in netlist
+    assert "Cxelig0 xelig0 0 20f IC=0" in netlist
+    assert "Ch0_hdp" not in netlist
+    assert "Mh0_live_pos_up" not in netlist
+    assert "Ch0_c0_direct_pv_pup0 h0_c0_direct_pv_pup0 0 0.05f IC=0" in netlist
+    assert "Mh0_c0_direct_pv_pup_e vwhi_ref xelig0 h0_c0_direct_pv_pup0 0 NSENSE W=0.35u" in netlist
+    assert "Mh0_c0_direct_pv_pup_a h0_c0_direct_pv_pup0 act0 h0_c0_direct_pv_pup1 0 NMOS W=0.35u" in netlist
+    assert "Mh0_c0_direct_pv_pup_r h0_c0_direct_pv_pup1 c0_errp h0_c0_direct_pv_pup2 0 NSENSE W=0.35u" in netlist
+    assert "Mh0_c0_direct_pv_pup_w h0_c0_direct_pv_pup2 c0_vwp0 whp0 0 NSENSE W=0.35u" in netlist
+    assert "Mh0_c0_direct_pn_nup_w h0_c0_direct_pn_nup2 c0_vwn0 whn0 0 NSENSE W=0.35u" in netlist
+    assert ".meas tran hcredit_f0_1" not in netlist
+    assert ".meas tran whsigned_f0_final PARAM='whp_f0_final-whn_f0_final'" in netlist
 
 
 def test_multiclass_block_sequence_can_use_label_rail_descent_for_live_gradient_flow() -> None:
@@ -1877,6 +1924,50 @@ def _hidden_readout_weighted_writer_netlist(*, vwp: float, vwn: float) -> str:
     return "\n".join(lines)
 
 
+def _hidden_direct_readout_weighted_writer_netlist(*, vwp: float, vwn: float) -> str:
+    lines = [
+        "* Low-level direct readout-weighted hidden writer primitive.",
+        ".param VDD=1.2",
+        seq.mos_models(),
+        ".options method=gear reltol=1e-3 abstol=1e-12 vntol=1e-6",
+        "Vdd vdd 0 {VDD}",
+        "Vwhi vwhi_ref 0 1.05",
+        "Vwlo vwlo_ref 0 0.15",
+        "Vrst rst 0 PULSE(1.2 0 0.1n 10p 10p 9n 20n)",
+        "Verrp c0_errp 0 PULSE(0 1.2 1n 10p 10p 4n 20n)",
+        "Verrn c0_errn 0 0",
+        "Vact act0 0 1.2",
+        "Vxelig xelig0 0 1.2",
+        f"Cc0_vwp0 c0_vwp0 0 20f IC={vwp:.12g}",
+        f"Cc0_vwn0 c0_vwn0 0 20f IC={vwn:.12g}",
+        "Cwhp0 whp0 0 20f IC=0.45",
+        "Cwhn0 whn0 0 20f IC=0.40",
+        "Rc0_vwp0 c0_vwp0 0 1e15",
+        "Rc0_vwn0 c0_vwn0 0 1e15",
+        "Rwhp0 whp0 0 1e15",
+        "Rwhn0 whn0 0 1e15",
+        *seq.hidden_direct_readout_weighted_update_lines(
+            class_count=1,
+            feature_idx=0,
+            error_positive_nodes=["c0_errp"],
+            error_negative_nodes=["c0_errn"],
+            eligibility_node="xelig0",
+            width_u=8.0,
+        ),
+        ".meas tran whp_after FIND V(whp0) AT=8n",
+        ".meas tran whn_after FIND V(whn0) AT=8n",
+        ".meas tran signed_after PARAM='whp_after-whn_after'",
+        ".tran 2p 10n uic",
+        ".control",
+        "run",
+        "quit",
+        ".endc",
+        ".end",
+        "",
+    ]
+    return "\n".join(lines)
+
+
 def test_multiclass_block_sequence_ngspice_residual_score_gate_is_monotonic_low_floor(
     tmp_path: Path,
     ngspice_path: str,
@@ -1956,6 +2047,31 @@ def test_multiclass_block_sequence_ngspice_hidden_credit_drives_live_hidden_writ
     assert float(negative["signed_after"]) < -0.5
     assert float(negative["whn_after"]) > 0.80
     assert float(negative["whp_after"]) < 0.20
+
+
+def test_multiclass_block_sequence_ngspice_direct_hidden_writer_preserves_credit_sign(
+    tmp_path: Path,
+    ngspice_path: str,
+) -> None:
+    positive = run_netlist(
+        ngspice_path,
+        tmp_path / "direct_hidden_writer_positive.cir",
+        _hidden_direct_readout_weighted_writer_netlist(vwp=1.0, vwn=0.05),
+        timeout=20.0,
+    )
+    negative = run_netlist(
+        ngspice_path,
+        tmp_path / "direct_hidden_writer_negative.cir",
+        _hidden_direct_readout_weighted_writer_netlist(vwp=0.05, vwn=1.0),
+        timeout=20.0,
+    )
+
+    assert float(positive["signed_after"]) > 0.20
+    assert float(positive["whp_after"]) > 0.50
+    assert float(positive["whn_after"]) < 0.35
+    assert float(negative["signed_after"]) < -0.20
+    assert float(negative["whn_after"]) > 0.50
+    assert float(negative["whp_after"]) < 0.35
 
 
 def test_multiclass_block_sequence_ngspice_live_error_rails_reset_before_eval_writer(

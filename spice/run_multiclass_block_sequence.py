@@ -719,6 +719,8 @@ def generate_netlist(
     score_mass_sum_width: float = 32.0,
     score_mass_error_width: float = 32.0,
     score_mass_pairwise_error_scale: float = 0.0625,
+    pairwise_margin_target_v: float = 1.0e-3,
+    pairwise_margin_error_drive_scale: float = 1.0,
     error_mode: str = "label-descent",
     class_bias_mode: str = "none",
     class_bias_input: float = 0.85,
@@ -744,6 +746,8 @@ def generate_netlist(
         "score_mass_sum_width": score_mass_sum_width,
         "score_mass_error_width": score_mass_error_width,
         "score_mass_pairwise_error_scale": score_mass_pairwise_error_scale,
+        "pairwise_margin_target_v": pairwise_margin_target_v,
+        "pairwise_margin_error_drive_scale": pairwise_margin_error_drive_scale,
     }.items():
         if value <= 0.0:
             raise ValueError(f"{name} must be positive")
@@ -872,9 +876,9 @@ def generate_netlist(
     margin_correction_sizing = (
         derive_multiclass_margin_correction_sizing(
             class_count=class_count,
-            target_margin_v=1.0e-3,
+            target_margin_v=pairwise_margin_target_v,
             score_delta_v=3.0e-3,
-            error_drive_scale=score_mass_error_width / 32.0,
+            error_drive_scale=pairwise_margin_error_drive_scale,
         )
         if uses_pairwise_margin_correction
         else None
@@ -1670,6 +1674,8 @@ def run_case(args: argparse.Namespace) -> dict[str, Any]:
         score_mass_sum_width=args.score_mass_sum_width,
         score_mass_error_width=args.score_mass_error_width,
         score_mass_pairwise_error_scale=args.score_mass_pairwise_error_scale,
+        pairwise_margin_target_v=args.pairwise_margin_target_v,
+        pairwise_margin_error_drive_scale=args.pairwise_margin_error_drive_scale,
         error_mode=args.error_mode,
         class_bias_mode=args.class_bias_mode,
         class_bias_input=args.class_bias_input,
@@ -1737,6 +1743,14 @@ def run_case(args: argparse.Namespace) -> dict[str, Any]:
         "score_mass_error_width_u": args.score_mass_error_width if "score-mass" in args.error_mode else None,
         "score_mass_pairwise_error_scale": (
             args.score_mass_pairwise_error_scale if args.error_mode == "common-score-mass-pairwise-descent" else None
+        ),
+        "pairwise_margin_target_v": (
+            args.pairwise_margin_target_v if args.error_mode == "pairwise-margin-correction-descent" else None
+        ),
+        "pairwise_margin_error_drive_scale": (
+            args.pairwise_margin_error_drive_scale
+            if args.error_mode == "pairwise-margin-correction-descent"
+            else None
         ),
         "score_mass_common_internal_gain": (
             4.0
@@ -1809,6 +1823,8 @@ def build_arg_parser() -> argparse.ArgumentParser:
     ap.add_argument("--score-mass-sum-width", type=float, default=32.0)
     ap.add_argument("--score-mass-error-width", type=float, default=32.0)
     ap.add_argument("--score-mass-pairwise-error-scale", type=float, default=0.0625)
+    ap.add_argument("--pairwise-margin-target-v", type=float, default=1.0e-3)
+    ap.add_argument("--pairwise-margin-error-drive-scale", type=float, default=1.0)
     ap.add_argument("--error-mode", choices=ERROR_MODES, default="label-descent")
     ap.add_argument("--class-bias-mode", choices=CLASS_BIAS_MODES, default="none")
     ap.add_argument("--class-bias-input", type=float, default=0.85)
@@ -1863,6 +1879,10 @@ def validate_args(args: argparse.Namespace) -> None:
         raise ValueError("score-mass-error-width must be positive")
     if args.score_mass_pairwise_error_scale <= 0.0:
         raise ValueError("score-mass-pairwise-error-scale must be positive")
+    if args.pairwise_margin_target_v <= 0.0:
+        raise ValueError("pairwise-margin-target-v must be positive")
+    if args.pairwise_margin_error_drive_scale <= 0.0:
+        raise ValueError("pairwise-margin-error-drive-scale must be positive")
     if min(args.initial_positive, args.initial_negative) <= 0.0:
         raise ValueError("initial-positive and initial-negative must be positive")
     if max(args.initial_positive, args.initial_negative) > 1.2:

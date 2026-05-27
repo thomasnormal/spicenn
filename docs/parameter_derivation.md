@@ -129,6 +129,66 @@ learning_rate_scale
 rather than individual pairwise comparator widths, error node capacitances, and
 per-class branch widths.
 
+## Normalization Candidate Contract
+
+The hardware normalization candidates are kept as standalone subcircuits before
+they are eligible for end-to-end training integration.  The current library
+tests these ten score-to-writer handoff approaches:
+
+```text
+current-sum
+common-mode
+pairwise-margin
+fixed-total-feedback
+soft-wta
+charge-share
+time-domain
+pulse-density
+log-domain
+learned-calibration
+```
+
+Each candidate has the same external contract:
+
+```text
+low-millivolt class score rails
+one-hot target rails
+reset/normalize phase
+  -> writer-domain err+ / err- rails for every class
+```
+
+The important analytical point is that low-millivolt score rails are not valid
+writer gates by themselves.  The subcircuits therefore include an internal
+low-gain PMOS score-lift stage before class normalization.  Local values should
+be derived from the handoff requirements:
+
+```text
+raw score delta           -> low-gain readable score separation
+normalizer capacitance    -> stable class-contrast storage
+writer error capacitance  -> target writer-domain voltage step
+error branch widths       -> I = C * dV / dt for the chosen phase window
+```
+
+The ngspice primitive suite currently requires each candidate to pass the same
+minimum behavioral guarantees before integration:
+
+```text
+wrong target score:
+    target class gets positive writer pressure
+    nontarget classes get negative writer pressure
+
+larger nontarget score mass:
+    target-positive pressure is no weaker than in a clear-target case
+
+flat scores:
+    still produce dense bootstrap pressure for the labeled class
+```
+
+These tests deliberately do not prove that all ten are equally good.  They prove
+that each candidate is electrically active at the right scale and sign, so later
+end-to-end experiments can compare a small number of higher-level choices
+instead of retuning local device widths.
+
 ## Signal Representation Contract
 
 The circuit should distinguish the mathematical sign of a value from the

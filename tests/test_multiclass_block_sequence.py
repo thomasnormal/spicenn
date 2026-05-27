@@ -379,6 +379,16 @@ def test_multiclass_block_sequence_can_use_pairwise_margin_correction_descent() 
     assert "Mc0_f0_gvp_e c0_f0_gvp_a c0_errp c0_f0_gvp_d 0 NSENSE" in netlist
     assert ".meas tran c0_errdiff_1" in netlist
 
+    wider_margin = seq.generate_netlist(
+        train_records=_target0_records(1),
+        eval_records=_target0_records(1),
+        error_mode="pairwise-margin-correction-descent",
+        pairwise_margin_target_v=2.0e-3,
+        pairwise_margin_error_drive_scale=0.5,
+    )
+    assert "Mmpen_t0_o1_label c0_gt_c1_decision c0_targetp mpen_t0_o1_i 0 NSENSE W=0.5u" in wider_margin
+    assert "Mt0_o1_errp_sup t0_o1_errp_sup c0_gt_c1_decision vdd vdd PMOS W=64u" in wider_margin
+
 
 def test_multiclass_block_sequence_can_use_common_score_mass_pairwise_descent() -> None:
     netlist = seq.generate_netlist(

@@ -13,6 +13,7 @@ from run_spice_sweep import ROOT, detect_spice
 
 UPDATE_MODES = ("none", "positive", "negative")
 CREDIT_MODES = ("none", "positive", "negative")
+WRITER_ERROR_SOURCES = ("external", "hidden_credit")
 PERIOD_NS = 24.0
 EDGE_NS = 0.01
 
@@ -45,6 +46,13 @@ def pwl(points: list[tuple[float, float]]) -> str:
         else:
             compact.append((time_ns, value))
     return "PWL(" + " ".join(f"{time_ns:.12g}n {value:.12g}" for time_ns, value in compact) + ")"
+
+
+def ns_literal(value: float) -> str:
+    text = f"{value:.12g}"
+    if "." not in text and "e" not in text:
+        return f"{text}.0"
+    return text
 
 
 def cycle_window_pwl(
@@ -82,6 +90,7 @@ def generate_netlist(
     update_width: float = 0.25,
     apply_width_ns: float = 0.05,
     credit_width: float = 8.0,
+    writer_error_source: str = "external",
     cycles: int = 1,
     cycle_rows: list[float] | tuple[float, ...] | None = None,
     cycle_update_modes: list[str] | tuple[str, ...] | None = None,
@@ -90,6 +99,8 @@ def generate_netlist(
         raise ValueError(f"update_mode must be one of {UPDATE_MODES}")
     if credit_mode not in CREDIT_MODES:
         raise ValueError(f"credit_mode must be one of {CREDIT_MODES}")
+    if writer_error_source not in WRITER_ERROR_SOURCES:
+        raise ValueError(f"writer_error_source must be one of {WRITER_ERROR_SOURCES}")
     if cycles < 1:
         raise ValueError("cycles must be at least 1")
     if cycle_rows is not None and len(cycle_rows) != cycles:
@@ -118,21 +129,30 @@ def generate_netlist(
     rwp = wp if readout_wp is None else readout_wp
     rwn = wn if readout_wn is None else readout_wn
     uses_cycle_sources = cycle_rows is not None or cycle_update_modes is not None
+    uses_external_error = writer_error_source == "external"
+    writer_p = "ep" if uses_external_error else "hdp"
+    writer_n = "en" if uses_external_error else "hdn"
+    apply_start_ns = 5.0 if uses_external_error else 14.5
+    weight_after_ns = 9.0 if uses_external_error else 17.0
     row_source = (
         cycle_window_pwl(per_cycle_rows, start_ns=1.0, end_ns=4.05)
         if uses_cycle_sources
         else f"PULSE(0 {row:.12g} 1.0n 10p 10p 3.05n 24n)"
     )
-    ep_source = (
-        cycle_window_pwl(ep_values, start_ns=5.0, end_ns=8.0)
-        if uses_cycle_sources
-        else f"PULSE(0 {ep:.12g} 5.0n 10p 10p 3.0n 24n)"
-    )
-    en_source = (
-        cycle_window_pwl(en_values, start_ns=5.0, end_ns=8.0)
-        if uses_cycle_sources
-        else f"PULSE(0 {en:.12g} 5.0n 10p 10p 3.0n 24n)"
-    )
+    if uses_external_error:
+        ep_source = (
+            cycle_window_pwl(ep_values, start_ns=5.0, end_ns=8.0)
+            if uses_cycle_sources
+            else f"PULSE(0 {ep:.12g} 5.0n 10p 10p 3.0n 24n)"
+        )
+        en_source = (
+            cycle_window_pwl(en_values, start_ns=5.0, end_ns=8.0)
+            if uses_cycle_sources
+            else f"PULSE(0 {en:.12g} 5.0n 10p 10p 3.0n 24n)"
+        )
+    else:
+        ep_source = "0"
+        en_source = "0"
     stop_ns = 18.0 + PERIOD_NS * (cycles - 1)
     lines = [
         "* Row-pulsed differential conductance primitive smoke.",
@@ -148,7 +168,7 @@ def generate_netlist(
         f"Vrow_src row_src 0 {row_source}",
         f"Vep ep 0 {ep_source}",
         f"Ven en 0 {en_source}",
-        f"Vapply apply 0 PULSE(0 1.2 5.0n 10p 10p {apply_width_ns:.12g}n 24n)",
+        f"Vapply apply 0 PULSE(0 1.2 {ns_literal(apply_start_ns)}n 10p 10p {apply_width_ns:.12g}n 24n)",
         f"Vedp edp 0 PULSE(0 {edp:.12g} 11.0n 10p 10p 4.0n 24n)",
         f"Vedn edn 0 PULSE(0 {edn:.12g} 11.0n 10p 10p 4.0n 24n)",
         f"Cwp wp 0 20f IC={wp:.12g}",
@@ -188,18 +208,19 @@ def generate_netlist(
         f"Melig_sample_p row fwdn elig vdd PMOS W={max(4.0, row_drive_width):.6g}u L=180n",
         "",
         "* Local update writer. Eligibility is the held row/input rail; positive error raises wp/lowers wn, negative error does the opposite.",
-        f"Mwp_up_e vdd ep wp_up_e 0 NSENSE W={update_width:.6g}u L=180n",
+        f"* Writer error source: {writer_error_source}.",
+        f"Mwp_up_e vdd {writer_p} wp_up_e 0 NSENSE W={update_width:.6g}u L=180n",
         f"Mwp_up_x wp_up_e elig wp_up_x 0 NSENSE W={update_width:.6g}u L=180n",
         f"Mwp_up_a wp_up_x apply wp 0 NREL W={update_width:.6g}u L=180n",
         f"Mwn_dn_a wn apply wn_dn_a 0 NREL W={update_width:.6g}u L=180n",
         f"Mwn_dn_x wn_dn_a elig wn_dn_x 0 NSENSE W={update_width:.6g}u L=180n",
-        f"Mwn_dn_e wn_dn_x ep 0 0 NSENSE W={update_width:.6g}u L=180n",
-        f"Mwn_up_e vdd en wn_up_e 0 NSENSE W={update_width:.6g}u L=180n",
+        f"Mwn_dn_e wn_dn_x {writer_p} 0 0 NSENSE W={update_width:.6g}u L=180n",
+        f"Mwn_up_e vdd {writer_n} wn_up_e 0 NSENSE W={update_width:.6g}u L=180n",
         f"Mwn_up_x wn_up_e elig wn_up_x 0 NSENSE W={update_width:.6g}u L=180n",
         f"Mwn_up_a wn_up_x apply wn 0 NREL W={update_width:.6g}u L=180n",
         f"Mwp_dn_a wp apply wp_dn_a 0 NREL W={update_width:.6g}u L=180n",
         f"Mwp_dn_x wp_dn_a elig wp_dn_x 0 NSENSE W={update_width:.6g}u L=180n",
-        f"Mwp_dn_e wp_dn_x en 0 0 NSENSE W={update_width:.6g}u L=180n",
+        f"Mwp_dn_e wp_dn_x {writer_n} 0 0 NSENSE W={update_width:.6g}u L=180n",
         "",
         "* Latch-free analog backward credit through readout conductance pair.",
         f"Mhdp_p edp vwp hdp 0 NSENSE W={credit_width:.6g}u L=180n",
@@ -212,8 +233,8 @@ def generate_netlist(
         ".meas tran forward_margin PARAM='pre_p_after-pre_n_after'",
         ".meas tran wp_before FIND V(wp) AT=4.5n",
         ".meas tran wn_before FIND V(wn) AT=4.5n",
-        ".meas tran wp_after FIND V(wp) AT=9.0n",
-        ".meas tran wn_after FIND V(wn) AT=9.0n",
+        f".meas tran wp_after FIND V(wp) AT={weight_after_ns:.12g}n",
+        f".meas tran wn_after FIND V(wn) AT={weight_after_ns:.12g}n",
         ".meas tran signed_weight_before PARAM='wp_before-wn_before'",
         ".meas tran signed_weight_after PARAM='wp_after-wn_after'",
         ".meas tran signed_weight_delta PARAM='signed_weight_after-signed_weight_before'",
@@ -227,8 +248,8 @@ def generate_netlist(
                 ".meas tran pre_p_after_cycle2 FIND V(pre_p) AT=28.5n",
                 ".meas tran pre_n_after_cycle2 FIND V(pre_n) AT=28.5n",
                 ".meas tran forward_margin_cycle2 PARAM='pre_p_after_cycle2-pre_n_after_cycle2'",
-                ".meas tran wp_after_cycle2 FIND V(wp) AT=33.0n",
-                ".meas tran wn_after_cycle2 FIND V(wn) AT=33.0n",
+                f".meas tran wp_after_cycle2 FIND V(wp) AT={PERIOD_NS + weight_after_ns:.12g}n",
+                f".meas tran wn_after_cycle2 FIND V(wn) AT={PERIOD_NS + weight_after_ns:.12g}n",
                 ".meas tran signed_weight_drift_cycle2 PARAM='(wp_after_cycle2-wn_after_cycle2)-signed_weight_before'",
             ]
             if cycles >= 2
@@ -264,16 +285,20 @@ def classify_row(row: dict[str, Any], *, min_abs_margin: float) -> dict[str, str
     row_v = float(row["row"])
     update_mode = str(row["update_mode"])
     credit_mode = str(row["credit_mode"])
-    update_expected = 0.0
-    if update_mode == "positive" and row_v > 0.0:
-        update_expected = 1.0
-    elif update_mode == "negative" and row_v > 0.0:
-        update_expected = -1.0
+    writer_error_source = str(row.get("writer_error_source", "external"))
     credit_expected = 0.0
     if credit_mode == "positive":
         credit_expected = readout_wp - readout_wn
     elif credit_mode == "negative":
         credit_expected = readout_wn - readout_wp
+    update_expected = 0.0
+    if writer_error_source == "external":
+        if update_mode == "positive" and row_v > 0.0:
+            update_expected = 1.0
+        elif update_mode == "negative" and row_v > 0.0:
+            update_expected = -1.0
+    elif writer_error_source == "hidden_credit" and row_v > 0.0:
+        update_expected = credit_expected
     return {
         "forward_classification": classify_sign(
             float(row["forward_margin"]),
@@ -356,6 +381,7 @@ def run_cases(args: argparse.Namespace) -> dict[str, Any]:
         row_data = dict(case)
         row_data.setdefault("update_mode", args.update_mode)
         row_data.setdefault("credit_mode", args.credit_mode)
+        row_data.setdefault("writer_error_source", args.writer_error_source)
         row_data.setdefault("readout_wp", row_data["wp"])
         row_data.setdefault("readout_wn", row_data["wn"])
         path = generated / f"{tag}_{sanitize_tag(str(row_data['case']))}.cir"
@@ -375,6 +401,7 @@ def run_cases(args: argparse.Namespace) -> dict[str, Any]:
                 update_width=args.update_width,
                 apply_width_ns=args.apply_width_ns,
                 credit_width=args.credit_width,
+                writer_error_source=str(row_data["writer_error_source"]),
                 cycles=args.cycles,
             ),
             timeout=args.timeout,
@@ -426,6 +453,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
     ap.add_argument("--update-width", type=float, default=0.25)
     ap.add_argument("--apply-width-ns", type=float, default=0.05)
     ap.add_argument("--credit-width", type=float, default=8.0)
+    ap.add_argument("--writer-error-source", choices=WRITER_ERROR_SOURCES, default="external")
     ap.add_argument("--min-abs-margin", type=float, default=1e-3)
     ap.add_argument("--cycles", type=int, default=1)
     return ap

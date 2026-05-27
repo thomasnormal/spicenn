@@ -50,6 +50,23 @@ def test_row_conductance_netlist_uses_differential_conductance_compute() -> None
     assert ".meas tran signed_weight_delta PARAM='signed_weight_after-signed_weight_before'" in netlist
     assert ".meas tran hidden_credit_margin PARAM='hdp_after-hdn_after'" in netlist
 
+    credit_driven = primitive.generate_netlist(
+        wp=0.45,
+        wn=0.40,
+        row=0.85,
+        update_mode="none",
+        credit_mode="positive",
+        readout_wp=0.55,
+        readout_wn=0.30,
+        writer_error_source="hidden_credit",
+    )
+    assert "\nB" not in credit_driven
+    assert "Vep ep 0 0" in credit_driven
+    assert "Ven en 0 0" in credit_driven
+    assert "Mwp_up_e vdd hdp wp_up_e 0 NSENSE W=0.25u L=180n" in credit_driven
+    assert "Mwp_dn_e wp_dn_x hdn 0 0 NSENSE W=0.25u L=180n" in credit_driven
+    assert "Vapply apply 0 PULSE(0 1.2 14.5n 10p 10p 0.05n 24n)" in credit_driven
+
     sequence = primitive.generate_netlist(
         wp=0.45,
         wn=0.40,
@@ -96,6 +113,19 @@ def test_row_conductance_classification_tracks_expected_signs() -> None:
     row["row"] = 0.0
     row["forward_margin"] = 0.0
     assert primitive.classify_row(row, min_abs_margin=0.001)["forward_classification"] == "dead_zone"
+    row.update(
+        {
+            "row": 0.85,
+            "readout_wp": 0.55,
+            "readout_wn": 0.30,
+            "credit_mode": "positive",
+            "update_mode": "none",
+            "writer_error_source": "hidden_credit",
+            "signed_weight_delta": 0.02,
+            "hidden_credit_margin": 0.03,
+        }
+    )
+    assert primitive.classify_row(row, min_abs_margin=0.001)["update_classification"] == "aligned"
 
 
 def test_row_conductance_cli_validation() -> None:
@@ -116,6 +146,8 @@ def test_row_conductance_cli_validation() -> None:
         primitive.generate_netlist(wp=0.45, wn=0.40, cycles=2, cycle_rows=[0.85])
     with pytest.raises(ValueError, match="cycle_update_modes"):
         primitive.generate_netlist(wp=0.45, wn=0.40, cycles=2, cycle_update_modes=["positive", "bad"])
+    with pytest.raises(ValueError, match="writer_error_source"):
+        primitive.generate_netlist(wp=0.45, wn=0.40, writer_error_source="bad")
 
 
 @pytest.mark.parametrize(
@@ -384,3 +416,71 @@ def test_row_conductance_primitive_ngspice_latch_free_hidden_credit(
         assert float(measures["hdn_after"]) > float(measures["hdp_after"])
     else:
         assert abs(margin) < 1e-3
+
+
+@pytest.mark.parametrize(
+    ("name", "credit_mode", "readout_wp", "readout_wn", "expected_sign"),
+    [
+        ("positive_error_positive_readout", "positive", 0.55, 0.30, 1.0),
+        ("positive_error_negative_readout", "positive", 0.30, 0.55, -1.0),
+        ("negative_error_negative_readout", "negative", 0.30, 0.55, 1.0),
+        ("neutral_readout_dead_zone", "positive", 0.40, 0.40, 0.0),
+    ],
+)
+def test_row_conductance_primitive_ngspice_hidden_credit_can_drive_local_writer(
+    tmp_path: Path,
+    ngspice_path: str,
+    name: str,
+    credit_mode: str,
+    readout_wp: float,
+    readout_wn: float,
+    expected_sign: float,
+) -> None:
+    measures = _run_ngspice_case(
+        tmp_path,
+        ngspice_path,
+        f"credit_writer_{name}",
+        wp=0.45,
+        wn=0.40,
+        row=0.85,
+        update_mode="none",
+        credit_mode=credit_mode,
+        readout_wp=readout_wp,
+        readout_wn=readout_wn,
+        writer_error_source="hidden_credit",
+    )
+
+    credit_margin = float(measures["hidden_credit_margin"])
+    delta = float(measures["signed_weight_delta"])
+    if expected_sign > 0.0:
+        assert credit_margin > 0.05
+        assert delta > 0.005
+    elif expected_sign < 0.0:
+        assert credit_margin < -0.05
+        assert delta < -0.005
+    else:
+        assert abs(credit_margin) < 1e-3
+        assert abs(delta) < 1e-3
+
+
+def test_row_conductance_primitive_ngspice_hidden_credit_writer_respects_input_dead_zone(
+    tmp_path: Path,
+    ngspice_path: str,
+) -> None:
+    measures = _run_ngspice_case(
+        tmp_path,
+        ngspice_path,
+        "credit_writer_zero_row_dead_zone",
+        wp=0.45,
+        wn=0.40,
+        row=0.0,
+        update_mode="none",
+        credit_mode="positive",
+        readout_wp=0.55,
+        readout_wn=0.30,
+        writer_error_source="hidden_credit",
+    )
+
+    assert float(measures["hidden_credit_margin"]) > 0.05
+    assert float(measures["elig_after"]) < 1e-3
+    assert abs(float(measures["signed_weight_delta"])) < 1e-3

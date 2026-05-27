@@ -87,6 +87,8 @@ def test_row_conductance_cli_validation() -> None:
         primitive.main_for_test(["--timeout", "0"])
     with pytest.raises(ValueError, match="min-abs-margin"):
         primitive.main_for_test(["--min-abs-margin", "-1"])
+    with pytest.raises(ValueError, match="cycles"):
+        primitive.main_for_test(["--cycles", "0"])
 
 
 @pytest.mark.parametrize(
@@ -128,6 +130,31 @@ def test_row_conductance_primitive_ngspice_forward_polarity(
         assert float(measures["pre_p_after"]) < 1e-3
     else:
         assert abs(margin) < 1e-3
+
+
+def test_row_conductance_primitive_ngspice_repeated_cycle_resets_dynamic_nodes_and_retains_weights(
+    tmp_path: Path,
+    ngspice_path: str,
+) -> None:
+    measures = _run_ngspice_case(
+        tmp_path,
+        ngspice_path,
+        "repeated_cycle_reset_retention",
+        wp=0.70,
+        wn=0.25,
+        row=0.85,
+        update_mode="none",
+        credit_mode="none",
+        cycles=2,
+    )
+
+    assert float(measures["forward_margin"]) > 0.10
+    assert float(measures["pre_p_after_cycle2_reset"]) < 1e-3
+    assert float(measures["pre_n_after_cycle2_reset"]) < 1e-3
+    assert float(measures["forward_margin_cycle2"]) > 0.10
+    assert float(measures["pre_p_after_cycle2"]) > 0.10
+    assert float(measures["pre_n_after_cycle2"]) < 1e-3
+    assert abs(float(measures["signed_weight_drift_cycle2"])) < 1e-3
 
 
 @pytest.mark.parametrize(

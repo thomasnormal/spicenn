@@ -48,11 +48,14 @@ def generate_netlist(
     row_drive_width: float = 12.0,
     update_width: float = 0.25,
     credit_width: float = 8.0,
+    cycles: int = 1,
 ) -> str:
     if update_mode not in UPDATE_MODES:
         raise ValueError(f"update_mode must be one of {UPDATE_MODES}")
     if credit_mode not in CREDIT_MODES:
         raise ValueError(f"credit_mode must be one of {CREDIT_MODES}")
+    if cycles < 1:
+        raise ValueError("cycles must be at least 1")
     for name, value in {
         "syn_width": syn_width,
         "row_drive_width": row_drive_width,
@@ -65,6 +68,7 @@ def generate_netlist(
     edp, edn = credit_rails(credit_mode)
     rwp = wp if readout_wp is None else readout_wp
     rwn = wn if readout_wn is None else readout_wn
+    stop_ns = 18.0 + 24.0 * (cycles - 1)
     lines = [
         "* Row-pulsed differential conductance primitive smoke.",
         "* The compute path is row -> conductance(weight gate) -> capacitive rails.",
@@ -141,7 +145,21 @@ def generate_netlist(
         ".meas tran hdp_after FIND V(hdp) AT=14.5n",
         ".meas tran hdn_after FIND V(hdn) AT=14.5n",
         ".meas tran hidden_credit_margin PARAM='hdp_after-hdn_after'",
-        ".tran 5p 18n uic",
+        *(
+            [
+                ".meas tran pre_p_after_cycle2_reset FIND V(pre_p) AT=24.45n",
+                ".meas tran pre_n_after_cycle2_reset FIND V(pre_n) AT=24.45n",
+                ".meas tran pre_p_after_cycle2 FIND V(pre_p) AT=28.5n",
+                ".meas tran pre_n_after_cycle2 FIND V(pre_n) AT=28.5n",
+                ".meas tran forward_margin_cycle2 PARAM='pre_p_after_cycle2-pre_n_after_cycle2'",
+                ".meas tran wp_after_cycle2 FIND V(wp) AT=33.0n",
+                ".meas tran wn_after_cycle2 FIND V(wn) AT=33.0n",
+                ".meas tran signed_weight_drift_cycle2 PARAM='(wp_after_cycle2-wn_after_cycle2)-signed_weight_before'",
+            ]
+            if cycles >= 2
+            else []
+        ),
+        f".tran 5p {stop_ns:.12g}n uic",
         ".control",
         "run",
         "quit",
@@ -281,6 +299,7 @@ def run_cases(args: argparse.Namespace) -> dict[str, Any]:
                 row_drive_width=args.row_drive_width,
                 update_width=args.update_width,
                 credit_width=args.credit_width,
+                cycles=args.cycles,
             ),
             timeout=args.timeout,
         )
@@ -331,6 +350,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
     ap.add_argument("--update-width", type=float, default=0.25)
     ap.add_argument("--credit-width", type=float, default=8.0)
     ap.add_argument("--min-abs-margin", type=float, default=1e-3)
+    ap.add_argument("--cycles", type=int, default=1)
     return ap
 
 
@@ -342,6 +362,8 @@ def validate_args(args: argparse.Namespace) -> None:
             raise ValueError(f"{name.replace('_', '-')} must be positive")
     if args.min_abs_margin < 0.0:
         raise ValueError("min-abs-margin must be nonnegative")
+    if args.cycles < 1:
+        raise ValueError("cycles must be at least 1")
 
 
 def main_for_test(argv: list[str]) -> argparse.Namespace:

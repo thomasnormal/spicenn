@@ -24,6 +24,15 @@
   the next main path should be lower-level row-pulsed differential conductance
   guarantees and stronger feature/readout/update alignment, not another
   score-error topology tweak in the old rung.
+- Extended the row-pulsed differential conductance primitive to cover repeated
+  cycles.  The new ngspice regression runs two periodic reset/forward windows
+  with no update rail, verifies the second reset clears `pre_p/pre_n` below
+  `1 mV`, verifies the second forward window reproduces a positive
+  `pre_p-pre_n` margin above `100 mV`, and verifies the persistent
+  `wp-wn` state drifts less than `1 mV`.  This is a small but important
+  guarantee for the strict continuous-training path: dynamic neuron state can
+  be reset between samples without Python intervention while capacitor-stored
+  weight state persists.
 - Added an experimental residual-score nontarget mode to the continuous
   split-rail multiclass block sequence.  The low-level regression now proves a
   transistor/passive low-common-mode PMOS score preamp plus weak analog

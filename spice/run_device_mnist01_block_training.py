@@ -4017,6 +4017,8 @@ def main() -> None:
         "status": "mnist01_block_stride_device_training_smoke",
         "model_level": "ngspice built-in LEVEL=1 MOS models; not a foundry PDK.",
         "dataset": f"MNIST01 raw-pixel block topology image{args.image_size}_b{args.block_size}_s{args.stride}_c{args.channels}",
+        "seed": args.seed,
+        "weight_seed": args.weight_seed,
         "positive_digit": args.positive_digit,
         "negative_digit": args.negative_digit,
         "target_polarity": args.target_polarity,

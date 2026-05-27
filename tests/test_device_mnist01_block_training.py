@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import inspect
 import subprocess
 import sys
 from types import SimpleNamespace
@@ -852,6 +853,16 @@ def test_nontrivial_learning_requires_initial_eval_baseline() -> None:
     assert block.nontrivial_learning_flag(None, 1.0) is False
     assert block.nontrivial_learning_flag(0.5, 0.75) is True
     assert block.nontrivial_learning_flag(0.75, 0.75) is False
+
+
+def test_summary_records_sample_and_weight_seeds() -> None:
+    sys.path.insert(0, str(SPICE_DIR))
+    import run_device_mnist01_block_training as block
+
+    source = inspect.getsource(block.main)
+
+    assert '"seed": args.seed' in source
+    assert '"weight_seed": args.weight_seed' in source
 
 
 def test_sample_order_diagnostics_expose_seed_order_and_balance() -> None:

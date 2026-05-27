@@ -18,12 +18,15 @@ from run_multiclass_output_head_primitive import (
     class_node,
     signed_store_lines,
 )
+from run_normalization_subcircuits import APPROACHES as NORMALIZER_APPROACHES
+from run_normalization_subcircuits import normalization_subcircuits, spice_subckt_name
 from run_score_decision_primitive import low_gain_ref_decision_lines, low_gain_ref_state_lines
 from run_spice_sweep import ROOT, detect_spice
 
 
 CYCLE_NS = 16.0
-ERROR_MODES = ("label-descent", "score-gated-nontarget", "restored-score-nontarget")
+NORMALIZER_ERROR_MODES = tuple(f"normalizer-{approach}-descent" for approach in NORMALIZER_APPROACHES)
+ERROR_MODES = ("label-descent", "score-gated-nontarget", "restored-score-nontarget", *NORMALIZER_ERROR_MODES)
 WRITER_MODES = ("sampled", "live")
 
 
@@ -237,23 +240,34 @@ def class_local_live_label_descent_update_lines(
     class_idx: int,
     feature_idx: int,
     activation_node: str,
+    positive_descent_node: str | None = None,
+    negative_descent_node: str | None = None,
     width_u: float = 0.5,
 ) -> list[str]:
     prefix = f"c{class_idx}_f{feature_idx}_live_"
     vwp = class_node(class_idx, f"vwp{feature_idx}")
     vwn = class_node(class_idx, f"vwn{feature_idx}")
-    targetp = class_node(class_idx, "targetp")
-    targetn = class_node(class_idx, "targetn")
+    pos = class_node(class_idx, "targetp") if positive_descent_node is None else positive_descent_node
+    neg = class_node(class_idx, "targetn") if negative_descent_node is None else negative_descent_node
     return [
         f"M{prefix}pos_up_e vwhi_ref {activation_node} {prefix}pos_up 0 NSENSE W={width_u:.6g}u L=180n",
-        f"M{prefix}pos_up_d {prefix}pos_up {targetp} {vwp} 0 NSENSE W={width_u:.6g}u L=180n",
+        f"M{prefix}pos_up_d {prefix}pos_up {pos} {vwp} 0 NSENSE W={width_u:.6g}u L=180n",
         f"M{prefix}pos_dn_e {vwn} {activation_node} {prefix}pos_dn 0 NSENSE W={width_u:.6g}u L=180n",
-        f"M{prefix}pos_dn_d {prefix}pos_dn {targetp} vwlo_ref 0 NSENSE W={width_u:.6g}u L=180n",
+        f"M{prefix}pos_dn_d {prefix}pos_dn {pos} vwlo_ref 0 NSENSE W={width_u:.6g}u L=180n",
         f"M{prefix}neg_up_e vwhi_ref {activation_node} {prefix}neg_up 0 NSENSE W={width_u:.6g}u L=180n",
-        f"M{prefix}neg_up_d {prefix}neg_up {targetn} {vwn} 0 NSENSE W={width_u:.6g}u L=180n",
+        f"M{prefix}neg_up_d {prefix}neg_up {neg} {vwn} 0 NSENSE W={width_u:.6g}u L=180n",
         f"M{prefix}neg_dn_e {vwp} {activation_node} {prefix}neg_dn 0 NSENSE W={width_u:.6g}u L=180n",
-        f"M{prefix}neg_dn_d {prefix}neg_dn {targetn} vwlo_ref 0 NSENSE W={width_u:.6g}u L=180n",
+        f"M{prefix}neg_dn_d {prefix}neg_dn {neg} vwlo_ref 0 NSENSE W={width_u:.6g}u L=180n",
     ]
+
+
+def normalizer_approach_from_error_mode(error_mode: str) -> str | None:
+    if not error_mode.startswith("normalizer-") or not error_mode.endswith("-descent"):
+        return None
+    approach = error_mode.removeprefix("normalizer-").removesuffix("-descent")
+    if approach not in NORMALIZER_APPROACHES:
+        raise ValueError(f"normalizer approach must be one of {NORMALIZER_APPROACHES}")
+    return approach
 
 
 def generate_netlist(
@@ -286,8 +300,11 @@ def generate_netlist(
         raise ValueError(f"error_mode must be one of {ERROR_MODES}")
     if writer_mode not in WRITER_MODES:
         raise ValueError(f"writer_mode must be one of {WRITER_MODES}")
-    if writer_mode == "live" and error_mode != "label-descent":
-        raise ValueError("live writer_mode currently supports label-descent only")
+    normalizer_approach = normalizer_approach_from_error_mode(error_mode)
+    if writer_mode == "live" and error_mode != "label-descent" and normalizer_approach is None:
+        raise ValueError("live writer_mode currently supports label-descent and normalizer descent modes only")
+    if normalizer_approach is not None and (writer_mode != "live" or class_count != 3):
+        raise ValueError("normalizer descent currently requires live writer_mode and class_count=3")
 
     all_records = eval_records + train_records + eval_records
     sequence = ["initial_eval"] * len(eval_records) + ["train"] * len(train_records) + ["final_eval"] * len(eval_records)
@@ -298,7 +315,7 @@ def generate_netlist(
     features = records_to_feature_matrix(all_records, feature_count)
     cycle_count = len(all_records)
     stop_ns = cycle_count * CYCLE_NS
-    uses_early_score = error_mode in {"score-gated-nontarget", "restored-score-nontarget"}
+    uses_early_score = error_mode in {"score-gated-nontarget", "restored-score-nontarget"} or normalizer_approach is not None
     uses_restored_score = error_mode == "restored-score-nontarget"
     update_signal_start_ns = 4.25 if uses_restored_score else 1.8
     update_signal_end_ns = 6.35 if uses_restored_score else 4.2
@@ -314,6 +331,7 @@ def generate_netlist(
         "* No behavioral sources.",
         ".param VDD=1.2",
         mos_models(),
+        *(normalization_subcircuits(approaches=(normalizer_approach,)).splitlines() if normalizer_approach is not None else []),
         ".options method=gear reltol=1e-3 abstol=1e-12 vntol=1e-6",
         "Vdd vdd 0 {VDD}",
         "Vvwhi_ref vwhi_ref 0 0.42",
@@ -326,6 +344,11 @@ def generate_netlist(
             f"Vacc acc 0 {periodic_phase_pwl(cycle_count, start_ns=acc_start_ns, end_ns=acc_end_ns, active_cycles=train_cycles)}",
             f"Vapply apply 0 {periodic_phase_pwl(cycle_count, start_ns=apply_start_ns, end_ns=apply_end_ns, active_cycles=train_cycles)}",
             f"Vapplyn applyn 0 {active_low_phase_pwl(cycle_count, start_ns=apply_start_ns, end_ns=apply_end_ns, active_cycles=train_cycles)}",
+        ]
+    if normalizer_approach is not None:
+        lines += [
+            f"Vscoreerr scoreerr 0 {periodic_phase_pwl(cycle_count, start_ns=update_signal_start_ns, end_ns=update_signal_end_ns, active_cycles=train_cycles)}",
+            f"Vscoregaterst scoregaterst 0 {periodic_phase_pwl(cycle_count, start_ns=0.2, end_ns=1.0)}",
         ]
     if uses_restored_score:
         lines += [
@@ -403,6 +426,8 @@ def generate_netlist(
                         class_idx=class_idx,
                         feature_idx=feature,
                         activation_node=f"act{feature}",
+                        positive_descent_node=f"c{class_idx}_errp" if normalizer_approach is not None else None,
+                        negative_descent_node=f"c{class_idx}_errn" if normalizer_approach is not None else None,
                     )
                     if writer_mode == "live"
                     else (
@@ -429,6 +454,18 @@ def generate_netlist(
                 *(class_local_bounded_update_lines(class_idx=class_idx, feature_idx=feature) if writer_mode == "sampled" else []),
                 *class_local_readout_forward_lines(class_idx=class_idx, feature_idx=feature),
             ]
+    if normalizer_approach is not None:
+        lines += [
+            "Xscore_normalizer "
+            + " ".join(class_node(class_idx, "score") for class_idx in range(3))
+            + " "
+            + " ".join(class_node(class_idx, "targetp") for class_idx in range(3))
+            + " "
+            + " ".join(class_node(class_idx, "targetn") for class_idx in range(3))
+            + " scoreerr scoregaterst "
+            + " ".join(f"c{class_idx}_errp c{class_idx}_errn" for class_idx in range(3))
+            + f" vdd 0 {spice_subckt_name(normalizer_approach)}"
+        ]
     for cycle, (record, seq) in enumerate(zip(all_records, sequence)):
         base = cycle * CYCLE_NS
         for class_idx in range(class_count):
@@ -632,8 +669,11 @@ def validate_args(args: argparse.Namespace) -> None:
         raise ValueError(f"error-mode must be one of {ERROR_MODES}")
     if args.writer_mode not in WRITER_MODES:
         raise ValueError(f"writer-mode must be one of {WRITER_MODES}")
-    if args.writer_mode == "live" and args.error_mode != "label-descent":
-        raise ValueError("live writer-mode currently supports label-descent only")
+    normalizer_approach = normalizer_approach_from_error_mode(args.error_mode)
+    if args.writer_mode == "live" and args.error_mode != "label-descent" and normalizer_approach is None:
+        raise ValueError("live writer-mode currently supports label-descent and normalizer descent modes only")
+    if normalizer_approach is not None and args.writer_mode != "live":
+        raise ValueError("normalizer descent currently requires live writer-mode")
     if parse_counted_mnist_dataset(args.dataset) is None:
         raise ValueError("dataset must be a counted multiclass MNIST dataset")
 

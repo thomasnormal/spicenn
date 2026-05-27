@@ -191,6 +191,43 @@ def test_multiclass_readout_sizing_rejects_invalid_global_scales() -> None:
         )
 
 
+def test_readout_margin_sizing_scales_width_or_capacitance_from_observed_margin() -> None:
+    sizing = theory.derive_readout_margin_sizing(
+        observed_margin_v=0.00029331,
+        target_margin_v=0.010,
+        current_readout_width_u=64.0,
+        current_score_cap_f=10.0,
+        max_readout_width_u=512.0,
+        min_score_cap_f=0.5,
+    )
+
+    assert sizing.required_signal_scale == pytest.approx(34.09362108349528)
+    assert sizing.suggested_readout_width_u == pytest.approx(2181.991749343698)
+    assert sizing.readout_width_feasible is False
+    assert sizing.suggested_score_cap_f == pytest.approx(0.29331)
+    assert sizing.score_cap_feasible is False
+
+    modest = theory.derive_readout_margin_sizing(
+        observed_margin_v=0.0025,
+        target_margin_v=0.010,
+        current_readout_width_u=64.0,
+        current_score_cap_f=10.0,
+    )
+    assert modest.required_signal_scale == pytest.approx(4.0)
+    assert modest.suggested_readout_width_u == pytest.approx(256.0)
+    assert modest.readout_width_feasible is True
+    assert modest.suggested_score_cap_f == pytest.approx(2.5)
+    assert modest.score_cap_feasible is True
+
+    with pytest.raises(ValueError, match="observed_margin_v"):
+        theory.derive_readout_margin_sizing(
+            observed_margin_v=0.0,
+            target_margin_v=0.010,
+            current_readout_width_u=64.0,
+            current_score_cap_f=10.0,
+        )
+
+
 def test_class_evidence_normalizer_sizing_derives_writer_domain_defaults() -> None:
     sizing = theory.derive_class_evidence_normalizer_sizing(
         class_count=3,

@@ -660,6 +660,30 @@ def test_multiclass_block_sequence_summarizes_physical_readout_replay_alignment(
     assert stats["final_eval_physical_readout_replay_alignment_rows"][1]["replay_prediction"] == 1
 
 
+def test_multiclass_block_sequence_summarizes_physical_replay_margin_sizing() -> None:
+    stats = seq.physical_readout_replay_margin_sizing_stats(
+        [
+            {"correct": True, "score_margin_v": 0.001},
+            {"correct": True, "score_margin_v": 0.004},
+            {"correct": False, "score_margin_v": -0.002},
+        ],
+        target_margin_v=0.010,
+        current_readout_width_u=64.0,
+        current_score_cap_f=10.0,
+    )
+
+    assert stats["final_eval_physical_readout_replay_correct_rows"] == 2
+    assert stats["final_eval_physical_readout_replay_wrong_rows"] == 1
+    assert stats["readout_margin_sizing_limited_by_wrong_sign"] is True
+    assert stats["readout_margin_required_signal_scale"] == pytest.approx(10.0)
+    assert stats["readout_margin_suggested_readout_width_u"] == pytest.approx(640.0)
+    assert stats["readout_margin_max_readout_width_u"] == pytest.approx(512.0)
+    assert stats["readout_margin_suggested_score_capacitance_f"] == pytest.approx(1.0)
+    assert stats["readout_margin_min_score_capacitance_f"] == pytest.approx(0.5)
+    assert stats["readout_margin_width_feasible"] is False
+    assert stats["readout_margin_score_cap_feasible"] is True
+
+
 def test_multiclass_block_sequence_can_generate_physical_readout_replay() -> None:
     netlist = seq.generate_physical_readout_replay_netlist(
         activations=[0.85, 0.25],
@@ -1893,6 +1917,8 @@ def test_multiclass_block_sequence_validation() -> None:
     assert replay_args.physical_readout_replay_timeout == 2.0
     with pytest.raises(ValueError, match="physical-readout-replay-timeout"):
         seq.main_for_test(["--physical-readout-replay-timeout", "0"])
+    with pytest.raises(ValueError, match="readout-margin-target-v"):
+        seq.main_for_test(["--readout-margin-target-v", "0"])
 
 
 def _residual_score_gate_netlist(score: float, scoren: float = 0.0) -> str:

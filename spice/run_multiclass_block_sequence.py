@@ -8,7 +8,11 @@ from typing import Any
 
 import numpy as np
 
-from parameter_theory import derive_class_evidence_normalizer_sizing, derive_multiclass_margin_correction_sizing
+from parameter_theory import (
+    derive_class_evidence_normalizer_sizing,
+    derive_multiclass_margin_correction_sizing,
+    derive_readout_margin_sizing,
+)
 from datasets import dataset_records, parse_counted_mnist_dataset
 from run_device_mnist01_scalar_training import sanitize_tag
 from run_device_sequential_training import mos_models, run_netlist
@@ -3181,6 +3185,57 @@ def physical_readout_replay_projection_stats(
     }
 
 
+def physical_readout_replay_margin_sizing_stats(
+    replay_rows: list[dict[str, Any]],
+    *,
+    target_margin_v: float,
+    current_readout_width_u: float,
+    current_score_cap_f: float,
+) -> dict[str, Any]:
+    correct_margins = [
+        float(row["score_margin_v"])
+        for row in replay_rows
+        if bool(row.get("correct")) and float(row["score_margin_v"]) > 0.0
+    ]
+    wrong_count = sum(not bool(row.get("correct")) for row in replay_rows)
+    if not correct_margins:
+        return {
+            "final_eval_physical_readout_replay_correct_rows": 0,
+            "final_eval_physical_readout_replay_wrong_rows": wrong_count,
+            "readout_margin_target_v": target_margin_v,
+            "readout_margin_sizing_limited_by_wrong_sign": wrong_count > 0,
+            "readout_margin_sizing_observed_margin_v": None,
+            "readout_margin_required_signal_scale": None,
+            "readout_margin_suggested_readout_width_u": None,
+            "readout_margin_max_readout_width_u": None,
+            "readout_margin_suggested_score_capacitance_f": None,
+            "readout_margin_min_score_capacitance_f": None,
+            "readout_margin_width_feasible": None,
+            "readout_margin_score_cap_feasible": None,
+        }
+    observed_margin = min(correct_margins)
+    sizing = derive_readout_margin_sizing(
+        observed_margin_v=observed_margin,
+        target_margin_v=target_margin_v,
+        current_readout_width_u=current_readout_width_u,
+        current_score_cap_f=current_score_cap_f,
+    )
+    return {
+        "final_eval_physical_readout_replay_correct_rows": len(correct_margins),
+        "final_eval_physical_readout_replay_wrong_rows": wrong_count,
+        "readout_margin_target_v": target_margin_v,
+        "readout_margin_sizing_limited_by_wrong_sign": wrong_count > 0,
+        "readout_margin_sizing_observed_margin_v": sizing.observed_margin_v,
+        "readout_margin_required_signal_scale": sizing.required_signal_scale,
+        "readout_margin_suggested_readout_width_u": sizing.suggested_readout_width_u,
+        "readout_margin_max_readout_width_u": sizing.max_readout_width_u,
+        "readout_margin_suggested_score_capacitance_f": sizing.suggested_score_cap_f,
+        "readout_margin_min_score_capacitance_f": sizing.min_score_cap_f,
+        "readout_margin_width_feasible": sizing.readout_width_feasible,
+        "readout_margin_score_cap_feasible": sizing.score_cap_feasible,
+    }
+
+
 def readout_weight_matrix_stats(
     *,
     final_signed: list[list[float]],
@@ -4135,6 +4190,12 @@ def run_case(args: argparse.Namespace) -> dict[str, Any]:
             physical_replay["final_eval_physical_readout_replay_rows"],
             class_count=args.class_count,
         ),
+        **physical_readout_replay_margin_sizing_stats(
+            physical_replay["final_eval_physical_readout_replay_rows"],
+            target_margin_v=args.readout_margin_target_v,
+            current_readout_width_u=args.readout_width,
+            current_score_cap_f=args.score_capacitance_f,
+        ),
         **activation_prototype_projection_stats(
             measures,
             labels=labels,
@@ -4252,6 +4313,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
     ap.add_argument("--readout-center-voltage", type=float, default=0.40)
     ap.add_argument("--physical-readout-replay", action="store_true")
     ap.add_argument("--physical-readout-replay-timeout", type=float, default=30.0)
+    ap.add_argument("--readout-margin-target-v", type=float, default=10.0e-3)
     ap.add_argument("--min-target-signed", type=float, default=10e-3)
     return ap
 
@@ -4261,6 +4323,8 @@ def validate_args(args: argparse.Namespace) -> None:
         raise ValueError("timeout must be positive")
     if args.physical_readout_replay_timeout <= 0.0:
         raise ValueError("physical-readout-replay-timeout must be positive")
+    if args.readout_margin_target_v <= 0.0:
+        raise ValueError("readout-margin-target-v must be positive")
     if args.class_count < 2:
         raise ValueError("class-count must be at least 2")
     if args.feature_count <= 0:

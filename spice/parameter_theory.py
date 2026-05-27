@@ -426,6 +426,71 @@ class MulticlassMarginCorrectionSizing:
     target_error_v: float
 
 
+@dataclass(frozen=True)
+class ReadoutMarginSizing:
+    """First-order W/C scale needed to make a sign-correct score observable."""
+
+    observed_margin_v: float
+    target_margin_v: float
+    required_signal_scale: float
+    current_readout_width_u: float
+    suggested_readout_width_u: float
+    max_readout_width_u: float
+    readout_width_feasible: bool
+    current_score_cap_f: float
+    suggested_score_cap_f: float
+    min_score_cap_f: float
+    score_cap_feasible: bool
+
+
+def derive_readout_margin_sizing(
+    *,
+    observed_margin_v: float,
+    target_margin_v: float,
+    current_readout_width_u: float,
+    current_score_cap_f: float,
+    max_readout_width_u: float = 512.0,
+    min_score_cap_f: float = 0.5,
+) -> ReadoutMarginSizing:
+    """Estimate readout W/C scaling needed for a target score margin.
+
+    For the same topology and measurement offset, first-order score swing is
+    approximately proportional to readout conductance and inversely
+    proportional to score capacitance:
+
+    ``Vmargin ~ Wreadout / Cscore``.
+
+    This helper is intentionally only valid for rows whose class sign is already
+    correct. If ``observed_margin_v`` is not positive, no amount of positive
+    W/C scaling fixes the classification sign.
+    """
+    for name, value in [
+        ("observed_margin_v", observed_margin_v),
+        ("target_margin_v", target_margin_v),
+        ("current_readout_width_u", current_readout_width_u),
+        ("current_score_cap_f", current_score_cap_f),
+        ("max_readout_width_u", max_readout_width_u),
+        ("min_score_cap_f", min_score_cap_f),
+    ]:
+        _require_positive(name, float(value))
+    required_signal_scale = target_margin_v / observed_margin_v
+    suggested_readout_width_u = current_readout_width_u * required_signal_scale
+    suggested_score_cap_f = current_score_cap_f / required_signal_scale
+    return ReadoutMarginSizing(
+        observed_margin_v=observed_margin_v,
+        target_margin_v=target_margin_v,
+        required_signal_scale=required_signal_scale,
+        current_readout_width_u=current_readout_width_u,
+        suggested_readout_width_u=suggested_readout_width_u,
+        max_readout_width_u=max_readout_width_u,
+        readout_width_feasible=suggested_readout_width_u <= max_readout_width_u,
+        current_score_cap_f=current_score_cap_f,
+        suggested_score_cap_f=suggested_score_cap_f,
+        min_score_cap_f=min_score_cap_f,
+        score_cap_feasible=suggested_score_cap_f >= min_score_cap_f,
+    )
+
+
 def derive_multiclass_readout_sizing(
     *,
     class_count: int,

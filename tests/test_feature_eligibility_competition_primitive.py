@@ -59,6 +59,18 @@ def test_feature_eligibility_competition_primitive_emits_rank_preserving_gate() 
     assert "Me0_rank_loss_to_e1_mid_dec egate0 e1_gt_e0_decision e0_rank_loss_to_e1_mid 0 NHIGH W=0.5u" in netlist
 
 
+def test_feature_eligibility_competition_primitive_emits_common_contrast_gate() -> None:
+    netlist = featcomp.generate_netlist(case="fixed8_like1", gate_mode="contrast")
+
+    assert "\nB" not in netlist
+    assert "Celig_common elig_common 0 8f IC=0" in netlist
+    assert "Relig_common_e0 elig_common elig0 20000" in netlist
+    assert "Cegate4 egate4 0 8f IC=0" in netlist
+    assert "Me4_contrast_up_v vdd elig4 e4_contrast_up_i 0 NSENSE W=512u" in netlist
+    assert "Me4_contrast_dn_v egate4 elig_common e4_contrast_dn_i 0 NSENSE W=24u" in netlist
+    assert ".meas tran elig_common_after FIND V(elig_common) AT=4.80n" in netlist
+
+
 @pytest.mark.parametrize(
     ("case", "expected_idx", "feature_count"),
     [
@@ -189,3 +201,38 @@ def test_feature_eligibility_competition_ngspice_rank_gate_tracks_unique_dense_o
     assert gates[1] > gates[2]
     assert gates[4] < 0.15
     assert gates[2] < 0.15
+
+
+def test_feature_eligibility_competition_ngspice_contrast_gate_tracks_common_mode(
+    tmp_path: Path,
+    ngspice_path: str,
+) -> None:
+    measures = run_netlist(
+        ngspice_path,
+        tmp_path / "feature_competition_contrast_fixed8_like1.cir",
+        featcomp.generate_netlist(case="fixed8_like1", gate_mode="contrast"),
+        timeout=60.0,
+    )
+
+    gates = _gates(measures, 9)
+    assert 0.18 < float(measures["elig_common_after"]) < 0.24
+    assert gates[4] > 0.25
+    assert gates[8] > 0.25
+    assert gates[1] < 0.08
+    assert gates[2] < 0.08
+    assert gates[5] < 0.08
+
+
+def test_feature_eligibility_competition_ngspice_contrast_gate_rejects_flat_dense(
+    tmp_path: Path,
+    ngspice_path: str,
+) -> None:
+    measures = run_netlist(
+        ngspice_path,
+        tmp_path / "feature_competition_contrast_flat_dense.cir",
+        featcomp.generate_netlist(case="flat_dense", gate_mode="contrast"),
+        timeout=30.0,
+    )
+
+    gates = _gates(measures, 5)
+    assert max(gates) < 0.20

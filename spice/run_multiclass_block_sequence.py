@@ -36,10 +36,12 @@ from run_multiclass_output_head_sequence import (
     windowed_pwl,
 )
 from run_feature_eligibility_competition_primitive import (
+    feature_common_contrast_gate_lines,
     feature_loss_suppression_lines,
     feature_rank_suppression_lines,
     gate_node as eligibility_gate_node,
     pairwise_feature_winner_lines,
+    shared_eligibility_common_reference_lines,
 )
 from run_score_decision_primitive import low_gain_preamp_lines, low_gain_ref_decision_lines, low_gain_ref_state_lines
 from run_spice_sweep import ROOT, detect_spice
@@ -49,7 +51,7 @@ SCENARIOS = ("target-repeat", "one-hot", "mnist")
 CLASS_BIAS_MODES = ("none", "target-only", "label-descent")
 READOUT_UPDATE_MODES = ("sampled", "live")
 SCORE_TIMING_MODES = ("late", "early")
-ELIGIBILITY_GATE_MODES = ("raw", "competition", "rank")
+ELIGIBILITY_GATE_MODES = ("raw", "competition", "rank", "contrast")
 ERROR_MODES = (
     "label-descent",
     "score-gated-nontarget",
@@ -763,6 +765,8 @@ def generate_netlist(
     readout_update_mode: str = "sampled",
     score_timing_mode: str = "late",
     eligibility_gate_mode: str = "raw",
+    eligibility_contrast_common_resistance_ohm: float = 1.0e6,
+    eligibility_contrast_common_capacitance_f: float = 1.0,
     class_bias_mode: str = "none",
     class_bias_input: float = 0.85,
     readout_center_resistance: float = 0.0,
@@ -791,6 +795,8 @@ def generate_netlist(
         "pairwise_margin_target_v": pairwise_margin_target_v,
         "pairwise_margin_error_drive_scale": pairwise_margin_error_drive_scale,
         "normalizer_error_clock_high": normalizer_error_clock_high,
+        "eligibility_contrast_common_resistance_ohm": eligibility_contrast_common_resistance_ohm,
+        "eligibility_contrast_common_capacitance_f": eligibility_contrast_common_capacitance_f,
     }.items():
         if value <= 0.0:
             raise ValueError(f"{name} must be positive")
@@ -1003,6 +1009,11 @@ def generate_netlist(
             if eligibility_gate_mode in ("competition", "rank")
             else []
         ),
+        *(
+            [f"Veliggate eliggate 0 {periodic_phase_pwl(cycle_count, start_ns=4.45, end_ns=4.75, active_cycles=train_cycles)}"]
+            if eligibility_gate_mode == "contrast"
+            else []
+        ),
         f"Vout out 0 {periodic_phase_pwl(cycle_count, start_ns=out_start_ns, end_ns=out_end_ns)}",
         f"Voutn outn 0 {active_low_phase_pwl(cycle_count, start_ns=out_start_ns, end_ns=out_end_ns, active_cycles=set(range(cycle_count)))}",
     ]
@@ -1104,7 +1115,18 @@ def generate_netlist(
             f"Mactrow{feature}_n actrow{feature} out act{feature} 0 NMOS W=16u L=180n",
             f"Mactrow{feature}_p actrow{feature} outn act{feature} vdd PMOS W=32u L=180n",
         ]
-    if eligibility_gate_mode in ("competition", "rank"):
+    if eligibility_gate_mode == "contrast":
+        lines += shared_eligibility_common_reference_lines(
+            feature_count=feature_count,
+            resistance_ohm=eligibility_contrast_common_resistance_ohm,
+            capacitance_f=eligibility_contrast_common_capacitance_f,
+        )
+        lines += feature_common_contrast_gate_lines(
+            feature_count=feature_count,
+            compare_clock_node="eliggate",
+            reset_node="rst",
+        )
+    elif eligibility_gate_mode in ("competition", "rank"):
         for feature_a in range(feature_count):
             for feature_b in range(feature_a + 1, feature_count):
                 lines += pairwise_feature_winner_lines(
@@ -1362,7 +1384,7 @@ def generate_netlist(
         for feature in range(total_feature_count):
             activation_node = (
                 eligibility_gate_node(feature)
-                if eligibility_gate_mode in ("competition", "rank") and feature < feature_count
+                if eligibility_gate_mode in ("competition", "rank", "contrast") and feature < feature_count
                 else f"elig{feature}"
             )
             if error_mode == "score-gated-nontarget":
@@ -1634,7 +1656,7 @@ def generate_netlist(
                 f".meas tran act_f{feature}_{cycle} FIND V(act{feature}) AT={base + 4.5:.2f}n",
                 f".meas tran elig_f{feature}_{cycle} FIND V(elig{feature}) AT={base + 4.5:.2f}n",
             ]
-        if eligibility_gate_mode in ("competition", "rank"):
+        if eligibility_gate_mode in ("competition", "rank", "contrast"):
             for feature in range(feature_count):
                 lines.append(
                     f".meas tran egate_f{feature}_{cycle} FIND V({eligibility_gate_node(feature)}) AT={base + 4.85:.2f}n"
@@ -1883,6 +1905,7 @@ def eligibility_gate_stats(
     feature_count: int,
 ) -> dict[str, Any]:
     rows: list[list[float]] = []
+    active_250mv: list[int] = []
     active_600mv: list[int] = []
     for cycle, seq in enumerate(sequence):
         if seq != "train":
@@ -1892,17 +1915,24 @@ def eligibility_gate_stats(
             continue
         values = [float(measures[key]) for key in keys]
         rows.append(values)
+        active_250mv.append(sum(value > 250e-3 for value in values))
         active_600mv.append(sum(value > 600e-3 for value in values))
     if not rows:
         return {
             "train_eligibility_gate_rows_v": [],
+            "train_eligibility_gate_active_features_250mv_mean": None,
+            "train_eligibility_gate_active_features_250mv_max": None,
             "train_eligibility_gate_active_features_600mv_mean": None,
             "train_eligibility_gate_active_features_600mv_max": None,
+            "train_eligibility_gate_max_v": None,
         }
     return {
         "train_eligibility_gate_rows_v": rows,
+        "train_eligibility_gate_active_features_250mv_mean": float(np.mean(active_250mv)),
+        "train_eligibility_gate_active_features_250mv_max": int(np.max(active_250mv)),
         "train_eligibility_gate_active_features_600mv_mean": float(np.mean(active_600mv)),
         "train_eligibility_gate_active_features_600mv_max": int(np.max(active_600mv)),
+        "train_eligibility_gate_max_v": float(np.max(rows)),
     }
 
 
@@ -1983,6 +2013,8 @@ def run_case(args: argparse.Namespace) -> dict[str, Any]:
         readout_update_mode=args.readout_update_mode,
         score_timing_mode=args.score_timing_mode,
         eligibility_gate_mode=args.eligibility_gate_mode,
+        eligibility_contrast_common_resistance_ohm=args.eligibility_contrast_common_resistance,
+        eligibility_contrast_common_capacitance_f=args.eligibility_contrast_common_capacitance_f,
         class_bias_mode=args.class_bias_mode,
         class_bias_input=args.class_bias_input,
         readout_center_resistance=args.readout_center_resistance,
@@ -2078,6 +2110,12 @@ def run_case(args: argparse.Namespace) -> dict[str, Any]:
         "readout_update_mode": args.readout_update_mode,
         "score_timing_mode": args.score_timing_mode,
         "eligibility_gate_mode": args.eligibility_gate_mode,
+        "eligibility_contrast_common_resistance_ohm": (
+            args.eligibility_contrast_common_resistance if args.eligibility_gate_mode == "contrast" else None
+        ),
+        "eligibility_contrast_common_capacitance_f": (
+            args.eligibility_contrast_common_capacitance_f if args.eligibility_gate_mode == "contrast" else None
+        ),
         "target_class": args.target_class if args.scenario == "target-repeat" else None,
         "train_samples": len(train_records),
         "eval_samples": len(eval_records),
@@ -2147,6 +2185,8 @@ def build_arg_parser() -> argparse.ArgumentParser:
     ap.add_argument("--readout-update-mode", choices=READOUT_UPDATE_MODES, default="sampled")
     ap.add_argument("--score-timing-mode", choices=SCORE_TIMING_MODES, default="late")
     ap.add_argument("--eligibility-gate-mode", choices=ELIGIBILITY_GATE_MODES, default="raw")
+    ap.add_argument("--eligibility-contrast-common-resistance", type=float, default=1.0e6)
+    ap.add_argument("--eligibility-contrast-common-capacitance-f", type=float, default=1.0)
     ap.add_argument("--class-bias-mode", choices=CLASS_BIAS_MODES, default="none")
     ap.add_argument("--class-bias-input", type=float, default=0.85)
     ap.add_argument("--readout-center-resistance", type=float, default=0.0)
@@ -2218,6 +2258,10 @@ def validate_args(args: argparse.Namespace) -> None:
         raise ValueError("pairwise-margin-error-drive-scale must be positive")
     if args.normalizer_error_clock_high <= 0.0 or args.normalizer_error_clock_high > 1.2:
         raise ValueError("normalizer-error-clock-high must stay in (0, 1.2]")
+    if args.eligibility_contrast_common_resistance <= 0.0:
+        raise ValueError("eligibility-contrast-common-resistance must be positive")
+    if args.eligibility_contrast_common_capacitance_f <= 0.0:
+        raise ValueError("eligibility-contrast-common-capacitance-f must be positive")
     if min(args.initial_positive, args.initial_negative) <= 0.0:
         raise ValueError("initial-positive and initial-negative must be positive")
     if max(args.initial_positive, args.initial_negative) > 1.2:

@@ -398,8 +398,11 @@ def test_multiclass_block_sequence_summarizes_train_eligibility_gate_activity() 
     )
 
     assert stats["train_eligibility_gate_rows_v"] == [[1.1, 0.02, 0.03], [0.1, 1.0, 0.9]]
+    assert stats["train_eligibility_gate_active_features_250mv_mean"] == 1.5
+    assert stats["train_eligibility_gate_active_features_250mv_max"] == 2
     assert stats["train_eligibility_gate_active_features_600mv_mean"] == 1.5
     assert stats["train_eligibility_gate_active_features_600mv_max"] == 2
+    assert stats["train_eligibility_gate_max_v"] == 1.1
 
 
 def test_multiclass_block_sequence_can_use_common_score_mass_descent() -> None:
@@ -689,6 +692,43 @@ def test_multiclass_block_sequence_can_rank_gate_live_writer_with_feature_compet
     assert "Me1_rank_loss_to_e0_mid_dec egate1 e0_gt_e1_decision e1_rank_loss_to_e0_mid 0 NHIGH W=0.5u" in netlist
     assert "Me1_loss_to_e0_mid_dec" not in netlist
     assert "Mc0_f0_live_pos_up_e vwhi_ref egate0 c0_f0_live_pos_up 0 NSENSE" in netlist
+
+
+def test_multiclass_block_sequence_can_contrast_gate_live_writer_with_feature_common_mode() -> None:
+    netlist = seq.generate_netlist(
+        train_records=_target0_two_feature_records(1),
+        eval_records=_target0_two_feature_records(1),
+        feature_count=2,
+        readout_update_mode="live",
+        error_mode="pairwise-margin-correction-descent",
+        eligibility_gate_mode="contrast",
+    )
+
+    assert "\nB" not in netlist
+    assert "Veliggate eliggate 0 PWL(" in netlist
+    assert "Veligpre" not in netlist
+    assert "Ce0_gt_e1_decision" not in netlist
+    assert "Celig_common elig_common 0 1f IC=0" in netlist
+    assert "Relig_common_e0 elig_common elig0 1000000" in netlist
+    assert "Me0_contrast_up_v vdd elig0 e0_contrast_up_i 0 NSENSE W=512u" in netlist
+    assert "Me0_contrast_dn_v egate0 elig_common e0_contrast_dn_i 0 NSENSE W=24u" in netlist
+    assert "Mc0_f0_live_pos_up_e vwhi_ref egate0 c0_f0_live_pos_up 0 NSENSE" in netlist
+
+
+def test_multiclass_block_sequence_can_tune_contrast_gate_common_reference() -> None:
+    netlist = seq.generate_netlist(
+        train_records=_target0_two_feature_records(1),
+        eval_records=_target0_two_feature_records(1),
+        feature_count=2,
+        readout_update_mode="live",
+        error_mode="pairwise-margin-correction-descent",
+        eligibility_gate_mode="contrast",
+        eligibility_contrast_common_resistance_ohm=2.5e6,
+        eligibility_contrast_common_capacitance_f=0.5,
+    )
+
+    assert "Celig_common elig_common 0 0.5f IC=0" in netlist
+    assert "Relig_common_e0 elig_common elig0 2500000" in netlist
 
 
 def test_multiclass_block_sequence_eligibility_gate_mode_validation() -> None:

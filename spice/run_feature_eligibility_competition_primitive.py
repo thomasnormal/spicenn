@@ -35,6 +35,10 @@ def gate_node(feature_idx: int) -> str:
     return f"egate{feature_idx}"
 
 
+def common_node() -> str:
+    return "elig_common"
+
+
 def pairwise_feature_winner_lines(
     *,
     feature_a: int,
@@ -121,6 +125,49 @@ def feature_rank_suppression_lines(
     return lines
 
 
+def shared_eligibility_common_reference_lines(
+    *,
+    feature_count: int,
+    common: str = "elig_common",
+    resistance_ohm: float = 20000.0,
+    capacitance_f: float = 8.0,
+) -> list[str]:
+    lines = [
+        f"C{common} {common} 0 {capacitance_f:.12g}f IC=0",
+        f"R{common}_leak {common} 0 1G",
+    ]
+    for feature_idx in range(feature_count):
+        lines.append(f"R{common}_e{feature_idx} {common} {elig_node(feature_idx)} {resistance_ohm:.12g}")
+    return lines
+
+
+def feature_common_contrast_gate_lines(
+    *,
+    feature_count: int,
+    common: str = "elig_common",
+    compare_clock_node: str = "eliggate",
+    reset_node: str = "gaterst",
+    gate_capacitance_f: float = 8.0,
+    pullup_width_u: float = 512.0,
+    pulldown_width_u: float = 24.0,
+    analog_model: str = "NSENSE",
+) -> list[str]:
+    lines: list[str] = []
+    for feature_idx in range(feature_count):
+        gate = gate_node(feature_idx)
+        prefix = f"e{feature_idx}_contrast_"
+        lines += [
+            f"C{gate} {gate} 0 {gate_capacitance_f:.12g}f IC=0",
+            f"R{gate} {gate} 0 1G",
+            f"Mreset_{gate} {gate} {reset_node} 0 0 NMOS W=4u L=180n",
+            f"M{prefix}up_v vdd {elig_node(feature_idx)} {prefix}up_i 0 {analog_model} W={pullup_width_u:.6g}u L=180n",
+            f"M{prefix}up_t {prefix}up_i {compare_clock_node} {gate} 0 NSENSE W={pullup_width_u:.6g}u L=180n",
+            f"M{prefix}dn_v {gate} {common} {prefix}dn_i 0 {analog_model} W={pulldown_width_u:.6g}u L=180n",
+            f"M{prefix}dn_t {prefix}dn_i {compare_clock_node} 0 0 NSENSE W={pulldown_width_u:.6g}u L=180n",
+        ]
+    return lines
+
+
 def values_for_case(case: str, eligibility_values: tuple[float, ...] | None = None) -> tuple[float, ...]:
     if eligibility_values is not None:
         values = tuple(float(value) for value in eligibility_values)
@@ -144,8 +191,8 @@ def generate_netlist(
     gate_loss_width_u: float = 32.0,
     gate_capacitance_f: float = 8.0,
 ) -> str:
-    if gate_mode not in ("hard", "rank"):
-        raise ValueError("gate_mode must be hard or rank")
+    if gate_mode not in ("hard", "rank", "contrast"):
+        raise ValueError("gate_mode must be hard, rank, or contrast")
     if min(pairwise_width_u, gate_loss_width_u, gate_capacitance_f) <= 0.0:
         raise ValueError("widths and capacitances must be positive")
     if gate_mode == "rank":
@@ -163,25 +210,30 @@ def generate_netlist(
         ".options method=gear reltol=1e-3 abstol=1e-12 vntol=1e-6",
         "Vdd vdd 0 {VDD}",
         "Vrst rst 0 PULSE(0 1.2 0.50n 10p 10p 8n 10n)",
+        *(["Vgaterst gaterst 0 PULSE(1.2 0 0.50n 10p 10p 8n 10n)"] if gate_mode == "contrast" else []),
         "Veligdec eligdec 0 PULSE(0 1.2 0.90n 10p 10p 1.60n 10n)",
         "Veliggate eliggate 0 PULSE(0 1.2 3.50n 10p 10p 1.00n 10n)",
     ]
     for idx, value in enumerate(values):
         lines.append(f"V{elig_node(idx)} {elig_node(idx)} 0 {value:.12g}")
-    for feature_a in range(feature_count):
-        for feature_b in range(feature_a + 1, feature_count):
-            lines += pairwise_feature_winner_lines(
-                feature_a=feature_a,
-                feature_b=feature_b,
-                width_u=pairwise_width_u,
-            )
+    if gate_mode == "contrast":
+        lines += shared_eligibility_common_reference_lines(feature_count=feature_count)
+        lines += feature_common_contrast_gate_lines(feature_count=feature_count)
+    else:
+        for feature_a in range(feature_count):
+            for feature_b in range(feature_a + 1, feature_count):
+                lines += pairwise_feature_winner_lines(
+                    feature_a=feature_a,
+                    feature_b=feature_b,
+                    width_u=pairwise_width_u,
+                )
     if gate_mode == "rank":
         lines += feature_rank_suppression_lines(
             feature_count=feature_count,
             gate_capacitance_f=gate_capacitance_f,
             loss_width_u=gate_loss_width_u,
         )
-    else:
+    elif gate_mode == "hard":
         lines += feature_loss_suppression_lines(
             feature_count=feature_count,
             gate_capacitance_f=gate_capacitance_f,
@@ -195,6 +247,8 @@ def generate_netlist(
             lines.append(
                 f".meas tran e{idx}_gt_e{opponent_idx}_after FIND V({decision_node(idx, opponent_idx)}) AT=3.40n"
             )
+    if gate_mode == "contrast":
+        lines.append(f".meas tran {common_node()}_after FIND V({common_node()}) AT=4.80n")
     lines += [
         ".tran 2p 5.0n uic",
         ".control",
@@ -270,7 +324,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--tag", default="feature_eligibility_competition")
     parser.add_argument("--spice-bin", default=None)
-    parser.add_argument("--gate-mode", choices=("hard", "rank"), default="hard")
+    parser.add_argument("--gate-mode", choices=("hard", "rank", "contrast"), default="hard")
     parser.add_argument("--pairwise-width", type=float, default=64.0)
     parser.add_argument("--gate-loss-width", type=float, default=32.0)
     parser.add_argument("--gate-capacitance-f", type=float, default=8.0)

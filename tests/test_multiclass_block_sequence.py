@@ -95,6 +95,21 @@ def test_multiclass_block_sequence_can_restore_score_before_nontarget_gate() -> 
     assert "Mc1_scoreamp_score_p c1_score_amp c1_score c1_scoreamp_score_i vdd PMOS" in netlist
 
 
+def test_multiclass_block_sequence_can_use_restored_score_binary_descent() -> None:
+    netlist = seq.generate_netlist(
+        train_records=_target0_records(1),
+        eval_records=_target0_records(1),
+        error_mode="restored-score-binary-descent",
+    )
+
+    assert "\nB" not in netlist
+    assert "Cc0_decision c0_decision 0 20f IC=0" in netlist
+    assert "Mc0_dec_low_gain_ref_tail c0_dec_src scoredec 0 0 NMOS" in netlist
+    assert "Mc0_f0_gvp_decisionn c0_f0_gvp_label c0_decisionn c0_f0_gvp_decisionn 0 NSENSE" in netlist
+    assert "Mc0_f0_gvn_decision c0_f0_gvn_label c0_decision c0_f0_gvn_decision 0 NSENSE" in netlist
+    assert "Mc0_f0_gvn_score" not in netlist
+
+
 def test_multiclass_block_sequence_can_use_residual_score_nontarget_gate() -> None:
     netlist = seq.generate_netlist(
         train_records=_target0_records(1),
@@ -163,6 +178,21 @@ def test_multiclass_block_sequence_can_add_target_only_class_bias_row() -> None:
     assert "Mc0_f1_gvn_d" not in netlist
     assert "Mc0_f1_rgn_res" not in netlist
     assert ".meas tran c0_f1_signed_final" in netlist
+
+
+def test_multiclass_block_sequence_can_add_label_descent_class_bias_row() -> None:
+    netlist = seq.generate_netlist(
+        train_records=_target0_records(1),
+        eval_records=_target0_records(1),
+        feature_count=1,
+        class_bias_mode="label-descent",
+    )
+
+    assert "\nB" not in netlist
+    assert "Vrow1 row1 0 PWL(" in netlist
+    assert "Mc0_f1_gvp_d c0_f1_gvp_a c0_targetp c0_f1_gvp_d 0 NSENSE" in netlist
+    assert "Mc1_f1_gvn_d c1_f1_gvn_a c1_targetn c1_f1_gvn_d 0 NSENSE" in netlist
+    assert "Mc1_f1_rgn_pd c1_rgn1 c1_gvn1 0 0 NSENSE" in netlist
 
 
 def test_multiclass_block_sequence_can_add_passive_readout_center_leak() -> None:
@@ -335,6 +365,67 @@ def _competitive_target_boost_netlist(opponent_gate: float) -> str:
     return "\n".join(lines)
 
 
+def _restored_score_binary_descent_netlist(
+    *,
+    targetp: float,
+    targetn: float,
+    decision: float,
+    decisionn: float,
+) -> str:
+    lines = [
+        "* Low-level restored-score binary-descent gradient primitive.",
+        ".param VDD=1.2",
+        seq.mos_models(),
+        ".options method=gear reltol=1e-3 abstol=1e-12 vntol=1e-6",
+        "Vdd vdd 0 {VDD}",
+        "Vvwhi_ref vwhi_ref 0 0.42",
+        "Vvwlo_ref vwlo_ref 0 0.28",
+        "Velig elig0 0 0.85",
+        f"Vtargetp c0_targetp 0 PULSE(0 {targetp:.12g} 1n 10p 10p 2n 20n)",
+        f"Vtargetn c0_targetn 0 PULSE(0 {targetn:.12g} 1n 10p 10p 2n 20n)",
+        f"Vdecision c0_decision 0 {decision:.12g}",
+        f"Vdecisionn c0_decisionn 0 {decisionn:.12g}",
+        "Vacc acc 0 PULSE(0 1.2 1n 10p 10p 2n 20n)",
+        "Vapply apply 0 PULSE(0 1.2 4n 10p 10p 0.1n 20n)",
+        "Vapplyn applyn 0 PULSE(1.2 0 4n 10p 10p 0.1n 20n)",
+        "Cc0_gvp0 c0_gvp0 0 2f IC=0",
+        "Cc0_gvn0 c0_gvn0 0 2f IC=0",
+        "Cc0_rgp0 c0_rgp0 0 4f IC=1.2",
+        "Cc0_rgn0 c0_rgn0 0 4f IC=1.2",
+        "Rc0_gvp0 c0_gvp0 0 1G",
+        "Rc0_gvn0 c0_gvn0 0 1G",
+        "Rc0_rgp0 c0_rgp0 vdd 50k",
+        "Rc0_rgn0 c0_rgn0 vdd 50k",
+        *seq.signed_store_lines(
+            positive_node=seq.class_node(0, "vwp0"),
+            negative_node=seq.class_node(0, "vwn0"),
+            positive_ic=0.40,
+            negative_ic=0.40,
+        ),
+        *seq.class_local_restored_score_binary_descent_gradient_lines(
+            class_idx=0,
+            feature_idx=0,
+            activation_node="elig0",
+            positive_gate_node="c0_decision",
+            negative_gate_node="c0_decisionn",
+        ),
+        *seq.class_local_bounded_update_lines(class_idx=0, feature_idx=0),
+        ".meas tran gvp_after FIND V(c0_gvp0) AT=3.5n",
+        ".meas tran gvn_after FIND V(c0_gvn0) AT=3.5n",
+        ".meas tran vwp_after FIND V(c0_vwp0) AT=5.5n",
+        ".meas tran vwn_after FIND V(c0_vwn0) AT=5.5n",
+        ".meas tran signed_after PARAM='vwp_after-vwn_after'",
+        ".tran 2p 6n uic",
+        ".control",
+        "run",
+        "quit",
+        ".endc",
+        ".end",
+        "",
+    ]
+    return "\n".join(lines)
+
+
 def _readout_center_leak_netlist(resistance: float = 5e6) -> str:
     lines = [
         "* Low-level passive readout center leak primitive.",
@@ -419,6 +510,35 @@ def test_multiclass_block_sequence_ngspice_competitive_target_boost_strengthens_
     assert float(high["signed_after"]) > float(low["signed_after"]) + 1e-3
 
 
+def test_multiclass_block_sequence_ngspice_restored_binary_descent_gates_target_miss_and_false_positive(
+    tmp_path: Path,
+    ngspice_path: str,
+) -> None:
+    target_miss = run_netlist(
+        ngspice_path,
+        tmp_path / "restored_binary_target_miss.cir",
+        _restored_score_binary_descent_netlist(targetp=1.1, targetn=0.0, decision=0.0, decisionn=1.2),
+        timeout=20.0,
+    )
+    target_already_wins = run_netlist(
+        ngspice_path,
+        tmp_path / "restored_binary_target_wins.cir",
+        _restored_score_binary_descent_netlist(targetp=1.1, targetn=0.0, decision=1.2, decisionn=0.0),
+        timeout=20.0,
+    )
+    false_positive = run_netlist(
+        ngspice_path,
+        tmp_path / "restored_binary_false_positive.cir",
+        _restored_score_binary_descent_netlist(targetp=0.0, targetn=1.1, decision=1.2, decisionn=0.0),
+        timeout=20.0,
+    )
+
+    assert float(target_miss["gvp_after"]) > float(target_already_wins["gvp_after"]) + 10e-3
+    assert float(target_miss["signed_after"]) > float(target_already_wins["signed_after"]) + 1e-3
+    assert float(false_positive["gvn_after"]) > float(target_already_wins["gvn_after"]) + 10e-3
+    assert float(false_positive["signed_after"]) < float(target_already_wins["signed_after"]) - 1e-3
+
+
 def test_multiclass_block_sequence_ngspice_passive_readout_center_leak_reduces_signed_state(
     tmp_path: Path,
     ngspice_path: str,
@@ -499,6 +619,27 @@ def test_multiclass_block_sequence_ngspice_target_only_bias_updates_target_class
     assert final_margin > 2e-3
 
 
+def test_multiclass_block_sequence_ngspice_label_descent_bias_updates_target_and_nontarget_classes(
+    tmp_path: Path,
+    ngspice_path: str,
+) -> None:
+    measures = run_netlist(
+        ngspice_path,
+        tmp_path / "multiclass_block_sequence_label_descent_bias.cir",
+        seq.generate_netlist(
+            train_records=_target0_records(1),
+            eval_records=_target0_records(1),
+            feature_count=1,
+            class_bias_mode="label-descent",
+        ),
+        timeout=60.0,
+    )
+
+    assert float(measures["c0_f1_signed_final"]) > 10e-3
+    assert float(measures["c1_f1_signed_final"]) < -10e-3
+    assert float(measures["c2_f1_signed_final"]) < -10e-3
+
+
 def test_multiclass_block_sequence_ngspice_nontarget_scale_removes_negative_off_diagonal_updates(
     tmp_path: Path,
     ngspice_path: str,
@@ -567,6 +708,36 @@ def test_multiclass_block_sequence_ngspice_restored_score_nontarget_keeps_one_ho
             feature_count=3,
             score_capacitance_f=5.0,
             error_mode="restored-score-nontarget",
+        ),
+        timeout=80.0,
+    )
+
+    final_predictions = [
+        int(np.argmax([float(measures[f"c{class_idx}_score_net_{cycle}"]) for class_idx in range(3)]))
+        for cycle in range(6, 9)
+    ]
+    assert final_predictions == [0, 1, 2]
+    for class_idx in range(3):
+        assert float(measures[f"c{class_idx}_f{class_idx}_signed_final"]) > 10e-3
+        for feature in range(3):
+            if feature != class_idx:
+                assert float(measures[f"c{class_idx}_f{feature}_signed_final"]) < -10e-3
+
+
+def test_multiclass_block_sequence_ngspice_restored_score_binary_descent_keeps_one_hot_learning(
+    tmp_path: Path,
+    ngspice_path: str,
+) -> None:
+    measures = run_netlist(
+        ngspice_path,
+        tmp_path / "multiclass_block_sequence_onehot_restored_binary.cir",
+        seq.generate_netlist(
+            train_records=_one_hot_records(),
+            eval_records=_one_hot_records(),
+            class_count=3,
+            feature_count=3,
+            score_capacitance_f=5.0,
+            error_mode="restored-score-binary-descent",
         ),
         timeout=80.0,
     )

@@ -33,13 +33,14 @@ from run_spice_sweep import ROOT, detect_spice
 
 
 SCENARIOS = ("target-repeat", "one-hot", "mnist")
-CLASS_BIAS_MODES = ("none", "target-only")
+CLASS_BIAS_MODES = ("none", "target-only", "label-descent")
 ERROR_MODES = (
     "label-descent",
     "score-gated-nontarget",
     "residual-score-nontarget",
     "amplified-score-nontarget",
     "amplified-score-competitive",
+    "restored-score-binary-descent",
     "restored-score-nontarget",
     "restored-winner-nontarget",
 )
@@ -191,6 +192,30 @@ def class_local_amplified_score_competitive_gradient_lines(
     return lines
 
 
+def class_local_restored_score_binary_descent_gradient_lines(
+    *,
+    class_idx: int,
+    feature_idx: int,
+    activation_node: str,
+    positive_gate_node: str,
+    negative_gate_node: str,
+    width_u: float = 24.0,
+) -> list[str]:
+    prefix = f"c{class_idx}_f{feature_idx}_"
+    return [
+        f"M{prefix}gvp_a vdd {activation_node} {prefix}gvp_a 0 NREL W={width_u:.6g}u L=180n",
+        f"M{prefix}gvp_label {prefix}gvp_a {class_node(class_idx, 'targetp')} {prefix}gvp_label 0 NSENSE W={width_u:.6g}u L=180n",
+        f"M{prefix}gvp_decisionn {prefix}gvp_label {negative_gate_node} {prefix}gvp_decisionn 0 NSENSE W={width_u:.6g}u L=180n",
+        f"M{prefix}gvp_g {prefix}gvp_decisionn acc {class_node(class_idx, f'gvp{feature_idx}')} 0 NREL W={width_u:.6g}u L=180n",
+        f"M{prefix}gvn_a vdd {activation_node} {prefix}gvn_a 0 NREL W={width_u:.6g}u L=180n",
+        f"M{prefix}gvn_label {prefix}gvn_a {class_node(class_idx, 'targetn')} {prefix}gvn_label 0 NSENSE W={width_u:.6g}u L=180n",
+        f"M{prefix}gvn_decision {prefix}gvn_label {positive_gate_node} {prefix}gvn_decision 0 NSENSE W={width_u:.6g}u L=180n",
+        f"M{prefix}gvn_g {prefix}gvn_decision acc {class_node(class_idx, f'gvn{feature_idx}')} 0 NREL W={width_u:.6g}u L=180n",
+        f"M{prefix}rgp_pd {class_node(class_idx, f'rgp{feature_idx}')} {class_node(class_idx, f'gvp{feature_idx}')} 0 0 NSENSE W=16u L=180n",
+        f"M{prefix}rgn_pd {class_node(class_idx, f'rgn{feature_idx}')} {class_node(class_idx, f'gvn{feature_idx}')} 0 0 NSENSE W=16u L=180n",
+    ]
+
+
 def class_local_target_only_gradient_lines(
     *,
     class_idx: int,
@@ -320,9 +345,10 @@ def generate_netlist(
     uses_residual_score = error_mode == "residual-score-nontarget"
     uses_amplified_score = error_mode == "amplified-score-nontarget"
     uses_amplified_competitive = error_mode == "amplified-score-competitive"
+    uses_restored_binary = error_mode == "restored-score-binary-descent"
     uses_score_preamp = uses_residual_score or uses_amplified_score or uses_amplified_competitive
     uses_restored_winner = error_mode == "restored-winner-nontarget"
-    uses_late_restored_gate = uses_restored_score or uses_restored_winner or uses_score_preamp
+    uses_late_restored_gate = uses_restored_score or uses_restored_binary or uses_restored_winner or uses_score_preamp
     target_start_ns = 10.8 if uses_late_restored_gate else 9.0
     target_end_ns = 12.8 if uses_late_restored_gate else 11.0
     acc_start_ns = 10.8 if uses_late_restored_gate else 9.0
@@ -421,12 +447,12 @@ def generate_netlist(
             f"Mreset_{class_node(class_idx, 'score')} {class_node(class_idx, 'score')} rst 0 0 NMOS W=4u L=180n",
             f"Mreset_{class_node(class_idx, 'scoren')} {class_node(class_idx, 'scoren')} rst 0 0 NMOS W=4u L=180n",
         ]
-        if uses_restored_score or uses_score_preamp:
+        if uses_restored_score or uses_restored_binary or uses_score_preamp:
             prefix = f"c{class_idx}_"
             lines += [
                 *low_gain_ref_state_lines(prefix=prefix, reset_node="scorepre"),
             ]
-            if uses_restored_score:
+            if uses_restored_score or uses_restored_binary:
                 lines += [
                     f"C{prefix}decision {prefix}decision 0 20f IC=0",
                     f"C{prefix}decisionn {prefix}decisionn 0 20f IC=0",
@@ -496,6 +522,14 @@ def generate_netlist(
                         for opponent_idx in range(class_count)
                         if opponent_idx != class_idx
                     ],
+                )
+            elif uses_restored_binary:
+                gradient_lines = class_local_restored_score_binary_descent_gradient_lines(
+                    class_idx=class_idx,
+                    feature_idx=feature,
+                    activation_node=f"elig{feature}",
+                    positive_gate_node=f"c{class_idx}_decision",
+                    negative_gate_node=f"c{class_idx}_decisionn",
                 )
             elif uses_restored_winner:
                 gradient_lines = class_local_multi_gate_nontarget_gradient_lines(

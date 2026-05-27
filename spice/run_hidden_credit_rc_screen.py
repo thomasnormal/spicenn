@@ -49,6 +49,10 @@ HIDDEN_CREDIT_DIAGNOSTIC_FIELDS = (
     "train_hidden_credit_abs_max_v",
     "train_hidden_credit_positive_mean_v",
     "train_hidden_credit_negative_mean_v",
+    "final_hidden_signed_delta_mean_v",
+    "final_hidden_signed_delta_abs_mean_v",
+    "final_hidden_signed_delta_min_v",
+    "final_hidden_signed_delta_max_v",
 )
 
 

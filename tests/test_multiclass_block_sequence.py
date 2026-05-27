@@ -546,6 +546,31 @@ def test_multiclass_block_sequence_summarizes_activation_prototype_projection() 
     assert stats["final_eval_activation_prototype_pairwise_cosine_mean"] == pytest.approx(0.23285, abs=1e-5)
 
 
+def test_multiclass_block_sequence_summarizes_hidden_weight_progress() -> None:
+    measures = {
+        "whsigned_f0_after_train1": 0.79,
+        "whsigned_f1_after_train1": 0.82,
+        "whsigned_f0_after_train2": 0.76,
+        "whsigned_f1_after_train2": 0.84,
+        "whsigned_f0_final": 0.75,
+        "whsigned_f1_final": 0.85,
+    }
+
+    stats = seq.hidden_weight_progress_stats(
+        measures,
+        train_count=2,
+        feature_count=2,
+        initial_signed_v=0.80,
+    )
+
+    assert stats["hidden_signed_after_each_train_v"] == [[0.79, 0.82], [0.76, 0.84]]
+    assert stats["final_hidden_signed_delta_v"] == pytest.approx([-0.05, 0.05])
+    assert stats["final_hidden_signed_delta_mean_v"] == pytest.approx(0.0)
+    assert stats["final_hidden_signed_delta_abs_mean_v"] == pytest.approx(0.05)
+    assert stats["final_hidden_signed_delta_min_v"] == pytest.approx(-0.05)
+    assert stats["final_hidden_signed_delta_max_v"] == pytest.approx(0.05)
+
+
 def test_multiclass_block_sequence_can_use_common_score_mass_descent() -> None:
     netlist = seq.generate_netlist(
         train_records=_target0_records(1),
@@ -2065,13 +2090,20 @@ def test_multiclass_block_sequence_ngspice_direct_hidden_writer_preserves_credit
         _hidden_direct_readout_weighted_writer_netlist(vwp=0.05, vwn=1.0),
         timeout=20.0,
     )
+    neutral = run_netlist(
+        ngspice_path,
+        tmp_path / "direct_hidden_writer_neutral.cir",
+        _hidden_direct_readout_weighted_writer_netlist(vwp=0.4, vwn=0.4),
+        timeout=20.0,
+    )
 
     assert float(positive["signed_after"]) > 0.20
     assert float(positive["whp_after"]) > 0.50
-    assert float(positive["whn_after"]) < 0.35
+    assert float(positive["whn_after"]) == pytest.approx(0.40, abs=5e-3)
     assert float(negative["signed_after"]) < -0.20
     assert float(negative["whn_after"]) > 0.50
-    assert float(negative["whp_after"]) < 0.35
+    assert float(negative["whp_after"]) == pytest.approx(0.45, abs=5e-3)
+    assert float(neutral["signed_after"]) == pytest.approx(0.05, abs=2e-3)
 
 
 def test_multiclass_block_sequence_ngspice_live_error_rails_reset_before_eval_writer(

@@ -57,6 +57,8 @@ READOUT_FORWARD_MODES = ("direct", "diode")
 ELIGIBILITY_GATE_MODES = ("raw", "competition", "rank", "contrast")
 ELIGIBILITY_SOURCE_MODES = ("pre-p", "act-raw", "act")
 HIDDEN_CREDIT_ACTIVATION_MODELS = ("NREL", "NMOS", "NSENSE")
+DEFAULT_HIDDEN_POSITIVE = 1.00
+DEFAULT_HIDDEN_NEGATIVE = 0.20
 ERROR_MODES = (
     "label-descent",
     "label-rail-descent",
@@ -257,59 +259,33 @@ def hidden_direct_readout_weighted_update_lines(
             up0 = f"{prefix}{suffix}_pup0"
             up1 = f"{prefix}{suffix}_pup1"
             up2 = f"{prefix}{suffix}_pup2"
-            dn0 = f"{prefix}{suffix}_pdn0"
-            dn1 = f"{prefix}{suffix}_pdn1"
-            dn2 = f"{prefix}{suffix}_pdn2"
             lines += [
                 f"R{up0} {up0} 0 1G",
                 f"R{up1} {up1} 0 1G",
                 f"R{up2} {up2} 0 1G",
-                f"R{dn0} {dn0} 0 1G",
-                f"R{dn1} {dn1} 0 1G",
-                f"R{dn2} {dn2} 0 1G",
                 f"C{up0} {up0} 0 {internal_capacitance_f:.12g}f IC=0",
                 f"C{up1} {up1} 0 {internal_capacitance_f:.12g}f IC=0",
                 f"C{up2} {up2} 0 {internal_capacitance_f:.12g}f IC=0",
-                f"C{dn0} {dn0} 0 {internal_capacitance_f:.12g}f IC=0",
-                f"C{dn1} {dn1} 0 {internal_capacitance_f:.12g}f IC=0",
-                f"C{dn2} {dn2} 0 {internal_capacitance_f:.12g}f IC=0",
                 f"M{prefix}{suffix}_pup_e vwhi_ref {eligibility_node} {up0} 0 NSENSE W={width_u:.6g}u L=180n",
                 f"M{prefix}{suffix}_pup_a {up0} {act} {up1} 0 {activation_model} W={width_u:.6g}u L=180n",
                 f"M{prefix}{suffix}_pup_r {up1} {err} {up2} 0 NSENSE W={width_u:.6g}u L=180n",
                 f"M{prefix}{suffix}_pup_w {up2} {weight} {whp} 0 NSENSE W={width_u:.6g}u L=180n",
-                f"M{prefix}{suffix}_pdn_e {whn} {eligibility_node} {dn0} 0 NSENSE W={width_u:.6g}u L=180n",
-                f"M{prefix}{suffix}_pdn_a {dn0} {act} {dn1} 0 {activation_model} W={width_u:.6g}u L=180n",
-                f"M{prefix}{suffix}_pdn_r {dn1} {err} {dn2} 0 NSENSE W={width_u:.6g}u L=180n",
-                f"M{prefix}{suffix}_pdn_w {dn2} {weight} vwlo_ref 0 NSENSE W={width_u:.6g}u L=180n",
             ]
         for err, weight, suffix in negative_terms:
             up0 = f"{prefix}{suffix}_nup0"
             up1 = f"{prefix}{suffix}_nup1"
             up2 = f"{prefix}{suffix}_nup2"
-            dn0 = f"{prefix}{suffix}_ndn0"
-            dn1 = f"{prefix}{suffix}_ndn1"
-            dn2 = f"{prefix}{suffix}_ndn2"
             lines += [
                 f"R{up0} {up0} 0 1G",
                 f"R{up1} {up1} 0 1G",
                 f"R{up2} {up2} 0 1G",
-                f"R{dn0} {dn0} 0 1G",
-                f"R{dn1} {dn1} 0 1G",
-                f"R{dn2} {dn2} 0 1G",
                 f"C{up0} {up0} 0 {internal_capacitance_f:.12g}f IC=0",
                 f"C{up1} {up1} 0 {internal_capacitance_f:.12g}f IC=0",
                 f"C{up2} {up2} 0 {internal_capacitance_f:.12g}f IC=0",
-                f"C{dn0} {dn0} 0 {internal_capacitance_f:.12g}f IC=0",
-                f"C{dn1} {dn1} 0 {internal_capacitance_f:.12g}f IC=0",
-                f"C{dn2} {dn2} 0 {internal_capacitance_f:.12g}f IC=0",
                 f"M{prefix}{suffix}_nup_e vwhi_ref {eligibility_node} {up0} 0 NSENSE W={width_u:.6g}u L=180n",
                 f"M{prefix}{suffix}_nup_a {up0} {act} {up1} 0 {activation_model} W={width_u:.6g}u L=180n",
                 f"M{prefix}{suffix}_nup_r {up1} {err} {up2} 0 NSENSE W={width_u:.6g}u L=180n",
                 f"M{prefix}{suffix}_nup_w {up2} {weight} {whn} 0 NSENSE W={width_u:.6g}u L=180n",
-                f"M{prefix}{suffix}_ndn_e {whp} {eligibility_node} {dn0} 0 NSENSE W={width_u:.6g}u L=180n",
-                f"M{prefix}{suffix}_ndn_a {dn0} {act} {dn1} 0 {activation_model} W={width_u:.6g}u L=180n",
-                f"M{prefix}{suffix}_ndn_r {dn1} {err} {dn2} 0 NSENSE W={width_u:.6g}u L=180n",
-                f"M{prefix}{suffix}_ndn_w {dn2} {weight} vwlo_ref 0 NSENSE W={width_u:.6g}u L=180n",
             ]
     return lines
 
@@ -953,8 +929,8 @@ def generate_netlist(
     eval_records: list[dict[str, Any]],
     class_count: int = 3,
     feature_count: int = 1,
-    hidden_positive: float = 1.00,
-    hidden_negative: float = 0.20,
+    hidden_positive: float = DEFAULT_HIDDEN_POSITIVE,
+    hidden_negative: float = DEFAULT_HIDDEN_NEGATIVE,
     hidden_width_u: float = 1.0,
     readout_width_u: float = 64.0,
     score_capacitance_f: float = 10.0,
@@ -2583,6 +2559,40 @@ def hidden_credit_stats(
     }
 
 
+def hidden_weight_progress_stats(
+    measures: dict[str, float],
+    *,
+    train_count: int,
+    feature_count: int,
+    initial_signed_v: float,
+) -> dict[str, Any]:
+    rows: list[list[float]] = []
+    for train_idx in range(1, train_count + 1):
+        keys = [f"whsigned_f{feature}_after_train{train_idx}" for feature in range(feature_count)]
+        if not all(key in measures for key in keys):
+            continue
+        rows.append([float(measures[key]) for key in keys])
+    final_keys = [f"whsigned_f{feature}_final" for feature in range(feature_count)]
+    if not all(key in measures for key in final_keys):
+        return {
+            "hidden_signed_after_each_train_v": rows,
+            "final_hidden_signed_delta_v": None,
+            "final_hidden_signed_delta_mean_v": None,
+            "final_hidden_signed_delta_abs_mean_v": None,
+            "final_hidden_signed_delta_min_v": None,
+            "final_hidden_signed_delta_max_v": None,
+        }
+    final_delta = [float(measures[key]) - initial_signed_v for key in final_keys]
+    return {
+        "hidden_signed_after_each_train_v": rows,
+        "final_hidden_signed_delta_v": final_delta,
+        "final_hidden_signed_delta_mean_v": float(np.mean(final_delta)),
+        "final_hidden_signed_delta_abs_mean_v": float(np.mean(np.abs(final_delta))),
+        "final_hidden_signed_delta_min_v": float(np.min(final_delta)),
+        "final_hidden_signed_delta_max_v": float(np.max(final_delta)),
+    }
+
+
 def run_case(args: argparse.Namespace) -> dict[str, Any]:
     generated = ROOT / "spice/generated"
     tables = ROOT / "results/tables"
@@ -2856,6 +2866,12 @@ def run_case(args: argparse.Namespace) -> dict[str, Any]:
         **eligibility_stats(measures, sequence=sequence, total_feature_count=total_feature_count),
         **eligibility_gate_stats(measures, sequence=sequence, feature_count=feature_count),
         **hidden_credit_stats(measures, sequence=sequence, feature_count=feature_count),
+        **hidden_weight_progress_stats(
+            measures,
+            train_count=len(train_records),
+            feature_count=feature_count,
+            initial_signed_v=DEFAULT_HIDDEN_POSITIVE - DEFAULT_HIDDEN_NEGATIVE,
+        ),
         "passed": (
             accuracy(rows, "final_eval") > accuracy(rows, "initial_eval")
             if args.scenario == "mnist"

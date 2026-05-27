@@ -131,6 +131,10 @@ def test_normalizer_block_screen_summary_runner(tmp_path: Path, monkeypatch: pyt
             "train_hidden_credit_abs_max_v": 0.31,
             "train_hidden_credit_positive_mean_v": 0.20,
             "train_hidden_credit_negative_mean_v": -0.15,
+            "final_hidden_signed_delta_mean_v": -0.04,
+            "final_hidden_signed_delta_abs_mean_v": 0.05,
+            "final_hidden_signed_delta_min_v": -0.08,
+            "final_hidden_signed_delta_max_v": 0.01,
             "csv": str(tmp_path / f"{suffix}.csv"),
             "wall_time_s": 1.0,
         }
@@ -157,3 +161,4 @@ def test_normalizer_block_screen_summary_runner(tmp_path: Path, monkeypatch: pyt
     assert rows[0]["final_eval_signed_projection_accuracy"] == "1.0"
     assert rows[0]["train_eligibility_pairwise_cosine_mean"] == "0.25"
     assert rows[0]["train_hidden_credit_abs_max_v"] == "0.31"
+    assert rows[0]["final_hidden_signed_delta_abs_mean_v"] == "0.05"

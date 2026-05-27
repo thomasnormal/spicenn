@@ -138,6 +138,10 @@ def _summary_row(summary: dict[str, Any], *, approach: str, scenario: str, tag: 
         "train_hidden_credit_abs_max_v": summary.get("train_hidden_credit_abs_max_v"),
         "train_hidden_credit_positive_mean_v": summary.get("train_hidden_credit_positive_mean_v"),
         "train_hidden_credit_negative_mean_v": summary.get("train_hidden_credit_negative_mean_v"),
+        "final_hidden_signed_delta_mean_v": summary.get("final_hidden_signed_delta_mean_v"),
+        "final_hidden_signed_delta_abs_mean_v": summary.get("final_hidden_signed_delta_abs_mean_v"),
+        "final_hidden_signed_delta_min_v": summary.get("final_hidden_signed_delta_min_v"),
+        "final_hidden_signed_delta_max_v": summary.get("final_hidden_signed_delta_max_v"),
         "csv": str(summary["csv"]),
         "wall_time_s": float(summary["wall_time_s"]),
     }
@@ -174,6 +178,10 @@ def _failure_row(error: Exception, *, approach: str, scenario: str, tag: str) ->
         "train_hidden_credit_abs_max_v": "",
         "train_hidden_credit_positive_mean_v": "",
         "train_hidden_credit_negative_mean_v": "",
+        "final_hidden_signed_delta_mean_v": "",
+        "final_hidden_signed_delta_abs_mean_v": "",
+        "final_hidden_signed_delta_min_v": "",
+        "final_hidden_signed_delta_max_v": "",
         "csv": "",
         "wall_time_s": "",
     }
@@ -228,6 +236,10 @@ def run_screen(args: argparse.Namespace) -> dict[str, Any]:
         "train_hidden_credit_abs_max_v",
         "train_hidden_credit_positive_mean_v",
         "train_hidden_credit_negative_mean_v",
+        "final_hidden_signed_delta_mean_v",
+        "final_hidden_signed_delta_abs_mean_v",
+        "final_hidden_signed_delta_min_v",
+        "final_hidden_signed_delta_max_v",
         "csv",
         "wall_time_s",
     ]

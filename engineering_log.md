@@ -2,6 +2,28 @@
 
 ## 2026-05-27
 
+- Added `contrast-score-mass-descent` to the continuous multiclass block
+  sequence.  The mode converts class score evidence into a centered analog
+  `cX_score_contrast` rail by charging from the class-local score preamp and
+  discharging against the shared score-common reference, then feeds those
+  contrast rails into the existing transistor/passive score-mass error writer.
+  The focused ngspice regression suite
+  `tests/test_multiclass_block_sequence.py`,
+  `tests/test_multiclass_score_contrast_primitive.py`,
+  `tests/test_multiclass_score_competition_primitive.py`,
+  `tests/test_score_error_primitive.py`, and
+  `tests/test_ngspice_availability.py` passes with 113 tests.  The one-hot
+  3-class sequence learns from `0.333 -> 1.000` with `+0.283 mV` final
+  minimum margin, proving the analog contrast rail is active enough to drive a
+  separable synthetic case without Python-side weight updates.
+- The contrast-score-mass path is not the MNIST3 fix.  On
+  `mnist3fixed8_12`, 6 train / 6 eval, eight fixed features, target-only class
+  bias, and 5 fF score caps, the same mode stayed at `0.333 -> 0.333` with
+  about `-0.523 mV` final minimum margin.  This makes the current conclusion
+  sharper: score centering/contrast blocks are useful support primitives, but
+  the next main path should be lower-level row-pulsed differential conductance
+  guarantees and stronger feature/readout/update alignment, not another
+  score-error topology tweak in the old rung.
 - Added an experimental residual-score nontarget mode to the continuous
   split-rail multiclass block sequence.  The low-level regression now proves a
   transistor/passive low-common-mode PMOS score preamp plus weak analog

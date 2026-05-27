@@ -389,6 +389,25 @@ def test_multiclass_block_sequence_can_use_common_score_mass_pairwise_descent() 
     assert "Mt0_o1_errp_sup t0_o1_errp_sup c0_gt_c1_decision vdd vdd PMOS W=4u" in scaled
 
 
+def test_multiclass_block_sequence_can_use_contrast_score_mass_descent() -> None:
+    netlist = seq.generate_netlist(
+        train_records=_target0_records(1),
+        eval_records=_target0_records(1),
+        error_mode="contrast-score-mass-descent",
+    )
+
+    assert "\nB" not in netlist
+    assert "Vscore_contrast_ref score_contrast_ref 0 0.6" in netlist
+    assert "Cscore_common score_common 0 4f IC=1.2" in netlist
+    assert "Cc0_score_contrast c0_score_contrast 0 10f IC=0.6" in netlist
+    assert "Mreset_c0_score_contrast c0_score_contrast scoregaterst score_contrast_ref 0 NMOS W=4u" in netlist
+    assert "Mc0_score_contrast_up_v vdd c0_score_amp c0_score_contrast_up 0 NREL W=192u" in netlist
+    assert "Mc0_score_contrast_dn_v c0_score_contrast score_common c0_score_contrast_dn 0 NREL W=24u" in netlist
+    assert "Mmass_nt1_score mass_nt1_a c1_score_contrast mass_nt1_s 0 NSENSE W=128u" in netlist
+    assert ".meas tran c0_score_contrast_1" in netlist
+    assert ".meas tran c0_errdiff_1" in netlist
+
+
 def test_multiclass_block_sequence_can_add_target_only_class_bias_row() -> None:
     netlist = seq.generate_netlist(
         train_records=_target0_records(1),
@@ -689,14 +708,23 @@ def _score_mass_descent_netlist(
     *,
     target_class: int,
     common_centered: bool = False,
+    contrast_centered: bool = False,
     target_centered: bool = False,
     pairwise_hybrid: bool = False,
 ) -> str:
-    if common_centered and target_centered:
-        raise ValueError("common_centered and target_centered are mutually exclusive")
+    if sum(bool(value) for value in (common_centered, contrast_centered, target_centered)) > 1:
+        raise ValueError("score centering modes are mutually exclusive")
     if pairwise_hybrid and not common_centered:
         raise ValueError("pairwise_hybrid currently uses common_centered score mass")
-    score_suffix = "score_target_gate" if target_centered else "score_common_gate" if common_centered else "score_amp"
+    score_suffix = (
+        "score_target_gate"
+        if target_centered
+        else "score_contrast"
+        if contrast_centered
+        else "score_common_gate"
+        if common_centered
+        else "score_amp"
+    )
     score_nodes = [f"c{class_idx}_{score_suffix}" for class_idx in range(3)]
     lines = [
         "* Low-level multiclass score-mass descent writer primitive.",
@@ -706,6 +734,7 @@ def _score_mass_descent_netlist(
         "Vdd vdd 0 {VDD}",
         "Vvwhi_ref vwhi_ref 0 0.42",
         "Vvwlo_ref vwlo_ref 0 0.28",
+        "Vscore_contrast_ref score_contrast_ref 0 0.6",
         "Velig elig0 0 0.85",
         "Vscorepre scorepre 0 1.2",
         "Vscoregaterst scoregaterst 0 PULSE(1.2 0 0.4n 10p 10p 8n 20n)",
@@ -741,6 +770,15 @@ def _score_mass_descent_netlist(
                 for line in seq.class_local_score_common_gate_lines(class_idx=class_idx)
             ],
         ]
+    if contrast_centered:
+        lines += [
+            *seq.shared_score_common_reference_lines(class_count=3),
+            *[
+                line
+                for class_idx in range(3)
+                for line in seq.class_local_score_contrast_lines(class_idx=class_idx)
+            ],
+        ]
     if target_centered:
         lines += [
             *seq.shared_label_score_reference_lines(class_count=3),
@@ -759,10 +797,10 @@ def _score_mass_descent_netlist(
     lines += seq.shared_score_mass_error_lines(
         class_count=3,
         score_input_template=f"c{{class_idx}}_{score_suffix}",
-        sum_width_u=128.0 if (common_centered or target_centered) else 32.0,
-        error_width_u=128.0 if (common_centered or target_centered) else 32.0,
-        mass_capacitance_f=0.5 if (common_centered or target_centered) else 8.0,
-        error_capacitance_f=0.5 if (common_centered or target_centered) else 8.0,
+        sum_width_u=128.0 if (common_centered or contrast_centered or target_centered) else 32.0,
+        error_width_u=128.0 if (common_centered or contrast_centered or target_centered) else 32.0,
+        mass_capacitance_f=0.5 if (common_centered or contrast_centered or target_centered) else 8.0,
+        error_capacitance_f=0.5 if (common_centered or contrast_centered or target_centered) else 8.0,
     )
     if pairwise_hybrid:
         lines += [
@@ -805,7 +843,7 @@ def _score_mass_descent_netlist(
                 [
                     f".meas tran c{class_idx}_score_gate_after FIND V({score_nodes[class_idx]}) AT=2.35n",
                 ]
-                if common_centered or target_centered
+                if common_centered or contrast_centered or target_centered
                 else []
             ),
             *(
@@ -1302,6 +1340,25 @@ def test_multiclass_block_sequence_ngspice_common_score_mass_uses_centered_class
     assert abs(float(measures["c2_errdiff"])) < abs(float(measures["c0_errdiff"]))
     assert float(measures["c1_signed_after"]) > 1e-6
     assert abs(float(measures["c0_signed_after"])) < 1e-6
+
+
+def test_multiclass_block_sequence_ngspice_contrast_score_mass_uses_analog_contrast(
+    tmp_path: Path,
+    ngspice_path: str,
+) -> None:
+    measures = run_netlist(
+        ngspice_path,
+        tmp_path / "contrast_score_mass_descent_high_wrong0.cir",
+        _score_mass_descent_netlist((0.75, 0.45, 0.15), target_class=1, contrast_centered=True),
+        timeout=20.0,
+    )
+
+    assert float(measures["c0_score_gate_after"]) > float(measures["c1_score_gate_after"]) + 10e-3
+    assert float(measures["c1_score_gate_after"]) > float(measures["c2_score_gate_after"]) + 10e-3
+    assert float(measures["score_nontarget_mass_after"]) > 0.05
+    assert float(measures["c1_errdiff"]) > 0.01
+    assert float(measures["c0_errdiff"]) < -0.01
+    assert float(measures["c1_signed_after"]) > 1e-6
 
 
 def test_multiclass_block_sequence_ngspice_common_score_mass_pairwise_adds_mistake_pressure(
@@ -1809,6 +1866,35 @@ def test_multiclass_block_sequence_ngspice_common_score_mass_pairwise_keeps_one_
     assert final_predictions == [0, 1, 2]
     assert float(measures["score_nontarget_mass_c0_4"]) > 1e-3
     assert abs(float(measures["c0_gt_c1_diff_4"])) > 1e-3
+    for class_idx in range(3):
+        assert float(measures[f"c{class_idx}_f{class_idx}_signed_final"]) > 1e-3
+
+
+def test_multiclass_block_sequence_ngspice_contrast_score_mass_keeps_one_hot_predictions(
+    tmp_path: Path,
+    ngspice_path: str,
+) -> None:
+    measures = run_netlist(
+        ngspice_path,
+        tmp_path / "multiclass_block_sequence_onehot_contrast_score_mass.cir",
+        seq.generate_netlist(
+            train_records=_one_hot_records(),
+            eval_records=_one_hot_records(),
+            class_count=3,
+            feature_count=3,
+            score_capacitance_f=5.0,
+            error_mode="contrast-score-mass-descent",
+        ),
+        timeout=100.0,
+    )
+
+    final_predictions = [
+        int(np.argmax([float(measures[f"c{class_idx}_score_net_{cycle}"]) for class_idx in range(3)]))
+        for cycle in range(6, 9)
+    ]
+    assert final_predictions == [0, 1, 2]
+    assert float(measures["score_nontarget_mass_c0_4"]) > 1e-3
+    assert float(measures["c0_score_contrast_4"]) > 1e-3
     for class_idx in range(3):
         assert float(measures[f"c{class_idx}_f{class_idx}_signed_final"]) > 1e-3
 

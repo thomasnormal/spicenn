@@ -94,6 +94,14 @@ def test_multiclass_block_sequence_defaults_score_measure_to_timing_window() -> 
     assert ".meas tran c0_score_0 FIND V(c0_score) AT=8.50n" in late_netlist
     assert ".meas tran c0_score_0 FIND V(c0_score) AT=5.30n" in early_netlist
     assert ".meas tran c0_score_0 FIND V(c0_score) AT=5.05n" in explicit_netlist
+    assert seq.physical_readout_replay_measure_time_ns(
+        continuous_score_measure_ns=5.30,
+        continuous_out_start_ns=5.0,
+    ) == pytest.approx(1.30)
+    assert seq.physical_readout_replay_measure_time_ns(
+        continuous_score_measure_ns=8.50,
+        continuous_out_start_ns=5.0,
+    ) == pytest.approx(4.50)
 
 
 def test_multiclass_block_sequence_can_sample_differential_activation_as_eligibility() -> None:

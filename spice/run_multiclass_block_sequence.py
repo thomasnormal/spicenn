@@ -272,6 +272,18 @@ def effective_score_measure_time_ns(*, score_timing_mode: str, requested_measure
     return 8.50
 
 
+def physical_readout_replay_measure_time_ns(
+    *,
+    continuous_score_measure_ns: float,
+    continuous_out_start_ns: float,
+    replay_out_start_ns: float = 1.0,
+) -> float:
+    measure_ns = replay_out_start_ns + continuous_score_measure_ns - continuous_out_start_ns
+    if measure_ns <= 0.0:
+        raise ValueError("physical replay measurement time must be positive")
+    return measure_ns
+
+
 def hidden_readout_weighted_credit_lines(
     *,
     class_count: int,
@@ -3099,6 +3111,7 @@ def physical_readout_replay_projection_stats(
     score_mirror_diode_width_u: float,
     score_mirror_sink_width_u: float,
     score_mirror_reset_width_u: float,
+    measure_ns: float,
     timeout: float,
 ) -> dict[str, Any]:
     """Run post-training final-weight readout replay decks for final eval rows.
@@ -3128,6 +3141,7 @@ def physical_readout_replay_projection_stats(
             score_mirror_diode_width_u=score_mirror_diode_width_u,
             score_mirror_sink_width_u=score_mirror_sink_width_u,
             score_mirror_reset_width_u=score_mirror_reset_width_u,
+            measure_ns=measure_ns,
         )
         replay_measures = run_netlist(
             spice_bin,
@@ -3858,6 +3872,14 @@ def run_case(args: argparse.Namespace) -> dict[str, Any]:
         final_positive=final_positive,
         final_negative=final_negative,
     )
+    effective_score_measure_ns = effective_score_measure_time_ns(
+        score_timing_mode=args.score_timing_mode,
+        requested_measure_ns=args.score_measure_ns,
+    )
+    replay_measure_ns = physical_readout_replay_measure_time_ns(
+        continuous_score_measure_ns=effective_score_measure_ns,
+        continuous_out_start_ns=5.0,
+    )
     physical_replay = (
         physical_readout_replay_projection_stats(
             measures,
@@ -3879,6 +3901,7 @@ def run_case(args: argparse.Namespace) -> dict[str, Any]:
             score_mirror_diode_width_u=args.score_mirror_diode_width,
             score_mirror_sink_width_u=args.score_mirror_sink_width,
             score_mirror_reset_width_u=args.score_mirror_reset_width,
+            measure_ns=replay_measure_ns,
             timeout=args.physical_readout_replay_timeout,
         )
         if args.physical_readout_replay
@@ -4105,6 +4128,7 @@ def run_case(args: argparse.Namespace) -> dict[str, Any]:
             prefix="conductance_projection",
         ),
         "physical_readout_replay_enabled": args.physical_readout_replay,
+        "physical_readout_replay_measure_ns": replay_measure_ns if args.physical_readout_replay else None,
         **physical_replay,
         **physical_readout_replay_alignment_stats(
             rows,

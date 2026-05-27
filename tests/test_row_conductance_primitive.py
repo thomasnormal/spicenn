@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import sys
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -10,7 +11,7 @@ ROOT = Path(__file__).resolve().parents[1]
 SPICE_DIR = ROOT / "spice"
 
 
-def _run_ngspice_case(tmp_path: Path, ngspice_path: str, name: str, **kwargs: float | str) -> dict[str, float]:
+def _run_ngspice_case(tmp_path: Path, ngspice_path: str, name: str, **kwargs: Any) -> dict[str, float]:
     sys.path.insert(0, str(SPICE_DIR))
     import run_row_conductance_primitive as primitive
     from run_device_sequential_training import run_netlist
@@ -80,6 +81,23 @@ def test_row_conductance_netlist_uses_differential_conductance_compute() -> None
     assert "Ven en 0 PWL(" in sequence
     assert "25.01n 0" in sequence
 
+    credit_sequence = primitive.generate_netlist(
+        wp=0.45,
+        wn=0.40,
+        cycles=2,
+        cycle_rows=[0.85, 0.85],
+        cycle_credit_modes=["positive", "negative"],
+        writer_error_source="hidden_credit",
+    )
+    assert "\nB" not in credit_sequence
+    assert "Vep ep 0 0" in credit_sequence
+    assert "Ven en 0 0" in credit_sequence
+    assert "Vedp edp 0 PWL(" in credit_sequence
+    assert "Vedn edn 0 PWL(" in credit_sequence
+    assert "11.01n 1.2" in credit_sequence
+    assert "35.01n 0" in credit_sequence
+    assert "35.01n 1.2" in credit_sequence
+
 
 def test_row_conductance_classification_tracks_expected_signs() -> None:
     sys.path.insert(0, str(SPICE_DIR))
@@ -146,6 +164,10 @@ def test_row_conductance_cli_validation() -> None:
         primitive.generate_netlist(wp=0.45, wn=0.40, cycles=2, cycle_rows=[0.85])
     with pytest.raises(ValueError, match="cycle_update_modes"):
         primitive.generate_netlist(wp=0.45, wn=0.40, cycles=2, cycle_update_modes=["positive", "bad"])
+    with pytest.raises(ValueError, match="cycle_credit_modes"):
+        primitive.generate_netlist(wp=0.45, wn=0.40, cycles=2, cycle_credit_modes=["positive"])
+    with pytest.raises(ValueError, match="cycle_credit_modes"):
+        primitive.generate_netlist(wp=0.45, wn=0.40, cycles=2, cycle_credit_modes=["positive", "bad"])
     with pytest.raises(ValueError, match="writer_error_source"):
         primitive.generate_netlist(wp=0.45, wn=0.40, writer_error_source="bad")
 
@@ -484,3 +506,86 @@ def test_row_conductance_primitive_ngspice_hidden_credit_writer_respects_input_d
     assert float(measures["hidden_credit_margin"]) > 0.05
     assert float(measures["elig_after"]) < 1e-3
     assert abs(float(measures["signed_weight_delta"])) < 1e-3
+
+
+def test_row_conductance_primitive_ngspice_hidden_credit_writer_accumulates_across_cycles(
+    tmp_path: Path,
+    ngspice_path: str,
+) -> None:
+    measures = _run_ngspice_case(
+        tmp_path,
+        ngspice_path,
+        "credit_writer_two_positive_cycles",
+        wp=0.45,
+        wn=0.40,
+        cycles=2,
+        cycle_rows=[0.85, 0.85],
+        cycle_credit_modes=["positive", "positive"],
+        update_mode="none",
+        credit_mode="none",
+        readout_wp=0.55,
+        readout_wn=0.30,
+        writer_error_source="hidden_credit",
+    )
+
+    first_delta = float(measures["signed_weight_delta"])
+    final_delta = float(measures["signed_weight_drift_cycle2"])
+    assert first_delta > 0.005
+    assert final_delta > first_delta + 0.005
+    assert float(measures["hidden_credit_margin_cycle2"]) > 0.05
+    assert float(measures["pre_p_after_cycle2_reset"]) < 1e-3
+    assert float(measures["pre_n_after_cycle2_reset"]) < 1e-3
+
+
+def test_row_conductance_primitive_ngspice_hidden_credit_writer_follows_cycle_error_polarity(
+    tmp_path: Path,
+    ngspice_path: str,
+) -> None:
+    measures = _run_ngspice_case(
+        tmp_path,
+        ngspice_path,
+        "credit_writer_positive_then_negative_cycle",
+        wp=0.45,
+        wn=0.40,
+        cycles=2,
+        cycle_rows=[0.85, 0.85],
+        cycle_credit_modes=["positive", "negative"],
+        update_mode="none",
+        credit_mode="none",
+        readout_wp=0.55,
+        readout_wn=0.30,
+        writer_error_source="hidden_credit",
+    )
+
+    first_delta = float(measures["signed_weight_delta"])
+    final_delta = float(measures["signed_weight_drift_cycle2"])
+    assert first_delta > 0.005
+    assert float(measures["hidden_credit_margin_cycle2"]) < -0.05
+    assert final_delta < first_delta - 0.005
+
+
+def test_row_conductance_primitive_ngspice_hidden_credit_sequence_respects_later_zero_row(
+    tmp_path: Path,
+    ngspice_path: str,
+) -> None:
+    measures = _run_ngspice_case(
+        tmp_path,
+        ngspice_path,
+        "credit_writer_positive_then_zero_row",
+        wp=0.45,
+        wn=0.40,
+        cycles=2,
+        cycle_rows=[0.85, 0.0],
+        cycle_credit_modes=["positive", "positive"],
+        update_mode="none",
+        credit_mode="none",
+        readout_wp=0.55,
+        readout_wn=0.30,
+        writer_error_source="hidden_credit",
+    )
+
+    first_delta = float(measures["signed_weight_delta"])
+    final_delta = float(measures["signed_weight_drift_cycle2"])
+    assert first_delta > 0.005
+    assert float(measures["hidden_credit_margin_cycle2"]) > 0.05
+    assert abs(final_delta - first_delta) < 2e-3

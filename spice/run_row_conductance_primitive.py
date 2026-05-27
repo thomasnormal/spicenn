@@ -94,6 +94,7 @@ def generate_netlist(
     cycles: int = 1,
     cycle_rows: list[float] | tuple[float, ...] | None = None,
     cycle_update_modes: list[str] | tuple[str, ...] | None = None,
+    cycle_credit_modes: list[str] | tuple[str, ...] | None = None,
 ) -> str:
     if update_mode not in UPDATE_MODES:
         raise ValueError(f"update_mode must be one of {UPDATE_MODES}")
@@ -107,10 +108,16 @@ def generate_netlist(
         raise ValueError("cycle_rows length must match cycles")
     if cycle_update_modes is not None and len(cycle_update_modes) != cycles:
         raise ValueError("cycle_update_modes length must match cycles")
+    if cycle_credit_modes is not None and len(cycle_credit_modes) != cycles:
+        raise ValueError("cycle_credit_modes length must match cycles")
     if cycle_update_modes is not None:
         bad_modes = sorted(set(cycle_update_modes) - set(UPDATE_MODES))
         if bad_modes:
             raise ValueError(f"cycle_update_modes entries must be one of {UPDATE_MODES}: {bad_modes}")
+    if cycle_credit_modes is not None:
+        bad_modes = sorted(set(cycle_credit_modes) - set(CREDIT_MODES))
+        if bad_modes:
+            raise ValueError(f"cycle_credit_modes entries must be one of {CREDIT_MODES}: {bad_modes}")
     for name, value in {
         "syn_width": syn_width,
         "row_drive_width": row_drive_width,
@@ -122,13 +129,16 @@ def generate_netlist(
             raise ValueError(f"{name} must be positive")
     per_cycle_rows = list(cycle_rows) if cycle_rows is not None else [row] * cycles
     per_cycle_update_modes = list(cycle_update_modes) if cycle_update_modes is not None else [update_mode] * cycles
+    per_cycle_credit_modes = list(cycle_credit_modes) if cycle_credit_modes is not None else [credit_mode] * cycles
     ep, en = update_rails(update_mode)
     ep_values = [update_rails(mode)[0] for mode in per_cycle_update_modes]
     en_values = [update_rails(mode)[1] for mode in per_cycle_update_modes]
     edp, edn = credit_rails(credit_mode)
+    edp_values = [credit_rails(mode)[0] for mode in per_cycle_credit_modes]
+    edn_values = [credit_rails(mode)[1] for mode in per_cycle_credit_modes]
     rwp = wp if readout_wp is None else readout_wp
     rwn = wn if readout_wn is None else readout_wn
-    uses_cycle_sources = cycle_rows is not None or cycle_update_modes is not None
+    uses_cycle_sources = cycle_rows is not None or cycle_update_modes is not None or cycle_credit_modes is not None
     uses_external_error = writer_error_source == "external"
     writer_p = "ep" if uses_external_error else "hdp"
     writer_n = "en" if uses_external_error else "hdn"
@@ -153,6 +163,16 @@ def generate_netlist(
     else:
         ep_source = "0"
         en_source = "0"
+    edp_source = (
+        cycle_window_pwl(edp_values, start_ns=11.0, end_ns=15.0)
+        if cycle_credit_modes is not None
+        else f"PULSE(0 {edp:.12g} 11.0n 10p 10p 4.0n 24n)"
+    )
+    edn_source = (
+        cycle_window_pwl(edn_values, start_ns=11.0, end_ns=15.0)
+        if cycle_credit_modes is not None
+        else f"PULSE(0 {edn:.12g} 11.0n 10p 10p 4.0n 24n)"
+    )
     stop_ns = 18.0 + PERIOD_NS * (cycles - 1)
     lines = [
         "* Row-pulsed differential conductance primitive smoke.",
@@ -169,8 +189,8 @@ def generate_netlist(
         f"Vep ep 0 {ep_source}",
         f"Ven en 0 {en_source}",
         f"Vapply apply 0 PULSE(0 1.2 {ns_literal(apply_start_ns)}n 10p 10p {apply_width_ns:.12g}n 24n)",
-        f"Vedp edp 0 PULSE(0 {edp:.12g} 11.0n 10p 10p 4.0n 24n)",
-        f"Vedn edn 0 PULSE(0 {edn:.12g} 11.0n 10p 10p 4.0n 24n)",
+        f"Vedp edp 0 {edp_source}",
+        f"Vedn edn 0 {edn_source}",
         f"Cwp wp 0 20f IC={wp:.12g}",
         f"Cwn wn 0 20f IC={wn:.12g}",
         f"Cvwp vwp 0 20f IC={rwp:.12g}",
@@ -251,6 +271,9 @@ def generate_netlist(
                 f".meas tran wp_after_cycle2 FIND V(wp) AT={PERIOD_NS + weight_after_ns:.12g}n",
                 f".meas tran wn_after_cycle2 FIND V(wn) AT={PERIOD_NS + weight_after_ns:.12g}n",
                 ".meas tran signed_weight_drift_cycle2 PARAM='(wp_after_cycle2-wn_after_cycle2)-signed_weight_before'",
+                ".meas tran hdp_after_cycle2 FIND V(hdp) AT=38.5n",
+                ".meas tran hdn_after_cycle2 FIND V(hdn) AT=38.5n",
+                ".meas tran hidden_credit_margin_cycle2 PARAM='hdp_after_cycle2-hdn_after_cycle2'",
             ]
             if cycles >= 2
             else []

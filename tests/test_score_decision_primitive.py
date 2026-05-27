@@ -138,6 +138,78 @@ def test_score_decision_primitive_emits_low_common_mode_referenced_gain_stage() 
     assert ".meas tran score_gain_diff PARAM='score_amp_after-scoren_amp_after'" in netlist
 
 
+def test_low_common_mode_referenced_gain_stage_can_be_prefixed_for_multiclass() -> None:
+    lines = decision.low_gain_ref_decision_lines(
+        prefix="c2_",
+        score_node="score_2",
+        scoren_node="scoren_2",
+        outref_node="outref_shared",
+        amp_clock_node="dec_2a",
+        decision_clock_node="dec_2b",
+        pullup_width=8.0,
+        pulldown_width=12.0,
+    )
+    text = "\n".join(lines)
+
+    assert "Mc2_scoreamp_score_p c2_score_amp score_2 c2_scoreamp_score_i vdd PMOS W=1u" in text
+    assert "Mc2_dec_low_gain_ref_ref c2_decision outref_shared c2_dec_src 0 NSENSE W=12u" in text
+    assert "Mc2_dec_low_gain_ref_tail c2_dec_src dec_2b 0 0 NMOS W=12u" in text
+    assert " score " not in text
+    assert " decision " not in text
+
+
+def _prefixed_low_gain_ref_multiclass_netlist() -> str:
+    lines = [
+        "* Two independent class-local low-common-mode score decisions.",
+        ".param VDD=1.2",
+        decision.mos_models(),
+        ".options method=gear reltol=1e-3 abstol=1e-12 vntol=1e-6",
+        "Vdd vdd 0 {VDD}",
+        "Vc0_score c0_score 0 0.05523149",
+        "Vc0_scoren c0_scoren 0 0",
+        "Vc1_score c1_score 0 0.02633636",
+        "Vc1_scoren c1_scoren 0 0",
+        "Voutref outref 0 0.25",
+        "Vrstfn rstfn 0 PULSE(0 1.2 0.8n 10p 10p 8n 10n)",
+        "Vdec dec 0 PULSE(0 1.2 1.0n 10p 10p 3n 10n)",
+        "Vdec2 dec2 0 PULSE(0 1.2 4.6n 10p 10p 0.7n 10n)",
+    ]
+    for prefix in ("c0_", "c1_"):
+        lines += [
+            f"C{prefix}decision {prefix}decision 0 20f IC=0",
+            f"C{prefix}decisionn {prefix}decisionn 0 20f IC=0",
+            f"R{prefix}decision {prefix}decision 0 1G",
+            f"R{prefix}decisionn {prefix}decisionn 0 1G",
+            f"Mprecharge_{prefix}decision {prefix}decision rstfn vdd vdd PMOS W=4u L=180n",
+            f"Mprecharge_{prefix}decisionn {prefix}decisionn rstfn vdd vdd PMOS W=4u L=180n",
+            *decision.low_gain_ref_state_lines(prefix=prefix),
+            *decision.low_gain_ref_decision_lines(
+                prefix=prefix,
+                score_node=f"{prefix}score",
+                scoren_node=f"{prefix}scoren",
+                outref_node="outref",
+                amp_clock_node="dec",
+                decision_clock_node="dec2",
+            ),
+            f".meas tran {prefix}score_gain_diff PARAM='{prefix}score_amp_after-{prefix}scoren_amp_after'",
+            f".meas tran {prefix}score_amp_after FIND V({prefix}score_amp) AT=4.5n",
+            f".meas tran {prefix}scoren_amp_after FIND V({prefix}scoren_amp) AT=4.5n",
+            f".meas tran {prefix}decision_after FIND V({prefix}decision) AT=5.80n",
+            f".meas tran {prefix}decisionn_after FIND V({prefix}decisionn) AT=5.80n",
+            f".meas tran {prefix}decision_diff PARAM='{prefix}decision_after-{prefix}decisionn_after'",
+        ]
+    lines += [
+        ".tran 2p 6.2n uic",
+        ".control",
+        "run",
+        "quit",
+        ".endc",
+        ".end",
+        "",
+    ]
+    return "\n".join(lines)
+
+
 @pytest.mark.parametrize(
     ("case", "expected"),
     [
@@ -507,3 +579,22 @@ def test_score_decision_primitive_ngspice_low_gain_ref_centers_target_scale_unip
     assert float(positive["score_gain_diff"]) > float(negative["score_gain_diff"])
     assert float(positive["decision_diff"]) > 0.05
     assert float(negative["decision_diff"]) < -0.05
+
+
+def test_score_decision_primitive_ngspice_prefixed_low_gain_ref_instances_are_independent(
+    tmp_path: Path,
+    ngspice_path: str,
+) -> None:
+    netlist = _prefixed_low_gain_ref_multiclass_netlist()
+    assert "\nB" not in netlist
+
+    measures = run_netlist(
+        ngspice_path,
+        tmp_path / "score_decision_prefixed_multiclass.cir",
+        netlist,
+        timeout=20.0,
+    )
+
+    assert float(measures["c0_score_gain_diff"]) > float(measures["c1_score_gain_diff"])
+    assert float(measures["c0_decision_diff"]) > 0.05
+    assert float(measures["c1_decision_diff"]) < -0.05

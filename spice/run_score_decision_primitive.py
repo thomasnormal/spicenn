@@ -31,6 +31,67 @@ DECISION_TOPOLOGIES = (
 )
 
 
+def prefixed(prefix: str, base: str) -> str:
+    return f"{prefix}{base}" if prefix else base
+
+
+def low_gain_ref_state_lines(
+    *,
+    prefix: str = "",
+    gain_capacitance_f: float = 8.0,
+    score_amp_ic: float = 1.2,
+    reset_node: str = "rstfn",
+) -> list[str]:
+    score_amp = prefixed(prefix, "score_amp")
+    scoren_amp = prefixed(prefix, "scoren_amp")
+    return [
+        f"C{score_amp} {score_amp} 0 {gain_capacitance_f:.12g}f IC={score_amp_ic:.12g}",
+        f"C{scoren_amp} {scoren_amp} 0 {gain_capacitance_f:.12g}f IC={score_amp_ic:.12g}",
+        f"R{score_amp} {score_amp} 0 1G",
+        f"R{scoren_amp} {scoren_amp} 0 1G",
+        f"Mprecharge_{score_amp} {score_amp} {reset_node} vdd vdd PMOS W=4u L=180n",
+        f"Mprecharge_{scoren_amp} {scoren_amp} {reset_node} vdd vdd PMOS W=4u L=180n",
+    ]
+
+
+def low_gain_ref_decision_lines(
+    *,
+    prefix: str = "",
+    score_node: str = "score",
+    scoren_node: str = "scoren",
+    outref_node: str = "outref",
+    decision_node: str | None = None,
+    decisionn_node: str | None = None,
+    amp_clock_node: str = "amp",
+    decision_clock_node: str = "dec2",
+    pullup_width: float = 8.0,
+    pulldown_width: float = 12.0,
+    gain_input_width: float = 1.0,
+    gain_tail_width: float = 8.0,
+) -> list[str]:
+    score_amp = prefixed(prefix, "score_amp")
+    scoren_amp = prefixed(prefix, "scoren_amp")
+    score_amp_i = prefixed(prefix, "scoreamp_score_i")
+    scoren_amp_i = prefixed(prefix, "scoreamp_scoren_i")
+    decision = prefixed(prefix, "decision") if decision_node is None else decision_node
+    decisionn = prefixed(prefix, "decisionn") if decisionn_node is None else decisionn_node
+    dec_src = prefixed(prefix, "dec_src")
+    return [
+        "* Low-common-mode PMOS-input preamp followed by a referenced binary latch.",
+        f"M{prefix}scoreamp_score_p {score_amp} {score_node} {score_amp_i} vdd PMOS W={gain_input_width:.6g}u L=180n",
+        f"M{prefix}scoreamp_score_tail {score_amp_i} {amp_clock_node} 0 0 NMOS W={gain_tail_width:.6g}u L=180n",
+        f"M{prefix}scoreamp_scoren_p {scoren_amp} {scoren_node} {scoren_amp_i} vdd PMOS W={gain_input_width:.6g}u L=180n",
+        f"M{prefix}scoreamp_scoren_tail {scoren_amp_i} {amp_clock_node} 0 0 NMOS W={gain_tail_width:.6g}u L=180n",
+        "* Positive class wins only when score_amp beats scoren_amp plus the physical outref current.",
+        f"M{prefix}dec_low_gain_ref_p {decision} {decisionn} vdd vdd PMOS W={pullup_width:.6g}u L=180n",
+        f"M{prefix}decn_low_gain_ref_p {decisionn} {decision} vdd vdd PMOS W={pullup_width:.6g}u L=180n",
+        f"M{prefix}dec_low_gain_ref_scorenamp {decision} {scoren_amp} {dec_src} 0 NSENSE W={pulldown_width:.6g}u L=180n",
+        f"M{prefix}dec_low_gain_ref_ref {decision} {outref_node} {dec_src} 0 NSENSE W={pulldown_width:.6g}u L=180n",
+        f"M{prefix}decn_low_gain_ref_scoreamp {decisionn} {score_amp} {dec_src} 0 NSENSE W={pulldown_width:.6g}u L=180n",
+        f"M{prefix}dec_low_gain_ref_tail {dec_src} {decision_clock_node} 0 0 NMOS W={pulldown_width:.6g}u L=180n",
+    ]
+
+
 def score_values(case: str, *, center: float, delta: float) -> tuple[float, float]:
     if case == "positive":
         return center + delta / 2.0, center - delta / 2.0
@@ -244,24 +305,13 @@ def generate_netlist(
         ]
     elif decision_topology == "score-diff-low-gain-ref":
         lines += [
-            f"Cscore_amp score_amp 0 {gain_capacitance_f:.12g}f IC=1.2",
-            f"Cscoren_amp scoren_amp 0 {gain_capacitance_f:.12g}f IC=1.2",
-            "Rscore_amp score_amp 0 1G",
-            "Rscoren_amp scoren_amp 0 1G",
-            "Mprecharge_score_amp score_amp rstfn vdd vdd PMOS W=4u L=180n",
-            "Mprecharge_scoren_amp scoren_amp rstfn vdd vdd PMOS W=4u L=180n",
-            "* Low-common-mode PMOS-input preamp followed by a referenced binary latch.",
-            f"Mscoreamp_score_p score_amp score scoreamp_score_i vdd PMOS W={gain_input_width:.6g}u L=180n",
-            f"Mscoreamp_score_tail scoreamp_score_i amp 0 0 NMOS W={gain_tail_width:.6g}u L=180n",
-            f"Mscoreamp_scoren_p scoren_amp scoren scoreamp_scoren_i vdd PMOS W={gain_input_width:.6g}u L=180n",
-            f"Mscoreamp_scoren_tail scoreamp_scoren_i amp 0 0 NMOS W={gain_tail_width:.6g}u L=180n",
-            "* Positive class wins only when score_amp beats scoren_amp plus the physical outref current.",
-            f"Mdec_low_gain_ref_p decision decisionn vdd vdd PMOS W={pullup_width:.6g}u L=180n",
-            f"Mdecn_low_gain_ref_p decisionn decision vdd vdd PMOS W={pullup_width:.6g}u L=180n",
-            f"Mdec_low_gain_ref_scorenamp decision scoren_amp dec_src 0 NSENSE W={pulldown_width:.6g}u L=180n",
-            f"Mdec_low_gain_ref_ref decision outref dec_src 0 NSENSE W={pulldown_width:.6g}u L=180n",
-            f"Mdecn_low_gain_ref_scoreamp decisionn score_amp dec_src 0 NSENSE W={pulldown_width:.6g}u L=180n",
-            f"Mdec_low_gain_ref_tail dec_src dec2 0 0 NMOS W={pulldown_width:.6g}u L=180n",
+            *low_gain_ref_state_lines(gain_capacitance_f=gain_capacitance_f),
+            *low_gain_ref_decision_lines(
+                pullup_width=pullup_width,
+                pulldown_width=pulldown_width,
+                gain_input_width=gain_input_width,
+                gain_tail_width=gain_tail_width,
+            ),
             ".meas tran score_amp_after FIND V(score_amp) AT=4.5n",
             ".meas tran scoren_amp_after FIND V(scoren_amp) AT=4.5n",
             ".meas tran score_gain_diff PARAM='score_amp_after-scoren_amp_after'",

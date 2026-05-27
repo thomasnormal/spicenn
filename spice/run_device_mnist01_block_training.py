@@ -22,6 +22,7 @@ from run_device_sequential_training import (
     pulse_wave,
     run_netlist,
 )
+from run_score_decision_primitive import low_gain_ref_decision_lines
 from run_spice_mnist_local_block_batch_op_train import block_indices
 from run_spice_sweep import ROOT, detect_spice, run_tiny_test
 from spicenn.timing import CYCLE_NS
@@ -2353,19 +2354,11 @@ def block_netlist(
         )
     elif output_decision_stage == "score-diff-low-gain-ref-latched":
         decision_stage = "\n".join(
-            [
-                "* Low-common-mode PMOS-input score preamp followed by a referenced binary latch.",
-                "Mscoreamp_score_p score_amp score scoreamp_score_i vdd PMOS W=1u L=180n",
-                "Mscoreamp_score_tail scoreamp_score_i dec 0 0 NMOS W=8u L=180n",
-                "Mscoreamp_scoren_p scoren_amp scoren scoreamp_scoren_i vdd PMOS W=1u L=180n",
-                "Mscoreamp_scoren_tail scoreamp_scoren_i dec 0 0 NMOS W=8u L=180n",
-                f"Mdec_low_gain_ref_p decision decisionn vdd vdd PMOS W={output_decision_pullup_width:.6g}u L=180n",
-                f"Mdecn_low_gain_ref_p decisionn decision vdd vdd PMOS W={output_decision_pullup_width:.6g}u L=180n",
-                f"Mdec_low_gain_ref_scorenamp decision scoren_amp dec_src 0 NSENSE W={output_decision_pulldown_width:.6g}u L=180n",
-                f"Mdec_low_gain_ref_ref decision outref dec_src 0 NSENSE W={output_decision_pulldown_width:.6g}u L=180n",
-                f"Mdecn_low_gain_ref_scoreamp decisionn score_amp dec_src 0 NSENSE W={output_decision_pulldown_width:.6g}u L=180n",
-                f"Mdec_low_gain_ref_tail dec_src dec2 0 0 NMOS W={output_decision_pulldown_width:.6g}u L=180n",
-            ]
+            low_gain_ref_decision_lines(
+                amp_clock_node="dec",
+                pullup_width=output_decision_pullup_width,
+                pulldown_width=output_decision_pulldown_width,
+            )
         )
     elif output_decision_stage == "ratio-inverter":
         decision_stage = "\n".join(

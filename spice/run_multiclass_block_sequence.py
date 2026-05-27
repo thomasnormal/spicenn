@@ -1873,6 +1873,98 @@ def signed_readout_projection_stats(
     }
 
 
+def activation_prototype_projection_stats(
+    measures: dict[str, float],
+    *,
+    labels: list[int],
+    sequence: list[str],
+    class_count: int,
+    total_feature_count: int,
+) -> dict[str, Any]:
+    """Classify final activations with prototypes built from train activations.
+
+    This diagnostic asks whether the measured feature/eligibility space is
+    separable before blaming a specific physical readout update rule. It is
+    post-run analysis only and does not modify circuit state.
+    """
+    train_by_class: list[list[np.ndarray]] = [[] for _ in range(class_count)]
+    final_rows: list[tuple[int, int, np.ndarray]] = []
+    for cycle, seq in enumerate(sequence):
+        keys = [f"act_f{feature}_{cycle}" for feature in range(total_feature_count)]
+        if not all(key in measures for key in keys):
+            continue
+        acts = np.array([float(measures[key]) for key in keys], dtype=float)
+        label = int(labels[cycle])
+        if seq == "train":
+            train_by_class[label].append(acts)
+        elif seq == "final_eval":
+            final_rows.append((cycle, label, acts))
+    if any(not rows for rows in train_by_class) or not final_rows:
+        return {
+            "final_eval_activation_prototype_rows": [],
+            "final_eval_activation_prototype_accuracy": None,
+            "final_eval_activation_prototype_min_margin_v2": None,
+            "final_eval_activation_prototype_pairwise_cosine_mean": None,
+        }
+    prototypes = np.array([np.mean(rows, axis=0) for rows in train_by_class], dtype=float)
+    proto_norms = np.linalg.norm(prototypes, axis=1)
+    rows: list[dict[str, Any]] = []
+    cosine_rows: list[dict[str, Any]] = []
+    for cycle, label, acts in final_rows:
+        scores = prototypes @ acts
+        prediction = int(np.argmax(scores))
+        margin = float(scores[label] - max(score for idx, score in enumerate(scores) if idx != label))
+        rows.append(
+            {
+                "cycle": cycle,
+                "label": label,
+                "prediction": prediction,
+                "correct": prediction == label,
+                "score_margin_v2": margin,
+                **{f"score_c{class_idx}_v2": float(scores[class_idx]) for class_idx in range(class_count)},
+            }
+        )
+        act_norm = float(np.linalg.norm(acts))
+        if act_norm > 0.0 and np.all(proto_norms > 0.0):
+            cosine_scores = scores / (proto_norms * act_norm)
+            cosine_prediction = int(np.argmax(cosine_scores))
+            cosine_margin = float(
+                cosine_scores[label] - max(score for idx, score in enumerate(cosine_scores) if idx != label)
+            )
+            cosine_rows.append(
+                {
+                    "cycle": cycle,
+                    "label": label,
+                    "prediction": cosine_prediction,
+                    "correct": cosine_prediction == label,
+                    "score_margin": cosine_margin,
+                    **{f"score_c{class_idx}": float(cosine_scores[class_idx]) for class_idx in range(class_count)},
+                }
+            )
+    pairwise_cosines: list[float] = []
+    for left_idx, left in enumerate(prototypes):
+        for right_idx in range(left_idx + 1, class_count):
+            denom = float(proto_norms[left_idx] * proto_norms[right_idx])
+            if denom > 0.0:
+                pairwise_cosines.append(float(np.dot(left, prototypes[right_idx]) / denom))
+    margins = [float(row["score_margin_v2"]) for row in rows]
+    return {
+        "final_eval_activation_prototype_rows": rows,
+        "final_eval_activation_prototype_accuracy": float(np.mean([bool(row["correct"]) for row in rows])),
+        "final_eval_activation_prototype_min_margin_v2": float(np.min(margins)),
+        "final_eval_activation_cosine_prototype_rows": cosine_rows,
+        "final_eval_activation_cosine_prototype_accuracy": (
+            float(np.mean([bool(row["correct"]) for row in cosine_rows])) if cosine_rows else None
+        ),
+        "final_eval_activation_cosine_prototype_min_margin": (
+            float(np.min([float(row["score_margin"]) for row in cosine_rows])) if cosine_rows else None
+        ),
+        "final_eval_activation_prototype_pairwise_cosine_mean": (
+            float(np.mean(pairwise_cosines)) if pairwise_cosines else None
+        ),
+    }
+
+
 def error_rail_stats(
     measures: dict[str, float],
     *,
@@ -2193,6 +2285,13 @@ def run_case(args: argparse.Namespace) -> dict[str, Any]:
             class_count=args.class_count,
             total_feature_count=total_feature_count,
             final_signed=final_signed,
+        ),
+        **activation_prototype_projection_stats(
+            measures,
+            labels=labels,
+            sequence=sequence,
+            class_count=args.class_count,
+            total_feature_count=total_feature_count,
         ),
         **error_rail_stats(measures, labels=labels, sequence=sequence, class_count=args.class_count),
         **eligibility_stats(measures, sequence=sequence, total_feature_count=total_feature_count),

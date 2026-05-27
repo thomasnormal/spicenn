@@ -432,6 +432,35 @@ def test_multiclass_block_sequence_summarizes_final_signed_projection() -> None:
     assert stats["final_eval_signed_projection_mean_abs_score_v2"] == pytest.approx(0.165)
 
 
+def test_multiclass_block_sequence_summarizes_activation_prototype_projection() -> None:
+    measures = {
+        "act_f0_0": 0.9,
+        "act_f1_0": 0.1,
+        "act_f0_1": 0.1,
+        "act_f1_1": 0.8,
+        "act_f0_2": 0.7,
+        "act_f1_2": 0.2,
+        "act_f0_3": 0.2,
+        "act_f1_3": 0.9,
+    }
+
+    stats = seq.activation_prototype_projection_stats(
+        measures,
+        labels=[0, 1, 0, 1],
+        sequence=["train", "train", "final_eval", "final_eval"],
+        class_count=2,
+        total_feature_count=2,
+    )
+
+    assert stats["final_eval_activation_prototype_accuracy"] == 1.0
+    assert stats["final_eval_activation_prototype_min_margin_v2"] == pytest.approx(0.42)
+    assert stats["final_eval_activation_prototype_rows"][0]["prediction"] == 0
+    assert stats["final_eval_activation_prototype_rows"][1]["prediction"] == 1
+    assert stats["final_eval_activation_cosine_prototype_accuracy"] == 1.0
+    assert stats["final_eval_activation_cosine_prototype_min_margin"] == pytest.approx(0.59412, abs=1e-5)
+    assert stats["final_eval_activation_prototype_pairwise_cosine_mean"] == pytest.approx(0.23285, abs=1e-5)
+
+
 def test_multiclass_block_sequence_can_use_common_score_mass_descent() -> None:
     netlist = seq.generate_netlist(
         train_records=_target0_records(1),

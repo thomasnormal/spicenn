@@ -55,6 +55,18 @@ def _block_argv(args: argparse.Namespace, *, approach: str, scenario: str, child
         str(args.initial_negative),
         "--normalizer-error-clock-high",
         str(args.normalizer_error_clock_high),
+        "--readout-update-mode",
+        args.readout_update_mode,
+        "--hidden-update-mode",
+        args.hidden_update_mode,
+        "--hidden-credit-width",
+        str(args.hidden_credit_width),
+        "--hidden-update-width",
+        str(args.hidden_update_width),
+        "--score-timing-mode",
+        args.score_timing_mode,
+        "--readout-forward-mode",
+        args.readout_forward_mode,
     ]
     if scenario == "one-hot":
         argv += [
@@ -104,6 +116,16 @@ def _summary_row(summary: dict[str, Any], *, approach: str, scenario: str, tag: 
         "train_target_errdiff_min_v": summary.get("train_target_errdiff_min_v"),
         "train_nontarget_errdiff_mean_v": summary.get("train_nontarget_errdiff_mean_v"),
         "train_nontarget_errdiff_max_v": summary.get("train_nontarget_errdiff_max_v"),
+        "final_eval_signed_projection_accuracy": summary.get("final_eval_signed_projection_accuracy"),
+        "final_eval_conductance_projection_accuracy": summary.get("final_eval_conductance_projection_accuracy"),
+        "final_eval_activation_prototype_accuracy": summary.get("final_eval_activation_prototype_accuracy"),
+        "final_eval_activation_cosine_prototype_accuracy": summary.get(
+            "final_eval_activation_cosine_prototype_accuracy"
+        ),
+        "train_eligibility_active_features_25mv_mean": summary.get("train_eligibility_active_features_25mv_mean"),
+        "train_eligibility_active_features_250mv_mean": summary.get("train_eligibility_active_features_250mv_mean"),
+        "train_eligibility_active_features_500mv_mean": summary.get("train_eligibility_active_features_500mv_mean"),
+        "train_eligibility_pairwise_cosine_mean": summary.get("train_eligibility_pairwise_cosine_mean"),
         "csv": str(summary["csv"]),
         "wall_time_s": float(summary["wall_time_s"]),
     }
@@ -128,6 +150,14 @@ def _failure_row(error: Exception, *, approach: str, scenario: str, tag: str) ->
         "train_target_errdiff_min_v": "",
         "train_nontarget_errdiff_mean_v": "",
         "train_nontarget_errdiff_max_v": "",
+        "final_eval_signed_projection_accuracy": "",
+        "final_eval_conductance_projection_accuracy": "",
+        "final_eval_activation_prototype_accuracy": "",
+        "final_eval_activation_cosine_prototype_accuracy": "",
+        "train_eligibility_active_features_25mv_mean": "",
+        "train_eligibility_active_features_250mv_mean": "",
+        "train_eligibility_active_features_500mv_mean": "",
+        "train_eligibility_pairwise_cosine_mean": "",
         "csv": "",
         "wall_time_s": "",
     }
@@ -170,6 +200,14 @@ def run_screen(args: argparse.Namespace) -> dict[str, Any]:
         "train_target_errdiff_min_v",
         "train_nontarget_errdiff_mean_v",
         "train_nontarget_errdiff_max_v",
+        "final_eval_signed_projection_accuracy",
+        "final_eval_conductance_projection_accuracy",
+        "final_eval_activation_prototype_accuracy",
+        "final_eval_activation_cosine_prototype_accuracy",
+        "train_eligibility_active_features_25mv_mean",
+        "train_eligibility_active_features_250mv_mean",
+        "train_eligibility_active_features_500mv_mean",
+        "train_eligibility_pairwise_cosine_mean",
         "csv",
         "wall_time_s",
     ]
@@ -206,6 +244,12 @@ def run_screen(args: argparse.Namespace) -> dict[str, Any]:
         "class_bias_mode": args.class_bias_mode if args.scenario in {"mnist", "both"} else None,
         "score_capacitance_f": args.score_capacitance_f,
         "normalizer_error_clock_high": args.normalizer_error_clock_high,
+        "readout_update_mode": args.readout_update_mode,
+        "hidden_update_mode": args.hidden_update_mode,
+        "hidden_credit_width": args.hidden_credit_width if args.hidden_update_mode != "none" else None,
+        "hidden_update_width": args.hidden_update_width if args.hidden_update_mode != "none" else None,
+        "score_timing_mode": args.score_timing_mode,
+        "readout_forward_mode": args.readout_forward_mode,
         "csv": str(csv_path),
         "by_scenario": by_scenario,
         "wall_time_s": time.perf_counter() - start,
@@ -237,6 +281,12 @@ def build_arg_parser() -> argparse.ArgumentParser:
     ap.add_argument("--initial-positive", type=float, default=0.40)
     ap.add_argument("--initial-negative", type=float, default=0.40)
     ap.add_argument("--normalizer-error-clock-high", type=float, default=1.2)
+    ap.add_argument("--readout-update-mode", choices=seq.READOUT_UPDATE_MODES, default="sampled")
+    ap.add_argument("--hidden-update-mode", choices=seq.HIDDEN_UPDATE_MODES, default="none")
+    ap.add_argument("--hidden-credit-width", type=float, default=8.0)
+    ap.add_argument("--hidden-update-width", type=float, default=0.25)
+    ap.add_argument("--score-timing-mode", choices=seq.SCORE_TIMING_MODES, default="late")
+    ap.add_argument("--readout-forward-mode", choices=seq.READOUT_FORWARD_MODES, default="direct")
     ap.add_argument("--keep-going", action=argparse.BooleanOptionalAction, default=True)
     return ap
 
@@ -259,6 +309,10 @@ def main_for_test(argv: list[str]) -> argparse.Namespace:
         raise ValueError("initial weight rails must be positive")
     if args.normalizer_error_clock_high <= 0.0 or args.normalizer_error_clock_high > 1.2:
         raise ValueError("normalizer-error-clock-high must stay in (0, 1.2]")
+    if args.hidden_credit_width <= 0.0:
+        raise ValueError("hidden-credit-width must be positive")
+    if args.hidden_update_width <= 0.0:
+        raise ValueError("hidden-update-width must be positive")
     return args
 
 

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import csv
 import sys
 from pathlib import Path
 
@@ -29,6 +30,18 @@ def test_normalizer_block_screen_builds_block_args() -> None:
             "7",
             "--normalizer-error-clock-high",
             "0.45",
+            "--readout-update-mode",
+            "live",
+            "--hidden-update-mode",
+            "readout-weighted",
+            "--hidden-credit-width",
+            "6",
+            "--hidden-update-width",
+            "0.2",
+            "--score-timing-mode",
+            "early",
+            "--readout-forward-mode",
+            "diode",
         ]
     )
 
@@ -42,6 +55,18 @@ def test_normalizer_block_screen_builds_block_args() -> None:
     assert "7.0" in argv
     assert "--normalizer-error-clock-high" in argv
     assert "0.45" in argv
+    assert "--readout-update-mode" in argv
+    assert "live" in argv
+    assert "--hidden-update-mode" in argv
+    assert "readout-weighted" in argv
+    assert "--hidden-credit-width" in argv
+    assert "6.0" in argv
+    assert "--hidden-update-width" in argv
+    assert "0.2" in argv
+    assert "--score-timing-mode" in argv
+    assert "early" in argv
+    assert "--readout-forward-mode" in argv
+    assert "diode" in argv
 
 
 def test_normalizer_block_screen_validation() -> None:
@@ -53,6 +78,10 @@ def test_normalizer_block_screen_validation() -> None:
         screen.main_for_test(["--score-capacitance-f", "0"])
     with pytest.raises(ValueError, match="normalizer-error-clock-high"):
         screen.main_for_test(["--normalizer-error-clock-high", "0"])
+    with pytest.raises(ValueError, match="hidden-credit-width"):
+        screen.main_for_test(["--hidden-credit-width", "0"])
+    with pytest.raises(ValueError, match="hidden-update-width"):
+        screen.main_for_test(["--hidden-update-width", "0"])
 
 
 def test_normalizer_block_screen_summary_runner(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -70,6 +99,14 @@ def test_normalizer_block_screen_summary_runner(tmp_path: Path, monkeypatch: pyt
             "initial_eval_min_margin_v": 0.0,
             "final_eval_min_margin_v": final_margin,
             "margin_improvement_v": final_margin,
+            "final_eval_signed_projection_accuracy": 1.0,
+            "final_eval_conductance_projection_accuracy": 1.0,
+            "final_eval_activation_prototype_accuracy": 0.6666666667,
+            "final_eval_activation_cosine_prototype_accuracy": 0.5,
+            "train_eligibility_active_features_25mv_mean": 3.0,
+            "train_eligibility_active_features_250mv_mean": 2.0,
+            "train_eligibility_active_features_500mv_mean": 1.0,
+            "train_eligibility_pairwise_cosine_mean": 0.25,
             "csv": str(tmp_path / f"{suffix}.csv"),
             "wall_time_s": 1.0,
         }
@@ -83,4 +120,11 @@ def test_normalizer_block_screen_summary_runner(tmp_path: Path, monkeypatch: pyt
     assert summary["architecture"] == "normalizer_block_screen"
     assert len(calls) == len(screen.APPROACHES)
     assert summary["by_scenario"]["one-hot"]["passed_count"] == len(screen.APPROACHES)
+    assert summary["readout_update_mode"] == "sampled"
+    assert summary["hidden_update_mode"] == "none"
     assert (tmp_path / "results/tables/unit_screen_summary.json").exists()
+
+    with (tmp_path / "results/tables/unit_screen.csv").open() as f:
+        rows = list(csv.DictReader(f))
+    assert rows[0]["final_eval_signed_projection_accuracy"] == "1.0"
+    assert rows[0]["train_eligibility_pairwise_cosine_mean"] == "0.25"

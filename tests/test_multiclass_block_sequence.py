@@ -1068,14 +1068,34 @@ def test_multiclass_block_sequence_can_directly_update_hidden_weights_from_reado
     assert "Cxelig0 xelig0 0 20f IC=0" in netlist
     assert "Ch0_hdp" not in netlist
     assert "Mh0_live_pos_up" not in netlist
+    assert "Ch0_c0_direct_vdiff_p h0_c0_direct_vdiff_p 0 2f IC=0" in netlist
+    assert "Mh0_c0_direct_vdiff_p_up0 vdd c0_vwp0 h0_c0_direct_vdiff_p_mid 0 NSENSE W=1u" in netlist
+    assert "Mh0_c0_direct_vdiff_p_dn h0_c0_direct_vdiff_p c0_vwn0 0 0 NSENSE W=1u" in netlist
     assert "Ch0_c0_direct_pv_pup0 h0_c0_direct_pv_pup0 0 0.05f IC=0" in netlist
     assert "Mh0_c0_direct_pv_pup_e vwhi_ref xelig0 h0_c0_direct_pv_pup0 0 NSENSE W=0.35u" in netlist
     assert "Mh0_c0_direct_pv_pup_a h0_c0_direct_pv_pup0 act0 h0_c0_direct_pv_pup1 0 NMOS W=0.35u" in netlist
     assert "Mh0_c0_direct_pv_pup_r h0_c0_direct_pv_pup1 c0_errp h0_c0_direct_pv_pup2 0 NSENSE W=0.35u" in netlist
-    assert "Mh0_c0_direct_pv_pup_w h0_c0_direct_pv_pup2 c0_vwp0 whp0 0 NSENSE W=0.35u" in netlist
-    assert "Mh0_c0_direct_pn_nup_w h0_c0_direct_pn_nup2 c0_vwn0 whn0 0 NSENSE W=0.35u" in netlist
+    assert "Mh0_c0_direct_pv_pup_w h0_c0_direct_pv_pup2 h0_c0_direct_vdiff_p whp0 0 NSENSE W=0.35u" in netlist
+    assert "Mh0_c0_direct_pn_nup_w h0_c0_direct_pn_nup2 h0_c0_direct_vdiff_n whn0 0 NSENSE W=0.35u" in netlist
     assert ".meas tran hcredit_f0_1" not in netlist
     assert ".meas tran whsigned_f0_final PARAM='whp_f0_final-whn_f0_final'" in netlist
+
+
+def test_multiclass_block_sequence_can_use_raw_direct_hidden_readout_gates() -> None:
+    records = _one_hot_records()
+    netlist = seq.generate_netlist(
+        train_records=records,
+        eval_records=records,
+        class_count=3,
+        feature_count=3,
+        readout_update_mode="live",
+        hidden_update_mode="direct-readout-weighted",
+        hidden_direct_readout_gate_mode="raw",
+        error_mode="label-rail-descent",
+    )
+
+    assert "h0_c0_direct_vdiff_p" not in netlist
+    assert "Mh0_c0_direct_pv_pup_w h0_c0_direct_pv_pup2 c0_vwp0 whp0 0 NSENSE" in netlist
 
 
 def test_multiclass_block_sequence_can_use_label_rail_descent_for_live_gradient_flow() -> None:
@@ -1182,6 +1202,14 @@ def test_multiclass_block_sequence_validation() -> None:
         seq.main_for_test(["--readout-update-mode", "live", "--error-mode", "score-gated-nontarget"])
     with pytest.raises(ValueError, match="hidden_update_mode"):
         seq.generate_netlist(train_records=records, eval_records=records, hidden_update_mode="missing")
+    with pytest.raises(ValueError, match="hidden_direct_readout_gate_mode"):
+        seq.generate_netlist(
+            train_records=records,
+            eval_records=records,
+            hidden_update_mode="direct-readout-weighted",
+            error_mode="pairwise-margin-correction-descent",
+            hidden_direct_readout_gate_mode="missing",
+        )
     with pytest.raises(ValueError, match="hidden_credit_activation_model"):
         seq.generate_netlist(
             train_records=records,
@@ -1949,7 +1977,13 @@ def _hidden_readout_weighted_writer_netlist(*, vwp: float, vwn: float) -> str:
     return "\n".join(lines)
 
 
-def _hidden_direct_readout_weighted_writer_netlist(*, vwp: float, vwn: float) -> str:
+def _hidden_direct_readout_weighted_writer_netlist(
+    *,
+    vwp: float,
+    vwn: float,
+    whp: float = 0.45,
+    whn: float = 0.40,
+) -> str:
     lines = [
         "* Low-level direct readout-weighted hidden writer primitive.",
         ".param VDD=1.2",
@@ -1965,8 +1999,8 @@ def _hidden_direct_readout_weighted_writer_netlist(*, vwp: float, vwn: float) ->
         "Vxelig xelig0 0 1.2",
         f"Cc0_vwp0 c0_vwp0 0 20f IC={vwp:.12g}",
         f"Cc0_vwn0 c0_vwn0 0 20f IC={vwn:.12g}",
-        "Cwhp0 whp0 0 20f IC=0.45",
-        "Cwhn0 whn0 0 20f IC=0.40",
+        f"Cwhp0 whp0 0 20f IC={whp:.12g}",
+        f"Cwhn0 whn0 0 20f IC={whn:.12g}",
         "Rc0_vwp0 c0_vwp0 0 1e15",
         "Rc0_vwn0 c0_vwn0 0 1e15",
         "Rwhp0 whp0 0 1e15",
@@ -1979,6 +2013,8 @@ def _hidden_direct_readout_weighted_writer_netlist(*, vwp: float, vwn: float) ->
             eligibility_node="xelig0",
             width_u=8.0,
         ),
+        ".meas tran vdiff_p FIND V(h0_c0_direct_vdiff_p) AT=5n",
+        ".meas tran vdiff_n FIND V(h0_c0_direct_vdiff_n) AT=5n",
         ".meas tran whp_after FIND V(whp0) AT=8n",
         ".meas tran whn_after FIND V(whn0) AT=8n",
         ".meas tran signed_after PARAM='whp_after-whn_after'",
@@ -2098,12 +2134,32 @@ def test_multiclass_block_sequence_ngspice_direct_hidden_writer_preserves_credit
     )
 
     assert float(positive["signed_after"]) > 0.20
+    assert float(positive["vdiff_p"]) > float(positive["vdiff_n"]) + 0.5
     assert float(positive["whp_after"]) > 0.50
     assert float(positive["whn_after"]) == pytest.approx(0.40, abs=5e-3)
     assert float(negative["signed_after"]) < -0.20
+    assert float(negative["vdiff_n"]) > float(negative["vdiff_p"]) + 0.5
     assert float(negative["whn_after"]) > 0.50
     assert float(negative["whp_after"]) == pytest.approx(0.45, abs=5e-3)
+    assert abs(float(neutral["vdiff_p"]) - float(neutral["vdiff_n"])) < 20e-3
+    assert max(float(neutral["vdiff_p"]), float(neutral["vdiff_n"])) < 0.20
     assert float(neutral["signed_after"]) == pytest.approx(0.05, abs=2e-3)
+
+
+def test_multiclass_block_sequence_ngspice_direct_hidden_writer_preserves_existing_state_for_neutral_readout(
+    tmp_path: Path,
+    ngspice_path: str,
+) -> None:
+    neutral = run_netlist(
+        ngspice_path,
+        tmp_path / "direct_hidden_writer_neutral_existing_state.cir",
+        _hidden_direct_readout_weighted_writer_netlist(vwp=0.4, vwn=0.4, whp=1.0, whn=0.2),
+        timeout=20.0,
+    )
+
+    assert abs(float(neutral["vdiff_p"]) - float(neutral["vdiff_n"])) < 20e-3
+    assert max(float(neutral["vdiff_p"]), float(neutral["vdiff_n"])) < 0.20
+    assert float(neutral["signed_after"]) > 0.75
 
 
 def test_multiclass_block_sequence_ngspice_live_error_rails_reset_before_eval_writer(

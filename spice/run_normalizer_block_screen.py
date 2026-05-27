@@ -69,6 +69,8 @@ def _block_argv(args: argparse.Namespace, *, approach: str, scenario: str, child
         args.hidden_credit_activation_model,
         "--hidden-update-width",
         str(args.hidden_update_width),
+        "--hidden-direct-readout-gate-mode",
+        args.hidden_direct_readout_gate_mode,
         "--score-timing-mode",
         args.score_timing_mode,
         "--readout-forward-mode",
@@ -287,6 +289,9 @@ def run_screen(args: argparse.Namespace) -> dict[str, Any]:
             args.hidden_credit_activation_model if args.hidden_update_mode != "none" else None
         ),
         "hidden_update_width": args.hidden_update_width if args.hidden_update_mode != "none" else None,
+        "hidden_direct_readout_gate_mode": (
+            args.hidden_direct_readout_gate_mode if args.hidden_update_mode == "direct-readout-weighted" else None
+        ),
         "score_timing_mode": args.score_timing_mode,
         "readout_forward_mode": args.readout_forward_mode,
         "eligibility_source_mode": args.eligibility_source_mode,
@@ -328,6 +333,11 @@ def build_arg_parser() -> argparse.ArgumentParser:
     ap.add_argument("--hidden-credit-shunt-resistance", type=float, default=1.0e9)
     ap.add_argument("--hidden-credit-activation-model", choices=seq.HIDDEN_CREDIT_ACTIVATION_MODELS, default="NREL")
     ap.add_argument("--hidden-update-width", type=float, default=0.25)
+    ap.add_argument(
+        "--hidden-direct-readout-gate-mode",
+        choices=seq.HIDDEN_DIRECT_READOUT_GATE_MODES,
+        default="differential-excess",
+    )
     ap.add_argument("--score-timing-mode", choices=seq.SCORE_TIMING_MODES, default="late")
     ap.add_argument("--readout-forward-mode", choices=seq.READOUT_FORWARD_MODES, default="direct")
     ap.add_argument("--eligibility-source-mode", choices=seq.ELIGIBILITY_SOURCE_MODES, default="pre-p")
@@ -361,6 +371,10 @@ def main_for_test(argv: list[str]) -> argparse.Namespace:
         raise ValueError("hidden-credit-shunt-resistance must be positive")
     if args.hidden_update_width <= 0.0:
         raise ValueError("hidden-update-width must be positive")
+    if args.hidden_direct_readout_gate_mode not in seq.HIDDEN_DIRECT_READOUT_GATE_MODES:
+        raise ValueError(
+            f"hidden-direct-readout-gate-mode must be one of {seq.HIDDEN_DIRECT_READOUT_GATE_MODES}"
+        )
     return args
 
 

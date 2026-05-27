@@ -57,6 +57,7 @@ READOUT_FORWARD_MODES = ("direct", "diode")
 ELIGIBILITY_GATE_MODES = ("raw", "competition", "rank", "contrast")
 ELIGIBILITY_SOURCE_MODES = ("pre-p", "act-raw", "act")
 HIDDEN_CREDIT_ACTIVATION_MODELS = ("NREL", "NMOS", "NSENSE")
+HIDDEN_DIRECT_READOUT_GATE_MODES = ("raw", "differential-excess")
 DEFAULT_HIDDEN_POSITIVE = 1.00
 DEFAULT_HIDDEN_NEGATIVE = 0.20
 ERROR_MODES = (
@@ -238,11 +239,16 @@ def hidden_direct_readout_weighted_update_lines(
     width_u: float = 0.25,
     activation_model: str = "NREL",
     internal_capacitance_f: float = 0.05,
+    excess_width_u: float = 1.0,
+    reset_node: str = "rst",
+    readout_gate_mode: str = "differential-excess",
 ) -> list[str]:
-    if min(width_u, internal_capacitance_f) <= 0.0:
-        raise ValueError("direct hidden update width and internal capacitance must be positive")
+    if min(width_u, internal_capacitance_f, excess_width_u) <= 0.0:
+        raise ValueError("direct hidden update width, internal capacitance, and excess width must be positive")
     if activation_model not in HIDDEN_CREDIT_ACTIVATION_MODELS:
         raise ValueError(f"activation_model must be one of {HIDDEN_CREDIT_ACTIVATION_MODELS}")
+    if readout_gate_mode not in HIDDEN_DIRECT_READOUT_GATE_MODES:
+        raise ValueError(f"readout_gate_mode must be one of {HIDDEN_DIRECT_READOUT_GATE_MODES}")
     whp = f"whp{feature_idx}"
     whn = f"whn{feature_idx}"
     act = f"act{feature_idx}"
@@ -253,8 +259,32 @@ def hidden_direct_readout_weighted_update_lines(
         vwp = class_node(class_idx, f"vwp{feature_idx}")
         vwn = class_node(class_idx, f"vwn{feature_idx}")
         prefix = f"h{feature_idx}_c{class_idx}_direct_"
-        positive_terms = ((errp, vwp, "pv"), (errn, vwn, "nv"))
-        negative_terms = ((errp, vwn, "pn"), (errn, vwp, "nn"))
+        if readout_gate_mode == "raw":
+            pos_gate = vwp
+            neg_gate = vwn
+        else:
+            pos_gate = f"{prefix}vdiff_p"
+            neg_gate = f"{prefix}vdiff_n"
+            pos_mid = f"{pos_gate}_mid"
+            neg_mid = f"{neg_gate}_mid"
+            lines += [
+                f"C{pos_gate} {pos_gate} 0 2f IC=0",
+                f"C{neg_gate} {neg_gate} 0 2f IC=0",
+                f"R{pos_gate} {pos_gate} 0 1G",
+                f"R{neg_gate} {neg_gate} 0 1G",
+                f"M{pos_gate}_rst {pos_gate} {reset_node} 0 0 NMOS W=4u L=180n",
+                f"M{neg_gate}_rst {neg_gate} {reset_node} 0 0 NMOS W=4u L=180n",
+                f"R{pos_mid} {pos_mid} 0 1G",
+                f"R{neg_mid} {neg_mid} 0 1G",
+                f"M{pos_gate}_up0 vdd {vwp} {pos_mid} 0 NSENSE W={excess_width_u:.6g}u L=180n",
+                f"M{pos_gate}_up1 {pos_mid} {vwp} {pos_gate} 0 NSENSE W={excess_width_u:.6g}u L=180n",
+                f"M{pos_gate}_dn {pos_gate} {vwn} 0 0 NSENSE W={excess_width_u:.6g}u L=180n",
+                f"M{neg_gate}_up0 vdd {vwn} {neg_mid} 0 NSENSE W={excess_width_u:.6g}u L=180n",
+                f"M{neg_gate}_up1 {neg_mid} {vwn} {neg_gate} 0 NSENSE W={excess_width_u:.6g}u L=180n",
+                f"M{neg_gate}_dn {neg_gate} {vwp} 0 0 NSENSE W={excess_width_u:.6g}u L=180n",
+            ]
+        positive_terms = ((errp, pos_gate, "pv"), (errn, neg_gate, "nv"))
+        negative_terms = ((errp, neg_gate, "pn"), (errn, pos_gate, "nn"))
         for err, weight, suffix in positive_terms:
             up0 = f"{prefix}{suffix}_pup0"
             up1 = f"{prefix}{suffix}_pup1"
@@ -959,6 +989,7 @@ def generate_netlist(
     hidden_credit_shunt_resistance_ohm: float = 1.0e9,
     hidden_credit_activation_model: str = "NREL",
     hidden_update_width_u: float = 0.25,
+    hidden_direct_readout_gate_mode: str = "differential-excess",
     score_timing_mode: str = "late",
     score_sense_mode: str = "voltage",
     readout_forward_mode: str = "direct",
@@ -1025,6 +1056,8 @@ def generate_netlist(
         raise ValueError(f"hidden_update_mode must be one of {HIDDEN_UPDATE_MODES}")
     if hidden_credit_activation_model not in HIDDEN_CREDIT_ACTIVATION_MODELS:
         raise ValueError(f"hidden_credit_activation_model must be one of {HIDDEN_CREDIT_ACTIVATION_MODELS}")
+    if hidden_direct_readout_gate_mode not in HIDDEN_DIRECT_READOUT_GATE_MODES:
+        raise ValueError(f"hidden_direct_readout_gate_mode must be one of {HIDDEN_DIRECT_READOUT_GATE_MODES}")
     if score_timing_mode not in SCORE_TIMING_MODES:
         raise ValueError(f"score_timing_mode must be one of {SCORE_TIMING_MODES}")
     if score_sense_mode not in SCORE_SENSE_MODES:
@@ -1709,6 +1742,7 @@ def generate_netlist(
                 eligibility_node=f"xelig{feature}",
                 width_u=hidden_update_width_u,
                 activation_model=hidden_credit_activation_model,
+                readout_gate_mode=hidden_direct_readout_gate_mode,
             )
     for class_idx in range(class_count):
         for feature in range(total_feature_count):
@@ -2678,6 +2712,7 @@ def run_case(args: argparse.Namespace) -> dict[str, Any]:
         hidden_credit_shunt_resistance_ohm=args.hidden_credit_shunt_resistance,
         hidden_credit_activation_model=args.hidden_credit_activation_model,
         hidden_update_width_u=args.hidden_update_width,
+        hidden_direct_readout_gate_mode=args.hidden_direct_readout_gate_mode,
         score_timing_mode=args.score_timing_mode,
         score_sense_mode=args.score_sense_mode,
         readout_forward_mode=args.readout_forward_mode,
@@ -2813,6 +2848,9 @@ def run_case(args: argparse.Namespace) -> dict[str, Any]:
             args.hidden_credit_activation_model if args.hidden_update_mode != "none" else None
         ),
         "hidden_update_width_u": args.hidden_update_width if args.hidden_update_mode != "none" else None,
+        "hidden_direct_readout_gate_mode": (
+            args.hidden_direct_readout_gate_mode if args.hidden_update_mode == "direct-readout-weighted" else None
+        ),
         "score_timing_mode": args.score_timing_mode,
         "score_sense_mode": args.score_sense_mode,
         "readout_forward_mode": args.readout_forward_mode,
@@ -2935,6 +2973,11 @@ def build_arg_parser() -> argparse.ArgumentParser:
     ap.add_argument("--hidden-credit-shunt-resistance", type=float, default=1.0e9)
     ap.add_argument("--hidden-credit-activation-model", choices=HIDDEN_CREDIT_ACTIVATION_MODELS, default="NREL")
     ap.add_argument("--hidden-update-width", type=float, default=0.25)
+    ap.add_argument(
+        "--hidden-direct-readout-gate-mode",
+        choices=HIDDEN_DIRECT_READOUT_GATE_MODES,
+        default="differential-excess",
+    )
     ap.add_argument("--score-timing-mode", choices=SCORE_TIMING_MODES, default="late")
     ap.add_argument("--score-sense-mode", choices=SCORE_SENSE_MODES, default="voltage")
     ap.add_argument("--readout-forward-mode", choices=READOUT_FORWARD_MODES, default="direct")
@@ -3042,6 +3085,8 @@ def validate_args(args: argparse.Namespace) -> None:
         raise ValueError("hidden-credit-shunt-resistance must be positive")
     if args.hidden_update_width <= 0.0:
         raise ValueError("hidden-update-width must be positive")
+    if args.hidden_direct_readout_gate_mode not in HIDDEN_DIRECT_READOUT_GATE_MODES:
+        raise ValueError(f"hidden-direct-readout-gate-mode must be one of {HIDDEN_DIRECT_READOUT_GATE_MODES}")
     if args.eligibility_contrast_common_resistance <= 0.0:
         raise ValueError("eligibility-contrast-common-resistance must be positive")
     if args.eligibility_contrast_common_capacitance_f <= 0.0:

@@ -71,6 +71,8 @@ def test_multiclass_block_sequence_validation() -> None:
         seq.main_for_test(["--feature-count", "0"])
     with pytest.raises(ValueError, match="train-samples"):
         seq.main_for_test(["--train-samples", "0"])
+    with pytest.raises(ValueError, match="counted multiclass"):
+        seq.main_for_test(["--scenario", "mnist", "--dataset", "mnist01fixed8_6"])
     with pytest.raises(ValueError, match="score-capacitance-f"):
         seq.main_for_test(["--score-capacitance-f", "0"])
     with pytest.raises(ValueError, match="score-load-resistance"):
@@ -188,3 +190,71 @@ def test_multiclass_block_sequence_ngspice_smaller_score_cap_improves_one_hot_ma
     assert default_margin > 0.0
     assert smaller_margin > 2e-3
     assert smaller_margin > 3.0 * default_margin
+
+
+def test_multiclass_block_sequence_mnist_scenario_uses_counted_records(monkeypatch, tmp_path: Path) -> None:
+    calls = []
+
+    def fake_detect_spice(spice_bin):
+        return "/usr/bin/ngspice", "fake-ngspice"
+
+    def fake_dataset_records(name, seed, *, root, download=False):
+        calls.append({"name": name, "seed": seed, "root": root, "download": download})
+        records = []
+        for _ in range(2):
+            for label in range(3):
+                records.append(
+                    {
+                        "label": label,
+                        "inputs": {f"x{feature}": 0.85 if feature == label else 0.08 for feature in range(8)},
+                    }
+                )
+        return records
+
+    def fake_run_netlist(spice_bin, path, deck, *, timeout):
+        assert "Vrow7 row7 0 PWL(" in deck
+        assert "Cc2_vwp7 c2_vwp7 0 20f IC=0.4" in deck
+        measures = {}
+        for cycle in range(9):
+            for class_idx in range(3):
+                measures[f"c{class_idx}_score_net_{cycle}"] = 1.0 if class_idx == cycle % 3 else 0.0
+                measures[f"c{class_idx}_score_{cycle}"] = measures[f"c{class_idx}_score_net_{cycle}"]
+                measures[f"c{class_idx}_scoren_{cycle}"] = 0.0
+        for class_idx in range(3):
+            for feature in range(8):
+                measures[f"c{class_idx}_f{feature}_signed_final"] = 0.01
+        for train_idx in range(1, 4):
+            for class_idx in range(3):
+                for feature in range(8):
+                    measures[f"c{class_idx}_f{feature}_signed_after_train{train_idx}"] = 0.01
+        return measures
+
+    monkeypatch.setattr(seq, "ROOT", tmp_path)
+    monkeypatch.setattr(seq, "detect_spice", fake_detect_spice)
+    monkeypatch.setattr(seq, "dataset_records", fake_dataset_records)
+    monkeypatch.setattr(seq, "run_netlist", fake_run_netlist)
+
+    args = seq.main_for_test(
+        [
+            "--scenario",
+            "mnist",
+            "--dataset",
+            "mnist3fixed8_6",
+            "--class-count",
+            "3",
+            "--feature-count",
+            "8",
+            "--train-samples",
+            "3",
+            "--eval-samples",
+            "3",
+            "--download",
+        ]
+    )
+    summary = seq.run_case(args)
+
+    assert calls == [{"name": "mnist3fixed8_6", "seed": 3, "root": tmp_path, "download": True}]
+    assert summary["scenario"] == "mnist"
+    assert summary["dataset"] == "mnist3fixed8_6"
+    assert summary["train_samples"] == 3
+    assert summary["eval_samples"] == 3

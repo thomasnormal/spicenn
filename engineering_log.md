@@ -2,6 +2,21 @@
 
 ## 2026-05-27
 
+- Added a real small-MNIST scenario to the continuous multiclass block
+  sequence.  The `mnist` scenario loads counted multiclass MNIST records,
+  uses the existing balanced train/eval split, and still only supplies feature
+  row rails, labels, clocks, and measurements to ngspice; class-feature
+  readout weights remain capacitor state updated by transistor/passive
+  writers inside one transient.  The evidence run
+  `codex_multiclass_block_sequence_mnist3fixed8_6_scorecap5` uses
+  `mnist3fixed8_6`, one train and one eval sample per class, eight fixed8
+  feature rows, and 5 fF score caps.  It improves final eval accuracy from
+  \(0.333\) to \(0.667\) without Python weight updates or checkpointing.  The
+  failure is also explicit: class 1 is still misclassified as class 2 and the
+  final minimum margin is \(-20.6\) mV, so this is only the first nontrivial
+  MNIST-slice learning proof, not a robust classifier.  The next work should
+  target repeated exposure, nontarget pressure, or score/readout balance so the
+  real MNIST margins become positive across all eval samples.
 - Added explicit score-observability controls to the continuous multiclass
   block sequence.  The generator now exposes class score capacitance, score
   load resistance, and readout width as first-class parameters instead of

@@ -8,6 +8,7 @@ from typing import Any
 
 import numpy as np
 
+from datasets import dataset_records, parse_counted_mnist_dataset
 from run_device_mnist01_scalar_training import sanitize_tag
 from run_device_sequential_training import mos_models, run_netlist
 from run_multiclass_output_head_primitive import (
@@ -20,13 +21,14 @@ from run_multiclass_output_head_primitive import (
 from run_multiclass_output_head_sequence import (
     CYCLE_NS,
     active_low_phase_pwl,
+    balanced_train_eval_split,
     periodic_phase_pwl,
     windowed_pwl,
 )
 from run_spice_sweep import ROOT, detect_spice
 
 
-SCENARIOS = ("target-repeat", "one-hot")
+SCENARIOS = ("target-repeat", "one-hot", "mnist")
 
 
 def records_to_feature_matrix(records: list[dict[str, Any]], feature_count: int) -> list[list[float]]:
@@ -312,6 +314,7 @@ def run_case(args: argparse.Namespace) -> dict[str, Any]:
     spice_bin, version = detect_spice(args.spice_bin)
     feature_count = args.feature_count
     if args.scenario == "target-repeat":
+        feature_count = 1
         train_records = target_repeat_records(
             count=args.train_samples,
             target_class=args.target_class,
@@ -333,6 +336,20 @@ def run_case(args: argparse.Namespace) -> dict[str, Any]:
             class_count=args.class_count,
             repeats=args.eval_repeats,
             active_value=args.input_value,
+        )
+    elif args.scenario == "mnist":
+        dataset_info = parse_counted_mnist_dataset(args.dataset)
+        if dataset_info is None:
+            raise ValueError("dataset must be a counted multiclass MNIST dataset such as mnist3fixed8_6")
+        class_count, _frontend, _sample_count = dataset_info
+        if class_count != args.class_count:
+            raise ValueError("class-count must match the counted MNIST dataset")
+        records = dataset_records(args.dataset, args.seed, root=ROOT, download=args.download)
+        train_records, eval_records = balanced_train_eval_split(
+            records,
+            class_count=args.class_count,
+            train_samples=args.train_samples,
+            eval_samples=args.eval_samples,
         )
     else:
         raise ValueError(f"scenario must be one of {SCENARIOS}")
@@ -389,6 +406,8 @@ def run_case(args: argparse.Namespace) -> dict[str, Any]:
         "simulator": version,
         "architecture": "continuous_multiclass_split_rail_block_sequence",
         "scenario": args.scenario,
+        "dataset": args.dataset if args.scenario == "mnist" else None,
+        "seed": args.seed if args.scenario == "mnist" else None,
         "class_count": args.class_count,
         "feature_count": feature_count,
         "readout_width_u": args.readout_width,
@@ -406,11 +425,15 @@ def run_case(args: argparse.Namespace) -> dict[str, Any]:
         "final_signed_matrix_v": final_signed,
         "signed_after_each_train_v": train_progress,
         "passed": (
-            final_margin > initial_margin
-            and accuracy(rows, "final_eval") >= accuracy(rows, "initial_eval")
-            and (
-                args.scenario == "one-hot"
-                or final_signed[args.target_class][0] > args.min_target_signed
+            accuracy(rows, "final_eval") > accuracy(rows, "initial_eval")
+            if args.scenario == "mnist"
+            else (
+                final_margin > initial_margin
+                and accuracy(rows, "final_eval") >= accuracy(rows, "initial_eval")
+                and (
+                    args.scenario == "one-hot"
+                    or final_signed[args.target_class][0] > args.min_target_signed
+                )
             )
         ),
         "csv": str(csv_path),
@@ -427,8 +450,11 @@ def build_arg_parser() -> argparse.ArgumentParser:
     ap.add_argument("--tag", default="multiclass_block_sequence")
     ap.add_argument("--timeout", type=float, default=60.0)
     ap.add_argument("--class-count", type=int, default=3)
-    ap.add_argument("--feature-count", type=int, default=1)
+    ap.add_argument("--feature-count", type=int, default=8)
     ap.add_argument("--scenario", choices=SCENARIOS, default="target-repeat")
+    ap.add_argument("--dataset", default="mnist3fixed8_6")
+    ap.add_argument("--seed", type=int, default=3)
+    ap.add_argument("--download", action="store_true")
     ap.add_argument("--target-class", type=int, default=0)
     ap.add_argument("--train-samples", type=int, default=2)
     ap.add_argument("--eval-samples", type=int, default=1)
@@ -453,6 +479,8 @@ def validate_args(args: argparse.Namespace) -> None:
         raise ValueError("feature-count must be positive")
     if args.scenario not in SCENARIOS:
         raise ValueError(f"scenario must be one of {SCENARIOS}")
+    if args.scenario == "mnist" and parse_counted_mnist_dataset(args.dataset) is None:
+        raise ValueError("dataset must be a counted multiclass MNIST dataset")
     if args.target_class < 0 or args.target_class >= args.class_count:
         raise ValueError("target-class must be a valid class index")
     if args.train_samples <= 0 or args.eval_samples <= 0:

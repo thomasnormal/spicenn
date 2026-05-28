@@ -597,6 +597,9 @@ def _measure_lines(samples: list[dict[str, Any]], eval_count: int, train_count: 
             at = base + 3.15
             for hidden in range(HIDDEN):
                 lines += [
+                    f".meas tran {phase}_prep_h{hidden}_{local} FIND V(pre{hidden}_p) AT={act_at:.2f}n",
+                    f".meas tran {phase}_pren_h{hidden}_{local} FIND V(pre{hidden}_n) AT={act_at:.2f}n",
+                    f".meas tran {phase}_pre_signed_h{hidden}_{local} PARAM='{phase}_prep_h{hidden}_{local}-{phase}_pren_h{hidden}_{local}'",
                     f".meas tran {phase}_act_h{hidden}_{local} FIND V(act{hidden}) AT={act_at:.2f}n",
                     f".meas tran {phase}_hrow_h{hidden}_{local} FIND V(hrow{hidden}) AT={act_at:.2f}n",
                 ]

@@ -2,6 +2,24 @@
 
 ## 2026-05-28
 
+- Integrated the bounded hidden-writer sizing into a real MNIST01 live-hidden
+  two-sample transient.  The new diagnostics measure initial/final hidden
+  `pre_p-pre_n` evidence for every hidden row, not only restored `act/hrow`.
+  With mild hidden weights (`inside 0.50/0.45 V`, outside `0.45/0.65 V`),
+  differential hidden activation, dynamic-preamp hidden credit, and a bounded
+  `pmos-differential` hidden writer (`0.005u` stack, `0.1u` PMOS, `5.20--5.70
+  ns` write), the real readout-weighted hidden-credit path produces a
+  writer-range gate (`h0_hdp_gate-h0_hdn_gate ~= -0.86 V`) and a bounded
+  physical hidden signed update of about `+31.6 mV` on the second sample while
+  keeping the measured hidden storage rails unsaturated (`whp <0.60 V`,
+  `whn >0.40 V`).  The selected hidden unit's own next-forward pre-evidence
+  improves by more than `3 mV`.  This closes the previous gap between the
+  synthetic hidden-write primitive and a real-credit MNIST handoff.  It is not
+  a learning win yet: the relative hidden activation margin can still get worse
+  because other hidden rows improve too, and the two-sample final class margins
+  remain tiny/opposite-sign.  Focused regression: `python3 -m pytest
+  tests/test_mnist01_live_hidden_divider_training.py -q` -> `10 passed`; with
+  adjacent XOR/fixed-feature suites -> `20 passed`.
 - Added a low-level MNIST hidden-cell forward/write regression for the new
   unsaturated operating region.  The deck uses one real hidden conductance
   cell, two forward phases, and one live `pmos-differential` hidden write

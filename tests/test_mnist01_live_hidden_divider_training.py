@@ -28,6 +28,16 @@ def _hidden_feature_margin(
     return active - strongest_inactive
 
 
+def _hidden_feature_pre_evidence(
+    measures: dict[str, float],
+    records: list[dict[str, object]],
+    phase: str,
+    sample_idx: int,
+) -> float:
+    hidden, _feature = mnist01_hidden._probe_hidden_feature(records[sample_idx])
+    return measures[f"{phase}_pre_signed_h{hidden}_{sample_idx}"]
+
+
 def _require_mnist_raw() -> None:
     raw = ROOT / "data/MNIST/raw"
     required = [
@@ -83,6 +93,7 @@ def test_mnist01_live_hidden_netlist_is_live_transistor_path() -> None:
     assert "Mc0_f1_live_pos_up_p c0_vwp1 c0_f1_live_pos_up_ctrl vwhi_ref vdd PMOS" in netlist
     assert "Mh1f6_live_pup_pgate_phi h1f6_live_pup_pgphi errphi 0 0 NSENSE" in netlist
     assert ".meas tran train_hrow_probe_0" in netlist
+    assert ".meas tran initial_pre_signed_h0_0" in netlist
     assert ".meas tran initial_act_h0_0" in netlist
     assert ".meas tran final_hrow_h3_1" in netlist
     assert ".meas tran final_margin_improvement_1" in netlist
@@ -347,6 +358,55 @@ def test_mnist01_hidden_bounded_write_improves_next_forward_evidence(
     assert parsed["whn_after_write"] > 0.40
     assert parsed["act_after"] >= parsed["act_before"]
     assert parsed["hrow_after"] >= parsed["hrow_before"] - 1e-6
+
+
+@pytest.mark.ngspice
+def test_mnist01_live_hidden_bounded_real_credit_improves_selected_pre_evidence(
+    tmp_path: Path,
+    ngspice_path: str,
+) -> None:
+    _require_mnist_raw()
+    train, _evals = mnist01_hidden.load_mnist01_records(
+        train_count_per_digit=1,
+        eval_count_per_digit=1,
+        image_size=4,
+    )
+
+    parsed = mnist01_hidden.run_netlist(
+        ngspice_path,
+        tmp_path / "mnist01_live_hidden_bounded_real_credit.cir",
+        mnist01_hidden.mnist01_live_hidden_netlist(
+            train,
+            train,
+            hidden_inside_positive=0.50,
+            hidden_outside_positive=0.45,
+            hidden_inside_negative=0.45,
+            hidden_outside_negative=0.65,
+            hidden_activation_mode="differential-preamp",
+            hidden_activation_sense_width_u=64.0,
+            hidden_credit_gate_mode="dynamic-preamp",
+            hidden_writer_topology="pmos-differential",
+            hidden_write_start_train_index=1,
+            hidden_credit_sense_start_ns=5.00,
+            hidden_credit_sense_end_ns=5.35,
+            hidden_write_start_ns=5.20,
+            hidden_write_end_ns=5.70,
+            hidden_update_width_u=0.005,
+            hidden_writer_pmos_width_u=0.1,
+        ),
+        timeout=160.0,
+    )
+
+    initial_evidence = _hidden_feature_pre_evidence(parsed, train, "initial", 1)
+    final_evidence = _hidden_feature_pre_evidence(parsed, train, "final", 1)
+
+    assert parsed["train_hcredit_gate_probe_1"] < -0.50
+    assert 20e-3 < parsed["train_wh_probe_signed_delta_1"] < 60e-3
+    assert parsed["train_wh_probe_p_after_1"] < 0.60
+    assert parsed["train_wh_probe_n_after_1"] > 0.40
+    assert final_evidence > initial_evidence + 3e-3
+    assert parsed["final_margin_0"] < 0.0
+    assert parsed["final_margin_1"] > 0.0
 
 
 @pytest.mark.ngspice

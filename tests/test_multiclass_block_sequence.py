@@ -4007,6 +4007,8 @@ def test_multiclass_block_sequence_hidden_direct_can_use_signed_support_state_gu
 
     assert "Mh0_c0_direct_pv_pup_sg" in netlist
     assert "Mh0_c0_direct_pn_nup_sg" in netlist
+    assert "Mh0_c0_direct_pv_ndn_state" in netlist
+    assert "Mh0_c0_direct_pn_pdn_state" in netlist
     assert "\nB" not in netlist
 
 

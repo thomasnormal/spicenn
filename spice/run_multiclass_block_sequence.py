@@ -610,8 +610,18 @@ def hidden_direct_readout_weighted_update_lines(
                     f"M{prefix}{suffix}_psup_w {source_for_weight} {weight} 0 0 NSENSE W={width_u:.6g}u L=180n",
                     f"M{prefix}{suffix}_ndn_gate_rst {dgate} {reset_node} 0 0 NMOS W=4u L=180n",
                     f"M{prefix}{suffix}_ndn_gate_inv {dgate} {pgate} {pmos_ref_node} vdd PMOS W={complement_width_scale * width_u:.6g}u L=180n",
-                    f"M{prefix}{suffix}_ndn_direct {whn} {dgate} {low_ref_node} 0 NSENSE W={complement_width_scale * width_u:.6g}u L=180n",
                 ]
+                if state_guard is not None:
+                    anti_mid = f"{prefix}{suffix}_ndn_mid"
+                    lines += [
+                        f"R{anti_mid} {anti_mid} 0 1G",
+                        f"M{prefix}{suffix}_ndn_direct {whn} {dgate} {anti_mid} 0 NSENSE W={complement_width_scale * width_u:.6g}u L=180n",
+                        f"M{prefix}{suffix}_ndn_state {anti_mid} {state_guard} {low_ref_node} 0 NSENSE W={complement_width_scale * width_u:.6g}u L=180n",
+                    ]
+                else:
+                    lines.append(
+                        f"M{prefix}{suffix}_ndn_direct {whn} {dgate} {low_ref_node} 0 NSENSE W={complement_width_scale * width_u:.6g}u L=180n"
+                    )
             else:
                 uses_hidden_ref = output_stage in ("pmos-balanced", "pmos-bounded", "pmos-complementary")
                 pmos_ref_node = high_ref_node if uses_hidden_ref else "vwhi_ref"
@@ -660,8 +670,18 @@ def hidden_direct_readout_weighted_update_lines(
                         f"C{dgate} {dgate} 0 {internal_capacitance_f:.12g}f IC=0",
                         f"M{prefix}{suffix}_ndn_gate_rst {dgate} {reset_node} 0 0 NMOS W=4u L=180n",
                         f"M{prefix}{suffix}_ndn_gate_inv {dgate} {pgate} {pmos_ref_node} vdd PMOS W={complement_width_scale * width_u:.6g}u L=180n",
-                        f"M{prefix}{suffix}_ndn_direct {whn} {dgate} {low_ref_node} 0 NSENSE W={complement_width_scale * width_u:.6g}u L=180n",
                     ]
+                    if state_guard is not None:
+                        anti_mid = f"{prefix}{suffix}_ndn_mid"
+                        lines += [
+                            f"R{anti_mid} {anti_mid} 0 1G",
+                            f"M{prefix}{suffix}_ndn_direct {whn} {dgate} {anti_mid} 0 NSENSE W={complement_width_scale * width_u:.6g}u L=180n",
+                            f"M{prefix}{suffix}_ndn_state {anti_mid} {state_guard} {low_ref_node} 0 NSENSE W={complement_width_scale * width_u:.6g}u L=180n",
+                        ]
+                    else:
+                        lines.append(
+                            f"M{prefix}{suffix}_ndn_direct {whn} {dgate} {low_ref_node} 0 NSENSE W={complement_width_scale * width_u:.6g}u L=180n"
+                        )
         for err, weight, anti_weight, guard, suffix in negative_terms:
             up0 = f"{prefix}{suffix}_nup0"
             up1 = f"{prefix}{suffix}_nup1"
@@ -741,8 +761,18 @@ def hidden_direct_readout_weighted_update_lines(
                     f"M{prefix}{suffix}_nsup_w {source_for_weight} {weight} 0 0 NSENSE W={width_u:.6g}u L=180n",
                     f"M{prefix}{suffix}_pdn_gate_rst {dgate} {reset_node} 0 0 NMOS W=4u L=180n",
                     f"M{prefix}{suffix}_pdn_gate_inv {dgate} {ngate} {pmos_ref_node} vdd PMOS W={complement_width_scale * width_u:.6g}u L=180n",
-                    f"M{prefix}{suffix}_pdn_direct {whp} {dgate} {low_ref_node} 0 NSENSE W={complement_width_scale * width_u:.6g}u L=180n",
                 ]
+                if state_guard is not None:
+                    anti_mid = f"{prefix}{suffix}_pdn_mid"
+                    lines += [
+                        f"R{anti_mid} {anti_mid} 0 1G",
+                        f"M{prefix}{suffix}_pdn_direct {whp} {dgate} {anti_mid} 0 NSENSE W={complement_width_scale * width_u:.6g}u L=180n",
+                        f"M{prefix}{suffix}_pdn_state {anti_mid} {state_guard} {low_ref_node} 0 NSENSE W={complement_width_scale * width_u:.6g}u L=180n",
+                    ]
+                else:
+                    lines.append(
+                        f"M{prefix}{suffix}_pdn_direct {whp} {dgate} {low_ref_node} 0 NSENSE W={complement_width_scale * width_u:.6g}u L=180n"
+                    )
             else:
                 uses_hidden_ref = output_stage in ("pmos-balanced", "pmos-bounded", "pmos-complementary")
                 pmos_ref_node = high_ref_node if uses_hidden_ref else "vwhi_ref"
@@ -791,8 +821,18 @@ def hidden_direct_readout_weighted_update_lines(
                         f"C{dgate} {dgate} 0 {internal_capacitance_f:.12g}f IC=0",
                         f"M{prefix}{suffix}_pdn_gate_rst {dgate} {reset_node} 0 0 NMOS W=4u L=180n",
                         f"M{prefix}{suffix}_pdn_gate_inv {dgate} {ngate} {pmos_ref_node} vdd PMOS W={complement_width_scale * width_u:.6g}u L=180n",
-                        f"M{prefix}{suffix}_pdn_direct {whp} {dgate} {low_ref_node} 0 NSENSE W={complement_width_scale * width_u:.6g}u L=180n",
                     ]
+                    if state_guard is not None:
+                        anti_mid = f"{prefix}{suffix}_pdn_mid"
+                        lines += [
+                            f"R{anti_mid} {anti_mid} 0 1G",
+                            f"M{prefix}{suffix}_pdn_direct {whp} {dgate} {anti_mid} 0 NSENSE W={complement_width_scale * width_u:.6g}u L=180n",
+                            f"M{prefix}{suffix}_pdn_state {anti_mid} {state_guard} {low_ref_node} 0 NSENSE W={complement_width_scale * width_u:.6g}u L=180n",
+                        ]
+                    else:
+                        lines.append(
+                            f"M{prefix}{suffix}_pdn_direct {whp} {dgate} {low_ref_node} 0 NSENSE W={complement_width_scale * width_u:.6g}u L=180n"
+                        )
     return lines
 
 

@@ -56,7 +56,7 @@ SCENARIOS = ("target-repeat", "one-hot", "mnist")
 SAMPLE_ORDER_MODES = ("grouped", "round-robin")
 CLASS_BIAS_MODES = ("none", "target-only", "label-descent")
 READOUT_UPDATE_MODES = ("sampled", "live")
-READOUT_LIVE_OBJECTIVE_MODES = ("global-error", "feature-margin")
+READOUT_LIVE_OBJECTIVE_MODES = ("global-error", "feature-margin", "feature-margin-centered")
 READOUT_NONTARGET_GUARD_MODES = ("none", "support", "support-symmetric")
 READOUT_SUPPORT_SOURCE_MODES = ("writer", "elig", "act", "act-raw")
 READOUT_LIVE_HIGH_SIDE_TOPOLOGIES = ("nmos-stack", "pmos-gated", "pmos-differential")
@@ -195,11 +195,12 @@ def class_centered_error_rail_lines(
     common_width_u: float = 64.0,
     capacitance_f: float = 4.0,
     common_capacitance_f: float = 4.0,
+    common_prefix: str = "class",
 ) -> list[str]:
     if min(copy_width_u, common_width_u, capacitance_f, common_capacitance_f) <= 0.0:
         raise ValueError("centered error rail sizes must be positive")
-    common_p = "class_errp_common"
-    common_n = "class_errn_common"
+    common_p = f"{common_prefix}_errp_common"
+    common_n = f"{common_prefix}_errn_common"
     lines = [
         f"C{common_p} {common_p} 0 {common_capacitance_f:.12g}f IC=0",
         f"C{common_n} {common_n} 0 {common_capacitance_f:.12g}f IC=0",
@@ -213,7 +214,7 @@ def class_centered_error_rail_lines(
         rawn = class_node(class_idx, raw_negative_suffix)
         errp = class_node(class_idx, positive_suffix)
         errn = class_node(class_idx, negative_suffix)
-        prefix = f"center_c{class_idx}_"
+        prefix = f"center_{common_prefix}_c{class_idx}_"
         lines += [
             f"C{errp} {errp} 0 {capacitance_f:.12g}f IC=0",
             f"C{errn} {errn} 0 {capacitance_f:.12g}f IC=0",
@@ -242,6 +243,7 @@ def class_error_rail_gain_restore_lines(
     restore_width_u: float = 128.0,
     cross_discharge_width_u: float = 64.0,
     capacitance_f: float = 1.0,
+    instance_prefix: str = "restore",
 ) -> list[str]:
     if min(restore_width_u, cross_discharge_width_u, capacitance_f) <= 0.0:
         raise ValueError("gain-restored error rail sizes must be positive")
@@ -258,10 +260,10 @@ def class_error_rail_gain_restore_lines(
             f"R{errn} {errn} 0 1G",
             f"Mreset_{errp} {errp} {reset_node} 0 0 NMOS W=4u L=180n",
             f"Mreset_{errn} {errn} {reset_node} 0 0 NMOS W=4u L=180n",
-            f"Mrestore_c{class_idx}_errp vdd {inp} {errp} 0 NSENSE W={restore_width_u:.6g}u L=180n",
-            f"Mrestore_c{class_idx}_errn vdd {inn} {errn} 0 NSENSE W={restore_width_u:.6g}u L=180n",
-            f"Mrestore_c{class_idx}_errp_xdn {errp} {inn} 0 0 NMOS W={cross_discharge_width_u:.6g}u L=180n",
-            f"Mrestore_c{class_idx}_errn_xdn {errn} {inp} 0 0 NMOS W={cross_discharge_width_u:.6g}u L=180n",
+            f"M{instance_prefix}_c{class_idx}_errp vdd {inp} {errp} 0 NSENSE W={restore_width_u:.6g}u L=180n",
+            f"M{instance_prefix}_c{class_idx}_errn vdd {inn} {errn} 0 NSENSE W={restore_width_u:.6g}u L=180n",
+            f"M{instance_prefix}_c{class_idx}_errp_xdn {errp} {inn} 0 0 NMOS W={cross_discharge_width_u:.6g}u L=180n",
+            f"M{instance_prefix}_c{class_idx}_errn_xdn {errn} {inp} 0 0 NMOS W={cross_discharge_width_u:.6g}u L=180n",
         ]
     return lines
 
@@ -278,6 +280,7 @@ def class_error_rail_bounded_gain_lines(
     cross_discharge_width_u: float = 4.0,
     capacitance_f: float = 4.0,
     shunt_resistance_ohm: float = 1.0e9,
+    instance_prefix: str = "bounded",
 ) -> list[str]:
     """Convert centered error rails into writer-range rails without hard latching.
 
@@ -303,13 +306,13 @@ def class_error_rail_bounded_gain_lines(
             f"R{errn} {errn} 0 {shunt_resistance_ohm:.12g}",
             f"Mreset_{errp} {errp} {reset_node} 0 0 NMOS W=4u L=180n",
             f"Mreset_{errn} {errn} {reset_node} 0 0 NMOS W=4u L=180n",
-            f"Mbounded_c{class_idx}_errp vdd {inp} {errp} 0 NSENSE W={restore_width_u:.6g}u L=180n",
-            f"Mbounded_c{class_idx}_errn vdd {inn} {errn} 0 NSENSE W={restore_width_u:.6g}u L=180n",
+            f"M{instance_prefix}_c{class_idx}_errp vdd {inp} {errp} 0 NSENSE W={restore_width_u:.6g}u L=180n",
+            f"M{instance_prefix}_c{class_idx}_errn vdd {inn} {errn} 0 NSENSE W={restore_width_u:.6g}u L=180n",
         ]
         if cross_discharge_width_u > 0.0:
             lines += [
-                f"Mbounded_c{class_idx}_errp_xdn {errp} {inn} 0 0 NMOS W={cross_discharge_width_u:.6g}u L=180n",
-                f"Mbounded_c{class_idx}_errn_xdn {errn} {inp} 0 0 NMOS W={cross_discharge_width_u:.6g}u L=180n",
+                f"M{instance_prefix}_c{class_idx}_errp_xdn {errp} {inn} 0 0 NMOS W={cross_discharge_width_u:.6g}u L=180n",
+                f"M{instance_prefix}_c{class_idx}_errn_xdn {errn} {inp} 0 0 NMOS W={cross_discharge_width_u:.6g}u L=180n",
             ]
     return lines
 
@@ -2028,10 +2031,10 @@ def generate_netlist(
         raise ValueError(f"readout_update_mode must be one of {READOUT_UPDATE_MODES}")
     if readout_live_objective_mode not in READOUT_LIVE_OBJECTIVE_MODES:
         raise ValueError(f"readout_live_objective_mode must be one of {READOUT_LIVE_OBJECTIVE_MODES}")
-    if readout_live_objective_mode == "feature-margin" and readout_update_mode != "live":
-        raise ValueError("readout_live_objective_mode=feature-margin requires live readout_update_mode")
-    if readout_live_objective_mode == "feature-margin" and hidden_update_mode != "none":
-        raise ValueError("readout_live_objective_mode=feature-margin currently supports readout-only integration")
+    if readout_live_objective_mode in ("feature-margin", "feature-margin-centered") and readout_update_mode != "live":
+        raise ValueError("feature-margin readout_live_objective_mode requires live readout_update_mode")
+    if readout_live_objective_mode in ("feature-margin", "feature-margin-centered") and hidden_update_mode != "none":
+        raise ValueError("feature-margin readout_live_objective_mode currently supports readout-only integration")
     if not (0.0 <= readout_low_ref < readout_high_ref <= 1.2):
         raise ValueError("readout update references must satisfy 0 <= low < high <= 1.2")
     if readout_nontarget_guard_mode not in READOUT_NONTARGET_GUARD_MODES:
@@ -2147,7 +2150,11 @@ def generate_netlist(
     uses_stored_hidden_credit_update = hidden_update_mode == "readout-weighted"
     uses_direct_hidden_update = hidden_update_mode == "direct-readout-weighted"
     uses_hidden_update = uses_stored_hidden_credit_update or uses_direct_hidden_update
-    uses_feature_margin_readout_objective = readout_live_objective_mode == "feature-margin"
+    uses_feature_margin_readout_objective = readout_live_objective_mode in (
+        "feature-margin",
+        "feature-margin-centered",
+    )
+    uses_feature_margin_centered_objective = readout_live_objective_mode == "feature-margin-centered"
     uses_gated_eligibility = eligibility_gate_mode in ("competition", "rank", "contrast")
     uses_hybrid_readout_eligibility = (
         uses_gated_eligibility and readout_update_eligibility_mode == "hybrid"
@@ -2820,8 +2827,10 @@ def generate_netlist(
                         reset_node="scorepre",
                     )
             for class_idx in range(class_count):
-                fcorrp = feature_correction_node(class_idx, feature, "p")
-                fcorrn = feature_correction_node(class_idx, feature, "n")
+                raw_suffix = "p_raw" if uses_feature_margin_centered_objective else "p"
+                raw_negative_suffix = "n_raw" if uses_feature_margin_centered_objective else "n"
+                fcorrp = feature_correction_node(class_idx, feature, raw_suffix)
+                fcorrn = feature_correction_node(class_idx, feature, raw_negative_suffix)
                 lines += [
                     f"C{fcorrp} {fcorrp} 0 4f IC=0",
                     f"C{fcorrn} {fcorrn} 0 4f IC=0",
@@ -2837,8 +2846,22 @@ def generate_netlist(
                     class_gate = pairwise_decision_node(opponent_idx, target_idx)
                     feature_gate = feature_contribution_decision_node(opponent_idx, target_idx, feature)
                     for suffix, output_node in (
-                        ("target", feature_correction_node(target_idx, feature, "p")),
-                        ("opponent", feature_correction_node(opponent_idx, feature, "n")),
+                        (
+                            "target",
+                            feature_correction_node(
+                                target_idx,
+                                feature,
+                                "p_raw" if uses_feature_margin_centered_objective else "p",
+                            ),
+                        ),
+                        (
+                            "opponent",
+                            feature_correction_node(
+                                opponent_idx,
+                                feature,
+                                "n_raw" if uses_feature_margin_centered_objective else "n",
+                            ),
+                        ),
                     ):
                         prefix = f"fcorr_t{target_idx}_o{opponent_idx}_f{feature}_{suffix}_"
                         lines += [
@@ -2850,6 +2873,32 @@ def generate_netlist(
                             f"M{prefix}feature {prefix}m1 {feature_gate} {prefix}m2 0 NMOS W=32u L=180n",
                             f"M{prefix}clk {prefix}m2 scoreerr {output_node} 0 NSENSE W=32u L=180n",
                         ]
+            if uses_feature_margin_centered_objective:
+                lines += class_centered_error_rail_lines(
+                    class_count=class_count,
+                    raw_positive_suffix=f"f{feature}_fcorr_p_raw",
+                    raw_negative_suffix=f"f{feature}_fcorr_n_raw",
+                    positive_suffix=f"f{feature}_fcorr_p_ctr",
+                    negative_suffix=f"f{feature}_fcorr_n_ctr",
+                    reset_node="scoregaterst",
+                    copy_width_u=16.0,
+                    common_width_u=32.0,
+                    capacitance_f=4.0,
+                    common_capacitance_f=4.0,
+                    common_prefix=f"feature_f{feature}",
+                )
+                lines += class_error_rail_gain_restore_lines(
+                    class_count=class_count,
+                    input_positive_suffix=f"f{feature}_fcorr_p_ctr",
+                    input_negative_suffix=f"f{feature}_fcorr_n_ctr",
+                    positive_suffix=f"f{feature}_fcorr_p",
+                    negative_suffix=f"f{feature}_fcorr_n",
+                    reset_node="scoregaterst",
+                    restore_width_u=48.0,
+                    cross_discharge_width_u=64.0,
+                    capacitance_f=4.0,
+                    instance_prefix=f"feature_f{feature}_restore",
+                )
     if uses_raw_common_ref_score:
         lines += shared_score_common_reference_lines(
             class_count=class_count,
@@ -5764,10 +5813,10 @@ def validate_args(args: argparse.Namespace) -> None:
         raise ValueError(f"readout-update-mode must be one of {READOUT_UPDATE_MODES}")
     if args.readout_live_objective_mode not in READOUT_LIVE_OBJECTIVE_MODES:
         raise ValueError(f"readout-live-objective-mode must be one of {READOUT_LIVE_OBJECTIVE_MODES}")
-    if args.readout_live_objective_mode == "feature-margin" and args.readout_update_mode != "live":
-        raise ValueError("readout-live-objective-mode=feature-margin requires live readout-update-mode")
-    if args.readout_live_objective_mode == "feature-margin" and args.hidden_update_mode != "none":
-        raise ValueError("readout-live-objective-mode=feature-margin currently supports readout-only integration")
+    if args.readout_live_objective_mode in ("feature-margin", "feature-margin-centered") and args.readout_update_mode != "live":
+        raise ValueError("feature-margin readout-live-objective-mode requires live readout-update-mode")
+    if args.readout_live_objective_mode in ("feature-margin", "feature-margin-centered") and args.hidden_update_mode != "none":
+        raise ValueError("feature-margin readout-live-objective-mode currently supports readout-only integration")
     if args.readout_nontarget_guard_mode not in READOUT_NONTARGET_GUARD_MODES:
         raise ValueError(f"readout-nontarget-guard-mode must be one of {READOUT_NONTARGET_GUARD_MODES}")
     if args.readout_nontarget_guard_mode != "none" and args.readout_update_mode != "live":
@@ -5804,7 +5853,7 @@ def validate_args(args: argparse.Namespace) -> None:
         args.readout_update_mode == "live"
         and args.error_mode != "label-descent"
         and args.error_mode not in ERROR_RAIL_DESCENT_MODES
-        and args.readout_live_objective_mode != "feature-margin"
+        and args.readout_live_objective_mode not in ("feature-margin", "feature-margin-centered")
     ):
         raise ValueError("live readout-update-mode requires label-descent or error-rail descent modes")
     if args.readout_update_width <= 0.0:

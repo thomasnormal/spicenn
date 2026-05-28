@@ -6712,6 +6712,41 @@ def test_multiclass_block_sequence_feature_margin_live_objective_is_gradient_flo
     assert "c0_f0_fcorr_n" in netlist
 
 
+def test_multiclass_block_sequence_feature_margin_centered_live_objective_has_local_restore() -> None:
+    records = [{"label": 1, "inputs": {"x0": 0.85, "x1": 0.25}}]
+    netlist = seq.generate_netlist(
+        train_records=records,
+        eval_records=records,
+        class_count=3,
+        feature_count=2,
+        score_capacitance_f=5.0,
+        error_mode="label-descent",
+        readout_update_mode="live",
+        readout_live_objective_mode="feature-margin-centered",
+        readout_live_high_side_topology="pmos-differential",
+        initial_readout_states={
+            (0, 0): (0.62, 0.32),
+            (1, 0): (0.38, 0.32),
+            (2, 0): (0.34, 0.40),
+        },
+    )
+
+    assert "Vapply" not in netlist
+    assert "Cc1_gvp0" not in netlist
+    assert "Cc1_f0_fcorr_p_raw c1_f0_fcorr_p_raw 0 4f IC=0" in netlist
+    assert "Cc1_f0_fcorr_p_ctr c1_f0_fcorr_p_ctr 0 4f IC=0" in netlist
+    assert "Cc1_f0_fcorr_p c1_f0_fcorr_p 0 4f IC=0" in netlist
+    assert "Cfeature_f0_errp_common feature_f0_errp_common 0 4f IC=0" in netlist
+    assert "Cfeature_f1_errp_common feature_f1_errp_common 0 4f IC=0" in netlist
+    assert "Mcenter_feature_f0_c1_common_p" in netlist
+    assert "Mcenter_feature_f1_c1_common_p" in netlist
+    assert "Mfeature_f0_restore_c1_errp" in netlist
+    assert "Mfeature_f1_restore_c1_errp" in netlist
+    assert "Mc1_f0_live_pos_up_p c1_vwp0 c1_f0_live_pos_up_ctrl vwhi_ref vdd PMOS" in netlist
+    assert netlist.count("Mcenter_feature_f0_c1_common_p") == 1
+    assert netlist.count("Mcenter_feature_f1_c1_common_p") == 1
+
+
 def test_multiclass_block_sequence_ngspice_feature_margin_live_objective_corrects_wrong_feature(
     tmp_path: Path,
     ngspice_path: str,
@@ -6757,6 +6792,54 @@ def test_multiclass_block_sequence_ngspice_feature_margin_live_objective_correct
     assert float(measures["c1_f0_signed_final"]) > class1_initial + 5e-3
     assert float(measures["c0_f0_signed_final"]) < class0_initial - 5e-3
     assert final_margin > initial_margin + 10e-3
+
+
+def test_multiclass_block_sequence_ngspice_feature_margin_centered_corrects_wrong_feature(
+    tmp_path: Path,
+    ngspice_path: str,
+) -> None:
+    records = [{"label": 1, "inputs": {"x0": 0.85}}]
+    initial_states = {
+        (0, 0): (0.62, 0.32),
+        (1, 0): (0.38, 0.32),
+        (2, 0): (0.34, 0.40),
+    }
+    measures = run_netlist(
+        ngspice_path,
+        tmp_path / "multiclass_block_sequence_feature_margin_centered_live.cir",
+        seq.generate_netlist(
+            train_records=records,
+            eval_records=records,
+            class_count=3,
+            feature_count=1,
+            score_capacitance_f=5.0,
+            error_mode="label-descent",
+            readout_update_mode="live",
+            readout_live_objective_mode="feature-margin-centered",
+            readout_live_high_side_topology="pmos-differential",
+            readout_high_ref=0.48,
+            readout_low_ref=0.22,
+            readout_update_width_u=1.0,
+            initial_readout_states=initial_states,
+        ),
+        timeout=80.0,
+    )
+
+    initial_scores = [float(measures[f"c{class_idx}_score_net_0"]) for class_idx in range(3)]
+    final_scores = [float(measures[f"c{class_idx}_score_net_2"]) for class_idx in range(3)]
+    initial_margin = initial_scores[1] - max(initial_scores[0], initial_scores[2])
+    final_margin = final_scores[1] - max(final_scores[0], final_scores[2])
+    class1_initial = initial_states[(1, 0)][0] - initial_states[(1, 0)][1]
+    class0_initial = initial_states[(0, 0)][0] - initial_states[(0, 0)][1]
+
+    assert initial_scores[0] > initial_scores[1] + 50e-3
+    assert float(measures["c1_f0_fcorrp_1"]) > float(measures["c1_f0_fcorrn_1"]) + 25e-3
+    assert float(measures["c0_f0_fcorrn_1"]) > float(measures["c0_f0_fcorrp_1"]) + 25e-3
+    assert abs(float(measures["c2_f0_fcorrp_1"]) - float(measures["c2_f0_fcorrn_1"])) < 5e-3
+    assert float(measures["c1_f0_signed_final"]) > class1_initial + 100e-3
+    assert float(measures["c0_f0_signed_final"]) < class0_initial - 100e-3
+    assert final_margin > initial_margin + 100e-3
+    assert final_scores[1] > final_scores[0] + 25e-3
 
 
 def test_multiclass_block_sequence_ngspice_centered_gain_margin_corrects_wrong_winner(

@@ -56,6 +56,7 @@ SCENARIOS = ("target-repeat", "one-hot", "mnist")
 SAMPLE_ORDER_MODES = ("grouped", "round-robin")
 CLASS_BIAS_MODES = ("none", "target-only", "label-descent")
 READOUT_UPDATE_MODES = ("sampled", "live")
+READOUT_LIVE_OBJECTIVE_MODES = ("global-error", "feature-margin")
 READOUT_NONTARGET_GUARD_MODES = ("none", "support", "support-symmetric")
 READOUT_SUPPORT_SOURCE_MODES = ("writer", "elig", "act", "act-raw")
 READOUT_LIVE_HIGH_SIDE_TOPOLOGIES = ("nmos-stack", "pmos-gated", "pmos-differential")
@@ -323,6 +324,57 @@ def hidden_update_eligibility_node(feature_idx: int) -> str:
 
 def readout_update_eligibility_node(feature_idx: int) -> str:
     return f"relig{feature_idx}"
+
+
+def feature_contribution_node(class_idx: int, feature_idx: int) -> str:
+    return f"c{class_idx}_f{feature_idx}_contrib"
+
+
+def feature_contribution_decision_node(class_idx: int, opponent_idx: int, feature_idx: int) -> str:
+    return f"c{class_idx}_gt_c{opponent_idx}_f{feature_idx}_contrib_decision"
+
+
+def feature_correction_node(class_idx: int, feature_idx: int, suffix: str) -> str:
+    return f"c{class_idx}_f{feature_idx}_fcorr_{suffix}"
+
+
+def feature_contribution_decision_lines(
+    *,
+    class_a: int,
+    class_b: int,
+    feature_idx: int,
+    amp_clock_node: str = "scoreamp",
+    decision_clock_node: str = "scoredec",
+    reset_node: str = "scorepre",
+    pullup_width_u: float = 16.0,
+    pulldown_width_u: float = 96.0,
+) -> list[str]:
+    node_ab = feature_contribution_decision_node(class_a, class_b, feature_idx)
+    node_ba = feature_contribution_decision_node(class_b, class_a, feature_idx)
+    prefix = f"fcmp_c{class_a}_c{class_b}_f{feature_idx}_"
+    dec_src = f"{prefix}dec_src"
+    return [
+        f"C{node_ab} {node_ab} 0 4f IC=0",
+        f"C{node_ba} {node_ba} 0 4f IC=0",
+        f"R{node_ab} {node_ab} 0 1G",
+        f"R{node_ba} {node_ba} 0 1G",
+        f"Mprecharge_{node_ab} {node_ab} {reset_node} vdd vdd PMOS W=4u L=180n",
+        f"Mprecharge_{node_ba} {node_ba} {reset_node} vdd vdd PMOS W=4u L=180n",
+        *low_gain_ref_state_lines(prefix=prefix, reset_node=reset_node, gain_capacitance_f=8.0),
+        *low_gain_preamp_lines(
+            prefix=prefix,
+            score_node=feature_contribution_node(class_a, feature_idx),
+            scoren_node=feature_contribution_node(class_b, feature_idx),
+            amp_clock_node=amp_clock_node,
+            gain_input_width=1.0,
+            gain_tail_width=8.0,
+        ),
+        f"M{prefix}dec_pair_p {node_ab} {node_ba} vdd vdd PMOS W={pullup_width_u:.6g}u L=180n",
+        f"M{prefix}decn_pair_p {node_ba} {node_ab} vdd vdd PMOS W={pullup_width_u:.6g}u L=180n",
+        f"M{prefix}dec_pair_n {node_ab} {prefix}scoren_amp {dec_src} 0 NSENSE W={pulldown_width_u:.6g}u L=180n",
+        f"M{prefix}decn_pair_n {node_ba} {prefix}score_amp {dec_src} 0 NSENSE W={pulldown_width_u:.6g}u L=180n",
+        f"M{prefix}dec_pair_tail {dec_src} {decision_clock_node} 0 0 NMOS W={pulldown_width_u:.6g}u L=180n",
+    ]
 
 
 def effective_readout_update_eligibility_capacitance(
@@ -1827,6 +1879,7 @@ def generate_netlist(
     normalizer_error_clock_high: float = 1.2,
     error_mode: str = "label-descent",
     readout_update_mode: str = "sampled",
+    readout_live_objective_mode: str = "global-error",
     readout_update_width_u: float = 0.5,
     readout_high_ref: float = 0.42,
     readout_low_ref: float = 0.28,
@@ -1973,6 +2026,12 @@ def generate_netlist(
         raise ValueError(f"error_mode must be one of {ERROR_MODES}")
     if readout_update_mode not in READOUT_UPDATE_MODES:
         raise ValueError(f"readout_update_mode must be one of {READOUT_UPDATE_MODES}")
+    if readout_live_objective_mode not in READOUT_LIVE_OBJECTIVE_MODES:
+        raise ValueError(f"readout_live_objective_mode must be one of {READOUT_LIVE_OBJECTIVE_MODES}")
+    if readout_live_objective_mode == "feature-margin" and readout_update_mode != "live":
+        raise ValueError("readout_live_objective_mode=feature-margin requires live readout_update_mode")
+    if readout_live_objective_mode == "feature-margin" and hidden_update_mode != "none":
+        raise ValueError("readout_live_objective_mode=feature-margin currently supports readout-only integration")
     if not (0.0 <= readout_low_ref < readout_high_ref <= 1.2):
         raise ValueError("readout update references must satisfy 0 <= low < high <= 1.2")
     if readout_nontarget_guard_mode not in READOUT_NONTARGET_GUARD_MODES:
@@ -2088,6 +2147,7 @@ def generate_netlist(
     uses_stored_hidden_credit_update = hidden_update_mode == "readout-weighted"
     uses_direct_hidden_update = hidden_update_mode == "direct-readout-weighted"
     uses_hidden_update = uses_stored_hidden_credit_update or uses_direct_hidden_update
+    uses_feature_margin_readout_objective = readout_live_objective_mode == "feature-margin"
     uses_gated_eligibility = eligibility_gate_mode in ("competition", "rank", "contrast")
     uses_hybrid_readout_eligibility = (
         uses_gated_eligibility and readout_update_eligibility_mode == "hybrid"
@@ -2131,6 +2191,7 @@ def generate_netlist(
         or uses_pairwise_score_competition
         or uses_pairwise_margin_correction
         or uses_normalizer_error
+        or uses_feature_margin_readout_objective
     )
     uses_restored_winner = error_mode == "restored-winner-nontarget"
     uses_pairwise_decisions = (
@@ -2140,6 +2201,7 @@ def generate_netlist(
         or uses_pairwise_score_competition
         or uses_pairwise_margin_correction
         or uses_common_score_mass_pairwise
+        or uses_feature_margin_readout_objective
     )
     uses_late_restored_gate = (
         uses_restored_score
@@ -2149,6 +2211,7 @@ def generate_netlist(
         or uses_pairwise_score_competition
         or uses_pairwise_margin_correction
         or uses_common_score_mass_pairwise
+        or uses_feature_margin_readout_objective
         or uses_score_preamp
         or uses_raw_common_ref_score
         or uses_normalizer_error
@@ -2165,6 +2228,7 @@ def generate_netlist(
         or uses_pairwise_score_competition
         or uses_pairwise_margin_correction
         or uses_normalizer_error
+        or uses_feature_margin_readout_objective
     )
     uses_score_based_target_timing = (
         uses_target_ref_score
@@ -2236,7 +2300,12 @@ def generate_netlist(
         if uses_pairwise_margin_correction
         else None
     )
-    if readout_update_mode == "live" and error_mode != "label-descent" and error_mode not in ERROR_RAIL_DESCENT_MODES:
+    if (
+        readout_update_mode == "live"
+        and error_mode != "label-descent"
+        and error_mode not in ERROR_RAIL_DESCENT_MODES
+        and not uses_feature_margin_readout_objective
+    ):
         raise ValueError("live readout_update_mode requires label-descent or error-rail descent modes")
 
     lines = [
@@ -2379,6 +2448,7 @@ def generate_netlist(
         or uses_pairwise_margin_correction
         or uses_normalizer_error
         or uses_label_rail_descent
+        or uses_feature_margin_readout_objective
     ):
         scoregaterst_start_ns = 0.2 if uses_live_writer else scorepre_start_ns
         scoregaterst_end_ns = 1.0 if uses_live_writer else scorepre_end_ns
@@ -2731,6 +2801,55 @@ def generate_netlist(
                     lines += pairwise_low_gain_winner_lines(class_a=class_idx, class_b=opponent_idx)
                 else:
                     lines += pairwise_winner_lines(class_a=class_idx, class_b=opponent_idx)
+    if uses_feature_margin_readout_objective:
+        for feature in range(feature_count):
+            for class_idx in range(class_count):
+                contrib = feature_contribution_node(class_idx, feature)
+                lines += [
+                    f"C{contrib} {contrib} 0 10f IC=0",
+                    f"R{contrib} {contrib} 0 1G",
+                    f"M{contrib}_rst {contrib} rst 0 0 NMOS W=4u L=180n",
+                    f"M{contrib}_cond actrow{feature} {class_node(class_idx, f'vwp{feature}')} {contrib} 0 NMOS W={readout_width_u:.6g}u L=180n",
+                ]
+            for class_a in range(class_count):
+                for class_b in range(class_a + 1, class_count):
+                    lines += feature_contribution_decision_lines(
+                        class_a=class_a,
+                        class_b=class_b,
+                        feature_idx=feature,
+                        reset_node="scorepre",
+                    )
+            for class_idx in range(class_count):
+                fcorrp = feature_correction_node(class_idx, feature, "p")
+                fcorrn = feature_correction_node(class_idx, feature, "n")
+                lines += [
+                    f"C{fcorrp} {fcorrp} 0 4f IC=0",
+                    f"C{fcorrn} {fcorrn} 0 4f IC=0",
+                    f"R{fcorrp} {fcorrp} 0 1G",
+                    f"R{fcorrn} {fcorrn} 0 1G",
+                    f"M{fcorrp}_rst {fcorrp} scoregaterst 0 0 NMOS W=4u L=180n",
+                    f"M{fcorrn}_rst {fcorrn} scoregaterst 0 0 NMOS W=4u L=180n",
+                ]
+            for target_idx in range(class_count):
+                for opponent_idx in range(class_count):
+                    if opponent_idx == target_idx:
+                        continue
+                    class_gate = pairwise_decision_node(opponent_idx, target_idx)
+                    feature_gate = feature_contribution_decision_node(opponent_idx, target_idx, feature)
+                    for suffix, output_node in (
+                        ("target", feature_correction_node(target_idx, feature, "p")),
+                        ("opponent", feature_correction_node(opponent_idx, feature, "n")),
+                    ):
+                        prefix = f"fcorr_t{target_idx}_o{opponent_idx}_f{feature}_{suffix}_"
+                        lines += [
+                            f"R{prefix}m0 {prefix}m0 0 1G",
+                            f"R{prefix}m1 {prefix}m1 0 1G",
+                            f"R{prefix}m2 {prefix}m2 0 1G",
+                            f"M{prefix}label vdd {class_node(target_idx, 'targetp')} {prefix}m0 0 NSENSE W=32u L=180n",
+                            f"M{prefix}class {prefix}m0 {class_gate} {prefix}m1 0 NMOS W=32u L=180n",
+                            f"M{prefix}feature {prefix}m1 {feature_gate} {prefix}m2 0 NMOS W=32u L=180n",
+                            f"M{prefix}clk {prefix}m2 scoreerr {output_node} 0 NSENSE W=32u L=180n",
+                        ]
     if uses_raw_common_ref_score:
         lines += shared_score_common_reference_lines(
             class_count=class_count,
@@ -3190,7 +3309,10 @@ def generate_netlist(
                 nontarget_guard_node = None
                 update_guard_node = None
                 readout_update_lines = []
-                if bias_feature is not None and feature == bias_feature and class_bias_mode == "target-only":
+                if uses_feature_margin_readout_objective and feature < feature_count:
+                    positive_descent_node = feature_correction_node(class_idx, feature, "p")
+                    negative_descent_node = feature_correction_node(class_idx, feature, "n")
+                elif bias_feature is not None and feature == bias_feature and class_bias_mode == "target-only":
                     positive_descent_node = None
                     negative_descent_node = "0"
                 elif readout_nontarget_guard_mode in ("support", "support-symmetric"):
@@ -3302,6 +3424,13 @@ def generate_netlist(
                     lines.append(
                         f".meas tran relig_pgate_f{feature}_{cycle} FIND V({relig}_pgate) AT={base + readout_eligibility_measure_ns:.2f}n"
                     )
+            if uses_feature_margin_readout_objective and feature < feature_count:
+                for class_idx in range(class_count):
+                    lines += [
+                        f".meas tran c{class_idx}_f{feature}_contrib_{cycle} FIND V({feature_contribution_node(class_idx, feature)}) AT={base + score_decision_measure_ns:.2f}n",
+                        f".meas tran c{class_idx}_f{feature}_fcorrp_{cycle} FIND V({feature_correction_node(class_idx, feature, 'p')}) AT={base + score_error_measure_ns:.2f}n",
+                        f".meas tran c{class_idx}_f{feature}_fcorrn_{cycle} FIND V({feature_correction_node(class_idx, feature, 'n')}) AT={base + score_error_measure_ns:.2f}n",
+                    ]
             if uses_stored_hidden_credit_update and feature < feature_count:
                 lines += [
                     f".meas tran hdp_f{feature}_{cycle} FIND V({hidden_credit_node(feature, 'hdp')}) AT={base + score_error_measure_ns:.2f}n",
@@ -4942,6 +5071,7 @@ def run_case(args: argparse.Namespace) -> dict[str, Any]:
         normalizer_error_clock_high=args.normalizer_error_clock_high,
         error_mode=args.error_mode,
         readout_update_mode=args.readout_update_mode,
+        readout_live_objective_mode=args.readout_live_objective_mode,
         readout_update_width_u=args.readout_update_width,
         readout_high_ref=args.readout_high_ref,
         readout_low_ref=args.readout_low_ref,
@@ -5230,6 +5360,9 @@ def run_case(args: argparse.Namespace) -> dict[str, Any]:
         ),
         "error_mode": args.error_mode,
         "readout_update_mode": args.readout_update_mode,
+        "readout_live_objective_mode": (
+            args.readout_live_objective_mode if args.readout_update_mode == "live" else None
+        ),
         "readout_update_width_u": args.readout_update_width if args.readout_update_mode == "live" else None,
         "readout_high_ref": args.readout_high_ref if args.readout_update_mode == "live" else None,
         "readout_low_ref": args.readout_low_ref if args.readout_update_mode == "live" else None,
@@ -5523,6 +5656,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
     ap.add_argument("--normalizer-error-clock-high", type=float, default=1.2)
     ap.add_argument("--error-mode", choices=ERROR_MODES, default="label-descent")
     ap.add_argument("--readout-update-mode", choices=READOUT_UPDATE_MODES, default="sampled")
+    ap.add_argument("--readout-live-objective-mode", choices=READOUT_LIVE_OBJECTIVE_MODES, default="global-error")
     ap.add_argument("--readout-update-width", type=float, default=0.5)
     ap.add_argument("--readout-high-ref", type=float, default=0.42)
     ap.add_argument("--readout-low-ref", type=float, default=0.28)
@@ -5628,6 +5762,12 @@ def validate_args(args: argparse.Namespace) -> None:
         raise ValueError(f"error-mode must be one of {ERROR_MODES}")
     if args.readout_update_mode not in READOUT_UPDATE_MODES:
         raise ValueError(f"readout-update-mode must be one of {READOUT_UPDATE_MODES}")
+    if args.readout_live_objective_mode not in READOUT_LIVE_OBJECTIVE_MODES:
+        raise ValueError(f"readout-live-objective-mode must be one of {READOUT_LIVE_OBJECTIVE_MODES}")
+    if args.readout_live_objective_mode == "feature-margin" and args.readout_update_mode != "live":
+        raise ValueError("readout-live-objective-mode=feature-margin requires live readout-update-mode")
+    if args.readout_live_objective_mode == "feature-margin" and args.hidden_update_mode != "none":
+        raise ValueError("readout-live-objective-mode=feature-margin currently supports readout-only integration")
     if args.readout_nontarget_guard_mode not in READOUT_NONTARGET_GUARD_MODES:
         raise ValueError(f"readout-nontarget-guard-mode must be one of {READOUT_NONTARGET_GUARD_MODES}")
     if args.readout_nontarget_guard_mode != "none" and args.readout_update_mode != "live":
@@ -5664,6 +5804,7 @@ def validate_args(args: argparse.Namespace) -> None:
         args.readout_update_mode == "live"
         and args.error_mode != "label-descent"
         and args.error_mode not in ERROR_RAIL_DESCENT_MODES
+        and args.readout_live_objective_mode != "feature-margin"
     ):
         raise ValueError("live readout-update-mode requires label-descent or error-rail descent modes")
     if args.readout_update_width <= 0.0:

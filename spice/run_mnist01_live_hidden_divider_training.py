@@ -10,7 +10,8 @@ from run_device_sequential_training import mos_models
 from run_mnist01_fixed_feature_divider_training import (
     CYCLE_NS,
     OUTPUTS,
-    _clock_lines,
+    _clock_lines as _fixed_clock_lines,
+    _pulse_wave,
     _sample_feature_wave,
     _sample_plan,
     _target_wave,
@@ -23,6 +24,21 @@ from run_spice_sweep import run_text_netlist
 
 
 HIDDEN = 4
+
+
+def _clock_lines(samples: list[dict[str, Any]], stop_ns: float, iref_a: float) -> list[str]:
+    hidden_sense: list[tuple[float, float]] = []
+    hidden_write: list[tuple[float, float]] = []
+    for idx, sample in enumerate(samples):
+        if bool(sample["train"]):
+            base = idx * CYCLE_NS
+            hidden_sense.append((base + 5.00, base + 6.15))
+            hidden_write.append((base + 6.30, base + 8.40))
+    return [
+        *_fixed_clock_lines(samples, stop_ns, iref_a),
+        f"Vhcgphi hcgphi 0 {_pulse_wave(hidden_sense, stop_ns)}",
+        f"Vhiddenwritephi hiddenwritephi 0 {_pulse_wave(hidden_write, stop_ns)}",
+    ]
 
 
 def hidden_block_for_feature(feature: int, image_size: int) -> int:
@@ -329,6 +345,58 @@ def _hidden_credit_gate_lines(hidden_count: int, width_u: float, cap_f: float, p
     return lines
 
 
+def _hidden_credit_dynamic_preamp_gate_lines(
+    hidden_count: int,
+    *,
+    sense_width_u: float,
+    latch_pmos_width_u: float,
+    output_width_u: float,
+    output_pull_width_u: float,
+    capacitance_f: float,
+) -> list[str]:
+    lines: list[str] = []
+    for hidden in range(hidden_count):
+        raw_p = f"h{hidden}_hdp"
+        raw_n = f"h{hidden}_hdn"
+        gate_p = f"h{hidden}_hdp_gate"
+        gate_n = f"h{hidden}_hdn_gate"
+        pre_p = f"h{hidden}_hcg_pre_p"
+        pre_n = f"h{hidden}_hcg_pre_n"
+        tail = f"h{hidden}_hcg_tail"
+        pos_mid = f"h{hidden}_hcg_pos_mid"
+        neg_mid = f"h{hidden}_hcg_neg_mid"
+        lines += [
+            f"C{pre_p} {pre_p} 0 {capacitance_f:.12g}f IC=1.2",
+            f"C{pre_n} {pre_n} 0 {capacitance_f:.12g}f IC=1.2",
+            f"R{pre_p} {pre_p} 0 1G",
+            f"R{pre_n} {pre_n} 0 1G",
+            f"M{pre_p}_rst {pre_p} rstn vdd vdd PMOS W=8u L=180n",
+            f"M{pre_n}_rst {pre_n} rstn vdd vdd PMOS W=8u L=180n",
+            f"M{hidden}_hcg_eq {pre_p} rst {pre_n} 0 NMOS W=2u L=180n",
+            f"R{tail} {tail} 0 1G",
+            f"M{hidden}_hcg_tail {tail} hcgphi 0 0 NSENSE W={sense_width_u:.6g}u L=180n",
+            f"M{hidden}_hcg_sense_p {pre_n} {raw_p} {tail} 0 NSENSE W={sense_width_u:.6g}u L=180n",
+            f"M{hidden}_hcg_sense_n {pre_p} {raw_n} {tail} 0 NSENSE W={sense_width_u:.6g}u L=180n",
+            f"M{hidden}_hcg_latch_p {pre_n} {pre_p} vdd vdd PMOS W={latch_pmos_width_u:.6g}u L=180n",
+            f"M{hidden}_hcg_latch_n {pre_p} {pre_n} vdd vdd PMOS W={latch_pmos_width_u:.6g}u L=180n",
+            f"C{gate_p} {gate_p} 0 {capacitance_f:.12g}f IC=0",
+            f"C{gate_n} {gate_n} 0 {capacitance_f:.12g}f IC=0",
+            f"R{gate_p} {gate_p} 0 1G",
+            f"R{gate_n} {gate_n} 0 1G",
+            f"Mreset_{gate_p} {gate_p} rst 0 0 NMOS W=4u L=180n",
+            f"Mreset_{gate_n} {gate_n} rst 0 0 NMOS W=4u L=180n",
+            f"R{pos_mid} {pos_mid} 0 1G",
+            f"R{neg_mid} {neg_mid} 0 1G",
+            f"M{hidden}_hcg_pos_pmos vdd {pre_n} {pos_mid} vdd PMOS W={output_width_u:.6g}u L=180n",
+            f"M{hidden}_hcg_pos_nmos {pos_mid} {pre_p} {gate_p} 0 NSENSE W={output_width_u:.6g}u L=180n",
+            f"M{hidden}_hcg_pos_pull {gate_p} {pre_n} 0 0 NMOS W={output_pull_width_u:.6g}u L=180n",
+            f"M{hidden}_hcg_neg_pmos vdd {pre_p} {neg_mid} vdd PMOS W={output_width_u:.6g}u L=180n",
+            f"M{hidden}_hcg_neg_nmos {neg_mid} {pre_n} {gate_n} 0 NSENSE W={output_width_u:.6g}u L=180n",
+            f"M{hidden}_hcg_neg_pull {gate_n} {pre_p} 0 0 NMOS W={output_pull_width_u:.6g}u L=180n",
+        ]
+    return lines
+
+
 def _hidden_writer_lines(
     feature_count: int,
     hidden_count: int,
@@ -336,6 +404,7 @@ def _hidden_writer_lines(
     pmos_width_u: float,
     gate_cap_f: float,
     topology: str,
+    phase_node: str = "errphi",
 ) -> list[str]:
     if topology not in ("pmos-highside", "pmos-differential"):
         raise ValueError("hidden_writer_topology must be pmos-highside or pmos-differential")
@@ -356,7 +425,7 @@ def _hidden_writer_lines(
             f"M{prefix}_pgate_rst hidden_whi_ref rst {gate} 0 NSENSE W=4u L=180n",
             f"M{prefix}_pgate_sel {gate} {selector} {mid} 0 NSENSE W={width_u:.6g}u L=180n",
             f"M{prefix}_pgate_cred {mid} {credit} {phi} 0 NSENSE W={width_u:.6g}u L=180n",
-            f"M{prefix}_pgate_phi {phi} errphi 0 0 NSENSE W={width_u:.6g}u L=180n",
+            f"M{prefix}_pgate_phi {phi} {phase_node} 0 0 NSENSE W={width_u:.6g}u L=180n",
             f"M{prefix}_pmos {dest} {gate} hidden_whi_ref vdd PMOS W={pmos_width_u:.6g}u L=180n",
         ]
 
@@ -398,10 +467,10 @@ def _hidden_writer_lines(
             f"M{prefix}neg_up_ctrl_rst vdd rst {neg_ctrl} 0 NSENSE W=4u L=180n",
             f"M{prefix}pos_up_ctrl_e {pos_ctrl} {selector} {pos_ctrl_mid} 0 NSENSE W={width_u:.6g}u L=180n",
             f"M{prefix}pos_up_ctrl_d {pos_ctrl_mid} {pos} {pos_ctrl_phi} 0 NSENSE W={width_u:.6g}u L=180n",
-            f"M{prefix}pos_up_ctrl_phi {pos_ctrl_phi} errphi 0 0 NSENSE W={width_u:.6g}u L=180n",
+            f"M{prefix}pos_up_ctrl_phi {pos_ctrl_phi} {phase_node} 0 0 NSENSE W={width_u:.6g}u L=180n",
             f"M{prefix}neg_up_ctrl_e {neg_ctrl} {selector} {neg_ctrl_mid} 0 NSENSE W={width_u:.6g}u L=180n",
             f"M{prefix}neg_up_ctrl_d {neg_ctrl_mid} {neg} {neg_ctrl_phi} 0 NSENSE W={width_u:.6g}u L=180n",
-            f"M{prefix}neg_up_ctrl_phi {neg_ctrl_phi} errphi 0 0 NSENSE W={width_u:.6g}u L=180n",
+            f"M{prefix}neg_up_ctrl_phi {neg_ctrl_phi} {phase_node} 0 0 NSENSE W={width_u:.6g}u L=180n",
             f"M{prefix}pos_up_ctrl_latch {pos_ctrl} {neg_ctrl} vdd vdd PMOS W={pmos_width_u:.6g}u L=180n",
             f"M{prefix}neg_up_ctrl_latch {neg_ctrl} {pos_ctrl} vdd vdd PMOS W={pmos_width_u:.6g}u L=180n",
             f"M{prefix}pos_up_p {whp} {pos_ctrl} hidden_whi_ref vdd PMOS W={pmos_width_u:.6g}u L=180n",
@@ -536,6 +605,11 @@ def mnist01_live_hidden_netlist(
     hidden_credit_gate_width_u: float = 4.0,
     hidden_credit_gate_cap_f: float = 2.0,
     hidden_credit_gate_pull_scale: float = 2.0,
+    hidden_credit_gate_mode: str = "differential-excess",
+    hidden_credit_preamp_sense_width_u: float = 32.0,
+    hidden_credit_preamp_latch_pmos_width_u: float = 4.0,
+    hidden_credit_preamp_output_width_u: float = 2.0,
+    hidden_credit_preamp_output_pull_width_u: float = 0.5,
     hidden_update_width_u: float = 1.0,
     hidden_writer_pmos_width_u: float = 4.0,
     hidden_writer_gate_cap_f: float = 0.2,
@@ -549,8 +623,12 @@ def mnist01_live_hidden_netlist(
     _validate_records(train_records, feature_count, "train")
     _validate_records(eval_records, feature_count, "eval")
     _image_size_from_feature_count(feature_count)
+    if hidden_credit_gate_mode not in ("differential-excess", "dynamic-preamp"):
+        raise ValueError("hidden_credit_gate_mode must be differential-excess or dynamic-preamp")
     if hidden_writer_topology not in ("pmos-highside", "pmos-differential"):
         raise ValueError("hidden_writer_topology must be pmos-highside or pmos-differential")
+    if hidden_credit_gate_mode == "dynamic-preamp" and hidden_writer_topology != "pmos-differential":
+        raise ValueError("dynamic-preamp hidden credit gate requires pmos-differential hidden writer topology")
     if min(
         readout_initial_positive,
         readout_initial_negative,
@@ -573,6 +651,10 @@ def mnist01_live_hidden_netlist(
         hidden_credit_gate_width_u,
         hidden_credit_gate_cap_f,
         hidden_credit_gate_pull_scale,
+        hidden_credit_preamp_sense_width_u,
+        hidden_credit_preamp_latch_pmos_width_u,
+        hidden_credit_preamp_output_width_u,
+        hidden_credit_preamp_output_pull_width_u,
         hidden_update_width_u,
         hidden_writer_pmos_width_u,
         hidden_writer_gate_cap_f,
@@ -621,11 +703,22 @@ def mnist01_live_hidden_netlist(
             hidden_credit_internal_cap_f,
             hidden_credit_internal_shunt_ohm,
         ),
-        *_hidden_credit_gate_lines(
-            hidden_count,
-            hidden_credit_gate_width_u,
-            hidden_credit_gate_cap_f,
-            hidden_credit_gate_pull_scale,
+        *(
+            _hidden_credit_gate_lines(
+                hidden_count,
+                hidden_credit_gate_width_u,
+                hidden_credit_gate_cap_f,
+                hidden_credit_gate_pull_scale,
+            )
+            if hidden_credit_gate_mode == "differential-excess"
+            else _hidden_credit_dynamic_preamp_gate_lines(
+                hidden_count,
+                sense_width_u=hidden_credit_preamp_sense_width_u,
+                latch_pmos_width_u=hidden_credit_preamp_latch_pmos_width_u,
+                output_width_u=hidden_credit_preamp_output_width_u,
+                output_pull_width_u=hidden_credit_preamp_output_pull_width_u,
+                capacitance_f=hidden_credit_gate_cap_f,
+            )
         ),
         *_hidden_writer_lines(
             feature_count,
@@ -634,6 +727,7 @@ def mnist01_live_hidden_netlist(
             hidden_writer_pmos_width_u,
             hidden_writer_gate_cap_f,
             hidden_writer_topology,
+            "hiddenwritephi" if hidden_credit_gate_mode == "dynamic-preamp" else "errphi",
         ),
         f".tran 5p {stop_ns:.2f}n uic",
         *_measure_lines(samples, eval_count, train_count),

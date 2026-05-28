@@ -231,10 +231,10 @@ normalizer gain only amplifies the same weak evidence.
 
 A bounded normalizer error clock now exposes this directly.  Reducing
 `scoreerr` reduces the physical `errp-errn` rails, but the current block has a
-cliff-like response: below the writer threshold learning disappears; above it
-different normalizers collapse to nearly the same final readout state.  Treat
-that as a circuit-design failure in the gradient-storage/write handoff, not as
-a hyperparameter surface to optimize.
+cliff-like response: below the live-writer threshold learning disappears; above
+it different normalizers collapse to nearly the same final readout state.
+Treat that as a circuit-design failure in the writer-domain error/eligibility
+handoff, not as a hyperparameter surface to optimize.
 
 ## Signal Representation Contract
 

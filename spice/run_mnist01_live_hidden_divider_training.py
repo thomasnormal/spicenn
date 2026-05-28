@@ -24,6 +24,7 @@ from run_spice_sweep import run_text_netlist
 
 
 HIDDEN = 4
+HIDDEN_INIT_MODES = ("quadrant", "identity")
 
 
 def _clock_lines(
@@ -64,6 +65,21 @@ def hidden_block_for_feature(feature: int, image_size: int) -> int:
     return (2 if row >= image_size // 2 else 0) + (1 if col >= image_size // 2 else 0)
 
 
+def hidden_unit_for_feature(feature: int, feature_count: int, hidden_count: int, hidden_init_mode: str) -> int:
+    if hidden_init_mode not in HIDDEN_INIT_MODES:
+        raise ValueError(f"hidden_init_mode must be one of {HIDDEN_INIT_MODES}")
+    image_size = _image_size_from_feature_count(feature_count)
+    if hidden_init_mode == "quadrant":
+        if hidden_count != HIDDEN:
+            raise ValueError("quadrant hidden_init_mode uses exactly four quadrant hidden units")
+        return hidden_block_for_feature(feature, image_size)
+    if hidden_count != feature_count:
+        raise ValueError("identity hidden_init_mode requires one hidden unit per input feature")
+    if not 0 <= feature < feature_count:
+        raise ValueError("feature index is outside the image")
+    return feature
+
+
 def _image_size_from_feature_count(feature_count: int) -> int:
     image_size = int(round(feature_count**0.5))
     if image_size * image_size != feature_count:
@@ -92,16 +108,26 @@ def _hidden_storage_lines(
     feature_count: int,
     hidden_count: int,
     *,
+    init_mode: str,
     inside_positive: float,
     outside_positive: float,
     inside_negative: float,
     outside_negative: float,
 ) -> list[str]:
     image_size = _image_size_from_feature_count(feature_count)
+    if init_mode not in HIDDEN_INIT_MODES:
+        raise ValueError(f"hidden_init_mode must be one of {HIDDEN_INIT_MODES}")
+    if init_mode == "quadrant" and hidden_count != HIDDEN:
+        raise ValueError("quadrant hidden_init_mode uses exactly four quadrant hidden units")
+    if init_mode == "identity" and hidden_count != feature_count:
+        raise ValueError("identity hidden_init_mode requires one hidden unit per input feature")
     lines: list[str] = []
     for hidden in range(hidden_count):
         for feature in range(feature_count):
-            inside = hidden_block_for_feature(feature, image_size) == hidden
+            if init_mode == "quadrant":
+                inside = hidden_block_for_feature(feature, image_size) == hidden
+            else:
+                inside = hidden == feature
             positive = inside_positive if inside else outside_positive
             negative = inside_negative if inside else outside_negative
             lines += [
@@ -814,14 +840,20 @@ def _hidden_writer_lines(
     return lines
 
 
-def _probe_hidden_feature(sample: dict[str, Any]) -> tuple[int, int]:
+def _probe_hidden_feature(sample: dict[str, Any], hidden_count: int = HIDDEN, hidden_init_mode: str = "quadrant") -> tuple[int, int]:
     features = np.asarray(sample["features"], dtype=float)
     feature = int(np.argmax(features))
-    image_size = _image_size_from_feature_count(features.shape[0])
-    return hidden_block_for_feature(feature, image_size), feature
+    return hidden_unit_for_feature(feature, features.shape[0], hidden_count, hidden_init_mode), feature
 
 
-def _measure_lines(samples: list[dict[str, Any]], eval_count: int, train_count: int) -> list[str]:
+def _measure_lines(
+    samples: list[dict[str, Any]],
+    eval_count: int,
+    train_count: int,
+    *,
+    hidden_count: int = HIDDEN,
+    hidden_init_mode: str = "quadrant",
+) -> list[str]:
     lines: list[str] = []
     train_offset = eval_count
     final_offset = eval_count + train_count
@@ -834,7 +866,7 @@ def _measure_lines(samples: list[dict[str, Any]], eval_count: int, train_count: 
             local = idx if phase == "initial" else idx - final_offset
             act_at = base + 2.00
             at = base + 3.15
-            for hidden in range(HIDDEN):
+            for hidden in range(hidden_count):
                 lines += [
                     f".meas tran {phase}_prep_h{hidden}_{local} FIND V(pre{hidden}_p) AT={act_at:.2f}n",
                     f".meas tran {phase}_pren_h{hidden}_{local} FIND V(pre{hidden}_n) AT={act_at:.2f}n",
@@ -857,7 +889,7 @@ def _measure_lines(samples: list[dict[str, Any]], eval_count: int, train_count: 
             readout_after = base + 7.80
             hidden_after = base + 9.80
             err_at = base + 5.35
-            hidden, feature = _probe_hidden_feature(sample)
+            hidden, feature = _probe_hidden_feature(sample, hidden_count, hidden_init_mode)
             lines += [
                 f".meas tran train_act_probe_{local} FIND V(act{hidden}) AT={base + 2.00:.2f}n",
                 f".meas tran train_hrow_probe_{local} FIND V(hrow{hidden}) AT={base + 2.00:.2f}n",
@@ -906,6 +938,7 @@ def mnist01_live_hidden_netlist(
     eval_records: list[dict[str, Any]],
     *,
     hidden_count: int = HIDDEN,
+    hidden_init_mode: str = "quadrant",
     readout_initial_positive: float = 0.40,
     readout_initial_negative: float = 0.40,
     hidden_inside_positive: float = 1.05,
@@ -967,14 +1000,18 @@ def mnist01_live_hidden_netlist(
     hidden_writer_gate_cap_f: float = 0.2,
     hidden_writer_topology: str = "pmos-highside",
 ) -> str:
-    if hidden_count != HIDDEN:
-        raise ValueError("this small MNIST01 rung currently uses exactly four quadrant hidden units")
     if not train_records or not eval_records:
         raise ValueError("train and eval records must not be empty")
     feature_count = len(train_records[0]["features"])
     _validate_records(train_records, feature_count, "train")
     _validate_records(eval_records, feature_count, "eval")
     _image_size_from_feature_count(feature_count)
+    if hidden_init_mode not in HIDDEN_INIT_MODES:
+        raise ValueError(f"hidden_init_mode must be one of {HIDDEN_INIT_MODES}")
+    if hidden_init_mode == "quadrant" and hidden_count != HIDDEN:
+        raise ValueError("quadrant hidden_init_mode uses exactly four quadrant hidden units")
+    if hidden_init_mode == "identity" and hidden_count != feature_count:
+        raise ValueError("identity hidden_init_mode requires one hidden unit per input feature")
     if hidden_credit_gate_mode not in ("differential-excess", "dynamic-preamp"):
         raise ValueError("hidden_credit_gate_mode must be differential-excess or dynamic-preamp")
     if hidden_activation_mode not in ("single-ended", "differential-preamp"):
@@ -998,6 +1035,7 @@ def mnist01_live_hidden_netlist(
     if not (0.0 <= hidden_write_start_ns < hidden_write_end_ns <= CYCLE_NS):
         raise ValueError("hidden write window must be inside one cycle")
     if min(
+        hidden_count,
         readout_initial_positive,
         readout_initial_negative,
         hidden_inside_positive,
@@ -1080,6 +1118,7 @@ def mnist01_live_hidden_netlist(
         *_hidden_storage_lines(
             feature_count,
             hidden_count,
+            init_mode=hidden_init_mode,
             inside_positive=hidden_inside_positive,
             outside_positive=hidden_outside_positive,
             inside_negative=hidden_inside_negative,
@@ -1157,7 +1196,7 @@ def mnist01_live_hidden_netlist(
             hidden_credit_gate_mode == "dynamic-preamp",
         ),
         f".tran 5p {stop_ns:.2f}n uic",
-        *_measure_lines(samples, eval_count, train_count),
+        *_measure_lines(samples, eval_count, train_count, hidden_count=hidden_count, hidden_init_mode=hidden_init_mode),
         ".control",
         "run",
         "quit",

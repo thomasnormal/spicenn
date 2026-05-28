@@ -65,6 +65,7 @@ def test_mnist01_live_hidden_records_and_quadrant_mapping_are_real_4x4_mnist() -
     assert mnist01_hidden.hidden_block_for_feature(2, 4) == 1
     assert mnist01_hidden.hidden_block_for_feature(8, 4) == 2
     assert mnist01_hidden.hidden_block_for_feature(15, 4) == 3
+    assert mnist01_hidden.hidden_unit_for_feature(15, 16, 16, "identity") == 15
     for sample in train + evals:
         assert len(sample["features"]) == 16
         assert all(0.0 <= value <= 1.1 for value in sample["features"])
@@ -219,6 +220,18 @@ def test_mnist01_live_hidden_netlist_is_live_transistor_path() -> None:
     assert "Mc0_f0_live_pren_pos_dn_d c0_f0_live_pren_pos_dn_sel c0_errn vwlo_ref 0 NSENSE" in pre_diff_writer_netlist
     assert "Mc0_f0_live_pren_neg_dn_d c0_f0_live_pren_neg_dn_sel c0_errp vwlo_ref 0 NSENSE" in pre_diff_writer_netlist
 
+    identity_netlist = mnist01_hidden.mnist01_live_hidden_netlist(
+        train,
+        train,
+        hidden_count=16,
+        hidden_init_mode="identity",
+    )
+    assert "Cwh0f0p wh0f0p 0 20f IC=1.05" in identity_netlist
+    assert "Cwh0f1p wh0f1p 0 20f IC=0.05" in identity_netlist
+    assert "Cwh15f15p wh15f15p 0 20f IC=1.05" in identity_netlist
+    assert "Mc1_h15_score_pa vdd hrow15 c1_h15_score_pa 0 NSENSE" in identity_netlist
+    assert ".meas tran final_hrow_h15_1" in identity_netlist
+
 
 def test_mnist01_live_hidden_netlist_validation() -> None:
     sample = {"features": [1.0] * 16, "label": 0}
@@ -227,6 +240,19 @@ def test_mnist01_live_hidden_netlist_validation() -> None:
         mnist01_hidden.mnist01_live_hidden_netlist([], [sample])
     with pytest.raises(ValueError, match="exactly four"):
         mnist01_hidden.mnist01_live_hidden_netlist([sample], [sample], hidden_count=3)
+    with pytest.raises(ValueError, match="identity"):
+        mnist01_hidden.mnist01_live_hidden_netlist(
+            [sample],
+            [sample],
+            hidden_count=4,
+            hidden_init_mode="identity",
+        )
+    with pytest.raises(ValueError, match="hidden_init_mode"):
+        mnist01_hidden.mnist01_live_hidden_netlist(
+            [sample],
+            [sample],
+            hidden_init_mode="BAD",
+        )
     with pytest.raises(ValueError, match="square"):
         mnist01_hidden.mnist01_live_hidden_netlist(
             [{"features": [1.0, 0.0], "label": 0}],
@@ -377,6 +403,43 @@ def test_mnist01_live_hidden_differential_activation_reads_unsaturated_synthetic
     assert max(diff_hrows[1:]) < 1e-3
     assert common_hrows[0] > 1.0
     assert max(common_hrows[1:]) < 1e-3
+
+
+@pytest.mark.ngspice
+def test_mnist01_live_hidden_identity_rows_learn_first_real_pair_without_python_weights(
+    tmp_path: Path,
+    ngspice_path: str,
+) -> None:
+    _require_mnist_raw()
+    train, evals = mnist01_hidden.load_mnist01_records(
+        train_count_per_digit=1,
+        eval_count_per_digit=1,
+        image_size=4,
+    )
+
+    parsed = mnist01_hidden.run_netlist(
+        ngspice_path,
+        tmp_path / "mnist01_live_hidden_identity_rows.cir",
+        mnist01_hidden.mnist01_live_hidden_netlist(
+            train,
+            evals,
+            hidden_count=16,
+            hidden_init_mode="identity",
+            hidden_activation_mode="differential-preamp",
+            hidden_activation_sense_width_u=4.0,
+        ),
+        timeout=180.0,
+    )
+
+    assert abs(parsed["initial_margin_0"]) < 1e-6
+    assert abs(parsed["initial_margin_1"]) < 1e-6
+    assert parsed["final_margin_0"] > 1e-3
+    assert parsed["final_margin_1"] > 50e-6
+    assert parsed["final_margin_improvement_0"] > 1e-3
+    assert parsed["final_margin_improvement_1"] > 50e-6
+    for train_idx in range(2):
+        assert parsed[f"train_target_signed_delta_{train_idx}"] > 3e-3
+        assert parsed[f"train_other_signed_delta_{train_idx}"] < -3e-3
 
 
 def _hidden_activation_preamp_probe_netlist(

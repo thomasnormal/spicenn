@@ -326,7 +326,10 @@ def class_local_live_label_descent_update_lines(
     width_u: float = 0.5,
     stack_shunt_resistance_ohm: float = 1.0e9,
     stack_parasitic_capacitance_f: float = 0.05,
+    high_side_topology: str = "nmos-stack",
 ) -> list[str]:
+    if high_side_topology not in ("nmos-stack", "pmos-gated"):
+        raise ValueError("high_side_topology must be nmos-stack or pmos-gated")
     if stack_shunt_resistance_ohm <= 0.0:
         raise ValueError("stack_shunt_resistance_ohm must be positive")
     if stack_parasitic_capacitance_f <= 0.0:
@@ -345,26 +348,72 @@ def class_local_live_label_descent_update_lines(
         f"C{prefix}pos_dn_par {prefix}pos_dn 0 {stack_parasitic_capacitance_f:.12g}f IC=0",
         f"C{prefix}neg_up_par {prefix}neg_up 0 {stack_parasitic_capacitance_f:.12g}f IC=0",
         f"C{prefix}neg_dn_par {prefix}neg_dn 0 {stack_parasitic_capacitance_f:.12g}f IC=0",
-        f"M{prefix}pos_up_e vwhi_ref {activation_node} {prefix}pos_up 0 NSENSE W={width_u:.6g}u L=180n",
-        f"M{prefix}pos_up_d {prefix}pos_up {pos} {vwp} 0 NSENSE W={width_u:.6g}u L=180n",
         f"M{prefix}pos_dn_e {vwn} {activation_node} {prefix}pos_dn 0 NSENSE W={width_u:.6g}u L=180n",
         f"M{prefix}pos_dn_d {prefix}pos_dn {pos} vwlo_ref 0 NSENSE W={width_u:.6g}u L=180n",
-        f"M{prefix}neg_up_e vwhi_ref {activation_node} {prefix}neg_up 0 NSENSE W={width_u:.6g}u L=180n",
         f"M{prefix}neg_dn_e {vwp} {activation_node} {prefix}neg_dn 0 NSENSE W={width_u:.6g}u L=180n",
     ]
-    if nontarget_guard_node is None:
+    if high_side_topology == "nmos-stack":
         lines += [
-            f"M{prefix}neg_up_d {prefix}neg_up {neg} {vwn} 0 NSENSE W={width_u:.6g}u L=180n",
-            f"M{prefix}neg_dn_d {prefix}neg_dn {neg} vwlo_ref 0 NSENSE W={width_u:.6g}u L=180n",
+            f"M{prefix}pos_up_e vwhi_ref {activation_node} {prefix}pos_up 0 NSENSE W={width_u:.6g}u L=180n",
+            f"M{prefix}pos_up_d {prefix}pos_up {pos} {vwp} 0 NSENSE W={width_u:.6g}u L=180n",
+            f"M{prefix}neg_up_e vwhi_ref {activation_node} {prefix}neg_up 0 NSENSE W={width_u:.6g}u L=180n",
         ]
     else:
+        pos_ctrl = f"{prefix}pos_up_ctrl"
+        neg_ctrl = f"{prefix}neg_up_ctrl"
+        pos_ctrl_mid = f"{prefix}pos_up_ctrl_mid"
+        neg_ctrl_mid = f"{prefix}neg_up_ctrl_mid"
+        pmos_width_u = 2.0 * width_u
+        lines += [
+            f"C{pos_ctrl} {pos_ctrl} 0 2f IC=1.2",
+            f"R{pos_ctrl} {pos_ctrl} vdd 50000",
+            f"R{pos_ctrl_mid} {pos_ctrl_mid} 0 {stack_shunt_resistance_ohm:.12g}",
+            f"C{pos_ctrl_mid} {pos_ctrl_mid} 0 {stack_parasitic_capacitance_f:.12g}f IC=0",
+            f"M{prefix}pos_up_ctrl_e {pos_ctrl} {activation_node} {pos_ctrl_mid} 0 NSENSE W={width_u:.6g}u L=180n",
+            f"M{prefix}pos_up_ctrl_d {pos_ctrl_mid} {pos} 0 0 NSENSE W={width_u:.6g}u L=180n",
+            f"M{prefix}pos_up_p {vwp} {pos_ctrl} vwhi_ref vdd PMOS W={pmos_width_u:.6g}u L=180n",
+            f"C{neg_ctrl} {neg_ctrl} 0 2f IC=1.2",
+            f"R{neg_ctrl} {neg_ctrl} vdd 50000",
+            f"R{neg_ctrl_mid} {neg_ctrl_mid} 0 {stack_shunt_resistance_ohm:.12g}",
+            f"C{neg_ctrl_mid} {neg_ctrl_mid} 0 {stack_parasitic_capacitance_f:.12g}f IC=0",
+            f"M{prefix}neg_up_ctrl_e {neg_ctrl} {activation_node} {neg_ctrl_mid} 0 NSENSE W={width_u:.6g}u L=180n",
+        ]
+    if nontarget_guard_node is None:
+        if high_side_topology == "nmos-stack":
+            lines.append(f"M{prefix}neg_up_d {prefix}neg_up {neg} {vwn} 0 NSENSE W={width_u:.6g}u L=180n")
+        else:
+            neg_ctrl = f"{prefix}neg_up_ctrl"
+            neg_ctrl_mid = f"{prefix}neg_up_ctrl_mid"
+            pmos_width_u = 2.0 * width_u
+            lines += [
+                f"M{prefix}neg_up_ctrl_d {neg_ctrl_mid} {neg} 0 0 NSENSE W={width_u:.6g}u L=180n",
+                f"M{prefix}neg_up_p {vwn} {neg_ctrl} vwhi_ref vdd PMOS W={pmos_width_u:.6g}u L=180n",
+            ]
+        lines.append(f"M{prefix}neg_dn_d {prefix}neg_dn {neg} vwlo_ref 0 NSENSE W={width_u:.6g}u L=180n")
+    else:
+        if high_side_topology == "nmos-stack":
+            neg_up_lines = [
+                f"M{prefix}neg_up_g {prefix}neg_up {nontarget_guard_node} {prefix}neg_up_guard 0 NSENSE W={width_u:.6g}u L=180n",
+                f"M{prefix}neg_up_d {prefix}neg_up_guard {neg} {vwn} 0 NSENSE W={width_u:.6g}u L=180n",
+            ]
+        else:
+            neg_ctrl = f"{prefix}neg_up_ctrl"
+            neg_ctrl_mid = f"{prefix}neg_up_ctrl_mid"
+            neg_ctrl_guard = f"{prefix}neg_up_ctrl_guard"
+            pmos_width_u = 2.0 * width_u
+            neg_up_lines = [
+                f"R{neg_ctrl_guard} {neg_ctrl_guard} 0 {stack_shunt_resistance_ohm:.12g}",
+                f"C{neg_ctrl_guard} {neg_ctrl_guard} 0 {stack_parasitic_capacitance_f:.12g}f IC=0",
+                f"M{prefix}neg_up_ctrl_g {neg_ctrl_mid} {nontarget_guard_node} {neg_ctrl_guard} 0 NSENSE W={width_u:.6g}u L=180n",
+                f"M{prefix}neg_up_ctrl_d {neg_ctrl_guard} {neg} 0 0 NSENSE W={width_u:.6g}u L=180n",
+                f"M{prefix}neg_up_p {vwn} {neg_ctrl} vwhi_ref vdd PMOS W={pmos_width_u:.6g}u L=180n",
+            ]
         lines += [
             f"R{prefix}neg_up_guard_shunt {prefix}neg_up_guard 0 {stack_shunt_resistance_ohm:.12g}",
             f"R{prefix}neg_dn_guard_shunt {prefix}neg_dn_guard 0 {stack_shunt_resistance_ohm:.12g}",
             f"C{prefix}neg_up_guard_par {prefix}neg_up_guard 0 {stack_parasitic_capacitance_f:.12g}f IC=0",
             f"C{prefix}neg_dn_guard_par {prefix}neg_dn_guard 0 {stack_parasitic_capacitance_f:.12g}f IC=0",
-            f"M{prefix}neg_up_g {prefix}neg_up {nontarget_guard_node} {prefix}neg_up_guard 0 NSENSE W={width_u:.6g}u L=180n",
-            f"M{prefix}neg_up_d {prefix}neg_up_guard {neg} {vwn} 0 NSENSE W={width_u:.6g}u L=180n",
+            *neg_up_lines,
             f"M{prefix}neg_dn_g {prefix}neg_dn {nontarget_guard_node} {prefix}neg_dn_guard 0 NSENSE W={width_u:.6g}u L=180n",
             f"M{prefix}neg_dn_d {prefix}neg_dn_guard {neg} vwlo_ref 0 NSENSE W={width_u:.6g}u L=180n",
         ]

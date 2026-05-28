@@ -2,6 +2,34 @@
 
 ## 2026-05-28
 
+- Added `readout_live_high_side_topology=pmos-gated` for the class-local live
+  readout writer.  The immediate ngspice primitive reproduced the integrated
+  analog-pass symptom: with a weak `~0.132 V` writer eligibility rail, the old
+  NMOS high-side stack moved `vwp-vwn` in the wrong direction because the
+  eligibility gate cannot raise a `~0.4 V` weight node (`Velig < Vweight+Vth`)
+  while the descent-side device can still charge-share the endpoint downward
+  through the internal stack node.  Width scaling cannot solve that headroom
+  inequality.  The new PMOS-gated high-side writer uses coincident eligibility
+  and descent rails to discharge a local PMOS control node, then raises the
+  selected positive or negative weight rail from `vwhi_ref`; it still has no
+  Python gradient, no gradient-storage capacitor, and no separate apply phase.
+  The new ngspice alignment regression passes under weak analog eligibility:
+  target class signed weight moves positive, nontarget class signed weight
+  moves negative, and an off-eligibility class moves negligibly.
+- Integrated `pmos-gated` result: compact strict continuous
+  `mnist3fixed8_6`, analog-pass readout eligibility, common-gate activation
+  contrast, support-guarded live updates, and direct readout-weighted hidden
+  updates still stayed at `0.333 -> 0.333`.  With
+  `readout_update_width=0.5`, the old wrong-sign readout delta disappeared but
+  the target-minus-nontarget feature-mean delta was effectively zero
+  (`~-6.6 nV` mean).  Repeating at the primitive-aligned `4.0u` writer width
+  also stayed at `0.333 -> 0.333` with near-zero class-selective readout delta
+  (`~-4.9 nV` mean).  That moves the blocker one stage upstream: writer
+  polarity is now proven in isolation, but the integrated error/support-to-
+  writer handoff is not producing class-selective feature updates under the
+  realistic pairwise centered-gain rails.  The next primitive should freeze
+  measured `errp/errn`, support, and analog eligibility levels from the compact
+  run and assert target/nontarget class separation before another MNIST run.
 - Added a hidden-activation `common-gate` contrast primitive to the continuous
   multiclass block sequence.  The circuit computes a feature common node from
   stored `act*` capacitors, generates per-feature `hactgate*` rails during an

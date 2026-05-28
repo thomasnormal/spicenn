@@ -1376,6 +1376,23 @@ def test_multiclass_block_sequence_can_use_pairwise_margin_centered_gain_descent
     assert "Mc0_f0_live_pos_up_d c0_f0_live_pos_up c0_errp c0_vwp0 0 NSENSE" in netlist
 
 
+def test_multiclass_block_sequence_can_use_pmos_gated_live_high_side_writer() -> None:
+    netlist = seq.generate_netlist(
+        train_records=_target0_records(1),
+        eval_records=_target0_records(1),
+        error_mode="pairwise-margin-centered-gain-descent",
+        readout_update_mode="live",
+        readout_live_high_side_topology="pmos-gated",
+    )
+
+    assert "\nB" not in netlist
+    assert "Cc0_f0_live_pos_up_ctrl c0_f0_live_pos_up_ctrl 0 2f IC=1.2" in netlist
+    assert "Mc0_f0_live_pos_up_ctrl_e c0_f0_live_pos_up_ctrl elig0 c0_f0_live_pos_up_ctrl_mid 0 NSENSE" in netlist
+    assert "Mc0_f0_live_pos_up_ctrl_d c0_f0_live_pos_up_ctrl_mid c0_errp 0 0 NSENSE" in netlist
+    assert "Mc0_f0_live_pos_up_p c0_vwp0 c0_f0_live_pos_up_ctrl vwhi_ref vdd PMOS" in netlist
+    assert "Mc0_f0_live_pos_up_d c0_f0_live_pos_up c0_errp c0_vwp0 0 NSENSE" not in netlist
+
+
 def test_multiclass_block_sequence_can_use_pairwise_margin_centered_bounded_gain_descent() -> None:
     netlist = seq.generate_netlist(
         train_records=_target0_records(1),
@@ -2256,6 +2273,88 @@ def _analog_pass_readout_eligibility_transfer_netlist() -> str:
     return "\n".join(lines)
 
 
+def _live_readout_writer_alignment_netlist(
+    *,
+    eligibility_v: float = 0.132,
+    high_side_topology: str = "pmos-gated",
+) -> str:
+    lines = [
+        "* Low-level multiclass live writer alignment primitive.",
+        "* Exercises the same class-local writer used by analog-pass eligibility.",
+        ".param VDD=1.2",
+        seq.mos_models(),
+        ".options method=gear reltol=1e-3 abstol=1e-12 vntol=1e-6",
+        "Vdd vdd 0 {VDD}",
+        "Vvhi vwhi_ref 0 0.48",
+        "Vvlo vwlo_ref 0 0.22",
+    ]
+    for class_idx in range(3):
+        lines += [
+            f"Cc{class_idx}_vwp0 c{class_idx}_vwp0 0 20f IC=0.4",
+            f"Cc{class_idx}_vwn0 c{class_idx}_vwn0 0 20f IC=0.4",
+            f"Rc{class_idx}_vwp0 c{class_idx}_vwp0 0 1e15",
+            f"Rc{class_idx}_vwn0 c{class_idx}_vwn0 0 1e15",
+        ]
+    lines += [
+        f"Vrelig_target relig_target 0 PULSE(0 {eligibility_v:.12g} 1n 5p 5p 3n 10n)",
+        f"Vrelig_nontarget relig_nontarget 0 PULSE(0 {eligibility_v:.12g} 1n 5p 5p 3n 10n)",
+        "Vrelig_off relig_off 0 0",
+        "Vc0_errp c0_errp 0 PULSE(0 1.2 1n 5p 5p 3n 10n)",
+        "Vc0_errn c0_errn 0 0",
+        "Vc1_errp c1_errp 0 0",
+        "Vc1_errn c1_errn 0 PULSE(0 1.2 1n 5p 5p 3n 10n)",
+        "Vc2_errp c2_errp 0 PULSE(0 1.2 1n 5p 5p 3n 10n)",
+        "Vc2_errn c2_errn 0 0",
+        *seq.class_local_live_label_descent_update_lines(
+            class_idx=0,
+            feature_idx=0,
+            activation_node="relig_target",
+            positive_descent_node="c0_errp",
+            negative_descent_node="c0_errn",
+            width_u=4.0,
+            high_side_topology=high_side_topology,
+        ),
+        *seq.class_local_live_label_descent_update_lines(
+            class_idx=1,
+            feature_idx=0,
+            activation_node="relig_nontarget",
+            positive_descent_node="c1_errp",
+            negative_descent_node="c1_errn",
+            width_u=4.0,
+            high_side_topology=high_side_topology,
+        ),
+        *seq.class_local_live_label_descent_update_lines(
+            class_idx=2,
+            feature_idx=0,
+            activation_node="relig_off",
+            positive_descent_node="c2_errp",
+            negative_descent_node="c2_errn",
+            width_u=4.0,
+            high_side_topology=high_side_topology,
+        ),
+    ]
+    for class_idx in range(3):
+        lines += [
+            f".meas tran c{class_idx}_vwp_before FIND V(c{class_idx}_vwp0) AT=0.8n",
+            f".meas tran c{class_idx}_vwn_before FIND V(c{class_idx}_vwn0) AT=0.8n",
+            f".meas tran c{class_idx}_vwp_after FIND V(c{class_idx}_vwp0) AT=5.0n",
+            f".meas tran c{class_idx}_vwn_after FIND V(c{class_idx}_vwn0) AT=5.0n",
+            f".meas tran c{class_idx}_signed_before PARAM='c{class_idx}_vwp_before-c{class_idx}_vwn_before'",
+            f".meas tran c{class_idx}_signed_after PARAM='c{class_idx}_vwp_after-c{class_idx}_vwn_after'",
+            f".meas tran c{class_idx}_signed_delta PARAM='c{class_idx}_signed_after-c{class_idx}_signed_before'",
+        ]
+    lines += [
+        ".tran 2p 6n uic",
+        ".control",
+        "run",
+        "quit",
+        ".endc",
+        ".end",
+        "",
+    ]
+    return "\n".join(lines)
+
+
 @pytest.mark.ngspice
 def test_multiclass_block_sequence_ngspice_hybrid_readout_eligibility_is_monotone_and_boosted(
     tmp_path: Path,
@@ -2299,6 +2398,26 @@ def test_multiclass_block_sequence_ngspice_analog_pass_readout_eligibility_is_mo
     assert low + 80e-3 < mid < 0.36
     assert mid + 150e-3 < high < 0.68
     assert high < 0.75
+
+
+@pytest.mark.ngspice
+def test_multiclass_block_sequence_ngspice_live_readout_writer_aligns_under_weak_analog_eligibility(
+    tmp_path: Path,
+    ngspice_path: str,
+) -> None:
+    measures = run_netlist(
+        ngspice_path,
+        tmp_path / "live_readout_writer_alignment.cir",
+        _live_readout_writer_alignment_netlist(),
+        timeout=30.0,
+    )
+
+    target_delta = float(measures["c0_signed_delta"])
+    nontarget_delta = float(measures["c1_signed_delta"])
+    off_delta = float(measures["c2_signed_delta"])
+    assert target_delta > 0.2e-3
+    assert nontarget_delta < -0.2e-3
+    assert abs(off_delta) < 20e-6
 
 
 def test_multiclass_block_sequence_can_use_raw_direct_hidden_readout_gates() -> None:
@@ -2521,8 +2640,17 @@ def test_multiclass_block_sequence_validation() -> None:
         seq.main_for_test(["--readout-update-mode", "live", "--error-mode", "score-gated-nontarget"])
     with pytest.raises(ValueError, match="readout_update_width_u"):
         seq.generate_netlist(train_records=records, eval_records=records, readout_update_mode="live", readout_update_width_u=0)
+    with pytest.raises(ValueError, match="readout_live_high_side_topology"):
+        seq.generate_netlist(
+            train_records=records,
+            eval_records=records,
+            readout_update_mode="live",
+            readout_live_high_side_topology="missing",
+        )
     with pytest.raises(ValueError, match="readout-update-width"):
         seq.main_for_test(["--readout-update-width", "0"])
+    with pytest.raises(SystemExit):
+        seq.main_for_test(["--readout-live-high-side-topology", "missing"])
     with pytest.raises(ValueError, match="readout_update_eligibility_ref"):
         seq.generate_netlist(train_records=records, eval_records=records, readout_update_eligibility_ref=0)
     with pytest.raises(ValueError, match="readout_update_eligibility_capacitance_f"):

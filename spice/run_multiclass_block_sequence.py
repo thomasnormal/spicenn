@@ -58,6 +58,7 @@ CLASS_BIAS_MODES = ("none", "target-only", "label-descent")
 READOUT_UPDATE_MODES = ("sampled", "live")
 READOUT_NONTARGET_GUARD_MODES = ("none", "support")
 READOUT_SUPPORT_SOURCE_MODES = ("writer", "elig", "act", "act-raw")
+READOUT_LIVE_HIGH_SIDE_TOPOLOGIES = ("nmos-stack", "pmos-gated")
 HIDDEN_UPDATE_MODES = ("none", "readout-weighted", "direct-readout-weighted")
 SCORE_TIMING_MODES = ("late", "early")
 SCORE_SENSE_MODES = ("voltage", "current-clamp", "diode-mirror")
@@ -1830,6 +1831,7 @@ def generate_netlist(
     readout_nontarget_guard_mode: str = "none",
     readout_support_source_mode: str = "writer",
     readout_support_capacitance_f: float = 4.0,
+    readout_live_high_side_topology: str = "nmos-stack",
     hidden_update_mode: str = "none",
     hidden_credit_width_u: float = 8.0,
     hidden_credit_capacitance_f: float = 12.0,
@@ -2003,6 +2005,8 @@ def generate_netlist(
         raise ValueError(f"eligibility_source_mode must be one of {ELIGIBILITY_SOURCE_MODES}")
     if readout_update_eligibility_mode not in READOUT_UPDATE_ELIGIBILITY_MODES:
         raise ValueError(f"readout_update_eligibility_mode must be one of {READOUT_UPDATE_ELIGIBILITY_MODES}")
+    if readout_live_high_side_topology not in READOUT_LIVE_HIGH_SIDE_TOPOLOGIES:
+        raise ValueError(f"readout_live_high_side_topology must be one of {READOUT_LIVE_HIGH_SIDE_TOPOLOGIES}")
     if readout_update_eligibility_sense_model not in READOUT_UPDATE_ELIGIBILITY_SENSE_MODELS:
         raise ValueError(
             f"readout_update_eligibility_sense_model must be one of {READOUT_UPDATE_ELIGIBILITY_SENSE_MODELS}"
@@ -3203,6 +3207,7 @@ def generate_netlist(
                     negative_descent_node=negative_descent_node,
                     nontarget_guard_node=nontarget_guard_node,
                     width_u=readout_update_width_u,
+                    high_side_topology=readout_live_high_side_topology,
                 )
             else:
                 readout_update_lines = [
@@ -4865,6 +4870,7 @@ def run_case(args: argparse.Namespace) -> dict[str, Any]:
         readout_nontarget_guard_mode=args.readout_nontarget_guard_mode,
         readout_support_source_mode=args.readout_support_source_mode,
         readout_support_capacitance_f=args.readout_support_capacitance_f,
+        readout_live_high_side_topology=args.readout_live_high_side_topology,
         hidden_update_mode=args.hidden_update_mode,
         hidden_credit_width_u=args.hidden_credit_width,
         hidden_credit_capacitance_f=args.hidden_credit_capacitance_f,
@@ -5138,6 +5144,9 @@ def run_case(args: argparse.Namespace) -> dict[str, Any]:
         "error_mode": args.error_mode,
         "readout_update_mode": args.readout_update_mode,
         "readout_update_width_u": args.readout_update_width if args.readout_update_mode == "live" else None,
+        "readout_live_high_side_topology": (
+            args.readout_live_high_side_topology if args.readout_update_mode == "live" else None
+        ),
         "readout_nontarget_guard_mode": (
             args.readout_nontarget_guard_mode if args.readout_update_mode == "live" else None
         ),
@@ -5422,6 +5431,11 @@ def build_arg_parser() -> argparse.ArgumentParser:
     ap.add_argument("--readout-nontarget-guard-mode", choices=READOUT_NONTARGET_GUARD_MODES, default="none")
     ap.add_argument("--readout-support-source-mode", choices=READOUT_SUPPORT_SOURCE_MODES, default="writer")
     ap.add_argument("--readout-support-capacitance-f", type=float, default=4.0)
+    ap.add_argument(
+        "--readout-live-high-side-topology",
+        choices=READOUT_LIVE_HIGH_SIDE_TOPOLOGIES,
+        default="nmos-stack",
+    )
     ap.add_argument("--hidden-update-mode", choices=HIDDEN_UPDATE_MODES, default="none")
     ap.add_argument("--hidden-activation-model", choices=HIDDEN_ACTIVATION_MODELS, default="NREL")
     ap.add_argument("--hidden-activation-negative-width-scale", type=float, default=1.0)

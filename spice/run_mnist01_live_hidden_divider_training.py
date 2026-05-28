@@ -125,7 +125,16 @@ def _hidden_state_lines(hidden_count: int) -> list[str]:
     return lines
 
 
-def _hidden_forward_lines(feature_count: int, hidden_count: int, width_u: float) -> list[str]:
+def _hidden_forward_lines(
+    feature_count: int,
+    hidden_count: int,
+    width_u: float,
+    *,
+    activation_mode: str,
+    activation_sense_width_u: float,
+) -> list[str]:
+    if activation_mode not in ("single-ended", "differential-preamp"):
+        raise ValueError("hidden_activation_mode must be single-ended or differential-preamp")
     lines: list[str] = []
     for hidden in range(hidden_count):
         pre_p = f"pre{hidden}_p"
@@ -142,9 +151,31 @@ def _hidden_forward_lines(feature_count: int, hidden_count: int, width_u: float)
                 f"Mh{hidden}f{feature}n_phi px{feature} featphi h{hidden}f{feature}nmid 0 NSENSE W={width_u:.6g}u L=180n",
                 f"Mh{hidden}f{feature}n_w h{hidden}f{feature}nmid {_hidden_weight_node(hidden, feature, 'n')} {pre_n} 0 NSENSE W={width_u:.6g}u L=180n",
             ]
+        if activation_mode == "single-ended":
+            lines += [
+                f"Mact{hidden}_p vdd {pre_p} {act} 0 NREL W=24u L=180n",
+                f"Mact{hidden}_n {act} {pre_n} 0 0 NSENSE W=24u L=180n",
+            ]
+        else:
+            sense_p = f"h{hidden}_act_sense_p"
+            sense_n = f"h{hidden}_act_sense_n"
+            tail = f"h{hidden}_act_sense_tail"
+            lines += [
+                f"C{sense_p} {sense_p} 0 1f IC=1.2",
+                f"C{sense_n} {sense_n} 0 1f IC=1.2",
+                f"R{sense_p} {sense_p} vdd 1G",
+                f"R{sense_n} {sense_n} vdd 1G",
+                f"R{tail} {tail} 0 1G",
+                f"M{sense_p}_rst {sense_p} rstn vdd vdd PMOS W=4u L=180n",
+                f"M{sense_n}_rst {sense_n} rstn vdd vdd PMOS W=4u L=180n",
+                f"Mh{hidden}_act_sense_tail {tail} featphi 0 0 NSENSE W={activation_sense_width_u:.6g}u L=180n",
+                f"Mh{hidden}_act_sense_p {sense_n} {pre_p} {tail} 0 NSENSE W={activation_sense_width_u:.6g}u L=180n",
+                f"Mh{hidden}_act_sense_n {sense_p} {pre_n} {tail} 0 NSENSE W={activation_sense_width_u:.6g}u L=180n",
+                f"Mh{hidden}_act_sense_lp {sense_n} {sense_p} vdd vdd PMOS W={max(2.0, activation_sense_width_u / 8.0):.6g}u L=180n",
+                f"Mh{hidden}_act_sense_ln {sense_p} {sense_n} vdd vdd PMOS W={max(2.0, activation_sense_width_u / 8.0):.6g}u L=180n",
+                f"Mact{hidden}_diff_restore {act} {sense_n} vdd vdd PMOS W={max(8.0, activation_sense_width_u / 2.0):.6g}u L=180n",
+            ]
         lines += [
-            f"Mact{hidden}_p vdd {pre_p} {act} 0 NREL W=24u L=180n",
-            f"Mact{hidden}_n {act} {pre_n} 0 0 NSENSE W=24u L=180n",
             f"Chrow{hidden}_ctrl hrow{hidden}_ctrl 0 1f IC=1.2",
             f"Rhrow{hidden}_ctrl hrow{hidden}_ctrl vdd 1G",
             f"Rhrow{hidden}_mid hrow{hidden}_mid 0 1G",
@@ -641,6 +672,8 @@ def mnist01_live_hidden_netlist(
     hidden_outside_negative: float = 0.05,
     iref_a: float = 1.0e-6,
     hidden_forward_width_u: float = 8.0,
+    hidden_activation_mode: str = "single-ended",
+    hidden_activation_sense_width_u: float = 32.0,
     readout_width_u: float = 16.0,
     branch_width_u: float = 0.05,
     floor_width_u: float = 0.015,
@@ -681,6 +714,8 @@ def mnist01_live_hidden_netlist(
     _image_size_from_feature_count(feature_count)
     if hidden_credit_gate_mode not in ("differential-excess", "dynamic-preamp"):
         raise ValueError("hidden_credit_gate_mode must be differential-excess or dynamic-preamp")
+    if hidden_activation_mode not in ("single-ended", "differential-preamp"):
+        raise ValueError("hidden_activation_mode must be single-ended or differential-preamp")
     if hidden_writer_topology not in ("pmos-highside", "pmos-differential"):
         raise ValueError("hidden_writer_topology must be pmos-highside or pmos-differential")
     if hidden_credit_gate_mode == "dynamic-preamp" and hidden_writer_topology != "pmos-differential":
@@ -700,6 +735,7 @@ def mnist01_live_hidden_netlist(
         hidden_outside_negative,
         iref_a,
         hidden_forward_width_u,
+        hidden_activation_sense_width_u,
         readout_width_u,
         branch_width_u,
         floor_width_u,
@@ -764,7 +800,13 @@ def mnist01_live_hidden_netlist(
         *_readout_storage_lines(hidden_count, readout_initial_positive, readout_initial_negative),
         *_hidden_state_lines(hidden_count),
         *_score_storage_lines(),
-        *_hidden_forward_lines(feature_count, hidden_count, hidden_forward_width_u),
+        *_hidden_forward_lines(
+            feature_count,
+            hidden_count,
+            hidden_forward_width_u,
+            activation_mode=hidden_activation_mode,
+            activation_sense_width_u=hidden_activation_sense_width_u,
+        ),
         *_score_readout_lines(hidden_count, readout_width_u),
         *_error_storage_lines(),
         *_divider_probability_lines(branch_width_u, floor_width_u),

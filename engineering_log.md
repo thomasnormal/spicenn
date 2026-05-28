@@ -2,6 +2,22 @@
 
 ## 2026-05-28
 
+- Added opt-in `hidden_activation_mode=differential-preamp` to the MNIST01
+  live-hidden deck.  The circuit is transistor/passive: a dynamic differential
+  sense pair compares `pre_p/pre_n`, PMOS keepers restore the winning sense
+  rail, and a PMOS restore drives `act*`; no `B` sources or Python weight
+  updates are involved.  A new ngspice primitive regression uses a synthetic
+  one-hot 4x4 input with unsaturated hidden capacitors (`inside p/n = 0.65/0.45
+  V`, outside `0.45/0.65 V`).  The old single-ended activation path leaves all
+  `hrow*` rails below `1 mV`, while the differential-preamp path restores only
+  the selected hidden row above `1 V` and keeps the other three below `1 mV`.
+  This proves a concrete way to read a less rail-coded hidden state.  It is not
+  yet the MNIST solution: preliminary real-digit probes still activate broad
+  quadrant combinations, so the next work is tying this readable unsaturated
+  mode to a hidden objective/common-mode controller that improves real MNIST01
+  margins.  Focused regressions: `python3 -m pytest
+  tests/test_mnist01_live_hidden_divider_training.py -q` -> `8 passed`; with
+  adjacent XOR/fixed-feature suites -> `18 passed`.
 - Added hidden activation and restored hidden-row eval probes to the MNIST01
   live-hidden conductance-divider deck.  This exposed that `hrow` restore can
   hide damage to the raw `act*` hidden features: the previous short hidden

@@ -137,6 +137,14 @@ def test_mnist01_live_hidden_netlist_is_live_transistor_path() -> None:
         in preamp_netlist
     )
 
+    activation_netlist = mnist01_hidden.mnist01_live_hidden_netlist(
+        train,
+        train,
+        hidden_activation_mode="differential-preamp",
+    )
+    assert "Mh0_act_sense_p h0_act_sense_n pre0_p h0_act_sense_tail 0 NSENSE" in activation_netlist
+    assert "Mact0_diff_restore act0 h0_act_sense_n vdd vdd PMOS" in activation_netlist
+
 
 def test_mnist01_live_hidden_netlist_validation() -> None:
     sample = {"features": [1.0] * 16, "label": 0}
@@ -173,6 +181,12 @@ def test_mnist01_live_hidden_netlist_validation() -> None:
             [sample],
             hidden_credit_gate_mode="BAD",
         )
+    with pytest.raises(ValueError, match="hidden_activation_mode"):
+        mnist01_hidden.mnist01_live_hidden_netlist(
+            [sample],
+            [sample],
+            hidden_activation_mode="BAD",
+        )
     with pytest.raises(ValueError, match="dynamic-preamp"):
         mnist01_hidden.mnist01_live_hidden_netlist(
             [sample],
@@ -203,6 +217,53 @@ def test_mnist01_live_hidden_netlist_validation() -> None:
         mnist01_hidden.hidden_block_for_feature(0, 5)
     with pytest.raises(ValueError, match="outside"):
         mnist01_hidden.hidden_block_for_feature(16, 4)
+
+
+@pytest.mark.ngspice
+def test_mnist01_live_hidden_differential_activation_reads_unsaturated_synthetic_feature(
+    tmp_path: Path,
+    ngspice_path: str,
+) -> None:
+    sample = {"features": [1.0] + [0.0] * 15, "label": 0}
+    common_kwargs = dict(
+        hidden_inside_positive=0.65,
+        hidden_outside_positive=0.45,
+        hidden_inside_negative=0.45,
+        hidden_outside_negative=0.65,
+        hidden_activation_sense_width_u=64.0,
+    )
+
+    single_ended = mnist01_hidden.run_netlist(
+        ngspice_path,
+        tmp_path / "mnist01_hidden_single_ended_mild.cir",
+        mnist01_hidden.mnist01_live_hidden_netlist(
+            [sample],
+            [sample],
+            **common_kwargs,
+        ),
+        timeout=60.0,
+    )
+    differential = mnist01_hidden.run_netlist(
+        ngspice_path,
+        tmp_path / "mnist01_hidden_diff_activation_mild.cir",
+        mnist01_hidden.mnist01_live_hidden_netlist(
+            [sample],
+            [sample],
+            hidden_activation_mode="differential-preamp",
+            **common_kwargs,
+        ),
+        timeout=60.0,
+    )
+
+    single_hrows = [single_ended[f"initial_hrow_h{hidden}_0"] for hidden in range(mnist01_hidden.HIDDEN)]
+    diff_acts = [differential[f"initial_act_h{hidden}_0"] for hidden in range(mnist01_hidden.HIDDEN)]
+    diff_hrows = [differential[f"initial_hrow_h{hidden}_0"] for hidden in range(mnist01_hidden.HIDDEN)]
+
+    assert max(single_hrows) < 1e-3
+    assert diff_acts[0] > 1.0
+    assert diff_hrows[0] > 1.0
+    assert max(diff_acts[1:]) < 1e-3
+    assert max(diff_hrows[1:]) < 1e-3
 
 
 @pytest.mark.ngspice

@@ -130,9 +130,9 @@ def _hidden_forward_lines(feature_count: int, hidden_count: int, width_u: float)
 def _score_storage_lines() -> list[str]:
     lines: list[str] = []
     for output in range(OUTPUTS):
-        for kind in ("scorep", "scoren", "errp", "errn"):
+        for kind in ("scorep", "scoren", "errp", "errn", "herrp", "herrn"):
             node = class_node(output, kind)
-            cap_f = 2.0 if kind.startswith("err") else 8.0
+            cap_f = 2.0 if "err" in kind else 8.0
             lines += [
                 f"C{node} {node} 0 {cap_f:.12g}f IC=0",
                 f"R{node} {node} 0 1G",
@@ -218,6 +218,24 @@ def _route_to_error_rails_lines(route_width_u: float) -> list[str]:
     return lines
 
 
+def _route_to_hidden_error_rails_lines(route_width_u: float) -> list[str]:
+    def charge_lines(name: str, dest: str, low: str, target: str) -> list[str]:
+        return [
+            f"R{name}_a {name}_a 0 1G",
+            f"R{name}_b {name}_b 0 1G",
+            f"M{name}_m vdd {low} {name}_a vdd PMOS W={route_width_u:.6g}u L=180n",
+            f"M{name}_t {name}_a {target} {name}_b 0 NSENSE W=12u L=180n",
+            f"M{name}_phi {name}_b errphi {dest} 0 NSENSE W=12u L=180n",
+        ]
+
+    lines: list[str] = []
+    lines += charge_lines("herr_c0p", class_node(0, "herrp"), "b1low", "t0")
+    lines += charge_lines("herr_c1n", class_node(1, "herrn"), "b1low", "t0")
+    lines += charge_lines("herr_c1p", class_node(1, "herrp"), "b0low", "t1")
+    lines += charge_lines("herr_c0n", class_node(0, "herrn"), "b0low", "t1")
+    return lines
+
+
 def _readout_writer_lines(hidden_count: int, width_u: float) -> list[str]:
     lines = [
         "Vvwhi_ref vwhi_ref 0 0.48",
@@ -271,8 +289,8 @@ def _hidden_credit_lines(
             f"Mreset_{hdn} {hdn} rst 0 0 NMOS W=4u L=180n",
         ]
         for output in range(OUTPUTS):
-            errp = class_node(output, "errp")
-            errn = class_node(output, "errn")
+            errp = class_node(output, "herrp")
+            errn = class_node(output, "herrn")
             vwp = class_node(output, f"vwp{hidden}")
             vwn = class_node(output, f"vwn{hidden}")
             prefix = f"h{hidden}_c{output}_cred"
@@ -404,6 +422,10 @@ def _measure_lines(samples: list[dict[str, Any]], eval_count: int, train_count: 
                 f".meas tran train_target_errn_{local} FIND V({class_node(label, 'errn')}) AT={err_at:.2f}n",
                 f".meas tran train_other_errp_{local} FIND V({class_node(other, 'errp')}) AT={err_at:.2f}n",
                 f".meas tran train_other_errn_{local} FIND V({class_node(other, 'errn')}) AT={err_at:.2f}n",
+                f".meas tran train_target_herrp_{local} FIND V({class_node(label, 'herrp')}) AT={err_at:.2f}n",
+                f".meas tran train_target_herrn_{local} FIND V({class_node(label, 'herrn')}) AT={err_at:.2f}n",
+                f".meas tran train_other_herrp_{local} FIND V({class_node(other, 'herrp')}) AT={err_at:.2f}n",
+                f".meas tran train_other_herrn_{local} FIND V({class_node(other, 'herrn')}) AT={err_at:.2f}n",
                 f".meas tran train_hdp_gate_probe_{local} FIND V(h{hidden}_hdp_gate) AT={err_at:.2f}n",
                 f".meas tran train_hdn_gate_probe_{local} FIND V(h{hidden}_hdn_gate) AT={err_at:.2f}n",
                 f".meas tran train_hcredit_gate_probe_{local} PARAM='train_hdp_gate_probe_{local}-train_hdn_gate_probe_{local}'",
@@ -450,6 +472,7 @@ def mnist01_live_hidden_netlist(
     branch_width_u: float = 0.05,
     floor_width_u: float = 0.015,
     route_width_u: float = 3.0,
+    hidden_error_route_width_u: float = 16.0,
     readout_update_width_u: float = 0.25,
     hidden_credit_width_u: float = 32.0,
     hidden_credit_cap_f: float = 12.0,
@@ -457,7 +480,7 @@ def mnist01_live_hidden_netlist(
     hidden_credit_internal_shunt_ohm: float = 5.0e7,
     hidden_credit_gate_width_u: float = 4.0,
     hidden_credit_gate_cap_f: float = 2.0,
-    hidden_credit_gate_pull_scale: float = 1.0,
+    hidden_credit_gate_pull_scale: float = 2.0,
     hidden_update_width_u: float = 1.0,
     hidden_writer_pmos_width_u: float = 4.0,
     hidden_writer_gate_cap_f: float = 0.2,
@@ -483,6 +506,7 @@ def mnist01_live_hidden_netlist(
         branch_width_u,
         floor_width_u,
         route_width_u,
+        hidden_error_route_width_u,
         readout_update_width_u,
         hidden_credit_width_u,
         hidden_credit_cap_f,
@@ -530,6 +554,7 @@ def mnist01_live_hidden_netlist(
         *_error_storage_lines(),
         *_divider_probability_lines(branch_width_u, floor_width_u),
         *_route_to_error_rails_lines(route_width_u),
+        *_route_to_hidden_error_rails_lines(hidden_error_route_width_u),
         *_readout_writer_lines(hidden_count, readout_update_width_u),
         *_hidden_credit_lines(
             hidden_count,

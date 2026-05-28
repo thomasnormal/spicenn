@@ -60,6 +60,9 @@ def test_mnist01_live_hidden_netlist_is_live_transistor_path() -> None:
     assert "Mh0f0p_phi px0 featphi h0f0pmid 0 NSENSE" in netlist
     assert "Mhrow1_restore hrow1 hrow1_ctrl vdd vdd PMOS" in netlist
     assert "Mnorm0_score rd0 c0_scorep mir0 0 NSENSE" in netlist
+    assert "Cc0_herrp c0_herrp 0 2f IC=0" in netlist
+    assert "Mherr_c0p_m vdd b1low herr_c0p_a vdd PMOS" in netlist
+    assert "Mh1_c0_cred_pv_e vdd c0_herrp h1_c0_cred_pv_e 0 NSENSE" in netlist
     assert "Mc0_f1_live_pos_up_p c0_vwp1 c0_f1_live_pos_up_ctrl vwhi_ref vdd PMOS" in netlist
     assert "Mh1f6_live_pup_pgate_phi h1f6_live_pup_pgphi errphi 0 0 NSENSE" in netlist
     assert ".meas tran train_hrow_probe_0" in netlist
@@ -87,7 +90,7 @@ def test_mnist01_live_hidden_netlist_validation() -> None:
         mnist01_hidden.mnist01_live_hidden_netlist(
             [sample],
             [sample],
-            hidden_forward_width_u=0.0,
+            hidden_error_route_width_u=0.0,
         )
     with pytest.raises(ValueError, match="even"):
         mnist01_hidden.hidden_block_for_feature(0, 5)
@@ -96,7 +99,7 @@ def test_mnist01_live_hidden_netlist_validation() -> None:
 
 
 @pytest.mark.ngspice
-def test_mnist01_live_hidden_divider_ngspice_bootstraps_readout_but_not_hidden_credit_yet(
+def test_mnist01_live_hidden_divider_ngspice_bootstraps_readout_and_visible_subthreshold_hidden_credit(
     tmp_path: Path,
     ngspice_path: str,
 ) -> None:
@@ -129,7 +132,12 @@ def test_mnist01_live_hidden_divider_ngspice_bootstraps_readout_but_not_hidden_c
         assert parsed[f"train_hrow_ctrl_probe_{train_idx}"] < 10e-3
         assert parsed[f"train_target_errp_{train_idx}"] > parsed[f"train_target_errn_{train_idx}"] + 30e-3
         assert parsed[f"train_other_errn_{train_idx}"] > parsed[f"train_other_errp_{train_idx}"] + 30e-3
+        assert parsed[f"train_target_herrp_{train_idx}"] > parsed[f"train_target_errp_{train_idx}"] + 0.20
+        assert parsed[f"train_other_herrn_{train_idx}"] > parsed[f"train_other_errn_{train_idx}"] + 0.20
         assert parsed[f"train_target_signed_delta_{train_idx}"] > 3e-3
         assert parsed[f"train_other_signed_delta_{train_idx}"] < -3e-3
-        assert abs(parsed[f"train_hcredit_gate_probe_{train_idx}"]) < 2e-6
         assert abs(parsed[f"train_wh_probe_signed_delta_{train_idx}"]) < 1e-3
+
+    assert abs(parsed["train_hcredit_gate_probe_0"]) < 1e-6
+    assert parsed["train_hcredit_gate_probe_1"] < -50e-6
+    assert abs(parsed["train_hcredit_gate_probe_1"]) < 1e-3

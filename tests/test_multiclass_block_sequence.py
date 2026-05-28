@@ -4518,6 +4518,8 @@ def test_multiclass_block_sequence_hidden_direct_can_use_pmos_differential_stage
 
     assert "\nB" not in netlist
     assert "Mh0_c0_direct_pv_pup_pmos whp0" in netlist
+    assert "Mh0_c0_direct_pv_pup_pmos whp0 h0_c0_direct_pv_pup_gate hidden_whi_ref vdd PMOS" in netlist
+    assert "Mh0_c0_direct_pn_nup_pmos whn0 h0_c0_direct_pn_nup_gate hidden_whi_ref vdd PMOS" in netlist
     assert "Mh0_c0_direct_pv_ndn_pmos hidden_wlo_ref h0_c0_direct_pv_pup_gate whn0 vdd PMOS" in netlist
     assert "Mh0_c0_direct_pn_pdn_pmos hidden_wlo_ref h0_c0_direct_pn_nup_gate whp0 vdd PMOS" in netlist
     assert "Mh0_c0_direct_pv_ndn_gate" not in netlist

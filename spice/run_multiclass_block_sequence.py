@@ -2744,6 +2744,7 @@ def generate_netlist(
                     "hidden_whi_ref"
                     if hidden_direct_output_stage in (
                         "pmos-balanced",
+                        "pmos-differential",
                         "pmos-suppressive",
                         "pmos-bounded",
                         "pmos-complementary",

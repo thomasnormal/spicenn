@@ -3042,7 +3042,7 @@ def _hidden_direct_readout_weighted_writer_netlist(
             internal_capacitance_f=internal_capacitance_f,
             high_ref_node=(
                 "hidden_whi_ref"
-                if output_stage in ("pmos-bounded", "pmos-complementary")
+                if output_stage in ("pmos-suppressive", "pmos-bounded", "pmos-complementary")
                 else "vwhi_ref"
             ),
             low_ref_node="hidden_wlo_ref",
@@ -3549,6 +3549,56 @@ def test_multiclass_block_sequence_ngspice_direct_hidden_writer_realistic_low_ra
     assert float(pmos_negative["signed_after"]) < -0.10
 
 
+def test_multiclass_block_sequence_ngspice_direct_hidden_writer_pmos_suppressive_uses_low_side_headroom(
+    tmp_path: Path,
+    ngspice_path: str,
+) -> None:
+    def realistic_rails(deck: str) -> str:
+        return deck.replace("Vact act0 0 1.2", "Vact act0 0 0.42").replace(
+            "Vxelig xelig0 0 1.2",
+            "Vxelig xelig0 0 0.46",
+        )
+
+    common_kwargs = dict(
+        whp=0.80,
+        whn=0.25,
+        errp="PULSE(0 0.04 1n 10p 10p 4n 20n)",
+        width_u=0.125,
+        readout_gate_mode="restored-excess",
+        output_stage="pmos-suppressive",
+        readout_high_ref=0.42,
+        readout_low_ref=0.28,
+        hidden_high_ref=1.05,
+        hidden_low_ref=0.15,
+    )
+    positive = run_netlist(
+        ngspice_path,
+        tmp_path / "direct_hidden_writer_suppressive_positive.cir",
+        realistic_rails(_hidden_direct_readout_weighted_writer_netlist(vwp=0.40, vwn=0.28, **common_kwargs)),
+        timeout=20.0,
+    )
+    negative = run_netlist(
+        ngspice_path,
+        tmp_path / "direct_hidden_writer_suppressive_negative.cir",
+        realistic_rails(_hidden_direct_readout_weighted_writer_netlist(vwp=0.28, vwn=0.40, **common_kwargs)),
+        timeout=20.0,
+    )
+    neutral = run_netlist(
+        ngspice_path,
+        tmp_path / "direct_hidden_writer_suppressive_neutral.cir",
+        realistic_rails(_hidden_direct_readout_weighted_writer_netlist(vwp=0.40, vwn=0.40, **common_kwargs)),
+        timeout=20.0,
+    )
+
+    assert float(positive["signed_after"]) > float(neutral["signed_after"]) + 50e-3
+    assert float(positive["whp_after"]) > 0.79
+    assert float(positive["whn_after"]) < 0.18
+    assert float(negative["signed_after"]) < float(neutral["signed_after"]) - 0.40
+    assert float(negative["whp_after"]) < 0.30
+    assert float(negative["whn_after"]) > 0.24
+    assert float(neutral["signed_after"]) == pytest.approx(0.55, abs=2e-3)
+
+
 def test_multiclass_block_sequence_ngspice_direct_hidden_writer_support_guard_blocks_immature_nontarget_feedback(
     tmp_path: Path,
     ngspice_path: str,
@@ -3598,6 +3648,30 @@ def test_multiclass_block_sequence_hidden_direct_support_guard_is_explicit_and_l
     assert "Mh0_c0_direct_nn_nup_g" in netlist
     assert " c0_f0_support " in netlist
     assert "Cgvp" not in netlist
+
+
+def test_multiclass_block_sequence_hidden_direct_can_use_pmos_suppressive_stage() -> None:
+    netlist = seq.generate_netlist(
+        train_records=_one_hot_records(),
+        eval_records=_one_hot_records(),
+        class_count=3,
+        feature_count=3,
+        readout_update_mode="live",
+        readout_nontarget_guard_mode="support",
+        hidden_update_mode="direct-readout-weighted",
+        hidden_direct_output_stage="pmos-suppressive",
+        hidden_direct_nontarget_guard_mode="support",
+        error_mode="pairwise-margin-centered-gain-descent",
+        eligibility_gate_mode="rank",
+        readout_update_eligibility_mode="restored",
+    )
+
+    assert "\nB" not in netlist
+    assert "Mh0_c0_direct_pv_psup_w" in netlist
+    assert "Mh0_c0_direct_pv_ndn_direct whn0" in netlist
+    assert "Mh0_c0_direct_pn_nsup_w" in netlist
+    assert "Mh0_c0_direct_pn_pdn_direct whp0" in netlist
+    assert "Mh0_c0_direct_pv_pup_pmos" not in netlist
 
 
 def test_multiclass_block_sequence_hidden_direct_can_use_centered_error_rails_before_writer_gain() -> None:

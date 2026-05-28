@@ -67,7 +67,13 @@ ELIGIBILITY_SOURCE_MODES = ("pre-p", "act-raw", "act")
 READOUT_UPDATE_ELIGIBILITY_MODES = ("restored", "hybrid")
 HIDDEN_CREDIT_ACTIVATION_MODELS = ("NREL", "NMOS", "NSENSE")
 HIDDEN_DIRECT_READOUT_GATE_MODES = ("raw", "differential-excess", "restored-excess")
-HIDDEN_DIRECT_OUTPUT_STAGES = ("nmos-pass", "pmos-pullup", "pmos-bounded", "pmos-complementary")
+HIDDEN_DIRECT_OUTPUT_STAGES = (
+    "nmos-pass",
+    "pmos-suppressive",
+    "pmos-pullup",
+    "pmos-bounded",
+    "pmos-complementary",
+)
 HIDDEN_DIRECT_NONTARGET_GUARD_MODES = ("none", "support")
 HIDDEN_DIRECT_ERROR_SOURCE_MODES = ("writer", "centered")
 DEFAULT_HIDDEN_POSITIVE = 1.00
@@ -548,6 +554,42 @@ def hidden_direct_readout_weighted_update_lines(
                 lines.append(
                     f"M{prefix}{suffix}_pup_w {source_for_weight} {weight} {whp} 0 NSENSE W={width_u:.6g}u L=180n"
                 )
+            elif output_stage == "pmos-suppressive":
+                pmos_ref_node = high_ref_node
+                pmos_ref_ic = high_ref_voltage
+                pgate = f"{prefix}{suffix}_pup_gate"
+                dgate = f"{prefix}{suffix}_ndn_gate"
+                lines += [
+                    f"R{pgate} {pgate} 0 1G",
+                    f"R{dgate} {dgate} 0 1G",
+                    f"R{up0} {up0} 0 1G",
+                    f"R{up1} {up1} 0 1G",
+                    f"R{up2} {up2} 0 1G",
+                    f"C{pgate} {pgate} 0 {internal_capacitance_f:.12g}f IC={pmos_ref_ic:.12g}",
+                    f"C{dgate} {dgate} 0 {internal_capacitance_f:.12g}f IC=0",
+                    f"C{up0} {up0} 0 {internal_capacitance_f:.12g}f IC=0",
+                    f"C{up1} {up1} 0 {internal_capacitance_f:.12g}f IC=0",
+                    f"C{up2} {up2} 0 {internal_capacitance_f:.12g}f IC=0",
+                    f"M{prefix}{suffix}_pup_gate_rst {pmos_ref_node} {reset_node} {pgate} 0 NSENSE W=4u L=180n",
+                    f"M{prefix}{suffix}_pup_gate_hold {pmos_ref_node} {anti_weight} {pgate} 0 NSENSE W={width_u:.6g}u L=180n",
+                    f"M{prefix}{suffix}_psup_e {pgate} {eligibility_node} {up0} 0 NSENSE W={width_u:.6g}u L=180n",
+                    f"M{prefix}{suffix}_psup_a {up0} {act} {up1} 0 {activation_model} W={width_u:.6g}u L=180n",
+                    f"M{prefix}{suffix}_psup_r {up1} {err} {up2} 0 NSENSE W={width_u:.6g}u L=180n",
+                ]
+                source_for_weight = up2
+                if guard is not None:
+                    lines += [
+                        f"R{upw} {upw} 0 1G",
+                        f"C{upw} {upw} 0 {internal_capacitance_f:.12g}f IC=0",
+                        f"M{prefix}{suffix}_psup_g {up2} {guard} {upw} 0 NSENSE W={width_u:.6g}u L=180n",
+                    ]
+                    source_for_weight = upw
+                lines += [
+                    f"M{prefix}{suffix}_psup_w {source_for_weight} {weight} 0 0 NSENSE W={width_u:.6g}u L=180n",
+                    f"M{prefix}{suffix}_ndn_gate_rst {dgate} {reset_node} 0 0 NMOS W=4u L=180n",
+                    f"M{prefix}{suffix}_ndn_gate_inv {dgate} {pgate} {pmos_ref_node} vdd PMOS W={complement_width_scale * width_u:.6g}u L=180n",
+                    f"M{prefix}{suffix}_ndn_direct {whn} {dgate} {low_ref_node} 0 NSENSE W={complement_width_scale * width_u:.6g}u L=180n",
+                ]
             else:
                 uses_hidden_ref = output_stage in ("pmos-bounded", "pmos-complementary")
                 pmos_ref_node = high_ref_node if uses_hidden_ref else "vwhi_ref"
@@ -617,6 +659,42 @@ def hidden_direct_readout_weighted_update_lines(
                 lines.append(
                     f"M{prefix}{suffix}_nup_w {source_for_weight} {weight} {whn} 0 NSENSE W={width_u:.6g}u L=180n"
                 )
+            elif output_stage == "pmos-suppressive":
+                pmos_ref_node = high_ref_node
+                pmos_ref_ic = high_ref_voltage
+                ngate = f"{prefix}{suffix}_nup_gate"
+                dgate = f"{prefix}{suffix}_pdn_gate"
+                lines += [
+                    f"R{ngate} {ngate} 0 1G",
+                    f"R{dgate} {dgate} 0 1G",
+                    f"R{up0} {up0} 0 1G",
+                    f"R{up1} {up1} 0 1G",
+                    f"R{up2} {up2} 0 1G",
+                    f"C{ngate} {ngate} 0 {internal_capacitance_f:.12g}f IC={pmos_ref_ic:.12g}",
+                    f"C{dgate} {dgate} 0 {internal_capacitance_f:.12g}f IC=0",
+                    f"C{up0} {up0} 0 {internal_capacitance_f:.12g}f IC=0",
+                    f"C{up1} {up1} 0 {internal_capacitance_f:.12g}f IC=0",
+                    f"C{up2} {up2} 0 {internal_capacitance_f:.12g}f IC=0",
+                    f"M{prefix}{suffix}_nup_gate_rst {pmos_ref_node} {reset_node} {ngate} 0 NSENSE W=4u L=180n",
+                    f"M{prefix}{suffix}_nup_gate_hold {pmos_ref_node} {anti_weight} {ngate} 0 NSENSE W={width_u:.6g}u L=180n",
+                    f"M{prefix}{suffix}_nsup_e {ngate} {eligibility_node} {up0} 0 NSENSE W={width_u:.6g}u L=180n",
+                    f"M{prefix}{suffix}_nsup_a {up0} {act} {up1} 0 {activation_model} W={width_u:.6g}u L=180n",
+                    f"M{prefix}{suffix}_nsup_r {up1} {err} {up2} 0 NSENSE W={width_u:.6g}u L=180n",
+                ]
+                source_for_weight = up2
+                if guard is not None:
+                    lines += [
+                        f"R{upw} {upw} 0 1G",
+                        f"C{upw} {upw} 0 {internal_capacitance_f:.12g}f IC=0",
+                        f"M{prefix}{suffix}_nsup_g {up2} {guard} {upw} 0 NSENSE W={width_u:.6g}u L=180n",
+                    ]
+                    source_for_weight = upw
+                lines += [
+                    f"M{prefix}{suffix}_nsup_w {source_for_weight} {weight} 0 0 NSENSE W={width_u:.6g}u L=180n",
+                    f"M{prefix}{suffix}_pdn_gate_rst {dgate} {reset_node} 0 0 NMOS W=4u L=180n",
+                    f"M{prefix}{suffix}_pdn_gate_inv {dgate} {ngate} {pmos_ref_node} vdd PMOS W={complement_width_scale * width_u:.6g}u L=180n",
+                    f"M{prefix}{suffix}_pdn_direct {whp} {dgate} {low_ref_node} 0 NSENSE W={complement_width_scale * width_u:.6g}u L=180n",
+                ]
             else:
                 uses_hidden_ref = output_stage in ("pmos-bounded", "pmos-complementary")
                 pmos_ref_node = high_ref_node if uses_hidden_ref else "vwhi_ref"
@@ -2338,7 +2416,7 @@ def generate_netlist(
                 internal_capacitance_f=hidden_direct_internal_capacitance_f,
                 high_ref_node=(
                     "hidden_whi_ref"
-                    if hidden_direct_output_stage in ("pmos-bounded", "pmos-complementary")
+                    if hidden_direct_output_stage in ("pmos-suppressive", "pmos-bounded", "pmos-complementary")
                     else "vwhi_ref"
                 ),
                 high_ref_voltage=hidden_direct_high_ref,

@@ -2,6 +2,27 @@
 
 ## 2026-05-28
 
+- Added an opt-in same-transient `eval_score_readout_mode=direct-current-clamp`
+  to the continuous multiclass block.  The first naive branch tied the current
+  clamps directly to `actrow*`; an ngspice regression caught that this stole
+  the activation row and collapsed the normal voltage score rail.  The fixed
+  version uses a separate post-score `evalout` phase and sampled
+  `eval_actrow*` nodes active only on initial/final eval cycles, so the
+  training score/error rails remain unchanged.  Focused regressions pass,
+  including an ngspice check that the eval branch tracks readout-weight sign
+  while the ordinary score measurement matches the no-eval baseline.
+- Compact strict continuous `mnist3fixed8_6` with feature-margin-centered
+  live updates, rank eligibility restore, target-only bias, and the new
+  in-transient eval current readout completed in about `197 s` with a `300 s`
+  timeout.  The ordinary voltage-score path stayed at `0.333 -> 0.333`
+  (`final_eval_min_margin_v ~= -6.5 uV`), and the sampled eval current path
+  also stayed at `0.333 -> 0.333` with final eval predictions `[2, 2, 2]`.
+  This is a useful separation from the prior posthoc replay sweep: the final
+  capacitor state can be read by an ideal direct-current replay source, but a
+  real sampled in-circuit eval row is still dominated by the physical
+  actrow/current-sense handoff.  Next readout work should improve that eval
+  row buffer/sense interface before treating replay accuracy as usable
+  on-chip accuracy.
 - Added `readout_live_high_side_topology=pmos-gated` for the class-local live
   readout writer.  The immediate ngspice primitive reproduced the integrated
   analog-pass symptom: with a weak `~0.132 V` writer eligibility rail, the old

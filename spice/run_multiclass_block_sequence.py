@@ -64,6 +64,7 @@ HIDDEN_UPDATE_MODES = ("none", "readout-weighted", "direct-readout-weighted")
 SCORE_TIMING_MODES = ("late", "early")
 SCORE_SENSE_MODES = ("voltage", "current-clamp", "diode-mirror")
 READOUT_FORWARD_MODES = ("direct", "diode")
+EVAL_SCORE_READOUT_MODES = ("none", "direct-current-clamp")
 PHYSICAL_READOUT_REPLAY_SWEEP_MODES: dict[str, tuple[str, str]] = {
     "direct-voltage": ("direct", "voltage"),
     "direct-current-clamp": ("direct", "current-clamp"),
@@ -421,6 +422,21 @@ def physical_readout_replay_measure_time_ns(
     if measure_ns <= 0.0:
         raise ValueError("physical replay measurement time must be positive")
     return measure_ns
+
+
+def class_local_eval_current_readout_lines(
+    *,
+    class_idx: int,
+    feature_idx: int,
+    width_u: float = 64.0,
+    negative_width_u: float = 48.0,
+) -> list[str]:
+    prefix = f"c{class_idx}_f{feature_idx}_eval_"
+    actrow = f"eval_actrow{feature_idx}"
+    return [
+        f"M{prefix}pos_cond {actrow} {class_node(class_idx, f'vwp{feature_idx}')} {class_node(class_idx, 'eval_score')} 0 NMOS W={width_u:.6g}u L=180n",
+        f"M{prefix}neg_cond {actrow} {class_node(class_idx, f'vwn{feature_idx}')} {class_node(class_idx, 'eval_scoren')} 0 NMOS W={negative_width_u:.6g}u L=180n",
+    ]
 
 
 def hidden_readout_weighted_credit_lines(
@@ -1921,6 +1937,7 @@ def generate_netlist(
     score_timing_mode: str = "late",
     score_sense_mode: str = "voltage",
     readout_forward_mode: str = "direct",
+    eval_score_readout_mode: str = "none",
     eligibility_gate_mode: str = "raw",
     eligibility_source_mode: str = "pre-p",
     readout_update_eligibility_mode: str = "restored",
@@ -2078,6 +2095,8 @@ def generate_netlist(
         raise ValueError(f"score_sense_mode must be one of {SCORE_SENSE_MODES}")
     if readout_forward_mode not in READOUT_FORWARD_MODES:
         raise ValueError(f"readout_forward_mode must be one of {READOUT_FORWARD_MODES}")
+    if eval_score_readout_mode not in EVAL_SCORE_READOUT_MODES:
+        raise ValueError(f"eval_score_readout_mode must be one of {EVAL_SCORE_READOUT_MODES}")
     if eligibility_gate_mode not in ELIGIBILITY_GATE_MODES:
         raise ValueError(f"eligibility_gate_mode must be one of {ELIGIBILITY_GATE_MODES}")
     if eligibility_source_mode not in ELIGIBILITY_SOURCE_MODES:
@@ -2293,6 +2312,9 @@ def generate_netlist(
         score_timing_mode=score_timing_mode,
         requested_measure_ns=score_measure_ns,
     )
+    eval_score_start_ns = min(effective_score_measure_ns + 0.25, CYCLE_NS - 0.80)
+    eval_score_end_ns = min(eval_score_start_ns + 0.50, CYCLE_NS - 0.20)
+    eval_score_measure_ns = eval_score_start_ns + 0.05
     readout_eligibility_measure_ns = 5.38 if uses_hybrid_readout_eligibility else 5.08
     readout_eligibility_update_measure_ns = max(readout_eligibility_measure_ns, acc_start_ns + 0.03)
     low_gain_contrast_sizing = (
@@ -2408,6 +2430,14 @@ def generate_netlist(
         ),
         f"Vout out 0 {periodic_phase_pwl(cycle_count, start_ns=out_start_ns, end_ns=out_end_ns)}",
         f"Voutn outn 0 {active_low_phase_pwl(cycle_count, start_ns=out_start_ns, end_ns=out_end_ns, active_cycles=set(range(cycle_count)))}",
+        *(
+            [
+                f"Vevalout evalout 0 {periodic_phase_pwl(cycle_count, start_ns=eval_score_start_ns, end_ns=eval_score_end_ns, active_cycles={idx for idx, phase in enumerate(sequence) if phase != 'train'})}",
+                f"Vevaloutn evaloutn 0 {active_low_phase_pwl(cycle_count, start_ns=eval_score_start_ns, end_ns=eval_score_end_ns, active_cycles={idx for idx, phase in enumerate(sequence) if phase != 'train'})}",
+            ]
+            if eval_score_readout_mode == "direct-current-clamp"
+            else []
+        ),
     ]
     if readout_update_mode == "sampled":
         lines += [
@@ -2556,6 +2586,21 @@ def generate_netlist(
                 else []
             ),
             f"Cactrow{feature} actrow{feature} 0 1f IC=0",
+            *(
+                [
+                    f"Ceval_actrow{feature} eval_actrow{feature} 0 1f IC=0",
+                    f"Reval_actrow{feature} eval_actrow{feature} 0 1e12",
+                    f"Meval_actrow{feature}_rst eval_actrow{feature} rst 0 0 NMOS W=4u L=180n",
+                    f"Meval_actrow{feature}_n eval_actrow{feature} evalout "
+                    f"{f'act_contrast{feature}' if hidden_activation_contrast_mode == 'common-gate' and feature < feature_count else f'act{feature}'} "
+                    "0 NMOS W=16u L=180n",
+                    f"Meval_actrow{feature}_p eval_actrow{feature} evaloutn "
+                    f"{f'act_contrast{feature}' if hidden_activation_contrast_mode == 'common-gate' and feature < feature_count else f'act{feature}'} "
+                    "vdd PMOS W=32u L=180n",
+                ]
+                if eval_score_readout_mode == "direct-current-clamp"
+                else []
+            ),
             f"Rpre_p{feature} pre_p{feature} 0 1G",
             f"Rpre_n{feature} pre_n{feature} 0 1G",
             f"Ract_raw{feature} act_raw{feature} 0 1G",
@@ -2730,6 +2775,11 @@ def generate_netlist(
                 f"R{class_node(class_idx, 'scoren')} {class_node(class_idx, 'scoren')} 0 {score_load_resistance:.12g}",
                 f"Mreset_{class_node(class_idx, 'score')} {class_node(class_idx, 'score')} rst 0 0 NMOS W=4u L=180n",
                 f"Mreset_{class_node(class_idx, 'scoren')} {class_node(class_idx, 'scoren')} rst 0 0 NMOS W=4u L=180n",
+            ]
+        if eval_score_readout_mode == "direct-current-clamp":
+            lines += [
+                f"V{class_node(class_idx, 'eval_score_clamp')} {class_node(class_idx, 'eval_score')} 0 0",
+                f"V{class_node(class_idx, 'eval_scoren_clamp')} {class_node(class_idx, 'eval_scoren')} 0 0",
             ]
         if uses_restored_score or uses_restored_binary or uses_score_preamp:
             prefix = f"c{class_idx}_"
@@ -3447,6 +3497,15 @@ def generate_netlist(
                     width_u=readout_width_u,
                     isolation=readout_forward_mode,
                 ),
+                *(
+                    class_local_eval_current_readout_lines(
+                        class_idx=class_idx,
+                        feature_idx=feature,
+                        width_u=readout_width_u,
+                    )
+                    if eval_score_readout_mode == "direct-current-clamp"
+                    else []
+                ),
                 *readout_update_lines,
             ]
     train_seen = 0
@@ -3524,6 +3583,12 @@ def generate_netlist(
                     f".meas tran c{class_idx}_score_{cycle} FIND V({class_node(class_idx, 'score')}) AT={base + effective_score_measure_ns:.2f}n",
                     f".meas tran c{class_idx}_scoren_{cycle} FIND V({class_node(class_idx, 'scoren')}) AT={base + effective_score_measure_ns:.2f}n",
                     f".meas tran c{class_idx}_score_net_{cycle} PARAM='c{class_idx}_score_{cycle}-c{class_idx}_scoren_{cycle}'",
+                ]
+            if eval_score_readout_mode == "direct-current-clamp":
+                lines += [
+                    f".meas tran c{class_idx}_eval_score_{cycle} FIND I(V{class_node(class_idx, 'eval_score_clamp')}) AT={base + eval_score_measure_ns:.2f}n",
+                    f".meas tran c{class_idx}_eval_scoren_{cycle} FIND I(V{class_node(class_idx, 'eval_scoren_clamp')}) AT={base + eval_score_measure_ns:.2f}n",
+                    f".meas tran c{class_idx}_eval_score_net_{cycle} PARAM='c{class_idx}_eval_scoren_{cycle}-c{class_idx}_eval_score_{cycle}'",
                 ]
             if uses_pairwise_decisions:
                 for opponent_idx in range(class_count):
@@ -3666,10 +3731,12 @@ def rows_from_measures(
     *,
     sequence: list[str],
     class_count: int,
+    score_measure: str = "score_net",
+    output_score_prefix: str = "score",
 ) -> list[dict[str, Any]]:
     rows = []
     for cycle, (record, seq) in enumerate(zip(records, sequence)):
-        scores = [float(measures[f"c{class_idx}_score_net_{cycle}"]) for class_idx in range(class_count)]
+        scores = [float(measures[f"c{class_idx}_{score_measure}_{cycle}"]) for class_idx in range(class_count)]
         label = int(record["label"])
         prediction = int(np.argmax(scores))
         rows.append(
@@ -3680,7 +3747,7 @@ def rows_from_measures(
                 "prediction": prediction,
                 "correct": prediction == label,
                 "score_margin_v": float(scores[label] - max(score for idx, score in enumerate(scores) if idx != label)),
-                **{f"score_c{class_idx}_v": scores[class_idx] for class_idx in range(class_count)},
+                **{f"{output_score_prefix}_c{class_idx}_v": scores[class_idx] for class_idx in range(class_count)},
             }
         )
     return rows
@@ -5245,6 +5312,7 @@ def run_case(args: argparse.Namespace) -> dict[str, Any]:
         score_timing_mode=args.score_timing_mode,
         score_sense_mode=args.score_sense_mode,
         readout_forward_mode=args.readout_forward_mode,
+        eval_score_readout_mode=args.eval_score_readout_mode,
         eligibility_gate_mode=args.eligibility_gate_mode,
         eligibility_source_mode=args.eligibility_source_mode,
         readout_update_eligibility_mode=args.readout_update_eligibility_mode,
@@ -5264,6 +5332,18 @@ def run_case(args: argparse.Namespace) -> dict[str, Any]:
     )
     measures = run_netlist(spice_bin, path, deck, timeout=args.timeout)
     rows = rows_from_measures(all_records, measures, sequence=sequence, class_count=args.class_count)
+    eval_score_rows = (
+        rows_from_measures(
+            all_records,
+            measures,
+            sequence=sequence,
+            class_count=args.class_count,
+            score_measure="eval_score_net",
+            output_score_prefix="eval_score",
+        )
+        if args.eval_score_readout_mode != "none"
+        else []
+    )
     initial_margins = [float(row["score_margin_v"]) for row in rows if row["sequence"] == "initial_eval"]
     final_margins = [float(row["score_margin_v"]) for row in rows if row["sequence"] == "final_eval"]
     final_signed = [
@@ -5429,6 +5509,12 @@ def run_case(args: argparse.Namespace) -> dict[str, Any]:
         writer.writerows(rows)
     initial_margin = min(initial_margins)
     final_margin = min(final_margins)
+    eval_score_initial_margins = [
+        float(row["score_margin_v"]) for row in eval_score_rows if row["sequence"] == "initial_eval"
+    ]
+    eval_score_final_margins = [
+        float(row["score_margin_v"]) for row in eval_score_rows if row["sequence"] == "final_eval"
+    ]
     summary = {
         "simulator": version,
         "architecture": "continuous_multiclass_split_rail_block_sequence",
@@ -5626,6 +5712,7 @@ def run_case(args: argparse.Namespace) -> dict[str, Any]:
         "score_timing_mode": args.score_timing_mode,
         "score_sense_mode": args.score_sense_mode,
         "readout_forward_mode": args.readout_forward_mode,
+        "eval_score_readout_mode": args.eval_score_readout_mode,
         "eligibility_gate_mode": args.eligibility_gate_mode,
         "eligibility_source_mode": args.eligibility_source_mode,
         "readout_update_eligibility_mode": (
@@ -5687,6 +5774,29 @@ def run_case(args: argparse.Namespace) -> dict[str, Any]:
         "initial_eval_min_margin_v": initial_margin,
         "final_eval_min_margin_v": final_margin,
         "margin_improvement_v": final_margin - initial_margin,
+        "eval_score_readout_rows": eval_score_rows,
+        "eval_score_initial_eval_accuracy": (
+            accuracy(eval_score_rows, "initial_eval") if eval_score_rows else None
+        ),
+        "eval_score_final_eval_accuracy": (
+            accuracy(eval_score_rows, "final_eval") if eval_score_rows else None
+        ),
+        "eval_score_accuracy_improvement": (
+            accuracy(eval_score_rows, "final_eval") - accuracy(eval_score_rows, "initial_eval")
+            if eval_score_rows
+            else None
+        ),
+        "eval_score_initial_eval_min_margin_v": (
+            min(eval_score_initial_margins) if eval_score_initial_margins else None
+        ),
+        "eval_score_final_eval_min_margin_v": (
+            min(eval_score_final_margins) if eval_score_final_margins else None
+        ),
+        "eval_score_margin_improvement_v": (
+            min(eval_score_final_margins) - min(eval_score_initial_margins)
+            if eval_score_initial_margins and eval_score_final_margins
+            else None
+        ),
         "final_signed_matrix_v": final_signed,
         "final_positive_matrix_v": final_positive,
         "final_negative_matrix_v": final_negative,
@@ -5895,6 +6005,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
     ap.add_argument("--score-timing-mode", choices=SCORE_TIMING_MODES, default="late")
     ap.add_argument("--score-sense-mode", choices=SCORE_SENSE_MODES, default="voltage")
     ap.add_argument("--readout-forward-mode", choices=READOUT_FORWARD_MODES, default="direct")
+    ap.add_argument("--eval-score-readout-mode", choices=EVAL_SCORE_READOUT_MODES, default="none")
     ap.add_argument("--eligibility-gate-mode", choices=ELIGIBILITY_GATE_MODES, default="raw")
     ap.add_argument("--eligibility-source-mode", choices=ELIGIBILITY_SOURCE_MODES, default="pre-p")
     ap.add_argument("--readout-update-eligibility-mode", choices=READOUT_UPDATE_ELIGIBILITY_MODES, default="restored")
@@ -5975,6 +6086,8 @@ def validate_args(args: argparse.Namespace) -> None:
         raise ValueError(f"score-sense-mode must be one of {SCORE_SENSE_MODES}")
     if args.readout_forward_mode not in READOUT_FORWARD_MODES:
         raise ValueError(f"readout-forward-mode must be one of {READOUT_FORWARD_MODES}")
+    if args.eval_score_readout_mode not in EVAL_SCORE_READOUT_MODES:
+        raise ValueError(f"eval-score-readout-mode must be one of {EVAL_SCORE_READOUT_MODES}")
     if args.score_sense_mode in ("current-clamp", "diode-mirror") and args.error_mode not in {
         "label-descent",
         "label-rail-descent",

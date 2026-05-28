@@ -12,6 +12,13 @@ sys.path.insert(0, str(SPICE_DIR))
 import run_xor_live_hidden_divider_training as live_xor  # noqa: E402
 
 
+def _feature_activation_margin(measures: dict[str, float], phase: str, pattern: int) -> float:
+    activations = [measures[f"{phase}_act_h{hidden}_{pattern}"] for hidden in range(live_xor.HIDDEN)]
+    active = activations[pattern]
+    strongest_inactive = max(value for hidden, value in enumerate(activations) if hidden != pattern)
+    return active - strongest_inactive
+
+
 def test_xor_live_hidden_divider_training_is_live_transistor_path() -> None:
     netlist = live_xor.xor_live_hidden_netlist([0, 1, 2, 3])
 
@@ -98,3 +105,29 @@ def test_xor_live_hidden_divider_ngspice_later_backprop_credit_is_gated_but_boun
     for slot, pattern in enumerate(order[4:], start=4):
         for bit in range(live_xor.BITS):
             assert measures[f"train_wh{pattern}{bit}_signed_delta_{slot}"] > 0.10
+
+
+def test_xor_live_hidden_divider_ngspice_single_backprop_sample_improves_matching_feature(
+    tmp_path: Path,
+    ngspice_path: str,
+) -> None:
+    order = [0, 1, 2, 3, 0]
+    measures = live_xor.run_netlist(
+        ngspice_path,
+        tmp_path / "xor_live_hidden_one_backprop_sample.cir",
+        live_xor.xor_live_hidden_netlist(order),
+        timeout=120.0,
+    )
+
+    assert measures["train_hcredit_gate_active_4"] > 20e-3
+    for bit in range(live_xor.BITS):
+        assert measures[f"train_wh0{bit}_signed_delta_4"] > 0.10
+
+    feature_margin_improvements = {
+        pattern: _feature_activation_margin(measures, "final", pattern)
+        - _feature_activation_margin(measures, "initial", pattern)
+        for pattern in range(4)
+    }
+    assert feature_margin_improvements[0] > 0.15
+    for pattern in (1, 2, 3):
+        assert abs(feature_margin_improvements[pattern]) < 0.03

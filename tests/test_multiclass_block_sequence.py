@@ -1888,6 +1888,38 @@ def test_multiclass_block_sequence_can_use_label_rail_descent_for_live_gradient_
     assert "Vapply apply" not in netlist
 
 
+def test_multiclass_block_sequence_can_gate_live_nontarget_depression_by_support() -> None:
+    netlist = seq.generate_netlist(
+        train_records=_one_hot_records(),
+        eval_records=_one_hot_records(),
+        class_count=3,
+        feature_count=3,
+        readout_update_mode="live",
+        readout_nontarget_guard_mode="support",
+    )
+
+    assert "\nB" not in netlist
+    assert "Vapply" not in netlist
+    assert "Cc0_gvp0" not in netlist
+    assert "Cc0_f0_support c0_f0_support 0" in netlist
+    assert "Mc0_f0_support_e vwhi_ref elig0 c0_f0_support_mid 0 NSENSE" in netlist
+    assert "Mc0_f0_support_d c0_f0_support_mid c0_targetp c0_f0_support 0 NSENSE" in netlist
+    assert "Mc0_f0_live_neg_up_g c0_f0_live_neg_up c0_f0_support c0_f0_live_neg_up_guard 0 NSENSE" in netlist
+    assert "Mc0_f0_live_neg_up_d c0_f0_live_neg_up_guard c0_targetn c0_vwn0 0 NSENSE" in netlist
+
+
+def test_multiclass_block_sequence_rejects_unknown_live_nontarget_guard() -> None:
+    with pytest.raises(ValueError, match="readout_nontarget_guard_mode"):
+        seq.generate_netlist(
+            train_records=_one_hot_records(),
+            eval_records=_one_hot_records(),
+            class_count=3,
+            feature_count=3,
+            readout_update_mode="live",
+            readout_nontarget_guard_mode="missing",
+        )
+
+
 def test_multiclass_block_sequence_parameterizes_live_readout_update_width() -> None:
     netlist = seq.generate_netlist(
         train_records=_two_class_one_hot_records(),
@@ -4560,6 +4592,63 @@ def test_multiclass_block_sequence_ngspice_live_ranked_update_corrects_offending
     assert float(measures["c2_f6_signed_final"]) < class2_feature6_initial - 100e-3
     assert abs(float(measures["c1_f0_signed_final"])) < 1e-3
     assert abs(float(measures["c2_f0_signed_final"])) < 1e-3
+
+
+def test_multiclass_block_sequence_ngspice_support_guard_blocks_unsupported_nontarget_depression(
+    tmp_path: Path,
+    ngspice_path: str,
+) -> None:
+    records = [{"label": 2, "inputs": {"x0": 0.85}}]
+    netlist = seq.generate_netlist(
+        train_records=records,
+        eval_records=records,
+        class_count=3,
+        feature_count=1,
+        readout_update_mode="live",
+        readout_nontarget_guard_mode="support",
+    )
+    measures = run_netlist(
+        ngspice_path,
+        tmp_path / "multiclass_block_sequence_live_support_blocks_unsupported.cir",
+        netlist,
+        timeout=60.0,
+    )
+
+    assert "Vapply" not in netlist
+    assert "Cc1_gvp0" not in netlist
+    assert float(measures["c2_f0_signed_after_train1"]) > 100e-3
+    assert float(measures["c2_f0_support_after_train1"]) > 0.25
+    assert abs(float(measures["c1_f0_signed_after_train1"])) < 20e-3
+    assert float(measures["c1_f0_support_after_train1"]) < 20e-3
+
+
+def test_multiclass_block_sequence_ngspice_support_guard_allows_depression_after_support(
+    tmp_path: Path,
+    ngspice_path: str,
+) -> None:
+    records = [
+        {"label": 1, "inputs": {"x0": 0.85}},
+        {"label": 2, "inputs": {"x0": 0.85}},
+    ]
+    measures = run_netlist(
+        ngspice_path,
+        tmp_path / "multiclass_block_sequence_live_support_allows_depression.cir",
+        seq.generate_netlist(
+            train_records=records,
+            eval_records=records,
+            class_count=3,
+            feature_count=1,
+            readout_update_mode="live",
+            readout_nontarget_guard_mode="support",
+        ),
+        timeout=80.0,
+    )
+
+    class1_after_positive = float(measures["c1_f0_signed_after_train1"])
+    class1_after_nontarget = float(measures["c1_f0_signed_after_train2"])
+    assert class1_after_positive > 100e-3
+    assert float(measures["c1_f0_support_after_train1"]) > 0.25
+    assert class1_after_nontarget < class1_after_positive - 20e-3
 
 
 def test_multiclass_block_sequence_ngspice_restored_winner_blocks_nonwinning_nontargets(

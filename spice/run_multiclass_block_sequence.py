@@ -35,6 +35,7 @@ from run_multiclass_output_head_sequence import (
     class_local_live_label_descent_update_lines,
     class_local_restored_score_nontarget_gradient_lines,
     class_local_score_gated_nontarget_gradient_lines,
+    class_local_support_storage_lines,
     periodic_phase_pwl,
     width_scaled_windowed_pwl,
     windowed_pwl,
@@ -55,6 +56,7 @@ SCENARIOS = ("target-repeat", "one-hot", "mnist")
 SAMPLE_ORDER_MODES = ("grouped", "round-robin")
 CLASS_BIAS_MODES = ("none", "target-only", "label-descent")
 READOUT_UPDATE_MODES = ("sampled", "live")
+READOUT_NONTARGET_GUARD_MODES = ("none", "support")
 HIDDEN_UPDATE_MODES = ("none", "readout-weighted", "direct-readout-weighted")
 SCORE_TIMING_MODES = ("late", "early")
 SCORE_SENSE_MODES = ("voltage", "current-clamp", "diode-mirror")
@@ -1319,6 +1321,8 @@ def generate_netlist(
     error_mode: str = "label-descent",
     readout_update_mode: str = "sampled",
     readout_update_width_u: float = 0.5,
+    readout_nontarget_guard_mode: str = "none",
+    readout_support_capacitance_f: float = 4.0,
     hidden_update_mode: str = "none",
     hidden_credit_width_u: float = 8.0,
     hidden_credit_capacitance_f: float = 12.0,
@@ -1376,6 +1380,7 @@ def generate_netlist(
         "pairwise_margin_error_drive_scale": pairwise_margin_error_drive_scale,
         "normalizer_error_clock_high": normalizer_error_clock_high,
         "readout_update_width_u": readout_update_width_u,
+        "readout_support_capacitance_f": readout_support_capacitance_f,
         "hidden_credit_width_u": hidden_credit_width_u,
         "hidden_credit_capacitance_f": hidden_credit_capacitance_f,
         "hidden_credit_shunt_resistance_ohm": hidden_credit_shunt_resistance_ohm,
@@ -1425,6 +1430,10 @@ def generate_netlist(
         raise ValueError(f"error_mode must be one of {ERROR_MODES}")
     if readout_update_mode not in READOUT_UPDATE_MODES:
         raise ValueError(f"readout_update_mode must be one of {READOUT_UPDATE_MODES}")
+    if readout_nontarget_guard_mode not in READOUT_NONTARGET_GUARD_MODES:
+        raise ValueError(f"readout_nontarget_guard_mode must be one of {READOUT_NONTARGET_GUARD_MODES}")
+    if readout_nontarget_guard_mode != "none" and readout_update_mode != "live":
+        raise ValueError("readout_nontarget_guard_mode requires live readout_update_mode")
     if hidden_update_mode not in HIDDEN_UPDATE_MODES:
         raise ValueError(f"hidden_update_mode must be one of {HIDDEN_UPDATE_MODES}")
     if hidden_credit_activation_model not in HIDDEN_CREDIT_ACTIVATION_MODELS:
@@ -2500,15 +2509,28 @@ def generate_netlist(
                 negative_descent_node = (
                     None if error_mode == "label-descent" else class_node(class_idx, "errn")
                 )
+                nontarget_guard_node = None
+                readout_update_lines = []
                 if bias_feature is not None and feature == bias_feature and class_bias_mode == "target-only":
                     positive_descent_node = None
                     negative_descent_node = "0"
-                readout_update_lines = class_local_live_label_descent_update_lines(
+                elif readout_nontarget_guard_mode == "support":
+                    nontarget_guard_node = class_node(class_idx, f"f{feature}_support")
+                    readout_update_lines = class_local_support_storage_lines(
+                        class_idx=class_idx,
+                        feature_idx=feature,
+                        activation_node=activation_node,
+                        positive_descent_node=positive_descent_node,
+                        capacitance_f=readout_support_capacitance_f,
+                        width_u=readout_update_width_u,
+                    )
+                readout_update_lines += class_local_live_label_descent_update_lines(
                     class_idx=class_idx,
                     feature_idx=feature,
                     activation_node=activation_node,
                     positive_descent_node=positive_descent_node,
                     negative_descent_node=negative_descent_node,
+                    nontarget_guard_node=nontarget_guard_node,
                     width_u=readout_update_width_u,
                 )
             else:
@@ -2716,6 +2738,10 @@ def generate_netlist(
                         f".meas tran c{class_idx}_f{feature}_vwn_after_train{train_seen} FIND V({class_node(class_idx, f'vwn{feature}')}) AT={base + 15.0:.2f}n",
                         f".meas tran c{class_idx}_f{feature}_signed_after_train{train_seen} PARAM='c{class_idx}_f{feature}_vwp_after_train{train_seen}-c{class_idx}_f{feature}_vwn_after_train{train_seen}'",
                     ]
+                    if readout_nontarget_guard_mode == "support" and feature < feature_count:
+                        lines.append(
+                            f".meas tran c{class_idx}_f{feature}_support_after_train{train_seen} FIND V({class_node(class_idx, f'f{feature}_support')}) AT={base + 15.0:.2f}n"
+                        )
                 lines += [
                     f".meas tran c{class_idx}_signed_after_train{train_seen} PARAM='c{class_idx}_f0_signed_after_train{train_seen}'",
                 ]
@@ -2727,6 +2753,10 @@ def generate_netlist(
                 f".meas tran c{class_idx}_f{feature}_vwn_final FIND V({class_node(class_idx, f'vwn{feature}')}) AT={stop_ns - 0.5:.2f}n",
                 f".meas tran c{class_idx}_f{feature}_signed_final PARAM='c{class_idx}_f{feature}_vwp_final-c{class_idx}_f{feature}_vwn_final'",
             ]
+            if readout_nontarget_guard_mode == "support" and feature < feature_count:
+                lines.append(
+                    f".meas tran c{class_idx}_f{feature}_support_final FIND V({class_node(class_idx, f'f{feature}_support')}) AT={stop_ns - 0.5:.2f}n"
+                )
         lines += [f".meas tran c{class_idx}_signed_final PARAM='c{class_idx}_f0_signed_final'"]
     if uses_hidden_update:
         for feature in range(feature_count):
@@ -4056,6 +4086,8 @@ def run_case(args: argparse.Namespace) -> dict[str, Any]:
         error_mode=args.error_mode,
         readout_update_mode=args.readout_update_mode,
         readout_update_width_u=args.readout_update_width,
+        readout_nontarget_guard_mode=args.readout_nontarget_guard_mode,
+        readout_support_capacitance_f=args.readout_support_capacitance_f,
         hidden_update_mode=args.hidden_update_mode,
         hidden_credit_width_u=args.hidden_credit_width,
         hidden_credit_capacitance_f=args.hidden_credit_capacitance_f,
@@ -4300,6 +4332,14 @@ def run_case(args: argparse.Namespace) -> dict[str, Any]:
         "error_mode": args.error_mode,
         "readout_update_mode": args.readout_update_mode,
         "readout_update_width_u": args.readout_update_width if args.readout_update_mode == "live" else None,
+        "readout_nontarget_guard_mode": (
+            args.readout_nontarget_guard_mode if args.readout_update_mode == "live" else None
+        ),
+        "readout_support_capacitance_f": (
+            args.readout_support_capacitance_f
+            if args.readout_update_mode == "live" and args.readout_nontarget_guard_mode == "support"
+            else None
+        ),
         "hidden_update_mode": args.hidden_update_mode,
         "hidden_credit_width_u": args.hidden_credit_width if args.hidden_update_mode != "none" else None,
         "hidden_credit_capacitance_f": args.hidden_credit_capacitance_f if args.hidden_update_mode != "none" else None,
@@ -4520,6 +4560,8 @@ def build_arg_parser() -> argparse.ArgumentParser:
     ap.add_argument("--error-mode", choices=ERROR_MODES, default="label-descent")
     ap.add_argument("--readout-update-mode", choices=READOUT_UPDATE_MODES, default="sampled")
     ap.add_argument("--readout-update-width", type=float, default=0.5)
+    ap.add_argument("--readout-nontarget-guard-mode", choices=READOUT_NONTARGET_GUARD_MODES, default="none")
+    ap.add_argument("--readout-support-capacitance-f", type=float, default=4.0)
     ap.add_argument("--hidden-update-mode", choices=HIDDEN_UPDATE_MODES, default="none")
     ap.add_argument("--hidden-credit-width", type=float, default=8.0)
     ap.add_argument("--hidden-credit-capacitance-f", type=float, default=12.0)
@@ -4583,6 +4625,12 @@ def validate_args(args: argparse.Namespace) -> None:
         raise ValueError(f"error-mode must be one of {ERROR_MODES}")
     if args.readout_update_mode not in READOUT_UPDATE_MODES:
         raise ValueError(f"readout-update-mode must be one of {READOUT_UPDATE_MODES}")
+    if args.readout_nontarget_guard_mode not in READOUT_NONTARGET_GUARD_MODES:
+        raise ValueError(f"readout-nontarget-guard-mode must be one of {READOUT_NONTARGET_GUARD_MODES}")
+    if args.readout_nontarget_guard_mode != "none" and args.readout_update_mode != "live":
+        raise ValueError("readout-nontarget-guard-mode requires live readout-update-mode")
+    if args.readout_support_capacitance_f <= 0.0:
+        raise ValueError("readout-support-capacitance-f must be positive")
     if args.hidden_update_mode not in HIDDEN_UPDATE_MODES:
         raise ValueError(f"hidden-update-mode must be one of {HIDDEN_UPDATE_MODES}")
     if args.score_timing_mode not in SCORE_TIMING_MODES:

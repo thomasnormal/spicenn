@@ -322,6 +322,7 @@ def class_local_live_label_descent_update_lines(
     activation_node: str,
     positive_descent_node: str | None = None,
     negative_descent_node: str | None = None,
+    nontarget_guard_node: str | None = None,
     width_u: float = 0.5,
 ) -> list[str]:
     prefix = f"c{class_idx}_f{feature_idx}_live_"
@@ -329,15 +330,47 @@ def class_local_live_label_descent_update_lines(
     vwn = class_node(class_idx, f"vwn{feature_idx}")
     pos = class_node(class_idx, "targetp") if positive_descent_node is None else positive_descent_node
     neg = class_node(class_idx, "targetn") if negative_descent_node is None else negative_descent_node
-    return [
+    lines = [
         f"M{prefix}pos_up_e vwhi_ref {activation_node} {prefix}pos_up 0 NSENSE W={width_u:.6g}u L=180n",
         f"M{prefix}pos_up_d {prefix}pos_up {pos} {vwp} 0 NSENSE W={width_u:.6g}u L=180n",
         f"M{prefix}pos_dn_e {vwn} {activation_node} {prefix}pos_dn 0 NSENSE W={width_u:.6g}u L=180n",
         f"M{prefix}pos_dn_d {prefix}pos_dn {pos} vwlo_ref 0 NSENSE W={width_u:.6g}u L=180n",
         f"M{prefix}neg_up_e vwhi_ref {activation_node} {prefix}neg_up 0 NSENSE W={width_u:.6g}u L=180n",
-        f"M{prefix}neg_up_d {prefix}neg_up {neg} {vwn} 0 NSENSE W={width_u:.6g}u L=180n",
         f"M{prefix}neg_dn_e {vwp} {activation_node} {prefix}neg_dn 0 NSENSE W={width_u:.6g}u L=180n",
-        f"M{prefix}neg_dn_d {prefix}neg_dn {neg} vwlo_ref 0 NSENSE W={width_u:.6g}u L=180n",
+    ]
+    if nontarget_guard_node is None:
+        lines += [
+            f"M{prefix}neg_up_d {prefix}neg_up {neg} {vwn} 0 NSENSE W={width_u:.6g}u L=180n",
+            f"M{prefix}neg_dn_d {prefix}neg_dn {neg} vwlo_ref 0 NSENSE W={width_u:.6g}u L=180n",
+        ]
+    else:
+        lines += [
+            f"M{prefix}neg_up_g {prefix}neg_up {nontarget_guard_node} {prefix}neg_up_guard 0 NSENSE W={width_u:.6g}u L=180n",
+            f"M{prefix}neg_up_d {prefix}neg_up_guard {neg} {vwn} 0 NSENSE W={width_u:.6g}u L=180n",
+            f"M{prefix}neg_dn_g {prefix}neg_dn {nontarget_guard_node} {prefix}neg_dn_guard 0 NSENSE W={width_u:.6g}u L=180n",
+            f"M{prefix}neg_dn_d {prefix}neg_dn_guard {neg} vwlo_ref 0 NSENSE W={width_u:.6g}u L=180n",
+        ]
+    return lines
+
+
+def class_local_support_storage_lines(
+    *,
+    class_idx: int,
+    feature_idx: int,
+    activation_node: str,
+    positive_descent_node: str | None = None,
+    capacitance_f: float = 4.0,
+    width_u: float = 0.5,
+) -> list[str]:
+    if min(capacitance_f, width_u) <= 0.0:
+        raise ValueError("support storage sizes must be positive")
+    support = class_node(class_idx, f"f{feature_idx}_support")
+    pos = class_node(class_idx, "targetp") if positive_descent_node is None else positive_descent_node
+    return [
+        f"C{support} {support} 0 {capacitance_f:.12g}f IC=0",
+        f"R{support} {support} 0 1G",
+        f"M{support}_e vwhi_ref {activation_node} {support}_mid 0 NSENSE W={width_u:.6g}u L=180n",
+        f"M{support}_d {support}_mid {pos} {support} 0 NSENSE W={width_u:.6g}u L=180n",
     ]
 
 

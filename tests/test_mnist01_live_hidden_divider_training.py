@@ -105,11 +105,18 @@ def test_mnist01_live_hidden_netlist_is_live_transistor_path() -> None:
         train,
         hidden_credit_gate_mode="dynamic-preamp",
         hidden_writer_topology="pmos-differential",
+        hidden_write_start_train_index=1,
     )
     assert "M1_hcg_sense_p h1_hcg_pre_n h1_hdp h1_hcg_tail 0 NSENSE" in preamp_netlist
+    assert "M1_hcg_support_p vdd h1_hdp h1_hcg_support 0 NSENSE" in preamp_netlist
+    assert "M1_hcg_write_support hiddenwritephi h1_hcg_support h1_hcg_write_mid 0 NSENSE" in preamp_netlist
     assert "M1_hcg_pos_pull h1_hdp_gate h1_hcg_pre_n 0 0 NMOS" in preamp_netlist
     assert (
-        "Mh1f6_live_pos_up_ctrl_phi h1f6_live_pos_up_ctrl_phi hiddenwritephi 0 0 NSENSE"
+        "Mh1f6_live_pos_up_ctrl_phi h1f6_live_pos_up_ctrl_phi h1_hcg_write 0 0 NSENSE"
+        in preamp_netlist
+    )
+    assert (
+        "Mh1f6_live_pos_dn_phi h1f6_live_pos_dn_sel h1_hcg_write h1f6_live_pos_dn_phi 0 NSENSE"
         in preamp_netlist
     )
 
@@ -154,6 +161,12 @@ def test_mnist01_live_hidden_netlist_validation() -> None:
             [sample],
             [sample],
             hidden_credit_gate_mode="dynamic-preamp",
+        )
+    with pytest.raises(ValueError, match="hidden_write_start_train_index"):
+        mnist01_hidden.mnist01_live_hidden_netlist(
+            [sample],
+            [sample],
+            hidden_write_start_train_index=-1,
         )
     with pytest.raises(ValueError, match="even"):
         mnist01_hidden.hidden_block_for_feature(0, 5)
@@ -206,6 +219,42 @@ def test_mnist01_live_hidden_divider_ngspice_bootstraps_readout_and_visible_subt
     assert abs(parsed["train_hcredit_gate_probe_1"]) < 1e-3
 
 
+@pytest.mark.ngspice
+def test_mnist01_live_hidden_dynamic_preamp_restores_second_sample_credit_after_bootstrap(
+    tmp_path: Path,
+    ngspice_path: str,
+) -> None:
+    _require_mnist_raw()
+    train, _evals = mnist01_hidden.load_mnist01_records(
+        train_count_per_digit=1,
+        eval_count_per_digit=1,
+        image_size=4,
+    )
+
+    parsed = mnist01_hidden.run_netlist(
+        ngspice_path,
+        tmp_path / "mnist01_live_hidden_dynamic_preamp.cir",
+        mnist01_hidden.mnist01_live_hidden_netlist(
+            train,
+            train,
+            hidden_credit_gate_mode="dynamic-preamp",
+            hidden_writer_topology="pmos-differential",
+            hidden_write_start_train_index=1,
+        ),
+        timeout=120.0,
+    )
+
+    assert parsed["final_margin_0"] > 0.10e-3
+    assert parsed["final_margin_1"] > 1e-6
+    assert parsed["train_target_signed_delta_0"] > 3e-3
+    assert parsed["train_other_signed_delta_0"] < -3e-3
+    assert parsed["train_target_signed_delta_1"] > 3e-3
+    assert parsed["train_other_signed_delta_1"] < -3e-3
+    assert abs(parsed["train_wh_probe_signed_delta_0"]) < 1e-3
+    assert parsed["train_hcredit_gate_probe_1"] < -0.50
+    assert parsed["train_wh_probe_signed_delta_1"] < -50e-3
+
+
 def _hidden_credit_preamp_primitive_netlist(raw_positive: float, raw_negative: float) -> str:
     lines = [
         "* MNIST-scale hidden-credit dynamic preamp primitive.",
@@ -230,6 +279,8 @@ def _hidden_credit_preamp_primitive_netlist(raw_positive: float, raw_negative: f
             latch_pmos_width_u=4.0,
             output_width_u=2.0,
             output_pull_width_u=0.5,
+            support_width_u=4.0,
+            write_gate_width_u=8.0,
             capacitance_f=2.0,
         ),
         *mnist01_hidden._hidden_writer_lines(
@@ -239,10 +290,13 @@ def _hidden_credit_preamp_primitive_netlist(raw_positive: float, raw_negative: f
             4.0,
             0.2,
             "pmos-differential",
-            "hiddenwritephi",
+            "h{hidden}_hcg_write",
+            True,
         ),
         ".meas tran gatep_pre FIND V(h0_hdp_gate) AT=3.10n",
         ".meas tran gaten_pre FIND V(h0_hdn_gate) AT=3.10n",
+        ".meas tran support_pre FIND V(h0_hcg_support) AT=2.50n",
+        ".meas tran write_gate FIND V(h0_hcg_write) AT=4.50n",
         ".meas tran gatep FIND V(h0_hdp_gate) AT=5.50n",
         ".meas tran gaten FIND V(h0_hdn_gate) AT=5.50n",
         ".meas tran gate_diff PARAM='gatep-gaten'",
@@ -290,7 +344,15 @@ def test_hidden_credit_dynamic_preamp_restores_mnist_scale_credit_with_dead_zone
         _hidden_credit_preamp_primitive_netlist(0.25605, 0.2560),
         timeout=30.0,
     )
+    zero = mnist01_hidden.run_netlist(
+        ngspice_path,
+        tmp_path / "hidden_credit_preamp_zero.cir",
+        _hidden_credit_preamp_primitive_netlist(0.0, 0.0),
+        timeout=30.0,
+    )
 
+    assert positive["support_pre"] > 0.15
+    assert positive["write_gate"] > 0.15
     assert positive["gate_diff"] > 30e-3
     assert positive["signed_delta"] > 0.50
     assert negative["gate_diff"] < -30e-3
@@ -299,3 +361,6 @@ def test_hidden_credit_dynamic_preamp_restores_mnist_scale_credit_with_dead_zone
     assert abs(neutral["signed_delta"]) < 1e-3
     assert tiny["gate_diff"] > 5e-3
     assert abs(tiny["signed_delta"]) < 1e-3
+    assert zero["support_pre"] < 1e-6
+    assert zero["write_gate"] < 1e-6
+    assert abs(zero["signed_delta"]) < 1e-3

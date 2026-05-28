@@ -1565,6 +1565,7 @@ def test_multiclass_block_sequence_can_directly_update_hidden_weights_from_reado
         readout_update_mode="live",
         hidden_update_mode="direct-readout-weighted",
         hidden_update_width_u=0.35,
+        hidden_direct_internal_capacitance_f=0.8,
         hidden_credit_activation_model="NMOS",
         error_mode="pairwise-margin-correction-descent",
         score_timing_mode="early",
@@ -1577,7 +1578,7 @@ def test_multiclass_block_sequence_can_directly_update_hidden_weights_from_reado
     assert "Ch0_c0_direct_vdiff_p h0_c0_direct_vdiff_p 0 2f IC=0" in netlist
     assert "Mh0_c0_direct_vdiff_p_up0 vdd c0_vwp0 h0_c0_direct_vdiff_p_mid 0 NSENSE W=1u" in netlist
     assert "Mh0_c0_direct_vdiff_p_dn h0_c0_direct_vdiff_p c0_vwn0 0 0 NSENSE W=1u" in netlist
-    assert "Ch0_c0_direct_pv_pup0 h0_c0_direct_pv_pup0 0 0.05f IC=0" in netlist
+    assert "Ch0_c0_direct_pv_pup0 h0_c0_direct_pv_pup0 0 0.8f IC=0" in netlist
     assert "Mh0_c0_direct_pv_pup_e vwhi_ref xelig0 h0_c0_direct_pv_pup0 0 NSENSE W=0.35u" in netlist
     assert "Mh0_c0_direct_pv_pup_a h0_c0_direct_pv_pup0 act0 h0_c0_direct_pv_pup1 0 NMOS W=0.35u" in netlist
     assert "Mh0_c0_direct_pv_pup_r h0_c0_direct_pv_pup1 c0_errp h0_c0_direct_pv_pup2 0 NSENSE W=0.35u" in netlist
@@ -2111,6 +2112,8 @@ def test_multiclass_block_sequence_validation() -> None:
         seq.main_for_test(["--hidden-credit-shunt-resistance", "0"])
     with pytest.raises(ValueError, match="hidden-update-width"):
         seq.main_for_test(["--hidden-update-width", "0"])
+    with pytest.raises(ValueError, match="hidden-direct-internal-capacitance-f"):
+        seq.main_for_test(["--hidden-direct-internal-capacitance-f", "0"])
     with pytest.raises(ValueError, match="score_timing_mode"):
         seq.generate_netlist(train_records=records, eval_records=records, score_timing_mode="missing")
     with pytest.raises(ValueError, match="score_sense_mode"):
@@ -3002,6 +3005,7 @@ def _hidden_direct_readout_weighted_writer_netlist(
     width_u: float = 8.0,
     readout_gate_mode: str = "differential-excess",
     output_stage: str = "nmos-pass",
+    internal_capacitance_f: float = 0.05,
 ) -> str:
     lines = [
         "* Low-level direct readout-weighted hidden writer primitive.",
@@ -3035,6 +3039,7 @@ def _hidden_direct_readout_weighted_writer_netlist(
             width_u=width_u,
             readout_gate_mode=readout_gate_mode,
             output_stage=output_stage,
+            internal_capacitance_f=internal_capacitance_f,
             high_ref_node=(
                 "hidden_whi_ref"
                 if output_stage in ("pmos-bounded", "pmos-complementary")
@@ -3375,6 +3380,108 @@ def test_multiclass_block_sequence_ngspice_complementary_pmos_hidden_writer_does
     assert float(measures["whp_after"]) < 0.45
     assert float(measures["whn_after"]) > 0.40
     assert float(measures["signed_after"]) < -0.10
+
+
+def test_multiclass_block_sequence_ngspice_direct_hidden_writer_realistic_low_rails_expose_headroom_limit(
+    tmp_path: Path,
+    ngspice_path: str,
+) -> None:
+    def realistic_rails(deck: str) -> str:
+        return deck.replace("Vact act0 0 1.2", "Vact act0 0 0.42").replace(
+            "Vxelig xelig0 0 1.2",
+            "Vxelig xelig0 0 0.46",
+        )
+
+    nmos_positive = run_netlist(
+        ngspice_path,
+        tmp_path / "direct_hidden_writer_realistic_nmos_positive.cir",
+        realistic_rails(
+            _hidden_direct_readout_weighted_writer_netlist(
+                vwp=0.40,
+                vwn=0.28,
+                whp=0.80,
+                whn=0.0,
+                errp="PULSE(0 0.04 1n 10p 10p 4n 20n)",
+                width_u=0.5,
+                readout_gate_mode="differential-excess",
+                output_stage="nmos-pass",
+                readout_high_ref=0.42,
+                readout_low_ref=0.28,
+                hidden_high_ref=1.05,
+                hidden_low_ref=0.15,
+            )
+        ),
+        timeout=20.0,
+    )
+    nmos_negative = run_netlist(
+        ngspice_path,
+        tmp_path / "direct_hidden_writer_realistic_nmos_negative.cir",
+        realistic_rails(
+            _hidden_direct_readout_weighted_writer_netlist(
+                vwp=0.28,
+                vwn=0.40,
+                whp=0.80,
+                whn=0.0,
+                errp="PULSE(0 0.04 1n 10p 10p 4n 20n)",
+                width_u=0.5,
+                readout_gate_mode="differential-excess",
+                output_stage="nmos-pass",
+                readout_high_ref=0.42,
+                readout_low_ref=0.28,
+                hidden_high_ref=1.05,
+                hidden_low_ref=0.15,
+            )
+        ),
+        timeout=20.0,
+    )
+    pmos_positive = run_netlist(
+        ngspice_path,
+        tmp_path / "direct_hidden_writer_realistic_pmos_positive.cir",
+        realistic_rails(
+            _hidden_direct_readout_weighted_writer_netlist(
+                vwp=0.40,
+                vwn=0.28,
+                whp=0.80,
+                whn=0.0,
+                errp="PULSE(0 0.04 1n 10p 10p 4n 20n)",
+                width_u=0.125,
+                readout_gate_mode="restored-excess",
+                output_stage="pmos-complementary",
+                readout_high_ref=0.42,
+                readout_low_ref=0.28,
+                hidden_high_ref=1.05,
+                hidden_low_ref=0.15,
+            )
+        ),
+        timeout=20.0,
+    )
+    pmos_negative = run_netlist(
+        ngspice_path,
+        tmp_path / "direct_hidden_writer_realistic_pmos_negative.cir",
+        realistic_rails(
+            _hidden_direct_readout_weighted_writer_netlist(
+                vwp=0.28,
+                vwn=0.40,
+                whp=0.80,
+                whn=0.0,
+                errp="PULSE(0 0.04 1n 10p 10p 4n 20n)",
+                width_u=0.125,
+                readout_gate_mode="restored-excess",
+                output_stage="pmos-complementary",
+                readout_high_ref=0.42,
+                readout_low_ref=0.28,
+                hidden_high_ref=1.05,
+                hidden_low_ref=0.15,
+            )
+        ),
+        timeout=20.0,
+    )
+
+    assert float(nmos_positive["signed_after"]) < 0.80
+    assert float(nmos_negative["signed_after"]) > 0.75
+    assert abs(float(nmos_positive["signed_after"]) - float(nmos_negative["signed_after"])) < 10e-3
+    assert float(pmos_positive["signed_after"]) > 0.85
+    assert float(pmos_negative["signed_after"]) < -0.10
 
 
 def test_multiclass_block_sequence_ngspice_live_error_rails_reset_before_eval_writer(

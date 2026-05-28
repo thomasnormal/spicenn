@@ -1336,6 +1336,7 @@ def generate_netlist(
     hidden_direct_high_ref: float = 1.05,
     hidden_direct_low_ref: float = 0.15,
     hidden_direct_complement_width_scale: float = 0.0625,
+    hidden_direct_internal_capacitance_f: float = 0.05,
     score_timing_mode: str = "late",
     score_sense_mode: str = "voltage",
     readout_forward_mode: str = "direct",
@@ -1390,6 +1391,7 @@ def generate_netlist(
         "hidden_direct_high_ref": hidden_direct_high_ref,
         "hidden_direct_low_ref": hidden_direct_low_ref,
         "hidden_direct_complement_width_scale": hidden_direct_complement_width_scale,
+        "hidden_direct_internal_capacitance_f": hidden_direct_internal_capacitance_f,
         "readout_update_eligibility_ref": readout_update_eligibility_ref,
         "readout_update_eligibility_pgate_capacitance_f": readout_update_eligibility_pgate_capacitance_f,
         "readout_update_eligibility_discharge_width_u": readout_update_eligibility_discharge_width_u,
@@ -2273,6 +2275,7 @@ def generate_netlist(
                 activation_model=hidden_credit_activation_model,
                 readout_gate_mode=hidden_direct_readout_gate_mode,
                 output_stage=hidden_direct_output_stage,
+                internal_capacitance_f=hidden_direct_internal_capacitance_f,
                 high_ref_node=(
                     "hidden_whi_ref"
                     if hidden_direct_output_stage in ("pmos-bounded", "pmos-complementary")
@@ -4110,6 +4113,7 @@ def run_case(args: argparse.Namespace) -> dict[str, Any]:
         hidden_direct_high_ref=args.hidden_direct_high_ref,
         hidden_direct_low_ref=args.hidden_direct_low_ref,
         hidden_direct_complement_width_scale=args.hidden_direct_complement_width_scale,
+        hidden_direct_internal_capacitance_f=args.hidden_direct_internal_capacitance_f,
         score_timing_mode=args.score_timing_mode,
         score_sense_mode=args.score_sense_mode,
         readout_forward_mode=args.readout_forward_mode,
@@ -4383,6 +4387,11 @@ def run_case(args: argparse.Namespace) -> dict[str, Any]:
             if args.hidden_update_mode == "direct-readout-weighted"
             else None
         ),
+        "hidden_direct_internal_capacitance_f": (
+            args.hidden_direct_internal_capacitance_f
+            if args.hidden_update_mode == "direct-readout-weighted"
+            else None
+        ),
         "score_timing_mode": args.score_timing_mode,
         "score_sense_mode": args.score_sense_mode,
         "readout_forward_mode": args.readout_forward_mode,
@@ -4598,6 +4607,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
     ap.add_argument("--hidden-direct-high-ref", type=float, default=1.05)
     ap.add_argument("--hidden-direct-low-ref", type=float, default=0.15)
     ap.add_argument("--hidden-direct-complement-width-scale", type=float, default=0.0625)
+    ap.add_argument("--hidden-direct-internal-capacitance-f", type=float, default=0.05)
     ap.add_argument("--score-timing-mode", choices=SCORE_TIMING_MODES, default="late")
     ap.add_argument("--score-sense-mode", choices=SCORE_SENSE_MODES, default="voltage")
     ap.add_argument("--readout-forward-mode", choices=READOUT_FORWARD_MODES, default="direct")
@@ -4761,6 +4771,8 @@ def validate_args(args: argparse.Namespace) -> None:
         raise ValueError("hidden-direct-low-ref must stay within supply rails")
     if args.hidden_direct_complement_width_scale <= 0.0:
         raise ValueError("hidden-direct-complement-width-scale must be positive")
+    if args.hidden_direct_internal_capacitance_f <= 0.0:
+        raise ValueError("hidden-direct-internal-capacitance-f must be positive")
     if args.eligibility_contrast_common_resistance <= 0.0:
         raise ValueError("eligibility-contrast-common-resistance must be positive")
     if args.eligibility_contrast_common_capacitance_f <= 0.0:

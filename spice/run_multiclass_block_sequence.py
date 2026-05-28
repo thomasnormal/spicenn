@@ -57,6 +57,7 @@ SAMPLE_ORDER_MODES = ("grouped", "round-robin")
 CLASS_BIAS_MODES = ("none", "target-only", "label-descent")
 READOUT_UPDATE_MODES = ("sampled", "live")
 READOUT_NONTARGET_GUARD_MODES = ("none", "support")
+READOUT_SUPPORT_SOURCE_MODES = ("writer", "elig", "act", "act-raw")
 HIDDEN_UPDATE_MODES = ("none", "readout-weighted", "direct-readout-weighted")
 SCORE_TIMING_MODES = ("late", "early")
 SCORE_SENSE_MODES = ("voltage", "current-clamp", "diode-mirror")
@@ -1322,6 +1323,7 @@ def generate_netlist(
     readout_update_mode: str = "sampled",
     readout_update_width_u: float = 0.5,
     readout_nontarget_guard_mode: str = "none",
+    readout_support_source_mode: str = "writer",
     readout_support_capacitance_f: float = 4.0,
     hidden_update_mode: str = "none",
     hidden_credit_width_u: float = 8.0,
@@ -1434,6 +1436,8 @@ def generate_netlist(
         raise ValueError(f"readout_nontarget_guard_mode must be one of {READOUT_NONTARGET_GUARD_MODES}")
     if readout_nontarget_guard_mode != "none" and readout_update_mode != "live":
         raise ValueError("readout_nontarget_guard_mode requires live readout_update_mode")
+    if readout_support_source_mode not in READOUT_SUPPORT_SOURCE_MODES:
+        raise ValueError(f"readout_support_source_mode must be one of {READOUT_SUPPORT_SOURCE_MODES}")
     if hidden_update_mode not in HIDDEN_UPDATE_MODES:
         raise ValueError(f"hidden_update_mode must be one of {HIDDEN_UPDATE_MODES}")
     if hidden_credit_activation_model not in HIDDEN_CREDIT_ACTIVATION_MODELS:
@@ -2516,10 +2520,16 @@ def generate_netlist(
                     negative_descent_node = "0"
                 elif readout_nontarget_guard_mode == "support":
                     nontarget_guard_node = class_node(class_idx, f"f{feature}_support")
+                    support_source_node = {
+                        "writer": activation_node,
+                        "elig": f"elig{feature}",
+                        "act": f"act{feature}",
+                        "act-raw": f"act_raw{feature}",
+                    }[readout_support_source_mode]
                     readout_update_lines = class_local_support_storage_lines(
                         class_idx=class_idx,
                         feature_idx=feature,
-                        activation_node=activation_node,
+                        activation_node=support_source_node,
                         positive_descent_node=positive_descent_node,
                         capacitance_f=readout_support_capacitance_f,
                         width_u=readout_update_width_u,
@@ -4087,6 +4097,7 @@ def run_case(args: argparse.Namespace) -> dict[str, Any]:
         readout_update_mode=args.readout_update_mode,
         readout_update_width_u=args.readout_update_width,
         readout_nontarget_guard_mode=args.readout_nontarget_guard_mode,
+        readout_support_source_mode=args.readout_support_source_mode,
         readout_support_capacitance_f=args.readout_support_capacitance_f,
         hidden_update_mode=args.hidden_update_mode,
         hidden_credit_width_u=args.hidden_credit_width,
@@ -4335,6 +4346,11 @@ def run_case(args: argparse.Namespace) -> dict[str, Any]:
         "readout_nontarget_guard_mode": (
             args.readout_nontarget_guard_mode if args.readout_update_mode == "live" else None
         ),
+        "readout_support_source_mode": (
+            args.readout_support_source_mode
+            if args.readout_update_mode == "live" and args.readout_nontarget_guard_mode == "support"
+            else None
+        ),
         "readout_support_capacitance_f": (
             args.readout_support_capacitance_f
             if args.readout_update_mode == "live" and args.readout_nontarget_guard_mode == "support"
@@ -4561,6 +4577,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
     ap.add_argument("--readout-update-mode", choices=READOUT_UPDATE_MODES, default="sampled")
     ap.add_argument("--readout-update-width", type=float, default=0.5)
     ap.add_argument("--readout-nontarget-guard-mode", choices=READOUT_NONTARGET_GUARD_MODES, default="none")
+    ap.add_argument("--readout-support-source-mode", choices=READOUT_SUPPORT_SOURCE_MODES, default="writer")
     ap.add_argument("--readout-support-capacitance-f", type=float, default=4.0)
     ap.add_argument("--hidden-update-mode", choices=HIDDEN_UPDATE_MODES, default="none")
     ap.add_argument("--hidden-credit-width", type=float, default=8.0)
@@ -4629,6 +4646,8 @@ def validate_args(args: argparse.Namespace) -> None:
         raise ValueError(f"readout-nontarget-guard-mode must be one of {READOUT_NONTARGET_GUARD_MODES}")
     if args.readout_nontarget_guard_mode != "none" and args.readout_update_mode != "live":
         raise ValueError("readout-nontarget-guard-mode requires live readout-update-mode")
+    if args.readout_support_source_mode not in READOUT_SUPPORT_SOURCE_MODES:
+        raise ValueError(f"readout-support-source-mode must be one of {READOUT_SUPPORT_SOURCE_MODES}")
     if args.readout_support_capacitance_f <= 0.0:
         raise ValueError("readout-support-capacitance-f must be positive")
     if args.hidden_update_mode not in HIDDEN_UPDATE_MODES:

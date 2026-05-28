@@ -1908,6 +1908,25 @@ def test_multiclass_block_sequence_can_gate_live_nontarget_depression_by_support
     assert "Mc0_f0_live_neg_up_d c0_f0_live_neg_up_guard c0_targetn c0_vwn0 0 NSENSE" in netlist
 
 
+def test_multiclass_block_sequence_can_charge_support_from_stored_activation() -> None:
+    netlist = seq.generate_netlist(
+        train_records=_one_hot_records(),
+        eval_records=_one_hot_records(),
+        class_count=3,
+        feature_count=3,
+        readout_update_mode="live",
+        readout_nontarget_guard_mode="support",
+        readout_support_source_mode="act",
+        eligibility_gate_mode="rank",
+        readout_update_eligibility_mode="restored",
+    )
+
+    assert "\nB" not in netlist
+    assert "Mc0_f0_support_e vwhi_ref act0 c0_f0_support_mid 0 NSENSE" in netlist
+    assert "Mc0_f0_support_e vwhi_ref relig0 c0_f0_support_mid 0 NSENSE" not in netlist
+    assert "Mc0_f0_live_pos_up_e vwhi_ref relig0 c0_f0_live_pos_up 0 NSENSE" in netlist
+
+
 def test_multiclass_block_sequence_rejects_unknown_live_nontarget_guard() -> None:
     with pytest.raises(ValueError, match="readout_nontarget_guard_mode"):
         seq.generate_netlist(
@@ -1917,6 +1936,19 @@ def test_multiclass_block_sequence_rejects_unknown_live_nontarget_guard() -> Non
             feature_count=3,
             readout_update_mode="live",
             readout_nontarget_guard_mode="missing",
+        )
+
+
+def test_multiclass_block_sequence_rejects_unknown_support_source() -> None:
+    with pytest.raises(ValueError, match="readout_support_source_mode"):
+        seq.generate_netlist(
+            train_records=_one_hot_records(),
+            eval_records=_one_hot_records(),
+            class_count=3,
+            feature_count=3,
+            readout_update_mode="live",
+            readout_nontarget_guard_mode="support",
+            readout_support_source_mode="missing",
         )
 
 
@@ -4649,6 +4681,82 @@ def test_multiclass_block_sequence_ngspice_support_guard_allows_depression_after
     assert class1_after_positive > 100e-3
     assert float(measures["c1_f0_support_after_train1"]) > 0.25
     assert class1_after_nontarget < class1_after_positive - 20e-3
+
+
+def _support_source_separation_netlist(*, support_source: str) -> str:
+    lines = [
+        "* Low-level support source separation primitive.",
+        ".param VDD=1.2",
+        seq.mos_models(),
+        ".options method=gear reltol=1e-3 abstol=1e-12 vntol=1e-6",
+        "Vdd vdd 0 {VDD}",
+        "Vvhi vwhi_ref 0 1.2",
+        "Vvlo vwlo_ref 0 0",
+        "Cwp c0_vwp0 0 20f IC=0.4",
+        "Cwn c0_vwn0 0 20f IC=0.4",
+        "Rwp c0_vwp0 0 1e15",
+        "Rwn c0_vwn0 0 1e15",
+        "Vact act 0 PULSE(0 1.2 1n 5p 5p 1n 10n)",
+        "Vrelig relig 0 PULSE(0 1.2 3n 5p 5p 2n 10n)",
+        "Vtargetp c0_errp 0 PULSE(0 1.2 1n 5p 5p 1n 10n)",
+        "Vtargetn c0_errn 0 PULSE(0 1.2 3n 5p 5p 2n 10n)",
+        *seq.class_local_support_storage_lines(
+            class_idx=0,
+            feature_idx=0,
+            activation_node=support_source,
+            positive_descent_node="c0_errp",
+            capacitance_f=4.0,
+            width_u=0.5,
+        ),
+        *seq.class_local_live_label_descent_update_lines(
+            class_idx=0,
+            feature_idx=0,
+            activation_node="relig",
+            positive_descent_node="c0_errp",
+            negative_descent_node="c0_errn",
+            nontarget_guard_node="c0_f0_support",
+            width_u=0.5,
+        ),
+        ".meas tran support_after_pos FIND V(c0_f0_support) AT=2.5n",
+        ".meas tran vwp_after_pos FIND V(c0_vwp0) AT=2.5n",
+        ".meas tran vwn_after_pos FIND V(c0_vwn0) AT=2.5n",
+        ".meas tran signed_after_pos PARAM='vwp_after_pos-vwn_after_pos'",
+        ".meas tran support_final FIND V(c0_f0_support) AT=6n",
+        ".meas tran vwp_final FIND V(c0_vwp0) AT=6n",
+        ".meas tran vwn_final FIND V(c0_vwn0) AT=6n",
+        ".meas tran signed_final PARAM='vwp_final-vwn_final'",
+        ".tran 2p 7n uic",
+        ".control",
+        "run",
+        "quit",
+        ".endc",
+        ".end",
+    ]
+    return "\n".join(lines)
+
+
+def test_multiclass_block_sequence_ngspice_soft_support_source_bootstraps_later_depression(
+    tmp_path: Path,
+    ngspice_path: str,
+) -> None:
+    act_source = run_netlist(
+        ngspice_path,
+        tmp_path / "support_source_act_bootstrap.cir",
+        _support_source_separation_netlist(support_source="act"),
+        timeout=20.0,
+    )
+    writer_source = run_netlist(
+        ngspice_path,
+        tmp_path / "support_source_writer_blocked.cir",
+        _support_source_separation_netlist(support_source="relig"),
+        timeout=20.0,
+    )
+
+    assert float(act_source["support_after_pos"]) > 0.25
+    assert abs(float(act_source["signed_after_pos"])) < 5e-3
+    assert float(act_source["signed_final"]) < -30e-3
+    assert float(writer_source["support_after_pos"]) < 5e-3
+    assert abs(float(writer_source["signed_final"])) < 5e-3
 
 
 def test_multiclass_block_sequence_ngspice_restored_winner_blocks_nonwinning_nontargets(

@@ -232,6 +232,16 @@ def test_mnist01_live_hidden_netlist_is_live_transistor_path() -> None:
     assert "Mc1_h15_score_pa vdd hrow15 c1_h15_score_pa 0 NSENSE" in identity_netlist
     assert ".meas tran final_hrow_h15_1" in identity_netlist
 
+    normalized_writer_netlist = mnist01_hidden.mnist01_live_hidden_netlist(
+        train,
+        train,
+        readout_writer_normalization_mode="activity-gate",
+    )
+    assert "Chrow_activity_gate hrow_activity_gate 0 80f IC=1.2" in normalized_writer_netlist
+    assert "Mhrow_activity_gate_h0_phi hrow_activity_gate_h0_mid scorephi 0 0 NSENSE" in normalized_writer_netlist
+    assert "Mc0_f0_live_pos_dn_g c0_f0_live_pos_dn_allguard hrow_activity_gate c0_f0_live_pos_dn 0 NREL" in normalized_writer_netlist
+    assert "Mc0_f0_live_pos_dn_e c0_vwn0 hrow0 c0_f0_live_pos_dn_allguard 0 NSENSE" in normalized_writer_netlist
+
 
 def test_mnist01_live_hidden_netlist_validation() -> None:
     sample = {"features": [1.0] * 16, "label": 0}
@@ -310,6 +320,19 @@ def test_mnist01_live_hidden_netlist_validation() -> None:
             [sample],
             [sample],
             readout_writer_activation_mode="BAD",
+        )
+    with pytest.raises(ValueError, match="readout_writer_normalization_mode"):
+        mnist01_hidden.mnist01_live_hidden_netlist(
+            [sample],
+            [sample],
+            readout_writer_normalization_mode="BAD",
+        )
+    with pytest.raises(ValueError, match="pre-differential"):
+        mnist01_hidden.mnist01_live_hidden_netlist(
+            [sample],
+            [sample],
+            readout_writer_activation_mode="pre-differential",
+            readout_writer_normalization_mode="activity-gate",
         )
     with pytest.raises(ValueError, match="dynamic-preamp"):
         mnist01_hidden.mnist01_live_hidden_netlist(
@@ -580,6 +603,109 @@ def _pre_differential_readout_writer_probe_netlist(
         "",
     ]
     return "\n".join(lines)
+
+
+def _readout_writer_activity_mass_probe_netlist(
+    *,
+    active_count: int,
+    normalization_mode: str,
+) -> str:
+    hidden_count = 10
+    if not 0 <= active_count <= hidden_count:
+        raise ValueError("active_count outside probe hidden_count")
+    lines = [
+        "* Readout writer active-feature mass normalization probe.",
+        ".param VDD=1.2",
+        mnist01_hidden.mos_models(),
+        ".options method=gear reltol=1e-4 abstol=1e-13 vntol=1e-7",
+        "Vdd vdd 0 {VDD}",
+        "Vrst rst 0 0",
+        "Vscorephi scorephi 0 PULSE(0 1.2 0.20n 10p 10p 1.20n 4n)",
+        "Verrphi errphi 0 PULSE(0 1.2 0.50n 10p 10p 2.00n 4n)",
+        f"Verrp {mnist01_hidden.class_node(0, 'errp')} 0 0.75",
+        f"Verrn {mnist01_hidden.class_node(0, 'errn')} 0 0",
+        f"Verrp1 {mnist01_hidden.class_node(1, 'errp')} 0 0",
+        f"Verrn1 {mnist01_hidden.class_node(1, 'errn')} 0 0",
+        *[
+            f"Vhrow{hidden} hrow{hidden} 0 {1.2 if hidden < active_count else 0.0:.12g}"
+            for hidden in range(hidden_count)
+        ],
+        *mnist01_hidden._readout_storage_lines(hidden_count, 0.40, 0.40),
+        *mnist01_hidden._readout_writer_lines(
+            hidden_count,
+            0.25,
+            activation_mode="hrow",
+            normalization_mode=normalization_mode,
+        ),
+        "Vrstn rstn 0 1.2",
+        ".meas tran hrow_activity_gate_at FIND V(hrow_activity_gate) AT=2.20n"
+        if normalization_mode != "none"
+        else ".meas tran hrow_activity_gate_at PARAM='1.2'",
+        *[
+            line
+            for hidden in range(hidden_count)
+            for line in [
+                f".meas tran vwp_h{hidden} FIND V({mnist01_hidden.class_node(0, f'vwp{hidden}')}) AT=2.80n",
+                f".meas tran vwn_h{hidden} FIND V({mnist01_hidden.class_node(0, f'vwn{hidden}')}) AT=2.80n",
+                f".meas tran signed_h{hidden} PARAM='vwp_h{hidden}-vwn_h{hidden}'",
+            ]
+        ],
+        ".tran 2p 3n uic",
+        ".control",
+        "run",
+        "quit",
+        ".endc",
+        ".end",
+        "",
+    ]
+    return "\n".join(lines)
+
+
+@pytest.mark.ngspice
+def test_mnist01_readout_writer_activity_gate_bounds_total_active_update_mass(
+    tmp_path: Path,
+    ngspice_path: str,
+) -> None:
+    raw_five = mnist01_hidden.run_netlist(
+        ngspice_path,
+        tmp_path / "mnist01_readout_writer_raw_5active.cir",
+        _readout_writer_activity_mass_probe_netlist(active_count=5, normalization_mode="none"),
+        timeout=30.0,
+    )
+    raw_ten = mnist01_hidden.run_netlist(
+        ngspice_path,
+        tmp_path / "mnist01_readout_writer_raw_10active.cir",
+        _readout_writer_activity_mass_probe_netlist(active_count=10, normalization_mode="none"),
+        timeout=30.0,
+    )
+    norm_five = mnist01_hidden.run_netlist(
+        ngspice_path,
+        tmp_path / "mnist01_readout_writer_activity_norm_5active.cir",
+        _readout_writer_activity_mass_probe_netlist(active_count=5, normalization_mode="activity-gate"),
+        timeout=30.0,
+    )
+    norm_ten = mnist01_hidden.run_netlist(
+        ngspice_path,
+        tmp_path / "mnist01_readout_writer_activity_norm_10active.cir",
+        _readout_writer_activity_mass_probe_netlist(active_count=10, normalization_mode="activity-gate"),
+        timeout=30.0,
+    )
+
+    raw_total_five = sum(raw_five[f"signed_h{hidden}"] for hidden in range(5))
+    raw_total_ten = sum(raw_ten[f"signed_h{hidden}"] for hidden in range(10))
+    norm_total_five = sum(norm_five[f"signed_h{hidden}"] for hidden in range(5))
+    norm_total_ten = sum(norm_ten[f"signed_h{hidden}"] for hidden in range(10))
+    norm_per_five = norm_total_five / 5.0
+    norm_per_ten = norm_total_ten / 10.0
+
+    assert raw_total_five > 5e-3
+    assert raw_total_ten / raw_total_five > 1.7
+    assert 0.20 < norm_five["hrow_activity_gate_at"] < 1.15
+    assert norm_ten["hrow_activity_gate_at"] < norm_five["hrow_activity_gate_at"] - 50e-3
+    assert norm_per_five > 0.5e-3
+    assert norm_per_ten > 0.0
+    assert norm_per_ten < norm_per_five * 0.90
+    assert norm_total_ten / norm_total_five < 1.75
 
 
 @pytest.mark.ngspice

@@ -329,9 +329,12 @@ def class_local_live_label_descent_update_lines(
     stack_parasitic_capacitance_f: float = 0.05,
     high_side_topology: str = "nmos-stack",
     prefix_suffix: str = "",
+    update_guard_model: str = "NSENSE",
 ) -> list[str]:
     if high_side_topology not in ("nmos-stack", "pmos-gated", "pmos-differential"):
         raise ValueError("high_side_topology must be nmos-stack, pmos-gated, or pmos-differential")
+    if update_guard_model not in ("NSENSE", "NMOS", "NREL"):
+        raise ValueError("update_guard_model must be NSENSE, NMOS, or NREL")
     if nontarget_guard_node is not None and update_guard_node is not None:
         raise ValueError("nontarget_guard_node and update_guard_node are mutually exclusive")
     if stack_shunt_resistance_ohm <= 0.0:
@@ -388,9 +391,9 @@ def class_local_live_label_descent_update_lines(
             f"C{prefix}pos_dn_allguard_par {prefix}pos_dn_allguard 0 {stack_parasitic_capacitance_f:.12g}f IC=0",
             f"C{prefix}neg_dn_allguard_par {prefix}neg_dn_allguard 0 {stack_parasitic_capacitance_f:.12g}f IC=0",
             f"M{prefix}pos_dn_e {vwn} {activation_node} {prefix}pos_dn_allguard 0 NSENSE W={width_u:.6g}u L=180n",
-            f"M{prefix}pos_dn_g {prefix}pos_dn_allguard {update_guard_node} {prefix}pos_dn 0 NSENSE W={width_u:.6g}u L=180n",
+            f"M{prefix}pos_dn_g {prefix}pos_dn_allguard {update_guard_node} {prefix}pos_dn 0 {update_guard_model} W={width_u:.6g}u L=180n",
             f"M{prefix}neg_dn_e {vwp} {activation_node} {prefix}neg_dn_allguard 0 NSENSE W={width_u:.6g}u L=180n",
-            f"M{prefix}neg_dn_g {prefix}neg_dn_allguard {update_guard_node} {prefix}neg_dn 0 NSENSE W={width_u:.6g}u L=180n",
+            f"M{prefix}neg_dn_g {prefix}neg_dn_allguard {update_guard_node} {prefix}neg_dn 0 {update_guard_model} W={width_u:.6g}u L=180n",
         ]
     if high_side_topology == "nmos-stack":
         if update_guard_node is None:
@@ -406,10 +409,10 @@ def class_local_live_label_descent_update_lines(
                 f"C{prefix}pos_up_allguard_par {prefix}pos_up_allguard 0 {stack_parasitic_capacitance_f:.12g}f IC=0",
                 f"C{prefix}neg_up_allguard_par {prefix}neg_up_allguard 0 {stack_parasitic_capacitance_f:.12g}f IC=0",
                 f"M{prefix}pos_up_e vwhi_ref {activation_node} {prefix}pos_up_allguard 0 NSENSE W={width_u:.6g}u L=180n",
-                f"M{prefix}pos_up_g {prefix}pos_up_allguard {update_guard_node} {prefix}pos_up 0 NSENSE W={width_u:.6g}u L=180n",
+                f"M{prefix}pos_up_g {prefix}pos_up_allguard {update_guard_node} {prefix}pos_up 0 {update_guard_model} W={width_u:.6g}u L=180n",
                 f"M{prefix}pos_up_d {prefix}pos_up {pos} {vwp} 0 NSENSE W={width_u:.6g}u L=180n",
                 f"M{prefix}neg_up_e vwhi_ref {activation_node} {prefix}neg_up_allguard 0 NSENSE W={width_u:.6g}u L=180n",
-                f"M{prefix}neg_up_g {prefix}neg_up_allguard {update_guard_node} {prefix}neg_up 0 NSENSE W={width_u:.6g}u L=180n",
+                f"M{prefix}neg_up_g {prefix}neg_up_allguard {update_guard_node} {prefix}neg_up 0 {update_guard_model} W={width_u:.6g}u L=180n",
             ]
     else:
         pos_ctrl_mid = f"{prefix}pos_up_ctrl_mid"
@@ -440,12 +443,12 @@ def class_local_live_label_descent_update_lines(
                 f"R{pos_ctrl_guard} {pos_ctrl_guard} 0 {stack_shunt_resistance_ohm:.12g}",
                 f"C{pos_ctrl_guard} {pos_ctrl_guard} 0 {stack_parasitic_capacitance_f:.12g}f IC=0",
                 f"M{prefix}pos_up_ctrl_e {pos_ctrl} {activation_node} {pos_ctrl_guard} 0 NSENSE W={width_u:.6g}u L=180n",
-                f"M{prefix}pos_up_ctrl_g {pos_ctrl_guard} {update_guard_node} {pos_ctrl_mid} 0 NSENSE W={width_u:.6g}u L=180n",
+                f"M{prefix}pos_up_ctrl_g {pos_ctrl_guard} {update_guard_node} {pos_ctrl_mid} 0 {update_guard_model} W={width_u:.6g}u L=180n",
                 f"M{prefix}pos_up_ctrl_d {pos_ctrl_mid} {pos} 0 0 NSENSE W={width_u:.6g}u L=180n",
                 f"R{neg_ctrl_guard} {neg_ctrl_guard} 0 {stack_shunt_resistance_ohm:.12g}",
                 f"C{neg_ctrl_guard} {neg_ctrl_guard} 0 {stack_parasitic_capacitance_f:.12g}f IC=0",
                 f"M{prefix}neg_up_ctrl_e {neg_ctrl} {activation_node} {neg_ctrl_guard} 0 NSENSE W={width_u:.6g}u L=180n",
-                f"M{prefix}neg_up_ctrl_g {neg_ctrl_guard} {update_guard_node} {neg_ctrl_mid} 0 NSENSE W={width_u:.6g}u L=180n",
+                f"M{prefix}neg_up_ctrl_g {neg_ctrl_guard} {update_guard_node} {neg_ctrl_mid} 0 {update_guard_model} W={width_u:.6g}u L=180n",
             ]
         if high_side_topology == "pmos-differential":
             lines += [

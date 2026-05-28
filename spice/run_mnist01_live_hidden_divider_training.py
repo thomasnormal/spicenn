@@ -25,6 +25,7 @@ from run_spice_sweep import run_text_netlist
 
 HIDDEN = 4
 HIDDEN_INIT_MODES = ("quadrant", "identity")
+READOUT_WRITER_NORMALIZATION_MODES = ("none", "activity-gate")
 
 
 def _clock_lines(
@@ -537,13 +538,62 @@ def _route_to_hidden_error_rails_lines(route_width_u: float) -> list[str]:
     return lines
 
 
-def _readout_writer_lines(hidden_count: int, width_u: float, activation_mode: str = "hrow") -> list[str]:
+def _readout_writer_activity_normalization_lines(
+    hidden_count: int,
+    *,
+    discharge_width_u: float,
+    gate_capacitance_f: float,
+    phase_node: str = "scorephi",
+) -> list[str]:
+    if min(
+        hidden_count,
+        discharge_width_u,
+        gate_capacitance_f,
+    ) <= 0.0:
+        raise ValueError("readout writer activity normalization sizes must be positive")
+    lines = [
+        f"Chrow_activity_gate hrow_activity_gate 0 {gate_capacitance_f:.12g}f IC=1.2",
+        "Rhrow_activity_gate hrow_activity_gate vdd 1G",
+        "Mpre_hrow_activity_gate hrow_activity_gate rstn vdd vdd PMOS W=4u L=180n",
+    ]
+    for hidden in range(hidden_count):
+        gate_mid = f"hrow_activity_gate_h{hidden}_mid"
+        lines += [
+            f"R{gate_mid} {gate_mid} 0 1G",
+            f"C{gate_mid} {gate_mid} 0 0.05f IC=0",
+            f"Mhrow_activity_gate_h{hidden}_src hrow_activity_gate hrow{hidden} {gate_mid} 0 NSENSE W={discharge_width_u:.6g}u L=180n",
+            f"Mhrow_activity_gate_h{hidden}_phi {gate_mid} {phase_node} 0 0 NSENSE W={discharge_width_u:.6g}u L=180n",
+        ]
+    return lines
+
+
+def _readout_writer_lines(
+    hidden_count: int,
+    width_u: float,
+    activation_mode: str = "hrow",
+    normalization_mode: str = "none",
+    *,
+    normalization_discharge_width_u: float = 0.02,
+    normalization_gate_capacitance_f: float = 80.0,
+) -> list[str]:
     if activation_mode not in ("hrow", "pre-differential"):
         raise ValueError("readout_writer_activation_mode must be hrow or pre-differential")
+    if normalization_mode not in READOUT_WRITER_NORMALIZATION_MODES:
+        raise ValueError(f"readout_writer_normalization_mode must be one of {READOUT_WRITER_NORMALIZATION_MODES}")
+    if activation_mode == "pre-differential" and normalization_mode != "none":
+        raise ValueError("readout_writer_normalization_mode is only supported for hrow, not pre-differential")
     lines = [
         "Vvwhi_ref vwhi_ref 0 0.48",
         "Vvwlo_ref vwlo_ref 0 0.22",
     ]
+    update_guard_node = None
+    if normalization_mode == "activity-gate":
+        lines += _readout_writer_activity_normalization_lines(
+            hidden_count,
+            discharge_width_u=normalization_discharge_width_u,
+            gate_capacitance_f=normalization_gate_capacitance_f,
+        )
+        update_guard_node = "hrow_activity_gate"
     for output in range(OUTPUTS):
         for hidden in range(hidden_count):
             if activation_mode == "hrow":
@@ -553,6 +603,8 @@ def _readout_writer_lines(hidden_count: int, width_u: float, activation_mode: st
                     activation_node=f"hrow{hidden}",
                     positive_descent_node=class_node(output, "errp"),
                     negative_descent_node=class_node(output, "errn"),
+                    update_guard_node=update_guard_node,
+                    update_guard_model="NREL" if update_guard_node is not None else "NSENSE",
                     width_u=width_u,
                     high_side_topology="pmos-differential",
                 )
@@ -970,6 +1022,9 @@ def mnist01_live_hidden_netlist(
     hidden_row_select_pass_width_u: float = 16.0,
     readout_activation_mode: str = "hrow",
     readout_writer_activation_mode: str = "hrow",
+    readout_writer_normalization_mode: str = "none",
+    readout_writer_normalization_discharge_width_u: float = 0.02,
+    readout_writer_normalization_gate_capacitance_f: float = 80.0,
     readout_width_u: float = 16.0,
     branch_width_u: float = 0.05,
     floor_width_u: float = 0.015,
@@ -1024,6 +1079,12 @@ def mnist01_live_hidden_netlist(
         raise ValueError("readout_activation_mode must be hrow or pre-differential")
     if readout_writer_activation_mode not in ("hrow", "pre-differential"):
         raise ValueError("readout_writer_activation_mode must be hrow or pre-differential")
+    if readout_writer_normalization_mode not in READOUT_WRITER_NORMALIZATION_MODES:
+        raise ValueError(
+            f"readout_writer_normalization_mode must be one of {READOUT_WRITER_NORMALIZATION_MODES}"
+        )
+    if readout_writer_activation_mode == "pre-differential" and readout_writer_normalization_mode != "none":
+        raise ValueError("readout_writer_normalization_mode is only supported for hrow, not pre-differential")
     if hidden_writer_topology not in ("pmos-highside", "pmos-differential"):
         raise ValueError("hidden_writer_topology must be pmos-highside or pmos-differential")
     if hidden_credit_gate_mode == "dynamic-preamp" and hidden_writer_topology != "pmos-differential":
@@ -1062,6 +1123,8 @@ def mnist01_live_hidden_netlist(
         hidden_row_select_pullup_width_u,
         hidden_row_select_pulldown_width_u,
         hidden_row_select_pass_width_u,
+        readout_writer_normalization_discharge_width_u,
+        readout_writer_normalization_gate_capacitance_f,
         readout_width_u,
         branch_width_u,
         floor_width_u,
@@ -1158,7 +1221,14 @@ def mnist01_live_hidden_netlist(
         *_divider_probability_lines(branch_width_u, floor_width_u),
         *_route_to_error_rails_lines(route_width_u),
         *_route_to_hidden_error_rails_lines(hidden_error_route_width_u),
-        *_readout_writer_lines(hidden_count, readout_update_width_u, activation_mode=readout_writer_activation_mode),
+        *_readout_writer_lines(
+            hidden_count,
+            readout_update_width_u,
+            activation_mode=readout_writer_activation_mode,
+            normalization_mode=readout_writer_normalization_mode,
+            normalization_discharge_width_u=readout_writer_normalization_discharge_width_u,
+            normalization_gate_capacitance_f=readout_writer_normalization_gate_capacitance_f,
+        ),
         *_hidden_credit_lines(
             hidden_count,
             hidden_credit_width_u,

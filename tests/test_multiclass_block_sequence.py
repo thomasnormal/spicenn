@@ -717,6 +717,54 @@ def test_multiclass_block_sequence_summarizes_wrong_replay_contributions() -> No
     assert rows[0]["top_predicted_over_target_features"][0]["predicted_minus_target_score_v2"] == pytest.approx(0.16)
 
 
+def test_multiclass_block_sequence_summarizes_wrong_contribution_update_history() -> None:
+    stats = seq.wrong_replay_contribution_update_history_stats(
+        [
+            {
+                "cycle": 7,
+                "label": 1,
+                "prediction": 2,
+                "top_predicted_over_target_features": [
+                    {"feature": 6, "predicted_minus_target_score_v2": 0.036},
+                    {"feature": 1, "predicted_minus_target_score_v2": 0.016},
+                ],
+            }
+        ],
+        train_progress=[
+            [
+                [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.00],
+                [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.03],
+                [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.01],
+            ],
+            [
+                [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, -0.01],
+                [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.06],
+                [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, -0.02],
+            ],
+            [
+                [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, -0.02],
+                [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.04],
+                [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.05],
+            ],
+        ],
+        train_labels=[0, 1, 2],
+        class_count=3,
+        feature_count=7,
+        initial_signed_v=0.0,
+        max_contributors=1,
+    )
+
+    rows = stats["final_eval_wrong_contribution_update_history_rows"]
+    assert len(rows) == 1
+    assert rows[0]["feature"] == 6
+    assert rows[0]["target_total_delta_v"] == pytest.approx(0.04)
+    assert rows[0]["predicted_total_delta_v"] == pytest.approx(0.05)
+    assert rows[0]["target_label_train_target_delta_sum_v"] == pytest.approx(0.03)
+    assert rows[0]["predicted_label_train_predicted_delta_sum_v"] == pytest.approx(0.07)
+    assert rows[0]["history"][1]["train_label"] == 1
+    assert rows[0]["history"][1]["target_minus_predicted_delta_v"] == pytest.approx(0.06)
+
+
 def test_multiclass_block_sequence_can_generate_physical_readout_replay() -> None:
     netlist = seq.generate_physical_readout_replay_netlist(
         activations=[0.85, 0.25],

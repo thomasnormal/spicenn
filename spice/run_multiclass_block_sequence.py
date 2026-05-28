@@ -3299,6 +3299,81 @@ def physical_readout_replay_wrong_contribution_stats(
     }
 
 
+def wrong_replay_contribution_update_history_stats(
+    wrong_contribution_rows: list[dict[str, Any]],
+    *,
+    train_progress: list[list[list[float]]],
+    train_labels: list[int],
+    class_count: int,
+    feature_count: int,
+    initial_signed_v: float,
+    max_wrong_rows: int = 3,
+    max_contributors: int = 3,
+) -> dict[str, Any]:
+    if max_wrong_rows <= 0:
+        raise ValueError("max_wrong_rows must be positive")
+    if max_contributors <= 0:
+        raise ValueError("max_contributors must be positive")
+    if class_count <= 0 or feature_count <= 0 or not wrong_contribution_rows or not train_progress:
+        return {"final_eval_wrong_contribution_update_history_rows": []}
+    progress = [np.array(step, dtype=float)[:, :feature_count] for step in train_progress]
+    for matrix in progress:
+        if matrix.shape != (class_count, feature_count):
+            raise ValueError("train_progress shape does not match class_count and feature_count")
+    previous = np.full((class_count, feature_count), initial_signed_v, dtype=float)
+    deltas: list[np.ndarray] = []
+    for matrix in progress:
+        deltas.append(matrix - previous)
+        previous = matrix
+    rows: list[dict[str, Any]] = []
+    for wrong in wrong_contribution_rows[:max_wrong_rows]:
+        label = int(wrong["label"])
+        prediction = int(wrong["prediction"])
+        for contributor in wrong.get("top_predicted_over_target_features", [])[:max_contributors]:
+            feature = int(contributor["feature"])
+            if not (0 <= label < class_count and 0 <= prediction < class_count and 0 <= feature < feature_count):
+                continue
+            history = []
+            target_label_delta_sum = 0.0
+            predicted_label_delta_sum = 0.0
+            for train_idx, (matrix, delta) in enumerate(zip(progress, deltas)):
+                train_label = int(train_labels[train_idx]) if train_idx < len(train_labels) else -1
+                target_delta = float(delta[label, feature])
+                predicted_delta = float(delta[prediction, feature])
+                if train_label == label:
+                    target_label_delta_sum += target_delta
+                if train_label == prediction:
+                    predicted_label_delta_sum += predicted_delta
+                history.append(
+                    {
+                        "train_index": train_idx + 1,
+                        "train_label": train_label,
+                        "target_signed_after_v": float(matrix[label, feature]),
+                        "predicted_signed_after_v": float(matrix[prediction, feature]),
+                        "target_delta_v": target_delta,
+                        "predicted_delta_v": predicted_delta,
+                        "target_minus_predicted_delta_v": target_delta - predicted_delta,
+                    }
+                )
+            rows.append(
+                {
+                    "cycle": int(wrong["cycle"]),
+                    "label": label,
+                    "prediction": prediction,
+                    "feature": feature,
+                    "predicted_minus_target_score_v2": float(
+                        contributor["predicted_minus_target_score_v2"]
+                    ),
+                    "target_total_delta_v": float(progress[-1][label, feature] - initial_signed_v),
+                    "predicted_total_delta_v": float(progress[-1][prediction, feature] - initial_signed_v),
+                    "target_label_train_target_delta_sum_v": target_label_delta_sum,
+                    "predicted_label_train_predicted_delta_sum_v": predicted_label_delta_sum,
+                    "history": history,
+                }
+            )
+    return {"final_eval_wrong_contribution_update_history_rows": rows}
+
+
 def readout_weight_matrix_stats(
     *,
     final_signed: list[list[float]],
@@ -4029,6 +4104,14 @@ def run_case(args: argparse.Namespace) -> dict[str, Any]:
             "final_eval_physical_readout_replay_min_margin_v": None,
         }
     )
+    wrong_replay_contributions = physical_readout_replay_wrong_contribution_stats(
+        physical_replay["final_eval_physical_readout_replay_rows"],
+        measures,
+        sequence=sequence,
+        total_feature_count=total_feature_count,
+        final_positive=final_positive,
+        final_negative=final_negative,
+    )
     csv_path = tables / f"{tag}.csv"
     with csv_path.open("w", newline="") as f:
         writer = csv.DictWriter(
@@ -4259,13 +4342,14 @@ def run_case(args: argparse.Namespace) -> dict[str, Any]:
             current_readout_width_u=args.readout_width,
             current_score_cap_f=args.score_capacitance_f,
         ),
-        **physical_readout_replay_wrong_contribution_stats(
-            physical_replay["final_eval_physical_readout_replay_rows"],
-            measures,
-            sequence=sequence,
-            total_feature_count=total_feature_count,
-            final_positive=final_positive,
-            final_negative=final_negative,
+        **wrong_replay_contributions,
+        **wrong_replay_contribution_update_history_stats(
+            wrong_replay_contributions["final_eval_physical_readout_replay_wrong_contribution_rows"],
+            train_progress=train_progress,
+            train_labels=[int(record["label"]) for record in train_records],
+            class_count=args.class_count,
+            feature_count=feature_count,
+            initial_signed_v=args.initial_positive - args.initial_negative,
         ),
         **activation_prototype_projection_stats(
             measures,

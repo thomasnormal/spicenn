@@ -56,6 +56,25 @@ def test_mnist01_pixel_downsample_and_voltage_encoding_are_bounded() -> None:
     assert min(encoded) == 0.0
 
 
+def test_mnist01_add_complement_features_preserves_records_and_adds_absence_rows() -> None:
+    records = [
+        {
+            "features": [0.0, 0.55, 1.1],
+            "label": 1,
+            "digit": 1,
+            "mnist_index": 7,
+        }
+    ]
+
+    augmented = mnist01_live.add_complement_features(records, scale=0.5)
+
+    assert records[0]["features"] == [0.0, 0.55, 1.1]
+    assert augmented[0]["label"] == 1
+    assert augmented[0]["digit"] == 1
+    assert augmented[0]["mnist_index"] == 7
+    assert augmented[0]["features"] == pytest.approx([0.0, 0.55, 1.1, 0.55, 0.275, 0.0])
+
+
 def test_mnist01_fixed_feature_netlist_is_live_transistor_path() -> None:
     train = [
         {"features": [1.0, 0.0, 0.0, 0.0], "label": 0},
@@ -127,3 +146,29 @@ def test_mnist01_fixed_feature_divider_ngspice_improves_two_real_mnist01_margins
         assert parsed[f"train_other_errn_{train_idx}"] > parsed[f"train_other_errp_{train_idx}"] + 30e-3
         assert parsed[f"train_target_signed_delta_{train_idx}"] > 1e-3
         assert parsed[f"train_other_signed_delta_{train_idx}"] < -1e-3
+
+
+@pytest.mark.ngspice
+def test_mnist01_fixed_feature_complement_rows_learn_four_real_mnist01_margins(
+    tmp_path: Path,
+    ngspice_path: str,
+) -> None:
+    _require_mnist_raw()
+    train, evals = mnist01_live.load_mnist01_records(
+        train_count_per_digit=2,
+        eval_count_per_digit=2,
+        image_size=4,
+    )
+    train = mnist01_live.add_complement_features(train, scale=0.5)
+    evals = mnist01_live.add_complement_features(evals, scale=0.5)
+
+    parsed = mnist01_live.run_netlist(
+        ngspice_path,
+        tmp_path / "mnist01_fixed_feature_complement_rows.cir",
+        mnist01_live.mnist01_fixed_feature_netlist(train, evals),
+        timeout=180.0,
+    )
+
+    for sample_idx in range(4):
+        assert parsed[f"final_margin_{sample_idx}"] > 1.0e-3
+        assert parsed[f"final_margin_improvement_{sample_idx}"] > 1.0e-3

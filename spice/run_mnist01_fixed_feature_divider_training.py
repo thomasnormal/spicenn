@@ -162,6 +162,29 @@ def pixel_to_feature_voltage(value: float) -> float:
     return float(np.clip(1.1 * clipped / 0.65, 0.0, 1.1))
 
 
+def add_complement_features(
+    records: list[dict[str, Any]],
+    *,
+    scale: float = 0.5,
+    high: float = 1.1,
+) -> list[dict[str, Any]]:
+    if scale <= 0.0 or high <= 0.0:
+        raise ValueError("complement feature scale and high voltage must be positive")
+    out: list[dict[str, Any]] = []
+    for record in records:
+        features = record.get("features")
+        if not isinstance(features, list) or not features:
+            raise ValueError("records must contain a nonempty feature list")
+        raw = [float(value) for value in features]
+        if any(value < 0.0 or value > high for value in raw):
+            raise ValueError("raw feature voltages must stay between 0 and high")
+        complement = [scale * max(0.0, high - value) for value in raw]
+        if any(value > 1.2 for value in complement):
+            raise ValueError("complement feature voltages must stay within supply rails")
+        out.append({**record, "features": raw + complement})
+    return out
+
+
 def load_mnist01_records(
     *,
     train_count_per_digit: int = 1,

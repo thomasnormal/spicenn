@@ -231,6 +231,18 @@ def test_mnist01_live_hidden_netlist_is_live_transistor_path() -> None:
     assert "Cwh15f15p wh15f15p 0 20f IC=1.05" in identity_netlist
     assert "Mc1_h15_score_pa vdd hrow15 c1_h15_score_pa 0 NSENSE" in identity_netlist
     assert ".meas tran final_hrow_h15_1" in identity_netlist
+    nonsquare_train = [
+        {"features": [1.0, 0.0, 0.5, 0.2, 0.7, 0.1], "label": 0},
+        {"features": [0.0, 1.0, 0.2, 0.5, 0.1, 0.7], "label": 1},
+    ]
+    nonsquare_identity_netlist = mnist01_hidden.mnist01_live_hidden_netlist(
+        nonsquare_train,
+        nonsquare_train,
+        hidden_count=6,
+        hidden_init_mode="identity",
+    )
+    assert "Cwh5f5p wh5f5p 0 20f IC=1.05" in nonsquare_identity_netlist
+    assert "Mc1_h5_score_pa vdd hrow5 c1_h5_score_pa 0 NSENSE" in nonsquare_identity_netlist
 
     normalized_writer_netlist = mnist01_hidden.mnist01_live_hidden_netlist(
         train,

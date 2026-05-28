@@ -69,10 +69,10 @@ def hidden_block_for_feature(feature: int, image_size: int) -> int:
 def hidden_unit_for_feature(feature: int, feature_count: int, hidden_count: int, hidden_init_mode: str) -> int:
     if hidden_init_mode not in HIDDEN_INIT_MODES:
         raise ValueError(f"hidden_init_mode must be one of {HIDDEN_INIT_MODES}")
-    image_size = _image_size_from_feature_count(feature_count)
     if hidden_init_mode == "quadrant":
         if hidden_count != HIDDEN:
             raise ValueError("quadrant hidden_init_mode uses exactly four quadrant hidden units")
+        image_size = _image_size_from_feature_count(feature_count)
         return hidden_block_for_feature(feature, image_size)
     if hidden_count != feature_count:
         raise ValueError("identity hidden_init_mode requires one hidden unit per input feature")
@@ -115,13 +115,13 @@ def _hidden_storage_lines(
     inside_negative: float,
     outside_negative: float,
 ) -> list[str]:
-    image_size = _image_size_from_feature_count(feature_count)
     if init_mode not in HIDDEN_INIT_MODES:
         raise ValueError(f"hidden_init_mode must be one of {HIDDEN_INIT_MODES}")
     if init_mode == "quadrant" and hidden_count != HIDDEN:
         raise ValueError("quadrant hidden_init_mode uses exactly four quadrant hidden units")
     if init_mode == "identity" and hidden_count != feature_count:
         raise ValueError("identity hidden_init_mode requires one hidden unit per input feature")
+    image_size = _image_size_from_feature_count(feature_count) if init_mode == "quadrant" else 0
     lines: list[str] = []
     for hidden in range(hidden_count):
         for feature in range(feature_count):
@@ -1060,13 +1060,14 @@ def mnist01_live_hidden_netlist(
     feature_count = len(train_records[0]["features"])
     _validate_records(train_records, feature_count, "train")
     _validate_records(eval_records, feature_count, "eval")
-    _image_size_from_feature_count(feature_count)
     if hidden_init_mode not in HIDDEN_INIT_MODES:
         raise ValueError(f"hidden_init_mode must be one of {HIDDEN_INIT_MODES}")
     if hidden_init_mode == "quadrant" and hidden_count != HIDDEN:
         raise ValueError("quadrant hidden_init_mode uses exactly four quadrant hidden units")
     if hidden_init_mode == "identity" and hidden_count != feature_count:
         raise ValueError("identity hidden_init_mode requires one hidden unit per input feature")
+    if hidden_init_mode == "quadrant":
+        _image_size_from_feature_count(feature_count)
     if hidden_credit_gate_mode not in ("differential-excess", "dynamic-preamp"):
         raise ValueError("hidden_credit_gate_mode must be differential-excess or dynamic-preamp")
     if hidden_activation_mode not in ("single-ended", "differential-preamp"):

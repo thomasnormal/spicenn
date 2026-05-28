@@ -56,7 +56,7 @@ SCENARIOS = ("target-repeat", "one-hot", "mnist")
 SAMPLE_ORDER_MODES = ("grouped", "round-robin")
 CLASS_BIAS_MODES = ("none", "target-only", "label-descent")
 READOUT_UPDATE_MODES = ("sampled", "live")
-READOUT_NONTARGET_GUARD_MODES = ("none", "support")
+READOUT_NONTARGET_GUARD_MODES = ("none", "support", "support-symmetric")
 READOUT_SUPPORT_SOURCE_MODES = ("writer", "elig", "act", "act-raw")
 READOUT_LIVE_HIGH_SIDE_TOPOLOGIES = ("nmos-stack", "pmos-gated", "pmos-differential")
 HIDDEN_UPDATE_MODES = ("none", "readout-weighted", "direct-readout-weighted")
@@ -1991,8 +1991,13 @@ def generate_netlist(
         raise ValueError(f"hidden_direct_output_stage must be one of {HIDDEN_DIRECT_OUTPUT_STAGES}")
     if hidden_direct_nontarget_guard_mode not in HIDDEN_DIRECT_NONTARGET_GUARD_MODES:
         raise ValueError(f"hidden_direct_nontarget_guard_mode must be one of {HIDDEN_DIRECT_NONTARGET_GUARD_MODES}")
-    if hidden_direct_nontarget_guard_mode == "support" and readout_nontarget_guard_mode != "support":
-        raise ValueError("hidden_direct_nontarget_guard_mode=support requires readout_nontarget_guard_mode=support")
+    if hidden_direct_nontarget_guard_mode == "support" and readout_nontarget_guard_mode not in (
+        "support",
+        "support-symmetric",
+    ):
+        raise ValueError(
+            "hidden_direct_nontarget_guard_mode=support requires readout_nontarget_guard_mode=support or support-symmetric"
+        )
     if hidden_direct_error_source_mode not in HIDDEN_DIRECT_ERROR_SOURCE_MODES:
         raise ValueError(f"hidden_direct_error_source_mode must be one of {HIDDEN_DIRECT_ERROR_SOURCE_MODES}")
     if hidden_direct_state_guard_mode not in HIDDEN_DIRECT_STATE_GUARD_MODES:
@@ -3183,12 +3188,17 @@ def generate_netlist(
                     None if error_mode == "label-descent" else class_node(class_idx, "errn")
                 )
                 nontarget_guard_node = None
+                update_guard_node = None
                 readout_update_lines = []
                 if bias_feature is not None and feature == bias_feature and class_bias_mode == "target-only":
                     positive_descent_node = None
                     negative_descent_node = "0"
-                elif readout_nontarget_guard_mode == "support":
-                    nontarget_guard_node = class_node(class_idx, f"f{feature}_support")
+                elif readout_nontarget_guard_mode in ("support", "support-symmetric"):
+                    support_node = class_node(class_idx, f"f{feature}_support")
+                    if readout_nontarget_guard_mode == "support":
+                        nontarget_guard_node = support_node
+                    else:
+                        update_guard_node = support_node
                     support_source_node = {
                         "writer": activation_node,
                         "elig": f"elig{feature}",
@@ -3210,6 +3220,7 @@ def generate_netlist(
                     positive_descent_node=positive_descent_node,
                     negative_descent_node=negative_descent_node,
                     nontarget_guard_node=nontarget_guard_node,
+                    update_guard_node=update_guard_node,
                     width_u=readout_update_width_u,
                     high_side_topology=readout_live_high_side_topology,
                 )
@@ -3424,7 +3435,7 @@ def generate_netlist(
                         f".meas tran c{class_idx}_f{feature}_vwn_after_train{train_seen} FIND V({class_node(class_idx, f'vwn{feature}')}) AT={base + 15.0:.2f}n",
                         f".meas tran c{class_idx}_f{feature}_signed_after_train{train_seen} PARAM='c{class_idx}_f{feature}_vwp_after_train{train_seen}-c{class_idx}_f{feature}_vwn_after_train{train_seen}'",
                     ]
-                    if readout_nontarget_guard_mode == "support" and feature < feature_count:
+                    if readout_nontarget_guard_mode in ("support", "support-symmetric") and feature < feature_count:
                         lines.append(
                             f".meas tran c{class_idx}_f{feature}_support_after_train{train_seen} FIND V({class_node(class_idx, f'f{feature}_support')}) AT={base + 15.0:.2f}n"
                         )
@@ -3439,7 +3450,7 @@ def generate_netlist(
                 f".meas tran c{class_idx}_f{feature}_vwn_final FIND V({class_node(class_idx, f'vwn{feature}')}) AT={stop_ns - 0.5:.2f}n",
                 f".meas tran c{class_idx}_f{feature}_signed_final PARAM='c{class_idx}_f{feature}_vwp_final-c{class_idx}_f{feature}_vwn_final'",
             ]
-            if readout_nontarget_guard_mode == "support" and feature < feature_count:
+            if readout_nontarget_guard_mode in ("support", "support-symmetric") and feature < feature_count:
                 lines.append(
                     f".meas tran c{class_idx}_f{feature}_support_final FIND V({class_node(class_idx, f'f{feature}_support')}) AT={stop_ns - 0.5:.2f}n"
                 )
@@ -5180,12 +5191,12 @@ def run_case(args: argparse.Namespace) -> dict[str, Any]:
         ),
         "readout_support_source_mode": (
             args.readout_support_source_mode
-            if args.readout_update_mode == "live" and args.readout_nontarget_guard_mode == "support"
+            if args.readout_update_mode == "live" and args.readout_nontarget_guard_mode != "none"
             else None
         ),
         "readout_support_capacitance_f": (
             args.readout_support_capacitance_f
-            if args.readout_update_mode == "live" and args.readout_nontarget_guard_mode == "support"
+            if args.readout_update_mode == "live" and args.readout_nontarget_guard_mode != "none"
             else None
         ),
         "hidden_update_mode": args.hidden_update_mode,
@@ -5702,8 +5713,13 @@ def validate_args(args: argparse.Namespace) -> None:
         raise ValueError(
             f"hidden-direct-nontarget-guard-mode must be one of {HIDDEN_DIRECT_NONTARGET_GUARD_MODES}"
         )
-    if args.hidden_direct_nontarget_guard_mode == "support" and args.readout_nontarget_guard_mode != "support":
-        raise ValueError("hidden-direct-nontarget-guard-mode=support requires readout-nontarget-guard-mode=support")
+    if args.hidden_direct_nontarget_guard_mode == "support" and args.readout_nontarget_guard_mode not in (
+        "support",
+        "support-symmetric",
+    ):
+        raise ValueError(
+            "hidden-direct-nontarget-guard-mode=support requires readout-nontarget-guard-mode=support or support-symmetric"
+        )
     if args.hidden_direct_error_source_mode not in HIDDEN_DIRECT_ERROR_SOURCE_MODES:
         raise ValueError(f"hidden-direct-error-source-mode must be one of {HIDDEN_DIRECT_ERROR_SOURCE_MODES}")
     if args.hidden_direct_state_guard_mode not in HIDDEN_DIRECT_STATE_GUARD_MODES:

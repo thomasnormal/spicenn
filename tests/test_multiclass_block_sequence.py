@@ -2442,6 +2442,68 @@ def _live_readout_writer_realistic_common_mode_netlist() -> str:
     return "\n".join(lines)
 
 
+def _live_readout_writer_symmetric_support_netlist() -> str:
+    lines = [
+        "* Symmetric support guard around the PMOS differential writer selector.",
+        ".param VDD=1.2",
+        seq.mos_models(),
+        ".options method=gear reltol=1e-3 abstol=1e-12 vntol=1e-6",
+        "Vdd vdd 0 {VDD}",
+        "Vvhi vwhi_ref 0 0.48",
+        "Vvlo vwlo_ref 0 0.22",
+    ]
+    cases = {
+        "target_supported": (0, 1.2, 0.129, 0.351, 0.313),
+        "nontarget_supported": (1, 1.2, 0.129, 0.235, 0.340),
+        "nontarget_unsupported": (2, 0.0, 0.129, 0.235, 0.340),
+    }
+    for name, class_idx, support_v, eligibility_v, errp_v, errn_v in (
+        (name, *values) for name, values in cases.items()
+    ):
+        support = f"{name}_support"
+        elig = f"{name}_elig"
+        lines += [
+            f"Cc{class_idx}_vwp0 c{class_idx}_vwp0 0 20f IC=0.4",
+            f"Cc{class_idx}_vwn0 c{class_idx}_vwn0 0 20f IC=0.4",
+            f"Rc{class_idx}_vwp0 c{class_idx}_vwp0 0 1e15",
+            f"Rc{class_idx}_vwn0 c{class_idx}_vwn0 0 1e15",
+            f"V{support} {support} 0 PULSE(0 {support_v:.12g} 1n 5p 5p 3n 10n)",
+            f"V{elig} {elig} 0 PULSE(0 {eligibility_v:.12g} 1n 5p 5p 3n 10n)",
+            f"Vc{class_idx}_errp c{class_idx}_errp 0 PULSE(0 {errp_v:.12g} 1n 5p 5p 3n 10n)",
+            f"Vc{class_idx}_errn c{class_idx}_errn 0 PULSE(0 {errn_v:.12g} 1n 5p 5p 3n 10n)",
+            *seq.class_local_live_label_descent_update_lines(
+                class_idx=class_idx,
+                feature_idx=0,
+                activation_node=elig,
+                positive_descent_node=f"c{class_idx}_errp",
+                negative_descent_node=f"c{class_idx}_errn",
+                update_guard_node=support,
+                width_u=4.0,
+                high_side_topology="pmos-differential",
+            ),
+        ]
+    for class_idx in range(3):
+        lines += [
+            f".meas tran c{class_idx}_vwp_before FIND V(c{class_idx}_vwp0) AT=0.8n",
+            f".meas tran c{class_idx}_vwn_before FIND V(c{class_idx}_vwn0) AT=0.8n",
+            f".meas tran c{class_idx}_vwp_after FIND V(c{class_idx}_vwp0) AT=5.0n",
+            f".meas tran c{class_idx}_vwn_after FIND V(c{class_idx}_vwn0) AT=5.0n",
+            f".meas tran c{class_idx}_signed_before PARAM='c{class_idx}_vwp_before-c{class_idx}_vwn_before'",
+            f".meas tran c{class_idx}_signed_after PARAM='c{class_idx}_vwp_after-c{class_idx}_vwn_after'",
+            f".meas tran c{class_idx}_signed_delta PARAM='c{class_idx}_signed_after-c{class_idx}_signed_before'",
+        ]
+    lines += [
+        ".tran 2p 6n uic",
+        ".control",
+        "run",
+        "quit",
+        ".endc",
+        ".end",
+        "",
+    ]
+    return "\n".join(lines)
+
+
 @pytest.mark.ngspice
 def test_multiclass_block_sequence_ngspice_hybrid_readout_eligibility_is_monotone_and_boosted(
     tmp_path: Path,
@@ -2527,6 +2589,26 @@ def test_multiclass_block_sequence_ngspice_live_readout_writer_rejects_error_com
     assert abs(off_delta) < 20e-6
 
 
+@pytest.mark.ngspice
+def test_multiclass_block_sequence_ngspice_symmetric_support_keeps_differential_writer_selective(
+    tmp_path: Path,
+    ngspice_path: str,
+) -> None:
+    measures = run_netlist(
+        ngspice_path,
+        tmp_path / "live_readout_writer_symmetric_support.cir",
+        _live_readout_writer_symmetric_support_netlist(),
+        timeout=30.0,
+    )
+
+    target_supported = float(measures["c0_signed_delta"])
+    nontarget_supported = float(measures["c1_signed_delta"])
+    nontarget_unsupported = float(measures["c2_signed_delta"])
+    assert target_supported > 0.1e-3
+    assert nontarget_supported < -0.1e-3
+    assert abs(nontarget_unsupported) < 20e-6
+
+
 def test_multiclass_block_sequence_can_use_raw_direct_hidden_readout_gates() -> None:
     records = _one_hot_records()
     netlist = seq.generate_netlist(
@@ -2592,6 +2674,27 @@ def test_multiclass_block_sequence_can_gate_live_nontarget_depression_by_support
     assert "Mc0_f0_support_d c0_f0_support_mid c0_targetp c0_f0_support 0 NSENSE" in netlist
     assert "Mc0_f0_live_neg_up_g c0_f0_live_neg_up c0_f0_support c0_f0_live_neg_up_guard 0 NSENSE" in netlist
     assert "Mc0_f0_live_neg_up_d c0_f0_live_neg_up_guard c0_targetn c0_vwn0 0 NSENSE" in netlist
+
+
+def test_multiclass_block_sequence_can_symmetrically_gate_live_readout_by_support() -> None:
+    netlist = seq.generate_netlist(
+        train_records=_one_hot_records(),
+        eval_records=_one_hot_records(),
+        class_count=3,
+        feature_count=3,
+        readout_update_mode="live",
+        readout_nontarget_guard_mode="support-symmetric",
+        readout_live_high_side_topology="pmos-differential",
+    )
+
+    assert "\nB" not in netlist
+    assert "Vapply" not in netlist
+    assert "Cc0_f0_support c0_f0_support 0" in netlist
+    assert "Mc0_f0_live_pos_up_ctrl_g c0_f0_live_pos_up_ctrl_allguard c0_f0_support c0_f0_live_pos_up_ctrl_mid 0 NSENSE" in netlist
+    assert "Mc0_f0_live_neg_up_ctrl_g c0_f0_live_neg_up_ctrl_allguard c0_f0_support c0_f0_live_neg_up_ctrl_mid 0 NSENSE" in netlist
+    assert "Mc0_f0_live_pos_dn_g c0_f0_live_pos_dn_allguard c0_f0_support c0_f0_live_pos_dn 0 NSENSE" in netlist
+    assert "Mc0_f0_live_neg_dn_g c0_f0_live_neg_dn_allguard c0_f0_support c0_f0_live_neg_dn 0 NSENSE" in netlist
+    assert "Mc0_f0_live_neg_up_ctrl_g c0_f0_live_neg_up_ctrl_mid c0_f0_support c0_f0_live_neg_up_ctrl_guard 0 NSENSE" not in netlist
 
 
 def test_multiclass_block_sequence_can_charge_support_from_stored_activation() -> None:

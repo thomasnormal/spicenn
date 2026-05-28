@@ -1001,6 +1001,90 @@ def test_multiclass_block_sequence_summarizes_physical_replay_margin_sizing() ->
     assert stats["readout_margin_score_cap_feasible"] is True
 
 
+def test_multiclass_block_sequence_summarizes_physical_replay_mode_sweep(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[tuple[str, str, str]] = []
+
+    def fake_replay_projection_stats(*args: object, **kwargs: object) -> dict[str, object]:
+        mode_tag = str(kwargs["tag"]).rsplit("_", 1)[-1]
+        calls.append(
+            (
+                mode_tag,
+                str(kwargs["readout_forward_mode"]),
+                str(kwargs["score_sense_mode"]),
+            )
+        )
+        accuracy = {
+            "direct-voltage": 0.0,
+            "diode-voltage": 0.5,
+            "diode-current-clamp": 1.0,
+            "diode-mirror": 1.0,
+        }[mode_tag]
+        margin = {
+            "direct-voltage": -0.02,
+            "diode-voltage": -0.01,
+            "diode-current-clamp": 0.003,
+            "diode-mirror": 0.010,
+        }[mode_tag]
+        return {
+            "final_eval_physical_readout_replay_rows": [
+                {
+                    "cycle": 0,
+                    "label": 0,
+                    "prediction": 0 if accuracy > 0.0 else 1,
+                    "correct": accuracy > 0.0,
+                    "score_margin_v": margin,
+                    "score_c0_v": margin,
+                    "score_c1_v": 0.0,
+                }
+            ],
+            "final_eval_physical_readout_replay_accuracy": accuracy,
+            "final_eval_physical_readout_replay_min_margin_v": margin,
+        }
+
+    monkeypatch.setattr(seq, "physical_readout_replay_projection_stats", fake_replay_projection_stats)
+
+    stats = seq.physical_readout_replay_mode_sweep_stats(
+        {"act_f0_0": 0.85},
+        labels=[0],
+        sequence=["final_eval"],
+        class_count=2,
+        total_feature_count=1,
+        final_positive=[[0.5], [0.3]],
+        final_negative=[[0.3], [0.5]],
+        spice_bin="ngspice",
+        generated_dir=tmp_path,
+        tag="unit",
+        readout_width_u=64.0,
+        score_capacitance_f=10.0,
+        score_load_resistance=1.0e6,
+        score_mirror_capacitance_f=20.0,
+        score_mirror_diode_width_u=64.0,
+        score_mirror_sink_width_u=4.0,
+        score_mirror_reset_width_u=16.0,
+        measure_ns=4.5,
+        timeout=1.0,
+    )
+
+    assert calls == [
+        ("direct-voltage", "direct", "voltage"),
+        ("diode-voltage", "diode", "voltage"),
+        ("diode-current-clamp", "diode", "current-clamp"),
+        ("diode-mirror", "diode", "diode-mirror"),
+    ]
+    assert stats["final_eval_physical_readout_replay_sweep_accuracy_by_mode"][
+        "diode-current-clamp"
+    ] == pytest.approx(1.0)
+    assert stats["final_eval_physical_readout_replay_sweep_min_margin_by_mode"]["diode-mirror"] == pytest.approx(
+        0.010
+    )
+    assert stats["final_eval_physical_readout_replay_sweep_best_mode"] == "diode-mirror"
+    assert stats["final_eval_physical_readout_replay_sweep_best_accuracy"] == pytest.approx(1.0)
+    assert stats["final_eval_physical_readout_replay_sweep_best_min_margin_v"] == pytest.approx(0.010)
+
+
 def test_multiclass_block_sequence_summarizes_wrong_replay_contributions() -> None:
     stats = seq.physical_readout_replay_wrong_contribution_stats(
         [

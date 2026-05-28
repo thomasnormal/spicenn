@@ -64,6 +64,12 @@ HIDDEN_UPDATE_MODES = ("none", "readout-weighted", "direct-readout-weighted")
 SCORE_TIMING_MODES = ("late", "early")
 SCORE_SENSE_MODES = ("voltage", "current-clamp", "diode-mirror")
 READOUT_FORWARD_MODES = ("direct", "diode")
+PHYSICAL_READOUT_REPLAY_SWEEP_MODES: dict[str, tuple[str, str]] = {
+    "direct-voltage": ("direct", "voltage"),
+    "diode-voltage": ("diode", "voltage"),
+    "diode-current-clamp": ("diode", "current-clamp"),
+    "diode-mirror": ("diode", "diode-mirror"),
+}
 ELIGIBILITY_GATE_MODES = ("raw", "competition", "rank", "contrast")
 ELIGIBILITY_SOURCE_MODES = ("pre-p", "act-raw", "act")
 READOUT_UPDATE_ELIGIBILITY_MODES = ("restored", "hybrid", "analog-pass")
@@ -4202,6 +4208,92 @@ def physical_readout_replay_projection_stats(
     }
 
 
+def physical_readout_replay_mode_sweep_stats(
+    measures: dict[str, float],
+    *,
+    labels: list[int],
+    sequence: list[str],
+    class_count: int,
+    total_feature_count: int,
+    final_positive: list[list[float]],
+    final_negative: list[list[float]],
+    spice_bin: str,
+    generated_dir: Any,
+    tag: str,
+    readout_width_u: float,
+    score_capacitance_f: float,
+    score_load_resistance: float,
+    score_mirror_capacitance_f: float,
+    score_mirror_diode_width_u: float,
+    score_mirror_sink_width_u: float,
+    score_mirror_reset_width_u: float,
+    measure_ns: float,
+    timeout: float,
+    modes: dict[str, tuple[str, str]] = PHYSICAL_READOUT_REPLAY_SWEEP_MODES,
+) -> dict[str, Any]:
+    """Replay final state through several physical readout/sense topologies.
+
+    This is diagnostic-only. It never feeds replay scores back into training;
+    it identifies whether a final capacitor state is unreadable generally or
+    only unreadable by the continuous deck's current score topology.
+    """
+    sweep: dict[str, dict[str, Any]] = {}
+    for mode_name, (readout_forward_mode, score_sense_mode) in modes.items():
+        sweep[mode_name] = physical_readout_replay_projection_stats(
+            measures,
+            labels=labels,
+            sequence=sequence,
+            class_count=class_count,
+            total_feature_count=total_feature_count,
+            final_positive=final_positive,
+            final_negative=final_negative,
+            spice_bin=spice_bin,
+            generated_dir=generated_dir,
+            tag=f"{tag}_{mode_name}",
+            readout_width_u=readout_width_u,
+            score_capacitance_f=score_capacitance_f,
+            score_load_resistance=score_load_resistance,
+            readout_forward_mode=readout_forward_mode,
+            score_sense_mode=score_sense_mode,
+            score_mirror_capacitance_f=score_mirror_capacitance_f,
+            score_mirror_diode_width_u=score_mirror_diode_width_u,
+            score_mirror_sink_width_u=score_mirror_sink_width_u,
+            score_mirror_reset_width_u=score_mirror_reset_width_u,
+            measure_ns=measure_ns,
+            timeout=timeout,
+        )
+    accuracies = {
+        mode_name: stats["final_eval_physical_readout_replay_accuracy"]
+        for mode_name, stats in sweep.items()
+    }
+    min_margins = {
+        mode_name: stats["final_eval_physical_readout_replay_min_margin_v"]
+        for mode_name, stats in sweep.items()
+    }
+    ranked = [
+        (
+            mode_name,
+            float(accuracy),
+            float(min_margins[mode_name]),
+        )
+        for mode_name, accuracy in accuracies.items()
+        if accuracy is not None and min_margins[mode_name] is not None
+    ]
+    best_mode = None
+    best_accuracy = None
+    best_min_margin = None
+    if ranked:
+        best_mode, best_accuracy, best_min_margin = max(ranked, key=lambda item: (item[1], item[2]))
+    return {
+        "final_eval_physical_readout_replay_sweep": sweep,
+        "final_eval_physical_readout_replay_sweep_accuracy_by_mode": accuracies,
+        "final_eval_physical_readout_replay_sweep_min_margin_by_mode": min_margins,
+        "final_eval_physical_readout_replay_sweep_best_mode": best_mode,
+        "final_eval_physical_readout_replay_sweep_best_accuracy": best_accuracy,
+        "final_eval_physical_readout_replay_sweep_best_min_margin_v": best_min_margin,
+    }
+
+
 def physical_readout_replay_margin_sizing_stats(
     replay_rows: list[dict[str, Any]],
     *,
@@ -5277,6 +5369,38 @@ def run_case(args: argparse.Namespace) -> dict[str, Any]:
             "final_eval_physical_readout_replay_min_margin_v": None,
         }
     )
+    physical_replay_sweep = (
+        physical_readout_replay_mode_sweep_stats(
+            measures,
+            labels=labels,
+            sequence=sequence,
+            class_count=args.class_count,
+            total_feature_count=total_feature_count,
+            final_positive=final_positive,
+            final_negative=final_negative,
+            spice_bin=spice_bin,
+            generated_dir=generated,
+            tag=tag,
+            readout_width_u=args.readout_width,
+            score_capacitance_f=args.score_capacitance_f,
+            score_load_resistance=args.score_load_resistance,
+            score_mirror_capacitance_f=args.score_mirror_capacitance_f,
+            score_mirror_diode_width_u=args.score_mirror_diode_width,
+            score_mirror_sink_width_u=args.score_mirror_sink_width,
+            score_mirror_reset_width_u=args.score_mirror_reset_width,
+            measure_ns=replay_measure_ns,
+            timeout=args.physical_readout_replay_timeout,
+        )
+        if args.physical_readout_replay_sweep
+        else {
+            "final_eval_physical_readout_replay_sweep": {},
+            "final_eval_physical_readout_replay_sweep_accuracy_by_mode": {},
+            "final_eval_physical_readout_replay_sweep_min_margin_by_mode": {},
+            "final_eval_physical_readout_replay_sweep_best_mode": None,
+            "final_eval_physical_readout_replay_sweep_best_accuracy": None,
+            "final_eval_physical_readout_replay_sweep_best_min_margin_v": None,
+        }
+    )
     wrong_replay_contributions = physical_readout_replay_wrong_contribution_stats(
         physical_replay["final_eval_physical_readout_replay_rows"],
         measures,
@@ -5603,8 +5727,12 @@ def run_case(args: argparse.Namespace) -> dict[str, Any]:
             prefix="conductance_projection",
         ),
         "physical_readout_replay_enabled": args.physical_readout_replay,
-        "physical_readout_replay_measure_ns": replay_measure_ns if args.physical_readout_replay else None,
+        "physical_readout_replay_measure_ns": (
+            replay_measure_ns if args.physical_readout_replay or args.physical_readout_replay_sweep else None
+        ),
+        "physical_readout_replay_sweep_enabled": args.physical_readout_replay_sweep,
         **physical_replay,
+        **physical_replay_sweep,
         **physical_readout_replay_alignment_stats(
             rows,
             physical_replay["final_eval_physical_readout_replay_rows"],
@@ -5786,6 +5914,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
     ap.add_argument("--readout-center-resistance", type=float, default=0.0)
     ap.add_argument("--readout-center-voltage", type=float, default=0.40)
     ap.add_argument("--physical-readout-replay", action="store_true")
+    ap.add_argument("--physical-readout-replay-sweep", action="store_true")
     ap.add_argument("--physical-readout-replay-timeout", type=float, default=30.0)
     ap.add_argument("--readout-margin-target-v", type=float, default=10.0e-3)
     ap.add_argument("--min-target-signed", type=float, default=10e-3)

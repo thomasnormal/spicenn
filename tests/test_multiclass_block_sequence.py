@@ -3287,6 +3287,7 @@ def _hidden_direct_readout_weighted_writer_netlist(
     state_keeper_width_u: float | None = None,
     state_keeper_mode: str = "differential",
     common_clamp_width_u: float | None = None,
+    common_clamp_mode: str = "equal",
 ) -> str:
     lines = [
         "* Low-level direct readout-weighted hidden writer primitive.",
@@ -3351,10 +3352,18 @@ def _hidden_direct_readout_weighted_writer_netlist(
             else []
         ),
         *(
-            seq.hidden_common_mode_clamp_lines(
-                feature_idx=0,
-                low_ref_node="hidden_wlo_ref",
-                width_u=common_clamp_width_u,
+            (
+                seq.hidden_differential_common_mode_clamp_lines(
+                    feature_idx=0,
+                    low_ref_node="hidden_wlo_ref",
+                    width_u=common_clamp_width_u,
+                )
+                if common_clamp_mode == "differential"
+                else seq.hidden_common_mode_clamp_lines(
+                    feature_idx=0,
+                    low_ref_node="hidden_wlo_ref",
+                    width_u=common_clamp_width_u,
+                )
             )
             if common_clamp_width_u is not None
             else []
@@ -4213,6 +4222,50 @@ def test_multiclass_block_sequence_ngspice_common_mode_clamp_limits_hidden_doubl
     assert float(clamped_negative["signed_after"]) < -0.75
 
 
+def test_multiclass_block_sequence_ngspice_differential_common_clamp_preserves_hidden_sign(
+    tmp_path: Path,
+    ngspice_path: str,
+) -> None:
+    common_kwargs = dict(
+        vwp=0.40,
+        vwn=0.40,
+        errp=0.0,
+        width_u=0.125,
+        readout_gate_mode="restored-excess",
+        output_stage="pmos-complementary",
+        readout_high_ref=0.42,
+        readout_low_ref=0.28,
+        hidden_high_ref=1.05,
+        hidden_low_ref=0.15,
+        common_clamp_width_u=2.0,
+        common_clamp_mode="differential",
+    )
+    positive_high = run_netlist(
+        ngspice_path,
+        tmp_path / "hidden_diff_common_clamp_positive_high.cir",
+        _hidden_direct_readout_weighted_writer_netlist(**common_kwargs, whp=1.0, whn=0.95),
+        timeout=20.0,
+    )
+    negative_high = run_netlist(
+        ngspice_path,
+        tmp_path / "hidden_diff_common_clamp_negative_high.cir",
+        _hidden_direct_readout_weighted_writer_netlist(**common_kwargs, whp=0.95, whn=1.0),
+        timeout=20.0,
+    )
+    valid_positive = run_netlist(
+        ngspice_path,
+        tmp_path / "hidden_diff_common_clamp_valid_positive.cir",
+        _hidden_direct_readout_weighted_writer_netlist(**common_kwargs, whp=0.80, whn=0.0),
+        timeout=20.0,
+    )
+
+    assert float(positive_high["common_after"]) < 0.90
+    assert float(positive_high["signed_after"]) > 40e-3
+    assert float(negative_high["common_after"]) < 0.90
+    assert float(negative_high["signed_after"]) < -40e-3
+    assert float(valid_positive["signed_after"]) > 0.75
+
+
 def test_multiclass_block_sequence_ngspice_direct_hidden_writer_pmos_suppressive_uses_low_side_headroom(
     tmp_path: Path,
     ngspice_path: str,
@@ -4733,6 +4786,25 @@ def test_multiclass_block_sequence_can_add_hidden_common_mode_clamp() -> None:
     assert "\nB" not in netlist
 
 
+def test_multiclass_block_sequence_can_add_differential_hidden_common_mode_clamp() -> None:
+    netlist = seq.generate_netlist(
+        train_records=_one_hot_records(),
+        eval_records=_one_hot_records(),
+        class_count=3,
+        feature_count=3,
+        hidden_update_mode="direct-readout-weighted",
+        hidden_state_common_clamp_width_u=0.5,
+        hidden_state_common_clamp_mode="differential",
+        error_mode="pairwise-margin-centered-gain-descent",
+    )
+
+    assert "Mhcmdiff_f0_detect_p hcmdiff_f0_bar whp0 hcmdiff_f0_stack_mid 0 NCM W=0.5u" in netlist
+    assert "Mhcmdiff_f0_p_cross whp0 whn0 hcmdiff_f0_p_mid 0 NSENSE W=0.5u" in netlist
+    assert "Mhcmdiff_f0_n_cross whn0 whp0 hcmdiff_f0_n_mid 0 NSENSE W=0.5u" in netlist
+    assert "Mhcmclamp_f0_p" not in netlist
+    assert "\nB" not in netlist
+
+
 def test_multiclass_block_sequence_can_add_physical_hidden_state_anchor() -> None:
     netlist = seq.generate_netlist(
         train_records=_one_hot_records(),
@@ -4854,6 +4926,17 @@ def test_multiclass_block_sequence_rejects_bad_hidden_state_keeper() -> None:
             feature_count=3,
             hidden_update_mode="direct-readout-weighted",
             hidden_state_common_clamp_width_u=-0.1,
+            error_mode="pairwise-margin-centered-gain-descent",
+        )
+    with pytest.raises(ValueError, match="hidden_state_common_clamp_mode"):
+        seq.generate_netlist(
+            train_records=_one_hot_records(),
+            eval_records=_one_hot_records(),
+            class_count=3,
+            feature_count=3,
+            hidden_update_mode="direct-readout-weighted",
+            hidden_state_common_clamp_width_u=0.5,
+            hidden_state_common_clamp_mode="charge-pump",
             error_mode="pairwise-margin-centered-gain-descent",
         )
 

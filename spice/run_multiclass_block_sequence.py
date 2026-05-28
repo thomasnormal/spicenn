@@ -70,6 +70,7 @@ HIDDEN_DIRECT_READOUT_GATE_MODES = ("raw", "differential-excess", "restored-exce
 HIDDEN_DIRECT_OUTPUT_STAGES = (
     "nmos-pass",
     "pmos-balanced",
+    "pmos-differential",
     "pmos-suppressive",
     "pmos-pullup",
     "pmos-bounded",
@@ -625,7 +626,12 @@ def hidden_direct_readout_weighted_update_lines(
                         f"M{prefix}{suffix}_ndn_direct {whn} {dgate} {low_ref_node} 0 NSENSE W={complement_width_scale * width_u:.6g}u L=180n"
                     )
             else:
-                uses_hidden_ref = output_stage in ("pmos-balanced", "pmos-bounded", "pmos-complementary")
+                uses_hidden_ref = output_stage in (
+                    "pmos-balanced",
+                    "pmos-bounded",
+                    "pmos-complementary",
+                    "pmos-differential",
+                )
                 pmos_ref_node = high_ref_node if uses_hidden_ref else "vwhi_ref"
                 pmos_ref_ic = high_ref_voltage if uses_hidden_ref else 1.05
                 pullup_width_u = complement_width_scale * width_u if output_stage == "pmos-balanced" else width_u
@@ -665,7 +671,11 @@ def hidden_direct_readout_weighted_update_lines(
                     f"M{prefix}{suffix}_pup_w {source_for_weight} {weight} 0 0 NSENSE W={width_u:.6g}u L=180n",
                     f"M{prefix}{suffix}_pup_pmos {whp} {pgate} {pmos_ref_node} vdd PMOS W={pullup_width_u:.6g}u L=180n",
                 ]
-                if output_stage in ("pmos-balanced", "pmos-complementary"):
+                if output_stage == "pmos-differential":
+                    lines.append(
+                        f"M{prefix}{suffix}_ndn_pmos {low_ref_node} {pgate} {whn} vdd PMOS W={complement_width_scale * width_u:.6g}u L=180n"
+                    )
+                elif output_stage in ("pmos-balanced", "pmos-complementary"):
                     dgate = f"{prefix}{suffix}_ndn_gate"
                     lines += [
                         f"R{dgate} {dgate} 0 1G",
@@ -776,7 +786,12 @@ def hidden_direct_readout_weighted_update_lines(
                         f"M{prefix}{suffix}_pdn_direct {whp} {dgate} {low_ref_node} 0 NSENSE W={complement_width_scale * width_u:.6g}u L=180n"
                     )
             else:
-                uses_hidden_ref = output_stage in ("pmos-balanced", "pmos-bounded", "pmos-complementary")
+                uses_hidden_ref = output_stage in (
+                    "pmos-balanced",
+                    "pmos-bounded",
+                    "pmos-complementary",
+                    "pmos-differential",
+                )
                 pmos_ref_node = high_ref_node if uses_hidden_ref else "vwhi_ref"
                 pmos_ref_ic = high_ref_voltage if uses_hidden_ref else 1.05
                 pullup_width_u = complement_width_scale * width_u if output_stage == "pmos-balanced" else width_u
@@ -816,7 +831,11 @@ def hidden_direct_readout_weighted_update_lines(
                     f"M{prefix}{suffix}_nup_w {source_for_weight} {weight} 0 0 NSENSE W={width_u:.6g}u L=180n",
                     f"M{prefix}{suffix}_nup_pmos {whn} {ngate} {pmos_ref_node} vdd PMOS W={pullup_width_u:.6g}u L=180n",
                 ]
-                if output_stage in ("pmos-balanced", "pmos-complementary"):
+                if output_stage == "pmos-differential":
+                    lines.append(
+                        f"M{prefix}{suffix}_pdn_pmos {low_ref_node} {ngate} {whp} vdd PMOS W={complement_width_scale * width_u:.6g}u L=180n"
+                    )
+                elif output_stage in ("pmos-balanced", "pmos-complementary"):
                     dgate = f"{prefix}{suffix}_pdn_gate"
                     lines += [
                         f"R{dgate} {dgate} 0 1G",

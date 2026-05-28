@@ -125,6 +125,54 @@ def _hidden_state_lines(hidden_count: int) -> list[str]:
     return lines
 
 
+def _hidden_activation_common_gate_lines(
+    hidden_count: int,
+    *,
+    common_resistance_ohm: float,
+    gate_capacitance_f: float,
+    contrast_capacitance_f: float,
+    pullup_width_u: float,
+    pulldown_width_u: float,
+    pass_width_u: float,
+) -> list[str]:
+    if min(
+        hidden_count,
+        common_resistance_ohm,
+        gate_capacitance_f,
+        contrast_capacitance_f,
+        pullup_width_u,
+        pulldown_width_u,
+        pass_width_u,
+    ) <= 0.0:
+        raise ValueError("hidden activation common-gate sizes must be positive")
+    lines = ["Rhidden_act_common hidden_act_common 0 1G"]
+    for hidden in range(hidden_count):
+        gate = f"hactgate{hidden}"
+        act_contrast = f"act_contrast{hidden}"
+        up_i = f"{gate}_up_i"
+        dn_i = f"{gate}_dn_i"
+        pass_mid = f"hactcontrast_h{hidden}_pass_mid"
+        lines += [
+            f"Rhidden_act_common_act{hidden} hidden_act_common act{hidden} {common_resistance_ohm:.12g}",
+            f"C{gate} {gate} 0 {gate_capacitance_f:.12g}f IC=0",
+            f"R{gate} {gate} 0 1G",
+            f"M{gate}_rst {gate} rst 0 0 NMOS W=4u L=180n",
+            f"R{up_i} {up_i} 0 1G",
+            f"R{dn_i} {dn_i} 0 1G",
+            f"M{gate}_up_v vdd act{hidden} {up_i} 0 NSENSE W={pullup_width_u:.6g}u L=180n",
+            f"M{gate}_up_t {up_i} featphi {gate} 0 NSENSE W={pullup_width_u:.6g}u L=180n",
+            f"M{gate}_dn_v {gate} hidden_act_common {dn_i} 0 NSENSE W={pulldown_width_u:.6g}u L=180n",
+            f"M{gate}_dn_t {dn_i} featphi 0 0 NSENSE W={pulldown_width_u:.6g}u L=180n",
+            f"C{act_contrast} {act_contrast} 0 {contrast_capacitance_f:.12g}f IC=0",
+            f"R{act_contrast} {act_contrast} 0 1G",
+            f"M{act_contrast}_rst {act_contrast} rst 0 0 NMOS W=4u L=180n",
+            f"R{pass_mid} {pass_mid} 0 1G",
+            f"Mhactcontrast_h{hidden}_pass_g act{hidden} {gate} {pass_mid} 0 NSENSE W={pass_width_u:.6g}u L=180n",
+            f"Mhactcontrast_h{hidden}_pass_t {pass_mid} featphi {act_contrast} 0 NSENSE W={pass_width_u:.6g}u L=180n",
+        ]
+    return lines
+
+
 def _hidden_forward_lines(
     feature_count: int,
     hidden_count: int,
@@ -132,9 +180,18 @@ def _hidden_forward_lines(
     *,
     activation_mode: str,
     activation_sense_width_u: float,
+    row_select_mode: str = "act",
+    row_select_common_resistance_ohm: float = 100000.0,
+    row_select_gate_capacitance_f: float = 8.0,
+    row_select_contrast_capacitance_f: float = 20.0,
+    row_select_pullup_width_u: float = 128.0,
+    row_select_pulldown_width_u: float = 24.0,
+    row_select_pass_width_u: float = 16.0,
 ) -> list[str]:
     if activation_mode not in ("single-ended", "differential-preamp"):
         raise ValueError("hidden_activation_mode must be single-ended or differential-preamp")
+    if row_select_mode not in ("act", "act-common-gate"):
+        raise ValueError("hidden_row_select_mode must be act or act-common-gate")
     lines: list[str] = []
     for hidden in range(hidden_count):
         pre_p = f"pre{hidden}_p"
@@ -175,12 +232,25 @@ def _hidden_forward_lines(
                 f"Mh{hidden}_act_sense_ln {sense_p} {sense_n} vdd vdd PMOS W={max(2.0, activation_sense_width_u / 8.0):.6g}u L=180n",
                 f"Mact{hidden}_diff_restore {act} {sense_n} vdd vdd PMOS W={max(8.0, activation_sense_width_u / 2.0):.6g}u L=180n",
             ]
+    if row_select_mode == "act-common-gate":
+        lines += _hidden_activation_common_gate_lines(
+            hidden_count,
+            common_resistance_ohm=row_select_common_resistance_ohm,
+            gate_capacitance_f=row_select_gate_capacitance_f,
+            contrast_capacitance_f=row_select_contrast_capacitance_f,
+            pullup_width_u=row_select_pullup_width_u,
+            pulldown_width_u=row_select_pulldown_width_u,
+            pass_width_u=row_select_pass_width_u,
+        )
+    for hidden in range(hidden_count):
+        hrow_source = f"act_contrast{hidden}" if row_select_mode == "act-common-gate" else f"act{hidden}"
+        hrow_select_model = "NMOS" if row_select_mode == "act-common-gate" else "NSENSE"
         lines += [
             f"Chrow{hidden}_ctrl hrow{hidden}_ctrl 0 1f IC=1.2",
             f"Rhrow{hidden}_ctrl hrow{hidden}_ctrl vdd 1G",
             f"Rhrow{hidden}_mid hrow{hidden}_mid 0 1G",
             f"Mhrow{hidden}_ctrl_rst hrow{hidden}_ctrl rstn vdd vdd PMOS W=4u L=180n",
-            f"Mhrow{hidden}_ctrl_a hrow{hidden}_ctrl {act} hrow{hidden}_mid 0 NSENSE W=12u L=180n",
+            f"Mhrow{hidden}_ctrl_a hrow{hidden}_ctrl {hrow_source} hrow{hidden}_mid 0 {hrow_select_model} W=12u L=180n",
             f"Mhrow{hidden}_ctrl_phi hrow{hidden}_mid featphi 0 0 NSENSE W=12u L=180n",
             f"Mhrow{hidden}_restore hrow{hidden} hrow{hidden}_ctrl vdd vdd PMOS W=16u L=180n",
         ]
@@ -677,6 +747,13 @@ def mnist01_live_hidden_netlist(
     hidden_forward_width_u: float = 8.0,
     hidden_activation_mode: str = "single-ended",
     hidden_activation_sense_width_u: float = 32.0,
+    hidden_row_select_mode: str = "act",
+    hidden_row_select_common_resistance_ohm: float = 100000.0,
+    hidden_row_select_gate_capacitance_f: float = 8.0,
+    hidden_row_select_contrast_capacitance_f: float = 20.0,
+    hidden_row_select_pullup_width_u: float = 128.0,
+    hidden_row_select_pulldown_width_u: float = 24.0,
+    hidden_row_select_pass_width_u: float = 16.0,
     readout_width_u: float = 16.0,
     branch_width_u: float = 0.05,
     floor_width_u: float = 0.015,
@@ -719,6 +796,8 @@ def mnist01_live_hidden_netlist(
         raise ValueError("hidden_credit_gate_mode must be differential-excess or dynamic-preamp")
     if hidden_activation_mode not in ("single-ended", "differential-preamp"):
         raise ValueError("hidden_activation_mode must be single-ended or differential-preamp")
+    if hidden_row_select_mode not in ("act", "act-common-gate"):
+        raise ValueError("hidden_row_select_mode must be act or act-common-gate")
     if hidden_writer_topology not in ("pmos-highside", "pmos-differential"):
         raise ValueError("hidden_writer_topology must be pmos-highside or pmos-differential")
     if hidden_credit_gate_mode == "dynamic-preamp" and hidden_writer_topology != "pmos-differential":
@@ -739,6 +818,12 @@ def mnist01_live_hidden_netlist(
         iref_a,
         hidden_forward_width_u,
         hidden_activation_sense_width_u,
+        hidden_row_select_common_resistance_ohm,
+        hidden_row_select_gate_capacitance_f,
+        hidden_row_select_contrast_capacitance_f,
+        hidden_row_select_pullup_width_u,
+        hidden_row_select_pulldown_width_u,
+        hidden_row_select_pass_width_u,
         readout_width_u,
         branch_width_u,
         floor_width_u,
@@ -809,6 +894,13 @@ def mnist01_live_hidden_netlist(
             hidden_forward_width_u,
             activation_mode=hidden_activation_mode,
             activation_sense_width_u=hidden_activation_sense_width_u,
+            row_select_mode=hidden_row_select_mode,
+            row_select_common_resistance_ohm=hidden_row_select_common_resistance_ohm,
+            row_select_gate_capacitance_f=hidden_row_select_gate_capacitance_f,
+            row_select_contrast_capacitance_f=hidden_row_select_contrast_capacitance_f,
+            row_select_pullup_width_u=hidden_row_select_pullup_width_u,
+            row_select_pulldown_width_u=hidden_row_select_pulldown_width_u,
+            row_select_pass_width_u=hidden_row_select_pass_width_u,
         ),
         *_score_readout_lines(hidden_count, readout_width_u),
         *_error_storage_lines(),

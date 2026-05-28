@@ -156,6 +156,18 @@ def test_mnist01_live_hidden_netlist_is_live_transistor_path() -> None:
     assert "Mh0_act_sense_p h0_act_sense_n pre0_p h0_act_sense_tail 0 NSENSE" in activation_netlist
     assert "Mact0_diff_restore act0 h0_act_sense_n vdd vdd PMOS" in activation_netlist
 
+    row_select_netlist = mnist01_hidden.mnist01_live_hidden_netlist(
+        train,
+        train,
+        hidden_activation_mode="differential-preamp",
+        hidden_row_select_mode="act-common-gate",
+    )
+    assert "Rhidden_act_common_act0 hidden_act_common act0 100000" in row_select_netlist
+    assert "Chactgate0 hactgate0 0 8f IC=0" in row_select_netlist
+    assert "Mhactcontrast_h0_pass_g act0 hactgate0 hactcontrast_h0_pass_mid 0 NSENSE" in row_select_netlist
+    assert "Mhrow0_ctrl_a hrow0_ctrl act_contrast0 hrow0_mid 0 NMOS" in row_select_netlist
+    assert "Mhrow1_ctrl_a hrow1_ctrl act1 hrow1_mid 0 NSENSE" not in row_select_netlist
+
 
 def test_mnist01_live_hidden_netlist_validation() -> None:
     sample = {"features": [1.0] * 16, "label": 0}
@@ -197,6 +209,12 @@ def test_mnist01_live_hidden_netlist_validation() -> None:
             [sample],
             [sample],
             hidden_activation_mode="BAD",
+        )
+    with pytest.raises(ValueError, match="hidden_row_select_mode"):
+        mnist01_hidden.mnist01_live_hidden_netlist(
+            [sample],
+            [sample],
+            hidden_row_select_mode="BAD",
         )
     with pytest.raises(ValueError, match="dynamic-preamp"):
         mnist01_hidden.mnist01_live_hidden_netlist(
@@ -265,16 +283,85 @@ def test_mnist01_live_hidden_differential_activation_reads_unsaturated_synthetic
         ),
         timeout=60.0,
     )
+    common_gate = mnist01_hidden.run_netlist(
+        ngspice_path,
+        tmp_path / "mnist01_hidden_diff_activation_common_gate_mild.cir",
+        mnist01_hidden.mnist01_live_hidden_netlist(
+            [sample],
+            [sample],
+            hidden_activation_mode="differential-preamp",
+            hidden_row_select_mode="act-common-gate",
+            **common_kwargs,
+        ),
+        timeout=60.0,
+    )
 
     single_hrows = [single_ended[f"initial_hrow_h{hidden}_0"] for hidden in range(mnist01_hidden.HIDDEN)]
     diff_acts = [differential[f"initial_act_h{hidden}_0"] for hidden in range(mnist01_hidden.HIDDEN)]
     diff_hrows = [differential[f"initial_hrow_h{hidden}_0"] for hidden in range(mnist01_hidden.HIDDEN)]
+    common_hrows = [common_gate[f"initial_hrow_h{hidden}_0"] for hidden in range(mnist01_hidden.HIDDEN)]
 
     assert max(single_hrows) < 1e-3
     assert diff_acts[0] > 1.0
     assert diff_hrows[0] > 1.0
     assert max(diff_acts[1:]) < 1e-3
     assert max(diff_hrows[1:]) < 1e-3
+    assert common_hrows[0] > 1.0
+    assert max(common_hrows[1:]) < 1e-3
+
+
+@pytest.mark.ngspice
+def test_mnist01_hidden_activation_common_gate_selects_above_common_activity(
+    tmp_path: Path,
+    ngspice_path: str,
+) -> None:
+    lines = [
+        "* Low-level MNIST live-hidden row-select common-gate primitive.",
+        ".param VDD=1.2",
+        mnist01_hidden.mos_models(),
+        ".options method=gear reltol=1e-4 abstol=1e-13 vntol=1e-7",
+        "Vdd vdd 0 {VDD}",
+        "Vrst rst 0 0",
+        "Vfeatphi featphi 0 PULSE(0 1.2 0.2n 10p 10p 1.4n 4n)",
+        "Vact0 act0 0 0.42",
+        "Vact1 act1 0 0.30",
+        "Vact2 act2 0 0.06",
+        *mnist01_hidden._hidden_activation_common_gate_lines(
+            3,
+            common_resistance_ohm=100000.0,
+            gate_capacitance_f=8.0,
+            contrast_capacitance_f=20.0,
+            pullup_width_u=128.0,
+            pulldown_width_u=24.0,
+            pass_width_u=16.0,
+        ),
+        ".meas tran common_after FIND V(hidden_act_common) AT=2n",
+        ".meas tran gate0 FIND V(hactgate0) AT=2n",
+        ".meas tran gate1 FIND V(hactgate1) AT=2n",
+        ".meas tran gate2 FIND V(hactgate2) AT=2n",
+        ".meas tran contrast0 FIND V(act_contrast0) AT=2n",
+        ".meas tran contrast1 FIND V(act_contrast1) AT=2n",
+        ".meas tran contrast2 FIND V(act_contrast2) AT=2n",
+        ".tran 2p 3n uic",
+        ".control",
+        "run",
+        "quit",
+        ".endc",
+        ".end",
+    ]
+
+    parsed = mnist01_hidden.run_netlist(
+        ngspice_path,
+        tmp_path / "mnist01_hidden_activation_common_gate.cir",
+        "\n".join(lines),
+        timeout=20.0,
+    )
+
+    assert 0.20 < parsed["common_after"] < 0.32
+    assert parsed["gate0"] > parsed["gate1"] + 40e-3
+    assert parsed["gate1"] > parsed["gate2"] + 40e-3
+    assert parsed["contrast0"] > parsed["contrast1"] + 30e-3
+    assert parsed["contrast1"] > parsed["contrast2"] + 30e-3
 
 
 def _hidden_forward_update_primitive_netlist() -> str:

@@ -2,6 +2,21 @@
 
 ## 2026-05-28
 
+- Added a low-level MNIST hidden-cell forward/write regression for the new
+  unsaturated operating region.  The deck uses one real hidden conductance
+  cell, two forward phases, and one live `pmos-differential` hidden write
+  between them; Python only supplies fixed clocks and source rails for the
+  primitive.  With `whp/whn = 0.50/0.45 V`, differential activation sense, a
+  short `errphi` pulse, `0.005u` writer stack devices, and a `0.1u` hidden
+  PMOS pullup, ngspice measures a bounded signed hidden update of about
+  `34 mV` and a next-forward pre-activation evidence increase of about
+  `37 mV`, while keeping `whp <0.60 V` and `whn >0.40 V`.  This is the missing
+  local contract for replacing the rail-coded MNIST hidden state: a physical
+  hidden write can improve the next forward computation without saturating the
+  storage rails.  It is still a primitive proof; the remaining integration
+  work is to drive the same bounded writer from real readout-weighted hidden
+  credit on real MNIST01 samples.  Focused regression: `python3 -m pytest
+  tests/test_mnist01_live_hidden_divider_training.py -q` -> `9 passed`.
 - Added opt-in `hidden_activation_mode=differential-preamp` to the MNIST01
   live-hidden deck.  The circuit is transistor/passive: a dynamic differential
   sense pair compares `pre_p/pre_n`, PMOS keepers restore the winning sense

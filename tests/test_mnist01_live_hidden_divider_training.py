@@ -266,6 +266,89 @@ def test_mnist01_live_hidden_differential_activation_reads_unsaturated_synthetic
     assert max(diff_hrows[1:]) < 1e-3
 
 
+def _hidden_forward_update_primitive_netlist() -> str:
+    lines = [
+        "* One hidden conductance cell: bounded write improves next forward evidence.",
+        ".param VDD=1.2",
+        mnist01_hidden.mos_models(),
+        ".options method=gear reltol=1e-4 abstol=1e-13 vntol=1e-7",
+        "Vdd vdd 0 {VDD}",
+        "Vrst rst 0 PWL(0n 1.2 0.45n 1.2 0.48n 0 4.97n 0 5.00n 1.2 5.45n 1.2 5.48n 0 8n 0)",
+        "Vrstn rstn 0 PWL(0n 0 0.45n 0 0.48n 1.2 4.97n 1.2 5.00n 0 5.45n 0 5.48n 1.2 8n 1.2)",
+        "Vfeatphi featphi 0 PWL(0n 0 0.75n 0 0.78n 1.2 2.10n 1.2 2.13n 0 5.75n 0 5.78n 1.2 7.10n 1.2 7.13n 0 8n 0)",
+        "Verrphi errphi 0 PWL(0n 0 3.00n 0 3.03n 1.2 3.10n 1.2 3.13n 0 8n 0)",
+        "Vpx0 px0 0 1.2",
+        "Vhdp h0_hdp_gate 0 0.8",
+        "Vhdn h0_hdn_gate 0 0",
+        "Cwh0f0p wh0f0p 0 20f IC=0.50",
+        "Rwh0f0p wh0f0p 0 1e15",
+        "Cwh0f0n wh0f0n 0 20f IC=0.45",
+        "Rwh0f0n wh0f0n 0 1e15",
+        *mnist01_hidden._hidden_state_lines(1),
+        *mnist01_hidden._hidden_forward_lines(
+            1,
+            1,
+            8.0,
+            activation_mode="differential-preamp",
+            activation_sense_width_u=64.0,
+        ),
+        *mnist01_hidden._hidden_writer_lines(
+            1,
+            1,
+            0.005,
+            0.1,
+            0.2,
+            "pmos-differential",
+            "errphi",
+            True,
+        ),
+        ".meas tran prep_before FIND V(pre0_p) AT=1.95n",
+        ".meas tran pren_before FIND V(pre0_n) AT=1.95n",
+        ".meas tran evidence_before PARAM='prep_before-pren_before'",
+        ".meas tran act_before FIND V(act0) AT=1.95n",
+        ".meas tran hrow_before FIND V(hrow0) AT=1.95n",
+        ".meas tran whp_before FIND V(wh0f0p) AT=2.50n",
+        ".meas tran whn_before FIND V(wh0f0n) AT=2.50n",
+        ".meas tran whp_after_write FIND V(wh0f0p) AT=4.80n",
+        ".meas tran whn_after_write FIND V(wh0f0n) AT=4.80n",
+        ".meas tran signed_delta PARAM='(whp_after_write-whn_after_write)-(whp_before-whn_before)'",
+        ".meas tran prep_after FIND V(pre0_p) AT=6.95n",
+        ".meas tran pren_after FIND V(pre0_n) AT=6.95n",
+        ".meas tran evidence_after PARAM='prep_after-pren_after'",
+        ".meas tran act_after FIND V(act0) AT=6.95n",
+        ".meas tran hrow_after FIND V(hrow0) AT=6.95n",
+        ".meas tran evidence_delta PARAM='evidence_after-evidence_before'",
+        ".tran 1p 8n uic",
+        ".control",
+        "run",
+        "quit",
+        ".endc",
+        ".end",
+        "",
+    ]
+    return "\n".join(lines)
+
+
+@pytest.mark.ngspice
+def test_mnist01_hidden_bounded_write_improves_next_forward_evidence(
+    tmp_path: Path,
+    ngspice_path: str,
+) -> None:
+    parsed = mnist01_hidden.run_netlist(
+        ngspice_path,
+        tmp_path / "mnist01_hidden_bounded_write_forward_evidence.cir",
+        _hidden_forward_update_primitive_netlist(),
+        timeout=30.0,
+    )
+
+    assert 0.02 < parsed["signed_delta"] < 0.06
+    assert 0.03 < parsed["evidence_delta"] < 0.06
+    assert parsed["whp_after_write"] < 0.60
+    assert parsed["whn_after_write"] > 0.40
+    assert parsed["act_after"] >= parsed["act_before"]
+    assert parsed["hrow_after"] >= parsed["hrow_before"] - 1e-6
+
+
 @pytest.mark.ngspice
 def test_mnist01_live_hidden_divider_ngspice_bootstraps_readout_and_visible_subthreshold_hidden_credit(
     tmp_path: Path,

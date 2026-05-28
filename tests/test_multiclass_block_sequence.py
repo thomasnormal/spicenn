@@ -1524,8 +1524,8 @@ def test_multiclass_block_sequence_can_gate_live_writer_with_feature_competition
     assert "Mprecharge_e0_gt_e1_decision e0_gt_e1_decision eligpre vdd vdd PMOS" in netlist
     assert "Me1_loss_to_e0_mid_dec egate1 e0_gt_e1_decision e1_loss_to_e0_mid 0 NHIGH" in netlist
     assert ".meas tran egate_f0_1 FIND V(egate0) AT=20.85n" in netlist
-    assert "Mc0_f0_live_pos_up_e vwhi_ref egate0 c0_f0_live_pos_up 0 NSENSE" in netlist
-    assert "Mc0_f1_live_pos_up_e vwhi_ref egate1 c0_f1_live_pos_up 0 NSENSE" in netlist
+    assert "Mc0_f0_live_pos_up_e vwhi_ref relig0 c0_f0_live_pos_up 0 NSENSE" in netlist
+    assert "Mc0_f1_live_pos_up_e vwhi_ref relig1 c0_f1_live_pos_up 0 NSENSE" in netlist
 
 
 def test_multiclass_block_sequence_can_rank_gate_live_writer_with_feature_competition() -> None:
@@ -1542,7 +1542,7 @@ def test_multiclass_block_sequence_can_rank_gate_live_writer_with_feature_compet
     assert "Cegate0 egate0 0 50f IC=0" in netlist
     assert "Me1_rank_loss_to_e0_mid_dec egate1 e0_gt_e1_decision e1_rank_loss_to_e0_mid 0 NHIGH W=0.5u" in netlist
     assert "Me1_loss_to_e0_mid_dec" not in netlist
-    assert "Mc0_f0_live_pos_up_e vwhi_ref egate0 c0_f0_live_pos_up 0 NSENSE" in netlist
+    assert "Mc0_f0_live_pos_up_e vwhi_ref relig0 c0_f0_live_pos_up 0 NSENSE" in netlist
 
 
 def test_multiclass_block_sequence_can_contrast_gate_live_writer_with_feature_common_mode() -> None:
@@ -1563,7 +1563,7 @@ def test_multiclass_block_sequence_can_contrast_gate_live_writer_with_feature_co
     assert "Relig_common_e0 elig_common elig0 1000000" in netlist
     assert "Me0_contrast_up_v vdd elig0 e0_contrast_up_i 0 NSENSE W=512u" in netlist
     assert "Me0_contrast_dn_v egate0 elig_common e0_contrast_dn_i 0 NSENSE W=24u" in netlist
-    assert "Mc0_f0_live_pos_up_e vwhi_ref egate0 c0_f0_live_pos_up 0 NSENSE" in netlist
+    assert "Mc0_f0_live_pos_up_e vwhi_ref relig0 c0_f0_live_pos_up 0 NSENSE" in netlist
 
 
 def test_multiclass_block_sequence_can_use_current_clamp_score_diagnostic() -> None:
@@ -1882,6 +1882,25 @@ def test_multiclass_block_sequence_can_use_hybrid_readout_eligibility() -> None:
     assert "Mrelig0_pass_gate relig0 egate0 relig0_pass_mid 0 NSENSE W=8u L=180n" in netlist
 
 
+def test_multiclass_block_sequence_can_use_low_threshold_readout_eligibility_sense_model() -> None:
+    records = _target0_two_feature_records(1)
+    netlist = seq.generate_netlist(
+        train_records=records,
+        eval_records=records,
+        feature_count=2,
+        readout_update_mode="live",
+        error_mode="label-rail-descent",
+        eligibility_gate_mode="contrast",
+        eligibility_source_mode="act",
+        readout_update_eligibility_mode="hybrid",
+        readout_update_eligibility_sense_model="NSENSE",
+    )
+
+    assert "\nB" not in netlist
+    assert "Mrelig0_pgate_dis_elig relig0_pgate elig0 relig0_pgate_elig 0 NSENSE" in netlist
+    assert "Mrelig0_pgate_dis_gate relig0_pgate_elig egate0 relig0_pgate_gate 0 NSENSE" in netlist
+
+
 @pytest.mark.ngspice
 def test_multiclass_block_sequence_ngspice_hybrid_readout_eligibility_uses_small_sample_cap(
     tmp_path: Path,
@@ -1920,6 +1939,73 @@ def test_multiclass_block_sequence_ngspice_hybrid_readout_eligibility_uses_small
     assert float(measures["relig_pgate_f0_1"]) < 0.85
     assert float(measures["relig_update_f0_1"]) > 0.80
     assert float(measures["relig_update_f1_1"]) < 0.05
+
+
+@pytest.mark.ngspice
+def test_multiclass_block_sequence_ngspice_low_threshold_relig_sense_restores_small_contrast_gate(
+    tmp_path: Path,
+    ngspice_path: str,
+) -> None:
+    def transfer_deck(sense_model: str) -> str:
+        cases = {
+            "off": (0.01, 0.00),
+            "mid": (0.12, 0.15),
+            "high": (0.19, 0.14),
+        }
+        lines = [
+            "* Low-level readout eligibility transfer with small contrast gates.",
+            ".param VDD=1.2",
+            seq.mos_models(),
+            ".options method=gear reltol=1e-3 abstol=1e-12 vntol=1e-6",
+            "Vdd vdd 0 {VDD}",
+            "Vrelig_ref relig_ref 0 1.2",
+            "Vrelpass relpass 0 PULSE(0 1.2 0.2n 5p 5p 0.2n 2n)",
+            "Vrelboost relboost 0 PULSE(0 1.2 0.5n 5p 5p 0.2n 2n)",
+        ]
+        for name, (eligibility_v, gate_v) in cases.items():
+            relig = f"relig_{name}"
+            pgate = f"{relig}_pgate"
+            mid_elig = f"{relig}_pgate_elig"
+            mid_gate = f"{relig}_pgate_gate"
+            pass_mid = f"{relig}_pass_mid"
+            lines += [
+                f"Velig_{name} elig_{name} 0 {eligibility_v}",
+                f"Vegate_{name} egate_{name} 0 {gate_v}",
+                f"C{relig} {relig} 0 5f IC=0",
+                f"R{relig} {relig} 0 1G",
+                f"C{pgate} {pgate} 0 5f IC=1.2",
+                f"R{pgate} {pgate} vdd 50000",
+                f"R{mid_elig} {mid_elig} 0 1G",
+                f"R{mid_gate} {mid_gate} 0 1G",
+                f"R{pass_mid} {pass_mid} 0 1G",
+                f"M{relig}_pgate_dis_elig {pgate} elig_{name} {mid_elig} 0 {sense_model} W=8u L=180n",
+                f"M{relig}_pgate_dis_gate {mid_elig} egate_{name} {mid_gate} 0 NSENSE W=8u L=180n",
+                f"M{relig}_pgate_dis_clk {mid_gate} relboost 0 0 NSENSE W=8u L=180n",
+                f"M{relig}_restore_p {relig} {pgate} relig_ref relig_ref PMOS W=16u L=180n",
+                f"M{relig}_pass_clk {pass_mid} relpass elig_{name} 0 NSENSE W=8u L=180n",
+                f"M{relig}_pass_gate {relig} egate_{name} {pass_mid} 0 NSENSE W=8u L=180n",
+                f".meas tran relig_{name} FIND V({relig}) AT=0.90n",
+            ]
+        lines += [".tran 2p 1.2n uic", ".control", "run", "quit", ".endc", ".end"]
+        return "\n".join(lines)
+
+    nrel = run_netlist(
+        ngspice_path,
+        tmp_path / "low_contrast_relig_nrel.cir",
+        transfer_deck("NREL"),
+        timeout=20.0,
+    )
+    nsense = run_netlist(
+        ngspice_path,
+        tmp_path / "low_contrast_relig_nsense.cir",
+        transfer_deck("NSENSE"),
+        timeout=20.0,
+    )
+
+    assert float(nrel["relig_mid"]) < 0.20
+    assert float(nsense["relig_mid"]) > 0.80
+    assert float(nsense["relig_high"]) > 0.80
+    assert float(nsense["relig_off"]) < 1e-3
 
 
 @pytest.mark.ngspice
@@ -2247,8 +2333,16 @@ def test_multiclass_block_sequence_validation() -> None:
         seq.generate_netlist(train_records=records, eval_records=records, readout_update_eligibility_capacitance_f=0)
     with pytest.raises(ValueError, match="readout_update_eligibility_mode"):
         seq.generate_netlist(train_records=records, eval_records=records, readout_update_eligibility_mode="missing")
+    with pytest.raises(ValueError, match="readout_update_eligibility_sense_model"):
+        seq.generate_netlist(
+            train_records=records,
+            eval_records=records,
+            readout_update_eligibility_sense_model="missing",
+        )
     with pytest.raises(SystemExit):
         seq.main_for_test(["--readout-update-eligibility-mode", "missing"])
+    with pytest.raises(SystemExit):
+        seq.main_for_test(["--readout-update-eligibility-sense-model", "missing"])
     with pytest.raises(ValueError, match="readout-update-eligibility-ref"):
         seq.main_for_test(["--readout-update-eligibility-ref", "1.3"])
     with pytest.raises(ValueError, match="readout-update-eligibility-capacitance-f"):

@@ -3009,6 +3009,7 @@ def _hidden_direct_readout_weighted_writer_netlist(
     complement_width_scale: float = 0.0625,
     hidden_anchor_resistance_ohm: float | None = None,
     state_guard_mode: str = "none",
+    state_keeper_width_u: float | None = None,
 ) -> str:
     lines = [
         "* Low-level direct readout-weighted hidden writer primitive.",
@@ -3041,6 +3042,16 @@ def _hidden_direct_readout_weighted_writer_netlist(
                 f"Rwhn_anchor whn0 hneg_anchor {hidden_anchor_resistance_ohm:.12g}",
             ]
             if hidden_anchor_resistance_ohm is not None
+            else []
+        ),
+        *(
+            seq.hidden_differential_state_keeper_lines(
+                feature_idx=0,
+                high_ref_node="hidden_whi_ref",
+                low_ref_node="hidden_wlo_ref",
+                width_u=state_keeper_width_u,
+            )
+            if state_keeper_width_u is not None
             else []
         ),
         *seq.hidden_direct_readout_weighted_update_lines(
@@ -3704,6 +3715,54 @@ def test_multiclass_block_sequence_ngspice_hidden_state_guard_blocks_opposite_si
     assert float(guarded_positive["signed_after"]) > float(guarded_negative["signed_after"]) + 20e-3
 
 
+def test_multiclass_block_sequence_ngspice_differential_keeper_preserves_hidden_sign_under_weak_opposing_update(
+    tmp_path: Path,
+    ngspice_path: str,
+) -> None:
+    def realistic_rails(deck: str) -> str:
+        return deck.replace("Vact act0 0 1.2", "Vact act0 0 0.42").replace(
+            "Vxelig xelig0 0 1.2",
+            "Vxelig xelig0 0 0.46",
+        )
+
+    common_kwargs = dict(
+        vwp=0.28,
+        vwn=0.40,
+        whp=0.80,
+        whn=0.0,
+        errp="PULSE(0 0.04 1n 10p 10p 4n 20n)",
+        width_u=0.125,
+        readout_gate_mode="restored-excess",
+        output_stage="pmos-complementary",
+        readout_high_ref=0.42,
+        readout_low_ref=0.28,
+        hidden_high_ref=1.05,
+        hidden_low_ref=0.15,
+    )
+    unkept = run_netlist(
+        ngspice_path,
+        tmp_path / "direct_hidden_writer_keeper_unkept.cir",
+        realistic_rails(_hidden_direct_readout_weighted_writer_netlist(**common_kwargs)),
+        timeout=20.0,
+    )
+    kept = run_netlist(
+        ngspice_path,
+        tmp_path / "direct_hidden_writer_keeper_kept.cir",
+        realistic_rails(
+            _hidden_direct_readout_weighted_writer_netlist(
+                **common_kwargs,
+                state_keeper_width_u=0.25,
+            )
+        ),
+        timeout=20.0,
+    )
+
+    assert float(unkept["signed_after"]) < -0.10
+    assert float(kept["signed_after"]) > 0.50
+    assert float(kept["whp_after"]) > 0.90
+    assert float(kept["whn_after"]) < 0.25
+
+
 def test_multiclass_block_sequence_ngspice_direct_hidden_writer_pmos_suppressive_uses_low_side_headroom(
     tmp_path: Path,
     ngspice_path: str,
@@ -4012,6 +4071,23 @@ def test_multiclass_block_sequence_hidden_direct_can_use_signed_support_state_gu
     assert "\nB" not in netlist
 
 
+def test_multiclass_block_sequence_can_add_differential_hidden_state_keeper() -> None:
+    netlist = seq.generate_netlist(
+        train_records=_one_hot_records(),
+        eval_records=_one_hot_records(),
+        class_count=3,
+        feature_count=3,
+        hidden_update_mode="direct-readout-weighted",
+        hidden_state_keeper_mode="differential",
+        hidden_state_keeper_width_u=0.25,
+        error_mode="pairwise-margin-centered-gain-descent",
+    )
+
+    assert "Mhkeep_f0_p_keep_hi whp0 whn0 hidden_whi_ref" in netlist
+    assert "Mhkeep_f0_n_keep_lo whn0 whp0 hidden_wlo_ref" in netlist
+    assert "\nB" not in netlist
+
+
 def test_multiclass_block_sequence_can_add_physical_hidden_state_anchor() -> None:
     netlist = seq.generate_netlist(
         train_records=_one_hot_records(),
@@ -4099,6 +4175,30 @@ def test_multiclass_block_sequence_rejects_unknown_hidden_state_guard() -> None:
             feature_count=3,
             hidden_update_mode="direct-readout-weighted",
             hidden_direct_state_guard_mode="floating",
+            error_mode="pairwise-margin-centered-gain-descent",
+        )
+
+
+def test_multiclass_block_sequence_rejects_bad_hidden_state_keeper() -> None:
+    with pytest.raises(ValueError, match="hidden_state_keeper_mode"):
+        seq.generate_netlist(
+            train_records=_one_hot_records(),
+            eval_records=_one_hot_records(),
+            class_count=3,
+            feature_count=3,
+            hidden_update_mode="direct-readout-weighted",
+            hidden_state_keeper_mode="latch",
+            error_mode="pairwise-margin-centered-gain-descent",
+        )
+    with pytest.raises(ValueError, match="hidden_state_keeper_width_u"):
+        seq.generate_netlist(
+            train_records=_one_hot_records(),
+            eval_records=_one_hot_records(),
+            class_count=3,
+            feature_count=3,
+            hidden_update_mode="direct-readout-weighted",
+            hidden_state_keeper_mode="differential",
+            hidden_state_keeper_width_u=0.0,
             error_mode="pairwise-margin-centered-gain-descent",
         )
 

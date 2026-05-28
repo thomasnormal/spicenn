@@ -78,6 +78,7 @@ HIDDEN_DIRECT_OUTPUT_STAGES = (
 HIDDEN_DIRECT_NONTARGET_GUARD_MODES = ("none", "support")
 HIDDEN_DIRECT_ERROR_SOURCE_MODES = ("writer", "centered", "differential-excess")
 HIDDEN_DIRECT_STATE_GUARD_MODES = ("none", "signed-support")
+HIDDEN_STATE_KEEPER_MODES = ("none", "differential")
 DEFAULT_HIDDEN_POSITIVE = 1.00
 DEFAULT_HIDDEN_NEGATIVE = 0.20
 ERROR_MODES = (
@@ -887,6 +888,26 @@ def hidden_direct_error_excess_lines(
     ]
 
 
+def hidden_differential_state_keeper_lines(
+    *,
+    feature_idx: int,
+    high_ref_node: str = "hidden_whi_ref",
+    low_ref_node: str = "hidden_wlo_ref",
+    width_u: float = 0.25,
+) -> list[str]:
+    if width_u <= 0.0:
+        raise ValueError("hidden state keeper width must be positive")
+    whp = f"whp{feature_idx}"
+    whn = f"whn{feature_idx}"
+    prefix = f"hkeep_f{feature_idx}"
+    return [
+        f"M{prefix}_p_keep_hi {whp} {whn} {high_ref_node} vdd PMOS W={width_u:.6g}u L=180n",
+        f"M{prefix}_n_keep_hi {whn} {whp} {high_ref_node} vdd PMOS W={width_u:.6g}u L=180n",
+        f"M{prefix}_p_keep_lo {whp} {whn} {low_ref_node} 0 NMOS W={width_u:.6g}u L=180n",
+        f"M{prefix}_n_keep_lo {whn} {whp} {low_ref_node} 0 NMOS W={width_u:.6g}u L=180n",
+    ]
+
+
 def pairwise_winner_lines(
     *,
     class_a: int,
@@ -1606,6 +1627,8 @@ def generate_netlist(
     hidden_credit_activation_model: str = "NREL",
     hidden_update_width_u: float = 0.25,
     hidden_state_anchor_resistance_ohm: float | None = None,
+    hidden_state_keeper_mode: str = "none",
+    hidden_state_keeper_width_u: float = 0.25,
     hidden_direct_readout_gate_mode: str = "differential-excess",
     hidden_direct_output_stage: str = "nmos-pass",
     hidden_direct_high_ref: float = 1.05,
@@ -1666,6 +1689,7 @@ def generate_netlist(
         "hidden_credit_capacitance_f": hidden_credit_capacitance_f,
         "hidden_credit_shunt_resistance_ohm": hidden_credit_shunt_resistance_ohm,
         "hidden_update_width_u": hidden_update_width_u,
+        "hidden_state_keeper_width_u": hidden_state_keeper_width_u,
         "hidden_direct_high_ref": hidden_direct_high_ref,
         "hidden_direct_low_ref": hidden_direct_low_ref,
         "hidden_direct_complement_width_scale": hidden_direct_complement_width_scale,
@@ -1682,6 +1706,8 @@ def generate_netlist(
             raise ValueError(f"{name} must be positive")
     if hidden_state_anchor_resistance_ohm is not None and hidden_state_anchor_resistance_ohm <= 0.0:
         raise ValueError("hidden_state_anchor_resistance_ohm must be positive when set")
+    if hidden_state_keeper_mode not in HIDDEN_STATE_KEEPER_MODES:
+        raise ValueError(f"hidden_state_keeper_mode must be one of {HIDDEN_STATE_KEEPER_MODES}")
     if score_measure_ns is not None and (score_measure_ns <= 0.0 or score_measure_ns >= CYCLE_NS):
         raise ValueError("score_measure_ns must be inside the cycle")
     if readout_center_resistance < 0.0:
@@ -2122,6 +2148,13 @@ def generate_netlist(
                 f"Rwhp_anchor{feature} whp{feature} hidden_pos_anchor {hidden_state_anchor_resistance_ohm:.12g}",
                 f"Rwhn_anchor{feature} whn{feature} hidden_neg_anchor {hidden_state_anchor_resistance_ohm:.12g}",
             ]
+        if hidden_state_keeper_mode == "differential":
+            lines += hidden_differential_state_keeper_lines(
+                feature_idx=feature,
+                high_ref_node="hidden_whi_ref",
+                low_ref_node="hidden_wlo_ref",
+                width_u=hidden_state_keeper_width_u,
+            )
         lines += [
             f"Cpre_p{feature} pre_p{feature} 0 20f IC=0",
             f"Cpre_n{feature} pre_n{feature} 0 20f IC=0",
@@ -4452,6 +4485,8 @@ def run_case(args: argparse.Namespace) -> dict[str, Any]:
         hidden_credit_activation_model=args.hidden_credit_activation_model,
         hidden_update_width_u=args.hidden_update_width,
         hidden_state_anchor_resistance_ohm=args.hidden_state_anchor_resistance,
+        hidden_state_keeper_mode=args.hidden_state_keeper_mode,
+        hidden_state_keeper_width_u=args.hidden_state_keeper_width,
         hidden_direct_readout_gate_mode=args.hidden_direct_readout_gate_mode,
         hidden_direct_output_stage=args.hidden_direct_output_stage,
         hidden_direct_high_ref=args.hidden_direct_high_ref,
@@ -4498,6 +4533,16 @@ def run_case(args: argparse.Namespace) -> dict[str, Any]:
     ]
     final_hidden_signed = (
         [float(measures[f"whsigned_f{feature}_final"]) for feature in range(feature_count)]
+        if args.hidden_update_mode != "none"
+        else None
+    )
+    final_hidden_positive = (
+        [float(measures[f"whp_f{feature}_final"]) for feature in range(feature_count)]
+        if args.hidden_update_mode != "none"
+        else None
+    )
+    final_hidden_negative = (
+        [float(measures[f"whn_f{feature}_final"]) for feature in range(feature_count)]
         if args.hidden_update_mode != "none"
         else None
     )
@@ -4720,6 +4765,12 @@ def run_case(args: argparse.Namespace) -> dict[str, Any]:
         "hidden_state_anchor_resistance_ohm": (
             args.hidden_state_anchor_resistance if args.hidden_update_mode != "none" else None
         ),
+        "hidden_state_keeper_mode": args.hidden_state_keeper_mode if args.hidden_update_mode != "none" else None,
+        "hidden_state_keeper_width_u": (
+            args.hidden_state_keeper_width
+            if args.hidden_update_mode != "none" and args.hidden_state_keeper_mode != "none"
+            else None
+        ),
         "hidden_direct_readout_gate_mode": (
             args.hidden_direct_readout_gate_mode if args.hidden_update_mode == "direct-readout-weighted" else None
         ),
@@ -4819,6 +4870,8 @@ def run_case(args: argparse.Namespace) -> dict[str, Any]:
         "final_signed_matrix_v": final_signed,
         "final_positive_matrix_v": final_positive,
         "final_negative_matrix_v": final_negative,
+        "final_hidden_positive_v": final_hidden_positive,
+        "final_hidden_negative_v": final_hidden_negative,
         "final_hidden_signed_v": final_hidden_signed,
         "signed_after_each_train_v": train_progress,
         **readout_weight_matrix_stats(
@@ -4960,6 +5013,8 @@ def build_arg_parser() -> argparse.ArgumentParser:
     ap.add_argument("--hidden-credit-activation-model", choices=HIDDEN_CREDIT_ACTIVATION_MODELS, default="NREL")
     ap.add_argument("--hidden-update-width", type=float, default=0.25)
     ap.add_argument("--hidden-state-anchor-resistance", type=float, default=None)
+    ap.add_argument("--hidden-state-keeper-mode", choices=HIDDEN_STATE_KEEPER_MODES, default="none")
+    ap.add_argument("--hidden-state-keeper-width", type=float, default=0.25)
     ap.add_argument(
         "--hidden-direct-readout-gate-mode",
         choices=HIDDEN_DIRECT_READOUT_GATE_MODES,
@@ -5144,6 +5199,10 @@ def validate_args(args: argparse.Namespace) -> None:
         raise ValueError("hidden-update-width must be positive")
     if args.hidden_state_anchor_resistance is not None and args.hidden_state_anchor_resistance <= 0.0:
         raise ValueError("hidden-state-anchor-resistance must be positive when set")
+    if args.hidden_state_keeper_mode not in HIDDEN_STATE_KEEPER_MODES:
+        raise ValueError(f"hidden-state-keeper-mode must be one of {HIDDEN_STATE_KEEPER_MODES}")
+    if args.hidden_state_keeper_width <= 0.0:
+        raise ValueError("hidden-state-keeper-width must be positive")
     if args.hidden_direct_readout_gate_mode not in HIDDEN_DIRECT_READOUT_GATE_MODES:
         raise ValueError(f"hidden-direct-readout-gate-mode must be one of {HIDDEN_DIRECT_READOUT_GATE_MODES}")
     if args.hidden_direct_output_stage not in HIDDEN_DIRECT_OUTPUT_STAGES:

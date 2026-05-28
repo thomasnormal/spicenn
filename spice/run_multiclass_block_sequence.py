@@ -91,6 +91,7 @@ ERROR_MODES = (
     "pairwise-margin-winner-descent",
     "pairwise-margin-centered-descent",
     "pairwise-margin-centered-gain-descent",
+    "pairwise-margin-centered-bounded-gain-descent",
     *(f"normalizer-{approach}-descent" for approach in NORMALIZATION_APPROACHES),
     "pairwise-binary-descent",
     "restored-score-binary-descent",
@@ -113,6 +114,7 @@ ERROR_RAIL_DESCENT_MODES = (
     "pairwise-margin-winner-descent",
     "pairwise-margin-centered-descent",
     "pairwise-margin-centered-gain-descent",
+    "pairwise-margin-centered-bounded-gain-descent",
     *NORMALIZER_ERROR_MODES,
 )
 
@@ -238,6 +240,54 @@ def class_error_rail_gain_restore_lines(
             f"Mrestore_c{class_idx}_errp_xdn {errp} {inn} 0 0 NMOS W={cross_discharge_width_u:.6g}u L=180n",
             f"Mrestore_c{class_idx}_errn_xdn {errn} {inp} 0 0 NMOS W={cross_discharge_width_u:.6g}u L=180n",
         ]
+    return lines
+
+
+def class_error_rail_bounded_gain_lines(
+    *,
+    class_count: int,
+    input_positive_suffix: str = "errp_ctr",
+    input_negative_suffix: str = "errn_ctr",
+    positive_suffix: str = "errp",
+    negative_suffix: str = "errn",
+    reset_node: str = "scoregaterst",
+    restore_width_u: float = 48.0,
+    cross_discharge_width_u: float = 4.0,
+    capacitance_f: float = 4.0,
+    shunt_resistance_ohm: float = 1.0e9,
+) -> list[str]:
+    """Convert centered error rails into writer-range rails without hard latching.
+
+    This is intentionally a current-limited source-follower style gain stage:
+    the larger output capacitor and weak cross-discharge preserve relative
+    centered-rail magnitude better than the full gain restore, while still
+    lifting nonzero centered rails into the live writer's useful gate range.
+    """
+    if min(restore_width_u, capacitance_f, shunt_resistance_ohm) <= 0.0:
+        raise ValueError("bounded-gain error rail restore width, cap, and shunt must be positive")
+    if cross_discharge_width_u < 0.0:
+        raise ValueError("bounded-gain cross-discharge width must be nonnegative")
+    lines: list[str] = []
+    for class_idx in range(class_count):
+        inp = class_node(class_idx, input_positive_suffix)
+        inn = class_node(class_idx, input_negative_suffix)
+        errp = class_node(class_idx, positive_suffix)
+        errn = class_node(class_idx, negative_suffix)
+        lines += [
+            f"C{errp} {errp} 0 {capacitance_f:.12g}f IC=0",
+            f"C{errn} {errn} 0 {capacitance_f:.12g}f IC=0",
+            f"R{errp} {errp} 0 {shunt_resistance_ohm:.12g}",
+            f"R{errn} {errn} 0 {shunt_resistance_ohm:.12g}",
+            f"Mreset_{errp} {errp} {reset_node} 0 0 NMOS W=4u L=180n",
+            f"Mreset_{errn} {errn} {reset_node} 0 0 NMOS W=4u L=180n",
+            f"Mbounded_c{class_idx}_errp vdd {inp} {errp} 0 NSENSE W={restore_width_u:.6g}u L=180n",
+            f"Mbounded_c{class_idx}_errn vdd {inn} {errn} 0 NSENSE W={restore_width_u:.6g}u L=180n",
+        ]
+        if cross_discharge_width_u > 0.0:
+            lines += [
+                f"Mbounded_c{class_idx}_errp_xdn {errp} {inn} 0 0 NMOS W={cross_discharge_width_u:.6g}u L=180n",
+                f"Mbounded_c{class_idx}_errn_xdn {errn} {inp} 0 0 NMOS W={cross_discharge_width_u:.6g}u L=180n",
+            ]
     return lines
 
 
@@ -1443,12 +1493,20 @@ def generate_netlist(
         "pairwise-margin-winner-descent",
         "pairwise-margin-centered-descent",
         "pairwise-margin-centered-gain-descent",
+        "pairwise-margin-centered-bounded-gain-descent",
     )
     uses_pairwise_margin_centered = error_mode in (
         "pairwise-margin-centered-descent",
         "pairwise-margin-centered-gain-descent",
+        "pairwise-margin-centered-bounded-gain-descent",
     )
     uses_pairwise_margin_centered_gain = error_mode == "pairwise-margin-centered-gain-descent"
+    uses_pairwise_margin_centered_bounded_gain = (
+        error_mode == "pairwise-margin-centered-bounded-gain-descent"
+    )
+    uses_pairwise_margin_centered_gain_stage = (
+        uses_pairwise_margin_centered_gain or uses_pairwise_margin_centered_bounded_gain
+    )
     uses_normalizer_error = error_mode in NORMALIZER_ERROR_MODES
     uses_stored_hidden_credit_update = hidden_update_mode == "readout-weighted"
     uses_direct_hidden_update = hidden_update_mode == "direct-readout-weighted"
@@ -2126,11 +2184,13 @@ def generate_netlist(
         if uses_pairwise_margin_centered:
             lines += class_centered_error_rail_lines(
                 class_count=class_count,
-                positive_suffix="errp_ctr" if uses_pairwise_margin_centered_gain else "errp",
-                negative_suffix="errn_ctr" if uses_pairwise_margin_centered_gain else "errn",
+                positive_suffix="errp_ctr" if uses_pairwise_margin_centered_gain_stage else "errp",
+                negative_suffix="errn_ctr" if uses_pairwise_margin_centered_gain_stage else "errn",
             )
             if uses_pairwise_margin_centered_gain:
                 lines += class_error_rail_gain_restore_lines(class_count=class_count)
+            if uses_pairwise_margin_centered_bounded_gain:
+                lines += class_error_rail_bounded_gain_lines(class_count=class_count)
     if uses_pairwise_score_competition:
         lines += pairwise_score_competition_error_lines(
             class_count=class_count,
@@ -4190,6 +4250,7 @@ def run_case(args: argparse.Namespace) -> dict[str, Any]:
                 "pairwise-margin-winner-descent",
                 "pairwise-margin-centered-descent",
                 "pairwise-margin-centered-gain-descent",
+                "pairwise-margin-centered-bounded-gain-descent",
             )
             else None
         ),
@@ -4201,6 +4262,7 @@ def run_case(args: argparse.Namespace) -> dict[str, Any]:
                 "pairwise-margin-winner-descent",
                 "pairwise-margin-centered-descent",
                 "pairwise-margin-centered-gain-descent",
+                "pairwise-margin-centered-bounded-gain-descent",
             )
             else None
         ),
@@ -4216,6 +4278,7 @@ def run_case(args: argparse.Namespace) -> dict[str, Any]:
                 "pairwise-margin-winner-descent",
                 "pairwise-margin-centered-descent",
                 "pairwise-margin-centered-gain-descent",
+                "pairwise-margin-centered-bounded-gain-descent",
             )
             else None
         ),

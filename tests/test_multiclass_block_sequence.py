@@ -1098,6 +1098,76 @@ def test_multiclass_block_sequence_can_use_pairwise_margin_centered_gain_descent
     assert "Mc0_f0_live_pos_up_d c0_f0_live_pos_up c0_errp c0_vwp0 0 NSENSE" in netlist
 
 
+def test_multiclass_block_sequence_can_use_pairwise_margin_centered_bounded_gain_descent() -> None:
+    netlist = seq.generate_netlist(
+        train_records=_target0_records(1),
+        eval_records=_target0_records(1),
+        error_mode="pairwise-margin-centered-bounded-gain-descent",
+        readout_update_mode="live",
+    )
+
+    assert "\nB" not in netlist
+    assert "Cc0_errp_raw c0_errp_raw 0 0.5f IC=0" in netlist
+    assert "Cc0_errp_ctr c0_errp_ctr 0 4f IC=0" in netlist
+    assert "Mcenter_c0_local_p vdd c0_errp_raw c0_errp_ctr 0 NSENSE" in netlist
+    assert "Cc0_errp c0_errp 0 4f IC=0" in netlist
+    assert "Mbounded_c0_errp vdd c0_errp_ctr c0_errp 0 NSENSE W=48u" in netlist
+    assert "Mrestore_c0_errp" not in netlist
+    assert "Cc0_gvp0" not in netlist
+    assert "Mc0_f0_live_pos_up_d c0_f0_live_pos_up c0_errp c0_vwp0 0 NSENSE" in netlist
+
+
+@pytest.mark.ngspice
+def test_multiclass_block_sequence_ngspice_bounded_gain_preserves_error_magnitude(
+    tmp_path: Path,
+    ngspice_path: str,
+) -> None:
+    lines = [
+        "* Bounded gain score-to-writer handoff probe.",
+        ".param VDD=1.2",
+        seq.mos_models(),
+        ".options method=gear reltol=1e-3 abstol=1e-12 vntol=1e-6",
+        "Vdd vdd 0 {VDD}",
+        "Vrst rst 0 PULSE(0 1.2 0n 10p 10p 0.4n 10n)",
+    ]
+    for class_idx, (positive_input, negative_input) in enumerate(((0.10, 0.03), (0.20, 0.03), (0.32, 0.03))):
+        lines += [
+            f"Vc{class_idx}_errp_ctr c{class_idx}_errp_ctr 0 {positive_input:.12g}",
+            f"Vc{class_idx}_errn_ctr c{class_idx}_errn_ctr 0 {negative_input:.12g}",
+        ]
+    lines += seq.class_error_rail_bounded_gain_lines(class_count=3, reset_node="rst")
+    for class_idx in range(3):
+        lines += [
+            f".meas tran c{class_idx}_errp_after FIND V(c{class_idx}_errp) AT=4.7n",
+            f".meas tran c{class_idx}_errn_after FIND V(c{class_idx}_errn) AT=4.7n",
+        ]
+    lines += [
+        ".tran 2p 5n uic",
+        ".control",
+        "run",
+        "quit",
+        ".endc",
+        ".end",
+        "",
+    ]
+
+    measures = run_netlist(
+        ngspice_path,
+        tmp_path / "pairwise_centered_bounded_gain_probe.cir",
+        "\n".join(lines),
+        timeout=30.0,
+    )
+    diffs = [
+        float(measures[f"c{class_idx}_errp_after"]) - float(measures[f"c{class_idx}_errn_after"])
+        for class_idx in range(3)
+    ]
+
+    assert diffs[0] > 0.02
+    assert diffs[1] > 1.8 * diffs[0]
+    assert diffs[2] > 1.45 * diffs[1]
+    assert float(measures["c2_errp_after"]) < 0.40
+
+
 def test_multiclass_block_sequence_can_use_common_score_mass_pairwise_descent() -> None:
     netlist = seq.generate_netlist(
         train_records=_target0_records(1),

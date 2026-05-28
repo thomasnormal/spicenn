@@ -77,6 +77,7 @@ HIDDEN_DIRECT_OUTPUT_STAGES = (
 )
 HIDDEN_DIRECT_NONTARGET_GUARD_MODES = ("none", "support")
 HIDDEN_DIRECT_ERROR_SOURCE_MODES = ("writer", "centered", "differential-excess")
+HIDDEN_DIRECT_STATE_GUARD_MODES = ("none", "signed-support")
 DEFAULT_HIDDEN_POSITIVE = 1.00
 DEFAULT_HIDDEN_NEGATIVE = 0.20
 ERROR_MODES = (
@@ -449,6 +450,7 @@ def hidden_direct_readout_weighted_update_lines(
     low_ref_node: str = "vwlo_ref",
     low_ref_voltage: float = 0.15,
     complement_width_scale: float = 0.0625,
+    state_guard_mode: str = "none",
     negative_error_guard_nodes: list[str] | None = None,
 ) -> list[str]:
     if min(width_u, internal_capacitance_f, excess_width_u) <= 0.0:
@@ -465,6 +467,8 @@ def hidden_direct_readout_weighted_update_lines(
         raise ValueError(f"readout_gate_mode must be one of {HIDDEN_DIRECT_READOUT_GATE_MODES}")
     if output_stage not in HIDDEN_DIRECT_OUTPUT_STAGES:
         raise ValueError(f"output_stage must be one of {HIDDEN_DIRECT_OUTPUT_STAGES}")
+    if state_guard_mode not in HIDDEN_DIRECT_STATE_GUARD_MODES:
+        raise ValueError(f"state_guard_mode must be one of {HIDDEN_DIRECT_STATE_GUARD_MODES}")
     if negative_error_guard_nodes is not None and len(negative_error_guard_nodes) != class_count:
         raise ValueError("negative_error_guard_nodes must match class_count")
     whp = f"whp{feature_idx}"
@@ -532,6 +536,7 @@ def hidden_direct_readout_weighted_update_lines(
             up1 = f"{prefix}{suffix}_pup1"
             up2 = f"{prefix}{suffix}_pup2"
             upw = f"{prefix}{suffix}_pupw"
+            state_guard = whp if state_guard_mode == "signed-support" else None
             if output_stage == "nmos-pass":
                 lines += [
                     f"R{up0} {up0} 0 1G",
@@ -552,6 +557,14 @@ def hidden_direct_readout_weighted_update_lines(
                         f"M{prefix}{suffix}_pup_g {up2} {guard} {upw} 0 NSENSE W={width_u:.6g}u L=180n",
                     ]
                     source_for_weight = upw
+                if state_guard is not None:
+                    upsg = f"{prefix}{suffix}_pup_sg"
+                    lines += [
+                        f"R{upsg} {upsg} 0 1G",
+                        f"C{upsg} {upsg} 0 {internal_capacitance_f:.12g}f IC=0",
+                        f"M{prefix}{suffix}_pup_sg {source_for_weight} {state_guard} {upsg} 0 NSENSE W={width_u:.6g}u L=180n",
+                    ]
+                    source_for_weight = upsg
                 lines.append(
                     f"M{prefix}{suffix}_pup_w {source_for_weight} {weight} {whp} 0 NSENSE W={width_u:.6g}u L=180n"
                 )
@@ -585,6 +598,14 @@ def hidden_direct_readout_weighted_update_lines(
                         f"M{prefix}{suffix}_psup_g {up2} {guard} {upw} 0 NSENSE W={width_u:.6g}u L=180n",
                     ]
                     source_for_weight = upw
+                if state_guard is not None:
+                    upsg = f"{prefix}{suffix}_psup_sg"
+                    lines += [
+                        f"R{upsg} {upsg} 0 1G",
+                        f"C{upsg} {upsg} 0 {internal_capacitance_f:.12g}f IC=0",
+                        f"M{prefix}{suffix}_psup_sg {source_for_weight} {state_guard} {upsg} 0 NSENSE W={width_u:.6g}u L=180n",
+                    ]
+                    source_for_weight = upsg
                 lines += [
                     f"M{prefix}{suffix}_psup_w {source_for_weight} {weight} 0 0 NSENSE W={width_u:.6g}u L=180n",
                     f"M{prefix}{suffix}_ndn_gate_rst {dgate} {reset_node} 0 0 NMOS W=4u L=180n",
@@ -620,6 +641,14 @@ def hidden_direct_readout_weighted_update_lines(
                         f"M{prefix}{suffix}_pup_g {up2} {guard} {upw} 0 NSENSE W={width_u:.6g}u L=180n",
                     ]
                     source_for_weight = upw
+                if state_guard is not None:
+                    upsg = f"{prefix}{suffix}_pup_sg"
+                    lines += [
+                        f"R{upsg} {upsg} 0 1G",
+                        f"C{upsg} {upsg} 0 {internal_capacitance_f:.12g}f IC=0",
+                        f"M{prefix}{suffix}_pup_sg {source_for_weight} {state_guard} {upsg} 0 NSENSE W={width_u:.6g}u L=180n",
+                    ]
+                    source_for_weight = upsg
                 lines += [
                     f"M{prefix}{suffix}_pup_w {source_for_weight} {weight} 0 0 NSENSE W={width_u:.6g}u L=180n",
                     f"M{prefix}{suffix}_pup_pmos {whp} {pgate} {pmos_ref_node} vdd PMOS W={pullup_width_u:.6g}u L=180n",
@@ -638,6 +667,7 @@ def hidden_direct_readout_weighted_update_lines(
             up1 = f"{prefix}{suffix}_nup1"
             up2 = f"{prefix}{suffix}_nup2"
             upw = f"{prefix}{suffix}_nupw"
+            state_guard = whn if state_guard_mode == "signed-support" else None
             if output_stage == "nmos-pass":
                 lines += [
                     f"R{up0} {up0} 0 1G",
@@ -658,6 +688,14 @@ def hidden_direct_readout_weighted_update_lines(
                         f"M{prefix}{suffix}_nup_g {up2} {guard} {upw} 0 NSENSE W={width_u:.6g}u L=180n",
                     ]
                     source_for_weight = upw
+                if state_guard is not None:
+                    upsg = f"{prefix}{suffix}_nup_sg"
+                    lines += [
+                        f"R{upsg} {upsg} 0 1G",
+                        f"C{upsg} {upsg} 0 {internal_capacitance_f:.12g}f IC=0",
+                        f"M{prefix}{suffix}_nup_sg {source_for_weight} {state_guard} {upsg} 0 NSENSE W={width_u:.6g}u L=180n",
+                    ]
+                    source_for_weight = upsg
                 lines.append(
                     f"M{prefix}{suffix}_nup_w {source_for_weight} {weight} {whn} 0 NSENSE W={width_u:.6g}u L=180n"
                 )
@@ -691,6 +729,14 @@ def hidden_direct_readout_weighted_update_lines(
                         f"M{prefix}{suffix}_nsup_g {up2} {guard} {upw} 0 NSENSE W={width_u:.6g}u L=180n",
                     ]
                     source_for_weight = upw
+                if state_guard is not None:
+                    upsg = f"{prefix}{suffix}_nsup_sg"
+                    lines += [
+                        f"R{upsg} {upsg} 0 1G",
+                        f"C{upsg} {upsg} 0 {internal_capacitance_f:.12g}f IC=0",
+                        f"M{prefix}{suffix}_nsup_sg {source_for_weight} {state_guard} {upsg} 0 NSENSE W={width_u:.6g}u L=180n",
+                    ]
+                    source_for_weight = upsg
                 lines += [
                     f"M{prefix}{suffix}_nsup_w {source_for_weight} {weight} 0 0 NSENSE W={width_u:.6g}u L=180n",
                     f"M{prefix}{suffix}_pdn_gate_rst {dgate} {reset_node} 0 0 NMOS W=4u L=180n",
@@ -726,6 +772,14 @@ def hidden_direct_readout_weighted_update_lines(
                         f"M{prefix}{suffix}_nup_g {up2} {guard} {upw} 0 NSENSE W={width_u:.6g}u L=180n",
                     ]
                     source_for_weight = upw
+                if state_guard is not None:
+                    upsg = f"{prefix}{suffix}_nup_sg"
+                    lines += [
+                        f"R{upsg} {upsg} 0 1G",
+                        f"C{upsg} {upsg} 0 {internal_capacitance_f:.12g}f IC=0",
+                        f"M{prefix}{suffix}_nup_sg {source_for_weight} {state_guard} {upsg} 0 NSENSE W={width_u:.6g}u L=180n",
+                    ]
+                    source_for_weight = upsg
                 lines += [
                     f"M{prefix}{suffix}_nup_w {source_for_weight} {weight} 0 0 NSENSE W={width_u:.6g}u L=180n",
                     f"M{prefix}{suffix}_nup_pmos {whn} {ngate} {pmos_ref_node} vdd PMOS W={pullup_width_u:.6g}u L=180n",
@@ -1520,6 +1574,7 @@ def generate_netlist(
     hidden_direct_internal_capacitance_f: float = 0.05,
     hidden_direct_nontarget_guard_mode: str = "none",
     hidden_direct_error_source_mode: str = "writer",
+    hidden_direct_state_guard_mode: str = "none",
     score_timing_mode: str = "late",
     score_sense_mode: str = "voltage",
     readout_forward_mode: str = "direct",
@@ -1639,6 +1694,8 @@ def generate_netlist(
         raise ValueError("hidden_direct_nontarget_guard_mode=support requires readout_nontarget_guard_mode=support")
     if hidden_direct_error_source_mode not in HIDDEN_DIRECT_ERROR_SOURCE_MODES:
         raise ValueError(f"hidden_direct_error_source_mode must be one of {HIDDEN_DIRECT_ERROR_SOURCE_MODES}")
+    if hidden_direct_state_guard_mode not in HIDDEN_DIRECT_STATE_GUARD_MODES:
+        raise ValueError(f"hidden_direct_state_guard_mode must be one of {HIDDEN_DIRECT_STATE_GUARD_MODES}")
     if score_timing_mode not in SCORE_TIMING_MODES:
         raise ValueError(f"score_timing_mode must be one of {SCORE_TIMING_MODES}")
     if score_sense_mode not in SCORE_SENSE_MODES:
@@ -2514,6 +2571,7 @@ def generate_netlist(
                 low_ref_node="hidden_wlo_ref",
                 low_ref_voltage=hidden_direct_low_ref,
                 complement_width_scale=hidden_direct_complement_width_scale,
+                state_guard_mode=hidden_direct_state_guard_mode,
                 negative_error_guard_nodes=(
                     [class_node(class_idx, f"f{feature}_support") for class_idx in range(class_count)]
                     if hidden_direct_nontarget_guard_mode == "support"
@@ -4362,6 +4420,7 @@ def run_case(args: argparse.Namespace) -> dict[str, Any]:
         hidden_direct_internal_capacitance_f=args.hidden_direct_internal_capacitance_f,
         hidden_direct_nontarget_guard_mode=args.hidden_direct_nontarget_guard_mode,
         hidden_direct_error_source_mode=args.hidden_direct_error_source_mode,
+        hidden_direct_state_guard_mode=args.hidden_direct_state_guard_mode,
         score_timing_mode=args.score_timing_mode,
         score_sense_mode=args.score_sense_mode,
         readout_forward_mode=args.readout_forward_mode,
@@ -4653,6 +4712,11 @@ def run_case(args: argparse.Namespace) -> dict[str, Any]:
             if args.hidden_update_mode == "direct-readout-weighted"
             else None
         ),
+        "hidden_direct_state_guard_mode": (
+            args.hidden_direct_state_guard_mode
+            if args.hidden_update_mode == "direct-readout-weighted"
+            else None
+        ),
         "score_timing_mode": args.score_timing_mode,
         "score_sense_mode": args.score_sense_mode,
         "readout_forward_mode": args.readout_forward_mode,
@@ -4880,6 +4944,11 @@ def build_arg_parser() -> argparse.ArgumentParser:
         choices=HIDDEN_DIRECT_ERROR_SOURCE_MODES,
         default="writer",
     )
+    ap.add_argument(
+        "--hidden-direct-state-guard-mode",
+        choices=HIDDEN_DIRECT_STATE_GUARD_MODES,
+        default="none",
+    )
     ap.add_argument("--score-timing-mode", choices=SCORE_TIMING_MODES, default="late")
     ap.add_argument("--score-sense-mode", choices=SCORE_SENSE_MODES, default="voltage")
     ap.add_argument("--readout-forward-mode", choices=READOUT_FORWARD_MODES, default="direct")
@@ -5047,6 +5116,8 @@ def validate_args(args: argparse.Namespace) -> None:
         raise ValueError("hidden-direct-nontarget-guard-mode=support requires readout-nontarget-guard-mode=support")
     if args.hidden_direct_error_source_mode not in HIDDEN_DIRECT_ERROR_SOURCE_MODES:
         raise ValueError(f"hidden-direct-error-source-mode must be one of {HIDDEN_DIRECT_ERROR_SOURCE_MODES}")
+    if args.hidden_direct_state_guard_mode not in HIDDEN_DIRECT_STATE_GUARD_MODES:
+        raise ValueError(f"hidden-direct-state-guard-mode must be one of {HIDDEN_DIRECT_STATE_GUARD_MODES}")
     if args.hidden_direct_error_source_mode == "centered" and args.error_mode not in {
         "pairwise-margin-centered-gain-descent",
         "pairwise-margin-centered-bounded-gain-descent",

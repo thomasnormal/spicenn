@@ -20,6 +20,8 @@ def test_live_readout_writer_handoff_primitive_uses_real_pmos_differential_write
     assert "Vapply" not in netlist
     assert "Mc0_f0_live_pos_up_p c0_vwp0 c0_f0_live_pos_up_ctrl vwhi_ref vdd PMOS" in netlist
     assert "Mc1_f0_live_neg_up_p c1_vwn0 c1_f0_live_neg_up_ctrl vwhi_ref vdd PMOS" in netlist
+    assert "Mc0_f0_live_pos_dn_select c0_f0_live_pos_dn c0_f0_live_neg_up_ctrl c0_f0_live_pos_dn_sel 0 NSENSE" in netlist
+    assert "Mc1_f0_live_neg_dn_select c1_f0_live_neg_dn c1_f0_live_pos_up_ctrl c1_f0_live_neg_dn_sel 0 NSENSE" in netlist
     assert "Mc0_f0_live_pos_up_ctrl_latch" in netlist
     assert ".meas tran c0_pos_ctrl_min MIN V(c0_f0_live_pos_up_ctrl)" in netlist
     assert ".meas tran c1_neg_ctrl_min MIN V(c1_f0_live_neg_up_ctrl)" in netlist
@@ -81,3 +83,37 @@ def test_live_readout_writer_handoff_ngspice_measured_common_mode_keeps_sign_und
         handoff.case_passed(row, min_signed_delta_v=0.2e-3, ctrl_on_max_v=0.65, ctrl_off_min_v=0.75)
         for row in rows
     )
+
+
+@pytest.mark.ngspice
+def test_live_readout_writer_handoff_ngspice_depressed_negative_state_still_moves_more_negative(
+    tmp_path: Path,
+    ngspice_path: str,
+) -> None:
+    case = handoff.HandoffCase(
+        "depressed_nontarget",
+        positive_drive_v=0.28155,
+        negative_drive_v=0.35536,
+        eligibility_v=1.19968,
+        support_v=1.2,
+        expected_sign=-1,
+    )
+    measures = run_netlist(
+        ngspice_path,
+        tmp_path / "live_readout_writer_handoff_depressed_nontarget.cir",
+        handoff.generate_netlist(
+            cases=(case,),
+            waveform="pwl",
+            update_width_u=0.25,
+            initial_positive=0.22,
+            initial_negative=0.352,
+            high_ref=0.48,
+            low_ref=0.22,
+        ),
+        timeout=30.0,
+    )
+    rows = handoff.rows_from_measures(measures, (case,))
+
+    assert rows[0]["signed_delta_v"] < -0.2e-3
+    assert rows[0]["neg_ctrl_min_v"] < 0.65
+    assert rows[0]["pos_ctrl_min_v"] > 0.75

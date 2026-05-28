@@ -342,16 +342,38 @@ def class_local_live_label_descent_update_lines(
     vwn = class_node(class_idx, f"vwn{feature_idx}")
     pos = class_node(class_idx, "targetp") if positive_descent_node is None else positive_descent_node
     neg = class_node(class_idx, "targetn") if negative_descent_node is None else negative_descent_node
+    pos_ctrl = f"{prefix}pos_up_ctrl"
+    neg_ctrl = f"{prefix}neg_up_ctrl"
+    pos_dn_drive = f"{prefix}pos_dn_sel" if high_side_topology == "pmos-differential" else f"{prefix}pos_dn"
+    neg_dn_drive = f"{prefix}neg_dn_sel" if high_side_topology == "pmos-differential" else f"{prefix}neg_dn"
     lines = [
         f"R{prefix}pos_up_shunt {prefix}pos_up 0 {stack_shunt_resistance_ohm:.12g}",
         f"R{prefix}pos_dn_shunt {prefix}pos_dn 0 {stack_shunt_resistance_ohm:.12g}",
         f"R{prefix}neg_up_shunt {prefix}neg_up 0 {stack_shunt_resistance_ohm:.12g}",
         f"R{prefix}neg_dn_shunt {prefix}neg_dn 0 {stack_shunt_resistance_ohm:.12g}",
+        *(
+            [
+                f"R{prefix}pos_dn_sel_shunt {prefix}pos_dn_sel 0 {stack_shunt_resistance_ohm:.12g}",
+                f"R{prefix}neg_dn_sel_shunt {prefix}neg_dn_sel 0 {stack_shunt_resistance_ohm:.12g}",
+                f"C{prefix}pos_dn_sel_par {prefix}pos_dn_sel 0 {stack_parasitic_capacitance_f:.12g}f IC=0",
+                f"C{prefix}neg_dn_sel_par {prefix}neg_dn_sel 0 {stack_parasitic_capacitance_f:.12g}f IC=0",
+            ]
+            if high_side_topology == "pmos-differential"
+            else []
+        ),
         f"C{prefix}pos_up_par {prefix}pos_up 0 {stack_parasitic_capacitance_f:.12g}f IC=0",
         f"C{prefix}pos_dn_par {prefix}pos_dn 0 {stack_parasitic_capacitance_f:.12g}f IC=0",
         f"C{prefix}neg_up_par {prefix}neg_up 0 {stack_parasitic_capacitance_f:.12g}f IC=0",
         f"C{prefix}neg_dn_par {prefix}neg_dn 0 {stack_parasitic_capacitance_f:.12g}f IC=0",
-        f"M{prefix}pos_dn_d {prefix}pos_dn {pos} vwlo_ref 0 NSENSE W={width_u:.6g}u L=180n",
+        *(
+            [
+                f"M{prefix}pos_dn_select {prefix}pos_dn {neg_ctrl} {prefix}pos_dn_sel 0 NSENSE W={width_u:.6g}u L=180n",
+                f"M{prefix}neg_dn_select {prefix}neg_dn {pos_ctrl} {prefix}neg_dn_sel 0 NSENSE W={width_u:.6g}u L=180n",
+            ]
+            if high_side_topology == "pmos-differential"
+            else []
+        ),
+        f"M{prefix}pos_dn_d {pos_dn_drive} {pos} vwlo_ref 0 NSENSE W={width_u:.6g}u L=180n",
     ]
     if update_guard_node is None:
         lines += [
@@ -389,8 +411,6 @@ def class_local_live_label_descent_update_lines(
                 f"M{prefix}neg_up_g {prefix}neg_up_allguard {update_guard_node} {prefix}neg_up 0 NSENSE W={width_u:.6g}u L=180n",
             ]
     else:
-        pos_ctrl = f"{prefix}pos_up_ctrl"
-        neg_ctrl = f"{prefix}neg_up_ctrl"
         pos_ctrl_mid = f"{prefix}pos_up_ctrl_mid"
         neg_ctrl_mid = f"{prefix}neg_up_ctrl_mid"
         pmos_width_u = 2.0 * width_u
@@ -442,7 +462,7 @@ def class_local_live_label_descent_update_lines(
                 f"M{prefix}neg_up_ctrl_d {neg_ctrl_mid} {neg} 0 0 NSENSE W={width_u:.6g}u L=180n",
                 f"M{prefix}neg_up_p {vwn} {neg_ctrl} vwhi_ref vdd PMOS W={pmos_width_u:.6g}u L=180n",
             ]
-        lines.append(f"M{prefix}neg_dn_d {prefix}neg_dn {neg} vwlo_ref 0 NSENSE W={width_u:.6g}u L=180n")
+        lines.append(f"M{prefix}neg_dn_d {neg_dn_drive} {neg} vwlo_ref 0 NSENSE W={width_u:.6g}u L=180n")
     else:
         if high_side_topology == "nmos-stack":
             neg_up_lines = [
@@ -467,7 +487,7 @@ def class_local_live_label_descent_update_lines(
             f"C{prefix}neg_up_guard_par {prefix}neg_up_guard 0 {stack_parasitic_capacitance_f:.12g}f IC=0",
             f"C{prefix}neg_dn_guard_par {prefix}neg_dn_guard 0 {stack_parasitic_capacitance_f:.12g}f IC=0",
             *neg_up_lines,
-            f"M{prefix}neg_dn_g {prefix}neg_dn {nontarget_guard_node} {prefix}neg_dn_guard 0 NSENSE W={width_u:.6g}u L=180n",
+            f"M{prefix}neg_dn_g {neg_dn_drive} {nontarget_guard_node} {prefix}neg_dn_guard 0 NSENSE W={width_u:.6g}u L=180n",
             f"M{prefix}neg_dn_d {prefix}neg_dn_guard {neg} vwlo_ref 0 NSENSE W={width_u:.6g}u L=180n",
         ]
     return lines

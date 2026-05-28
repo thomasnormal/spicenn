@@ -101,6 +101,54 @@ def test_multiclass_block_sequence_can_strengthen_hidden_activation_negative_shu
     assert "Mact0_n act_raw0 pre_n0 0 0 NSENSE W=96u L=180n" in netlist
 
 
+def test_multiclass_block_sequence_can_add_hidden_activation_common_gate() -> None:
+    netlist = seq.generate_netlist(
+        train_records=_one_hot_records(),
+        eval_records=_one_hot_records(),
+        class_count=3,
+        feature_count=3,
+        hidden_activation_contrast_mode="common-gate",
+        hidden_activation_contrast_width_u=6.0,
+        hidden_activation_contrast_common_width_u=2.0,
+        class_bias_mode="target-only",
+    )
+
+    assert "\nB" not in netlist
+    assert "Vactcmp actcmp 0 PWL(" in netlist
+    assert "Rhidden_act_common_act0 hidden_act_common act0 100000" in netlist
+    assert "Chactgate0 hactgate0 0 8f IC=0" in netlist
+    assert "Mhactgate0_up_v vdd act0 hactgate0_up_i 0 NSENSE W=64u" in netlist
+    assert "Mhactgate0_dn_v hactgate0 hidden_act_common hactgate0_dn_i 0 NSENSE W=18u" in netlist
+    assert "Cact_contrast0 act_contrast0 0 20f IC=0" in netlist
+    assert "Mhactcontrast_f0_pass_g act0 hactgate0 hactcontrast_f0_pass_mid 0 NSENSE W=12u" in netlist
+    assert "Mactrow0_n actrow0 out act_contrast0 0 NMOS W=16u L=180n" in netlist
+    assert "Mactrow3_n actrow3 out act3 0 NMOS W=16u L=180n" in netlist
+    assert "Mhactcontrast_f3" not in netlist
+    assert "Cact_contrast3" not in netlist
+
+
+def test_multiclass_block_sequence_common_gate_drives_writer_eligibility_gate() -> None:
+    netlist = seq.generate_netlist(
+        train_records=_one_hot_records(),
+        eval_records=_one_hot_records(),
+        class_count=3,
+        feature_count=3,
+        hidden_activation_contrast_mode="common-gate",
+        eligibility_gate_mode="contrast",
+        readout_update_eligibility_mode="hybrid",
+        readout_update_mode="live",
+        error_mode="pairwise-margin-correction-descent",
+        hidden_update_mode="direct-readout-weighted",
+    )
+
+    assert "\nB" not in netlist
+    assert "Mhxelig0_pass_gate hxelig0 hactgate0 hxelig0_pass_mid 0 NSENSE W=16u L=180n" in netlist
+    assert "Mrelig0_pgate_dis_gate relig0_pgate_elig hactgate0 relig0_pgate_gate 0 NSENSE W=16u L=180n" in netlist
+    assert "Mrelig0_pass_gate relig0 hactgate0 relig0_pass_mid 0 NSENSE W=16u L=180n" in netlist
+    assert "Mhxelig0_pass_gate hxelig0 egate0" not in netlist
+    assert "Mrelig0_pgate_dis_gate relig0_pgate_elig egate0" not in netlist
+
+
 def test_multiclass_block_sequence_defaults_score_measure_to_timing_window() -> None:
     records = _target0_records(1)
 
@@ -217,6 +265,59 @@ def test_multiclass_block_sequence_ngspice_strong_negative_hidden_activation_shu
     assert float(measures["act_common_high"]) < 50e-3
     assert float(measures["act_reverse"]) < 1e-3
     assert float(measures["act_weak_margin"]) > float(measures["act_common_weak"]) + 10e-3
+
+
+@pytest.mark.ngspice
+def test_multiclass_block_sequence_ngspice_hidden_activation_common_gate_selects_above_common_activity(
+    tmp_path: Path,
+    ngspice_path: str,
+) -> None:
+    lines = [
+        "* Low-level hidden activation common-gate contrast primitive.",
+        ".param VDD=1.2",
+        seq.mos_models(),
+        "Vdd vdd 0 {VDD}",
+        "Vrst rst 0 0",
+        "Vactcmp actcmp 0 PULSE(0 1.2 0.2n 10p 10p 1.4n 4n)",
+        "Vact0 act0 0 0.42",
+        "Vact1 act1 0 0.30",
+        "Vact2 act2 0 0.06",
+        *seq.hidden_activation_common_gate_lines(
+            feature_count=3,
+            compare_clock_node="actcmp",
+            reset_node="rst",
+            common_resistance_ohm=100000.0,
+            pullup_width_u=128.0,
+            pulldown_width_u=24.0,
+            pass_width_u=16.0,
+        ),
+        ".meas tran common_after FIND V(hidden_act_common) AT=2n",
+        ".meas tran gate0 FIND V(hactgate0) AT=2n",
+        ".meas tran gate1 FIND V(hactgate1) AT=2n",
+        ".meas tran gate2 FIND V(hactgate2) AT=2n",
+        ".meas tran contrast0 FIND V(act_contrast0) AT=2n",
+        ".meas tran contrast1 FIND V(act_contrast1) AT=2n",
+        ".meas tran contrast2 FIND V(act_contrast2) AT=2n",
+        ".tran 2p 3n uic",
+        ".control",
+        "run",
+        "quit",
+        ".endc",
+        ".end",
+    ]
+
+    measures = run_netlist(
+        ngspice_path,
+        tmp_path / "hidden_activation_common_gate.cir",
+        "\n".join(lines),
+        timeout=20.0,
+    )
+
+    assert 0.20 < float(measures["common_after"]) < 0.32
+    assert float(measures["gate0"]) > float(measures["gate1"]) + 40e-3
+    assert float(measures["gate1"]) > float(measures["gate2"]) + 40e-3
+    assert float(measures["contrast0"]) > float(measures["contrast1"]) + 30e-3
+    assert float(measures["contrast1"]) > float(measures["contrast2"]) + 30e-3
 
 
 def test_multiclass_block_sequence_can_sample_differential_activation_as_eligibility() -> None:
@@ -2353,6 +2454,19 @@ def test_multiclass_block_sequence_validation() -> None:
         seq.generate_netlist(train_records=records, eval_records=records, hidden_activation_negative_width_scale=0)
     with pytest.raises(ValueError, match="hidden-activation-negative-width-scale"):
         seq.main_for_test(["--hidden-activation-negative-width-scale", "0"])
+    with pytest.raises(ValueError, match="hidden_activation_contrast_mode"):
+        seq.generate_netlist(train_records=records, eval_records=records, hidden_activation_contrast_mode="missing")
+    with pytest.raises(ValueError, match="hidden_activation_contrast_width_u"):
+        seq.generate_netlist(
+            train_records=records,
+            eval_records=records,
+            hidden_activation_contrast_mode="common-gate",
+            hidden_activation_contrast_width_u=0.0,
+        )
+    with pytest.raises(SystemExit):
+        seq.main_for_test(["--hidden-activation-contrast-mode", "missing"])
+    with pytest.raises(ValueError, match="hidden-activation-contrast widths"):
+        seq.main_for_test(["--hidden-activation-contrast-mode", "common-gate", "--hidden-activation-contrast-width", "0"])
     with pytest.raises(ValueError, match="hidden_direct_readout_gate_mode"):
         seq.generate_netlist(
             train_records=records,

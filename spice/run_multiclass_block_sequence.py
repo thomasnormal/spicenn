@@ -68,6 +68,7 @@ READOUT_UPDATE_ELIGIBILITY_MODES = ("restored", "hybrid")
 READOUT_UPDATE_ELIGIBILITY_SENSE_MODELS = ("NREL", "NMOS", "NSENSE")
 HIDDEN_CREDIT_ACTIVATION_MODELS = ("NREL", "NMOS", "NSENSE")
 HIDDEN_ACTIVATION_MODELS = ("NREL", "NMOS", "NSENSE")
+HIDDEN_ACTIVATION_CONTRAST_MODES = ("none", "common-gate")
 HIDDEN_DIRECT_READOUT_GATE_MODES = ("raw", "differential-excess", "restored-excess")
 HIDDEN_DIRECT_OUTPUT_STAGES = (
     "nmos-pass",
@@ -1057,6 +1058,61 @@ def hidden_differential_common_mode_clamp_lines(
     ]
 
 
+def hidden_activation_common_gate_lines(
+    *,
+    feature_count: int,
+    common_node: str = "hidden_act_common",
+    compare_clock_node: str = "actcmp",
+    reset_node: str = "rst",
+    common_resistance_ohm: float = 100000.0,
+    gate_capacitance_f: float = 8.0,
+    contrast_capacitance_f: float = 20.0,
+    pullup_width_u: float = 128.0,
+    pulldown_width_u: float = 24.0,
+    pass_width_u: float = 16.0,
+) -> list[str]:
+    if feature_count <= 0:
+        raise ValueError("feature_count must be positive")
+    if min(
+        common_resistance_ohm,
+        gate_capacitance_f,
+        contrast_capacitance_f,
+        pullup_width_u,
+        pulldown_width_u,
+        pass_width_u,
+    ) <= 0.0:
+        raise ValueError("hidden activation common gate sizes must be positive")
+    lines = [
+        f"R{common_node} {common_node} 0 1G",
+    ]
+    for feature in range(feature_count):
+        act = f"act{feature}"
+        act_contrast = f"act_contrast{feature}"
+        gate = f"hactgate{feature}"
+        up_i = f"hactgate{feature}_up_i"
+        dn_i = f"hactgate{feature}_dn_i"
+        pass_mid = f"hactcontrast_f{feature}_pass_mid"
+        lines += [
+            f"R{common_node}_act{feature} {common_node} {act} {common_resistance_ohm:.12g}",
+            f"C{gate} {gate} 0 {gate_capacitance_f:.12g}f IC=0",
+            f"R{gate} {gate} 0 1G",
+            f"M{gate}_rst {gate} {reset_node} 0 0 NMOS W=4u L=180n",
+            f"R{up_i} {up_i} 0 1G",
+            f"R{dn_i} {dn_i} 0 1G",
+            f"M{gate}_up_v vdd {act} {up_i} 0 NSENSE W={pullup_width_u:.6g}u L=180n",
+            f"M{gate}_up_t {up_i} {compare_clock_node} {gate} 0 NSENSE W={pullup_width_u:.6g}u L=180n",
+            f"M{gate}_dn_v {gate} {common_node} {dn_i} 0 NSENSE W={pulldown_width_u:.6g}u L=180n",
+            f"M{gate}_dn_t {dn_i} {compare_clock_node} 0 0 NSENSE W={pulldown_width_u:.6g}u L=180n",
+            f"C{act_contrast} {act_contrast} 0 {contrast_capacitance_f:.12g}f IC=0",
+            f"R{act_contrast} {act_contrast} 0 1G",
+            f"M{act_contrast}_rst {act_contrast} {reset_node} 0 0 NMOS W=4u L=180n",
+            f"R{pass_mid} {pass_mid} 0 1G",
+            f"Mhactcontrast_f{feature}_pass_g {act} {gate} {pass_mid} 0 NSENSE W={pass_width_u:.6g}u L=180n",
+            f"Mhactcontrast_f{feature}_pass_t {pass_mid} {compare_clock_node} {act_contrast} 0 NSENSE W={pass_width_u:.6g}u L=180n",
+        ]
+    return lines
+
+
 def pairwise_winner_lines(
     *,
     class_a: int,
@@ -1744,6 +1800,9 @@ def generate_netlist(
     hidden_width_u: float = 1.0,
     hidden_activation_model: str = "NREL",
     hidden_activation_negative_width_scale: float = 1.0,
+    hidden_activation_contrast_mode: str = "none",
+    hidden_activation_contrast_width_u: float = 8.0,
+    hidden_activation_contrast_common_width_u: float = 4.0,
     readout_width_u: float = 64.0,
     score_capacitance_f: float = 10.0,
     score_load_resistance: float = 1e6,
@@ -1822,6 +1881,8 @@ def generate_netlist(
         "hidden_negative": hidden_negative,
         "hidden_width_u": hidden_width_u,
         "hidden_activation_negative_width_scale": hidden_activation_negative_width_scale,
+        "hidden_activation_contrast_width_u": hidden_activation_contrast_width_u,
+        "hidden_activation_contrast_common_width_u": hidden_activation_contrast_common_width_u,
         "readout_width_u": readout_width_u,
         "score_capacitance_f": score_capacitance_f,
         "score_load_resistance": score_load_resistance,
@@ -1863,6 +1924,13 @@ def generate_netlist(
         raise ValueError("hidden_state_anchor_resistance_ohm must be positive when set")
     if hidden_activation_model not in HIDDEN_ACTIVATION_MODELS:
         raise ValueError(f"hidden_activation_model must be one of {HIDDEN_ACTIVATION_MODELS}")
+    if hidden_activation_contrast_mode not in HIDDEN_ACTIVATION_CONTRAST_MODES:
+        raise ValueError(f"hidden_activation_contrast_mode must be one of {HIDDEN_ACTIVATION_CONTRAST_MODES}")
+    if hidden_activation_contrast_mode != "none" and min(
+        hidden_activation_contrast_width_u,
+        hidden_activation_contrast_common_width_u,
+    ) <= 0.0:
+        raise ValueError("hidden activation contrast widths must be positive")
     if hidden_state_keeper_mode not in HIDDEN_STATE_KEEPER_MODES:
         raise ValueError(f"hidden_state_keeper_mode must be one of {HIDDEN_STATE_KEEPER_MODES}")
     if hidden_state_common_clamp_width_u < 0.0:
@@ -2197,6 +2265,11 @@ def generate_netlist(
         f"Vsamp samp 0 {periodic_phase_pwl(cycle_count, start_ns=2.5, end_ns=3.5)}",
         f"Vsampn sampn 0 {active_low_phase_pwl(cycle_count, start_ns=2.5, end_ns=3.5, active_cycles=set(range(cycle_count)))}",
         *(
+            [f"Vactcmp actcmp 0 {periodic_phase_pwl(cycle_count, start_ns=3.65, end_ns=4.35)}"]
+            if hidden_activation_contrast_mode == "common-gate"
+            else []
+        ),
+        *(
             [f"Vrelig_ref relig_ref 0 {readout_update_eligibility_ref:.12g}"]
             if eligibility_gate_mode in ("competition", "rank", "contrast")
             else []
@@ -2410,9 +2483,22 @@ def generate_netlist(
                 if uses_hidden_update
                 else []
             ),
-            f"Mactrow{feature}_n actrow{feature} out act{feature} 0 NMOS W=16u L=180n",
-            f"Mactrow{feature}_p actrow{feature} outn act{feature} vdd PMOS W=32u L=180n",
+            f"Mactrow{feature}_n actrow{feature} out "
+            f"{f'act_contrast{feature}' if hidden_activation_contrast_mode == 'common-gate' and feature < feature_count else f'act{feature}'} "
+            "0 NMOS W=16u L=180n",
+            f"Mactrow{feature}_p actrow{feature} outn "
+            f"{f'act_contrast{feature}' if hidden_activation_contrast_mode == 'common-gate' and feature < feature_count else f'act{feature}'} "
+            "vdd PMOS W=32u L=180n",
         ]
+    if hidden_activation_contrast_mode == "common-gate":
+        lines += hidden_activation_common_gate_lines(
+            feature_count=feature_count,
+            compare_clock_node="actcmp",
+            reset_node="rst",
+            pullup_width_u=hidden_activation_contrast_common_width_u * 32.0,
+            pulldown_width_u=hidden_activation_contrast_width_u * 3.0,
+            pass_width_u=hidden_activation_contrast_width_u * 2.0,
+        )
     if eligibility_gate_mode == "contrast":
         lines += shared_eligibility_common_reference_lines(
             feature_count=feature_count,
@@ -2453,7 +2539,11 @@ def generate_netlist(
     if uses_hidden_update and eligibility_gate_mode in ("competition", "rank", "contrast"):
         for feature in range(feature_count):
             hxelg = hidden_update_eligibility_node(feature)
-            egate = eligibility_gate_node(feature)
+            egate = (
+                f"hactgate{feature}"
+                if hidden_activation_contrast_mode == "common-gate" and eligibility_gate_mode == "contrast"
+                else eligibility_gate_node(feature)
+            )
             mid = f"{hxelg}_pass_mid"
             lines += [
                 f"R{mid} {mid} 0 1G",
@@ -2465,7 +2555,11 @@ def generate_netlist(
         readout_pass_clock = "relpass" if uses_hybrid_readout_eligibility else "relsamp"
         for feature in range(feature_count):
             relig = readout_update_eligibility_node(feature)
-            egate = eligibility_gate_node(feature)
+            egate = (
+                f"hactgate{feature}"
+                if hidden_activation_contrast_mode == "common-gate" and eligibility_gate_mode == "contrast"
+                else eligibility_gate_node(feature)
+            )
             pgate = f"{relig}_pgate"
             mid_elig = f"{relig}_pgate_elig"
             mid_gate = f"{relig}_pgate_gate"
@@ -4737,6 +4831,9 @@ def run_case(args: argparse.Namespace) -> dict[str, Any]:
         readout_width_u=args.readout_width,
         hidden_activation_model=args.hidden_activation_model,
         hidden_activation_negative_width_scale=args.hidden_activation_negative_width_scale,
+        hidden_activation_contrast_mode=args.hidden_activation_contrast_mode,
+        hidden_activation_contrast_width_u=args.hidden_activation_contrast_width,
+        hidden_activation_contrast_common_width_u=args.hidden_activation_contrast_common_width,
         score_capacitance_f=args.score_capacitance_f,
         score_load_resistance=args.score_load_resistance,
         score_mirror_capacitance_f=args.score_mirror_capacitance_f,
@@ -4942,6 +5039,15 @@ def run_case(args: argparse.Namespace) -> dict[str, Any]:
         "readout_center_resistance_ohm": args.readout_center_resistance if args.readout_center_resistance > 0.0 else None,
         "readout_center_voltage_v": args.readout_center_voltage if args.readout_center_resistance > 0.0 else None,
         "readout_width_u": args.readout_width,
+        "hidden_activation_model": args.hidden_activation_model,
+        "hidden_activation_negative_width_scale": args.hidden_activation_negative_width_scale,
+        "hidden_activation_contrast_mode": args.hidden_activation_contrast_mode,
+        "hidden_activation_contrast_width_u": (
+            args.hidden_activation_contrast_width if args.hidden_activation_contrast_mode != "none" else None
+        ),
+        "hidden_activation_contrast_common_width_u": (
+            args.hidden_activation_contrast_common_width if args.hidden_activation_contrast_mode != "none" else None
+        ),
         "score_capacitance_f": args.score_capacitance_f,
         "score_load_resistance_ohm": args.score_load_resistance,
         "score_mirror_capacitance_f": (
@@ -5039,8 +5145,6 @@ def run_case(args: argparse.Namespace) -> dict[str, Any]:
             else None
         ),
         "hidden_update_mode": args.hidden_update_mode,
-        "hidden_activation_model": args.hidden_activation_model,
-        "hidden_activation_negative_width_scale": args.hidden_activation_negative_width_scale,
         "hidden_credit_width_u": args.hidden_credit_width if args.hidden_update_mode != "none" else None,
         "hidden_credit_capacitance_f": args.hidden_credit_capacitance_f if args.hidden_update_mode != "none" else None,
         "hidden_credit_shunt_resistance_ohm": (
@@ -5314,6 +5418,9 @@ def build_arg_parser() -> argparse.ArgumentParser:
     ap.add_argument("--hidden-update-mode", choices=HIDDEN_UPDATE_MODES, default="none")
     ap.add_argument("--hidden-activation-model", choices=HIDDEN_ACTIVATION_MODELS, default="NREL")
     ap.add_argument("--hidden-activation-negative-width-scale", type=float, default=1.0)
+    ap.add_argument("--hidden-activation-contrast-mode", choices=HIDDEN_ACTIVATION_CONTRAST_MODES, default="none")
+    ap.add_argument("--hidden-activation-contrast-width", type=float, default=8.0)
+    ap.add_argument("--hidden-activation-contrast-common-width", type=float, default=4.0)
     ap.add_argument("--hidden-credit-width", type=float, default=8.0)
     ap.add_argument("--hidden-credit-capacitance-f", type=float, default=12.0)
     ap.add_argument("--hidden-credit-shunt-resistance", type=float, default=1.0e9)
@@ -5416,6 +5523,13 @@ def validate_args(args: argparse.Namespace) -> None:
         raise ValueError(f"hidden-activation-model must be one of {HIDDEN_ACTIVATION_MODELS}")
     if args.hidden_activation_negative_width_scale <= 0.0:
         raise ValueError("hidden-activation-negative-width-scale must be positive")
+    if args.hidden_activation_contrast_mode not in HIDDEN_ACTIVATION_CONTRAST_MODES:
+        raise ValueError(f"hidden-activation-contrast-mode must be one of {HIDDEN_ACTIVATION_CONTRAST_MODES}")
+    if args.hidden_activation_contrast_mode != "none" and min(
+        args.hidden_activation_contrast_width,
+        args.hidden_activation_contrast_common_width,
+    ) <= 0.0:
+        raise ValueError("hidden-activation-contrast widths must be positive")
     if args.score_timing_mode not in SCORE_TIMING_MODES:
         raise ValueError(f"score-timing-mode must be one of {SCORE_TIMING_MODES}")
     if args.score_sense_mode not in SCORE_SENSE_MODES:

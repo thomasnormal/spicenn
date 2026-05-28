@@ -1,5 +1,38 @@
 # Engineering Log
 
+## 2026-05-28
+
+- Added a hidden-activation `common-gate` contrast primitive to the continuous
+  multiclass block sequence.  The circuit computes a feature common node from
+  stored `act*` capacitors, generates per-feature `hactgate*` rails during an
+  `actcmp` phase, and samples `act_contrast*` through those gates for readout.
+  Bias features stay on raw `act*`, so the contrast circuit only applies to
+  hidden features.  The ngspice primitive regression proves ordered behavior:
+  `act=0.42/0.30/0.06 V` produces ordered `hactgate` and `act_contrast`
+  outputs, with no behavioral sources.  Focused regression passed:
+  `python3 -m py_compile spice/run_multiclass_block_sequence.py && python3 -m
+  pytest tests/test_multiclass_block_sequence.py -q -k "hidden_activation_common_gate
+  or hidden_activation or validation"` with 8 tests.
+- Wired `common-gate` mode into the live writer eligibility gate as well as
+  readout, so `eligibility_gate_mode=contrast` can use the same `hactgate*`
+  selector for readout update eligibility and direct hidden-update eligibility.
+  This keeps the forward evidence and gradient-flow writer selection aligned at
+  the topology level, rather than letting readout see `act_contrast*` while the
+  writer still gates from the older broad `egate*` path.
+- Negative integrated result: the compact strict continuous
+  `mnist3fixed8_6`, 3-train/3-eval round-robin run with differential hidden
+  common clamp, `common-gate` activation contrast, hybrid restored readout
+  eligibility, pairwise-margin centered-gain error rails, and direct
+  readout-weighted hidden updates still stayed at `0.333 -> 0.333`.  The first
+  common-gate run had final min margin about `-21.09 mV`; after tying writer
+  gates to `hactgate*`, the result was still `0.333 -> 0.333` with final min
+  margin about `-21.09 mV`.  The useful diagnostic is that high activation
+  sparsity improved, and hidden-update eligibility amplitude fell, but
+  `train_readout_update_eligibility_at_writer_active_features_250mv_mean`
+  remained `6.0` and those rails still saturated near `1.2 V`.  The next
+  blocker is therefore the restored/hybrid readout-update eligibility writer
+  interface, not the existence of an activation contrast gate itself.
+
 ## 2026-05-27
 
 - Extended the conductance-row readout primitive with a `current-clamp`

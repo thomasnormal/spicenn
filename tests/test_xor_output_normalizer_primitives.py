@@ -44,6 +44,13 @@ def test_xor_output_normalizer_primitives_define_real_subcircuits() -> None:
     assert ".subckt xor_prob_conductance_divider2 " in text
     assert "Icdref vdd norm PULSE" in text
     assert "Mcd0 d0 gcond ps0 vss NSENSE" in text
+    assert ".subckt xor_current_routed_descent2 " in text
+    assert "Mcrd0 rd0 gcrd mir0 vss NSENSE" in text
+    assert "Me0p_sink e0p mir1 e0p_a vss NMOS" in text
+    assert ".subckt xor_current_to_writer_descent2 " in text
+    assert "Mcrw0 rd0 gcrw mir0 vss NSENSE" in text
+    assert "Mb1low_sink b1low mir1 b1low_a vss NMOS" in text
+    assert "Me0p_m vdd b1low e0p_a vdd PMOS" in text
     assert ".subckt xor_prob_soft_wta2 " in text
     assert "Mswta0_supp_phi swta0_supp phip vss vss NMOS" in text
     assert ".subckt xor_label_routed_descent2 " in text
@@ -67,6 +74,36 @@ def test_xor_output_normalizer_primitive_validation() -> None:
             target=0,
             conductance_floor=-0.1,
         )
+    with pytest.raises(ValueError, match="divider_error_mode"):
+        xor_norm.generate_netlist(
+            approach="conductance-divider",
+            evidence=(1.0, 1.0),
+            target=0,
+            divider_error_mode="bad",
+        )
+    with pytest.raises(ValueError, match="only available"):
+        xor_norm.generate_netlist(
+            approach="soft-wta",
+            evidence=(1.0, 1.0),
+            target=0,
+            divider_error_mode="current-routed",
+        )
+    with pytest.raises(ValueError, match="target"):
+        xor_norm.generate_writer_correction_netlist(evidence=(1.0, 1.0), target=2)
+    with pytest.raises(ValueError, match="references"):
+        xor_norm.generate_writer_correction_netlist(evidence=(1.0, 1.0), target=0, high_ref=0.2, low_ref=0.3)
+
+
+def test_xor_divider_writer_correction_uses_real_pmos_writer() -> None:
+    netlist = xor_norm.generate_writer_correction_netlist(evidence=(1.0, 3.0), target=0)
+
+    assert "\nB" not in netlist
+    assert "Vapply" not in netlist
+    assert "Xwroute rnorm rd0 rd1 t0 t1 phip c0_errp c0_errn c1_errp c1_errn vdd 0 xor_current_to_writer_descent2" in netlist
+    assert "Mc0_f0_live_pos_up_p c0_vwp0 c0_f0_live_pos_up_ctrl vwhi_ref vdd PMOS" in netlist
+    assert "Mc1_f0_live_neg_up_p c1_vwn0 c1_f0_live_neg_up_ctrl vwhi_ref vdd PMOS" in netlist
+    assert ".meas tran c0_signed_delta" in netlist
+    assert ".meas tran ir0_raw" in netlist
 
 
 @pytest.mark.parametrize(
@@ -217,6 +254,255 @@ def test_conductance_divider_ngspice_tie_is_symmetric_and_bounded(
     for measures in (target0, target1):
         for name in ("e0p_after", "e0n_after", "e1p_after", "e1n_after"):
             assert 0.0 <= measures[name] < 0.95
+
+
+def test_conductance_divider_ngspice_current_routed_error_preserves_label_sign_and_magnitude(
+    tmp_path: Path,
+    ngspice_path: str,
+) -> None:
+    target0_loses = _run_case(
+        tmp_path,
+        ngspice_path,
+        approach="conductance-divider",
+        evidence=(1.0, 3.0),
+        target=0,
+        conductance_floor=0.0,
+        divider_error_mode="current-routed",
+        name="current_routed_target0_loses",
+    )
+    target0_clear = _run_case(
+        tmp_path,
+        ngspice_path,
+        approach="conductance-divider",
+        evidence=(3.0, 1.0),
+        target=0,
+        conductance_floor=0.0,
+        divider_error_mode="current-routed",
+        name="current_routed_target0_clear",
+    )
+    target1_loses = _run_case(
+        tmp_path,
+        ngspice_path,
+        approach="conductance-divider",
+        evidence=(3.0, 1.0),
+        target=1,
+        conductance_floor=0.0,
+        divider_error_mode="current-routed",
+        name="current_routed_target1_loses",
+    )
+
+    for measures in (target0_loses, target0_clear, target1_loses):
+        ir0 = abs(measures["ir0_raw"])
+        ir1 = abs(measures["ir1_raw"])
+        assert ir0 + ir1 == pytest.approx(1.0e-6, rel=0.08)
+        assert 0.0 < measures["rnorm_after"] < 0.9
+
+    wrong_frac = abs(target0_loses["ir1_raw"]) / (
+        abs(target0_loses["ir0_raw"]) + abs(target0_loses["ir1_raw"])
+    )
+    assert wrong_frac > 0.60
+    assert target0_loses["e0_diff"] > 0.08
+    assert target0_loses["e1_diff"] < -0.08
+    assert target0_loses["e0_diff"] > target0_clear["e0_diff"] + 0.04
+    assert target1_loses["e1_diff"] > 0.08
+    assert target1_loses["e0_diff"] < -0.08
+
+    assert 0.9 < target0_loses["e0p_after"] < 1.15
+    assert target0_loses["e0n_after"] > 1.18
+    assert target0_loses["e1p_after"] > 1.18
+    assert 0.9 < target0_loses["e1n_after"] < 1.15
+
+
+def test_conductance_divider_ngspice_current_routed_error_scale_drift_is_bounded(
+    tmp_path: Path,
+    ngspice_path: str,
+) -> None:
+    base = _run_case(
+        tmp_path,
+        ngspice_path,
+        approach="conductance-divider",
+        evidence=(1.0, 3.0),
+        target=0,
+        conductance_floor=0.0,
+        conductance_scale=1.0,
+        divider_error_mode="current-routed",
+        name="current_routed_scale1",
+    )
+    scaled = _run_case(
+        tmp_path,
+        ngspice_path,
+        approach="conductance-divider",
+        evidence=(1.0, 3.0),
+        target=0,
+        conductance_floor=0.0,
+        conductance_scale=4.0,
+        divider_error_mode="current-routed",
+        name="current_routed_scale4",
+    )
+
+    base_ir0 = abs(base["ir0_raw"])
+    base_ir1 = abs(base["ir1_raw"])
+    scaled_ir0 = abs(scaled["ir0_raw"])
+    scaled_ir1 = abs(scaled["ir1_raw"])
+    base_ir0_frac = base_ir0 / (base_ir0 + base_ir1)
+    scaled_ir0_frac = scaled_ir0 / (scaled_ir0 + scaled_ir1)
+
+    assert base_ir0_frac < 0.40
+    assert scaled_ir0_frac > base_ir0_frac
+    assert scaled_ir0_frac < 0.48
+    assert scaled_ir0 + scaled_ir1 == pytest.approx(base_ir0 + base_ir1, rel=0.08)
+    assert scaled["e0_diff"] > 0.08
+    assert scaled["e0_diff"] == pytest.approx(base["e0_diff"], rel=0.25)
+
+
+def _run_writer_case(
+    tmp_path: Path,
+    ngspice_path: str,
+    *,
+    evidence: tuple[float, float],
+    target: int,
+    name: str,
+    **kwargs: float,
+) -> dict[str, float]:
+    netlist = xor_norm.generate_writer_correction_netlist(
+        evidence=evidence,
+        target=target,
+        **kwargs,
+    )
+    assert "\nB" not in netlist
+    return xor_norm.run_netlist(
+        ngspice_path,
+        tmp_path / f"divider_writer_{name}.cir",
+        netlist,
+        timeout=30.0,
+    )
+
+
+def test_conductance_divider_ngspice_current_to_writer_one_sample_correction(
+    tmp_path: Path,
+    ngspice_path: str,
+) -> None:
+    target0_loses = _run_writer_case(
+        tmp_path,
+        ngspice_path,
+        evidence=(1.0, 3.0),
+        target=0,
+        conductance_floor=0.0,
+        name="target0_loses",
+    )
+    target0_clear = _run_writer_case(
+        tmp_path,
+        ngspice_path,
+        evidence=(3.0, 1.0),
+        target=0,
+        conductance_floor=0.0,
+        name="target0_clear",
+    )
+    target1_loses = _run_writer_case(
+        tmp_path,
+        ngspice_path,
+        evidence=(3.0, 1.0),
+        target=1,
+        conductance_floor=0.0,
+        name="target1_loses",
+    )
+
+    for measures in (target0_loses, target0_clear, target1_loses):
+        ir0 = abs(measures["ir0_raw"])
+        ir1 = abs(measures["ir1_raw"])
+        assert ir0 + ir1 == pytest.approx(1.0e-6, rel=0.08)
+        assert 0.0 < measures["rnorm_after"] < 0.9
+
+    assert target0_loses["e0_diff"] > 0.04
+    assert target0_loses["e1_diff"] < -0.04
+    assert target0_loses["c0_signed_delta"] > 0.5e-3
+    assert target0_loses["c1_signed_delta"] < -0.5e-3
+    assert target0_loses["c0_signed_delta"] > target0_clear["c0_signed_delta"] + 0.5e-3
+    assert target0_loses["c1_signed_delta"] < target0_clear["c1_signed_delta"] - 0.5e-3
+    assert target1_loses["c1_signed_delta"] > 0.5e-3
+    assert target1_loses["c0_signed_delta"] < -0.5e-3
+    assert target0_loses["c0_pos_ctrl_min"] < 0.85
+    assert target0_loses["c1_neg_ctrl_min"] < 0.85
+    assert target0_loses["c0_neg_ctrl_min"] > 0.90
+    assert target0_loses["c1_pos_ctrl_min"] > 0.90
+
+
+def test_conductance_divider_ngspice_current_to_writer_tracks_wrong_probability(
+    tmp_path: Path,
+    ngspice_path: str,
+) -> None:
+    clear = _run_writer_case(
+        tmp_path,
+        ngspice_path,
+        evidence=(3.0, 1.0),
+        target=0,
+        conductance_floor=0.0,
+        name="writer_clear",
+    )
+    tie = _run_writer_case(
+        tmp_path,
+        ngspice_path,
+        evidence=(1.0, 1.0),
+        target=0,
+        conductance_floor=0.0,
+        name="writer_tie",
+    )
+    wrong = _run_writer_case(
+        tmp_path,
+        ngspice_path,
+        evidence=(1.0, 3.0),
+        target=0,
+        conductance_floor=0.0,
+        name="writer_wrong",
+    )
+
+    assert abs(clear["c0_signed_delta"]) < 1.0e-3
+    assert tie["c0_signed_delta"] > clear["c0_signed_delta"] + 0.2e-3
+    assert wrong["c0_signed_delta"] > tie["c0_signed_delta"] + 0.2e-3
+    assert abs(clear["c1_signed_delta"]) < 1.0e-3
+    assert tie["c1_signed_delta"] < clear["c1_signed_delta"] - 0.2e-3
+    assert wrong["c1_signed_delta"] < tie["c1_signed_delta"] - 0.2e-3
+
+
+def test_conductance_divider_ngspice_current_to_writer_scale_and_floor_are_bounded(
+    tmp_path: Path,
+    ngspice_path: str,
+) -> None:
+    base = _run_writer_case(
+        tmp_path,
+        ngspice_path,
+        evidence=(1.0, 3.0),
+        target=0,
+        conductance_floor=0.0,
+        conductance_scale=1.0,
+        name="writer_scale1",
+    )
+    scaled = _run_writer_case(
+        tmp_path,
+        ngspice_path,
+        evidence=(1.0, 3.0),
+        target=0,
+        conductance_floor=0.0,
+        conductance_scale=4.0,
+        name="writer_scale4",
+    )
+    floored_tie = _run_writer_case(
+        tmp_path,
+        ngspice_path,
+        evidence=(0.0, 0.0),
+        target=0,
+        conductance_floor=1.0,
+        name="writer_floor_tie",
+    )
+
+    assert scaled["c0_signed_delta"] > 0.0
+    assert scaled["c1_signed_delta"] < 0.0
+    assert scaled["c0_signed_delta"] == pytest.approx(base["c0_signed_delta"], rel=0.55)
+    assert scaled["c1_signed_delta"] == pytest.approx(base["c1_signed_delta"], rel=0.55)
+    assert 0.0 < floored_tie["rnorm_after"] < 0.9
+    assert floored_tie["c0_signed_delta"] > 0.0
+    assert floored_tie["c1_signed_delta"] < 0.0
+    assert abs(floored_tie["c0_signed_delta"] + floored_tie["c1_signed_delta"]) < 2.0e-3
 
 
 @pytest.mark.parametrize(

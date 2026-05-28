@@ -1511,6 +1511,7 @@ def generate_netlist(
     hidden_credit_shunt_resistance_ohm: float = 1.0e9,
     hidden_credit_activation_model: str = "NREL",
     hidden_update_width_u: float = 0.25,
+    hidden_state_anchor_resistance_ohm: float | None = None,
     hidden_direct_readout_gate_mode: str = "differential-excess",
     hidden_direct_output_stage: str = "nmos-pass",
     hidden_direct_high_ref: float = 1.05,
@@ -1584,6 +1585,8 @@ def generate_netlist(
     }.items():
         if value <= 0.0:
             raise ValueError(f"{name} must be positive")
+    if hidden_state_anchor_resistance_ohm is not None and hidden_state_anchor_resistance_ohm <= 0.0:
+        raise ValueError("hidden_state_anchor_resistance_ohm must be positive when set")
     if score_measure_ns is not None and (score_measure_ns <= 0.0 or score_measure_ns >= CYCLE_NS):
         raise ValueError("score_measure_ns must be inside the cycle")
     if readout_center_resistance < 0.0:
@@ -1881,6 +1884,14 @@ def generate_netlist(
         "Vvwlo_ref vwlo_ref 0 0.28",
         f"Vhidden_whi_ref hidden_whi_ref 0 {hidden_direct_high_ref:.12g}",
         f"Vhidden_wlo_ref hidden_wlo_ref 0 {hidden_direct_low_ref:.12g}",
+        *(
+            [
+                f"Vhidden_pos_anchor hidden_pos_anchor 0 {hidden_positive:.12g}",
+                f"Vhidden_neg_anchor hidden_neg_anchor 0 {hidden_negative:.12g}",
+            ]
+            if hidden_state_anchor_resistance_ohm is not None
+            else []
+        ),
         f"Vrst rst 0 {periodic_phase_pwl(cycle_count, start_ns=0.2, end_ns=1.0)}",
         *(
             [f"Vrstn rstn 0 {active_low_phase_pwl(cycle_count, start_ns=0.2, end_ns=1.0, active_cycles=set(range(cycle_count)))}"]
@@ -2008,6 +2019,13 @@ def generate_netlist(
             f"Cwhn{feature} whn{feature} 0 20f IC={hidden_negative:.12g}",
             f"Rwhp{feature} whp{feature} 0 1e15",
             f"Rwhn{feature} whn{feature} 0 1e15",
+        ]
+        if hidden_state_anchor_resistance_ohm is not None:
+            lines += [
+                f"Rwhp_anchor{feature} whp{feature} hidden_pos_anchor {hidden_state_anchor_resistance_ohm:.12g}",
+                f"Rwhn_anchor{feature} whn{feature} hidden_neg_anchor {hidden_state_anchor_resistance_ohm:.12g}",
+            ]
+        lines += [
             f"Cpre_p{feature} pre_p{feature} 0 20f IC=0",
             f"Cpre_n{feature} pre_n{feature} 0 20f IC=0",
             f"Cact_raw{feature} act_raw{feature} 0 20f IC=0",
@@ -4335,6 +4353,7 @@ def run_case(args: argparse.Namespace) -> dict[str, Any]:
         hidden_credit_shunt_resistance_ohm=args.hidden_credit_shunt_resistance,
         hidden_credit_activation_model=args.hidden_credit_activation_model,
         hidden_update_width_u=args.hidden_update_width,
+        hidden_state_anchor_resistance_ohm=args.hidden_state_anchor_resistance,
         hidden_direct_readout_gate_mode=args.hidden_direct_readout_gate_mode,
         hidden_direct_output_stage=args.hidden_direct_output_stage,
         hidden_direct_high_ref=args.hidden_direct_high_ref,
@@ -4599,6 +4618,9 @@ def run_case(args: argparse.Namespace) -> dict[str, Any]:
             args.hidden_credit_activation_model if args.hidden_update_mode != "none" else None
         ),
         "hidden_update_width_u": args.hidden_update_width if args.hidden_update_mode != "none" else None,
+        "hidden_state_anchor_resistance_ohm": (
+            args.hidden_state_anchor_resistance if args.hidden_update_mode != "none" else None
+        ),
         "hidden_direct_readout_gate_mode": (
             args.hidden_direct_readout_gate_mode if args.hidden_update_mode == "direct-readout-weighted" else None
         ),
@@ -4833,6 +4855,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
     ap.add_argument("--hidden-credit-shunt-resistance", type=float, default=1.0e9)
     ap.add_argument("--hidden-credit-activation-model", choices=HIDDEN_CREDIT_ACTIVATION_MODELS, default="NREL")
     ap.add_argument("--hidden-update-width", type=float, default=0.25)
+    ap.add_argument("--hidden-state-anchor-resistance", type=float, default=None)
     ap.add_argument(
         "--hidden-direct-readout-gate-mode",
         choices=HIDDEN_DIRECT_READOUT_GATE_MODES,
@@ -5010,6 +5033,8 @@ def validate_args(args: argparse.Namespace) -> None:
         raise ValueError("hidden-credit-shunt-resistance must be positive")
     if args.hidden_update_width <= 0.0:
         raise ValueError("hidden-update-width must be positive")
+    if args.hidden_state_anchor_resistance is not None and args.hidden_state_anchor_resistance <= 0.0:
+        raise ValueError("hidden-state-anchor-resistance must be positive when set")
     if args.hidden_direct_readout_gate_mode not in HIDDEN_DIRECT_READOUT_GATE_MODES:
         raise ValueError(f"hidden-direct-readout-gate-mode must be one of {HIDDEN_DIRECT_READOUT_GATE_MODES}")
     if args.hidden_direct_output_stage not in HIDDEN_DIRECT_OUTPUT_STAGES:

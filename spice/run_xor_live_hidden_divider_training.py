@@ -299,13 +299,16 @@ def _hidden_writer_lines(mode: str, width_u: float, pmos_width_u: float, gate_ca
     def pmos_charge_lines(prefix: str, dest: str, selector: str, credit: str) -> list[str]:
         gate = f"{prefix}_pgate"
         mid = f"{prefix}_pgmid"
+        phi = f"{prefix}_pgphi"
         return [
             f"C{gate} {gate} 0 {gate_cap_f:.12g}f IC=1.05",
             f"R{gate} {gate} hidden_whi_ref 1G",
             f"R{mid} {mid} 0 1G",
+            f"R{phi} {phi} 0 1G",
             f"M{prefix}_pgate_rst hidden_whi_ref rst {gate} 0 NSENSE W=4u L=180n",
             f"M{prefix}_pgate_sel {gate} {selector} {mid} 0 NSENSE W={width_u:.6g}u L=180n",
-            f"M{prefix}_pgate_cred {mid} {credit} 0 0 NSENSE W={width_u:.6g}u L=180n",
+            f"M{prefix}_pgate_cred {mid} {credit} {phi} 0 NSENSE W={width_u:.6g}u L=180n",
+            f"M{prefix}_pgate_phi {phi} errphi 0 0 NSENSE W={width_u:.6g}u L=180n",
             f"M{prefix}_pmos {dest} {gate} hidden_whi_ref vdd PMOS W={pmos_width_u:.6g}u L=180n",
         ]
 
@@ -437,7 +440,8 @@ def _measure_lines(samples: list[dict[str, Any]], train_offset: int) -> list[str
         if sample["phase"] == "train":
             local = idx - train_offset
             before = base + 0.55
-            after = base + 7.80
+            readout_after = base + 7.80
+            hidden_after = base + 9.80
             err_at = base + 5.55
             credit_at = base + 5.55
             active = pattern
@@ -460,8 +464,8 @@ def _measure_lines(samples: list[dict[str, Any]], train_offset: int) -> list[str
                 lines += [
                     f".meas tran train_{role}_vwp_before_{local} FIND V({class_node(output, f'vwp{active}')}) AT={before:.2f}n",
                     f".meas tran train_{role}_vwn_before_{local} FIND V({class_node(output, f'vwn{active}')}) AT={before:.2f}n",
-                    f".meas tran train_{role}_vwp_after_{local} FIND V({class_node(output, f'vwp{active}')}) AT={after:.2f}n",
-                    f".meas tran train_{role}_vwn_after_{local} FIND V({class_node(output, f'vwn{active}')}) AT={after:.2f}n",
+                    f".meas tran train_{role}_vwp_after_{local} FIND V({class_node(output, f'vwp{active}')}) AT={readout_after:.2f}n",
+                    f".meas tran train_{role}_vwn_after_{local} FIND V({class_node(output, f'vwn{active}')}) AT={readout_after:.2f}n",
                     f".meas tran train_{role}_signed_before_{local} PARAM='train_{role}_vwp_before_{local}-train_{role}_vwn_before_{local}'",
                     f".meas tran train_{role}_signed_after_{local} PARAM='train_{role}_vwp_after_{local}-train_{role}_vwn_after_{local}'",
                     f".meas tran train_{role}_signed_delta_{local} PARAM='train_{role}_signed_after_{local}-train_{role}_signed_before_{local}'",
@@ -470,8 +474,8 @@ def _measure_lines(samples: list[dict[str, Any]], train_offset: int) -> list[str
                 lines += [
                     f".meas tran train_wh{active}{bit}p_before_{local} FIND V(wh{active}{bit}p) AT={before:.2f}n",
                     f".meas tran train_wh{active}{bit}n_before_{local} FIND V(wh{active}{bit}n) AT={before:.2f}n",
-                    f".meas tran train_wh{active}{bit}p_after_{local} FIND V(wh{active}{bit}p) AT={after:.2f}n",
-                    f".meas tran train_wh{active}{bit}n_after_{local} FIND V(wh{active}{bit}n) AT={after:.2f}n",
+                    f".meas tran train_wh{active}{bit}p_after_{local} FIND V(wh{active}{bit}p) AT={hidden_after:.2f}n",
+                    f".meas tran train_wh{active}{bit}n_after_{local} FIND V(wh{active}{bit}n) AT={hidden_after:.2f}n",
                     f".meas tran train_wh{active}{bit}_signed_before_{local} PARAM='train_wh{active}{bit}p_before_{local}-train_wh{active}{bit}n_before_{local}'",
                     f".meas tran train_wh{active}{bit}_signed_after_{local} PARAM='train_wh{active}{bit}p_after_{local}-train_wh{active}{bit}n_after_{local}'",
                     f".meas tran train_wh{active}{bit}_signed_delta_{local} PARAM='train_wh{active}{bit}_signed_after_{local}-train_wh{active}{bit}_signed_before_{local}'",
@@ -497,7 +501,7 @@ def xor_live_hidden_netlist(
     readout_update_width_u: float = 0.25,
     hidden_credit_width_u: float = 32.0,
     hidden_credit_cap_f: float = 12.0,
-    hidden_update_width_u: float = 0.05,
+    hidden_update_width_u: float = 1.0,
     hidden_credit_activation_model: str = "NMOS",
     hidden_credit_internal_cap_f: float = 0.05,
     hidden_credit_internal_shunt_ohm: float = 5.0e7,
@@ -505,7 +509,7 @@ def xor_live_hidden_netlist(
     hidden_credit_gate_cap_f: float = 2.0,
     hidden_credit_gate_pull_scale: float = 1.0,
     hidden_writer_mode: str = "pmos-highside",
-    hidden_writer_pmos_width_u: float = 2.0,
+    hidden_writer_pmos_width_u: float = 4.0,
     hidden_writer_gate_cap_f: float = 0.2,
 ) -> str:
     if not train_order:

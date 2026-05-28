@@ -24,7 +24,8 @@ def test_xor_live_hidden_divider_training_is_live_transistor_path() -> None:
     assert "Mc0_f0_live_pos_up_p c0_vwp0 c0_f0_live_pos_up_ctrl vwhi_ref vdd PMOS" in netlist
     assert "Mh0_c0_cred_pv_e vdd c0_errp h0_c0_cred_pv_e 0 NSENSE" in netlist
     assert "Mh0_hdp_gate_dn h0_hdp_gate h0_hdn 0 0 NSENSE" in netlist
-    assert "Mh0b0_live_pup_pgate_cred h0b0_live_pup_pgmid h0_hdp_gate 0 0 NSENSE" in netlist
+    assert "Mh0b0_live_pup_pgate_cred h0b0_live_pup_pgmid h0_hdp_gate h0b0_live_pup_pgphi 0 NSENSE" in netlist
+    assert "Mh0b0_live_pup_pgate_phi h0b0_live_pup_pgphi errphi 0 0 NSENSE" in netlist
     assert "Mh0b0_live_pup_pmos wh00p h0b0_live_pup_pgate hidden_whi_ref vdd PMOS" in netlist
 
 
@@ -96,4 +97,4 @@ def test_xor_live_hidden_divider_ngspice_later_backprop_credit_is_gated_but_boun
             assert abs(measures[f"train_wh{pattern}{bit}_signed_delta_{slot}"]) < 1e-3
     for slot, pattern in enumerate(order[4:], start=4):
         for bit in range(live_xor.BITS):
-            assert measures[f"train_wh{pattern}{bit}_signed_delta_{slot}"] > 0.3e-3
+            assert measures[f"train_wh{pattern}{bit}_signed_delta_{slot}"] > 0.10

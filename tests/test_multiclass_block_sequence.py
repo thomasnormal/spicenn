@@ -7116,6 +7116,28 @@ def test_multiclass_block_sequence_feature_margin_centered_bootstrap_is_transist
     assert "Mfboot_t1_o0_f0_clear_sink" in netlist
 
 
+def test_multiclass_block_sequence_feature_margin_supported_bootstrap_gates_common_rails() -> None:
+    records = [{"label": 1, "inputs": {"x0": 0.85}}]
+    netlist = seq.generate_netlist(
+        train_records=records,
+        eval_records=records,
+        class_count=3,
+        feature_count=1,
+        score_capacitance_f=5.0,
+        error_mode="label-descent",
+        readout_update_mode="live",
+        readout_live_objective_mode="feature-margin-centered-supported-bootstrap",
+        readout_live_high_side_topology="pmos-differential",
+    )
+
+    assert "\nB" not in netlist
+    assert "Vapply" not in netlist
+    assert "Mfeature_f0_restore_c1_errp" in netlist
+    assert "Mfeature_f0_target_guard_c0_errp_non_target_xdn" in netlist
+    assert "Mfeature_f0_target_guard_c1_errp_non_target_xdn" in netlist
+    assert "Mfeature_f0_target_guard_c2_errp_non_target_xdn" in netlist
+
+
 def test_multiclass_block_sequence_ngspice_feature_margin_live_objective_corrects_wrong_feature(
     tmp_path: Path,
     ngspice_path: str,
@@ -7248,6 +7270,46 @@ def test_multiclass_block_sequence_ngspice_feature_margin_bootstrap_moves_tied_f
     assert float(measures["c0_f0_fcorrn_1"]) > float(measures["c0_f0_fcorrp_1"]) + 5e-3
     assert float(measures["c1_f0_signed_final"]) > class1_initial + 2e-3
     assert float(measures["c0_f0_signed_final"]) < class0_initial - 2e-3
+
+
+def test_multiclass_block_sequence_ngspice_supported_bootstrap_suppresses_nonoffending_positive_common(
+    tmp_path: Path,
+    ngspice_path: str,
+) -> None:
+    records = [{"label": 1, "inputs": {"x0": 0.85}}]
+    initial_states = {
+        (0, 0): (0.40, 0.32),
+        (1, 0): (0.40, 0.32),
+        (2, 0): (0.34, 0.40),
+    }
+    measures = run_netlist(
+        ngspice_path,
+        tmp_path / "multiclass_block_sequence_feature_margin_supported_bootstrap_tied.cir",
+        seq.generate_netlist(
+            train_records=records,
+            eval_records=records,
+            class_count=3,
+            feature_count=1,
+            score_capacitance_f=5.0,
+            error_mode="label-descent",
+            readout_update_mode="live",
+            readout_live_objective_mode="feature-margin-centered-supported-bootstrap",
+            readout_live_high_side_topology="pmos-differential",
+            readout_high_ref=0.48,
+            readout_low_ref=0.22,
+            readout_update_width_u=0.25,
+            initial_readout_states=initial_states,
+        ),
+        timeout=80.0,
+    )
+
+    class0_initial = initial_states[(0, 0)][0] - initial_states[(0, 0)][1]
+    class1_initial = initial_states[(1, 0)][0] - initial_states[(1, 0)][1]
+
+    assert float(measures["c1_f0_fcorrp_1"]) > float(measures["c1_f0_fcorrn_1"]) + 5e-3
+    assert float(measures["c0_f0_fcorrp_1"]) < 20e-3
+    assert float(measures["c1_f0_signed_final"]) > class1_initial + 2e-3
+    assert float(measures["c0_f0_signed_final"]) < class0_initial + 2e-3
 
 
 def test_multiclass_block_sequence_ngspice_centered_gain_margin_corrects_wrong_winner(

@@ -61,6 +61,7 @@ READOUT_LIVE_OBJECTIVE_MODES = (
     "feature-margin",
     "feature-margin-centered",
     "feature-margin-centered-bootstrap",
+    "feature-margin-centered-supported-bootstrap",
 )
 READOUT_NONTARGET_GUARD_MODES = ("none", "support", "support-symmetric")
 READOUT_SUPPORT_SOURCE_MODES = ("writer", "elig", "act", "act-raw")
@@ -279,6 +280,27 @@ def class_error_rail_gain_restore_lines(
             f"M{instance_prefix}_c{class_idx}_errn vdd {inn} {errn} 0 NSENSE W={restore_width_u:.6g}u L=180n",
             f"M{instance_prefix}_c{class_idx}_errp_xdn {errp} {inn} 0 0 NMOS W={cross_discharge_width_u:.6g}u L=180n",
             f"M{instance_prefix}_c{class_idx}_errn_xdn {errn} {inp} 0 0 NMOS W={cross_discharge_width_u:.6g}u L=180n",
+        ]
+    return lines
+
+
+def class_error_rail_positive_target_guard_lines(
+    *,
+    class_count: int,
+    positive_suffix: str,
+    reset_node: str = "scoregaterst",
+    discharge_width_u: float = 96.0,
+    instance_prefix: str = "target_guard",
+) -> list[str]:
+    if discharge_width_u <= 0.0:
+        raise ValueError("target guard discharge width must be positive")
+    lines: list[str] = []
+    for class_idx in range(class_count):
+        errp = class_node(class_idx, positive_suffix)
+        prefix = f"{instance_prefix}_c{class_idx}_"
+        lines += [
+            f"M{prefix}errp_non_target_xdn {errp} {class_node(class_idx, 'targetn')} 0 0 NMOS W={discharge_width_u:.6g}u L=180n",
+            f"M{prefix}errp_reset_xdn {errp} {reset_node} 0 0 NMOS W=4u L=180n",
         ]
     return lines
 
@@ -2246,12 +2268,20 @@ def generate_netlist(
         "feature-margin",
         "feature-margin-centered",
         "feature-margin-centered-bootstrap",
+        "feature-margin-centered-supported-bootstrap",
     )
     uses_feature_margin_centered_objective = readout_live_objective_mode in (
         "feature-margin-centered",
         "feature-margin-centered-bootstrap",
+        "feature-margin-centered-supported-bootstrap",
     )
-    uses_feature_margin_bootstrap_objective = readout_live_objective_mode == "feature-margin-centered-bootstrap"
+    uses_feature_margin_bootstrap_objective = readout_live_objective_mode in (
+        "feature-margin-centered-bootstrap",
+        "feature-margin-centered-supported-bootstrap",
+    )
+    uses_feature_margin_supported_restore_objective = (
+        readout_live_objective_mode == "feature-margin-centered-supported-bootstrap"
+    )
     uses_gated_eligibility = eligibility_gate_mode in ("competition", "rank", "contrast")
     uses_hybrid_readout_eligibility = (
         uses_gated_eligibility and readout_update_eligibility_mode == "hybrid"
@@ -3037,18 +3067,39 @@ def generate_netlist(
                     common_capacitance_f=4.0,
                     common_prefix=f"feature_f{feature}",
                 )
-                lines += class_error_rail_gain_restore_lines(
-                    class_count=class_count,
-                    input_positive_suffix=f"f{feature}_fcorr_p_ctr",
-                    input_negative_suffix=f"f{feature}_fcorr_n_ctr",
-                    positive_suffix=f"f{feature}_fcorr_p",
-                    negative_suffix=f"f{feature}_fcorr_n",
-                    reset_node="scoregaterst",
-                    restore_width_u=48.0,
-                    cross_discharge_width_u=64.0,
-                    capacitance_f=4.0,
-                    instance_prefix=f"feature_f{feature}_restore",
-                )
+                if uses_feature_margin_supported_restore_objective:
+                    lines += class_error_rail_gain_restore_lines(
+                        class_count=class_count,
+                        input_positive_suffix=f"f{feature}_fcorr_p_ctr",
+                        input_negative_suffix=f"f{feature}_fcorr_n_ctr",
+                        positive_suffix=f"f{feature}_fcorr_p",
+                        negative_suffix=f"f{feature}_fcorr_n",
+                        reset_node="scoregaterst",
+                        restore_width_u=48.0,
+                        cross_discharge_width_u=64.0,
+                        capacitance_f=4.0,
+                        instance_prefix=f"feature_f{feature}_restore",
+                    )
+                    lines += class_error_rail_positive_target_guard_lines(
+                        class_count=class_count,
+                        positive_suffix=f"f{feature}_fcorr_p",
+                        reset_node="scoregaterst",
+                        discharge_width_u=1024.0,
+                        instance_prefix=f"feature_f{feature}_target_guard",
+                    )
+                else:
+                    lines += class_error_rail_gain_restore_lines(
+                        class_count=class_count,
+                        input_positive_suffix=f"f{feature}_fcorr_p_ctr",
+                        input_negative_suffix=f"f{feature}_fcorr_n_ctr",
+                        positive_suffix=f"f{feature}_fcorr_p",
+                        negative_suffix=f"f{feature}_fcorr_n",
+                        reset_node="scoregaterst",
+                        restore_width_u=48.0,
+                        cross_discharge_width_u=64.0,
+                        capacitance_f=4.0,
+                        instance_prefix=f"feature_f{feature}_restore",
+                    )
     if uses_raw_common_ref_score:
         lines += shared_score_common_reference_lines(
             class_count=class_count,

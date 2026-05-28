@@ -32,6 +32,10 @@ def _clock_lines(
     iref_a: float,
     *,
     hidden_write_start_train_index: int = 0,
+    hidden_credit_sense_start_ns: float = 5.00,
+    hidden_credit_sense_end_ns: float = 6.15,
+    hidden_write_start_ns: float = 6.30,
+    hidden_write_end_ns: float = 8.40,
 ) -> list[str]:
     hidden_sense: list[tuple[float, float]] = []
     hidden_write: list[tuple[float, float]] = []
@@ -39,9 +43,9 @@ def _clock_lines(
     for idx, sample in enumerate(samples):
         if bool(sample["train"]):
             base = idx * CYCLE_NS
-            hidden_sense.append((base + 5.00, base + 6.15))
+            hidden_sense.append((base + hidden_credit_sense_start_ns, base + hidden_credit_sense_end_ns))
             if train_idx >= hidden_write_start_train_index:
-                hidden_write.append((base + 6.30, base + 8.40))
+                hidden_write.append((base + hidden_write_start_ns, base + hidden_write_end_ns))
             train_idx += 1
     return [
         *_fixed_clock_lines(samples, stop_ns, iref_a),
@@ -652,6 +656,10 @@ def mnist01_live_hidden_netlist(
     hidden_credit_preamp_support_width_u: float = 4.0,
     hidden_credit_preamp_write_gate_width_u: float = 8.0,
     hidden_write_start_train_index: int = 0,
+    hidden_credit_sense_start_ns: float = 5.00,
+    hidden_credit_sense_end_ns: float = 6.15,
+    hidden_write_start_ns: float = 6.30,
+    hidden_write_end_ns: float = 8.40,
     hidden_update_width_u: float = 1.0,
     hidden_writer_pmos_width_u: float = 4.0,
     hidden_writer_gate_cap_f: float = 0.2,
@@ -673,6 +681,10 @@ def mnist01_live_hidden_netlist(
         raise ValueError("dynamic-preamp hidden credit gate requires pmos-differential hidden writer topology")
     if hidden_write_start_train_index < 0:
         raise ValueError("hidden_write_start_train_index must be nonnegative")
+    if not (0.0 <= hidden_credit_sense_start_ns < hidden_credit_sense_end_ns <= CYCLE_NS):
+        raise ValueError("hidden credit sense window must be inside one cycle")
+    if not (0.0 <= hidden_write_start_ns < hidden_write_end_ns <= CYCLE_NS):
+        raise ValueError("hidden write window must be inside one cycle")
     if min(
         readout_initial_positive,
         readout_initial_negative,
@@ -701,6 +713,8 @@ def mnist01_live_hidden_netlist(
         hidden_credit_preamp_output_pull_width_u,
         hidden_credit_preamp_support_width_u,
         hidden_credit_preamp_write_gate_width_u,
+        hidden_credit_sense_end_ns - hidden_credit_sense_start_ns,
+        hidden_write_end_ns - hidden_write_start_ns,
         hidden_update_width_u,
         hidden_writer_pmos_width_u,
         hidden_writer_gate_cap_f,
@@ -724,6 +738,10 @@ def mnist01_live_hidden_netlist(
             stop_ns,
             iref_a,
             hidden_write_start_train_index=hidden_write_start_train_index,
+            hidden_credit_sense_start_ns=hidden_credit_sense_start_ns,
+            hidden_credit_sense_end_ns=hidden_credit_sense_end_ns,
+            hidden_write_start_ns=hidden_write_start_ns,
+            hidden_write_end_ns=hidden_write_end_ns,
         ),
     ]
     for feature in range(feature_count):

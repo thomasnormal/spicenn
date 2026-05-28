@@ -168,6 +168,20 @@ def test_mnist01_live_hidden_netlist_validation() -> None:
             [sample],
             hidden_write_start_train_index=-1,
         )
+    with pytest.raises(ValueError, match="hidden credit sense window"):
+        mnist01_hidden.mnist01_live_hidden_netlist(
+            [sample],
+            [sample],
+            hidden_credit_sense_start_ns=6.0,
+            hidden_credit_sense_end_ns=5.0,
+        )
+    with pytest.raises(ValueError, match="hidden write window"):
+        mnist01_hidden.mnist01_live_hidden_netlist(
+            [sample],
+            [sample],
+            hidden_write_start_ns=8.0,
+            hidden_write_end_ns=10.5,
+        )
     with pytest.raises(ValueError, match="even"):
         mnist01_hidden.hidden_block_for_feature(0, 5)
     with pytest.raises(ValueError, match="outside"):
@@ -253,6 +267,44 @@ def test_mnist01_live_hidden_dynamic_preamp_restores_second_sample_credit_after_
     assert abs(parsed["train_wh_probe_signed_delta_0"]) < 1e-3
     assert parsed["train_hcredit_gate_probe_1"] < -0.50
     assert parsed["train_wh_probe_signed_delta_1"] < -50e-3
+
+
+@pytest.mark.ngspice
+def test_mnist01_live_hidden_dynamic_preamp_short_write_bounds_multisample_hidden_update(
+    tmp_path: Path,
+    ngspice_path: str,
+) -> None:
+    _require_mnist_raw()
+    train, evals = mnist01_hidden.load_mnist01_records(
+        train_count_per_digit=2,
+        eval_count_per_digit=2,
+        image_size=4,
+    )
+
+    parsed = mnist01_hidden.run_netlist(
+        ngspice_path,
+        tmp_path / "mnist01_live_hidden_dynamic_preamp_bounded.cir",
+        mnist01_hidden.mnist01_live_hidden_netlist(
+            train,
+            evals,
+            hidden_credit_gate_mode="dynamic-preamp",
+            hidden_writer_topology="pmos-differential",
+            hidden_write_start_train_index=1,
+            hidden_credit_sense_start_ns=5.00,
+            hidden_credit_sense_end_ns=5.35,
+            hidden_write_start_ns=5.15,
+            hidden_write_end_ns=5.45,
+            hidden_update_width_u=0.05,
+        ),
+        timeout=180.0,
+    )
+
+    assert parsed["final_margin_0"] > 10e-3
+    assert parsed["final_margin_1"] > 10e-3
+    assert parsed["final_margin_2"] < 0.0
+    assert parsed["final_margin_3"] < 0.0
+    for train_idx in range(4):
+        assert abs(parsed[f"train_wh_probe_signed_delta_{train_idx}"]) < 10e-3
 
 
 def _hidden_credit_preamp_primitive_netlist(raw_positive: float, raw_negative: float) -> str:

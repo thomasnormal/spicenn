@@ -16,6 +16,7 @@ from run_spice_sweep import ROOT, detect_spice
 
 CASES = (
     "wrong_feature_active",
+    "tied_feature_active",
     "target_feature_active",
     "inactive_feature",
     "rotated_wrong_feature_active",
@@ -41,6 +42,16 @@ def case_config(case: str) -> dict[str, float | int]:
             "target_wp": 0.62,
             "target_wn": 0.32,
             "wrong_wp": 0.38,
+            "wrong_wn": 0.32,
+        }
+    if case == "tied_feature_active":
+        return {
+            "target_class": 1,
+            "wrong_class": 0,
+            "act_v": 0.85,
+            "target_wp": 0.40,
+            "target_wn": 0.32,
+            "wrong_wp": 0.40,
             "wrong_wn": 0.32,
         }
     if case == "inactive_feature":
@@ -110,12 +121,13 @@ def generate_netlist(
     feature_idx: int = 0,
     readout_width_u: float = 64.0,
     writer_width_u: float = 0.75,
+    bootstrap_width_u: float = 14.0,
 ) -> str:
     if case not in CASES:
         raise ValueError(f"case must be one of {CASES}")
     if feature_idx < 0:
         raise ValueError("feature_idx must be nonnegative")
-    if min(readout_width_u, writer_width_u) <= 0.0:
+    if min(readout_width_u, writer_width_u, bootstrap_width_u) <= 0.0:
         raise ValueError("device widths must be positive")
     cfg = case_config(case)
     target_class = int(cfg["target_class"])
@@ -196,6 +208,12 @@ def generate_netlist(
         f"M{writer_gate}_act vdd actrow {writer_gate}_m1 0 NSENSE W=16u L=180n",
         f"M{writer_gate}_dec1 {writer_gate}_m1 {wrong_gt_target} {writer_gate}_m2 0 NMOS W=16u L=180n",
         f"M{writer_gate}_dec2 {writer_gate}_m2 {wrong_gt_target} {writer_gate} 0 NMOS W=16u L=180n",
+        f"C{writer_gate}_boot_ctrl {writer_gate}_boot_ctrl 0 4f IC=1.2",
+        f"R{writer_gate}_boot_ctrl_keep {writer_gate}_boot_ctrl vdd 1G",
+        f"R{writer_gate}_boot_m1 {writer_gate}_boot_m1 0 1G",
+        f"M{writer_gate}_boot_act {writer_gate}_boot_ctrl actrow {writer_gate}_boot_m1 0 NMOS W={bootstrap_width_u:.6g}u L=180n",
+        f"M{writer_gate}_boot_clk {writer_gate}_boot_m1 scoredec 0 0 NMOS W={bootstrap_width_u:.6g}u L=180n",
+        f"M{writer_gate}_boot_p {writer_gate} {writer_gate}_boot_ctrl vdd vdd PMOS W={bootstrap_width_u:.6g}u L=180n",
         f"M{writer_gate}_target_discharge {writer_gate} {target_ge_wrong} 0 0 NMOS W=64u L=180n",
         *class_local_live_label_descent_update_lines(
             class_idx=target_class,
@@ -245,6 +263,8 @@ def classify_case(case: str, measures: dict[str, Any], *, min_delta_v: float = 0
     wrong_delta = float(measures["wrong_signed_delta"])
     if case in {"wrong_feature_active", "rotated_wrong_feature_active"}:
         passed = target_delta > min_delta_v and wrong_delta < -min_delta_v
+    elif case == "tied_feature_active":
+        passed = target_delta > 0.5 * min_delta_v and wrong_delta < -0.5 * min_delta_v
     else:
         passed = abs(target_delta) < min_delta_v and abs(wrong_delta) < min_delta_v
     return {"passed": passed, "target_delta_v": target_delta, "wrong_delta_v": wrong_delta}
@@ -283,6 +303,7 @@ def run_cases(args: argparse.Namespace) -> dict[str, Any]:
         "passed": all(bool(row["passed"]) for row in rows),
         "min_delta_v": args.min_delta_v,
         "writer_width_u": args.writer_width_u,
+        "bootstrap_width_u": args.bootstrap_width_u,
         "csv": str(csv_path),
         "wall_time_s": time.perf_counter() - start,
     }
@@ -297,6 +318,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--tag", default="feature_margin_correction_primitive")
     parser.add_argument("--timeout", type=float, default=30.0)
     parser.add_argument("--writer-width-u", type=float, default=0.75)
+    parser.add_argument("--bootstrap-width-u", type=float, default=14.0)
     parser.add_argument("--min-delta-v", type=float, default=0.010)
     return parser
 
@@ -306,6 +328,8 @@ def main_for_test(argv: list[str] | None) -> dict[str, Any]:
     args = parser.parse_args(argv)
     if args.writer_width_u <= 0.0:
         raise ValueError("writer-width-u must be positive")
+    if args.bootstrap_width_u <= 0.0:
+        raise ValueError("bootstrap-width-u must be positive")
     if args.min_delta_v <= 0.0:
         raise ValueError("min-delta-v must be positive")
     return run_cases(args)

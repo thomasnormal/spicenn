@@ -66,6 +66,7 @@ ELIGIBILITY_GATE_MODES = ("raw", "competition", "rank", "contrast")
 ELIGIBILITY_SOURCE_MODES = ("pre-p", "act-raw", "act")
 READOUT_UPDATE_ELIGIBILITY_MODES = ("restored", "hybrid")
 HIDDEN_CREDIT_ACTIVATION_MODELS = ("NREL", "NMOS", "NSENSE")
+HIDDEN_ACTIVATION_MODELS = ("NREL", "NMOS", "NSENSE")
 HIDDEN_DIRECT_READOUT_GATE_MODES = ("raw", "differential-excess", "restored-excess")
 HIDDEN_DIRECT_OUTPUT_STAGES = (
     "nmos-pass",
@@ -1667,6 +1668,7 @@ def generate_netlist(
     hidden_positive: float = DEFAULT_HIDDEN_POSITIVE,
     hidden_negative: float = DEFAULT_HIDDEN_NEGATIVE,
     hidden_width_u: float = 1.0,
+    hidden_activation_model: str = "NREL",
     readout_width_u: float = 64.0,
     score_capacitance_f: float = 10.0,
     score_load_resistance: float = 1e6,
@@ -1781,6 +1783,8 @@ def generate_netlist(
             raise ValueError(f"{name} must be positive")
     if hidden_state_anchor_resistance_ohm is not None and hidden_state_anchor_resistance_ohm <= 0.0:
         raise ValueError("hidden_state_anchor_resistance_ohm must be positive when set")
+    if hidden_activation_model not in HIDDEN_ACTIVATION_MODELS:
+        raise ValueError(f"hidden_activation_model must be one of {HIDDEN_ACTIVATION_MODELS}")
     if hidden_state_keeper_mode not in HIDDEN_STATE_KEEPER_MODES:
         raise ValueError(f"hidden_state_keeper_mode must be one of {HIDDEN_STATE_KEEPER_MODES}")
     if hidden_state_common_clamp_width_u < 0.0:
@@ -2301,8 +2305,8 @@ def generate_netlist(
             f"Mactrow{feature}_rst actrow{feature} rst 0 0 NMOS W=4u L=180n",
             f"Mhidden_pos{feature} row{feature} whp{feature} pre_p{feature} 0 NMOS W={hidden_width_u:.6g}u L=180n",
             f"Mhidden_neg{feature} row{feature} whn{feature} pre_n{feature} 0 NMOS W={hidden_width_u:.6g}u L=180n",
-            f"Mact{feature}_p vdd pre_p{feature} act_raw{feature} 0 NREL W=24u L=180n",
-            f"Mact{feature}_n act_raw{feature} pre_n{feature} 0 0 NREL W=24u L=180n",
+            f"Mact{feature}_p vdd pre_p{feature} act_raw{feature} 0 {hidden_activation_model} W=24u L=180n",
+            f"Mact{feature}_n act_raw{feature} pre_n{feature} 0 0 {hidden_activation_model} W=24u L=180n",
             f"Mact_store{feature}_n act{feature} samp act_raw{feature} 0 NMOS W=16u L=180n",
             f"Mact_store{feature}_p act{feature} sampn act_raw{feature} vdd PMOS W=32u L=180n",
             f"Melig{feature}_n elig{feature} samp {eligibility_source_node} 0 NMOS W=16u L=180n",
@@ -4300,6 +4304,48 @@ def activation_stats(
     }
 
 
+def pre_margin_stats(
+    measures: dict[str, float],
+    *,
+    sequence: list[str],
+    total_feature_count: int,
+) -> dict[str, Any]:
+    def summarize_phase(phase: str, prefix: str) -> dict[str, Any]:
+        rows: list[list[float]] = []
+        positive_counts: list[int] = []
+        max_values: list[float] = []
+        min_values: list[float] = []
+        for cycle, seq in enumerate(sequence):
+            if seq != phase:
+                continue
+            keys = [f"pre_margin_f{feature}_{cycle}" for feature in range(total_feature_count)]
+            if not all(key in measures for key in keys):
+                continue
+            values = [float(measures[key]) for key in keys]
+            rows.append(values)
+            positive_counts.append(sum(value > 0.0 for value in values))
+            max_values.append(float(np.max(values)))
+            min_values.append(float(np.min(values)))
+        if not rows:
+            return {
+                f"{prefix}_pre_margin_rows_v": [],
+                f"{prefix}_pre_margin_positive_features_mean": None,
+                f"{prefix}_pre_margin_max_v": None,
+                f"{prefix}_pre_margin_min_v": None,
+            }
+        return {
+            f"{prefix}_pre_margin_rows_v": rows,
+            f"{prefix}_pre_margin_positive_features_mean": float(np.mean(positive_counts)),
+            f"{prefix}_pre_margin_max_v": float(np.max(max_values)),
+            f"{prefix}_pre_margin_min_v": float(np.min(min_values)),
+        }
+
+    return {
+        **summarize_phase("train", "train"),
+        **summarize_phase("final_eval", "final_eval"),
+    }
+
+
 def eligibility_gate_stats(
     measures: dict[str, float],
     *,
@@ -4596,6 +4642,7 @@ def run_case(args: argparse.Namespace) -> dict[str, Any]:
         class_count=args.class_count,
         feature_count=feature_count,
         readout_width_u=args.readout_width,
+        hidden_activation_model=args.hidden_activation_model,
         score_capacitance_f=args.score_capacitance_f,
         score_load_resistance=args.score_load_resistance,
         score_mirror_capacitance_f=args.score_mirror_capacitance_f,
@@ -4896,6 +4943,7 @@ def run_case(args: argparse.Namespace) -> dict[str, Any]:
             else None
         ),
         "hidden_update_mode": args.hidden_update_mode,
+        "hidden_activation_model": args.hidden_activation_model,
         "hidden_credit_width_u": args.hidden_credit_width if args.hidden_update_mode != "none" else None,
         "hidden_credit_capacitance_f": args.hidden_credit_capacitance_f if args.hidden_update_mode != "none" else None,
         "hidden_credit_shunt_resistance_ohm": (
@@ -5080,6 +5128,7 @@ def run_case(args: argparse.Namespace) -> dict[str, Any]:
             total_feature_count=total_feature_count,
         ),
         **activation_stats(measures, sequence=sequence, total_feature_count=total_feature_count),
+        **pre_margin_stats(measures, sequence=sequence, total_feature_count=total_feature_count),
         **error_rail_stats(measures, labels=labels, sequence=sequence, class_count=args.class_count),
         **eligibility_stats(measures, sequence=sequence, total_feature_count=total_feature_count),
         **eligibility_gate_stats(measures, sequence=sequence, feature_count=feature_count),
@@ -5156,6 +5205,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
     ap.add_argument("--readout-support-source-mode", choices=READOUT_SUPPORT_SOURCE_MODES, default="writer")
     ap.add_argument("--readout-support-capacitance-f", type=float, default=4.0)
     ap.add_argument("--hidden-update-mode", choices=HIDDEN_UPDATE_MODES, default="none")
+    ap.add_argument("--hidden-activation-model", choices=HIDDEN_ACTIVATION_MODELS, default="NREL")
     ap.add_argument("--hidden-credit-width", type=float, default=8.0)
     ap.add_argument("--hidden-credit-capacitance-f", type=float, default=12.0)
     ap.add_argument("--hidden-credit-shunt-resistance", type=float, default=1.0e9)
@@ -5248,6 +5298,8 @@ def validate_args(args: argparse.Namespace) -> None:
         raise ValueError("readout-support-capacitance-f must be positive")
     if args.hidden_update_mode not in HIDDEN_UPDATE_MODES:
         raise ValueError(f"hidden-update-mode must be one of {HIDDEN_UPDATE_MODES}")
+    if args.hidden_activation_model not in HIDDEN_ACTIVATION_MODELS:
+        raise ValueError(f"hidden-activation-model must be one of {HIDDEN_ACTIVATION_MODELS}")
     if args.score_timing_mode not in SCORE_TIMING_MODES:
         raise ValueError(f"score-timing-mode must be one of {SCORE_TIMING_MODES}")
     if args.score_sense_mode not in SCORE_SENSE_MODES:

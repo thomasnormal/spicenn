@@ -75,6 +75,19 @@ def test_multiclass_block_sequence_emits_single_continuous_deck() -> None:
     assert "* cycle 3 final_eval label=0" in netlist
 
 
+def test_multiclass_block_sequence_can_use_low_threshold_hidden_activation_model() -> None:
+    netlist = seq.generate_netlist(
+        train_records=_target0_records(1),
+        eval_records=_target0_records(1),
+        hidden_activation_model="NSENSE",
+    )
+
+    assert "\nB" not in netlist
+    assert "Mact0_p vdd pre_p0 act_raw0 0 NSENSE W=24u L=180n" in netlist
+    assert "Mact0_n act_raw0 pre_n0 0 0 NSENSE W=24u L=180n" in netlist
+    assert "Mact0_p vdd pre_p0 act_raw0 0 NREL" not in netlist
+
+
 def test_multiclass_block_sequence_defaults_score_measure_to_timing_window() -> None:
     records = _target0_records(1)
 
@@ -102,6 +115,52 @@ def test_multiclass_block_sequence_defaults_score_measure_to_timing_window() -> 
         continuous_score_measure_ns=8.50,
         continuous_out_start_ns=5.0,
     ) == pytest.approx(4.50)
+
+
+@pytest.mark.ngspice
+def test_multiclass_block_sequence_ngspice_low_threshold_hidden_activation_boosts_weak_pre_margin(
+    tmp_path: Path,
+    ngspice_path: str,
+) -> None:
+    def deck(model: str) -> str:
+        return "\n".join(
+            [
+                "* Low-level hidden activation transfer primitive.",
+                ".param VDD=1.2",
+                seq.mos_models(),
+                "Vdd vdd 0 {VDD}",
+                "Vpre_p pre_p 0 0.08",
+                "Vpre_n pre_n 0 0.04",
+                "Cact act 0 20f IC=0",
+                "Ract act 0 1G",
+                f"Mact_p vdd pre_p act 0 {model} W=24u L=180n",
+                f"Mact_n act pre_n 0 0 {model} W=24u L=180n",
+                ".meas tran act_2n FIND V(act) AT=2n",
+                ".tran 2p 3n uic",
+                ".control",
+                "run",
+                "quit",
+                ".endc",
+                ".end",
+            ]
+        )
+
+    nrel = run_netlist(
+        ngspice_path,
+        tmp_path / "hidden_activation_nrel.cir",
+        deck("NREL"),
+        timeout=20.0,
+    )
+    nsense = run_netlist(
+        ngspice_path,
+        tmp_path / "hidden_activation_nsense.cir",
+        deck("NSENSE"),
+        timeout=20.0,
+    )
+
+    assert float(nrel["act_2n"]) < 5e-3
+    assert float(nsense["act_2n"]) > 25e-3
+    assert float(nsense["act_2n"]) > float(nrel["act_2n"]) + 25e-3
 
 
 def test_multiclass_block_sequence_can_sample_differential_activation_as_eligibility() -> None:
@@ -488,6 +547,36 @@ def test_multiclass_block_sequence_summarizes_activation_rows() -> None:
     assert stats["final_eval_activation_active_features_25mv_mean"] == pytest.approx(1.5)
     assert stats["final_eval_activation_active_features_250mv_mean"] == pytest.approx(1.5)
     assert stats["final_eval_activation_max_v"] == pytest.approx(0.427)
+
+
+def test_multiclass_block_sequence_summarizes_pre_margin_rows() -> None:
+    measures = {
+        "pre_p_f0_0": 0.20,
+        "pre_n_f0_0": 0.05,
+        "pre_margin_f0_0": 0.15,
+        "pre_p_f1_0": 0.10,
+        "pre_n_f1_0": 0.12,
+        "pre_margin_f1_0": -0.02,
+        "pre_p_f0_1": 0.07,
+        "pre_n_f0_1": 0.05,
+        "pre_margin_f0_1": 0.02,
+        "pre_p_f1_1": 0.30,
+        "pre_n_f1_1": 0.10,
+        "pre_margin_f1_1": 0.20,
+    }
+
+    stats = seq.pre_margin_stats(
+        measures,
+        sequence=["train", "final_eval"],
+        total_feature_count=2,
+    )
+
+    assert stats["train_pre_margin_rows_v"] == [[0.15, -0.02]]
+    assert stats["train_pre_margin_positive_features_mean"] == pytest.approx(1.0)
+    assert stats["train_pre_margin_max_v"] == pytest.approx(0.15)
+    assert stats["final_eval_pre_margin_rows_v"] == [[0.02, 0.20]]
+    assert stats["final_eval_pre_margin_positive_features_mean"] == pytest.approx(2.0)
+    assert stats["final_eval_pre_margin_max_v"] == pytest.approx(0.20)
 
 
 def test_multiclass_block_sequence_summarizes_train_eligibility_gate_activity() -> None:

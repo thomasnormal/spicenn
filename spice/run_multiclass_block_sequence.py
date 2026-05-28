@@ -73,6 +73,7 @@ HIDDEN_DIRECT_OUTPUT_STAGES = (
     "nmos-pass",
     "pmos-balanced",
     "pmos-differential",
+    "pmos-differential-sink",
     "pmos-suppressive",
     "pmos-pullup",
     "pmos-bounded",
@@ -480,6 +481,25 @@ def hidden_direct_readout_weighted_update_lines(
     whn = f"whn{feature_idx}"
     act = f"act{feature_idx}"
     lines: list[str] = []
+
+    def anti_rail_sink_lines(
+        *,
+        prefix: str,
+        suffix: str,
+        anti_node: str,
+        event_gate: str,
+        sink_suffix: str,
+    ) -> list[str]:
+        sink_width = complement_width_scale * width_u
+        sink_gate = f"{prefix}{suffix}_{sink_suffix}_gate"
+        return [
+            f"R{sink_gate} {sink_gate} 0 50000",
+            f"C{sink_gate} {sink_gate} 0 {internal_capacitance_f:.12g}f IC=0",
+            f"M{prefix}{suffix}_{sink_suffix}_gate_rst {sink_gate} {reset_node} 0 0 NMOS W=4u L=180n",
+            f"M{prefix}{suffix}_{sink_suffix}_gate_inv {sink_gate} {event_gate} {high_ref_node} vdd PMOS W={sink_width:.6g}u L=180n",
+            f"M{prefix}{suffix}_{sink_suffix}_direct {anti_node} {sink_gate} {low_ref_node} 0 NSENSE W={sink_width:.6g}u L=180n",
+        ]
+
     for class_idx in range(class_count):
         errp = error_positive_nodes[class_idx]
         errn = error_negative_nodes[class_idx]
@@ -633,6 +653,7 @@ def hidden_direct_readout_weighted_update_lines(
                     "pmos-bounded",
                     "pmos-complementary",
                     "pmos-differential",
+                    "pmos-differential-sink",
                 )
                 pmos_ref_node = high_ref_node if uses_hidden_ref else "vwhi_ref"
                 pmos_ref_ic = high_ref_voltage if uses_hidden_ref else 1.05
@@ -676,6 +697,14 @@ def hidden_direct_readout_weighted_update_lines(
                 if output_stage == "pmos-differential":
                     lines.append(
                         f"M{prefix}{suffix}_ndn_pmos {low_ref_node} {pgate} {whn} vdd PMOS W={complement_width_scale * width_u:.6g}u L=180n"
+                    )
+                elif output_stage == "pmos-differential-sink":
+                    lines += anti_rail_sink_lines(
+                        prefix=prefix,
+                        suffix=suffix,
+                        anti_node=whn,
+                        event_gate=pgate,
+                        sink_suffix="ndn",
                     )
                 elif output_stage in ("pmos-balanced", "pmos-complementary"):
                     dgate = f"{prefix}{suffix}_ndn_gate"
@@ -793,6 +822,7 @@ def hidden_direct_readout_weighted_update_lines(
                     "pmos-bounded",
                     "pmos-complementary",
                     "pmos-differential",
+                    "pmos-differential-sink",
                 )
                 pmos_ref_node = high_ref_node if uses_hidden_ref else "vwhi_ref"
                 pmos_ref_ic = high_ref_voltage if uses_hidden_ref else 1.05
@@ -836,6 +866,14 @@ def hidden_direct_readout_weighted_update_lines(
                 if output_stage == "pmos-differential":
                     lines.append(
                         f"M{prefix}{suffix}_pdn_pmos {low_ref_node} {ngate} {whp} vdd PMOS W={complement_width_scale * width_u:.6g}u L=180n"
+                    )
+                elif output_stage == "pmos-differential-sink":
+                    lines += anti_rail_sink_lines(
+                        prefix=prefix,
+                        suffix=suffix,
+                        anti_node=whp,
+                        event_gate=ngate,
+                        sink_suffix="pdn",
                     )
                 elif output_stage in ("pmos-balanced", "pmos-complementary"):
                     dgate = f"{prefix}{suffix}_pdn_gate"
@@ -2745,6 +2783,7 @@ def generate_netlist(
                     if hidden_direct_output_stage in (
                         "pmos-balanced",
                         "pmos-differential",
+                        "pmos-differential-sink",
                         "pmos-suppressive",
                         "pmos-bounded",
                         "pmos-complementary",

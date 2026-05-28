@@ -3374,7 +3374,14 @@ def _hidden_direct_readout_weighted_writer_netlist(
             high_ref_node=(
                 "hidden_whi_ref"
                 if output_stage
-                in ("pmos-balanced", "pmos-differential", "pmos-suppressive", "pmos-bounded", "pmos-complementary")
+                in (
+                    "pmos-balanced",
+                    "pmos-differential",
+                    "pmos-differential-sink",
+                    "pmos-suppressive",
+                    "pmos-bounded",
+                    "pmos-complementary",
+                )
                 else "vwhi_ref"
             ),
             low_ref_node="hidden_wlo_ref",
@@ -3469,6 +3476,7 @@ def _hidden_direct_readout_weighted_two_update_netlist(
         ".meas tran whp_after FIND V(whp0) AT=18n",
         ".meas tran whn_after FIND V(whn0) AT=18n",
         ".meas tran signed_after PARAM='whp_after-whn_after'",
+        ".meas tran common_after PARAM='0.5*(whp_after+whn_after)'",
         ".tran 2p 20n uic",
         ".control",
         "run",
@@ -4357,6 +4365,64 @@ def test_multiclass_block_sequence_ngspice_direct_hidden_writer_pmos_differentia
     assert float(neutral["signed_after"]) == pytest.approx(0.55, abs=2e-3)
 
 
+def test_multiclass_block_sequence_ngspice_direct_hidden_writer_pmos_differential_sink_removes_common_mode(
+    tmp_path: Path,
+    ngspice_path: str,
+) -> None:
+    def realistic_rails(deck: str) -> str:
+        return deck.replace("Vact act0 0 1.2", "Vact act0 0 0.42").replace(
+            "Vxelig xelig0 0 1.2",
+            "Vxelig xelig0 0 0.46",
+        )
+
+    common_kwargs = dict(
+        whp=0.80,
+        whn=0.25,
+        errp="PULSE(0 0.04 1n 10p 10p 4n 20n)",
+        width_u=0.125,
+        complement_width_scale=2.0,
+        readout_gate_mode="restored-excess",
+        output_stage="pmos-differential-sink",
+        readout_high_ref=0.42,
+        readout_low_ref=0.28,
+        hidden_high_ref=1.05,
+        hidden_low_ref=0.15,
+    )
+    positive = run_netlist(
+        ngspice_path,
+        tmp_path / "direct_hidden_writer_differential_sink_positive.cir",
+        realistic_rails(_hidden_direct_readout_weighted_writer_netlist(vwp=0.40, vwn=0.28, **common_kwargs)),
+        timeout=20.0,
+    )
+    negative = run_netlist(
+        ngspice_path,
+        tmp_path / "direct_hidden_writer_differential_sink_negative.cir",
+        realistic_rails(_hidden_direct_readout_weighted_writer_netlist(vwp=0.28, vwn=0.40, **common_kwargs)),
+        timeout=20.0,
+    )
+    repeated = run_netlist(
+        ngspice_path,
+        tmp_path / "direct_hidden_writer_differential_sink_repeated.cir",
+        _hidden_direct_readout_weighted_two_update_netlist(
+            output_stage="pmos-differential-sink",
+            width_u=0.125,
+            complement_width_scale=2.0,
+            whp=0.80,
+            whn=0.25,
+            first_errp=0.04,
+            second_errn=0.04,
+        ),
+        timeout=30.0,
+    )
+
+    assert float(positive["whp_after"]) > 0.95
+    assert float(positive["whn_after"]) < 0.20
+    assert float(negative["whp_after"]) < 0.35
+    assert float(negative["whn_after"]) > 0.50
+    assert float(repeated["common_after"]) < 0.60
+    assert abs(float(repeated["signed_after"])) > 50e-3
+
+
 def test_multiclass_block_sequence_ngspice_direct_hidden_writer_support_guard_blocks_immature_nontarget_feedback(
     tmp_path: Path,
     ngspice_path: str,
@@ -4523,6 +4589,30 @@ def test_multiclass_block_sequence_hidden_direct_can_use_pmos_differential_stage
     assert "Mh0_c0_direct_pv_ndn_pmos hidden_wlo_ref h0_c0_direct_pv_pup_gate whn0 vdd PMOS" in netlist
     assert "Mh0_c0_direct_pn_pdn_pmos hidden_wlo_ref h0_c0_direct_pn_nup_gate whp0 vdd PMOS" in netlist
     assert "Mh0_c0_direct_pv_ndn_gate" not in netlist
+
+
+def test_multiclass_block_sequence_hidden_direct_can_use_pmos_differential_sink_stage() -> None:
+    netlist = seq.generate_netlist(
+        train_records=_one_hot_records(),
+        eval_records=_one_hot_records(),
+        class_count=3,
+        feature_count=3,
+        readout_update_mode="live",
+        readout_nontarget_guard_mode="support",
+        hidden_update_mode="direct-readout-weighted",
+        hidden_direct_output_stage="pmos-differential-sink",
+        hidden_direct_nontarget_guard_mode="support",
+        hidden_direct_complement_width_scale=1.0,
+        error_mode="pairwise-margin-centered-gain-descent",
+        eligibility_gate_mode="rank",
+        readout_update_eligibility_mode="restored",
+    )
+
+    assert "\nB" not in netlist
+    assert "Mh0_c0_direct_pv_pup_pmos whp0 h0_c0_direct_pv_pup_gate hidden_whi_ref vdd PMOS" in netlist
+    assert "Mh0_c0_direct_pv_ndn_gate_inv h0_c0_direct_pv_ndn_gate h0_c0_direct_pv_pup_gate hidden_whi_ref vdd PMOS" in netlist
+    assert "Mh0_c0_direct_pv_ndn_direct whn0 h0_c0_direct_pv_ndn_gate hidden_wlo_ref 0 NSENSE" in netlist
+    assert "Mh0_c0_direct_pv_ndn_pmos" not in netlist
 
 
 def test_multiclass_block_sequence_hidden_direct_can_use_centered_error_rails_before_writer_gain() -> None:

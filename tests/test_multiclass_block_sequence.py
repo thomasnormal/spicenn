@@ -633,6 +633,15 @@ def test_multiclass_block_sequence_reduces_train_error_rail_stats() -> None:
         "c0_errdiff_1": -0.2,
         "c1_errdiff_1": 0.4,
         "c2_errdiff_1": -0.1,
+        "c0_errdiff_writer_1": -0.02,
+        "c1_errdiff_writer_1": 0.04,
+        "c2_errdiff_writer_1": -0.01,
+        "c0_errp_writer_1": 0.20,
+        "c1_errp_writer_1": 0.34,
+        "c2_errp_writer_1": 0.18,
+        "c0_errn_writer_1": 0.22,
+        "c1_errn_writer_1": 0.30,
+        "c2_errn_writer_1": 0.19,
         "c0_errdiff_2": 0.5,
         "c1_errdiff_2": -0.3,
         "c2_errdiff_2": -0.2,
@@ -645,6 +654,9 @@ def test_multiclass_block_sequence_reduces_train_error_rail_stats() -> None:
     )
 
     assert stats["train_errdiff_rows_v"] == [[-0.2, 0.4, -0.1], [0.5, -0.3, -0.2]]
+    assert stats["train_errdiff_at_writer_rows_v"] == [[-0.02, 0.04, -0.01]]
+    assert stats["train_errp_at_writer_rows_v"] == [[0.20, 0.34, 0.18]]
+    assert stats["train_errn_at_writer_rows_v"] == [[0.22, 0.30, 0.19]]
     assert stats["train_target_errdiff_min_v"] == pytest.approx(0.4)
     assert stats["train_target_errdiff_mean_v"] == pytest.approx(0.45)
     assert stats["train_nontarget_errdiff_max_v"] == pytest.approx(-0.1)
@@ -1391,6 +1403,25 @@ def test_multiclass_block_sequence_can_use_pmos_gated_live_high_side_writer() ->
     assert "Mc0_f0_live_pos_up_ctrl_d c0_f0_live_pos_up_ctrl_mid c0_errp 0 0 NSENSE" in netlist
     assert "Mc0_f0_live_pos_up_p c0_vwp0 c0_f0_live_pos_up_ctrl vwhi_ref vdd PMOS" in netlist
     assert "Mc0_f0_live_pos_up_d c0_f0_live_pos_up c0_errp c0_vwp0 0 NSENSE" not in netlist
+
+
+def test_multiclass_block_sequence_can_use_pmos_differential_live_high_side_writer() -> None:
+    netlist = seq.generate_netlist(
+        train_records=_target0_records(1),
+        eval_records=_target0_records(1),
+        error_mode="pairwise-margin-centered-gain-descent",
+        readout_update_mode="live",
+        readout_live_high_side_topology="pmos-differential",
+        readout_high_ref=0.48,
+        readout_low_ref=0.22,
+    )
+
+    assert "\nB" not in netlist
+    assert "Vvwhi_ref vwhi_ref 0 0.48" in netlist
+    assert "Vvwlo_ref vwlo_ref 0 0.22" in netlist
+    assert "Rc0_f0_live_pos_up_ctrl c0_f0_live_pos_up_ctrl vdd 1000000" in netlist
+    assert "Mc0_f0_live_pos_up_ctrl_latch c0_f0_live_pos_up_ctrl c0_f0_live_neg_up_ctrl vdd vdd PMOS" in netlist
+    assert "Mc0_f0_live_neg_up_ctrl_latch c0_f0_live_neg_up_ctrl c0_f0_live_pos_up_ctrl vdd vdd PMOS" in netlist
 
 
 def test_multiclass_block_sequence_can_use_pairwise_margin_centered_bounded_gain_descent() -> None:
@@ -2355,6 +2386,62 @@ def _live_readout_writer_alignment_netlist(
     return "\n".join(lines)
 
 
+def _live_readout_writer_realistic_common_mode_netlist() -> str:
+    lines = [
+        "* Low-level writer handoff primitive using measured compact-run error common-mode levels.",
+        ".param VDD=1.2",
+        seq.mos_models(),
+        ".options method=gear reltol=1e-3 abstol=1e-12 vntol=1e-6",
+        "Vdd vdd 0 {VDD}",
+        "Vvhi vwhi_ref 0 0.48",
+        "Vvlo vwlo_ref 0 0.22",
+    ]
+    cases = {
+        "target": (0, "relig_target", 0.129, 0.351, 0.313),
+        "nontarget": (1, "relig_nontarget", 0.129, 0.235, 0.340),
+        "off": (2, "relig_off", 0.0, 0.351, 0.313),
+    }
+    for class_idx, relig, eligibility_v, errp_v, errn_v in cases.values():
+        lines += [
+            f"Cc{class_idx}_vwp0 c{class_idx}_vwp0 0 20f IC=0.4",
+            f"Cc{class_idx}_vwn0 c{class_idx}_vwn0 0 20f IC=0.4",
+            f"Rc{class_idx}_vwp0 c{class_idx}_vwp0 0 1e15",
+            f"Rc{class_idx}_vwn0 c{class_idx}_vwn0 0 1e15",
+            f"V{relig} {relig} 0 PULSE(0 {eligibility_v:.12g} 1n 5p 5p 3n 10n)",
+            f"Vc{class_idx}_errp c{class_idx}_errp 0 PULSE(0 {errp_v:.12g} 1n 5p 5p 3n 10n)",
+            f"Vc{class_idx}_errn c{class_idx}_errn 0 PULSE(0 {errn_v:.12g} 1n 5p 5p 3n 10n)",
+            *seq.class_local_live_label_descent_update_lines(
+                class_idx=class_idx,
+                feature_idx=0,
+                activation_node=relig,
+                positive_descent_node=f"c{class_idx}_errp",
+                negative_descent_node=f"c{class_idx}_errn",
+                width_u=4.0,
+                high_side_topology="pmos-differential",
+            ),
+        ]
+    for class_idx in range(3):
+        lines += [
+            f".meas tran c{class_idx}_vwp_before FIND V(c{class_idx}_vwp0) AT=0.8n",
+            f".meas tran c{class_idx}_vwn_before FIND V(c{class_idx}_vwn0) AT=0.8n",
+            f".meas tran c{class_idx}_vwp_after FIND V(c{class_idx}_vwp0) AT=5.0n",
+            f".meas tran c{class_idx}_vwn_after FIND V(c{class_idx}_vwn0) AT=5.0n",
+            f".meas tran c{class_idx}_signed_before PARAM='c{class_idx}_vwp_before-c{class_idx}_vwn_before'",
+            f".meas tran c{class_idx}_signed_after PARAM='c{class_idx}_vwp_after-c{class_idx}_vwn_after'",
+            f".meas tran c{class_idx}_signed_delta PARAM='c{class_idx}_signed_after-c{class_idx}_signed_before'",
+        ]
+    lines += [
+        ".tran 2p 6n uic",
+        ".control",
+        "run",
+        "quit",
+        ".endc",
+        ".end",
+        "",
+    ]
+    return "\n".join(lines)
+
+
 @pytest.mark.ngspice
 def test_multiclass_block_sequence_ngspice_hybrid_readout_eligibility_is_monotone_and_boosted(
     tmp_path: Path,
@@ -2409,6 +2496,26 @@ def test_multiclass_block_sequence_ngspice_live_readout_writer_aligns_under_weak
         ngspice_path,
         tmp_path / "live_readout_writer_alignment.cir",
         _live_readout_writer_alignment_netlist(),
+        timeout=30.0,
+    )
+
+    target_delta = float(measures["c0_signed_delta"])
+    nontarget_delta = float(measures["c1_signed_delta"])
+    off_delta = float(measures["c2_signed_delta"])
+    assert target_delta > 0.2e-3
+    assert nontarget_delta < -0.2e-3
+    assert abs(off_delta) < 20e-6
+
+
+@pytest.mark.ngspice
+def test_multiclass_block_sequence_ngspice_live_readout_writer_rejects_error_common_mode(
+    tmp_path: Path,
+    ngspice_path: str,
+) -> None:
+    measures = run_netlist(
+        ngspice_path,
+        tmp_path / "live_readout_writer_realistic_common_mode.cir",
+        _live_readout_writer_realistic_common_mode_netlist(),
         timeout=30.0,
     )
 
@@ -2640,6 +2747,14 @@ def test_multiclass_block_sequence_validation() -> None:
         seq.main_for_test(["--readout-update-mode", "live", "--error-mode", "score-gated-nontarget"])
     with pytest.raises(ValueError, match="readout_update_width_u"):
         seq.generate_netlist(train_records=records, eval_records=records, readout_update_mode="live", readout_update_width_u=0)
+    with pytest.raises(ValueError, match="readout update references"):
+        seq.generate_netlist(
+            train_records=records,
+            eval_records=records,
+            readout_update_mode="live",
+            readout_high_ref=0.30,
+            readout_low_ref=0.30,
+        )
     with pytest.raises(ValueError, match="readout_live_high_side_topology"):
         seq.generate_netlist(
             train_records=records,
@@ -2649,6 +2764,8 @@ def test_multiclass_block_sequence_validation() -> None:
         )
     with pytest.raises(ValueError, match="readout-update-width"):
         seq.main_for_test(["--readout-update-width", "0"])
+    with pytest.raises(ValueError, match="readout update references"):
+        seq.main_for_test(["--readout-high-ref", "0.2", "--readout-low-ref", "0.3"])
     with pytest.raises(SystemExit):
         seq.main_for_test(["--readout-live-high-side-topology", "missing"])
     with pytest.raises(ValueError, match="readout_update_eligibility_ref"):

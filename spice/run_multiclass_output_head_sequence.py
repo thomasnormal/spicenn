@@ -328,8 +328,8 @@ def class_local_live_label_descent_update_lines(
     stack_parasitic_capacitance_f: float = 0.05,
     high_side_topology: str = "nmos-stack",
 ) -> list[str]:
-    if high_side_topology not in ("nmos-stack", "pmos-gated"):
-        raise ValueError("high_side_topology must be nmos-stack or pmos-gated")
+    if high_side_topology not in ("nmos-stack", "pmos-gated", "pmos-differential"):
+        raise ValueError("high_side_topology must be nmos-stack, pmos-gated, or pmos-differential")
     if stack_shunt_resistance_ohm <= 0.0:
         raise ValueError("stack_shunt_resistance_ohm must be positive")
     if stack_parasitic_capacitance_f <= 0.0:
@@ -364,20 +364,26 @@ def class_local_live_label_descent_update_lines(
         pos_ctrl_mid = f"{prefix}pos_up_ctrl_mid"
         neg_ctrl_mid = f"{prefix}neg_up_ctrl_mid"
         pmos_width_u = 2.0 * width_u
+        ctrl_keeper_resistance = 1.0e6 if high_side_topology == "pmos-differential" else 50000
         lines += [
             f"C{pos_ctrl} {pos_ctrl} 0 2f IC=1.2",
-            f"R{pos_ctrl} {pos_ctrl} vdd 50000",
+            f"R{pos_ctrl} {pos_ctrl} vdd {ctrl_keeper_resistance:.12g}",
             f"R{pos_ctrl_mid} {pos_ctrl_mid} 0 {stack_shunt_resistance_ohm:.12g}",
             f"C{pos_ctrl_mid} {pos_ctrl_mid} 0 {stack_parasitic_capacitance_f:.12g}f IC=0",
             f"M{prefix}pos_up_ctrl_e {pos_ctrl} {activation_node} {pos_ctrl_mid} 0 NSENSE W={width_u:.6g}u L=180n",
             f"M{prefix}pos_up_ctrl_d {pos_ctrl_mid} {pos} 0 0 NSENSE W={width_u:.6g}u L=180n",
             f"M{prefix}pos_up_p {vwp} {pos_ctrl} vwhi_ref vdd PMOS W={pmos_width_u:.6g}u L=180n",
             f"C{neg_ctrl} {neg_ctrl} 0 2f IC=1.2",
-            f"R{neg_ctrl} {neg_ctrl} vdd 50000",
+            f"R{neg_ctrl} {neg_ctrl} vdd {ctrl_keeper_resistance:.12g}",
             f"R{neg_ctrl_mid} {neg_ctrl_mid} 0 {stack_shunt_resistance_ohm:.12g}",
             f"C{neg_ctrl_mid} {neg_ctrl_mid} 0 {stack_parasitic_capacitance_f:.12g}f IC=0",
             f"M{prefix}neg_up_ctrl_e {neg_ctrl} {activation_node} {neg_ctrl_mid} 0 NSENSE W={width_u:.6g}u L=180n",
         ]
+        if high_side_topology == "pmos-differential":
+            lines += [
+                f"M{prefix}pos_up_ctrl_latch {pos_ctrl} {neg_ctrl} vdd vdd PMOS W={pmos_width_u:.6g}u L=180n",
+                f"M{prefix}neg_up_ctrl_latch {neg_ctrl} {pos_ctrl} vdd vdd PMOS W={pmos_width_u:.6g}u L=180n",
+            ]
     if nontarget_guard_node is None:
         if high_side_topology == "nmos-stack":
             lines.append(f"M{prefix}neg_up_d {prefix}neg_up {neg} {vwn} 0 NSENSE W={width_u:.6g}u L=180n")

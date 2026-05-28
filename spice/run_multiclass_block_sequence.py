@@ -58,7 +58,7 @@ CLASS_BIAS_MODES = ("none", "target-only", "label-descent")
 READOUT_UPDATE_MODES = ("sampled", "live")
 READOUT_NONTARGET_GUARD_MODES = ("none", "support")
 READOUT_SUPPORT_SOURCE_MODES = ("writer", "elig", "act", "act-raw")
-READOUT_LIVE_HIGH_SIDE_TOPOLOGIES = ("nmos-stack", "pmos-gated")
+READOUT_LIVE_HIGH_SIDE_TOPOLOGIES = ("nmos-stack", "pmos-gated", "pmos-differential")
 HIDDEN_UPDATE_MODES = ("none", "readout-weighted", "direct-readout-weighted")
 SCORE_TIMING_MODES = ("late", "early")
 SCORE_SENSE_MODES = ("voltage", "current-clamp", "diode-mirror")
@@ -1828,6 +1828,8 @@ def generate_netlist(
     error_mode: str = "label-descent",
     readout_update_mode: str = "sampled",
     readout_update_width_u: float = 0.5,
+    readout_high_ref: float = 0.42,
+    readout_low_ref: float = 0.28,
     readout_nontarget_guard_mode: str = "none",
     readout_support_source_mode: str = "writer",
     readout_support_capacitance_f: float = 4.0,
@@ -1971,6 +1973,8 @@ def generate_netlist(
         raise ValueError(f"error_mode must be one of {ERROR_MODES}")
     if readout_update_mode not in READOUT_UPDATE_MODES:
         raise ValueError(f"readout_update_mode must be one of {READOUT_UPDATE_MODES}")
+    if not (0.0 <= readout_low_ref < readout_high_ref <= 1.2):
+        raise ValueError("readout update references must satisfy 0 <= low < high <= 1.2")
     if readout_nontarget_guard_mode not in READOUT_NONTARGET_GUARD_MODES:
         raise ValueError(f"readout_nontarget_guard_mode must be one of {READOUT_NONTARGET_GUARD_MODES}")
     if readout_nontarget_guard_mode != "none" and readout_update_mode != "live":
@@ -2251,8 +2255,8 @@ def generate_netlist(
         ),
         ".options method=gear reltol=1e-3 abstol=1e-12 vntol=1e-6",
         "Vdd vdd 0 {VDD}",
-        "Vvwhi_ref vwhi_ref 0 0.42",
-        "Vvwlo_ref vwlo_ref 0 0.28",
+        f"Vvwhi_ref vwhi_ref 0 {readout_high_ref:.12g}",
+        f"Vvwlo_ref vwlo_ref 0 {readout_low_ref:.12g}",
         f"Vhidden_whi_ref hidden_whi_ref 0 {hidden_direct_high_ref:.12g}",
         f"Vhidden_wlo_ref hidden_wlo_ref 0 {hidden_direct_low_ref:.12g}",
         *(
@@ -3395,6 +3399,9 @@ def generate_netlist(
                 lines += [
                     f".meas tran c{class_idx}_errp_{cycle} FIND V({class_node(class_idx, 'errp')}) AT={base + score_error_measure_ns:.2f}n",
                     f".meas tran c{class_idx}_errn_{cycle} FIND V({class_node(class_idx, 'errn')}) AT={base + score_error_measure_ns:.2f}n",
+                    f".meas tran c{class_idx}_errp_writer_{cycle} FIND V({class_node(class_idx, 'errp')}) AT={base + readout_eligibility_update_measure_ns:.2f}n",
+                    f".meas tran c{class_idx}_errn_writer_{cycle} FIND V({class_node(class_idx, 'errn')}) AT={base + readout_eligibility_update_measure_ns:.2f}n",
+                    f".meas tran c{class_idx}_errdiff_writer_{cycle} PARAM='c{class_idx}_errp_writer_{cycle}-c{class_idx}_errn_writer_{cycle}'",
                     f".meas tran c{class_idx}_errdiff_{cycle} PARAM='c{class_idx}_errp_{cycle}-c{class_idx}_errn_{cycle}'",
                 ]
             if uses_residual_score:
@@ -4376,6 +4383,9 @@ def error_rail_stats(
     rows: list[list[float]] = []
     errp_rows: list[list[float]] = []
     errn_rows: list[list[float]] = []
+    writer_rows: list[list[float]] = []
+    writer_errp_rows: list[list[float]] = []
+    writer_errn_rows: list[list[float]] = []
     for cycle, seq in enumerate(sequence):
         if seq != "train":
             continue
@@ -4389,6 +4399,14 @@ def error_rail_stats(
         if all(key in measures for key in errp_keys + errn_keys):
             errp_rows.append([float(measures[key]) for key in errp_keys])
             errn_rows.append([float(measures[key]) for key in errn_keys])
+        writer_keys = [f"c{class_idx}_errdiff_writer_{cycle}" for class_idx in range(class_count)]
+        writer_errp_keys = [f"c{class_idx}_errp_writer_{cycle}" for class_idx in range(class_count)]
+        writer_errn_keys = [f"c{class_idx}_errn_writer_{cycle}" for class_idx in range(class_count)]
+        if all(key in measures for key in writer_keys):
+            writer_rows.append([float(measures[key]) for key in writer_keys])
+        if all(key in measures for key in writer_errp_keys + writer_errn_keys):
+            writer_errp_rows.append([float(measures[key]) for key in writer_errp_keys])
+            writer_errn_rows.append([float(measures[key]) for key in writer_errn_keys])
         label = int(labels[cycle])
         target_values.append(values[label])
         nontarget_values.extend(value for class_idx, value in enumerate(values) if class_idx != label)
@@ -4397,6 +4415,9 @@ def error_rail_stats(
             "train_errdiff_rows_v": [],
             "train_errp_rows_v": [],
             "train_errn_rows_v": [],
+            "train_errdiff_at_writer_rows_v": [],
+            "train_errp_at_writer_rows_v": [],
+            "train_errn_at_writer_rows_v": [],
             "train_target_errdiff_mean_v": None,
             "train_target_errdiff_min_v": None,
             "train_nontarget_errdiff_mean_v": None,
@@ -4406,6 +4427,9 @@ def error_rail_stats(
         "train_errdiff_rows_v": rows,
         "train_errp_rows_v": errp_rows,
         "train_errn_rows_v": errn_rows,
+        "train_errdiff_at_writer_rows_v": writer_rows,
+        "train_errp_at_writer_rows_v": writer_errp_rows,
+        "train_errn_at_writer_rows_v": writer_errn_rows,
         "train_target_errdiff_mean_v": float(np.mean(target_values)),
         "train_target_errdiff_min_v": float(np.min(target_values)),
         "train_nontarget_errdiff_mean_v": float(np.mean(nontarget_values)),
@@ -4867,6 +4891,8 @@ def run_case(args: argparse.Namespace) -> dict[str, Any]:
         error_mode=args.error_mode,
         readout_update_mode=args.readout_update_mode,
         readout_update_width_u=args.readout_update_width,
+        readout_high_ref=args.readout_high_ref,
+        readout_low_ref=args.readout_low_ref,
         readout_nontarget_guard_mode=args.readout_nontarget_guard_mode,
         readout_support_source_mode=args.readout_support_source_mode,
         readout_support_capacitance_f=args.readout_support_capacitance_f,
@@ -5144,6 +5170,8 @@ def run_case(args: argparse.Namespace) -> dict[str, Any]:
         "error_mode": args.error_mode,
         "readout_update_mode": args.readout_update_mode,
         "readout_update_width_u": args.readout_update_width if args.readout_update_mode == "live" else None,
+        "readout_high_ref": args.readout_high_ref if args.readout_update_mode == "live" else None,
+        "readout_low_ref": args.readout_low_ref if args.readout_update_mode == "live" else None,
         "readout_live_high_side_topology": (
             args.readout_live_high_side_topology if args.readout_update_mode == "live" else None
         ),
@@ -5428,6 +5456,8 @@ def build_arg_parser() -> argparse.ArgumentParser:
     ap.add_argument("--error-mode", choices=ERROR_MODES, default="label-descent")
     ap.add_argument("--readout-update-mode", choices=READOUT_UPDATE_MODES, default="sampled")
     ap.add_argument("--readout-update-width", type=float, default=0.5)
+    ap.add_argument("--readout-high-ref", type=float, default=0.42)
+    ap.add_argument("--readout-low-ref", type=float, default=0.28)
     ap.add_argument("--readout-nontarget-guard-mode", choices=READOUT_NONTARGET_GUARD_MODES, default="none")
     ap.add_argument("--readout-support-source-mode", choices=READOUT_SUPPORT_SOURCE_MODES, default="writer")
     ap.add_argument("--readout-support-capacitance-f", type=float, default=4.0)
@@ -5570,6 +5600,8 @@ def validate_args(args: argparse.Namespace) -> None:
         raise ValueError("live readout-update-mode requires label-descent or error-rail descent modes")
     if args.readout_update_width <= 0.0:
         raise ValueError("readout-update-width must be positive")
+    if not (0.0 <= args.readout_low_ref < args.readout_high_ref <= 1.2):
+        raise ValueError("readout update references must satisfy 0 <= low < high <= 1.2")
     if args.hidden_update_mode != "none" and args.error_mode not in ERROR_RAIL_DESCENT_MODES:
         raise ValueError("hidden-update-mode requires an error-rail descent mode")
     if args.class_bias_mode not in CLASS_BIAS_MODES:

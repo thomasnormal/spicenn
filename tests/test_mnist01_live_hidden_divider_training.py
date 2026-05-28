@@ -154,6 +154,7 @@ def test_mnist01_live_hidden_netlist_is_live_transistor_path() -> None:
         hidden_activation_mode="differential-preamp",
     )
     assert "Mh0_act_sense_p h0_act_sense_n pre0_p h0_act_sense_tail 0 NSENSE" in activation_netlist
+    assert "Mh0_act_sense_tail h0_act_sense_tail featphi 0 0 NSENSE W=4u" in activation_netlist
     assert "Mact0_diff_restore act0 h0_act_sense_n vdd vdd PMOS" in activation_netlist
 
     input_contrast_netlist = mnist01_hidden.mnist01_live_hidden_netlist(
@@ -337,6 +338,74 @@ def test_mnist01_live_hidden_differential_activation_reads_unsaturated_synthetic
     assert max(diff_hrows[1:]) < 1e-3
     assert common_hrows[0] > 1.0
     assert max(common_hrows[1:]) < 1e-3
+
+
+def _hidden_activation_preamp_probe_netlist(
+    *,
+    pre_p: float,
+    pre_n: float,
+    sense_width_u: float,
+) -> str:
+    lines = [
+        "* Hidden differential activation preamp sizing probe.",
+        ".param VDD=1.2",
+        mnist01_hidden.mos_models(),
+        ".options method=gear reltol=1e-4 abstol=1e-13 vntol=1e-7",
+        "Vdd vdd 0 {VDD}",
+        "Vrst rst 0 PWL(0n 1.2 0.45n 1.2 0.48n 0 3n 0)",
+        "Vrstn rstn 0 PWL(0n 0 0.45n 0 0.48n 1.2 3n 1.2)",
+        "Vfeatphi featphi 0 PWL(0n 0 0.75n 0 0.78n 1.2 2.10n 1.2 2.13n 0 3n 0)",
+        f"Vprep pre0_p 0 {pre_p:.12g}",
+        f"Vpren pre0_n 0 {pre_n:.12g}",
+        *mnist01_hidden._hidden_state_lines(1),
+        *mnist01_hidden._hidden_forward_lines(
+            0,
+            1,
+            8.0,
+            activation_mode="differential-preamp",
+            activation_sense_width_u=sense_width_u,
+        ),
+        ".meas tran sense_p FIND V(h0_act_sense_p) AT=2n",
+        ".meas tran sense_n FIND V(h0_act_sense_n) AT=2n",
+        ".meas tran act FIND V(act0) AT=2n",
+        ".meas tran hrow FIND V(hrow0) AT=2n",
+        ".tran 2p 3n uic",
+        ".control",
+        "run",
+        "quit",
+        ".endc",
+        ".end",
+        "",
+    ]
+    return "\n".join(lines)
+
+
+@pytest.mark.ngspice
+def test_mnist01_hidden_differential_activation_sizing_rejects_high_common_mode_negative_evidence(
+    tmp_path: Path,
+    ngspice_path: str,
+) -> None:
+    positive = mnist01_hidden.run_netlist(
+        ngspice_path,
+        tmp_path / "hidden_activation_weak_positive.cir",
+        _hidden_activation_preamp_probe_netlist(pre_p=0.45, pre_n=0.32, sense_width_u=4.0),
+        timeout=20.0,
+    )
+    negative = mnist01_hidden.run_netlist(
+        ngspice_path,
+        tmp_path / "hidden_activation_weak_negative.cir",
+        _hidden_activation_preamp_probe_netlist(pre_p=0.32, pre_n=0.45, sense_width_u=4.0),
+        timeout=20.0,
+    )
+
+    assert positive["sense_n"] < 50e-3
+    assert positive["sense_p"] > 0.50
+    assert positive["act"] > 1.0
+    assert positive["hrow"] > 1.0
+    assert negative["sense_n"] > 0.50
+    assert negative["sense_p"] < 50e-3
+    assert negative["act"] < 1e-3
+    assert negative["hrow"] < 1e-3
 
 
 @pytest.mark.ngspice

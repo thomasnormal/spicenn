@@ -879,7 +879,7 @@ def mnist01_live_hidden_netlist(
     iref_a: float = 1.0e-6,
     hidden_forward_width_u: float = 8.0,
     hidden_activation_mode: str = "single-ended",
-    hidden_activation_sense_width_u: float = 32.0,
+    hidden_activation_sense_width_u: float = 4.0,
     hidden_input_mode: str = "raw",
     hidden_input_common_resistance_ohm: float = 20000.0,
     hidden_input_common_capacitance_f: float = 8.0,

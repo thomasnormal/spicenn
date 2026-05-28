@@ -14,6 +14,7 @@ BITS = 2
 HIDDEN = 4
 OUTPUTS = 2
 CYCLE_NS = 10.0
+HIDDEN_WRITER_MODES = ("nmos-pass", "pmos-highside")
 
 
 def bit_value(pattern: int, bit: int) -> int:
@@ -287,11 +288,27 @@ def _readout_writer_lines(width_u: float) -> list[str]:
     return lines
 
 
-def _hidden_writer_lines(width_u: float) -> list[str]:
+def _hidden_writer_lines(mode: str, width_u: float, pmos_width_u: float, gate_cap_f: float) -> list[str]:
+    if mode not in HIDDEN_WRITER_MODES:
+        raise ValueError(f"hidden_writer_mode must be one of {HIDDEN_WRITER_MODES}")
     lines = [
         "Vhidden_whi_ref hidden_whi_ref 0 1.05",
         "Vhidden_wlo_ref hidden_wlo_ref 0 0.15",
     ]
+
+    def pmos_charge_lines(prefix: str, dest: str, selector: str, credit: str) -> list[str]:
+        gate = f"{prefix}_pgate"
+        mid = f"{prefix}_pgmid"
+        return [
+            f"C{gate} {gate} 0 {gate_cap_f:.12g}f IC=1.05",
+            f"R{gate} {gate} hidden_whi_ref 1G",
+            f"R{mid} {mid} 0 1G",
+            f"M{prefix}_pgate_rst hidden_whi_ref rst {gate} 0 NSENSE W=4u L=180n",
+            f"M{prefix}_pgate_sel {gate} {selector} {mid} 0 NSENSE W={width_u:.6g}u L=180n",
+            f"M{prefix}_pgate_cred {mid} {credit} 0 0 NSENSE W={width_u:.6g}u L=180n",
+            f"M{prefix}_pmos {dest} {gate} hidden_whi_ref vdd PMOS W={pmos_width_u:.6g}u L=180n",
+        ]
+
     for hidden in range(HIDDEN):
         hdp = f"h{hidden}_hdp_gate"
         hdn = f"h{hidden}_hdn_gate"
@@ -302,19 +319,25 @@ def _hidden_writer_lines(width_u: float) -> list[str]:
             whn = f"wh{hidden}{bit}n"
             prefix = f"h{hidden}b{bit}_live_"
             lines += [
-                f"R{prefix}pup {prefix}pup 0 1G",
                 f"R{prefix}pdn {prefix}pdn 0 1G",
-                f"R{prefix}nup {prefix}nup 0 1G",
                 f"R{prefix}ndn {prefix}ndn 0 1G",
-                f"M{prefix}pup_e hidden_whi_ref {match_lit} {prefix}pup 0 NSENSE W={width_u:.6g}u L=180n",
-                f"M{prefix}pup_c {prefix}pup {hdp} {whp} 0 NSENSE W={width_u:.6g}u L=180n",
                 f"M{prefix}pdn_e {whp} {match_lit} {prefix}pdn 0 NSENSE W={width_u:.6g}u L=180n",
                 f"M{prefix}pdn_c {prefix}pdn {hdn} hidden_wlo_ref 0 NSENSE W={width_u:.6g}u L=180n",
-                f"M{prefix}nup_e hidden_whi_ref {mismatch_lit} {prefix}nup 0 NSENSE W={width_u:.6g}u L=180n",
-                f"M{prefix}nup_c {prefix}nup {hdn} {whn} 0 NSENSE W={width_u:.6g}u L=180n",
                 f"M{prefix}ndn_e {whn} {mismatch_lit} {prefix}ndn 0 NSENSE W={width_u:.6g}u L=180n",
                 f"M{prefix}ndn_c {prefix}ndn {hdp} hidden_wlo_ref 0 NSENSE W={width_u:.6g}u L=180n",
             ]
+            if mode == "nmos-pass":
+                lines += [
+                    f"R{prefix}pup {prefix}pup 0 1G",
+                    f"R{prefix}nup {prefix}nup 0 1G",
+                    f"M{prefix}pup_e hidden_whi_ref {match_lit} {prefix}pup 0 NSENSE W={width_u:.6g}u L=180n",
+                    f"M{prefix}pup_c {prefix}pup {hdp} {whp} 0 NSENSE W={width_u:.6g}u L=180n",
+                    f"M{prefix}nup_e hidden_whi_ref {mismatch_lit} {prefix}nup 0 NSENSE W={width_u:.6g}u L=180n",
+                    f"M{prefix}nup_c {prefix}nup {hdn} {whn} 0 NSENSE W={width_u:.6g}u L=180n",
+                ]
+            else:
+                lines += pmos_charge_lines(f"{prefix}pup", whp, match_lit, hdp)
+                lines += pmos_charge_lines(f"{prefix}nup", whn, mismatch_lit, hdn)
     return lines
 
 
@@ -481,6 +504,9 @@ def xor_live_hidden_netlist(
     hidden_credit_gate_width_u: float = 4.0,
     hidden_credit_gate_cap_f: float = 2.0,
     hidden_credit_gate_pull_scale: float = 1.0,
+    hidden_writer_mode: str = "pmos-highside",
+    hidden_writer_pmos_width_u: float = 2.0,
+    hidden_writer_gate_cap_f: float = 0.2,
 ) -> str:
     if not train_order:
         raise ValueError("train_order must not be empty")
@@ -506,10 +532,14 @@ def xor_live_hidden_netlist(
         hidden_credit_gate_width_u,
         hidden_credit_gate_cap_f,
         hidden_credit_gate_pull_scale,
+        hidden_writer_pmos_width_u,
+        hidden_writer_gate_cap_f,
     ) <= 0.0:
         raise ValueError("voltages, currents, widths, and capacitances must be positive")
     if hidden_credit_activation_model not in {"NREL", "NMOS", "NSENSE"}:
         raise ValueError("hidden_credit_activation_model must be NREL, NMOS, or NSENSE")
+    if hidden_writer_mode not in HIDDEN_WRITER_MODES:
+        raise ValueError(f"hidden_writer_mode must be one of {HIDDEN_WRITER_MODES}")
 
     samples = _sample_plan(train_order)
     stop_ns = len(samples) * CYCLE_NS
@@ -549,7 +579,12 @@ def xor_live_hidden_netlist(
             hidden_credit_gate_cap_f,
             hidden_credit_gate_pull_scale,
         ),
-        *_hidden_writer_lines(hidden_update_width_u),
+        *_hidden_writer_lines(
+            hidden_writer_mode,
+            hidden_update_width_u,
+            hidden_writer_pmos_width_u,
+            hidden_writer_gate_cap_f,
+        ),
         f".tran 5p {stop_ns:.2f}n uic",
         *_measure_lines(samples, train_offset),
         ".control",

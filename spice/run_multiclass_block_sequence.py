@@ -78,7 +78,7 @@ HIDDEN_DIRECT_OUTPUT_STAGES = (
 HIDDEN_DIRECT_NONTARGET_GUARD_MODES = ("none", "support")
 HIDDEN_DIRECT_ERROR_SOURCE_MODES = ("writer", "centered", "differential-excess")
 HIDDEN_DIRECT_STATE_GUARD_MODES = ("none", "signed-support")
-HIDDEN_STATE_KEEPER_MODES = ("none", "differential")
+HIDDEN_STATE_KEEPER_MODES = ("none", "differential", "differential-threshold")
 DEFAULT_HIDDEN_POSITIVE = 1.00
 DEFAULT_HIDDEN_NEGATIVE = 0.20
 ERROR_MODES = (
@@ -905,6 +905,32 @@ def hidden_differential_state_keeper_lines(
         f"M{prefix}_n_keep_hi {whn} {whp} {high_ref_node} vdd PMOS W={width_u:.6g}u L=180n",
         f"M{prefix}_p_keep_lo {whp} {whn} {low_ref_node} 0 NMOS W={width_u:.6g}u L=180n",
         f"M{prefix}_n_keep_lo {whn} {whp} {low_ref_node} 0 NMOS W={width_u:.6g}u L=180n",
+    ]
+
+
+def hidden_thresholded_differential_state_keeper_lines(
+    *,
+    feature_idx: int,
+    high_ref_node: str = "hidden_whi_ref",
+    low_ref_node: str = "hidden_wlo_ref",
+    width_u: float = 0.5,
+) -> list[str]:
+    if width_u <= 0.0:
+        raise ValueError("hidden state keeper width must be positive")
+    whp = f"whp{feature_idx}"
+    whn = f"whn{feature_idx}"
+    prefix = f"hkeepth_f{feature_idx}"
+    pos_bar = f"{prefix}_pos_bar"
+    neg_bar = f"{prefix}_neg_bar"
+    return [
+        f"R{pos_bar} {pos_bar} vdd 1G",
+        f"R{neg_bar} {neg_bar} vdd 1G",
+        f"M{prefix}_pos_detect {pos_bar} {whp} 0 0 NHIGH W={width_u:.6g}u L=180n",
+        f"M{prefix}_neg_detect {neg_bar} {whn} 0 0 NHIGH W={width_u:.6g}u L=180n",
+        f"M{prefix}_p_keep_hi {whp} {pos_bar} {high_ref_node} vdd PMOS W={width_u:.6g}u L=180n",
+        f"M{prefix}_p_keep_lo {whn} {whp} {low_ref_node} 0 NHIGH W={width_u:.6g}u L=180n",
+        f"M{prefix}_n_keep_hi {whn} {neg_bar} {high_ref_node} vdd PMOS W={width_u:.6g}u L=180n",
+        f"M{prefix}_n_keep_lo {whp} {whn} {low_ref_node} 0 NHIGH W={width_u:.6g}u L=180n",
     ]
 
 
@@ -1998,7 +2024,7 @@ def generate_netlist(
         mos_models(),
         *(
             [".model NHIGH NMOS LEVEL=1 VTO=0.75 KP=220u LAMBDA=0.03 GAMMA=0.20 PHI=0.60"]
-            if eligibility_gate_mode in ("competition", "rank")
+            if eligibility_gate_mode in ("competition", "rank") or hidden_state_keeper_mode == "differential-threshold"
             else []
         ),
         ".options method=gear reltol=1e-3 abstol=1e-12 vntol=1e-6",
@@ -2150,6 +2176,13 @@ def generate_netlist(
             ]
         if hidden_state_keeper_mode == "differential":
             lines += hidden_differential_state_keeper_lines(
+                feature_idx=feature,
+                high_ref_node="hidden_whi_ref",
+                low_ref_node="hidden_wlo_ref",
+                width_u=hidden_state_keeper_width_u,
+            )
+        elif hidden_state_keeper_mode == "differential-threshold":
+            lines += hidden_thresholded_differential_state_keeper_lines(
                 feature_idx=feature,
                 high_ref_node="hidden_whi_ref",
                 low_ref_node="hidden_wlo_ref",

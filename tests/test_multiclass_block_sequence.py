@@ -3010,11 +3010,17 @@ def _hidden_direct_readout_weighted_writer_netlist(
     hidden_anchor_resistance_ohm: float | None = None,
     state_guard_mode: str = "none",
     state_keeper_width_u: float | None = None,
+    state_keeper_mode: str = "differential",
 ) -> str:
     lines = [
         "* Low-level direct readout-weighted hidden writer primitive.",
         ".param VDD=1.2",
         seq.mos_models(),
+        *(
+            [".model NHIGH NMOS LEVEL=1 VTO=0.75 KP=220u LAMBDA=0.03 GAMMA=0.20 PHI=0.60"]
+            if state_keeper_mode == "differential-threshold"
+            else []
+        ),
         ".options method=gear reltol=1e-3 abstol=1e-12 vntol=1e-6",
         "Vdd vdd 0 {VDD}",
         f"Vwhi vwhi_ref 0 {readout_high_ref:.12g}",
@@ -3045,11 +3051,20 @@ def _hidden_direct_readout_weighted_writer_netlist(
             else []
         ),
         *(
-            seq.hidden_differential_state_keeper_lines(
-                feature_idx=0,
-                high_ref_node="hidden_whi_ref",
-                low_ref_node="hidden_wlo_ref",
-                width_u=state_keeper_width_u,
+            (
+                seq.hidden_thresholded_differential_state_keeper_lines(
+                    feature_idx=0,
+                    high_ref_node="hidden_whi_ref",
+                    low_ref_node="hidden_wlo_ref",
+                    width_u=state_keeper_width_u,
+                )
+                if state_keeper_mode == "differential-threshold"
+                else seq.hidden_differential_state_keeper_lines(
+                    feature_idx=0,
+                    high_ref_node="hidden_whi_ref",
+                    low_ref_node="hidden_wlo_ref",
+                    width_u=state_keeper_width_u,
+                )
             )
             if state_keeper_width_u is not None
             else []
@@ -3763,6 +3778,78 @@ def test_multiclass_block_sequence_ngspice_differential_keeper_preserves_hidden_
     assert float(kept["whn_after"]) < 0.25
 
 
+def test_multiclass_block_sequence_ngspice_thresholded_keeper_preserves_sign_without_forcing_neutral(
+    tmp_path: Path,
+    ngspice_path: str,
+) -> None:
+    def realistic_rails(deck: str) -> str:
+        return deck.replace("Vact act0 0 1.2", "Vact act0 0 0.42").replace(
+            "Vxelig xelig0 0 1.2",
+            "Vxelig xelig0 0 0.46",
+        )
+
+    common_kwargs = dict(
+        errp="PULSE(0 0.04 1n 10p 10p 4n 20n)",
+        width_u=0.125,
+        readout_gate_mode="restored-excess",
+        output_stage="pmos-complementary",
+        readout_high_ref=0.42,
+        readout_low_ref=0.28,
+        hidden_high_ref=1.05,
+        hidden_low_ref=0.15,
+        state_keeper_width_u=0.5,
+        state_keeper_mode="differential-threshold",
+    )
+    positive = run_netlist(
+        ngspice_path,
+        tmp_path / "direct_hidden_writer_threshold_keeper_positive.cir",
+        realistic_rails(
+            _hidden_direct_readout_weighted_writer_netlist(
+                **common_kwargs,
+                vwp=0.28,
+                vwn=0.40,
+                whp=0.80,
+                whn=0.0,
+            )
+        ),
+        timeout=20.0,
+    )
+    negative = run_netlist(
+        ngspice_path,
+        tmp_path / "direct_hidden_writer_threshold_keeper_negative.cir",
+        realistic_rails(
+            _hidden_direct_readout_weighted_writer_netlist(
+                **common_kwargs,
+                vwp=0.40,
+                vwn=0.28,
+                whp=0.0,
+                whn=0.80,
+            )
+        ),
+        timeout=20.0,
+    )
+    neutral = run_netlist(
+        ngspice_path,
+        tmp_path / "direct_hidden_writer_threshold_keeper_neutral.cir",
+        realistic_rails(
+            _hidden_direct_readout_weighted_writer_netlist(
+                **{**common_kwargs, "errp": 0.0},
+                vwp=0.40,
+                vwn=0.40,
+                whp=0.45,
+                whn=0.40,
+            )
+        ),
+        timeout=20.0,
+    )
+
+    assert float(positive["signed_after"]) > 0.20
+    assert float(negative["signed_after"]) < -0.20
+    assert float(neutral["whp_after"]) == pytest.approx(0.45, abs=2e-3)
+    assert float(neutral["whn_after"]) == pytest.approx(0.40, abs=2e-3)
+    assert float(neutral["signed_after"]) == pytest.approx(0.05, abs=2e-3)
+
+
 def test_multiclass_block_sequence_ngspice_direct_hidden_writer_pmos_suppressive_uses_low_side_headroom(
     tmp_path: Path,
     ngspice_path: str,
@@ -4085,6 +4172,25 @@ def test_multiclass_block_sequence_can_add_differential_hidden_state_keeper() ->
 
     assert "Mhkeep_f0_p_keep_hi whp0 whn0 hidden_whi_ref" in netlist
     assert "Mhkeep_f0_n_keep_lo whn0 whp0 hidden_wlo_ref" in netlist
+    assert "\nB" not in netlist
+
+
+def test_multiclass_block_sequence_can_add_thresholded_hidden_state_keeper() -> None:
+    netlist = seq.generate_netlist(
+        train_records=_one_hot_records(),
+        eval_records=_one_hot_records(),
+        class_count=3,
+        feature_count=3,
+        hidden_update_mode="direct-readout-weighted",
+        hidden_state_keeper_mode="differential-threshold",
+        hidden_state_keeper_width_u=0.5,
+        error_mode="pairwise-margin-centered-gain-descent",
+    )
+
+    assert ".model NHIGH NMOS LEVEL=1 VTO=0.75" in netlist
+    assert "Mhkeepth_f0_pos_detect hkeepth_f0_pos_bar whp0 0 0 NHIGH" in netlist
+    assert "Mhkeepth_f0_p_keep_hi whp0 hkeepth_f0_pos_bar hidden_whi_ref" in netlist
+    assert "Mhkeepth_f0_n_keep_lo whp0 whn0 hidden_wlo_ref" in netlist
     assert "\nB" not in netlist
 
 

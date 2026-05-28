@@ -68,6 +68,36 @@ def test_mnist01_live_hidden_netlist_is_live_transistor_path() -> None:
     assert ".meas tran train_hrow_probe_0" in netlist
     assert ".meas tran final_margin_improvement_1" in netlist
 
+    differential_netlist = mnist01_hidden.mnist01_live_hidden_netlist(
+        train,
+        train,
+        hidden_writer_topology="pmos-differential",
+    )
+    assert (
+        "Mh1f6_live_pos_up_ctrl_phi h1f6_live_pos_up_ctrl_phi errphi 0 0 NSENSE"
+        in differential_netlist
+    )
+    assert (
+        "Mh1f6_live_neg_up_ctrl_phi h1f6_live_neg_up_ctrl_phi errphi 0 0 NSENSE"
+        in differential_netlist
+    )
+    assert (
+        "Mh1f6_live_pos_up_ctrl_latch h1f6_live_pos_up_ctrl h1f6_live_neg_up_ctrl vdd vdd PMOS"
+        in differential_netlist
+    )
+    assert (
+        "Mh1f6_live_neg_up_ctrl_latch h1f6_live_neg_up_ctrl h1f6_live_pos_up_ctrl vdd vdd PMOS"
+        in differential_netlist
+    )
+    assert (
+        "Mh1f6_live_pos_dn_select h1f6_live_pos_dn h1f6_live_neg_up_ctrl h1f6_live_pos_dn_sel 0 NSENSE"
+        in differential_netlist
+    )
+    assert (
+        "Mh1f6_live_neg_dn_select h1f6_live_neg_dn h1f6_live_pos_up_ctrl h1f6_live_neg_dn_sel 0 NSENSE"
+        in differential_netlist
+    )
+
 
 def test_mnist01_live_hidden_netlist_validation() -> None:
     sample = {"features": [1.0] * 16, "label": 0}
@@ -91,6 +121,12 @@ def test_mnist01_live_hidden_netlist_validation() -> None:
             [sample],
             [sample],
             hidden_error_route_width_u=0.0,
+        )
+    with pytest.raises(ValueError, match="hidden_writer_topology"):
+        mnist01_hidden.mnist01_live_hidden_netlist(
+            [sample],
+            [sample],
+            hidden_writer_topology="BAD",
         )
     with pytest.raises(ValueError, match="even"):
         mnist01_hidden.hidden_block_for_feature(0, 5)

@@ -335,7 +335,10 @@ def _hidden_writer_lines(
     width_u: float,
     pmos_width_u: float,
     gate_cap_f: float,
+    topology: str,
 ) -> list[str]:
+    if topology not in ("pmos-highside", "pmos-differential"):
+        raise ValueError("hidden_writer_topology must be pmos-highside or pmos-differential")
     lines = [
         "Vhidden_whi_ref hidden_whi_ref 0 1.05",
         "Vhidden_wlo_ref hidden_wlo_ref 0 0.15",
@@ -357,6 +360,55 @@ def _hidden_writer_lines(
             f"M{prefix}_pmos {dest} {gate} hidden_whi_ref vdd PMOS W={pmos_width_u:.6g}u L=180n",
         ]
 
+    def pmos_differential_lines(prefix: str, whp: str, whn: str, selector: str, pos: str, neg: str) -> list[str]:
+        pos_ctrl = f"{prefix}pos_up_ctrl"
+        neg_ctrl = f"{prefix}neg_up_ctrl"
+        pos_ctrl_mid = f"{prefix}pos_up_ctrl_mid"
+        pos_ctrl_phi = f"{prefix}pos_up_ctrl_phi"
+        neg_ctrl_mid = f"{prefix}neg_up_ctrl_mid"
+        neg_ctrl_phi = f"{prefix}neg_up_ctrl_phi"
+        pos_dn = f"{prefix}pos_dn"
+        neg_dn = f"{prefix}neg_dn"
+        pos_dn_sel = f"{prefix}pos_dn_sel"
+        neg_dn_sel = f"{prefix}neg_dn_sel"
+        out: list[str] = [
+            f"R{prefix}pos_dn_shunt {pos_dn} 0 1G",
+            f"R{prefix}neg_dn_shunt {neg_dn} 0 1G",
+            f"R{prefix}pos_dn_sel_shunt {pos_dn_sel} 0 1G",
+            f"R{prefix}neg_dn_sel_shunt {neg_dn_sel} 0 1G",
+            f"C{prefix}pos_dn_par {pos_dn} 0 0.05f IC=0",
+            f"C{prefix}neg_dn_par {neg_dn} 0 0.05f IC=0",
+            f"C{prefix}pos_dn_sel_par {pos_dn_sel} 0 0.05f IC=0",
+            f"C{prefix}neg_dn_sel_par {neg_dn_sel} 0 0.05f IC=0",
+            f"M{prefix}pos_dn_e {whn} {selector} {pos_dn} 0 NSENSE W={width_u:.6g}u L=180n",
+            f"M{prefix}neg_dn_e {whp} {selector} {neg_dn} 0 NSENSE W={width_u:.6g}u L=180n",
+            f"M{prefix}pos_dn_select {pos_dn} {neg_ctrl} {pos_dn_sel} 0 NSENSE W={width_u:.6g}u L=180n",
+            f"M{prefix}neg_dn_select {neg_dn} {pos_ctrl} {neg_dn_sel} 0 NSENSE W={width_u:.6g}u L=180n",
+            f"M{prefix}pos_dn_d {pos_dn_sel} {pos} hidden_wlo_ref 0 NSENSE W={width_u:.6g}u L=180n",
+            f"M{prefix}neg_dn_d {neg_dn_sel} {neg} hidden_wlo_ref 0 NSENSE W={width_u:.6g}u L=180n",
+            f"C{pos_ctrl} {pos_ctrl} 0 {gate_cap_f:.12g}f IC=1.2",
+            f"C{neg_ctrl} {neg_ctrl} 0 {gate_cap_f:.12g}f IC=1.2",
+            f"R{pos_ctrl} {pos_ctrl} vdd 1G",
+            f"R{neg_ctrl} {neg_ctrl} vdd 1G",
+            f"R{pos_ctrl_mid} {pos_ctrl_mid} 0 1G",
+            f"R{pos_ctrl_phi} {pos_ctrl_phi} 0 1G",
+            f"R{neg_ctrl_mid} {neg_ctrl_mid} 0 1G",
+            f"R{neg_ctrl_phi} {neg_ctrl_phi} 0 1G",
+            f"M{prefix}pos_up_ctrl_rst vdd rst {pos_ctrl} 0 NSENSE W=4u L=180n",
+            f"M{prefix}neg_up_ctrl_rst vdd rst {neg_ctrl} 0 NSENSE W=4u L=180n",
+            f"M{prefix}pos_up_ctrl_e {pos_ctrl} {selector} {pos_ctrl_mid} 0 NSENSE W={width_u:.6g}u L=180n",
+            f"M{prefix}pos_up_ctrl_d {pos_ctrl_mid} {pos} {pos_ctrl_phi} 0 NSENSE W={width_u:.6g}u L=180n",
+            f"M{prefix}pos_up_ctrl_phi {pos_ctrl_phi} errphi 0 0 NSENSE W={width_u:.6g}u L=180n",
+            f"M{prefix}neg_up_ctrl_e {neg_ctrl} {selector} {neg_ctrl_mid} 0 NSENSE W={width_u:.6g}u L=180n",
+            f"M{prefix}neg_up_ctrl_d {neg_ctrl_mid} {neg} {neg_ctrl_phi} 0 NSENSE W={width_u:.6g}u L=180n",
+            f"M{prefix}neg_up_ctrl_phi {neg_ctrl_phi} errphi 0 0 NSENSE W={width_u:.6g}u L=180n",
+            f"M{prefix}pos_up_ctrl_latch {pos_ctrl} {neg_ctrl} vdd vdd PMOS W={pmos_width_u:.6g}u L=180n",
+            f"M{prefix}neg_up_ctrl_latch {neg_ctrl} {pos_ctrl} vdd vdd PMOS W={pmos_width_u:.6g}u L=180n",
+            f"M{prefix}pos_up_p {whp} {pos_ctrl} hidden_whi_ref vdd PMOS W={pmos_width_u:.6g}u L=180n",
+            f"M{prefix}neg_up_p {whn} {neg_ctrl} hidden_whi_ref vdd PMOS W={pmos_width_u:.6g}u L=180n",
+        ]
+        return out
+
     for hidden in range(hidden_count):
         hdp = f"h{hidden}_hdp_gate"
         hdn = f"h{hidden}_hdn_gate"
@@ -364,16 +416,19 @@ def _hidden_writer_lines(
             whp = _hidden_weight_node(hidden, feature, "p")
             whn = _hidden_weight_node(hidden, feature, "n")
             prefix = f"h{hidden}f{feature}_live_"
-            lines += [
-                f"R{prefix}pdn {prefix}pdn 0 1G",
-                f"R{prefix}ndn {prefix}ndn 0 1G",
-                f"M{prefix}pdn_e {whp} px{feature} {prefix}pdn 0 NSENSE W={width_u:.6g}u L=180n",
-                f"M{prefix}pdn_c {prefix}pdn {hdn} hidden_wlo_ref 0 NSENSE W={width_u:.6g}u L=180n",
-                f"M{prefix}ndn_e {whn} px{feature} {prefix}ndn 0 NSENSE W={width_u:.6g}u L=180n",
-                f"M{prefix}ndn_c {prefix}ndn {hdp} hidden_wlo_ref 0 NSENSE W={width_u:.6g}u L=180n",
-                *pmos_charge_lines(f"{prefix}pup", whp, f"px{feature}", hdp),
-                *pmos_charge_lines(f"{prefix}nup", whn, f"px{feature}", hdn),
-            ]
+            if topology == "pmos-highside":
+                lines += [
+                    f"R{prefix}pdn {prefix}pdn 0 1G",
+                    f"R{prefix}ndn {prefix}ndn 0 1G",
+                    f"M{prefix}pdn_e {whp} px{feature} {prefix}pdn 0 NSENSE W={width_u:.6g}u L=180n",
+                    f"M{prefix}pdn_c {prefix}pdn {hdn} hidden_wlo_ref 0 NSENSE W={width_u:.6g}u L=180n",
+                    f"M{prefix}ndn_e {whn} px{feature} {prefix}ndn 0 NSENSE W={width_u:.6g}u L=180n",
+                    f"M{prefix}ndn_c {prefix}ndn {hdp} hidden_wlo_ref 0 NSENSE W={width_u:.6g}u L=180n",
+                    *pmos_charge_lines(f"{prefix}pup", whp, f"px{feature}", hdp),
+                    *pmos_charge_lines(f"{prefix}nup", whn, f"px{feature}", hdn),
+                ]
+            else:
+                lines += pmos_differential_lines(prefix, whp, whn, f"px{feature}", hdp, hdn)
     return lines
 
 
@@ -484,6 +539,7 @@ def mnist01_live_hidden_netlist(
     hidden_update_width_u: float = 1.0,
     hidden_writer_pmos_width_u: float = 4.0,
     hidden_writer_gate_cap_f: float = 0.2,
+    hidden_writer_topology: str = "pmos-highside",
 ) -> str:
     if hidden_count != HIDDEN:
         raise ValueError("this small MNIST01 rung currently uses exactly four quadrant hidden units")
@@ -493,6 +549,8 @@ def mnist01_live_hidden_netlist(
     _validate_records(train_records, feature_count, "train")
     _validate_records(eval_records, feature_count, "eval")
     _image_size_from_feature_count(feature_count)
+    if hidden_writer_topology not in ("pmos-highside", "pmos-differential"):
+        raise ValueError("hidden_writer_topology must be pmos-highside or pmos-differential")
     if min(
         readout_initial_positive,
         readout_initial_negative,
@@ -575,6 +633,7 @@ def mnist01_live_hidden_netlist(
             hidden_update_width_u,
             hidden_writer_pmos_width_u,
             hidden_writer_gate_cap_f,
+            hidden_writer_topology,
         ),
         f".tran 5p {stop_ns:.2f}n uic",
         *_measure_lines(samples, eval_count, train_count),

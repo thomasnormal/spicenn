@@ -2,6 +2,21 @@
 
 ## 2026-05-28
 
+- Added hidden activation and restored hidden-row eval probes to the MNIST01
+  live-hidden conductance-divider deck.  This exposed that `hrow` restore can
+  hide damage to the raw `act*` hidden features: the previous short hidden
+  write preserved restored-row margins while raw activation margins could
+  regress by about `138 mV`.  A pulse/width sweep showed the safe region is a
+  much shorter hidden-write pulse (`5.20--5.30 ns` at `0.05u`, or similarly
+  short/small settings): raw activation degradation stays below `1 mV` and
+  probed hidden signed deltas stay below about `1 mV`.  Wider/longer dynamic
+  preamp writes still fail sharply, with examples around `0.02u/0.30 ns`
+  dropping restored hidden-row margin by `~1.2 V` and moving hidden signed
+  state by `~1 V`.  The four-sample MNIST01 result remains only readout-level:
+  final margins are roughly `[+19, +19, -0.37, -21] mV`, so this is a bounded
+  non-destructive hidden-write regression, not a solved live-hidden MNIST
+  learner.  Focused regression: `python3 -m pytest
+  tests/test_mnist01_live_hidden_divider_training.py -q` -> `7 passed`.
 - Added an opt-in same-transient `eval_score_readout_mode=direct-current-clamp`
   to the continuous multiclass block.  The first naive branch tied the current
   clamps directly to `actrow*`; an ngspice regression caught that this stole

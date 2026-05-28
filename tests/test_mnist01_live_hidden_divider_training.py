@@ -13,6 +13,21 @@ sys.path.insert(0, str(SPICE_DIR))
 import run_mnist01_live_hidden_divider_training as mnist01_hidden  # noqa: E402
 
 
+def _hidden_feature_margin(
+    measures: dict[str, float],
+    records: list[dict[str, object]],
+    phase: str,
+    sample_idx: int,
+    *,
+    node: str,
+) -> float:
+    hidden, _feature = mnist01_hidden._probe_hidden_feature(records[sample_idx])
+    values = [measures[f"{phase}_{node}_h{idx}_{sample_idx}"] for idx in range(mnist01_hidden.HIDDEN)]
+    active = values[hidden]
+    strongest_inactive = max(value for idx, value in enumerate(values) if idx != hidden)
+    return active - strongest_inactive
+
+
 def _require_mnist_raw() -> None:
     raw = ROOT / "data/MNIST/raw"
     required = [
@@ -68,6 +83,8 @@ def test_mnist01_live_hidden_netlist_is_live_transistor_path() -> None:
     assert "Mc0_f1_live_pos_up_p c0_vwp1 c0_f1_live_pos_up_ctrl vwhi_ref vdd PMOS" in netlist
     assert "Mh1f6_live_pup_pgate_phi h1f6_live_pup_pgphi errphi 0 0 NSENSE" in netlist
     assert ".meas tran train_hrow_probe_0" in netlist
+    assert ".meas tran initial_act_h0_0" in netlist
+    assert ".meas tran final_hrow_h3_1" in netlist
     assert ".meas tran final_margin_improvement_1" in netlist
 
     differential_netlist = mnist01_hidden.mnist01_live_hidden_netlist(
@@ -292,8 +309,8 @@ def test_mnist01_live_hidden_dynamic_preamp_short_write_bounds_multisample_hidde
             hidden_write_start_train_index=1,
             hidden_credit_sense_start_ns=5.00,
             hidden_credit_sense_end_ns=5.35,
-            hidden_write_start_ns=5.15,
-            hidden_write_end_ns=5.45,
+            hidden_write_start_ns=5.20,
+            hidden_write_end_ns=5.30,
             hidden_update_width_u=0.05,
         ),
         timeout=180.0,
@@ -305,6 +322,14 @@ def test_mnist01_live_hidden_dynamic_preamp_short_write_bounds_multisample_hidde
     assert parsed["final_margin_3"] < 0.0
     for train_idx in range(4):
         assert abs(parsed[f"train_wh_probe_signed_delta_{train_idx}"]) < 10e-3
+
+    for eval_idx in range(4):
+        initial_hrow_margin = _hidden_feature_margin(parsed, evals, "initial", eval_idx, node="hrow")
+        final_hrow_margin = _hidden_feature_margin(parsed, evals, "final", eval_idx, node="hrow")
+        initial_act_margin = _hidden_feature_margin(parsed, evals, "initial", eval_idx, node="act")
+        final_act_margin = _hidden_feature_margin(parsed, evals, "final", eval_idx, node="act")
+        assert final_hrow_margin >= initial_hrow_margin - 20e-3
+        assert final_act_margin >= initial_act_margin - 20e-3
 
 
 def _hidden_credit_preamp_primitive_netlist(raw_positive: float, raw_negative: float) -> str:

@@ -562,7 +562,13 @@ def _measure_lines(samples: list[dict[str, Any]], eval_count: int, train_count: 
         if sample["phase"] in {"initial", "final"}:
             phase = str(sample["phase"])
             local = idx if phase == "initial" else idx - final_offset
+            act_at = base + 2.00
             at = base + 3.15
+            for hidden in range(HIDDEN):
+                lines += [
+                    f".meas tran {phase}_act_h{hidden}_{local} FIND V(act{hidden}) AT={act_at:.2f}n",
+                    f".meas tran {phase}_hrow_h{hidden}_{local} FIND V(hrow{hidden}) AT={act_at:.2f}n",
+                ]
             lines += [
                 f".meas tran {phase}_target_scorep_{local} FIND V({class_node(label, 'scorep')}) AT={at:.2f}n",
                 f".meas tran {phase}_target_scoren_{local} FIND V({class_node(label, 'scoren')}) AT={at:.2f}n",

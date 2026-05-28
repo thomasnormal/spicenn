@@ -1047,6 +1047,7 @@ def test_multiclass_block_sequence_can_use_pairwise_margin_correction_descent() 
     assert "Mmpen_t0_o1_clk mpen_t0_o1_i scoredec 0 0 NMOS W=0.25u" in netlist
     assert "Cc1_errp c1_errp 0 0.5f IC=0" in netlist
     assert "Mt0_o1_errp_sup t0_o1_errp_sup c0_gt_c1_decision vdd vdd PMOS W=128u" in netlist
+    assert "Mt0_o1_errn_sup t0_o1_errn_sup c0_gt_c1_decision vdd vdd PMOS W=64u" in netlist
     assert "Mc0_f0_gvp_e c0_f0_gvp_a c0_errp c0_f0_gvp_d 0 NSENSE" in netlist
     assert ".meas tran c0_errdiff_1" in netlist
 
@@ -1056,9 +1057,11 @@ def test_multiclass_block_sequence_can_use_pairwise_margin_correction_descent() 
         error_mode="pairwise-margin-correction-descent",
         pairwise_margin_target_v=2.0e-3,
         pairwise_margin_error_drive_scale=0.5,
+        pairwise_margin_nontarget_error_scale=0.25,
     )
     assert "Mmpen_t0_o1_label c0_gt_c1_decision c0_targetp mpen_t0_o1_i 0 NSENSE W=0.5u" in wider_margin
     assert "Mt0_o1_errp_sup t0_o1_errp_sup c0_gt_c1_decision vdd vdd PMOS W=64u" in wider_margin
+    assert "Mt0_o1_errn_sup t0_o1_errn_sup c0_gt_c1_decision vdd vdd PMOS W=16u" in wider_margin
 
 
 def test_multiclass_block_sequence_can_use_pairwise_margin_centered_descent() -> None:
@@ -1889,6 +1892,8 @@ def test_multiclass_block_sequence_validation() -> None:
         seq.main_for_test(["--score-mass-error-width", "0"])
     with pytest.raises(ValueError, match="score-mass-pairwise-error-scale"):
         seq.main_for_test(["--score-mass-pairwise-error-scale", "0"])
+    with pytest.raises(ValueError, match="pairwise-margin-nontarget-error-scale"):
+        seq.main_for_test(["--pairwise-margin-nontarget-error-scale", "1.5"])
     with pytest.raises(ValueError, match="initial_readout_states class index"):
         seq.generate_netlist(
             train_records=records,
@@ -1905,6 +1910,8 @@ def test_multiclass_block_sequence_validation() -> None:
         seq.generate_netlist(train_records=records, eval_records=records, nontarget_scale=-0.1)
     with pytest.raises(ValueError, match="nontarget_width_scale"):
         seq.generate_netlist(train_records=records, eval_records=records, nontarget_width_scale=1.1)
+    with pytest.raises(ValueError, match="pairwise_margin_nontarget_error_scale"):
+        seq.generate_netlist(train_records=records, eval_records=records, pairwise_margin_nontarget_error_scale=0.0)
     with pytest.raises(ValueError, match="error_mode"):
         seq.generate_netlist(train_records=records, eval_records=records, error_mode="missing")
     with pytest.raises(ValueError, match="readout_update_mode"):

@@ -420,6 +420,8 @@ class MulticlassMarginCorrectionSizing:
     margin_penalty_width_u: float
     margin_reference_window_v: float
     error_width_u: float
+    nontarget_error_width_u: float
+    nontarget_error_scale: float
     error_cap_f: float
     error_window_ns: float
     error_clock_high_v: float
@@ -682,6 +684,7 @@ def derive_multiclass_margin_correction_sizing(
     anchor_pairwise_pulldown_width_u: float = 64.0,
     margin_reference_window_v: float = 0.256,
     error_drive_scale: float = 1.0,
+    nontarget_error_scale: float | None = None,
 ) -> MulticlassMarginCorrectionSizing:
     """Derive sizes for a pairwise target-margin correction primitive.
 
@@ -708,9 +711,15 @@ def derive_multiclass_margin_correction_sizing(
         ("anchor_pairwise_pullup_width_u", anchor_pairwise_pullup_width_u),
         ("anchor_pairwise_pulldown_width_u", anchor_pairwise_pulldown_width_u),
         ("margin_reference_window_v", margin_reference_window_v),
-        ("error_drive_scale", error_drive_scale),
     ]:
         _require_positive(name, float(value))
+    _require_positive("error_drive_scale", error_drive_scale)
+    effective_nontarget_error_scale = (
+        1.0 / (class_count - 1) if nontarget_error_scale is None else nontarget_error_scale
+    )
+    _require_positive("nontarget_error_scale", effective_nontarget_error_scale)
+    if effective_nontarget_error_scale > 1.0:
+        raise ValueError("nontarget_error_scale must not exceed 1.")
 
     observable_margin_ratio = min(target_margin_v, score_delta_v) / min_observable_score_delta_v
     if observable_margin_ratio < 1.0:
@@ -722,6 +731,7 @@ def derive_multiclass_margin_correction_sizing(
         target_error_v,
     )
     error_width_u = anchor_error_width_u * error_drive_scale
+    nontarget_error_width_u = error_width_u * effective_nontarget_error_scale
     margin_penalty_width_u = anchor_pairwise_pulldown_width_u * target_margin_v / margin_reference_window_v
     error_clock_high_v = min(1.2, target_error_v + sense_threshold_v)
 
@@ -735,6 +745,8 @@ def derive_multiclass_margin_correction_sizing(
         margin_penalty_width_u=margin_penalty_width_u,
         margin_reference_window_v=margin_reference_window_v,
         error_width_u=error_width_u,
+        nontarget_error_width_u=nontarget_error_width_u,
+        nontarget_error_scale=effective_nontarget_error_scale,
         error_cap_f=error_cap_f,
         error_window_ns=error_window_ns,
         error_clock_high_v=error_clock_high_v,

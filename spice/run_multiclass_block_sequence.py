@@ -1006,6 +1006,7 @@ def pairwise_score_competition_error_lines(
     error_clock_node: str = "scoreerr",
     reset_node: str = "scoregaterst",
     error_width_u: float = 128.0,
+    nontarget_error_width_u: float | None = None,
     error_capacitance_f: float = 4.0,
     create_error_nodes: bool = True,
     positive_suffix: str = "errp",
@@ -1014,6 +1015,11 @@ def pairwise_score_competition_error_lines(
 ) -> list[str]:
     if min(error_width_u, error_capacitance_f) <= 0.0:
         raise ValueError("pairwise competition error widths and capacitances must be positive")
+    effective_nontarget_error_width_u = (
+        error_width_u if nontarget_error_width_u is None else nontarget_error_width_u
+    )
+    if effective_nontarget_error_width_u <= 0.0:
+        raise ValueError("nontarget_error_width_u must be positive")
     lines: list[str] = []
     if create_error_nodes:
         for class_idx in range(class_count):
@@ -1055,9 +1061,9 @@ def pairwise_score_competition_error_lines(
                 f"C{prefix}errn_sup {prefix}errn_sup 0 0.1f IC=0",
                 f"C{prefix}errn_t {prefix}errn_t 0 0.1f IC=0",
                 f"C{prefix}errn_w {prefix}errn_w 0 0.1f IC=0",
-                f"M{prefix}errn_sup {prefix}errn_sup {opposite_decision} vdd vdd PMOS W={error_width_u:.6g}u L=180n",
-                f"M{prefix}errn_label {prefix}errn_sup {targetp} {prefix}errn_t 0 NSENSE W={error_width_u:.6g}u L=180n",
-                f"M{prefix}errn_win {prefix}errn_t {decision} {prefix}errn_w 0 NSENSE W={error_width_u:.6g}u L=180n",
+                f"M{prefix}errn_sup {prefix}errn_sup {opposite_decision} vdd vdd PMOS W={effective_nontarget_error_width_u:.6g}u L=180n",
+                f"M{prefix}errn_label {prefix}errn_sup {targetp} {prefix}errn_t 0 NSENSE W={effective_nontarget_error_width_u:.6g}u L=180n",
+                f"M{prefix}errn_win {prefix}errn_t {decision} {prefix}errn_w 0 NSENSE W={effective_nontarget_error_width_u:.6g}u L=180n",
             ]
             if strongest_opponent_only:
                 for other_idx in range(class_count):
@@ -1072,13 +1078,13 @@ def pairwise_score_competition_error_lines(
                         f"C{next_errp} {next_errp} 0 0.1f IC=0",
                         f"C{next_errn} {next_errn} 0 0.1f IC=0",
                         f"M{prefix}errp_strong{other_idx} {errp_drive} {strongest_gate} {next_errp} 0 NSENSE W={error_width_u:.6g}u L=180n",
-                        f"M{prefix}errn_strong{other_idx} {errn_drive} {strongest_gate} {next_errn} 0 NSENSE W={error_width_u:.6g}u L=180n",
+                        f"M{prefix}errn_strong{other_idx} {errn_drive} {strongest_gate} {next_errn} 0 NSENSE W={effective_nontarget_error_width_u:.6g}u L=180n",
                     ]
                     errp_drive = next_errp
                     errn_drive = next_errn
             lines += [
                 f"M{prefix}errp_clk {errp_drive} {error_clock_node} {errp} 0 NSENSE W={error_width_u:.6g}u L=180n",
-                f"M{prefix}errn_clk {errn_drive} {error_clock_node} {errn} 0 NSENSE W={error_width_u:.6g}u L=180n",
+                f"M{prefix}errn_clk {errn_drive} {error_clock_node} {errn} 0 NSENSE W={effective_nontarget_error_width_u:.6g}u L=180n",
             ]
     return lines
 
@@ -1258,6 +1264,7 @@ def generate_netlist(
     score_mass_pairwise_error_scale: float = 0.0625,
     pairwise_margin_target_v: float = 1.0e-3,
     pairwise_margin_error_drive_scale: float = 1.0,
+    pairwise_margin_nontarget_error_scale: float | None = None,
     normalizer_error_clock_high: float = 1.2,
     error_mode: str = "label-descent",
     readout_update_mode: str = "sampled",
@@ -1362,6 +1369,8 @@ def generate_netlist(
         raise ValueError("nontarget_scale must be in [0, 1]")
     if nontarget_width_scale < 0.0 or nontarget_width_scale > 1.0:
         raise ValueError("nontarget_width_scale must be in [0, 1]")
+    if pairwise_margin_nontarget_error_scale is not None and not 0.0 < pairwise_margin_nontarget_error_scale <= 1.0:
+        raise ValueError("pairwise_margin_nontarget_error_scale must be in (0, 1]")
     if error_mode not in ERROR_MODES:
         raise ValueError(f"error_mode must be one of {ERROR_MODES}")
     if readout_update_mode not in READOUT_UPDATE_MODES:
@@ -1584,6 +1593,7 @@ def generate_netlist(
             target_margin_v=pairwise_margin_target_v,
             score_delta_v=3.0e-3,
             error_drive_scale=pairwise_margin_error_drive_scale,
+            nontarget_error_scale=pairwise_margin_nontarget_error_scale,
         )
         if uses_pairwise_margin_correction
         else None
@@ -2107,6 +2117,7 @@ def generate_netlist(
         lines += pairwise_score_competition_error_lines(
             class_count=class_count,
             error_width_u=margin_correction_sizing.error_width_u,
+            nontarget_error_width_u=margin_correction_sizing.nontarget_error_width_u,
             error_capacitance_f=margin_correction_sizing.error_cap_f,
             positive_suffix="errp_raw" if uses_pairwise_margin_centered else "errp",
             negative_suffix="errn_raw" if uses_pairwise_margin_centered else "errn",
@@ -3980,6 +3991,7 @@ def run_case(args: argparse.Namespace) -> dict[str, Any]:
         score_mass_pairwise_error_scale=args.score_mass_pairwise_error_scale,
         pairwise_margin_target_v=args.pairwise_margin_target_v,
         pairwise_margin_error_drive_scale=args.pairwise_margin_error_drive_scale,
+        pairwise_margin_nontarget_error_scale=args.pairwise_margin_nontarget_error_scale,
         normalizer_error_clock_high=args.normalizer_error_clock_high,
         error_mode=args.error_mode,
         readout_update_mode=args.readout_update_mode,
@@ -4183,6 +4195,21 @@ def run_case(args: argparse.Namespace) -> dict[str, Any]:
         ),
         "pairwise_margin_error_drive_scale": (
             args.pairwise_margin_error_drive_scale
+            if args.error_mode
+            in (
+                "pairwise-margin-correction-descent",
+                "pairwise-margin-winner-descent",
+                "pairwise-margin-centered-descent",
+                "pairwise-margin-centered-gain-descent",
+            )
+            else None
+        ),
+        "pairwise_margin_nontarget_error_scale": (
+            (
+                args.pairwise_margin_nontarget_error_scale
+                if args.pairwise_margin_nontarget_error_scale is not None
+                else 1.0 / (args.class_count - 1)
+            )
             if args.error_mode
             in (
                 "pairwise-margin-correction-descent",
@@ -4425,6 +4452,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
     ap.add_argument("--score-mass-pairwise-error-scale", type=float, default=0.0625)
     ap.add_argument("--pairwise-margin-target-v", type=float, default=1.0e-3)
     ap.add_argument("--pairwise-margin-error-drive-scale", type=float, default=1.0)
+    ap.add_argument("--pairwise-margin-nontarget-error-scale", type=float, default=None)
     ap.add_argument("--normalizer-error-clock-high", type=float, default=1.2)
     ap.add_argument("--error-mode", choices=ERROR_MODES, default="label-descent")
     ap.add_argument("--readout-update-mode", choices=READOUT_UPDATE_MODES, default="sampled")
@@ -4578,6 +4606,11 @@ def validate_args(args: argparse.Namespace) -> None:
         raise ValueError("pairwise-margin-target-v must be positive")
     if args.pairwise_margin_error_drive_scale <= 0.0:
         raise ValueError("pairwise-margin-error-drive-scale must be positive")
+    if (
+        args.pairwise_margin_nontarget_error_scale is not None
+        and not 0.0 < args.pairwise_margin_nontarget_error_scale <= 1.0
+    ):
+        raise ValueError("pairwise-margin-nontarget-error-scale must be in (0, 1]")
     if args.normalizer_error_clock_high <= 0.0 or args.normalizer_error_clock_high > 1.2:
         raise ValueError("normalizer-error-clock-high must stay in (0, 1.2]")
     if args.hidden_credit_width <= 0.0:

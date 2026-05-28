@@ -303,8 +303,19 @@ def test_multiclass_margin_correction_sizing_derives_writer_domain_defaults() ->
     assert sizing.margin_penalty_width_u == pytest.approx(0.25)
     assert sizing.margin_reference_window_v == pytest.approx(0.256)
     assert sizing.error_width_u == pytest.approx(64.0)
+    assert sizing.nontarget_error_scale == pytest.approx(0.5)
+    assert sizing.nontarget_error_width_u == pytest.approx(32.0)
     assert sizing.error_cap_f == pytest.approx(0.5)
     assert sizing.error_clock_high_v == pytest.approx(0.10)
+
+    explicit = theory.derive_multiclass_margin_correction_sizing(
+        class_count=4,
+        target_margin_v=1.0e-3,
+        score_delta_v=3.0e-3,
+        nontarget_error_scale=0.25,
+    )
+    assert explicit.nontarget_error_scale == pytest.approx(0.25)
+    assert explicit.nontarget_error_width_u == pytest.approx(explicit.error_width_u * 0.25)
 
 
 def test_multiclass_margin_correction_sizing_rejects_invisible_margin() -> None:

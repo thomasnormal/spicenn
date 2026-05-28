@@ -66,6 +66,8 @@ SCORE_SENSE_MODES = ("voltage", "current-clamp", "diode-mirror")
 READOUT_FORWARD_MODES = ("direct", "diode")
 PHYSICAL_READOUT_REPLAY_SWEEP_MODES: dict[str, tuple[str, str]] = {
     "direct-voltage": ("direct", "voltage"),
+    "direct-current-clamp": ("direct", "current-clamp"),
+    "direct-diode-mirror": ("direct", "diode-mirror"),
     "diode-voltage": ("diode", "voltage"),
     "diode-current-clamp": ("diode", "current-clamp"),
     "diode-mirror": ("diode", "diode-mirror"),

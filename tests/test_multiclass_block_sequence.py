@@ -1018,12 +1018,16 @@ def test_multiclass_block_sequence_summarizes_physical_replay_mode_sweep(
         )
         accuracy = {
             "direct-voltage": 0.0,
+            "direct-current-clamp": 1.0,
+            "direct-diode-mirror": 0.5,
             "diode-voltage": 0.5,
             "diode-current-clamp": 1.0,
             "diode-mirror": 1.0,
         }[mode_tag]
         margin = {
             "direct-voltage": -0.02,
+            "direct-current-clamp": 0.004,
+            "direct-diode-mirror": 0.002,
             "diode-voltage": -0.01,
             "diode-current-clamp": 0.003,
             "diode-mirror": 0.010,
@@ -1070,6 +1074,8 @@ def test_multiclass_block_sequence_summarizes_physical_replay_mode_sweep(
 
     assert calls == [
         ("direct-voltage", "direct", "voltage"),
+        ("direct-current-clamp", "direct", "current-clamp"),
+        ("direct-diode-mirror", "direct", "diode-mirror"),
         ("diode-voltage", "diode", "voltage"),
         ("diode-current-clamp", "diode", "current-clamp"),
         ("diode-mirror", "diode", "diode-mirror"),

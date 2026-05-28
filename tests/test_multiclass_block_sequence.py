@@ -1881,6 +1881,27 @@ def test_multiclass_block_sequence_can_add_noninvasive_eval_current_readout() ->
     assert "Cc0_gvp0" not in netlist
 
 
+def test_multiclass_block_sequence_can_add_buffered_eval_current_readout() -> None:
+    netlist = seq.generate_netlist(
+        train_records=_target0_two_feature_records(1),
+        eval_records=_target0_two_feature_records(1),
+        feature_count=2,
+        readout_update_mode="live",
+        error_mode="label-descent",
+        eval_score_readout_mode="buffered-current-clamp",
+    )
+
+    assert "\nB" not in netlist
+    assert "Vapply" not in netlist
+    assert "Ceval_actrow_src0 eval_actrow_src0 0 2f IC=0" in netlist
+    assert "Meval_actrow_src0_drv vdd act0 eval_actrow_src0 0 NSENSE W=64u L=180n" in netlist
+    assert "Meval_actrow0_buf_n eval_actrow0 evalout eval_actrow_src0 0 NMOS W=64u L=180n" in netlist
+    assert "Meval_actrow0_n eval_actrow0 evalout act0 0 NMOS" not in netlist
+    assert "Mc0_f0_eval_pos_cond eval_actrow0 c0_vwp0 c0_eval_score 0 NMOS" in netlist
+    assert ".meas tran eval_actrow_f0_0 FIND V(eval_actrow0)" in netlist
+    assert ".meas tran c0_eval_score_net_0 PARAM='c0_eval_score_0-c0_eval_scoren_0'" in netlist
+
+
 def test_multiclass_block_sequence_can_use_diode_mirror_score_sensor() -> None:
     netlist = seq.generate_netlist(
         train_records=_target0_two_feature_records(1),
@@ -1903,10 +1924,12 @@ def test_multiclass_block_sequence_can_use_diode_mirror_score_sensor() -> None:
     assert ".meas tran c0_score_net_0 PARAM='c0_score_0-c0_scoren_0'" in netlist
 
 
+@pytest.mark.parametrize("eval_score_readout_mode", ["direct-current-clamp", "buffered-current-clamp"])
 @pytest.mark.ngspice
 def test_multiclass_block_sequence_ngspice_eval_current_readout_tracks_weight_sign_without_score_loading(
     tmp_path: Path,
     ngspice_path: str,
+    eval_score_readout_mode: str,
 ) -> None:
     records = [{"label": 0, "inputs": {"x0": 0.85}}]
     initial_states = {
@@ -1938,7 +1961,7 @@ def test_multiclass_block_sequence_ngspice_eval_current_readout_tracks_weight_si
             feature_count=1,
             readout_update_mode="live",
             error_mode="label-descent",
-            eval_score_readout_mode="direct-current-clamp",
+            eval_score_readout_mode=eval_score_readout_mode,
             initial_readout_states=initial_states,
         ),
         timeout=60.0,
@@ -1955,6 +1978,64 @@ def test_multiclass_block_sequence_ngspice_eval_current_readout_tracks_weight_si
         float(baseline["c1_score_net_0"]),
         abs=2e-6,
     )
+    assert float(with_eval_readout["c0_f0_signed_final"]) == pytest.approx(
+        float(baseline["c0_f0_signed_final"]),
+        abs=2e-6,
+    )
+    assert float(with_eval_readout["c1_f0_signed_final"]) == pytest.approx(
+        float(baseline["c1_f0_signed_final"]),
+        abs=2e-6,
+    )
+
+
+@pytest.mark.ngspice
+def test_multiclass_block_sequence_ngspice_buffered_eval_row_drives_clamped_readout_harder(
+    tmp_path: Path,
+    ngspice_path: str,
+) -> None:
+    records = [{"label": 0, "inputs": {"x0": 0.85}}]
+    initial_states = {
+        (0, 0): (0.58, 0.34),
+        (1, 0): (0.34, 0.58),
+        (2, 0): (0.58, 0.34),
+    }
+
+    direct = run_netlist(
+        ngspice_path,
+        tmp_path / "multiclass_block_sequence_eval_current_direct_loaded.cir",
+        seq.generate_netlist(
+            train_records=records,
+            eval_records=records,
+            class_count=3,
+            feature_count=1,
+            readout_update_mode="live",
+            error_mode="label-descent",
+            eval_score_readout_mode="direct-current-clamp",
+            initial_readout_states=initial_states,
+        ),
+        timeout=80.0,
+    )
+    buffered = run_netlist(
+        ngspice_path,
+        tmp_path / "multiclass_block_sequence_eval_current_buffered_loaded.cir",
+        seq.generate_netlist(
+            train_records=records,
+            eval_records=records,
+            class_count=3,
+            feature_count=1,
+            readout_update_mode="live",
+            error_mode="label-descent",
+            eval_score_readout_mode="buffered-current-clamp",
+            initial_readout_states=initial_states,
+        ),
+        timeout=80.0,
+    )
+
+    assert float(buffered["eval_actrow_f0_0"]) > float(direct["eval_actrow_f0_0"]) + 1e-3
+    assert abs(float(buffered["c0_eval_score_net_0"])) > 10.0 * abs(float(direct["c0_eval_score_net_0"]))
+    assert int(
+        np.argmax([float(buffered[f"c{class_idx}_eval_score_net_0"]) for class_idx in range(3)])
+    ) == 0
 
 
 def test_multiclass_block_sequence_can_diode_isolate_readout_forward_path() -> None:

@@ -64,7 +64,7 @@ HIDDEN_UPDATE_MODES = ("none", "readout-weighted", "direct-readout-weighted")
 SCORE_TIMING_MODES = ("late", "early")
 SCORE_SENSE_MODES = ("voltage", "current-clamp", "diode-mirror")
 READOUT_FORWARD_MODES = ("direct", "diode")
-EVAL_SCORE_READOUT_MODES = ("none", "direct-current-clamp")
+EVAL_SCORE_READOUT_MODES = ("none", "direct-current-clamp", "buffered-current-clamp")
 PHYSICAL_READOUT_REPLAY_SWEEP_MODES: dict[str, tuple[str, str]] = {
     "direct-voltage": ("direct", "voltage"),
     "direct-current-clamp": ("direct", "current-clamp"),
@@ -2435,7 +2435,7 @@ def generate_netlist(
                 f"Vevalout evalout 0 {periodic_phase_pwl(cycle_count, start_ns=eval_score_start_ns, end_ns=eval_score_end_ns, active_cycles={idx for idx, phase in enumerate(sequence) if phase != 'train'})}",
                 f"Vevaloutn evaloutn 0 {active_low_phase_pwl(cycle_count, start_ns=eval_score_start_ns, end_ns=eval_score_end_ns, active_cycles={idx for idx, phase in enumerate(sequence) if phase != 'train'})}",
             ]
-            if eval_score_readout_mode == "direct-current-clamp"
+            if eval_score_readout_mode != "none"
             else []
         ),
     ]
@@ -2591,14 +2591,29 @@ def generate_netlist(
                     f"Ceval_actrow{feature} eval_actrow{feature} 0 1f IC=0",
                     f"Reval_actrow{feature} eval_actrow{feature} 0 1e12",
                     f"Meval_actrow{feature}_rst eval_actrow{feature} rst 0 0 NMOS W=4u L=180n",
-                    f"Meval_actrow{feature}_n eval_actrow{feature} evalout "
-                    f"{f'act_contrast{feature}' if hidden_activation_contrast_mode == 'common-gate' and feature < feature_count else f'act{feature}'} "
-                    "0 NMOS W=16u L=180n",
-                    f"Meval_actrow{feature}_p eval_actrow{feature} evaloutn "
-                    f"{f'act_contrast{feature}' if hidden_activation_contrast_mode == 'common-gate' and feature < feature_count else f'act{feature}'} "
-                    "vdd PMOS W=32u L=180n",
+                    *(
+                        [
+                            f"Meval_actrow{feature}_n eval_actrow{feature} evalout "
+                            f"{f'act_contrast{feature}' if hidden_activation_contrast_mode == 'common-gate' and feature < feature_count else f'act{feature}'} "
+                            "0 NMOS W=16u L=180n",
+                            f"Meval_actrow{feature}_p eval_actrow{feature} evaloutn "
+                            f"{f'act_contrast{feature}' if hidden_activation_contrast_mode == 'common-gate' and feature < feature_count else f'act{feature}'} "
+                            "vdd PMOS W=32u L=180n",
+                        ]
+                        if eval_score_readout_mode == "direct-current-clamp"
+                        else [
+                            f"Ceval_actrow_src{feature} eval_actrow_src{feature} 0 2f IC=0",
+                            f"Reval_actrow_src{feature} eval_actrow_src{feature} 0 1G",
+                            f"Meval_actrow_src{feature}_rst eval_actrow_src{feature} rst 0 0 NMOS W=4u L=180n",
+                            f"Meval_actrow_src{feature}_drv vdd "
+                            f"{f'act_contrast{feature}' if hidden_activation_contrast_mode == 'common-gate' and feature < feature_count else f'act{feature}'} "
+                            f"eval_actrow_src{feature} 0 NSENSE W=64u L=180n",
+                            f"Meval_actrow{feature}_buf_n eval_actrow{feature} evalout eval_actrow_src{feature} 0 NMOS W=64u L=180n",
+                            f"Meval_actrow{feature}_buf_p eval_actrow{feature} evaloutn eval_actrow_src{feature} vdd PMOS W=128u L=180n",
+                        ]
+                    ),
                 ]
-                if eval_score_readout_mode == "direct-current-clamp"
+                if eval_score_readout_mode != "none"
                 else []
             ),
             f"Rpre_p{feature} pre_p{feature} 0 1G",
@@ -2776,7 +2791,7 @@ def generate_netlist(
                 f"Mreset_{class_node(class_idx, 'score')} {class_node(class_idx, 'score')} rst 0 0 NMOS W=4u L=180n",
                 f"Mreset_{class_node(class_idx, 'scoren')} {class_node(class_idx, 'scoren')} rst 0 0 NMOS W=4u L=180n",
             ]
-        if eval_score_readout_mode == "direct-current-clamp":
+        if eval_score_readout_mode != "none":
             lines += [
                 f"V{class_node(class_idx, 'eval_score_clamp')} {class_node(class_idx, 'eval_score')} 0 0",
                 f"V{class_node(class_idx, 'eval_scoren_clamp')} {class_node(class_idx, 'eval_scoren')} 0 0",
@@ -3503,7 +3518,7 @@ def generate_netlist(
                         feature_idx=feature,
                         width_u=readout_width_u,
                     )
-                    if eval_score_readout_mode == "direct-current-clamp"
+                    if eval_score_readout_mode != "none"
                     else []
                 ),
                 *readout_update_lines,
@@ -3547,6 +3562,10 @@ def generate_netlist(
                         f".meas tran c{class_idx}_f{feature}_fcorrp_{cycle} FIND V({feature_correction_node(class_idx, feature, 'p')}) AT={base + score_error_measure_ns:.2f}n",
                         f".meas tran c{class_idx}_f{feature}_fcorrn_{cycle} FIND V({feature_correction_node(class_idx, feature, 'n')}) AT={base + score_error_measure_ns:.2f}n",
                     ]
+            if eval_score_readout_mode != "none":
+                lines.append(
+                    f".meas tran eval_actrow_f{feature}_{cycle} FIND V(eval_actrow{feature}) AT={base + eval_score_measure_ns:.2f}n"
+                )
             if uses_stored_hidden_credit_update and feature < feature_count:
                 lines += [
                     f".meas tran hdp_f{feature}_{cycle} FIND V({hidden_credit_node(feature, 'hdp')}) AT={base + score_error_measure_ns:.2f}n",
@@ -3584,11 +3603,15 @@ def generate_netlist(
                     f".meas tran c{class_idx}_scoren_{cycle} FIND V({class_node(class_idx, 'scoren')}) AT={base + effective_score_measure_ns:.2f}n",
                     f".meas tran c{class_idx}_score_net_{cycle} PARAM='c{class_idx}_score_{cycle}-c{class_idx}_scoren_{cycle}'",
                 ]
-            if eval_score_readout_mode == "direct-current-clamp":
+            if eval_score_readout_mode != "none":
                 lines += [
                     f".meas tran c{class_idx}_eval_score_{cycle} FIND I(V{class_node(class_idx, 'eval_score_clamp')}) AT={base + eval_score_measure_ns:.2f}n",
                     f".meas tran c{class_idx}_eval_scoren_{cycle} FIND I(V{class_node(class_idx, 'eval_scoren_clamp')}) AT={base + eval_score_measure_ns:.2f}n",
-                    f".meas tran c{class_idx}_eval_score_net_{cycle} PARAM='c{class_idx}_eval_scoren_{cycle}-c{class_idx}_eval_score_{cycle}'",
+                    (
+                        f".meas tran c{class_idx}_eval_score_net_{cycle} PARAM='c{class_idx}_eval_score_{cycle}-c{class_idx}_eval_scoren_{cycle}'"
+                        if eval_score_readout_mode == "buffered-current-clamp"
+                        else f".meas tran c{class_idx}_eval_score_net_{cycle} PARAM='c{class_idx}_eval_scoren_{cycle}-c{class_idx}_eval_score_{cycle}'"
+                    ),
                 ]
             if uses_pairwise_decisions:
                 for opponent_idx in range(class_count):

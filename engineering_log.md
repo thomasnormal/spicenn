@@ -23,6 +23,20 @@
   actrow/current-sense handoff.  Next readout work should improve that eval
   row buffer/sense interface before treating replay accuracy as usable
   on-chip accuracy.
+- Added `eval_score_readout_mode=buffered-current-clamp`, which drives the
+  eval-only current-sense readout from a transistor source-follower row buffer
+  controlled by the stored activation instead of using the activation capacitor
+  as the charge source.  A loaded 3-class ngspice primitive shows the buffered
+  row raises `eval_actrow` and the sensed score current by more than 10x while
+  preserving the ordinary voltage score and final readout weights on a simple
+  one-sample case.  On the same compact strict continuous `mnist3fixed8_6`
+  feature-margin-centered run, the ordinary voltage-score accuracy still stayed
+  at `0.333 -> 0.333`, but the same-transient buffered eval-current readout
+  reached `0.333 -> 0.667` with final predictions `[0, 2, 2]`.  This is the
+  first on-chip-style readout evidence matching the signed/conductance
+  projection direction without Python replay, but the remaining class-1 miss
+  and negative margin mean the score/error normalization and readout common-mode
+  problem is not solved yet.
 - Added `readout_live_high_side_topology=pmos-gated` for the class-local live
   readout writer.  The immediate ngspice primitive reproduced the integrated
   analog-pass symptom: with a weak `~0.132 V` writer eligibility rail, the old

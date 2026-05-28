@@ -3011,6 +3011,7 @@ def _hidden_direct_readout_weighted_writer_netlist(
     state_guard_mode: str = "none",
     state_keeper_width_u: float | None = None,
     state_keeper_mode: str = "differential",
+    common_clamp_width_u: float | None = None,
 ) -> str:
     lines = [
         "* Low-level direct readout-weighted hidden writer primitive.",
@@ -3019,6 +3020,11 @@ def _hidden_direct_readout_weighted_writer_netlist(
         *(
             [".model NHIGH NMOS LEVEL=1 VTO=0.75 KP=220u LAMBDA=0.03 GAMMA=0.20 PHI=0.60"]
             if state_keeper_mode == "differential-threshold"
+            else []
+        ),
+        *(
+            [".model NCM NMOS LEVEL=1 VTO=0.65 KP=220u LAMBDA=0.03 GAMMA=0.20 PHI=0.60"]
+            if common_clamp_width_u is not None
             else []
         ),
         ".options method=gear reltol=1e-3 abstol=1e-12 vntol=1e-6",
@@ -3069,6 +3075,15 @@ def _hidden_direct_readout_weighted_writer_netlist(
             if state_keeper_width_u is not None
             else []
         ),
+        *(
+            seq.hidden_common_mode_clamp_lines(
+                feature_idx=0,
+                low_ref_node="hidden_wlo_ref",
+                width_u=common_clamp_width_u,
+            )
+            if common_clamp_width_u is not None
+            else []
+        ),
         *seq.hidden_direct_readout_weighted_update_lines(
             class_count=1,
             feature_idx=0,
@@ -3099,6 +3114,7 @@ def _hidden_direct_readout_weighted_writer_netlist(
         ".meas tran whp_after FIND V(whp0) AT=8n",
         ".meas tran whn_after FIND V(whn0) AT=8n",
         ".meas tran signed_after PARAM='whp_after-whn_after'",
+        ".meas tran common_after PARAM='0.5*(whp_after+whn_after)'",
         ".tran 2p 10n uic",
         ".control",
         "run",
@@ -3850,6 +3866,69 @@ def test_multiclass_block_sequence_ngspice_thresholded_keeper_preserves_sign_wit
     assert float(neutral["signed_after"]) == pytest.approx(0.05, abs=2e-3)
 
 
+def test_multiclass_block_sequence_ngspice_common_mode_clamp_limits_hidden_double_high_state(
+    tmp_path: Path,
+    ngspice_path: str,
+) -> None:
+    common_kwargs = dict(
+        vwp=0.40,
+        vwn=0.40,
+        errp=0.0,
+        width_u=0.125,
+        readout_gate_mode="restored-excess",
+        output_stage="pmos-complementary",
+        readout_high_ref=0.42,
+        readout_low_ref=0.28,
+        hidden_high_ref=1.05,
+        hidden_low_ref=0.15,
+    )
+    unclamped_high = run_netlist(
+        ngspice_path,
+        tmp_path / "hidden_common_clamp_unclamped_high.cir",
+        _hidden_direct_readout_weighted_writer_netlist(**common_kwargs, whp=1.0, whn=1.0),
+        timeout=20.0,
+    )
+    clamped_high = run_netlist(
+        ngspice_path,
+        tmp_path / "hidden_common_clamp_clamped_high.cir",
+        _hidden_direct_readout_weighted_writer_netlist(
+            **common_kwargs,
+            whp=1.0,
+            whn=1.0,
+            common_clamp_width_u=4.0,
+        ),
+        timeout=20.0,
+    )
+    clamped_positive = run_netlist(
+        ngspice_path,
+        tmp_path / "hidden_common_clamp_positive.cir",
+        _hidden_direct_readout_weighted_writer_netlist(
+            **common_kwargs,
+            whp=0.80,
+            whn=0.0,
+            common_clamp_width_u=4.0,
+        ),
+        timeout=20.0,
+    )
+    clamped_negative = run_netlist(
+        ngspice_path,
+        tmp_path / "hidden_common_clamp_negative.cir",
+        _hidden_direct_readout_weighted_writer_netlist(
+            **common_kwargs,
+            whp=0.0,
+            whn=0.80,
+            common_clamp_width_u=4.0,
+        ),
+        timeout=20.0,
+    )
+
+    assert float(unclamped_high["common_after"]) > 0.95
+    assert float(clamped_high["common_after"]) < 0.80
+    assert abs(float(clamped_high["signed_after"])) < 5e-3
+    assert float(clamped_positive["signed_after"]) > 0.75
+    assert float(clamped_negative["signed_after"]) < -0.75
+
+
 def test_multiclass_block_sequence_ngspice_direct_hidden_writer_pmos_suppressive_uses_low_side_headroom(
     tmp_path: Path,
     ngspice_path: str,
@@ -4194,6 +4273,23 @@ def test_multiclass_block_sequence_can_add_thresholded_hidden_state_keeper() -> 
     assert "\nB" not in netlist
 
 
+def test_multiclass_block_sequence_can_add_hidden_common_mode_clamp() -> None:
+    netlist = seq.generate_netlist(
+        train_records=_one_hot_records(),
+        eval_records=_one_hot_records(),
+        class_count=3,
+        feature_count=3,
+        hidden_update_mode="direct-readout-weighted",
+        hidden_state_common_clamp_width_u=0.5,
+        error_mode="pairwise-margin-centered-gain-descent",
+    )
+
+    assert "Mhcmclamp_f0_detect_p hcmclamp_f0_bar whp0 hcmclamp_f0_stack_mid 0 NCM W=0.5u" in netlist
+    assert ".model NCM NMOS LEVEL=1 VTO=0.65" in netlist
+    assert "Mhcmclamp_f0_p whp0 hcmclamp_f0_en hidden_wlo_ref 0 NSENSE W=0.5u" in netlist
+    assert "\nB" not in netlist
+
+
 def test_multiclass_block_sequence_can_add_physical_hidden_state_anchor() -> None:
     netlist = seq.generate_netlist(
         train_records=_one_hot_records(),
@@ -4305,6 +4401,16 @@ def test_multiclass_block_sequence_rejects_bad_hidden_state_keeper() -> None:
             hidden_update_mode="direct-readout-weighted",
             hidden_state_keeper_mode="differential",
             hidden_state_keeper_width_u=0.0,
+            error_mode="pairwise-margin-centered-gain-descent",
+        )
+    with pytest.raises(ValueError, match="hidden_state_common_clamp_width_u"):
+        seq.generate_netlist(
+            train_records=_one_hot_records(),
+            eval_records=_one_hot_records(),
+            class_count=3,
+            feature_count=3,
+            hidden_update_mode="direct-readout-weighted",
+            hidden_state_common_clamp_width_u=-0.1,
             error_mode="pairwise-margin-centered-gain-descent",
         )
 

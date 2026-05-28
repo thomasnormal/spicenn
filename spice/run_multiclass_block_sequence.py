@@ -79,6 +79,7 @@ HIDDEN_DIRECT_NONTARGET_GUARD_MODES = ("none", "support")
 HIDDEN_DIRECT_ERROR_SOURCE_MODES = ("writer", "centered", "differential-excess")
 HIDDEN_DIRECT_STATE_GUARD_MODES = ("none", "signed-support")
 HIDDEN_STATE_KEEPER_MODES = ("none", "differential", "differential-threshold")
+DEFAULT_HIDDEN_STATE_COMMON_CLAMP_WIDTH = 0.0
 DEFAULT_HIDDEN_POSITIVE = 1.00
 DEFAULT_HIDDEN_NEGATIVE = 0.20
 ERROR_MODES = (
@@ -934,6 +935,34 @@ def hidden_thresholded_differential_state_keeper_lines(
     ]
 
 
+def hidden_common_mode_clamp_lines(
+    *,
+    feature_idx: int,
+    low_ref_node: str = "hidden_wlo_ref",
+    width_u: float = 0.5,
+) -> list[str]:
+    if width_u <= 0.0:
+        raise ValueError("hidden common-mode clamp width must be positive")
+    whp = f"whp{feature_idx}"
+    whn = f"whn{feature_idx}"
+    prefix = f"hcmclamp_f{feature_idx}"
+    bar = f"{prefix}_bar"
+    en = f"{prefix}_en"
+    stack_mid = f"{prefix}_stack_mid"
+    return [
+        f"C{bar} {bar} 0 0.5f IC=1.2",
+        f"C{en} {en} 0 0.5f IC=0",
+        f"R{bar} {bar} vdd 1e6",
+        f"R{en} {en} 0 1e6",
+        f"R{stack_mid} {stack_mid} 0 1G",
+        f"M{prefix}_detect_p {bar} {whp} {stack_mid} 0 NCM W={width_u:.6g}u L=180n",
+        f"M{prefix}_detect_n {stack_mid} {whn} 0 0 NCM W={width_u:.6g}u L=180n",
+        f"M{prefix}_en {en} {bar} vdd vdd PMOS W={width_u:.6g}u L=180n",
+        f"M{prefix}_p {whp} {en} {low_ref_node} 0 NSENSE W={width_u:.6g}u L=180n",
+        f"M{prefix}_n {whn} {en} {low_ref_node} 0 NSENSE W={width_u:.6g}u L=180n",
+    ]
+
+
 def pairwise_winner_lines(
     *,
     class_a: int,
@@ -1655,6 +1684,7 @@ def generate_netlist(
     hidden_state_anchor_resistance_ohm: float | None = None,
     hidden_state_keeper_mode: str = "none",
     hidden_state_keeper_width_u: float = 0.25,
+    hidden_state_common_clamp_width_u: float = DEFAULT_HIDDEN_STATE_COMMON_CLAMP_WIDTH,
     hidden_direct_readout_gate_mode: str = "differential-excess",
     hidden_direct_output_stage: str = "nmos-pass",
     hidden_direct_high_ref: float = 1.05,
@@ -1734,6 +1764,8 @@ def generate_netlist(
         raise ValueError("hidden_state_anchor_resistance_ohm must be positive when set")
     if hidden_state_keeper_mode not in HIDDEN_STATE_KEEPER_MODES:
         raise ValueError(f"hidden_state_keeper_mode must be one of {HIDDEN_STATE_KEEPER_MODES}")
+    if hidden_state_common_clamp_width_u < 0.0:
+        raise ValueError("hidden_state_common_clamp_width_u must be nonnegative")
     if score_measure_ns is not None and (score_measure_ns <= 0.0 or score_measure_ns >= CYCLE_NS):
         raise ValueError("score_measure_ns must be inside the cycle")
     if readout_center_resistance < 0.0:
@@ -2024,7 +2056,15 @@ def generate_netlist(
         mos_models(),
         *(
             [".model NHIGH NMOS LEVEL=1 VTO=0.75 KP=220u LAMBDA=0.03 GAMMA=0.20 PHI=0.60"]
-            if eligibility_gate_mode in ("competition", "rank") or hidden_state_keeper_mode == "differential-threshold"
+            if (
+                eligibility_gate_mode in ("competition", "rank")
+                or hidden_state_keeper_mode == "differential-threshold"
+            )
+            else []
+        ),
+        *(
+            [".model NCM NMOS LEVEL=1 VTO=0.65 KP=220u LAMBDA=0.03 GAMMA=0.20 PHI=0.60"]
+            if hidden_state_common_clamp_width_u > 0.0
             else []
         ),
         ".options method=gear reltol=1e-3 abstol=1e-12 vntol=1e-6",
@@ -2187,6 +2227,12 @@ def generate_netlist(
                 high_ref_node="hidden_whi_ref",
                 low_ref_node="hidden_wlo_ref",
                 width_u=hidden_state_keeper_width_u,
+            )
+        if hidden_state_common_clamp_width_u > 0.0:
+            lines += hidden_common_mode_clamp_lines(
+                feature_idx=feature,
+                low_ref_node="hidden_wlo_ref",
+                width_u=hidden_state_common_clamp_width_u,
             )
         lines += [
             f"Cpre_p{feature} pre_p{feature} 0 20f IC=0",
@@ -4520,6 +4566,7 @@ def run_case(args: argparse.Namespace) -> dict[str, Any]:
         hidden_state_anchor_resistance_ohm=args.hidden_state_anchor_resistance,
         hidden_state_keeper_mode=args.hidden_state_keeper_mode,
         hidden_state_keeper_width_u=args.hidden_state_keeper_width,
+        hidden_state_common_clamp_width_u=args.hidden_state_common_clamp_width,
         hidden_direct_readout_gate_mode=args.hidden_direct_readout_gate_mode,
         hidden_direct_output_stage=args.hidden_direct_output_stage,
         hidden_direct_high_ref=args.hidden_direct_high_ref,
@@ -4804,6 +4851,11 @@ def run_case(args: argparse.Namespace) -> dict[str, Any]:
             if args.hidden_update_mode != "none" and args.hidden_state_keeper_mode != "none"
             else None
         ),
+        "hidden_state_common_clamp_width_u": (
+            args.hidden_state_common_clamp_width
+            if args.hidden_update_mode != "none" and args.hidden_state_common_clamp_width > 0.0
+            else None
+        ),
         "hidden_direct_readout_gate_mode": (
             args.hidden_direct_readout_gate_mode if args.hidden_update_mode == "direct-readout-weighted" else None
         ),
@@ -5048,6 +5100,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
     ap.add_argument("--hidden-state-anchor-resistance", type=float, default=None)
     ap.add_argument("--hidden-state-keeper-mode", choices=HIDDEN_STATE_KEEPER_MODES, default="none")
     ap.add_argument("--hidden-state-keeper-width", type=float, default=0.25)
+    ap.add_argument("--hidden-state-common-clamp-width", type=float, default=DEFAULT_HIDDEN_STATE_COMMON_CLAMP_WIDTH)
     ap.add_argument(
         "--hidden-direct-readout-gate-mode",
         choices=HIDDEN_DIRECT_READOUT_GATE_MODES,
@@ -5236,6 +5289,8 @@ def validate_args(args: argparse.Namespace) -> None:
         raise ValueError(f"hidden-state-keeper-mode must be one of {HIDDEN_STATE_KEEPER_MODES}")
     if args.hidden_state_keeper_width <= 0.0:
         raise ValueError("hidden-state-keeper-width must be positive")
+    if args.hidden_state_common_clamp_width < 0.0:
+        raise ValueError("hidden-state-common-clamp-width must be nonnegative")
     if args.hidden_direct_readout_gate_mode not in HIDDEN_DIRECT_READOUT_GATE_MODES:
         raise ValueError(f"hidden-direct-readout-gate-mode must be one of {HIDDEN_DIRECT_READOUT_GATE_MODES}")
     if args.hidden_direct_output_stage not in HIDDEN_DIRECT_OUTPUT_STAGES:

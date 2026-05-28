@@ -156,6 +156,29 @@ def test_mnist01_live_hidden_netlist_is_live_transistor_path() -> None:
     assert "Mh0_act_sense_p h0_act_sense_n pre0_p h0_act_sense_tail 0 NSENSE" in activation_netlist
     assert "Mact0_diff_restore act0 h0_act_sense_n vdd vdd PMOS" in activation_netlist
 
+    input_contrast_netlist = mnist01_hidden.mnist01_live_hidden_netlist(
+        train,
+        train,
+        hidden_input_mode="contrast-common-gate",
+    )
+    assert "Cpx_common px_common 0 8f IC=0" in input_contrast_netlist
+    assert "Rpx_common_px0 px_common px0 20000" in input_contrast_netlist
+    assert "Mpxcontrast_f0_pass_g px0 pxgate0 pxcontrast_f0_pass_mid 0 NSENSE" in input_contrast_netlist
+    assert "Mh0f0p_phi px0 featphi h0f0pinput 0 NSENSE" in input_contrast_netlist
+    assert "Mh0f0p_gate h0f0pinput pxgate0 h0f0pmid 0 NSENSE" in input_contrast_netlist
+    assert "Mh0f0p_phi px0 featphi h0f0pmid 0 NSENSE" not in input_contrast_netlist
+
+    restored_input_netlist = mnist01_hidden.mnist01_live_hidden_netlist(
+        train,
+        train,
+        hidden_input_mode="restored-common-gate",
+    )
+    assert "Cpxgate0_low pxgate0_low 0 1f IC=1.2" in restored_input_netlist
+    assert "Mpxgate0_low_dis_g pxgate0_low pxgate0 pxgate0_low_mid 0 NSENSE" in restored_input_netlist
+    assert "Cpxdrive0 pxdrive0 0 4f IC=0" in restored_input_netlist
+    assert "Mpxdrive0_rest pxdrive0 pxgate0_low vdd vdd PMOS" in restored_input_netlist
+    assert "Mh0f0p_gate h0f0pinput pxdrive0 h0f0pmid 0 NSENSE" in restored_input_netlist
+
     row_select_netlist = mnist01_hidden.mnist01_live_hidden_netlist(
         train,
         train,
@@ -209,6 +232,12 @@ def test_mnist01_live_hidden_netlist_validation() -> None:
             [sample],
             [sample],
             hidden_activation_mode="BAD",
+        )
+    with pytest.raises(ValueError, match="hidden_input_mode"):
+        mnist01_hidden.mnist01_live_hidden_netlist(
+            [sample],
+            [sample],
+            hidden_input_mode="BAD",
         )
     with pytest.raises(ValueError, match="hidden_row_select_mode"):
         mnist01_hidden.mnist01_live_hidden_netlist(
@@ -308,6 +337,141 @@ def test_mnist01_live_hidden_differential_activation_reads_unsaturated_synthetic
     assert max(diff_hrows[1:]) < 1e-3
     assert common_hrows[0] > 1.0
     assert max(common_hrows[1:]) < 1e-3
+
+
+@pytest.mark.ngspice
+def test_mnist01_input_feature_common_gate_tracks_above_common_pixels(
+    tmp_path: Path,
+    ngspice_path: str,
+) -> None:
+    lines = [
+        "* Low-level MNIST pixel common-gate contrast primitive.",
+        ".param VDD=1.2",
+        mnist01_hidden.mos_models(),
+        ".options method=gear reltol=1e-4 abstol=1e-13 vntol=1e-7",
+        "Vdd vdd 0 {VDD}",
+        "Vrst rst 0 0",
+        "Vfeatphi featphi 0 PULSE(0 1.2 0.2n 10p 10p 1.4n 4n)",
+        "Vpx0 px0 0 0.42",
+        "Vpx1 px1 0 0.30",
+        "Vpx2 px2 0 0.06",
+        *mnist01_hidden._input_feature_common_gate_lines(
+            3,
+            common_resistance_ohm=20000.0,
+            common_capacitance_f=8.0,
+            gate_capacitance_f=8.0,
+            contrast_capacitance_f=20.0,
+            pullup_width_u=128.0,
+            pulldown_width_u=24.0,
+            pass_width_u=16.0,
+        ),
+        ".meas tran common_after FIND V(px_common) AT=2n",
+        ".meas tran gate0 FIND V(pxgate0) AT=2n",
+        ".meas tran gate1 FIND V(pxgate1) AT=2n",
+        ".meas tran gate2 FIND V(pxgate2) AT=2n",
+        ".meas tran contrast0 FIND V(px_contrast0) AT=2n",
+        ".meas tran contrast1 FIND V(px_contrast1) AT=2n",
+        ".meas tran contrast2 FIND V(px_contrast2) AT=2n",
+        ".tran 2p 3n uic",
+        ".control",
+        "run",
+        "quit",
+        ".endc",
+        ".end",
+    ]
+
+    parsed = mnist01_hidden.run_netlist(
+        ngspice_path,
+        tmp_path / "mnist01_input_feature_common_gate.cir",
+        "\n".join(lines),
+        timeout=20.0,
+    )
+
+    assert 0.20 < parsed["common_after"] < 0.30
+    assert parsed["gate0"] > parsed["gate1"] + 30e-3
+    assert parsed["gate1"] > parsed["gate2"] + 30e-3
+    assert parsed["contrast0"] > parsed["contrast1"] + 25e-3
+    assert parsed["contrast1"] > parsed["contrast2"] + 25e-3
+
+
+def _hidden_input_restored_gate_forward_netlist(px0: float, px1: float) -> str:
+    lines = [
+        "* Restored input common-gate feeding one signed hidden template.",
+        ".param VDD=1.2",
+        mnist01_hidden.mos_models(),
+        ".options method=gear reltol=1e-4 abstol=1e-13 vntol=1e-7",
+        "Vdd vdd 0 {VDD}",
+        "Vrst rst 0 PWL(0n 1.2 0.45n 1.2 0.48n 0 3n 0)",
+        "Vrstn rstn 0 PWL(0n 0 0.45n 0 0.48n 1.2 3n 1.2)",
+        "Vfeatphi featphi 0 PWL(0n 0 0.75n 0 0.78n 1.2 2.10n 1.2 2.13n 0 3n 0)",
+        f"Vpx0 px0 0 {px0:.12g}",
+        f"Vpx1 px1 0 {px1:.12g}",
+        "Cwh0f0p wh0f0p 0 20f IC=0.75",
+        "Rwh0f0p wh0f0p 0 1e15",
+        "Cwh0f0n wh0f0n 0 20f IC=0.35",
+        "Rwh0f0n wh0f0n 0 1e15",
+        "Cwh0f1p wh0f1p 0 20f IC=0.35",
+        "Rwh0f1p wh0f1p 0 1e15",
+        "Cwh0f1n wh0f1n 0 20f IC=0.75",
+        "Rwh0f1n wh0f1n 0 1e15",
+        *mnist01_hidden._hidden_state_lines(1),
+        *mnist01_hidden._hidden_forward_lines(
+            2,
+            1,
+            8.0,
+            activation_mode="differential-preamp",
+            activation_sense_width_u=64.0,
+            input_mode="restored-common-gate",
+        ),
+        ".meas tran gate0 FIND V(pxgate0) AT=2n",
+        ".meas tran gate1 FIND V(pxgate1) AT=2n",
+        ".meas tran drive0 FIND V(pxdrive0) AT=2n",
+        ".meas tran drive1 FIND V(pxdrive1) AT=2n",
+        ".meas tran prep FIND V(pre0_p) AT=2n",
+        ".meas tran pren FIND V(pre0_n) AT=2n",
+        ".meas tran evidence PARAM='prep-pren'",
+        ".tran 2p 3n uic",
+        ".control",
+        "run",
+        "quit",
+        ".endc",
+        ".end",
+        "",
+    ]
+    return "\n".join(lines)
+
+
+@pytest.mark.ngspice
+def test_mnist01_hidden_input_restored_common_gate_preserves_signed_forward_template(
+    tmp_path: Path,
+    ngspice_path: str,
+) -> None:
+    match = mnist01_hidden.run_netlist(
+        ngspice_path,
+        tmp_path / "mnist01_hidden_input_restored_match.cir",
+        _hidden_input_restored_gate_forward_netlist(0.45, 0.05),
+        timeout=30.0,
+    )
+    mismatch = mnist01_hidden.run_netlist(
+        ngspice_path,
+        tmp_path / "mnist01_hidden_input_restored_mismatch.cir",
+        _hidden_input_restored_gate_forward_netlist(0.05, 0.45),
+        timeout=30.0,
+    )
+    flat = mnist01_hidden.run_netlist(
+        ngspice_path,
+        tmp_path / "mnist01_hidden_input_restored_flat.cir",
+        _hidden_input_restored_gate_forward_netlist(0.35, 0.35),
+        timeout=30.0,
+    )
+
+    assert match["drive0"] > 1.0
+    assert match["drive1"] < 1e-3
+    assert match["evidence"] > 100e-3
+    assert mismatch["drive1"] > 1.0
+    assert mismatch["drive0"] < 1e-3
+    assert mismatch["evidence"] < -100e-3
+    assert abs(flat["evidence"]) < 1e-3
 
 
 @pytest.mark.ngspice

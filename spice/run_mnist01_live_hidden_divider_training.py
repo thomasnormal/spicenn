@@ -125,6 +125,89 @@ def _hidden_state_lines(hidden_count: int) -> list[str]:
     return lines
 
 
+def _input_feature_common_gate_lines(
+    feature_count: int,
+    *,
+    common_resistance_ohm: float,
+    common_capacitance_f: float,
+    gate_capacitance_f: float,
+    contrast_capacitance_f: float,
+    pullup_width_u: float,
+    pulldown_width_u: float,
+    pass_width_u: float,
+) -> list[str]:
+    if min(
+        feature_count,
+        common_resistance_ohm,
+        common_capacitance_f,
+        gate_capacitance_f,
+        contrast_capacitance_f,
+        pullup_width_u,
+        pulldown_width_u,
+        pass_width_u,
+    ) <= 0.0:
+        raise ValueError("input feature common-gate sizes must be positive")
+    lines = [
+        f"Cpx_common px_common 0 {common_capacitance_f:.12g}f IC=0",
+        "Rpx_common_leak px_common 0 1G",
+    ]
+    for feature in range(feature_count):
+        gate = f"pxgate{feature}"
+        contrast = f"px_contrast{feature}"
+        up_i = f"{gate}_up_i"
+        dn_i = f"{gate}_dn_i"
+        pass_mid = f"pxcontrast_f{feature}_pass_mid"
+        lines += [
+            f"Rpx_common_px{feature} px_common px{feature} {common_resistance_ohm:.12g}",
+            f"C{gate} {gate} 0 {gate_capacitance_f:.12g}f IC=0",
+            f"R{gate} {gate} 0 1G",
+            f"M{gate}_rst {gate} rst 0 0 NMOS W=4u L=180n",
+            f"R{up_i} {up_i} 0 1G",
+            f"R{dn_i} {dn_i} 0 1G",
+            f"M{gate}_up_v vdd px{feature} {up_i} 0 NSENSE W={pullup_width_u:.6g}u L=180n",
+            f"M{gate}_up_t {up_i} featphi {gate} 0 NSENSE W={pullup_width_u:.6g}u L=180n",
+            f"M{gate}_dn_v {gate} px_common {dn_i} 0 NSENSE W={pulldown_width_u:.6g}u L=180n",
+            f"M{gate}_dn_t {dn_i} featphi 0 0 NSENSE W={pulldown_width_u:.6g}u L=180n",
+            f"C{contrast} {contrast} 0 {contrast_capacitance_f:.12g}f IC=0",
+            f"R{contrast} {contrast} 0 1G",
+            f"M{contrast}_rst {contrast} rst 0 0 NMOS W=4u L=180n",
+            f"R{pass_mid} {pass_mid} 0 1G",
+            f"Mpxcontrast_f{feature}_pass_g px{feature} {gate} {pass_mid} 0 NSENSE W={pass_width_u:.6g}u L=180n",
+            f"Mpxcontrast_f{feature}_pass_t {pass_mid} featphi {contrast} 0 NSENSE W={pass_width_u:.6g}u L=180n",
+        ]
+    return lines
+
+
+def _input_feature_restored_gate_lines(
+    feature_count: int,
+    *,
+    low_capacitance_f: float,
+    drive_capacitance_f: float,
+    discharge_width_u: float,
+    restore_width_u: float,
+) -> list[str]:
+    if min(feature_count, low_capacitance_f, drive_capacitance_f, discharge_width_u, restore_width_u) <= 0.0:
+        raise ValueError("input feature restored-gate sizes must be positive")
+    lines: list[str] = []
+    for feature in range(feature_count):
+        low = f"pxgate{feature}_low"
+        drive = f"pxdrive{feature}"
+        low_mid = f"{low}_mid"
+        lines += [
+            f"C{low} {low} 0 {low_capacitance_f:.12g}f IC=1.2",
+            f"R{low} {low} vdd 1G",
+            f"M{low}_rst {low} rstn vdd vdd PMOS W=4u L=180n",
+            f"R{low_mid} {low_mid} 0 1G",
+            f"M{low}_dis_g {low} pxgate{feature} {low_mid} 0 NSENSE W={discharge_width_u:.6g}u L=180n",
+            f"M{low}_dis_t {low_mid} featphi 0 0 NSENSE W={discharge_width_u:.6g}u L=180n",
+            f"C{drive} {drive} 0 {drive_capacitance_f:.12g}f IC=0",
+            f"R{drive} {drive} 0 1G",
+            f"M{drive}_rst {drive} rst 0 0 NMOS W=4u L=180n",
+            f"M{drive}_rest {drive} {low} vdd vdd PMOS W={restore_width_u:.6g}u L=180n",
+        ]
+    return lines
+
+
 def _hidden_activation_common_gate_lines(
     hidden_count: int,
     *,
@@ -180,6 +263,18 @@ def _hidden_forward_lines(
     *,
     activation_mode: str,
     activation_sense_width_u: float,
+    input_mode: str = "raw",
+    input_common_resistance_ohm: float = 20000.0,
+    input_common_capacitance_f: float = 8.0,
+    input_gate_capacitance_f: float = 8.0,
+    input_contrast_capacitance_f: float = 20.0,
+    input_pullup_width_u: float = 128.0,
+    input_pulldown_width_u: float = 24.0,
+    input_pass_width_u: float = 16.0,
+    input_restored_low_capacitance_f: float = 1.0,
+    input_restored_drive_capacitance_f: float = 4.0,
+    input_restored_discharge_width_u: float = 24.0,
+    input_restored_restore_width_u: float = 16.0,
     row_select_mode: str = "act",
     row_select_common_resistance_ohm: float = 100000.0,
     row_select_gate_capacitance_f: float = 8.0,
@@ -190,9 +285,30 @@ def _hidden_forward_lines(
 ) -> list[str]:
     if activation_mode not in ("single-ended", "differential-preamp"):
         raise ValueError("hidden_activation_mode must be single-ended or differential-preamp")
+    if input_mode not in ("raw", "contrast-common-gate", "restored-common-gate"):
+        raise ValueError("hidden_input_mode must be raw, contrast-common-gate, or restored-common-gate")
     if row_select_mode not in ("act", "act-common-gate"):
         raise ValueError("hidden_row_select_mode must be act or act-common-gate")
     lines: list[str] = []
+    if input_mode in ("contrast-common-gate", "restored-common-gate"):
+        lines += _input_feature_common_gate_lines(
+            feature_count,
+            common_resistance_ohm=input_common_resistance_ohm,
+            common_capacitance_f=input_common_capacitance_f,
+            gate_capacitance_f=input_gate_capacitance_f,
+            contrast_capacitance_f=input_contrast_capacitance_f,
+            pullup_width_u=input_pullup_width_u,
+            pulldown_width_u=input_pulldown_width_u,
+            pass_width_u=input_pass_width_u,
+        )
+    if input_mode == "restored-common-gate":
+        lines += _input_feature_restored_gate_lines(
+            feature_count,
+            low_capacitance_f=input_restored_low_capacitance_f,
+            drive_capacitance_f=input_restored_drive_capacitance_f,
+            discharge_width_u=input_restored_discharge_width_u,
+            restore_width_u=input_restored_restore_width_u,
+        )
     for hidden in range(hidden_count):
         pre_p = f"pre{hidden}_p"
         pre_n = f"pre{hidden}_n"
@@ -203,9 +319,26 @@ def _hidden_forward_lines(
                 f"Ch{hidden}f{feature}pmid h{hidden}f{feature}pmid 0 0.05f IC=0",
                 f"Rh{hidden}f{feature}nmid h{hidden}f{feature}nmid 0 1G",
                 f"Ch{hidden}f{feature}nmid h{hidden}f{feature}nmid 0 0.05f IC=0",
-                f"Mh{hidden}f{feature}p_phi px{feature} featphi h{hidden}f{feature}pmid 0 NSENSE W={width_u:.6g}u L=180n",
+            ]
+            if input_mode == "raw":
+                lines += [
+                    f"Mh{hidden}f{feature}p_phi px{feature} featphi h{hidden}f{feature}pmid 0 NSENSE W={width_u:.6g}u L=180n",
+                    f"Mh{hidden}f{feature}n_phi px{feature} featphi h{hidden}f{feature}nmid 0 NSENSE W={width_u:.6g}u L=180n",
+                ]
+            else:
+                gate_node = f"pxdrive{feature}" if input_mode == "restored-common-gate" else f"pxgate{feature}"
+                lines += [
+                    f"Rh{hidden}f{feature}pinput h{hidden}f{feature}pinput 0 1G",
+                    f"Ch{hidden}f{feature}pinput h{hidden}f{feature}pinput 0 0.05f IC=0",
+                    f"Rh{hidden}f{feature}ninput h{hidden}f{feature}ninput 0 1G",
+                    f"Ch{hidden}f{feature}ninput h{hidden}f{feature}ninput 0 0.05f IC=0",
+                    f"Mh{hidden}f{feature}p_phi px{feature} featphi h{hidden}f{feature}pinput 0 NSENSE W={width_u:.6g}u L=180n",
+                    f"Mh{hidden}f{feature}p_gate h{hidden}f{feature}pinput {gate_node} h{hidden}f{feature}pmid 0 NSENSE W={width_u:.6g}u L=180n",
+                    f"Mh{hidden}f{feature}n_phi px{feature} featphi h{hidden}f{feature}ninput 0 NSENSE W={width_u:.6g}u L=180n",
+                    f"Mh{hidden}f{feature}n_gate h{hidden}f{feature}ninput {gate_node} h{hidden}f{feature}nmid 0 NSENSE W={width_u:.6g}u L=180n",
+                ]
+            lines += [
                 f"Mh{hidden}f{feature}p_w h{hidden}f{feature}pmid {_hidden_weight_node(hidden, feature, 'p')} {pre_p} 0 NSENSE W={width_u:.6g}u L=180n",
-                f"Mh{hidden}f{feature}n_phi px{feature} featphi h{hidden}f{feature}nmid 0 NSENSE W={width_u:.6g}u L=180n",
                 f"Mh{hidden}f{feature}n_w h{hidden}f{feature}nmid {_hidden_weight_node(hidden, feature, 'n')} {pre_n} 0 NSENSE W={width_u:.6g}u L=180n",
             ]
         if activation_mode == "single-ended":
@@ -747,6 +880,18 @@ def mnist01_live_hidden_netlist(
     hidden_forward_width_u: float = 8.0,
     hidden_activation_mode: str = "single-ended",
     hidden_activation_sense_width_u: float = 32.0,
+    hidden_input_mode: str = "raw",
+    hidden_input_common_resistance_ohm: float = 20000.0,
+    hidden_input_common_capacitance_f: float = 8.0,
+    hidden_input_gate_capacitance_f: float = 8.0,
+    hidden_input_contrast_capacitance_f: float = 20.0,
+    hidden_input_pullup_width_u: float = 128.0,
+    hidden_input_pulldown_width_u: float = 24.0,
+    hidden_input_pass_width_u: float = 16.0,
+    hidden_input_restored_low_capacitance_f: float = 1.0,
+    hidden_input_restored_drive_capacitance_f: float = 4.0,
+    hidden_input_restored_discharge_width_u: float = 24.0,
+    hidden_input_restored_restore_width_u: float = 16.0,
     hidden_row_select_mode: str = "act",
     hidden_row_select_common_resistance_ohm: float = 100000.0,
     hidden_row_select_gate_capacitance_f: float = 8.0,
@@ -796,6 +941,8 @@ def mnist01_live_hidden_netlist(
         raise ValueError("hidden_credit_gate_mode must be differential-excess or dynamic-preamp")
     if hidden_activation_mode not in ("single-ended", "differential-preamp"):
         raise ValueError("hidden_activation_mode must be single-ended or differential-preamp")
+    if hidden_input_mode not in ("raw", "contrast-common-gate", "restored-common-gate"):
+        raise ValueError("hidden_input_mode must be raw, contrast-common-gate, or restored-common-gate")
     if hidden_row_select_mode not in ("act", "act-common-gate"):
         raise ValueError("hidden_row_select_mode must be act or act-common-gate")
     if hidden_writer_topology not in ("pmos-highside", "pmos-differential"):
@@ -818,6 +965,17 @@ def mnist01_live_hidden_netlist(
         iref_a,
         hidden_forward_width_u,
         hidden_activation_sense_width_u,
+        hidden_input_common_resistance_ohm,
+        hidden_input_common_capacitance_f,
+        hidden_input_gate_capacitance_f,
+        hidden_input_contrast_capacitance_f,
+        hidden_input_pullup_width_u,
+        hidden_input_pulldown_width_u,
+        hidden_input_pass_width_u,
+        hidden_input_restored_low_capacitance_f,
+        hidden_input_restored_drive_capacitance_f,
+        hidden_input_restored_discharge_width_u,
+        hidden_input_restored_restore_width_u,
         hidden_row_select_common_resistance_ohm,
         hidden_row_select_gate_capacitance_f,
         hidden_row_select_contrast_capacitance_f,
@@ -894,6 +1052,18 @@ def mnist01_live_hidden_netlist(
             hidden_forward_width_u,
             activation_mode=hidden_activation_mode,
             activation_sense_width_u=hidden_activation_sense_width_u,
+            input_mode=hidden_input_mode,
+            input_common_resistance_ohm=hidden_input_common_resistance_ohm,
+            input_common_capacitance_f=hidden_input_common_capacitance_f,
+            input_gate_capacitance_f=hidden_input_gate_capacitance_f,
+            input_contrast_capacitance_f=hidden_input_contrast_capacitance_f,
+            input_pullup_width_u=hidden_input_pullup_width_u,
+            input_pulldown_width_u=hidden_input_pulldown_width_u,
+            input_pass_width_u=hidden_input_pass_width_u,
+            input_restored_low_capacitance_f=hidden_input_restored_low_capacitance_f,
+            input_restored_drive_capacitance_f=hidden_input_restored_drive_capacitance_f,
+            input_restored_discharge_width_u=hidden_input_restored_discharge_width_u,
+            input_restored_restore_width_u=hidden_input_restored_restore_width_u,
             row_select_mode=hidden_row_select_mode,
             row_select_common_resistance_ohm=hidden_row_select_common_resistance_ohm,
             row_select_gate_capacitance_f=hidden_row_select_gate_capacitance_f,

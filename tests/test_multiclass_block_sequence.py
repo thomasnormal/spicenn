@@ -3147,6 +3147,71 @@ def _hidden_direct_readout_weighted_two_update_netlist(
     return "\n".join(lines)
 
 
+def _hidden_direct_multiclass_nontarget_guard_netlist(*, support_level: float | None) -> str:
+    negative_guard_nodes = [seq.class_node(class_idx, "f0_support") for class_idx in range(3)] if support_level is not None else None
+    lines = [
+        "* Three-class direct hidden writer bootstrap/nontarget guard primitive.",
+        ".param VDD=1.2",
+        seq.mos_models(),
+        ".options method=gear reltol=1e-3 abstol=1e-12 vntol=1e-6",
+        "Vdd vdd 0 {VDD}",
+        "Vwhi vwhi_ref 0 0.42",
+        "Vwlo vwlo_ref 0 0.28",
+        "Vhwhi hidden_whi_ref 0 1.05",
+        "Vhwlo hidden_wlo_ref 0 0.15",
+        "Vrst rst 0 PULSE(1.2 0 0.1n 10p 10p 9n 20n)",
+        "Vact act0 0 0.42",
+        "Vxelig xelig0 0 0.46",
+        "Verrp0 c0_errp 0 PULSE(0 0.037 1n 10p 10p 4n 20n)",
+        "Verrn0 c0_errn 0 0",
+        "Verrp1 c1_errp 0 0",
+        "Verrn1 c1_errn 0 PULSE(0 0.064 1n 10p 10p 4n 20n)",
+        "Verrp2 c2_errp 0 0",
+        "Verrn2 c2_errn 0 PULSE(0 0.064 1n 10p 10p 4n 20n)",
+        "Cwhp0 whp0 0 20f IC=0.8",
+        "Cwhn0 whn0 0 20f IC=0",
+        "Rwhp0 whp0 0 1e15",
+        "Rwhn0 whn0 0 1e15",
+    ]
+    for class_idx in range(3):
+        lines += [
+            f"Cc{class_idx}_vwp0 c{class_idx}_vwp0 0 20f IC=0.40",
+            f"Cc{class_idx}_vwn0 c{class_idx}_vwn0 0 20f IC=0.28",
+            f"Rc{class_idx}_vwp0 c{class_idx}_vwp0 0 1e15",
+            f"Rc{class_idx}_vwn0 c{class_idx}_vwn0 0 1e15",
+        ]
+        if support_level is not None:
+            lines.append(f"Vsupport{class_idx} {seq.class_node(class_idx, 'f0_support')} 0 {support_level:.12g}")
+    lines += [
+        *seq.hidden_direct_readout_weighted_update_lines(
+            class_count=3,
+            feature_idx=0,
+            error_positive_nodes=["c0_errp", "c1_errp", "c2_errp"],
+            error_negative_nodes=["c0_errn", "c1_errn", "c2_errn"],
+            eligibility_node="xelig0",
+            width_u=0.05,
+            readout_gate_mode="restored-excess",
+            output_stage="pmos-complementary",
+            high_ref_node="hidden_whi_ref",
+            low_ref_node="hidden_wlo_ref",
+            complement_width_scale=0.0625,
+            internal_capacitance_f=0.05,
+            negative_error_guard_nodes=negative_guard_nodes,
+        ),
+        ".meas tran whp_after FIND V(whp0) AT=8n",
+        ".meas tran whn_after FIND V(whn0) AT=8n",
+        ".meas tran signed_after PARAM='whp_after-whn_after'",
+        ".tran 2p 10n uic",
+        ".control",
+        "run",
+        "quit",
+        ".endc",
+        ".end",
+        "",
+    ]
+    return "\n".join(lines)
+
+
 def test_multiclass_block_sequence_ngspice_residual_score_gate_is_monotonic_low_floor(
     tmp_path: Path,
     ngspice_path: str,
@@ -3482,6 +3547,110 @@ def test_multiclass_block_sequence_ngspice_direct_hidden_writer_realistic_low_ra
     assert abs(float(nmos_positive["signed_after"]) - float(nmos_negative["signed_after"])) < 10e-3
     assert float(pmos_positive["signed_after"]) > 0.85
     assert float(pmos_negative["signed_after"]) < -0.10
+
+
+def test_multiclass_block_sequence_ngspice_direct_hidden_writer_support_guard_blocks_immature_nontarget_feedback(
+    tmp_path: Path,
+    ngspice_path: str,
+) -> None:
+    unguarded = run_netlist(
+        ngspice_path,
+        tmp_path / "direct_hidden_multiclass_nontarget_unguarded.cir",
+        _hidden_direct_multiclass_nontarget_guard_netlist(support_level=None),
+        timeout=30.0,
+    )
+    unsupported = run_netlist(
+        ngspice_path,
+        tmp_path / "direct_hidden_multiclass_nontarget_unsupported.cir",
+        _hidden_direct_multiclass_nontarget_guard_netlist(support_level=0.0),
+        timeout=30.0,
+    )
+    supported = run_netlist(
+        ngspice_path,
+        tmp_path / "direct_hidden_multiclass_nontarget_supported.cir",
+        _hidden_direct_multiclass_nontarget_guard_netlist(support_level=1.2),
+        timeout=30.0,
+    )
+
+    assert float(unguarded["signed_after"]) < 0.40
+    assert float(unsupported["signed_after"]) > 0.80
+    assert float(supported["signed_after"]) < 0.40
+
+
+def test_multiclass_block_sequence_hidden_direct_support_guard_is_explicit_and_live() -> None:
+    netlist = seq.generate_netlist(
+        train_records=_one_hot_records(),
+        eval_records=_one_hot_records(),
+        class_count=3,
+        feature_count=3,
+        readout_update_mode="live",
+        readout_nontarget_guard_mode="support",
+        hidden_update_mode="direct-readout-weighted",
+        hidden_direct_nontarget_guard_mode="support",
+        error_mode="pairwise-margin-centered-gain-descent",
+        eligibility_gate_mode="rank",
+        readout_update_eligibility_mode="restored",
+    )
+
+    assert "\nB" not in netlist
+    assert "Cc0_f0_support c0_f0_support 0 4f IC=0" in netlist
+    assert "Mh0_c0_direct_nv_pup_g" in netlist
+    assert "Mh0_c0_direct_nn_nup_g" in netlist
+    assert " c0_f0_support " in netlist
+    assert "Cgvp" not in netlist
+
+
+def test_multiclass_block_sequence_hidden_direct_can_use_centered_error_rails_before_writer_gain() -> None:
+    netlist = seq.generate_netlist(
+        train_records=_one_hot_records(),
+        eval_records=_one_hot_records(),
+        class_count=3,
+        feature_count=3,
+        readout_update_mode="live",
+        readout_nontarget_guard_mode="support",
+        hidden_update_mode="direct-readout-weighted",
+        hidden_direct_nontarget_guard_mode="support",
+        hidden_direct_error_source_mode="centered",
+        error_mode="pairwise-margin-centered-gain-descent",
+        eligibility_gate_mode="rank",
+        readout_update_eligibility_mode="restored",
+    )
+
+    assert "\nB" not in netlist
+    assert "Mh0_c0_direct_pv_pup_r h0_c0_direct_pv_pup1 c0_errp_ctr h0_c0_direct_pv_pup2" in netlist
+    assert "Mh0_c0_direct_nn_nup_r h0_c0_direct_nn_nup1 c0_errn_ctr h0_c0_direct_nn_nup2" in netlist
+    assert "Mc0_f0_live_pos_up_d c0_f0_live_pos_up c0_errp c0_vwp0" in netlist
+
+
+def test_multiclass_block_sequence_rejects_hidden_direct_support_guard_without_support_storage() -> None:
+    with pytest.raises(ValueError, match="hidden_direct_nontarget_guard_mode=support"):
+        seq.generate_netlist(
+            train_records=_one_hot_records(),
+            eval_records=_one_hot_records(),
+            class_count=3,
+            feature_count=3,
+            readout_update_mode="live",
+            readout_nontarget_guard_mode="none",
+            hidden_update_mode="direct-readout-weighted",
+            hidden_direct_nontarget_guard_mode="support",
+            error_mode="pairwise-margin-centered-gain-descent",
+        )
+
+
+def test_multiclass_block_sequence_rejects_centered_hidden_direct_error_source_without_centered_stage() -> None:
+    with pytest.raises(ValueError, match="hidden_direct_error_source_mode=centered"):
+        seq.generate_netlist(
+            train_records=_one_hot_records(),
+            eval_records=_one_hot_records(),
+            class_count=3,
+            feature_count=3,
+            readout_update_mode="live",
+            readout_nontarget_guard_mode="support",
+            hidden_update_mode="direct-readout-weighted",
+            hidden_direct_nontarget_guard_mode="support",
+            hidden_direct_error_source_mode="centered",
+            error_mode="pairwise-margin-correction-descent",
+        )
 
 
 def test_multiclass_block_sequence_ngspice_live_error_rails_reset_before_eval_writer(

@@ -68,6 +68,8 @@ READOUT_UPDATE_ELIGIBILITY_MODES = ("restored", "hybrid")
 HIDDEN_CREDIT_ACTIVATION_MODELS = ("NREL", "NMOS", "NSENSE")
 HIDDEN_DIRECT_READOUT_GATE_MODES = ("raw", "differential-excess", "restored-excess")
 HIDDEN_DIRECT_OUTPUT_STAGES = ("nmos-pass", "pmos-pullup", "pmos-bounded", "pmos-complementary")
+HIDDEN_DIRECT_NONTARGET_GUARD_MODES = ("none", "support")
+HIDDEN_DIRECT_ERROR_SOURCE_MODES = ("writer", "centered")
 DEFAULT_HIDDEN_POSITIVE = 1.00
 DEFAULT_HIDDEN_NEGATIVE = 0.20
 ERROR_MODES = (
@@ -440,6 +442,7 @@ def hidden_direct_readout_weighted_update_lines(
     low_ref_node: str = "vwlo_ref",
     low_ref_voltage: float = 0.15,
     complement_width_scale: float = 0.0625,
+    negative_error_guard_nodes: list[str] | None = None,
 ) -> list[str]:
     if min(width_u, internal_capacitance_f, excess_width_u) <= 0.0:
         raise ValueError("direct hidden update width, internal capacitance, and excess width must be positive")
@@ -455,6 +458,8 @@ def hidden_direct_readout_weighted_update_lines(
         raise ValueError(f"readout_gate_mode must be one of {HIDDEN_DIRECT_READOUT_GATE_MODES}")
     if output_stage not in HIDDEN_DIRECT_OUTPUT_STAGES:
         raise ValueError(f"output_stage must be one of {HIDDEN_DIRECT_OUTPUT_STAGES}")
+    if negative_error_guard_nodes is not None and len(negative_error_guard_nodes) != class_count:
+        raise ValueError("negative_error_guard_nodes must match class_count")
     whp = f"whp{feature_idx}"
     whn = f"whn{feature_idx}"
     act = f"act{feature_idx}"
@@ -462,6 +467,7 @@ def hidden_direct_readout_weighted_update_lines(
     for class_idx in range(class_count):
         errp = error_positive_nodes[class_idx]
         errn = error_negative_nodes[class_idx]
+        errn_guard = negative_error_guard_nodes[class_idx] if negative_error_guard_nodes is not None else None
         vwp = class_node(class_idx, f"vwp{feature_idx}")
         vwn = class_node(class_idx, f"vwn{feature_idx}")
         prefix = f"h{feature_idx}_c{class_idx}_direct_"
@@ -512,12 +518,13 @@ def hidden_direct_readout_weighted_update_lines(
                     f"M{neg_gate}_up1 {neg_mid} {diff_neg_gate} {neg_gate} 0 NSENSE W={excess_width_u:.6g}u L=180n",
                     f"M{neg_gate}_dn {neg_gate} {diff_pos_gate} 0 0 NSENSE W={4.0 * excess_width_u:.6g}u L=180n",
                 ]
-        positive_terms = ((errp, pos_gate, neg_gate, "pv"), (errn, neg_gate, pos_gate, "nv"))
-        negative_terms = ((errp, neg_gate, pos_gate, "pn"), (errn, pos_gate, neg_gate, "nn"))
-        for err, weight, anti_weight, suffix in positive_terms:
+        positive_terms = ((errp, pos_gate, neg_gate, None, "pv"), (errn, neg_gate, pos_gate, errn_guard, "nv"))
+        negative_terms = ((errp, neg_gate, pos_gate, None, "pn"), (errn, pos_gate, neg_gate, errn_guard, "nn"))
+        for err, weight, anti_weight, guard, suffix in positive_terms:
             up0 = f"{prefix}{suffix}_pup0"
             up1 = f"{prefix}{suffix}_pup1"
             up2 = f"{prefix}{suffix}_pup2"
+            upw = f"{prefix}{suffix}_pupw"
             if output_stage == "nmos-pass":
                 lines += [
                     f"R{up0} {up0} 0 1G",
@@ -529,8 +536,18 @@ def hidden_direct_readout_weighted_update_lines(
                     f"M{prefix}{suffix}_pup_e vwhi_ref {eligibility_node} {up0} 0 NSENSE W={width_u:.6g}u L=180n",
                     f"M{prefix}{suffix}_pup_a {up0} {act} {up1} 0 {activation_model} W={width_u:.6g}u L=180n",
                     f"M{prefix}{suffix}_pup_r {up1} {err} {up2} 0 NSENSE W={width_u:.6g}u L=180n",
-                    f"M{prefix}{suffix}_pup_w {up2} {weight} {whp} 0 NSENSE W={width_u:.6g}u L=180n",
                 ]
+                source_for_weight = up2
+                if guard is not None:
+                    lines += [
+                        f"R{upw} {upw} 0 1G",
+                        f"C{upw} {upw} 0 {internal_capacitance_f:.12g}f IC=0",
+                        f"M{prefix}{suffix}_pup_g {up2} {guard} {upw} 0 NSENSE W={width_u:.6g}u L=180n",
+                    ]
+                    source_for_weight = upw
+                lines.append(
+                    f"M{prefix}{suffix}_pup_w {source_for_weight} {weight} {whp} 0 NSENSE W={width_u:.6g}u L=180n"
+                )
             else:
                 uses_hidden_ref = output_stage in ("pmos-bounded", "pmos-complementary")
                 pmos_ref_node = high_ref_node if uses_hidden_ref else "vwhi_ref"
@@ -550,7 +567,17 @@ def hidden_direct_readout_weighted_update_lines(
                     f"M{prefix}{suffix}_pup_e {pgate} {eligibility_node} {up0} 0 NSENSE W={width_u:.6g}u L=180n",
                     f"M{prefix}{suffix}_pup_a {up0} {act} {up1} 0 {activation_model} W={width_u:.6g}u L=180n",
                     f"M{prefix}{suffix}_pup_r {up1} {err} {up2} 0 NSENSE W={width_u:.6g}u L=180n",
-                    f"M{prefix}{suffix}_pup_w {up2} {weight} 0 0 NSENSE W={width_u:.6g}u L=180n",
+                ]
+                source_for_weight = up2
+                if guard is not None:
+                    lines += [
+                        f"R{upw} {upw} 0 1G",
+                        f"C{upw} {upw} 0 {internal_capacitance_f:.12g}f IC=0",
+                        f"M{prefix}{suffix}_pup_g {up2} {guard} {upw} 0 NSENSE W={width_u:.6g}u L=180n",
+                    ]
+                    source_for_weight = upw
+                lines += [
+                    f"M{prefix}{suffix}_pup_w {source_for_weight} {weight} 0 0 NSENSE W={width_u:.6g}u L=180n",
                     f"M{prefix}{suffix}_pup_pmos {whp} {pgate} {pmos_ref_node} vdd PMOS W={width_u:.6g}u L=180n",
                 ]
                 if output_stage == "pmos-complementary":
@@ -562,10 +589,11 @@ def hidden_direct_readout_weighted_update_lines(
                         f"M{prefix}{suffix}_ndn_gate_inv {dgate} {pgate} {pmos_ref_node} vdd PMOS W={complement_width_scale * width_u:.6g}u L=180n",
                         f"M{prefix}{suffix}_ndn_direct {whn} {dgate} {low_ref_node} 0 NSENSE W={complement_width_scale * width_u:.6g}u L=180n",
                     ]
-        for err, weight, anti_weight, suffix in negative_terms:
+        for err, weight, anti_weight, guard, suffix in negative_terms:
             up0 = f"{prefix}{suffix}_nup0"
             up1 = f"{prefix}{suffix}_nup1"
             up2 = f"{prefix}{suffix}_nup2"
+            upw = f"{prefix}{suffix}_nupw"
             if output_stage == "nmos-pass":
                 lines += [
                     f"R{up0} {up0} 0 1G",
@@ -577,8 +605,18 @@ def hidden_direct_readout_weighted_update_lines(
                     f"M{prefix}{suffix}_nup_e vwhi_ref {eligibility_node} {up0} 0 NSENSE W={width_u:.6g}u L=180n",
                     f"M{prefix}{suffix}_nup_a {up0} {act} {up1} 0 {activation_model} W={width_u:.6g}u L=180n",
                     f"M{prefix}{suffix}_nup_r {up1} {err} {up2} 0 NSENSE W={width_u:.6g}u L=180n",
-                    f"M{prefix}{suffix}_nup_w {up2} {weight} {whn} 0 NSENSE W={width_u:.6g}u L=180n",
                 ]
+                source_for_weight = up2
+                if guard is not None:
+                    lines += [
+                        f"R{upw} {upw} 0 1G",
+                        f"C{upw} {upw} 0 {internal_capacitance_f:.12g}f IC=0",
+                        f"M{prefix}{suffix}_nup_g {up2} {guard} {upw} 0 NSENSE W={width_u:.6g}u L=180n",
+                    ]
+                    source_for_weight = upw
+                lines.append(
+                    f"M{prefix}{suffix}_nup_w {source_for_weight} {weight} {whn} 0 NSENSE W={width_u:.6g}u L=180n"
+                )
             else:
                 uses_hidden_ref = output_stage in ("pmos-bounded", "pmos-complementary")
                 pmos_ref_node = high_ref_node if uses_hidden_ref else "vwhi_ref"
@@ -598,7 +636,17 @@ def hidden_direct_readout_weighted_update_lines(
                     f"M{prefix}{suffix}_nup_e {ngate} {eligibility_node} {up0} 0 NSENSE W={width_u:.6g}u L=180n",
                     f"M{prefix}{suffix}_nup_a {up0} {act} {up1} 0 {activation_model} W={width_u:.6g}u L=180n",
                     f"M{prefix}{suffix}_nup_r {up1} {err} {up2} 0 NSENSE W={width_u:.6g}u L=180n",
-                    f"M{prefix}{suffix}_nup_w {up2} {weight} 0 0 NSENSE W={width_u:.6g}u L=180n",
+                ]
+                source_for_weight = up2
+                if guard is not None:
+                    lines += [
+                        f"R{upw} {upw} 0 1G",
+                        f"C{upw} {upw} 0 {internal_capacitance_f:.12g}f IC=0",
+                        f"M{prefix}{suffix}_nup_g {up2} {guard} {upw} 0 NSENSE W={width_u:.6g}u L=180n",
+                    ]
+                    source_for_weight = upw
+                lines += [
+                    f"M{prefix}{suffix}_nup_w {source_for_weight} {weight} 0 0 NSENSE W={width_u:.6g}u L=180n",
                     f"M{prefix}{suffix}_nup_pmos {whn} {ngate} {pmos_ref_node} vdd PMOS W={width_u:.6g}u L=180n",
                 ]
                 if output_stage == "pmos-complementary":
@@ -1337,6 +1385,8 @@ def generate_netlist(
     hidden_direct_low_ref: float = 0.15,
     hidden_direct_complement_width_scale: float = 0.0625,
     hidden_direct_internal_capacitance_f: float = 0.05,
+    hidden_direct_nontarget_guard_mode: str = "none",
+    hidden_direct_error_source_mode: str = "writer",
     score_timing_mode: str = "late",
     score_sense_mode: str = "voltage",
     readout_forward_mode: str = "direct",
@@ -1448,6 +1498,12 @@ def generate_netlist(
         raise ValueError(f"hidden_direct_readout_gate_mode must be one of {HIDDEN_DIRECT_READOUT_GATE_MODES}")
     if hidden_direct_output_stage not in HIDDEN_DIRECT_OUTPUT_STAGES:
         raise ValueError(f"hidden_direct_output_stage must be one of {HIDDEN_DIRECT_OUTPUT_STAGES}")
+    if hidden_direct_nontarget_guard_mode not in HIDDEN_DIRECT_NONTARGET_GUARD_MODES:
+        raise ValueError(f"hidden_direct_nontarget_guard_mode must be one of {HIDDEN_DIRECT_NONTARGET_GUARD_MODES}")
+    if hidden_direct_nontarget_guard_mode == "support" and readout_nontarget_guard_mode != "support":
+        raise ValueError("hidden_direct_nontarget_guard_mode=support requires readout_nontarget_guard_mode=support")
+    if hidden_direct_error_source_mode not in HIDDEN_DIRECT_ERROR_SOURCE_MODES:
+        raise ValueError(f"hidden_direct_error_source_mode must be one of {HIDDEN_DIRECT_ERROR_SOURCE_MODES}")
     if score_timing_mode not in SCORE_TIMING_MODES:
         raise ValueError(f"score_timing_mode must be one of {SCORE_TIMING_MODES}")
     if score_sense_mode not in SCORE_SENSE_MODES:
@@ -1522,6 +1578,8 @@ def generate_netlist(
     uses_pairwise_margin_centered_gain_stage = (
         uses_pairwise_margin_centered_gain or uses_pairwise_margin_centered_bounded_gain
     )
+    if hidden_direct_error_source_mode == "centered" and not uses_pairwise_margin_centered_gain_stage:
+        raise ValueError("hidden_direct_error_source_mode=centered requires a centered gain error mode")
     uses_normalizer_error = error_mode in NORMALIZER_ERROR_MODES
     uses_stored_hidden_credit_update = hidden_update_mode == "readout-weighted"
     uses_direct_hidden_update = hidden_update_mode == "direct-readout-weighted"
@@ -2257,8 +2315,10 @@ def generate_netlist(
                 width_u=hidden_update_width_u,
             )
     if uses_direct_hidden_update:
-        error_positive_nodes = [class_node(class_idx, "errp") for class_idx in range(class_count)]
-        error_negative_nodes = [class_node(class_idx, "errn") for class_idx in range(class_count)]
+        error_positive_suffix = "errp_ctr" if hidden_direct_error_source_mode == "centered" else "errp"
+        error_negative_suffix = "errn_ctr" if hidden_direct_error_source_mode == "centered" else "errn"
+        error_positive_nodes = [class_node(class_idx, error_positive_suffix) for class_idx in range(class_count)]
+        error_negative_nodes = [class_node(class_idx, error_negative_suffix) for class_idx in range(class_count)]
         for feature in range(feature_count):
             hidden_eligibility_node = (
                 hidden_update_eligibility_node(feature)
@@ -2285,6 +2345,11 @@ def generate_netlist(
                 low_ref_node="hidden_wlo_ref",
                 low_ref_voltage=hidden_direct_low_ref,
                 complement_width_scale=hidden_direct_complement_width_scale,
+                negative_error_guard_nodes=(
+                    [class_node(class_idx, f"f{feature}_support") for class_idx in range(class_count)]
+                    if hidden_direct_nontarget_guard_mode == "support"
+                    else None
+                ),
             )
     for class_idx in range(class_count):
         for feature in range(total_feature_count):
@@ -3708,6 +3773,8 @@ def error_rail_stats(
     target_values: list[float] = []
     nontarget_values: list[float] = []
     rows: list[list[float]] = []
+    errp_rows: list[list[float]] = []
+    errn_rows: list[list[float]] = []
     for cycle, seq in enumerate(sequence):
         if seq != "train":
             continue
@@ -3716,12 +3783,19 @@ def error_rail_stats(
             continue
         values = [float(measures[key]) for key in keys]
         rows.append(values)
+        errp_keys = [f"c{class_idx}_errp_{cycle}" for class_idx in range(class_count)]
+        errn_keys = [f"c{class_idx}_errn_{cycle}" for class_idx in range(class_count)]
+        if all(key in measures for key in errp_keys + errn_keys):
+            errp_rows.append([float(measures[key]) for key in errp_keys])
+            errn_rows.append([float(measures[key]) for key in errn_keys])
         label = int(labels[cycle])
         target_values.append(values[label])
         nontarget_values.extend(value for class_idx, value in enumerate(values) if class_idx != label)
     if not rows:
         return {
             "train_errdiff_rows_v": [],
+            "train_errp_rows_v": [],
+            "train_errn_rows_v": [],
             "train_target_errdiff_mean_v": None,
             "train_target_errdiff_min_v": None,
             "train_nontarget_errdiff_mean_v": None,
@@ -3729,6 +3803,8 @@ def error_rail_stats(
         }
     return {
         "train_errdiff_rows_v": rows,
+        "train_errp_rows_v": errp_rows,
+        "train_errn_rows_v": errn_rows,
         "train_target_errdiff_mean_v": float(np.mean(target_values)),
         "train_target_errdiff_min_v": float(np.min(target_values)),
         "train_nontarget_errdiff_mean_v": float(np.mean(nontarget_values)),
@@ -4114,6 +4190,8 @@ def run_case(args: argparse.Namespace) -> dict[str, Any]:
         hidden_direct_low_ref=args.hidden_direct_low_ref,
         hidden_direct_complement_width_scale=args.hidden_direct_complement_width_scale,
         hidden_direct_internal_capacitance_f=args.hidden_direct_internal_capacitance_f,
+        hidden_direct_nontarget_guard_mode=args.hidden_direct_nontarget_guard_mode,
+        hidden_direct_error_source_mode=args.hidden_direct_error_source_mode,
         score_timing_mode=args.score_timing_mode,
         score_sense_mode=args.score_sense_mode,
         readout_forward_mode=args.readout_forward_mode,
@@ -4392,6 +4470,16 @@ def run_case(args: argparse.Namespace) -> dict[str, Any]:
             if args.hidden_update_mode == "direct-readout-weighted"
             else None
         ),
+        "hidden_direct_nontarget_guard_mode": (
+            args.hidden_direct_nontarget_guard_mode
+            if args.hidden_update_mode == "direct-readout-weighted"
+            else None
+        ),
+        "hidden_direct_error_source_mode": (
+            args.hidden_direct_error_source_mode
+            if args.hidden_update_mode == "direct-readout-weighted"
+            else None
+        ),
         "score_timing_mode": args.score_timing_mode,
         "score_sense_mode": args.score_sense_mode,
         "readout_forward_mode": args.readout_forward_mode,
@@ -4608,6 +4696,16 @@ def build_arg_parser() -> argparse.ArgumentParser:
     ap.add_argument("--hidden-direct-low-ref", type=float, default=0.15)
     ap.add_argument("--hidden-direct-complement-width-scale", type=float, default=0.0625)
     ap.add_argument("--hidden-direct-internal-capacitance-f", type=float, default=0.05)
+    ap.add_argument(
+        "--hidden-direct-nontarget-guard-mode",
+        choices=HIDDEN_DIRECT_NONTARGET_GUARD_MODES,
+        default="none",
+    )
+    ap.add_argument(
+        "--hidden-direct-error-source-mode",
+        choices=HIDDEN_DIRECT_ERROR_SOURCE_MODES,
+        default="writer",
+    )
     ap.add_argument("--score-timing-mode", choices=SCORE_TIMING_MODES, default="late")
     ap.add_argument("--score-sense-mode", choices=SCORE_SENSE_MODES, default="voltage")
     ap.add_argument("--readout-forward-mode", choices=READOUT_FORWARD_MODES, default="direct")
@@ -4765,6 +4863,19 @@ def validate_args(args: argparse.Namespace) -> None:
         raise ValueError(f"hidden-direct-readout-gate-mode must be one of {HIDDEN_DIRECT_READOUT_GATE_MODES}")
     if args.hidden_direct_output_stage not in HIDDEN_DIRECT_OUTPUT_STAGES:
         raise ValueError(f"hidden-direct-output-stage must be one of {HIDDEN_DIRECT_OUTPUT_STAGES}")
+    if args.hidden_direct_nontarget_guard_mode not in HIDDEN_DIRECT_NONTARGET_GUARD_MODES:
+        raise ValueError(
+            f"hidden-direct-nontarget-guard-mode must be one of {HIDDEN_DIRECT_NONTARGET_GUARD_MODES}"
+        )
+    if args.hidden_direct_nontarget_guard_mode == "support" and args.readout_nontarget_guard_mode != "support":
+        raise ValueError("hidden-direct-nontarget-guard-mode=support requires readout-nontarget-guard-mode=support")
+    if args.hidden_direct_error_source_mode not in HIDDEN_DIRECT_ERROR_SOURCE_MODES:
+        raise ValueError(f"hidden-direct-error-source-mode must be one of {HIDDEN_DIRECT_ERROR_SOURCE_MODES}")
+    if args.hidden_direct_error_source_mode == "centered" and args.error_mode not in {
+        "pairwise-margin-centered-gain-descent",
+        "pairwise-margin-centered-bounded-gain-descent",
+    }:
+        raise ValueError("hidden-direct-error-source-mode=centered requires a centered gain error mode")
     if args.hidden_direct_high_ref <= 0.0 or args.hidden_direct_high_ref > 1.2:
         raise ValueError("hidden-direct-high-ref must stay in (0, 1.2]")
     if args.hidden_direct_low_ref < 0.0 or args.hidden_direct_low_ref > 1.2:

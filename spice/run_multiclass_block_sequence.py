@@ -1669,6 +1669,7 @@ def generate_netlist(
     hidden_negative: float = DEFAULT_HIDDEN_NEGATIVE,
     hidden_width_u: float = 1.0,
     hidden_activation_model: str = "NREL",
+    hidden_activation_negative_width_scale: float = 1.0,
     readout_width_u: float = 64.0,
     score_capacitance_f: float = 10.0,
     score_load_resistance: float = 1e6,
@@ -1744,6 +1745,7 @@ def generate_netlist(
         "hidden_positive": hidden_positive,
         "hidden_negative": hidden_negative,
         "hidden_width_u": hidden_width_u,
+        "hidden_activation_negative_width_scale": hidden_activation_negative_width_scale,
         "readout_width_u": readout_width_u,
         "score_capacitance_f": score_capacitance_f,
         "score_load_resistance": score_load_resistance,
@@ -2306,7 +2308,7 @@ def generate_netlist(
             f"Mhidden_pos{feature} row{feature} whp{feature} pre_p{feature} 0 NMOS W={hidden_width_u:.6g}u L=180n",
             f"Mhidden_neg{feature} row{feature} whn{feature} pre_n{feature} 0 NMOS W={hidden_width_u:.6g}u L=180n",
             f"Mact{feature}_p vdd pre_p{feature} act_raw{feature} 0 {hidden_activation_model} W=24u L=180n",
-            f"Mact{feature}_n act_raw{feature} pre_n{feature} 0 0 {hidden_activation_model} W=24u L=180n",
+            f"Mact{feature}_n act_raw{feature} pre_n{feature} 0 0 {hidden_activation_model} W={24.0 * hidden_activation_negative_width_scale:.6g}u L=180n",
             f"Mact_store{feature}_n act{feature} samp act_raw{feature} 0 NMOS W=16u L=180n",
             f"Mact_store{feature}_p act{feature} sampn act_raw{feature} vdd PMOS W=32u L=180n",
             f"Melig{feature}_n elig{feature} samp {eligibility_source_node} 0 NMOS W=16u L=180n",
@@ -4643,6 +4645,7 @@ def run_case(args: argparse.Namespace) -> dict[str, Any]:
         feature_count=feature_count,
         readout_width_u=args.readout_width,
         hidden_activation_model=args.hidden_activation_model,
+        hidden_activation_negative_width_scale=args.hidden_activation_negative_width_scale,
         score_capacitance_f=args.score_capacitance_f,
         score_load_resistance=args.score_load_resistance,
         score_mirror_capacitance_f=args.score_mirror_capacitance_f,
@@ -4944,6 +4947,7 @@ def run_case(args: argparse.Namespace) -> dict[str, Any]:
         ),
         "hidden_update_mode": args.hidden_update_mode,
         "hidden_activation_model": args.hidden_activation_model,
+        "hidden_activation_negative_width_scale": args.hidden_activation_negative_width_scale,
         "hidden_credit_width_u": args.hidden_credit_width if args.hidden_update_mode != "none" else None,
         "hidden_credit_capacitance_f": args.hidden_credit_capacitance_f if args.hidden_update_mode != "none" else None,
         "hidden_credit_shunt_resistance_ohm": (
@@ -5206,6 +5210,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
     ap.add_argument("--readout-support-capacitance-f", type=float, default=4.0)
     ap.add_argument("--hidden-update-mode", choices=HIDDEN_UPDATE_MODES, default="none")
     ap.add_argument("--hidden-activation-model", choices=HIDDEN_ACTIVATION_MODELS, default="NREL")
+    ap.add_argument("--hidden-activation-negative-width-scale", type=float, default=1.0)
     ap.add_argument("--hidden-credit-width", type=float, default=8.0)
     ap.add_argument("--hidden-credit-capacitance-f", type=float, default=12.0)
     ap.add_argument("--hidden-credit-shunt-resistance", type=float, default=1.0e9)
@@ -5300,6 +5305,8 @@ def validate_args(args: argparse.Namespace) -> None:
         raise ValueError(f"hidden-update-mode must be one of {HIDDEN_UPDATE_MODES}")
     if args.hidden_activation_model not in HIDDEN_ACTIVATION_MODELS:
         raise ValueError(f"hidden-activation-model must be one of {HIDDEN_ACTIVATION_MODELS}")
+    if args.hidden_activation_negative_width_scale <= 0.0:
+        raise ValueError("hidden-activation-negative-width-scale must be positive")
     if args.score_timing_mode not in SCORE_TIMING_MODES:
         raise ValueError(f"score-timing-mode must be one of {SCORE_TIMING_MODES}")
     if args.score_sense_mode not in SCORE_SENSE_MODES:

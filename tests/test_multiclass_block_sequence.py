@@ -88,6 +88,19 @@ def test_multiclass_block_sequence_can_use_low_threshold_hidden_activation_model
     assert "Mact0_p vdd pre_p0 act_raw0 0 NREL" not in netlist
 
 
+def test_multiclass_block_sequence_can_strengthen_hidden_activation_negative_shunt() -> None:
+    netlist = seq.generate_netlist(
+        train_records=_target0_records(1),
+        eval_records=_target0_records(1),
+        hidden_activation_model="NSENSE",
+        hidden_activation_negative_width_scale=4.0,
+    )
+
+    assert "\nB" not in netlist
+    assert "Mact0_p vdd pre_p0 act_raw0 0 NSENSE W=24u L=180n" in netlist
+    assert "Mact0_n act_raw0 pre_n0 0 0 NSENSE W=96u L=180n" in netlist
+
+
 def test_multiclass_block_sequence_defaults_score_measure_to_timing_window() -> None:
     records = _target0_records(1)
 
@@ -161,6 +174,49 @@ def test_multiclass_block_sequence_ngspice_low_threshold_hidden_activation_boost
     assert float(nrel["act_2n"]) < 5e-3
     assert float(nsense["act_2n"]) > 25e-3
     assert float(nsense["act_2n"]) > float(nrel["act_2n"]) + 25e-3
+
+
+@pytest.mark.ngspice
+def test_multiclass_block_sequence_ngspice_strong_negative_hidden_activation_shunt_rejects_common_mode(
+    tmp_path: Path,
+    ngspice_path: str,
+) -> None:
+    cases = {
+        "margin": (0.18, 0.04),
+        "weak_margin": (0.08, 0.04),
+        "common_weak": (0.08, 0.07),
+        "common_high": (0.30, 0.26),
+        "reverse": (0.04, 0.18),
+    }
+    lines = [
+        "* Low-level hidden activation common-mode rejection primitive.",
+        ".param VDD=1.2",
+        seq.mos_models(),
+        "Vdd vdd 0 {VDD}",
+    ]
+    for name, (pre_p, pre_n) in cases.items():
+        lines += [
+            f"Vpre_p_{name} pre_p_{name} 0 {pre_p}",
+            f"Vpre_n_{name} pre_n_{name} 0 {pre_n}",
+            f"Cact_{name} act_{name} 0 20f IC=0",
+            f"Ract_{name} act_{name} 0 1G",
+            f"Mact_p_{name} vdd pre_p_{name} act_{name} 0 NSENSE W=24u L=180n",
+            f"Mact_n_{name} act_{name} pre_n_{name} 0 0 NSENSE W=96u L=180n",
+            f".meas tran act_{name} FIND V(act_{name}) AT=2n",
+        ]
+    lines += [".tran 2p 3n uic", ".control", "run", "quit", ".endc", ".end"]
+
+    measures = run_netlist(
+        ngspice_path,
+        tmp_path / "hidden_activation_negative_shunt.cir",
+        "\n".join(lines),
+        timeout=20.0,
+    )
+
+    assert float(measures["act_margin"]) > 100e-3
+    assert float(measures["act_common_high"]) < 50e-3
+    assert float(measures["act_reverse"]) < 1e-3
+    assert float(measures["act_weak_margin"]) > float(measures["act_common_weak"]) + 10e-3
 
 
 def test_multiclass_block_sequence_can_sample_differential_activation_as_eligibility() -> None:
@@ -2199,6 +2255,10 @@ def test_multiclass_block_sequence_validation() -> None:
         seq.main_for_test(["--readout-update-eligibility-capacitance-f", "0"])
     with pytest.raises(ValueError, match="hidden_update_mode"):
         seq.generate_netlist(train_records=records, eval_records=records, hidden_update_mode="missing")
+    with pytest.raises(ValueError, match="hidden_activation_negative_width_scale"):
+        seq.generate_netlist(train_records=records, eval_records=records, hidden_activation_negative_width_scale=0)
+    with pytest.raises(ValueError, match="hidden-activation-negative-width-scale"):
+        seq.main_for_test(["--hidden-activation-negative-width-scale", "0"])
     with pytest.raises(ValueError, match="hidden_direct_readout_gate_mode"):
         seq.generate_netlist(
             train_records=records,

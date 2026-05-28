@@ -85,6 +85,8 @@ def test_mnist01_live_hidden_netlist_is_live_transistor_path() -> None:
     assert "Mh0f0p_phi px0 featphi h0f0pmid 0 NSENSE" in netlist
     assert "Mhrow1_restore hrow1 hrow1_ctrl vdd vdd PMOS" in netlist
     assert "Mnorm0_score rd0 c0_scorep mir0 0 NSENSE" in netlist
+    assert "Mc0_h0_score_pa vdd hrow0 c0_h0_score_pa 0 NSENSE" in netlist
+    assert "Mc0_h0_score_pw c0_h0_score_pa c0_vwp0 c0_h0_score_pb 0 NSENSE" in netlist
     assert "Vhcgphi hcgphi 0 PWL" in netlist
     assert "Vhiddenwritephi hiddenwritephi 0 PWL" in netlist
     assert "Cc0_herrp c0_herrp 0 2f IC=0" in netlist
@@ -192,6 +194,31 @@ def test_mnist01_live_hidden_netlist_is_live_transistor_path() -> None:
     assert "Mhrow0_ctrl_a hrow0_ctrl act_contrast0 hrow0_mid 0 NMOS" in row_select_netlist
     assert "Mhrow1_ctrl_a hrow1_ctrl act1 hrow1_mid 0 NSENSE" not in row_select_netlist
 
+    pre_diff_readout_netlist = mnist01_hidden.mnist01_live_hidden_netlist(
+        train,
+        train,
+        readout_activation_mode="pre-differential",
+    )
+    assert "Mc0_h0_score_ppa vdd pre0_p c0_h0_score_ppa 0 NSENSE" in pre_diff_readout_netlist
+    assert "Mc0_h0_score_ppw c0_h0_score_ppa c0_vwp0 c0_h0_score_ppb 0 NSENSE" in pre_diff_readout_netlist
+    assert "Mc0_h0_score_nna vdd pre0_n c0_h0_score_nna 0 NSENSE" in pre_diff_readout_netlist
+    assert "Mc0_h0_score_nnw c0_h0_score_nna c0_vwn0 c0_h0_score_nnb 0 NSENSE" in pre_diff_readout_netlist
+    assert "Mc0_h0_score_pna vdd pre0_p c0_h0_score_pna 0 NSENSE" in pre_diff_readout_netlist
+    assert "Mc0_h0_score_pnw c0_h0_score_pna c0_vwn0 c0_h0_score_pnb 0 NSENSE" in pre_diff_readout_netlist
+    assert "Mc0_h0_score_npa vdd pre0_n c0_h0_score_npa 0 NSENSE" in pre_diff_readout_netlist
+    assert "Mc0_h0_score_npw c0_h0_score_npa c0_vwp0 c0_h0_score_npb 0 NSENSE" in pre_diff_readout_netlist
+
+    pre_diff_writer_netlist = mnist01_hidden.mnist01_live_hidden_netlist(
+        train,
+        train,
+        readout_writer_activation_mode="pre-differential",
+    )
+    assert "Mc0_f0_live_prep_pos_dn_e c0_vwn0 pre0_p c0_f0_live_prep_pos_dn 0 NSENSE" in pre_diff_writer_netlist
+    assert "Mc0_f0_live_prep_pos_up_ctrl_e c0_f0_live_prep_pos_up_ctrl pre0_p" in pre_diff_writer_netlist
+    assert "Mc0_f0_live_pren_pos_dn_e c0_vwn0 pre0_n c0_f0_live_pren_pos_dn 0 NSENSE" in pre_diff_writer_netlist
+    assert "Mc0_f0_live_pren_pos_dn_d c0_f0_live_pren_pos_dn_sel c0_errn vwlo_ref 0 NSENSE" in pre_diff_writer_netlist
+    assert "Mc0_f0_live_pren_neg_dn_d c0_f0_live_pren_neg_dn_sel c0_errp vwlo_ref 0 NSENSE" in pre_diff_writer_netlist
+
 
 def test_mnist01_live_hidden_netlist_validation() -> None:
     sample = {"features": [1.0] * 16, "label": 0}
@@ -245,6 +272,18 @@ def test_mnist01_live_hidden_netlist_validation() -> None:
             [sample],
             [sample],
             hidden_row_select_mode="BAD",
+        )
+    with pytest.raises(ValueError, match="readout_activation_mode"):
+        mnist01_hidden.mnist01_live_hidden_netlist(
+            [sample],
+            [sample],
+            readout_activation_mode="BAD",
+        )
+    with pytest.raises(ValueError, match="readout_writer_activation_mode"):
+        mnist01_hidden.mnist01_live_hidden_netlist(
+            [sample],
+            [sample],
+            readout_writer_activation_mode="BAD",
         )
     with pytest.raises(ValueError, match="dynamic-preamp"):
         mnist01_hidden.mnist01_live_hidden_netlist(
@@ -378,6 +417,135 @@ def _hidden_activation_preamp_probe_netlist(
         "",
     ]
     return "\n".join(lines)
+
+
+def _pre_differential_readout_probe_netlist(
+    *,
+    pre_p: float,
+    pre_n: float,
+    vwp: float = 0.75,
+    vwn: float = 0.35,
+) -> str:
+    lines = [
+        "* Pre-differential readout product primitive.",
+        ".param VDD=1.2",
+        mnist01_hidden.mos_models(),
+        ".options method=gear reltol=1e-4 abstol=1e-13 vntol=1e-7",
+        "Vdd vdd 0 {VDD}",
+        "Vrst rst 0 0",
+        "Vscorephi scorephi 0 PULSE(0 1.2 0.50n 10p 10p 1.50n 4n)",
+        f"Vprep pre0_p 0 {pre_p:.12g}",
+        f"Vpren pre0_n 0 {pre_n:.12g}",
+        *mnist01_hidden._readout_storage_lines(1, vwp, vwn),
+        *mnist01_hidden._score_storage_lines(),
+        *mnist01_hidden._score_readout_lines(1, 16.0, activation_mode="pre-differential"),
+        ".meas tran scorep FIND V(c0_scorep) AT=2.40n",
+        ".meas tran scoren FIND V(c0_scoren) AT=2.40n",
+        ".meas tran score_net PARAM='scorep-scoren'",
+        ".tran 2p 3n uic",
+        ".control",
+        "run",
+        "quit",
+        ".endc",
+        ".end",
+        "",
+    ]
+    return "\n".join(lines)
+
+
+@pytest.mark.ngspice
+def test_mnist01_pre_differential_readout_tracks_signed_pre_and_weight_product(
+    tmp_path: Path,
+    ngspice_path: str,
+) -> None:
+    positive = mnist01_hidden.run_netlist(
+        ngspice_path,
+        tmp_path / "mnist01_pre_diff_readout_positive.cir",
+        _pre_differential_readout_probe_netlist(pre_p=0.55, pre_n=0.35),
+        timeout=20.0,
+    )
+    negative = mnist01_hidden.run_netlist(
+        ngspice_path,
+        tmp_path / "mnist01_pre_diff_readout_negative.cir",
+        _pre_differential_readout_probe_netlist(pre_p=0.35, pre_n=0.55),
+        timeout=20.0,
+    )
+    common = mnist01_hidden.run_netlist(
+        ngspice_path,
+        tmp_path / "mnist01_pre_diff_readout_common.cir",
+        _pre_differential_readout_probe_netlist(pre_p=0.45, pre_n=0.45),
+        timeout=20.0,
+    )
+
+    assert positive["score_net"] > 20e-3
+    assert negative["score_net"] < -20e-3
+    assert abs(common["score_net"]) < 2e-3
+    assert positive["score_net"] == pytest.approx(-negative["score_net"], rel=0.25)
+
+
+def _pre_differential_readout_writer_probe_netlist(
+    *,
+    pre_p: float,
+    pre_n: float,
+    errp: float = 0.75,
+    errn: float = 0.0,
+) -> str:
+    lines = [
+        "* Pre-differential readout writer primitive.",
+        ".param VDD=1.2",
+        mnist01_hidden.mos_models(),
+        ".options method=gear reltol=1e-4 abstol=1e-13 vntol=1e-7",
+        "Vdd vdd 0 {VDD}",
+        "Verrphi errphi 0 PULSE(0 1.2 0.50n 10p 10p 1.50n 4n)",
+        f"Vprep pre0_p 0 {pre_p:.12g}",
+        f"Vpren pre0_n 0 {pre_n:.12g}",
+        f"Verrp {mnist01_hidden.class_node(0, 'errp')} 0 {errp:.12g}",
+        f"Verrn {mnist01_hidden.class_node(0, 'errn')} 0 {errn:.12g}",
+        f"Verrp1 {mnist01_hidden.class_node(1, 'errp')} 0 0",
+        f"Verrn1 {mnist01_hidden.class_node(1, 'errn')} 0 0",
+        *mnist01_hidden._readout_storage_lines(1, 0.40, 0.40),
+        *mnist01_hidden._readout_writer_lines(1, 0.25, activation_mode="pre-differential"),
+        ".meas tran vwp_after FIND V(c0_vwp0) AT=2.80n",
+        ".meas tran vwn_after FIND V(c0_vwn0) AT=2.80n",
+        ".meas tran signed_after PARAM='vwp_after-vwn_after'",
+        ".tran 2p 3n uic",
+        ".control",
+        "run",
+        "quit",
+        ".endc",
+        ".end",
+        "",
+    ]
+    return "\n".join(lines)
+
+
+@pytest.mark.ngspice
+def test_mnist01_pre_differential_writer_uses_signed_hidden_evidence(
+    tmp_path: Path,
+    ngspice_path: str,
+) -> None:
+    positive = mnist01_hidden.run_netlist(
+        ngspice_path,
+        tmp_path / "mnist01_pre_diff_writer_positive.cir",
+        _pre_differential_readout_writer_probe_netlist(pre_p=0.55, pre_n=0.35),
+        timeout=20.0,
+    )
+    negative = mnist01_hidden.run_netlist(
+        ngspice_path,
+        tmp_path / "mnist01_pre_diff_writer_negative.cir",
+        _pre_differential_readout_writer_probe_netlist(pre_p=0.35, pre_n=0.55),
+        timeout=20.0,
+    )
+    common = mnist01_hidden.run_netlist(
+        ngspice_path,
+        tmp_path / "mnist01_pre_diff_writer_common.cir",
+        _pre_differential_readout_writer_probe_netlist(pre_p=0.45, pre_n=0.45),
+        timeout=20.0,
+    )
+
+    assert positive["signed_after"] > 2e-3
+    assert negative["signed_after"] < -2e-3
+    assert abs(common["signed_after"]) < 1e-3
 
 
 @pytest.mark.ngspice

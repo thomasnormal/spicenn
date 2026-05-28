@@ -328,6 +328,7 @@ def class_local_live_label_descent_update_lines(
     stack_shunt_resistance_ohm: float = 1.0e9,
     stack_parasitic_capacitance_f: float = 0.05,
     high_side_topology: str = "nmos-stack",
+    prefix_suffix: str = "",
 ) -> list[str]:
     if high_side_topology not in ("nmos-stack", "pmos-gated", "pmos-differential"):
         raise ValueError("high_side_topology must be nmos-stack, pmos-gated, or pmos-differential")
@@ -337,7 +338,7 @@ def class_local_live_label_descent_update_lines(
         raise ValueError("stack_shunt_resistance_ohm must be positive")
     if stack_parasitic_capacitance_f <= 0.0:
         raise ValueError("stack_parasitic_capacitance_f must be positive")
-    prefix = f"c{class_idx}_f{feature_idx}_live_"
+    prefix = f"c{class_idx}_f{feature_idx}_live_{prefix_suffix}"
     vwp = class_node(class_idx, f"vwp{feature_idx}")
     vwn = class_node(class_idx, f"vwn{feature_idx}")
     pos = class_node(class_idx, "targetp") if positive_descent_node is None else positive_descent_node

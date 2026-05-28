@@ -404,29 +404,41 @@ def _score_storage_lines() -> list[str]:
     return lines
 
 
-def _score_readout_lines(hidden_count: int, width_u: float) -> list[str]:
+def _score_readout_lines(hidden_count: int, width_u: float, activation_mode: str = "hrow") -> list[str]:
+    if activation_mode not in ("hrow", "pre-differential"):
+        raise ValueError("readout_activation_mode must be hrow or pre-differential")
     lines: list[str] = []
+
+    def term(prefix: str, activation_node: str, weight_node: str, dest: str) -> list[str]:
+        node_a = f"{prefix}a"
+        node_b = f"{prefix}b"
+        return [
+            f"R{node_a} {node_a} 0 1G",
+            f"R{node_b} {node_b} 0 1G",
+            f"C{node_a} {node_a} 0 0.05f IC=0",
+            f"C{node_b} {node_b} 0 0.05f IC=0",
+            f"M{prefix}a vdd {activation_node} {node_a} 0 NSENSE W={width_u:.6g}u L=180n",
+            f"M{prefix}w {node_a} {weight_node} {node_b} 0 NSENSE W={width_u:.6g}u L=180n",
+            f"M{prefix}phi {node_b} scorephi {dest} 0 NSENSE W={width_u:.6g}u L=180n",
+        ]
+
     for output in range(OUTPUTS):
         scorep = class_node(output, "scorep")
         scoren = class_node(output, "scoren")
         for hidden in range(hidden_count):
             prefix = f"c{output}_h{hidden}_score_"
-            lines += [
-                f"R{prefix}pa {prefix}pa 0 1G",
-                f"R{prefix}pb {prefix}pb 0 1G",
-                f"C{prefix}pa {prefix}pa 0 0.05f IC=0",
-                f"C{prefix}pb {prefix}pb 0 0.05f IC=0",
-                f"M{prefix}pa vdd hrow{hidden} {prefix}pa 0 NSENSE W={width_u:.6g}u L=180n",
-                f"M{prefix}pw {prefix}pa {class_node(output, f'vwp{hidden}')} {prefix}pb 0 NSENSE W={width_u:.6g}u L=180n",
-                f"M{prefix}pphi {prefix}pb scorephi {scorep} 0 NSENSE W={width_u:.6g}u L=180n",
-                f"R{prefix}na {prefix}na 0 1G",
-                f"R{prefix}nb {prefix}nb 0 1G",
-                f"C{prefix}na {prefix}na 0 0.05f IC=0",
-                f"C{prefix}nb {prefix}nb 0 0.05f IC=0",
-                f"M{prefix}na vdd hrow{hidden} {prefix}na 0 NSENSE W={width_u:.6g}u L=180n",
-                f"M{prefix}nw {prefix}na {class_node(output, f'vwn{hidden}')} {prefix}nb 0 NSENSE W={width_u:.6g}u L=180n",
-                f"M{prefix}nphi {prefix}nb scorephi {scoren} 0 NSENSE W={width_u:.6g}u L=180n",
-            ]
+            if activation_mode == "hrow":
+                lines += term(prefix + "p", f"hrow{hidden}", class_node(output, f"vwp{hidden}"), scorep)
+                lines += term(prefix + "n", f"hrow{hidden}", class_node(output, f"vwn{hidden}"), scoren)
+            else:
+                pre_p = f"pre{hidden}_p"
+                pre_n = f"pre{hidden}_n"
+                vwp = class_node(output, f"vwp{hidden}")
+                vwn = class_node(output, f"vwn{hidden}")
+                lines += term(prefix + "pp", pre_p, vwp, scorep)
+                lines += term(prefix + "nn", pre_n, vwn, scorep)
+                lines += term(prefix + "pn", pre_p, vwn, scoren)
+                lines += term(prefix + "np", pre_n, vwp, scoren)
     return lines
 
 
@@ -499,22 +511,46 @@ def _route_to_hidden_error_rails_lines(route_width_u: float) -> list[str]:
     return lines
 
 
-def _readout_writer_lines(hidden_count: int, width_u: float) -> list[str]:
+def _readout_writer_lines(hidden_count: int, width_u: float, activation_mode: str = "hrow") -> list[str]:
+    if activation_mode not in ("hrow", "pre-differential"):
+        raise ValueError("readout_writer_activation_mode must be hrow or pre-differential")
     lines = [
         "Vvwhi_ref vwhi_ref 0 0.48",
         "Vvwlo_ref vwlo_ref 0 0.22",
     ]
     for output in range(OUTPUTS):
         for hidden in range(hidden_count):
-            lines += class_local_live_label_descent_update_lines(
-                class_idx=output,
-                feature_idx=hidden,
-                activation_node=f"hrow{hidden}",
-                positive_descent_node=class_node(output, "errp"),
-                negative_descent_node=class_node(output, "errn"),
-                width_u=width_u,
-                high_side_topology="pmos-differential",
-            )
+            if activation_mode == "hrow":
+                lines += class_local_live_label_descent_update_lines(
+                    class_idx=output,
+                    feature_idx=hidden,
+                    activation_node=f"hrow{hidden}",
+                    positive_descent_node=class_node(output, "errp"),
+                    negative_descent_node=class_node(output, "errn"),
+                    width_u=width_u,
+                    high_side_topology="pmos-differential",
+                )
+            else:
+                lines += class_local_live_label_descent_update_lines(
+                    class_idx=output,
+                    feature_idx=hidden,
+                    activation_node=f"pre{hidden}_p",
+                    positive_descent_node=class_node(output, "errp"),
+                    negative_descent_node=class_node(output, "errn"),
+                    width_u=width_u,
+                    high_side_topology="pmos-differential",
+                    prefix_suffix="prep_",
+                )
+                lines += class_local_live_label_descent_update_lines(
+                    class_idx=output,
+                    feature_idx=hidden,
+                    activation_node=f"pre{hidden}_n",
+                    positive_descent_node=class_node(output, "errn"),
+                    negative_descent_node=class_node(output, "errp"),
+                    width_u=width_u,
+                    high_side_topology="pmos-differential",
+                    prefix_suffix="pren_",
+                )
     return lines
 
 
@@ -899,6 +935,8 @@ def mnist01_live_hidden_netlist(
     hidden_row_select_pullup_width_u: float = 128.0,
     hidden_row_select_pulldown_width_u: float = 24.0,
     hidden_row_select_pass_width_u: float = 16.0,
+    readout_activation_mode: str = "hrow",
+    readout_writer_activation_mode: str = "hrow",
     readout_width_u: float = 16.0,
     branch_width_u: float = 0.05,
     floor_width_u: float = 0.015,
@@ -945,6 +983,10 @@ def mnist01_live_hidden_netlist(
         raise ValueError("hidden_input_mode must be raw, contrast-common-gate, or restored-common-gate")
     if hidden_row_select_mode not in ("act", "act-common-gate"):
         raise ValueError("hidden_row_select_mode must be act or act-common-gate")
+    if readout_activation_mode not in ("hrow", "pre-differential"):
+        raise ValueError("readout_activation_mode must be hrow or pre-differential")
+    if readout_writer_activation_mode not in ("hrow", "pre-differential"):
+        raise ValueError("readout_writer_activation_mode must be hrow or pre-differential")
     if hidden_writer_topology not in ("pmos-highside", "pmos-differential"):
         raise ValueError("hidden_writer_topology must be pmos-highside or pmos-differential")
     if hidden_credit_gate_mode == "dynamic-preamp" and hidden_writer_topology != "pmos-differential":
@@ -1072,12 +1114,12 @@ def mnist01_live_hidden_netlist(
             row_select_pulldown_width_u=hidden_row_select_pulldown_width_u,
             row_select_pass_width_u=hidden_row_select_pass_width_u,
         ),
-        *_score_readout_lines(hidden_count, readout_width_u),
+        *_score_readout_lines(hidden_count, readout_width_u, activation_mode=readout_activation_mode),
         *_error_storage_lines(),
         *_divider_probability_lines(branch_width_u, floor_width_u),
         *_route_to_error_rails_lines(route_width_u),
         *_route_to_hidden_error_rails_lines(hidden_error_route_width_u),
-        *_readout_writer_lines(hidden_count, readout_update_width_u),
+        *_readout_writer_lines(hidden_count, readout_update_width_u, activation_mode=readout_writer_activation_mode),
         *_hidden_credit_lines(
             hidden_count,
             hidden_credit_width_u,

@@ -458,6 +458,38 @@ def test_multiclass_block_sequence_summarizes_train_eligibility_overlap() -> Non
     assert stats["train_eligibility_pairwise_cosine_mean"] == pytest.approx(0.519896, abs=1e-6)
 
 
+def test_multiclass_block_sequence_summarizes_activation_rows() -> None:
+    measures = {
+        "act_f0_0": 0.50,
+        "act_f1_0": 0.01,
+        "act_f2_0": 0.45,
+        "act_f0_1": 0.30,
+        "act_f1_1": 0.20,
+        "act_f2_1": 0.40,
+        "act_f0_2": 0.001,
+        "act_f1_2": 0.010,
+        "act_f2_2": 0.427,
+        "act_f0_3": 0.002,
+        "act_f1_3": 0.260,
+        "act_f2_3": 0.427,
+    }
+
+    stats = seq.activation_stats(
+        measures,
+        sequence=["train", "train", "final_eval", "final_eval"],
+        total_feature_count=3,
+    )
+
+    assert stats["train_activation_rows_v"] == [[0.50, 0.01, 0.45], [0.30, 0.20, 0.40]]
+    assert stats["train_activation_active_features_25mv_mean"] == pytest.approx(2.5)
+    assert stats["train_activation_active_features_250mv_mean"] == pytest.approx(2.0)
+    assert stats["train_activation_max_v"] == pytest.approx(0.50)
+    assert stats["final_eval_activation_rows_v"] == [[0.001, 0.010, 0.427], [0.002, 0.260, 0.427]]
+    assert stats["final_eval_activation_active_features_25mv_mean"] == pytest.approx(1.5)
+    assert stats["final_eval_activation_active_features_250mv_mean"] == pytest.approx(1.5)
+    assert stats["final_eval_activation_max_v"] == pytest.approx(0.427)
+
+
 def test_multiclass_block_sequence_summarizes_train_eligibility_gate_activity() -> None:
     measures = {
         "egate_f0_1": 1.1,

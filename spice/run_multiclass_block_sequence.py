@@ -4256,6 +4256,50 @@ def eligibility_stats(
     }
 
 
+def activation_stats(
+    measures: dict[str, float],
+    *,
+    sequence: list[str],
+    total_feature_count: int,
+) -> dict[str, Any]:
+    def summarize_phase(phase: str, prefix: str) -> dict[str, Any]:
+        rows: list[list[float]] = []
+        active_25mv: list[int] = []
+        active_250mv: list[int] = []
+        for cycle, seq in enumerate(sequence):
+            if seq != phase:
+                continue
+            keys = [f"act_f{feature}_{cycle}" for feature in range(total_feature_count)]
+            if not all(key in measures for key in keys):
+                continue
+            values = [float(measures[key]) for key in keys]
+            rows.append(values)
+            active_25mv.append(sum(value > 25e-3 for value in values))
+            active_250mv.append(sum(value > 250e-3 for value in values))
+        if not rows:
+            return {
+                f"{prefix}_activation_rows_v": [],
+                f"{prefix}_activation_active_features_25mv_mean": None,
+                f"{prefix}_activation_active_features_25mv_max": None,
+                f"{prefix}_activation_active_features_250mv_mean": None,
+                f"{prefix}_activation_active_features_250mv_max": None,
+                f"{prefix}_activation_max_v": None,
+            }
+        return {
+            f"{prefix}_activation_rows_v": rows,
+            f"{prefix}_activation_active_features_25mv_mean": float(np.mean(active_25mv)),
+            f"{prefix}_activation_active_features_25mv_max": int(np.max(active_25mv)),
+            f"{prefix}_activation_active_features_250mv_mean": float(np.mean(active_250mv)),
+            f"{prefix}_activation_active_features_250mv_max": int(np.max(active_250mv)),
+            f"{prefix}_activation_max_v": float(np.max(rows)),
+        }
+
+    return {
+        **summarize_phase("train", "train"),
+        **summarize_phase("final_eval", "final_eval"),
+    }
+
+
 def eligibility_gate_stats(
     measures: dict[str, float],
     *,
@@ -5035,6 +5079,7 @@ def run_case(args: argparse.Namespace) -> dict[str, Any]:
             class_count=args.class_count,
             total_feature_count=total_feature_count,
         ),
+        **activation_stats(measures, sequence=sequence, total_feature_count=total_feature_count),
         **error_rail_stats(measures, labels=labels, sequence=sequence, class_count=args.class_count),
         **eligibility_stats(measures, sequence=sequence, total_feature_count=total_feature_count),
         **eligibility_gate_stats(measures, sequence=sequence, feature_count=feature_count),

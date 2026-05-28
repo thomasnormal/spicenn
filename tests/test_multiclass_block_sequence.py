@@ -1902,6 +1902,24 @@ def test_multiclass_block_sequence_can_add_buffered_eval_current_readout() -> No
     assert ".meas tran c0_eval_score_net_0 PARAM='c0_eval_score_0-c0_eval_scoren_0'" in netlist
 
 
+def test_multiclass_block_sequence_can_gate_eval_current_readout_final_only() -> None:
+    netlist = seq.generate_netlist(
+        train_records=_target0_two_feature_records(1),
+        eval_records=_target0_two_feature_records(1),
+        feature_count=2,
+        readout_update_mode="live",
+        error_mode="label-descent",
+        eval_score_readout_mode="buffered-current-clamp",
+        eval_score_active_mode="final-only",
+    )
+
+    assert "Vevalout evalout 0 PWL(" in netlist
+    assert "0n 0" in netlist
+    assert "8.75n 0" in netlist
+    assert "24.75n 0" in netlist
+    assert "40.75n 1.2" in netlist
+
+
 def test_multiclass_block_sequence_can_use_diode_mirror_score_sensor() -> None:
     netlist = seq.generate_netlist(
         train_records=_target0_two_feature_records(1),

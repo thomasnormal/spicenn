@@ -65,6 +65,7 @@ SCORE_TIMING_MODES = ("late", "early")
 SCORE_SENSE_MODES = ("voltage", "current-clamp", "diode-mirror")
 READOUT_FORWARD_MODES = ("direct", "diode")
 EVAL_SCORE_READOUT_MODES = ("none", "direct-current-clamp", "buffered-current-clamp")
+EVAL_SCORE_ACTIVE_MODES = ("initial-final", "final-only")
 PHYSICAL_READOUT_REPLAY_SWEEP_MODES: dict[str, tuple[str, str]] = {
     "direct-voltage": ("direct", "voltage"),
     "direct-current-clamp": ("direct", "current-clamp"),
@@ -1938,6 +1939,7 @@ def generate_netlist(
     score_sense_mode: str = "voltage",
     readout_forward_mode: str = "direct",
     eval_score_readout_mode: str = "none",
+    eval_score_active_mode: str = "initial-final",
     eligibility_gate_mode: str = "raw",
     eligibility_source_mode: str = "pre-p",
     readout_update_eligibility_mode: str = "restored",
@@ -2097,6 +2099,8 @@ def generate_netlist(
         raise ValueError(f"readout_forward_mode must be one of {READOUT_FORWARD_MODES}")
     if eval_score_readout_mode not in EVAL_SCORE_READOUT_MODES:
         raise ValueError(f"eval_score_readout_mode must be one of {EVAL_SCORE_READOUT_MODES}")
+    if eval_score_active_mode not in EVAL_SCORE_ACTIVE_MODES:
+        raise ValueError(f"eval_score_active_mode must be one of {EVAL_SCORE_ACTIVE_MODES}")
     if eligibility_gate_mode not in ELIGIBILITY_GATE_MODES:
         raise ValueError(f"eligibility_gate_mode must be one of {ELIGIBILITY_GATE_MODES}")
     if eligibility_source_mode not in ELIGIBILITY_SOURCE_MODES:
@@ -2128,6 +2132,11 @@ def generate_netlist(
     all_records = eval_records + train_records + eval_records
     sequence = ["initial_eval"] * len(eval_records) + ["train"] * len(train_records) + ["final_eval"] * len(eval_records)
     train_cycles = {idx for idx, label in enumerate(sequence) if label == "train"}
+    eval_score_cycles = (
+        {idx for idx, phase in enumerate(sequence) if phase == "final_eval"}
+        if eval_score_active_mode == "final-only"
+        else {idx for idx, phase in enumerate(sequence) if phase != "train"}
+    )
     cycle_count = len(all_records)
     uses_live_writer = readout_update_mode == "live" or hidden_update_mode != "none"
     live_writer_reset_cycles = set(range(cycle_count)) if uses_live_writer else train_cycles
@@ -2432,8 +2441,8 @@ def generate_netlist(
         f"Voutn outn 0 {active_low_phase_pwl(cycle_count, start_ns=out_start_ns, end_ns=out_end_ns, active_cycles=set(range(cycle_count)))}",
         *(
             [
-                f"Vevalout evalout 0 {periodic_phase_pwl(cycle_count, start_ns=eval_score_start_ns, end_ns=eval_score_end_ns, active_cycles={idx for idx, phase in enumerate(sequence) if phase != 'train'})}",
-                f"Vevaloutn evaloutn 0 {active_low_phase_pwl(cycle_count, start_ns=eval_score_start_ns, end_ns=eval_score_end_ns, active_cycles={idx for idx, phase in enumerate(sequence) if phase != 'train'})}",
+                f"Vevalout evalout 0 {periodic_phase_pwl(cycle_count, start_ns=eval_score_start_ns, end_ns=eval_score_end_ns, active_cycles=eval_score_cycles)}",
+                f"Vevaloutn evaloutn 0 {active_low_phase_pwl(cycle_count, start_ns=eval_score_start_ns, end_ns=eval_score_end_ns, active_cycles=eval_score_cycles)}",
             ]
             if eval_score_readout_mode != "none"
             else []
@@ -5336,6 +5345,7 @@ def run_case(args: argparse.Namespace) -> dict[str, Any]:
         score_sense_mode=args.score_sense_mode,
         readout_forward_mode=args.readout_forward_mode,
         eval_score_readout_mode=args.eval_score_readout_mode,
+        eval_score_active_mode=args.eval_score_active_mode,
         eligibility_gate_mode=args.eligibility_gate_mode,
         eligibility_source_mode=args.eligibility_source_mode,
         readout_update_eligibility_mode=args.readout_update_eligibility_mode,
@@ -5736,6 +5746,7 @@ def run_case(args: argparse.Namespace) -> dict[str, Any]:
         "score_sense_mode": args.score_sense_mode,
         "readout_forward_mode": args.readout_forward_mode,
         "eval_score_readout_mode": args.eval_score_readout_mode,
+        "eval_score_active_mode": args.eval_score_active_mode if args.eval_score_readout_mode != "none" else None,
         "eligibility_gate_mode": args.eligibility_gate_mode,
         "eligibility_source_mode": args.eligibility_source_mode,
         "readout_update_eligibility_mode": (
@@ -6029,6 +6040,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
     ap.add_argument("--score-sense-mode", choices=SCORE_SENSE_MODES, default="voltage")
     ap.add_argument("--readout-forward-mode", choices=READOUT_FORWARD_MODES, default="direct")
     ap.add_argument("--eval-score-readout-mode", choices=EVAL_SCORE_READOUT_MODES, default="none")
+    ap.add_argument("--eval-score-active-mode", choices=EVAL_SCORE_ACTIVE_MODES, default="initial-final")
     ap.add_argument("--eligibility-gate-mode", choices=ELIGIBILITY_GATE_MODES, default="raw")
     ap.add_argument("--eligibility-source-mode", choices=ELIGIBILITY_SOURCE_MODES, default="pre-p")
     ap.add_argument("--readout-update-eligibility-mode", choices=READOUT_UPDATE_ELIGIBILITY_MODES, default="restored")
@@ -6111,6 +6123,8 @@ def validate_args(args: argparse.Namespace) -> None:
         raise ValueError(f"readout-forward-mode must be one of {READOUT_FORWARD_MODES}")
     if args.eval_score_readout_mode not in EVAL_SCORE_READOUT_MODES:
         raise ValueError(f"eval-score-readout-mode must be one of {EVAL_SCORE_READOUT_MODES}")
+    if args.eval_score_active_mode not in EVAL_SCORE_ACTIVE_MODES:
+        raise ValueError(f"eval-score-active-mode must be one of {EVAL_SCORE_ACTIVE_MODES}")
     if args.score_sense_mode in ("current-clamp", "diode-mirror") and args.error_mode not in {
         "label-descent",
         "label-rail-descent",

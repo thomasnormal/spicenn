@@ -324,13 +324,27 @@ def class_local_live_label_descent_update_lines(
     negative_descent_node: str | None = None,
     nontarget_guard_node: str | None = None,
     width_u: float = 0.5,
+    stack_shunt_resistance_ohm: float = 1.0e9,
+    stack_parasitic_capacitance_f: float = 0.05,
 ) -> list[str]:
+    if stack_shunt_resistance_ohm <= 0.0:
+        raise ValueError("stack_shunt_resistance_ohm must be positive")
+    if stack_parasitic_capacitance_f <= 0.0:
+        raise ValueError("stack_parasitic_capacitance_f must be positive")
     prefix = f"c{class_idx}_f{feature_idx}_live_"
     vwp = class_node(class_idx, f"vwp{feature_idx}")
     vwn = class_node(class_idx, f"vwn{feature_idx}")
     pos = class_node(class_idx, "targetp") if positive_descent_node is None else positive_descent_node
     neg = class_node(class_idx, "targetn") if negative_descent_node is None else negative_descent_node
     lines = [
+        f"R{prefix}pos_up_shunt {prefix}pos_up 0 {stack_shunt_resistance_ohm:.12g}",
+        f"R{prefix}pos_dn_shunt {prefix}pos_dn 0 {stack_shunt_resistance_ohm:.12g}",
+        f"R{prefix}neg_up_shunt {prefix}neg_up 0 {stack_shunt_resistance_ohm:.12g}",
+        f"R{prefix}neg_dn_shunt {prefix}neg_dn 0 {stack_shunt_resistance_ohm:.12g}",
+        f"C{prefix}pos_up_par {prefix}pos_up 0 {stack_parasitic_capacitance_f:.12g}f IC=0",
+        f"C{prefix}pos_dn_par {prefix}pos_dn 0 {stack_parasitic_capacitance_f:.12g}f IC=0",
+        f"C{prefix}neg_up_par {prefix}neg_up 0 {stack_parasitic_capacitance_f:.12g}f IC=0",
+        f"C{prefix}neg_dn_par {prefix}neg_dn 0 {stack_parasitic_capacitance_f:.12g}f IC=0",
         f"M{prefix}pos_up_e vwhi_ref {activation_node} {prefix}pos_up 0 NSENSE W={width_u:.6g}u L=180n",
         f"M{prefix}pos_up_d {prefix}pos_up {pos} {vwp} 0 NSENSE W={width_u:.6g}u L=180n",
         f"M{prefix}pos_dn_e {vwn} {activation_node} {prefix}pos_dn 0 NSENSE W={width_u:.6g}u L=180n",
@@ -345,6 +359,10 @@ def class_local_live_label_descent_update_lines(
         ]
     else:
         lines += [
+            f"R{prefix}neg_up_guard_shunt {prefix}neg_up_guard 0 {stack_shunt_resistance_ohm:.12g}",
+            f"R{prefix}neg_dn_guard_shunt {prefix}neg_dn_guard 0 {stack_shunt_resistance_ohm:.12g}",
+            f"C{prefix}neg_up_guard_par {prefix}neg_up_guard 0 {stack_parasitic_capacitance_f:.12g}f IC=0",
+            f"C{prefix}neg_dn_guard_par {prefix}neg_dn_guard 0 {stack_parasitic_capacitance_f:.12g}f IC=0",
             f"M{prefix}neg_up_g {prefix}neg_up {nontarget_guard_node} {prefix}neg_up_guard 0 NSENSE W={width_u:.6g}u L=180n",
             f"M{prefix}neg_up_d {prefix}neg_up_guard {neg} {vwn} 0 NSENSE W={width_u:.6g}u L=180n",
             f"M{prefix}neg_dn_g {prefix}neg_dn {nontarget_guard_node} {prefix}neg_dn_guard 0 NSENSE W={width_u:.6g}u L=180n",

@@ -32,6 +32,32 @@
   remained `6.0` and those rails still saturated near `1.2 V`.  The next
   blocker is therefore the restored/hybrid readout-update eligibility writer
   interface, not the existence of an activation contrast gate itself.
+- Added `readout_update_eligibility_mode=analog-pass` as a non-restored live
+  writer-drive option.  This mode samples `elig*` through the local feature
+  gate into `relig*` on a small capacitor and deliberately omits `relig_ref`,
+  `relig_pgate`, and the PMOS restore device, so the writer sees an analog
+  eligibility rail instead of a full-rail restored rail.  A new ngspice
+  primitive regression proves the transfer is monotone and not full-rail
+  restored: gate-off stays near zero, larger eligibility gives larger
+  `relig`, and the high case remains below `0.75 V`.  The live readout writer
+  stack also now includes weak `1 GOhm` shunts and explicit `0.05 fF`
+  parasitic capacitors on internal stack nodes; this is a physical junction
+  model improvement and fixed the analog-pass compact deck's previous
+  timestep-too-small failure at `c2_f2_live_neg_up`.
+- Integrated analog-pass result: the same compact `mnist3fixed8_6` deck now
+  converges and removes the previous saturated writer symptom.  With
+  `readout_update_width=0.5`, `train_readout_update_eligibility_at_writer_max`
+  is about `0.132 V`, and active writer features above `250 mV` fall from
+  `6.0` to `0.0`; final accuracy remains `0.333 -> 0.333`, but the worst
+  physical margin improves from about `-21 mV` to `-0.18 mV`.  The negative
+  evidence is important: target-minus-nontarget readout delta becomes negative
+  (about `-0.405 mV` mean), so the weak analog writer path is directionally
+  misaligned.  Analytically scaling `readout_update_width` from `0.5` to `4.0`
+  to compensate for the lost gate drive did not change that sign.  The next
+  primitive target is therefore a one-sample live readout writer alignment
+  test under analog-pass eligibility: force target/nontarget descent rails and
+  assert the physical `vwp-vwn` delta has the correct sign before retrying
+  MNIST integration.
 
 ## 2026-05-27
 

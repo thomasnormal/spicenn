@@ -64,7 +64,7 @@ SCORE_SENSE_MODES = ("voltage", "current-clamp", "diode-mirror")
 READOUT_FORWARD_MODES = ("direct", "diode")
 ELIGIBILITY_GATE_MODES = ("raw", "competition", "rank", "contrast")
 ELIGIBILITY_SOURCE_MODES = ("pre-p", "act-raw", "act")
-READOUT_UPDATE_ELIGIBILITY_MODES = ("restored", "hybrid")
+READOUT_UPDATE_ELIGIBILITY_MODES = ("restored", "hybrid", "analog-pass")
 READOUT_UPDATE_ELIGIBILITY_SENSE_MODELS = ("NREL", "NMOS", "NSENSE")
 HIDDEN_CREDIT_ACTIVATION_MODELS = ("NREL", "NMOS", "NSENSE")
 HIDDEN_ACTIVATION_MODELS = ("NREL", "NMOS", "NSENSE")
@@ -332,7 +332,7 @@ def effective_readout_update_eligibility_capacitance(
 ) -> float:
     if requested_capacitance_f is not None:
         return requested_capacitance_f
-    if uses_gated_eligibility and mode == "hybrid":
+    if uses_gated_eligibility and mode in ("hybrid", "analog-pass"):
         # Keep charge sharing from the 20 fF eligibility store below roughly 20%:
         # Csample <= Celig * droop / (1 - droop) = 20 fF * 0.2 / 0.8 = 5 fF.
         return 5.0
@@ -2079,6 +2079,9 @@ def generate_netlist(
     uses_hybrid_readout_eligibility = (
         uses_gated_eligibility and readout_update_eligibility_mode == "hybrid"
     )
+    uses_analog_pass_readout_eligibility = (
+        uses_gated_eligibility and readout_update_eligibility_mode == "analog-pass"
+    )
     effective_readout_update_eligibility_capacitance_f = effective_readout_update_eligibility_capacitance(
         mode=readout_update_eligibility_mode,
         requested_capacitance_f=readout_update_eligibility_capacitance_f,
@@ -2271,7 +2274,7 @@ def generate_netlist(
         ),
         *(
             [f"Vrelig_ref relig_ref 0 {readout_update_eligibility_ref:.12g}"]
-            if eligibility_gate_mode in ("competition", "rank", "contrast")
+            if uses_gated_eligibility and not uses_analog_pass_readout_eligibility
             else []
         ),
         *(
@@ -2563,17 +2566,18 @@ def generate_netlist(
             pgate = f"{relig}_pgate"
             mid_elig = f"{relig}_pgate_elig"
             mid_gate = f"{relig}_pgate_gate"
-            lines += [
-                f"C{pgate} {pgate} 0 {readout_update_eligibility_pgate_capacitance_f:.12g}f IC=1.2",
-                f"R{pgate} {pgate} vdd 50000",
-                f"R{mid_elig} {mid_elig} 0 1G",
-                f"R{mid_gate} {mid_gate} 0 1G",
-                f"M{relig}_pgate_dis_elig {pgate} elig{feature} {mid_elig} 0 {readout_update_eligibility_sense_model} W={readout_update_eligibility_discharge_width_u:.6g}u L=180n",
-                f"M{relig}_pgate_dis_gate {mid_elig} {egate} {mid_gate} 0 NSENSE W={readout_update_eligibility_discharge_width_u:.6g}u L=180n",
-                f"M{relig}_pgate_dis_clk {mid_gate} {readout_restore_clock} 0 0 NSENSE W={readout_update_eligibility_discharge_width_u:.6g}u L=180n",
-                f"M{relig}_restore_p {relig} {pgate} relig_ref relig_ref PMOS W={readout_update_eligibility_restore_width_u:.6g}u L=180n",
-            ]
-            if readout_update_eligibility_mode == "hybrid":
+            if not uses_analog_pass_readout_eligibility:
+                lines += [
+                    f"C{pgate} {pgate} 0 {readout_update_eligibility_pgate_capacitance_f:.12g}f IC=1.2",
+                    f"R{pgate} {pgate} vdd 50000",
+                    f"R{mid_elig} {mid_elig} 0 1G",
+                    f"R{mid_gate} {mid_gate} 0 1G",
+                    f"M{relig}_pgate_dis_elig {pgate} elig{feature} {mid_elig} 0 {readout_update_eligibility_sense_model} W={readout_update_eligibility_discharge_width_u:.6g}u L=180n",
+                    f"M{relig}_pgate_dis_gate {mid_elig} {egate} {mid_gate} 0 NSENSE W={readout_update_eligibility_discharge_width_u:.6g}u L=180n",
+                    f"M{relig}_pgate_dis_clk {mid_gate} {readout_restore_clock} 0 0 NSENSE W={readout_update_eligibility_discharge_width_u:.6g}u L=180n",
+                    f"M{relig}_restore_p {relig} {pgate} relig_ref relig_ref PMOS W={readout_update_eligibility_restore_width_u:.6g}u L=180n",
+                ]
+            if readout_update_eligibility_mode in ("hybrid", "analog-pass"):
                 pass_mid = f"{relig}_pass_mid"
                 lines += [
                     f"R{pass_mid} {pass_mid} 0 1G",
@@ -3273,8 +3277,11 @@ def generate_netlist(
                 lines += [
                     f".meas tran relig_f{feature}_{cycle} FIND V({relig}) AT={base + readout_eligibility_measure_ns:.2f}n",
                     f".meas tran relig_update_f{feature}_{cycle} FIND V({relig}) AT={base + readout_eligibility_update_measure_ns:.2f}n",
-                    f".meas tran relig_pgate_f{feature}_{cycle} FIND V({relig}_pgate) AT={base + readout_eligibility_measure_ns:.2f}n",
                 ]
+                if not uses_analog_pass_readout_eligibility:
+                    lines.append(
+                        f".meas tran relig_pgate_f{feature}_{cycle} FIND V({relig}_pgate) AT={base + readout_eligibility_measure_ns:.2f}n"
+                    )
             if uses_stored_hidden_credit_update and feature < feature_count:
                 lines += [
                     f".meas tran hdp_f{feature}_{cycle} FIND V({hidden_credit_node(feature, 'hdp')}) AT={base + score_error_measure_ns:.2f}n",

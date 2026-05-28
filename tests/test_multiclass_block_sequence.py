@@ -1952,6 +1952,8 @@ def test_multiclass_block_sequence_uses_sampled_gated_readout_eligibility() -> N
     assert "Mrelig0_restore_p relig0 relig0_pgate relig_ref relig_ref PMOS W=16u L=180n" in netlist
     assert ".meas tran relig_update_f0_1 FIND V(relig0)" in netlist
     assert ".meas tran relig_pgate_f0_1 FIND V(relig0_pgate)" in netlist
+    assert "Rc0_f0_live_pos_up_shunt c0_f0_live_pos_up 0 1000000000" in netlist
+    assert "Cc0_f0_live_pos_up_par c0_f0_live_pos_up 0 0.05f IC=0" in netlist
     assert "Mc0_f0_live_pos_up_e vwhi_ref relig0 c0_f0_live_pos_up 0 NSENSE W=0.5u L=180n" in netlist
     assert "Mc0_f0_live_pos_up_e vwhi_ref egate0" not in netlist
 
@@ -1981,6 +1983,36 @@ def test_multiclass_block_sequence_can_use_hybrid_readout_eligibility() -> None:
     assert "Mrelig0_pgate_dis_clk relig0_pgate_gate relboost 0 0 NSENSE W=0.5u L=180n" in netlist
     assert "Mrelig0_pass_clk relig0_pass_mid relpass elig0 0 NSENSE W=8u L=180n" in netlist
     assert "Mrelig0_pass_gate relig0 egate0 relig0_pass_mid 0 NSENSE W=8u L=180n" in netlist
+
+
+def test_multiclass_block_sequence_can_use_analog_pass_readout_eligibility() -> None:
+    records = _target0_two_feature_records(1)
+    netlist = seq.generate_netlist(
+        train_records=records,
+        eval_records=records,
+        feature_count=2,
+        readout_update_mode="live",
+        error_mode="label-rail-descent",
+        eligibility_gate_mode="contrast",
+        eligibility_source_mode="act",
+        hidden_activation_contrast_mode="common-gate",
+        readout_update_eligibility_mode="analog-pass",
+        readout_update_eligibility_pass_width_u=8.0,
+    )
+
+    assert "\nB" not in netlist
+    assert "Vrelsamp relsamp 0 PWL(" in netlist
+    assert "Vrelpass relpass 0 PWL(" not in netlist
+    assert "Vrelboost relboost 0 PWL(" not in netlist
+    assert "Vrelig_ref relig_ref 0" not in netlist
+    assert "Crelig0 relig0 0 5f IC=0" in netlist
+    assert "Crelig0_pgate" not in netlist
+    assert "Mrelig0_restore_p" not in netlist
+    assert "Mrelig0_pass_clk relig0_pass_mid relsamp elig0 0 NSENSE W=8u L=180n" in netlist
+    assert "Mrelig0_pass_gate relig0 hactgate0 relig0_pass_mid 0 NSENSE W=8u L=180n" in netlist
+    assert ".meas tran relig_update_f0_1 FIND V(relig0)" in netlist
+    assert ".meas tran relig_pgate_f0_1" not in netlist
+    assert "Mc0_f0_live_pos_up_e vwhi_ref relig0 c0_f0_live_pos_up 0 NSENSE W=0.5u L=180n" in netlist
 
 
 def test_multiclass_block_sequence_can_use_low_threshold_readout_eligibility_sense_model() -> None:
@@ -2184,6 +2216,46 @@ def _hybrid_readout_eligibility_transfer_netlist() -> str:
     return "\n".join(lines)
 
 
+def _analog_pass_readout_eligibility_transfer_netlist() -> str:
+    lines = [
+        "* Low-level analog-pass readout eligibility transfer primitive.",
+        ".param VDD=1.2",
+        seq.mos_models(),
+        ".options method=gear reltol=1e-3 abstol=1e-12 vntol=1e-6",
+        "Vdd vdd 0 {VDD}",
+        "Vrelsamp relsamp 0 PULSE(0 1.2 0.2n 5p 5p 0.6n 2n)",
+    ]
+    cases = {
+        "off_gate": (0.60, 0.00),
+        "low": (0.15, 1.20),
+        "mid": (0.30, 1.20),
+        "high": (0.60, 1.20),
+    }
+    for name, (eligibility_v, gate_v) in cases.items():
+        relig = f"relig_{name}"
+        pass_mid = f"{relig}_pass_mid"
+        lines += [
+            f"Velig_{name} elig_{name} 0 {eligibility_v:.12g}",
+            f"Vegate_{name} egate_{name} 0 {gate_v:.12g}",
+            f"C{relig} {relig} 0 5f IC=0",
+            f"R{relig} {relig} 0 1G",
+            f"R{pass_mid} {pass_mid} 0 1G",
+            f"M{relig}_pass_clk {pass_mid} relsamp elig_{name} 0 NSENSE W=8u L=180n",
+            f"M{relig}_pass_gate {relig} egate_{name} {pass_mid} 0 NSENSE W=8u L=180n",
+            f".meas tran relig_{name} FIND V({relig}) AT=1.0n",
+        ]
+    lines += [
+        ".tran 2p 1.2n uic",
+        ".control",
+        "run",
+        "quit",
+        ".endc",
+        ".end",
+        "",
+    ]
+    return "\n".join(lines)
+
+
 @pytest.mark.ngspice
 def test_multiclass_block_sequence_ngspice_hybrid_readout_eligibility_is_monotone_and_boosted(
     tmp_path: Path,
@@ -2204,6 +2276,29 @@ def test_multiclass_block_sequence_ngspice_hybrid_readout_eligibility_is_monoton
     assert 0.25 < mid < 0.40
     assert high > 0.80
     assert stronger > high
+
+
+@pytest.mark.ngspice
+def test_multiclass_block_sequence_ngspice_analog_pass_readout_eligibility_is_monotone_not_restored(
+    tmp_path: Path,
+    ngspice_path: str,
+) -> None:
+    measures = run_netlist(
+        ngspice_path,
+        tmp_path / "analog_pass_readout_eligibility_transfer.cir",
+        _analog_pass_readout_eligibility_transfer_netlist(),
+        timeout=30.0,
+    )
+
+    off_gate = float(measures["relig_off_gate"])
+    low = float(measures["relig_low"])
+    mid = float(measures["relig_mid"])
+    high = float(measures["relig_high"])
+    assert off_gate < 1e-3
+    assert 0.08 < low < 0.20
+    assert low + 80e-3 < mid < 0.36
+    assert mid + 150e-3 < high < 0.68
+    assert high < 0.75
 
 
 def test_multiclass_block_sequence_can_use_raw_direct_hidden_readout_gates() -> None:

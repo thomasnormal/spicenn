@@ -3214,6 +3214,39 @@ def _hidden_direct_multiclass_nontarget_guard_netlist(*, support_level: float | 
     return "\n".join(lines)
 
 
+def _hidden_direct_error_excess_netlist(*, errp: float, errn: float) -> str:
+    lines = [
+        "* Hidden direct error differential-excess primitive.",
+        ".param VDD=1.2",
+        seq.mos_models(),
+        ".options method=gear reltol=1e-3 abstol=1e-12 vntol=1e-6",
+        "Vdd vdd 0 {VDD}",
+        "Vrst scoregaterst 0 PULSE(1.2 0 0.1n 10p 10p 9n 20n)",
+        f"Verrp c0_errp 0 PULSE(0 {errp:.12g} 1n 10p 10p 4n 20n)",
+        f"Verrn c0_errn 0 PULSE(0 {errn:.12g} 1n 10p 10p 4n 20n)",
+        *seq.hidden_direct_error_excess_lines(
+            class_idx=0,
+            error_positive_node="c0_errp",
+            error_negative_node="c0_errn",
+            reset_node="scoregaterst",
+            width_u=8.0,
+            capacitance_f=2.0,
+        ),
+        ".meas tran rawp FIND V(c0_herrp_raw) AT=5n",
+        ".meas tran rawn FIND V(c0_herrn_raw) AT=5n",
+        ".meas tran herrp FIND V(c0_herrp) AT=5n",
+        ".meas tran herrn FIND V(c0_herrn) AT=5n",
+        ".tran 2p 8n uic",
+        ".control",
+        "run",
+        "quit",
+        ".endc",
+        ".end",
+        "",
+    ]
+    return "\n".join(lines)
+
+
 def test_multiclass_block_sequence_ngspice_residual_score_gate_is_monotonic_low_floor(
     tmp_path: Path,
     ngspice_path: str,
@@ -3680,6 +3713,48 @@ def test_multiclass_block_sequence_ngspice_direct_hidden_writer_support_guard_bl
     assert float(supported["signed_after"]) < 0.40
 
 
+def test_multiclass_block_sequence_ngspice_hidden_direct_error_excess_rejects_common_mode(
+    tmp_path: Path,
+    ngspice_path: str,
+) -> None:
+    common = run_netlist(
+        ngspice_path,
+        tmp_path / "hidden_direct_error_excess_common.cir",
+        _hidden_direct_error_excess_netlist(errp=0.34, errn=0.34),
+        timeout=20.0,
+    )
+    positive_small = run_netlist(
+        ngspice_path,
+        tmp_path / "hidden_direct_error_excess_positive_small.cir",
+        _hidden_direct_error_excess_netlist(errp=0.35, errn=0.31),
+        timeout=20.0,
+    )
+    negative_small = run_netlist(
+        ngspice_path,
+        tmp_path / "hidden_direct_error_excess_negative_small.cir",
+        _hidden_direct_error_excess_netlist(errp=0.31, errn=0.35),
+        timeout=20.0,
+    )
+    positive_large = run_netlist(
+        ngspice_path,
+        tmp_path / "hidden_direct_error_excess_positive_large.cir",
+        _hidden_direct_error_excess_netlist(errp=0.45, errn=0.25),
+        timeout=20.0,
+    )
+
+    common_diff = float(common["herrp"]) - float(common["herrn"])
+    small_diff = float(positive_small["herrp"]) - float(positive_small["herrn"])
+    small_neg_diff = float(negative_small["herrp"]) - float(negative_small["herrn"])
+    large_diff = float(positive_large["herrp"]) - float(positive_large["herrn"])
+
+    assert abs(common_diff) < 1e-6
+    assert float(common["herrp"]) < 5e-3
+    assert 1e-3 < small_diff < 10e-3
+    assert small_neg_diff == pytest.approx(-small_diff, rel=0.05, abs=0.5e-3)
+    assert large_diff > small_diff + 50e-3
+    assert float(positive_large["herrn"]) < 1e-3
+
+
 def test_multiclass_block_sequence_hidden_direct_support_guard_is_explicit_and_live() -> None:
     netlist = seq.generate_netlist(
         train_records=_one_hot_records(),
@@ -3772,6 +3847,29 @@ def test_multiclass_block_sequence_hidden_direct_can_use_centered_error_rails_be
     assert "Mh0_c0_direct_pv_pup_r h0_c0_direct_pv_pup1 c0_errp_ctr h0_c0_direct_pv_pup2" in netlist
     assert "Mh0_c0_direct_nn_nup_r h0_c0_direct_nn_nup1 c0_errn_ctr h0_c0_direct_nn_nup2" in netlist
     assert "Mc0_f0_live_pos_up_d c0_f0_live_pos_up c0_errp c0_vwp0" in netlist
+
+
+def test_multiclass_block_sequence_hidden_direct_can_use_differential_excess_error_source() -> None:
+    netlist = seq.generate_netlist(
+        train_records=_one_hot_records(),
+        eval_records=_one_hot_records(),
+        class_count=3,
+        feature_count=3,
+        readout_update_mode="live",
+        readout_nontarget_guard_mode="support",
+        hidden_update_mode="direct-readout-weighted",
+        hidden_direct_nontarget_guard_mode="support",
+        hidden_direct_error_source_mode="differential-excess",
+        error_mode="pairwise-margin-centered-gain-descent",
+        eligibility_gate_mode="rank",
+        readout_update_eligibility_mode="restored",
+    )
+
+    assert "\nB" not in netlist
+    assert "Cc0_herrp c0_herrp 0" in netlist
+    assert "Mc0_herrp_raw_up0 vdd c0_errp" in netlist
+    assert "Mh0_c0_direct_pv_pup_r h0_c0_direct_pv_pup1 c0_herrp" in netlist
+    assert "Mh0_c0_direct_pn_nup_r h0_c0_direct_pn_nup1 c0_herrp" in netlist
 
 
 def test_multiclass_block_sequence_rejects_hidden_direct_support_guard_without_support_storage() -> None:

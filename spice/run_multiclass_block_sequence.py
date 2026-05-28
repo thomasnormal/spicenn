@@ -76,7 +76,7 @@ HIDDEN_DIRECT_OUTPUT_STAGES = (
     "pmos-complementary",
 )
 HIDDEN_DIRECT_NONTARGET_GUARD_MODES = ("none", "support")
-HIDDEN_DIRECT_ERROR_SOURCE_MODES = ("writer", "centered")
+HIDDEN_DIRECT_ERROR_SOURCE_MODES = ("writer", "centered", "differential-excess")
 DEFAULT_HIDDEN_POSITIVE = 1.00
 DEFAULT_HIDDEN_NEGATIVE = 0.20
 ERROR_MODES = (
@@ -740,6 +740,57 @@ def hidden_direct_readout_weighted_update_lines(
                         f"M{prefix}{suffix}_pdn_direct {whp} {dgate} {low_ref_node} 0 NSENSE W={complement_width_scale * width_u:.6g}u L=180n",
                     ]
     return lines
+
+
+def hidden_direct_error_excess_lines(
+    *,
+    class_idx: int,
+    error_positive_node: str,
+    error_negative_node: str,
+    reset_node: str = "scoregaterst",
+    width_u: float = 8.0,
+    capacitance_f: float = 2.0,
+) -> list[str]:
+    if width_u <= 0.0 or capacitance_f <= 0.0:
+        raise ValueError("hidden direct error excess width and capacitance must be positive")
+    rawp = class_node(class_idx, "herrp_raw")
+    rawn = class_node(class_idx, "herrn_raw")
+    herrp = class_node(class_idx, "herrp")
+    herrn = class_node(class_idx, "herrn")
+    rawp_mid = f"{rawp}_mid"
+    rawn_mid = f"{rawn}_mid"
+    herrp_mid = f"{herrp}_mid"
+    herrn_mid = f"{herrn}_mid"
+    return [
+        f"C{rawp} {rawp} 0 {capacitance_f:.12g}f IC=0",
+        f"C{rawn} {rawn} 0 {capacitance_f:.12g}f IC=0",
+        f"C{herrp} {herrp} 0 {capacitance_f:.12g}f IC=0",
+        f"C{herrn} {herrn} 0 {capacitance_f:.12g}f IC=0",
+        f"R{rawp} {rawp} 0 1G",
+        f"R{rawn} {rawn} 0 1G",
+        f"R{herrp} {herrp} 0 1G",
+        f"R{herrn} {herrn} 0 1G",
+        f"R{rawp_mid} {rawp_mid} 0 1G",
+        f"R{rawn_mid} {rawn_mid} 0 1G",
+        f"R{herrp_mid} {herrp_mid} 0 1G",
+        f"R{herrn_mid} {herrn_mid} 0 1G",
+        f"M{rawp}_rst {rawp} {reset_node} 0 0 NMOS W=4u L=180n",
+        f"M{rawn}_rst {rawn} {reset_node} 0 0 NMOS W=4u L=180n",
+        f"M{herrp}_rst {herrp} {reset_node} 0 0 NMOS W=4u L=180n",
+        f"M{herrn}_rst {herrn} {reset_node} 0 0 NMOS W=4u L=180n",
+        f"M{rawp}_up0 vdd {error_positive_node} {rawp_mid} 0 NSENSE W={width_u:.6g}u L=180n",
+        f"M{rawp}_up1 {rawp_mid} {error_positive_node} {rawp} 0 NSENSE W={width_u:.6g}u L=180n",
+        f"M{rawp}_dn {rawp} {error_negative_node} 0 0 NSENSE W={width_u:.6g}u L=180n",
+        f"M{rawn}_up0 vdd {error_negative_node} {rawn_mid} 0 NSENSE W={width_u:.6g}u L=180n",
+        f"M{rawn}_up1 {rawn_mid} {error_negative_node} {rawn} 0 NSENSE W={width_u:.6g}u L=180n",
+        f"M{rawn}_dn {rawn} {error_positive_node} 0 0 NSENSE W={width_u:.6g}u L=180n",
+        f"M{herrp}_up0 vdd {rawp} {herrp_mid} 0 NSENSE W={width_u:.6g}u L=180n",
+        f"M{herrp}_up1 {herrp_mid} {rawp} {herrp} 0 NSENSE W={width_u:.6g}u L=180n",
+        f"M{herrp}_dn {herrp} {rawn} 0 0 NSENSE W={4.0 * width_u:.6g}u L=180n",
+        f"M{herrn}_up0 vdd {rawn} {herrn_mid} 0 NSENSE W={width_u:.6g}u L=180n",
+        f"M{herrn}_up1 {herrn_mid} {rawn} {herrn} 0 NSENSE W={width_u:.6g}u L=180n",
+        f"M{herrn}_dn {herrn} {rawp} 0 0 NSENSE W={4.0 * width_u:.6g}u L=180n",
+    ]
 
 
 def pairwise_winner_lines(
@@ -2396,10 +2447,24 @@ def generate_netlist(
                 width_u=hidden_update_width_u,
             )
     if uses_direct_hidden_update:
-        error_positive_suffix = "errp_ctr" if hidden_direct_error_source_mode == "centered" else "errp"
-        error_negative_suffix = "errn_ctr" if hidden_direct_error_source_mode == "centered" else "errn"
-        error_positive_nodes = [class_node(class_idx, error_positive_suffix) for class_idx in range(class_count)]
-        error_negative_nodes = [class_node(class_idx, error_negative_suffix) for class_idx in range(class_count)]
+        if hidden_direct_error_source_mode == "centered":
+            error_positive_nodes = [class_node(class_idx, "errp_ctr") for class_idx in range(class_count)]
+            error_negative_nodes = [class_node(class_idx, "errn_ctr") for class_idx in range(class_count)]
+        elif hidden_direct_error_source_mode == "differential-excess":
+            for class_idx in range(class_count):
+                lines += hidden_direct_error_excess_lines(
+                    class_idx=class_idx,
+                    error_positive_node=class_node(class_idx, "errp"),
+                    error_negative_node=class_node(class_idx, "errn"),
+                    reset_node="scoregaterst",
+                    width_u=max(1.0, hidden_update_width_u * 64.0),
+                    capacitance_f=max(1.0, hidden_direct_internal_capacitance_f * 40.0),
+                )
+            error_positive_nodes = [class_node(class_idx, "herrp") for class_idx in range(class_count)]
+            error_negative_nodes = [class_node(class_idx, "herrn") for class_idx in range(class_count)]
+        else:
+            error_positive_nodes = [class_node(class_idx, "errp") for class_idx in range(class_count)]
+            error_negative_nodes = [class_node(class_idx, "errn") for class_idx in range(class_count)]
         for feature in range(feature_count):
             hidden_eligibility_node = (
                 hidden_update_eligibility_node(feature)

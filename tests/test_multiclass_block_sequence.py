@@ -820,6 +820,33 @@ def test_multiclass_block_sequence_summarizes_final_signed_projection() -> None:
     assert stats["final_eval_signed_projection_mean_abs_score_v2"] == pytest.approx(0.165)
 
 
+def test_multiclass_block_sequence_summarizes_class_centered_signed_projection() -> None:
+    measures = {
+        "act_f0_2": 1.0,
+        "act_f1_2": 0.0,
+        "act_f0_3": 0.0,
+        "act_f1_3": 1.0,
+    }
+
+    stats = seq.class_centered_signed_readout_projection_stats(
+        measures,
+        labels=[0, 1, 0, 1],
+        sequence=["initial_eval", "train", "final_eval", "final_eval"],
+        class_count=2,
+        feature_count=2,
+        total_feature_count=2,
+        final_signed=[
+            [1.0, 1.0],
+            [0.6, 1.4],
+        ],
+    )
+
+    assert stats["final_eval_class_centered_signed_projection_accuracy"] == 1.0
+    assert stats["final_eval_class_centered_signed_projection_min_margin_v2"] == pytest.approx(0.4)
+    assert stats["final_eval_class_centered_signed_projection_rows"][0]["prediction"] == 0
+    assert stats["final_eval_class_centered_signed_projection_rows"][1]["prediction"] == 1
+
+
 def test_multiclass_block_sequence_summarizes_conductance_projection() -> None:
     measures = {
         "act_f0_2": 1.0,

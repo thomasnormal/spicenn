@@ -3566,6 +3566,47 @@ def signed_readout_projection_stats(
     }
 
 
+def class_centered_signed_readout_projection_stats(
+    measures: dict[str, float],
+    *,
+    labels: list[int],
+    sequence: list[str],
+    class_count: int,
+    feature_count: int,
+    total_feature_count: int,
+    final_signed: list[list[float]],
+) -> dict[str, Any]:
+    """Diagnostic signed readout after removing per-class feature mean.
+
+    The bias feature, when present, is left untouched. This is not used by the
+    circuit; it tests whether a future physical class-mean centering servo would
+    address class-prior dominance.
+    """
+    if feature_count <= 0:
+        centered = np.array(final_signed, dtype=float)
+    else:
+        centered = np.array(final_signed, dtype=float).copy()
+        centered[:, :feature_count] -= np.mean(centered[:, :feature_count], axis=1)[:, None]
+    stats = signed_readout_projection_stats(
+        measures,
+        labels=labels,
+        sequence=sequence,
+        class_count=class_count,
+        total_feature_count=total_feature_count,
+        final_signed=centered.tolist(),
+    )
+    return {
+        "final_eval_class_centered_signed_projection_rows": stats["final_eval_signed_projection_rows"],
+        "final_eval_class_centered_signed_projection_accuracy": stats["final_eval_signed_projection_accuracy"],
+        "final_eval_class_centered_signed_projection_min_margin_v2": stats[
+            "final_eval_signed_projection_min_margin_v2"
+        ],
+        "final_eval_class_centered_signed_projection_mean_abs_score_v2": stats[
+            "final_eval_signed_projection_mean_abs_score_v2"
+        ],
+    }
+
+
 def conductance_readout_projection_stats(
     measures: dict[str, float],
     *,
@@ -5000,6 +5041,15 @@ def run_case(args: argparse.Namespace) -> dict[str, Any]:
         total_feature_count=total_feature_count,
         final_signed=final_signed,
     )
+    class_centered_signed_projection = class_centered_signed_readout_projection_stats(
+        measures,
+        labels=labels,
+        sequence=sequence,
+        class_count=args.class_count,
+        feature_count=feature_count,
+        total_feature_count=total_feature_count,
+        final_signed=final_signed,
+    )
     conductance_projection = conductance_readout_projection_stats(
         measures,
         labels=labels,
@@ -5350,6 +5400,13 @@ def run_case(args: argparse.Namespace) -> dict[str, Any]:
             initial_signed_v=args.initial_positive - args.initial_negative,
         ),
         **signed_projection,
+        **class_centered_signed_projection,
+        **projection_alignment_stats(
+            rows,
+            class_centered_signed_projection["final_eval_class_centered_signed_projection_rows"],
+            class_count=args.class_count,
+            prefix="class_centered_signed_projection",
+        ),
         **projection_alignment_stats(
             rows,
             signed_projection["final_eval_signed_projection_rows"],

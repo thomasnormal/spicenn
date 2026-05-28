@@ -3207,6 +3207,7 @@ def generate_netlist(
                     else None
                 ),
             )
+    live_writer_measure_specs: list[dict[str, Any]] = []
     for class_idx in range(class_count):
         for feature in range(total_feature_count):
             activation_node = (
@@ -3477,6 +3478,25 @@ def generate_netlist(
                     width_u=readout_update_width_u,
                     high_side_topology=readout_live_high_side_topology,
                 )
+                live_writer_measure_specs.append(
+                    {
+                        "class_idx": class_idx,
+                        "feature": feature,
+                        "activation_node": activation_node,
+                        "positive_descent_node": (
+                            class_node(class_idx, "targetp")
+                            if positive_descent_node is None
+                            else positive_descent_node
+                        ),
+                        "negative_descent_node": (
+                            class_node(class_idx, "targetn")
+                            if negative_descent_node is None
+                            else negative_descent_node
+                        ),
+                        "guard_node": update_guard_node or nontarget_guard_node,
+                        "has_pmos_controls": readout_live_high_side_topology in ("pmos-gated", "pmos-differential"),
+                    }
+                )
             else:
                 readout_update_lines = [
                     f"C{class_node(class_idx, f'gvp{feature}')} {class_node(class_idx, f'gvp{feature}')} 0 2f IC=0",
@@ -3704,6 +3724,42 @@ def generate_netlist(
                 ]
         if seq == "train":
             train_seen += 1
+            if readout_update_mode == "live":
+                before_ns = max(0.0, base + acc_start_ns - 0.05)
+                after_ns = min(base + CYCLE_NS - 0.10, base + acc_end_ns + 0.50)
+                writer_sample_ns = base + readout_eligibility_update_measure_ns
+                for spec in live_writer_measure_specs:
+                    class_idx = int(spec["class_idx"])
+                    feature = int(spec["feature"])
+                    prefix = f"c{class_idx}_f{feature}_writer"
+                    vwp = class_node(class_idx, f"vwp{feature}")
+                    vwn = class_node(class_idx, f"vwn{feature}")
+                    positive_node = str(spec["positive_descent_node"])
+                    negative_node = str(spec["negative_descent_node"])
+                    activation_node = str(spec["activation_node"])
+                    guard_node = spec["guard_node"]
+                    lines += [
+                        f".meas tran {prefix}_pos_train{train_seen} FIND V({positive_node}) AT={writer_sample_ns:.2f}n",
+                        f".meas tran {prefix}_neg_train{train_seen} FIND V({negative_node}) AT={writer_sample_ns:.2f}n",
+                        f".meas tran {prefix}_drive_diff_train{train_seen} PARAM='{prefix}_pos_train{train_seen}-{prefix}_neg_train{train_seen}'",
+                        f".meas tran {prefix}_elig_train{train_seen} FIND V({activation_node}) AT={writer_sample_ns:.2f}n",
+                        f".meas tran {prefix}_vwp_before_train{train_seen} FIND V({vwp}) AT={before_ns:.2f}n",
+                        f".meas tran {prefix}_vwn_before_train{train_seen} FIND V({vwn}) AT={before_ns:.2f}n",
+                        f".meas tran {prefix}_signed_before_train{train_seen} PARAM='{prefix}_vwp_before_train{train_seen}-{prefix}_vwn_before_train{train_seen}'",
+                        f".meas tran {prefix}_vwp_after_train{train_seen} FIND V({vwp}) AT={after_ns:.2f}n",
+                        f".meas tran {prefix}_vwn_after_train{train_seen} FIND V({vwn}) AT={after_ns:.2f}n",
+                        f".meas tran {prefix}_signed_after_train{train_seen} PARAM='{prefix}_vwp_after_train{train_seen}-{prefix}_vwn_after_train{train_seen}'",
+                        f".meas tran {prefix}_signed_delta_train{train_seen} PARAM='{prefix}_signed_after_train{train_seen}-{prefix}_signed_before_train{train_seen}'",
+                    ]
+                    if guard_node is not None:
+                        lines.append(
+                            f".meas tran {prefix}_guard_train{train_seen} FIND V({guard_node}) AT={writer_sample_ns:.2f}n"
+                        )
+                    if bool(spec["has_pmos_controls"]):
+                        lines += [
+                            f".meas tran {prefix}_pos_ctrl_min_train{train_seen} MIN V(c{class_idx}_f{feature}_live_pos_up_ctrl) FROM={base + acc_start_ns:.2f}n TO={base + acc_end_ns:.2f}n",
+                            f".meas tran {prefix}_neg_ctrl_min_train{train_seen} MIN V(c{class_idx}_f{feature}_live_neg_up_ctrl) FROM={base + acc_start_ns:.2f}n TO={base + acc_end_ns:.2f}n",
+                        ]
             if uses_hidden_update:
                 for feature in range(feature_count):
                     lines += [
@@ -4699,6 +4755,105 @@ def readout_train_progress_stats(
         "train_readout_target_minus_nontarget_delta_by_train_v": target_minus_nontarget_deltas,
         "train_readout_target_minus_nontarget_delta_mean_v": float(np.mean(target_minus_nontarget_deltas)),
         "train_readout_target_minus_nontarget_delta_min_v": float(np.min(target_minus_nontarget_deltas)),
+    }
+
+
+def live_readout_writer_handoff_stats(
+    measures: dict[str, float],
+    *,
+    train_labels: list[int],
+    class_count: int,
+    total_feature_count: int,
+    eligibility_active_threshold_v: float = 25e-3,
+    drive_deadzone_v: float = 1e-6,
+    delta_deadzone_v: float = 1e-6,
+) -> dict[str, Any]:
+    rows: list[dict[str, Any]] = []
+    target_active_deltas: list[float] = []
+    nontarget_active_deltas: list[float] = []
+    aligned = 0
+    alignable = 0
+    ctrl_aligned = 0
+    ctrl_alignable = 0
+    for train_idx, label in enumerate(train_labels, start=1):
+        for class_idx in range(class_count):
+            role = "target" if class_idx == label else "nontarget"
+            for feature in range(total_feature_count):
+                prefix = f"c{class_idx}_f{feature}_writer"
+                required = [
+                    f"{prefix}_pos_train{train_idx}",
+                    f"{prefix}_neg_train{train_idx}",
+                    f"{prefix}_drive_diff_train{train_idx}",
+                    f"{prefix}_elig_train{train_idx}",
+                    f"{prefix}_signed_delta_train{train_idx}",
+                ]
+                if not all(key in measures for key in required):
+                    continue
+                positive = float(measures[f"{prefix}_pos_train{train_idx}"])
+                negative = float(measures[f"{prefix}_neg_train{train_idx}"])
+                drive_diff = float(measures[f"{prefix}_drive_diff_train{train_idx}"])
+                eligibility = float(measures[f"{prefix}_elig_train{train_idx}"])
+                signed_delta = float(measures[f"{prefix}_signed_delta_train{train_idx}"])
+                active = eligibility > eligibility_active_threshold_v
+                row: dict[str, Any] = {
+                    "train_index": train_idx,
+                    "label": label,
+                    "class": class_idx,
+                    "feature": feature,
+                    "role": role,
+                    "positive_drive_v": positive,
+                    "negative_drive_v": negative,
+                    "drive_diff_v": drive_diff,
+                    "eligibility_v": eligibility,
+                    "active": active,
+                    "signed_delta_v": signed_delta,
+                }
+                guard_key = f"{prefix}_guard_train{train_idx}"
+                if guard_key in measures:
+                    row["guard_v"] = float(measures[guard_key])
+                pos_ctrl_key = f"{prefix}_pos_ctrl_min_train{train_idx}"
+                neg_ctrl_key = f"{prefix}_neg_ctrl_min_train{train_idx}"
+                if pos_ctrl_key in measures and neg_ctrl_key in measures:
+                    pos_ctrl = float(measures[pos_ctrl_key])
+                    neg_ctrl = float(measures[neg_ctrl_key])
+                    row["pos_ctrl_min_v"] = pos_ctrl
+                    row["neg_ctrl_min_v"] = neg_ctrl
+                    if active and abs(drive_diff) > drive_deadzone_v:
+                        ctrl_alignable += 1
+                        if (drive_diff > 0.0 and pos_ctrl < neg_ctrl) or (
+                            drive_diff < 0.0 and neg_ctrl < pos_ctrl
+                        ):
+                            ctrl_aligned += 1
+                if active and abs(drive_diff) > drive_deadzone_v:
+                    alignable += 1
+                    if (drive_diff > 0.0 and signed_delta > delta_deadzone_v) or (
+                        drive_diff < 0.0 and signed_delta < -delta_deadzone_v
+                    ):
+                        aligned += 1
+                if active:
+                    if role == "target":
+                        target_active_deltas.append(signed_delta)
+                    else:
+                        nontarget_active_deltas.append(signed_delta)
+                rows.append(row)
+    target_mean = float(np.mean(target_active_deltas)) if target_active_deltas else None
+    nontarget_mean = float(np.mean(nontarget_active_deltas)) if nontarget_active_deltas else None
+    return {
+        "train_live_writer_handoff_rows": rows,
+        "train_live_writer_handoff_row_count": len(rows),
+        "train_live_writer_handoff_active_target_signed_delta_mean_v": target_mean,
+        "train_live_writer_handoff_active_nontarget_signed_delta_mean_v": nontarget_mean,
+        "train_live_writer_handoff_active_target_minus_nontarget_delta_mean_v": (
+            target_mean - nontarget_mean if target_mean is not None and nontarget_mean is not None else None
+        ),
+        "train_live_writer_handoff_drive_delta_alignment_fraction": (
+            aligned / alignable if alignable else None
+        ),
+        "train_live_writer_handoff_drive_delta_alignable_count": alignable,
+        "train_live_writer_handoff_ctrl_selection_alignment_fraction": (
+            ctrl_aligned / ctrl_alignable if ctrl_alignable else None
+        ),
+        "train_live_writer_handoff_ctrl_selection_alignable_count": ctrl_alignable,
     }
 
 
@@ -5850,6 +6005,12 @@ def run_case(args: argparse.Namespace) -> dict[str, Any]:
             feature_count=feature_count,
             class_count=args.class_count,
             initial_signed_v=args.initial_positive - args.initial_negative,
+        ),
+        **live_readout_writer_handoff_stats(
+            measures,
+            train_labels=[int(record["label"]) for record in train_records],
+            class_count=args.class_count,
+            total_feature_count=total_feature_count,
         ),
         **signed_projection,
         **class_centered_signed_projection,

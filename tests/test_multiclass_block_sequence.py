@@ -1539,6 +1539,43 @@ def test_multiclass_block_sequence_can_use_pmos_differential_live_high_side_writ
     assert "Rc0_f0_live_pos_up_ctrl c0_f0_live_pos_up_ctrl vdd 1000000" in netlist
     assert "Mc0_f0_live_pos_up_ctrl_latch c0_f0_live_pos_up_ctrl c0_f0_live_neg_up_ctrl vdd vdd PMOS" in netlist
     assert "Mc0_f0_live_neg_up_ctrl_latch c0_f0_live_neg_up_ctrl c0_f0_live_pos_up_ctrl vdd vdd PMOS" in netlist
+    assert ".meas tran c0_f0_writer_pos_train1 FIND V(c0_errp)" in netlist
+    assert ".meas tran c0_f0_writer_elig_train1 FIND V(elig0)" in netlist
+    assert ".meas tran c0_f0_writer_signed_delta_train1" in netlist
+    assert ".meas tran c0_f0_writer_pos_ctrl_min_train1 MIN V(c0_f0_live_pos_up_ctrl)" in netlist
+
+
+def test_multiclass_block_sequence_summarizes_live_writer_handoff_alignment() -> None:
+    measures = {
+        "c0_f0_writer_pos_train1": 0.36,
+        "c0_f0_writer_neg_train1": 0.30,
+        "c0_f0_writer_drive_diff_train1": 0.06,
+        "c0_f0_writer_elig_train1": 0.20,
+        "c0_f0_writer_signed_delta_train1": 0.010,
+        "c0_f0_writer_pos_ctrl_min_train1": 0.10,
+        "c0_f0_writer_neg_ctrl_min_train1": 1.10,
+        "c1_f0_writer_pos_train1": 0.24,
+        "c1_f0_writer_neg_train1": 0.34,
+        "c1_f0_writer_drive_diff_train1": -0.10,
+        "c1_f0_writer_elig_train1": 0.20,
+        "c1_f0_writer_signed_delta_train1": -0.020,
+        "c1_f0_writer_pos_ctrl_min_train1": 1.05,
+        "c1_f0_writer_neg_ctrl_min_train1": 0.08,
+    }
+
+    stats = seq.live_readout_writer_handoff_stats(
+        measures,
+        train_labels=[0],
+        class_count=2,
+        total_feature_count=1,
+    )
+
+    assert stats["train_live_writer_handoff_row_count"] == 2
+    assert stats["train_live_writer_handoff_active_target_signed_delta_mean_v"] == pytest.approx(0.010)
+    assert stats["train_live_writer_handoff_active_nontarget_signed_delta_mean_v"] == pytest.approx(-0.020)
+    assert stats["train_live_writer_handoff_active_target_minus_nontarget_delta_mean_v"] == pytest.approx(0.030)
+    assert stats["train_live_writer_handoff_drive_delta_alignment_fraction"] == 1.0
+    assert stats["train_live_writer_handoff_ctrl_selection_alignment_fraction"] == 1.0
 
 
 def test_multiclass_block_sequence_can_use_pairwise_margin_centered_bounded_gain_descent() -> None:
@@ -2907,6 +2944,44 @@ def test_multiclass_block_sequence_ngspice_symmetric_support_keeps_differential_
     assert target_supported > 0.1e-3
     assert nontarget_supported < -0.1e-3
     assert abs(nontarget_unsupported) < 20e-6
+
+
+@pytest.mark.ngspice
+def test_multiclass_block_sequence_ngspice_integrated_live_writer_handoff_diagnostics(
+    tmp_path: Path,
+    ngspice_path: str,
+) -> None:
+    records = [{"label": 0, "inputs": {"x0": 0.85}}]
+    measures = run_netlist(
+        ngspice_path,
+        tmp_path / "integrated_live_writer_handoff_diagnostics.cir",
+        seq.generate_netlist(
+            train_records=records,
+            eval_records=records,
+            class_count=2,
+            feature_count=1,
+            error_mode="label-rail-descent",
+            readout_update_mode="live",
+            readout_live_high_side_topology="pmos-differential",
+            readout_update_width_u=1.0,
+            readout_high_ref=0.48,
+            readout_low_ref=0.22,
+        ),
+        timeout=60.0,
+    )
+
+    stats = seq.live_readout_writer_handoff_stats(
+        measures,
+        train_labels=[0],
+        class_count=2,
+        total_feature_count=1,
+    )
+
+    assert stats["train_live_writer_handoff_row_count"] == 2
+    assert stats["train_live_writer_handoff_drive_delta_alignment_fraction"] == 1.0
+    assert stats["train_live_writer_handoff_ctrl_selection_alignment_fraction"] == 1.0
+    assert stats["train_live_writer_handoff_active_target_signed_delta_mean_v"] > 1e-3
+    assert stats["train_live_writer_handoff_active_nontarget_signed_delta_mean_v"] < -1e-3
 
 
 def test_multiclass_block_sequence_can_use_raw_direct_hidden_readout_gates() -> None:

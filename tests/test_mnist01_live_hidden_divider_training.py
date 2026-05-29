@@ -160,6 +160,8 @@ def test_mnist01_live_hidden_netlist_is_live_transistor_path() -> None:
         hidden_write_start_train_index=1,
     )
     assert "Mh1f6_live_pup_pgate_sel h1f6_live_pup_pgate px6 h1f6_live_pup_pgmid 0 NSENSE" in signcharge_netlist
+    assert "Ch1f6_live_pup_packet h1f6_live_pup_packet 0 0.25f IC=1.05" in signcharge_netlist
+    assert "Mh1f6_live_pup_pmos wh1f6p h1f6_live_pup_pgate h1f6_live_pup_packet vdd PMOS" in signcharge_netlist
     assert "Ch1f6_live_pup_pgmid h1f6_live_pup_pgmid 0 0.001f IC=0" in signcharge_netlist
     assert "Ch1f6_live_pup_pgphi h1f6_live_pup_pgphi 0 0.001f IC=0" in signcharge_netlist
     assert "Mh1f6_live_pos_up_ctrl_phi" not in signcharge_netlist
@@ -632,6 +634,56 @@ def test_mnist01_live_hidden_sparse_complement_dynamic_hidden_writes_stay_bounde
     assert max(abs(parsed[f"train_hcredit_gate_probe_{idx}"]) for idx in range(1, 4)) > 0.5
     for train_idx in range(4):
         assert abs(parsed[f"train_wh_probe_signed_delta_{train_idx}"]) < 2.0e-3
+
+
+@pytest.mark.ngspice
+def test_mnist01_live_hidden_sparse_complement_signcharge_packet_writes_are_bounded(
+    tmp_path: Path,
+    ngspice_path: str,
+) -> None:
+    _require_mnist_raw()
+    train, evals = mnist01_hidden.load_mnist01_records(
+        train_count_per_digit=2,
+        eval_count_per_digit=2,
+        image_size=4,
+    )
+    train = mnist01_fixed.add_complement_features(mnist01_fixed.round_robin_by_label(train), scale=0.5)
+    evals = mnist01_fixed.add_complement_features(evals, scale=0.5)
+
+    parsed = mnist01_hidden.run_netlist(
+        ngspice_path,
+        tmp_path / "mnist01_live_hidden_sparse_complement_signcharge_packet.cir",
+        mnist01_hidden.mnist01_live_hidden_netlist(
+            train,
+            evals,
+            hidden_count=32,
+            hidden_init_mode="identity",
+            hidden_connectivity_mode="identity-sparse",
+            hidden_activation_mode="differential-preamp",
+            hidden_activation_sense_width_u=4.0,
+            readout_activation_mode="pre-differential",
+            readout_writer_activation_mode="pre-differential",
+            readout_update_width_u=0.20,
+            hidden_credit_gate_mode="dynamic-preamp",
+            hidden_writer_topology="pmos-signcharge",
+            hidden_write_start_train_index=1,
+            hidden_credit_sense_start_ns=5.00,
+            hidden_credit_sense_end_ns=5.35,
+            hidden_write_start_ns=5.35,
+            hidden_write_end_ns=5.45,
+            hidden_update_width_u=0.2,
+        ),
+        timeout=300.0,
+    )
+
+    for sample_idx in range(4):
+        assert parsed[f"final_margin_{sample_idx}"] > 0.25e-3
+        assert parsed[f"final_margin_improvement_{sample_idx}"] > 0.25e-3
+    assert abs(parsed["train_wh_probe_signed_delta_0"]) < 1.0e-3
+    hidden_deltas = [parsed[f"train_wh_probe_signed_delta_{idx}"] for idx in range(1, 4)]
+    assert max(abs(delta) for delta in hidden_deltas) > 5.0e-3
+    assert max(abs(delta) for delta in hidden_deltas) < 20.0e-3
+    assert max(abs(parsed[f"train_hcredit_gate_probe_{idx}"]) for idx in range(1, 4)) > 0.5
 
 
 def _hidden_activation_preamp_probe_netlist(
@@ -1499,6 +1551,53 @@ def _hidden_credit_signcharge_primitive_netlist(raw_positive: float, raw_negativ
     return "\n".join(lines)
 
 
+def _hidden_signcharge_packet_writer_netlist(
+    *,
+    positive_gate: float,
+    negative_gate: float,
+    whp_ic: float,
+    whn_ic: float,
+) -> str:
+    lines = [
+        "* Integrated-like signcharge packet writer primitive.",
+        ".param VDD=1.2",
+        mnist01_hidden.mos_models(),
+        ".options method=gear reltol=1e-4 abstol=1e-13 vntol=1e-7",
+        "Vdd vdd 0 {VDD}",
+        "Vrst rst 0 PULSE(1.2 0 0.4n 10p 10p 9n 20n)",
+        "Vrstn rstn 0 PULSE(0 1.2 0.4n 10p 10p 9n 20n)",
+        "Vhcgwrite h0_hcg_write 0 PWL(0n 0 1.27n 0 1.30n 1.2 1.40n 1.2 1.43n 0 5n 0)",
+        "Vpx0 px0 0 0.78",
+        f"Vhdpg h0_hdp_gate 0 {positive_gate:.12g}",
+        f"Vhdng h0_hdn_gate 0 {negative_gate:.12g}",
+        f"Cwh0f0p wh0f0p 0 20f IC={whp_ic:.12g}",
+        f"Cwh0f0n wh0f0n 0 20f IC={whn_ic:.12g}",
+        "Rwhp wh0f0p 0 1e15",
+        "Rwhn wh0f0n 0 1e15",
+        *mnist01_hidden._hidden_writer_lines(
+            1,
+            1,
+            0.2,
+            4.0,
+            0.2,
+            "pmos-signcharge",
+            "h{hidden}_hcg_write",
+            True,
+        ),
+        ".meas tran whp_after FIND V(wh0f0p) AT=4.00n",
+        ".meas tran whn_after FIND V(wh0f0n) AT=4.00n",
+        f".meas tran signed_delta PARAM='whp_after-whn_after-({whp_ic:.12g}-{whn_ic:.12g})'",
+        ".tran 1p 5n uic",
+        ".control",
+        "run",
+        "quit",
+        ".endc",
+        ".end",
+        "",
+    ]
+    return "\n".join(lines)
+
+
 @pytest.mark.ngspice
 def test_hidden_credit_dynamic_preamp_restores_mnist_scale_credit_with_dead_zone(
     tmp_path: Path,
@@ -1551,6 +1650,50 @@ def test_hidden_credit_dynamic_preamp_restores_mnist_scale_credit_with_dead_zone
 
 
 @pytest.mark.ngspice
+def test_hidden_signcharge_packet_writer_bounds_saturated_state(
+    tmp_path: Path,
+    ngspice_path: str,
+) -> None:
+    negative = mnist01_hidden.run_netlist(
+        ngspice_path,
+        tmp_path / "hidden_signcharge_packet_negative.cir",
+        _hidden_signcharge_packet_writer_netlist(
+            positive_gate=0.0,
+            negative_gate=0.69,
+            whp_ic=1.05,
+            whn_ic=0.05,
+        ),
+        timeout=30.0,
+    )
+    positive = mnist01_hidden.run_netlist(
+        ngspice_path,
+        tmp_path / "hidden_signcharge_packet_positive.cir",
+        _hidden_signcharge_packet_writer_netlist(
+            positive_gate=0.69,
+            negative_gate=0.0,
+            whp_ic=0.05,
+            whn_ic=1.05,
+        ),
+        timeout=30.0,
+    )
+    neutral = mnist01_hidden.run_netlist(
+        ngspice_path,
+        tmp_path / "hidden_signcharge_packet_neutral.cir",
+        _hidden_signcharge_packet_writer_netlist(
+            positive_gate=0.0,
+            negative_gate=0.0,
+            whp_ic=1.05,
+            whn_ic=0.05,
+        ),
+        timeout=30.0,
+    )
+
+    assert -30e-3 < negative["signed_delta"] < -3e-3
+    assert 3e-3 < positive["signed_delta"] < 30e-3
+    assert abs(neutral["signed_delta"]) < 100e-6
+
+
+@pytest.mark.ngspice
 def test_hidden_credit_signcharge_writer_preserves_bounded_magnitude(
     tmp_path: Path,
     ngspice_path: str,
@@ -1587,11 +1730,11 @@ def test_hidden_credit_signcharge_writer_preserves_bounded_magnitude(
     )
 
     assert negative["gate_diff"] < -30e-3
-    assert -30e-3 < negative["signed_delta"] < -3e-3
+    assert -1e-3 < negative["signed_delta"] < -50e-6
     assert abs(neutral["gate_diff"]) < 1e-6
     assert abs(neutral["signed_delta"]) < 100e-6
     assert tiny["gate_diff"] > 10e-3
     assert abs(tiny["signed_delta"]) < 100e-6
     assert positive["gate_diff"] > 30e-3
-    assert 3e-3 < positive["signed_delta"] < 30e-3
-    assert large["signed_delta"] > positive["signed_delta"] + 0.20
+    assert 50e-6 < positive["signed_delta"] < 1e-3
+    assert positive["signed_delta"] < large["signed_delta"] < 20e-3

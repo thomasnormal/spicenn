@@ -811,18 +811,30 @@ def _hidden_writer_lines(
     phase_low_side: bool = False,
     hidden_init_mode: str = "quadrant",
     hidden_connectivity_mode: str = "dense",
+    signcharge_packet_cap_f: float = 0.25,
 ) -> list[str]:
     if topology not in HIDDEN_WRITER_TOPOLOGIES:
         raise ValueError(f"hidden_writer_topology must be one of {HIDDEN_WRITER_TOPOLOGIES}")
+    if signcharge_packet_cap_f <= 0.0:
+        raise ValueError("signcharge packet capacitance must be positive")
     lines = [
         "Vhidden_whi_ref hidden_whi_ref 0 1.05",
         "Vhidden_wlo_ref hidden_wlo_ref 0 0.15",
     ]
 
-    def pmos_charge_lines(prefix: str, dest: str, selector: str, credit: str, phase: str) -> list[str]:
+    def pmos_charge_lines(
+        prefix: str,
+        dest: str,
+        selector: str,
+        credit: str,
+        phase: str,
+        *,
+        packet_cap_f: float | None = None,
+    ) -> list[str]:
         gate = f"{prefix}_pgate"
         mid = f"{prefix}_pgmid"
         phi = f"{prefix}_pgphi"
+        source = "hidden_whi_ref" if packet_cap_f is None else f"{prefix}_packet"
         return [
             f"C{gate} {gate} 0 {gate_cap_f:.12g}f IC=1.05",
             f"R{gate} {gate} hidden_whi_ref 1G",
@@ -830,11 +842,20 @@ def _hidden_writer_lines(
             f"R{phi} {phi} 0 1G",
             f"C{mid} {mid} 0 0.001f IC=0",
             f"C{phi} {phi} 0 0.001f IC=0",
+            *(
+                [
+                    f"C{source} {source} 0 {packet_cap_f:.12g}f IC=1.05",
+                    f"R{source} {source} hidden_whi_ref 1G",
+                    f"M{prefix}_packet_rst {source} rstn hidden_whi_ref vdd PMOS W=4u L=180n",
+                ]
+                if packet_cap_f is not None
+                else []
+            ),
             f"M{prefix}_pgate_rst hidden_whi_ref rst {gate} 0 NSENSE W=4u L=180n",
             f"M{prefix}_pgate_sel {gate} {selector} {mid} 0 NSENSE W={width_u:.6g}u L=180n",
             f"M{prefix}_pgate_cred {mid} {credit} {phi} 0 NSENSE W={width_u:.6g}u L=180n",
             f"M{prefix}_pgate_phi {phi} {phase} 0 0 NSENSE W={width_u:.6g}u L=180n",
-            f"M{prefix}_pmos {dest} {gate} hidden_whi_ref vdd PMOS W={pmos_width_u:.6g}u L=180n",
+            f"M{prefix}_pmos {dest} {gate} {source} vdd PMOS W={pmos_width_u:.6g}u L=180n",
         ]
 
     def pmos_differential_lines(prefix: str, whp: str, whn: str, selector: str, pos: str, neg: str, phase: str) -> list[str]:
@@ -928,8 +949,22 @@ def _hidden_writer_lines(
             elif topology == "pmos-differential":
                 lines += pmos_differential_lines(prefix, whp, whn, f"px{feature}", hdp, hdn, hidden_phase)
             else:
-                lines += pmos_charge_lines(f"{prefix}pup", whp, f"px{feature}", hdp, hidden_phase)
-                lines += pmos_charge_lines(f"{prefix}nup", whn, f"px{feature}", hdn, hidden_phase)
+                lines += pmos_charge_lines(
+                    f"{prefix}pup",
+                    whp,
+                    f"px{feature}",
+                    hdp,
+                    hidden_phase,
+                    packet_cap_f=signcharge_packet_cap_f,
+                )
+                lines += pmos_charge_lines(
+                    f"{prefix}nup",
+                    whn,
+                    f"px{feature}",
+                    hdn,
+                    hidden_phase,
+                    packet_cap_f=signcharge_packet_cap_f,
+                )
     return lines
 
 
@@ -1095,6 +1130,7 @@ def mnist01_live_hidden_netlist(
     hidden_update_width_u: float = 1.0,
     hidden_writer_pmos_width_u: float = 4.0,
     hidden_writer_gate_cap_f: float = 0.2,
+    hidden_writer_signcharge_packet_cap_f: float = 0.25,
     hidden_writer_topology: str = "pmos-highside",
     hidden_writer_phase_mode: str = "default",
 ) -> str:
@@ -1207,6 +1243,7 @@ def mnist01_live_hidden_netlist(
         hidden_update_width_u,
         hidden_writer_pmos_width_u,
         hidden_writer_gate_cap_f,
+        hidden_writer_signcharge_packet_cap_f,
     ) <= 0.0:
         raise ValueError("voltages, currents, widths, and capacitances must be positive")
 
@@ -1330,6 +1367,7 @@ def mnist01_live_hidden_netlist(
             hidden_credit_gate_mode == "dynamic-preamp",
             hidden_init_mode=hidden_init_mode,
             hidden_connectivity_mode=hidden_connectivity_mode,
+            signcharge_packet_cap_f=hidden_writer_signcharge_packet_cap_f,
         ),
         f".tran 5p {stop_ns:.2f}n uic",
         *_measure_lines(samples, eval_count, train_count, hidden_count=hidden_count, hidden_init_mode=hidden_init_mode),

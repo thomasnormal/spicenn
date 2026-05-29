@@ -828,6 +828,8 @@ def _hidden_writer_lines(
             f"R{gate} {gate} hidden_whi_ref 1G",
             f"R{mid} {mid} 0 1G",
             f"R{phi} {phi} 0 1G",
+            f"C{mid} {mid} 0 0.001f IC=0",
+            f"C{phi} {phi} 0 0.001f IC=0",
             f"M{prefix}_pgate_rst hidden_whi_ref rst {gate} 0 NSENSE W=4u L=180n",
             f"M{prefix}_pgate_sel {gate} {selector} {mid} 0 NSENSE W={width_u:.6g}u L=180n",
             f"M{prefix}_pgate_cred {mid} {credit} {phi} 0 NSENSE W={width_u:.6g}u L=180n",

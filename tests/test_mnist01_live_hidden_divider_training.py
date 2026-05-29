@@ -160,6 +160,8 @@ def test_mnist01_live_hidden_netlist_is_live_transistor_path() -> None:
         hidden_write_start_train_index=1,
     )
     assert "Mh1f6_live_pup_pgate_sel h1f6_live_pup_pgate px6 h1f6_live_pup_pgmid 0 NSENSE" in signcharge_netlist
+    assert "Ch1f6_live_pup_pgmid h1f6_live_pup_pgmid 0 0.001f IC=0" in signcharge_netlist
+    assert "Ch1f6_live_pup_pgphi h1f6_live_pup_pgphi 0 0.001f IC=0" in signcharge_netlist
     assert "Mh1f6_live_pos_up_ctrl_phi" not in signcharge_netlist
 
     hidden_write_phase_netlist = mnist01_hidden.mnist01_live_hidden_netlist(

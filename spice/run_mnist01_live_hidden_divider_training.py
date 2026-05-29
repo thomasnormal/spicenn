@@ -26,6 +26,7 @@ from run_spice_sweep import run_text_netlist
 HIDDEN = 4
 HIDDEN_INIT_MODES = ("quadrant", "identity")
 HIDDEN_CONNECTIVITY_MODES = ("dense", "identity-sparse")
+HIDDEN_WRITER_PHASE_MODES = ("default", "hidden-write")
 READOUT_WRITER_NORMALIZATION_MODES = ("none", "activity-gate")
 
 
@@ -1089,6 +1090,7 @@ def mnist01_live_hidden_netlist(
     hidden_writer_pmos_width_u: float = 4.0,
     hidden_writer_gate_cap_f: float = 0.2,
     hidden_writer_topology: str = "pmos-highside",
+    hidden_writer_phase_mode: str = "default",
 ) -> str:
     if not train_records or not eval_records:
         raise ValueError("train and eval records must not be empty")
@@ -1127,8 +1129,12 @@ def mnist01_live_hidden_netlist(
         raise ValueError("readout_writer_normalization_mode is only supported for hrow, not pre-differential")
     if hidden_writer_topology not in ("pmos-highside", "pmos-differential"):
         raise ValueError("hidden_writer_topology must be pmos-highside or pmos-differential")
+    if hidden_writer_phase_mode not in HIDDEN_WRITER_PHASE_MODES:
+        raise ValueError(f"hidden_writer_phase_mode must be one of {HIDDEN_WRITER_PHASE_MODES}")
     if hidden_credit_gate_mode == "dynamic-preamp" and hidden_writer_topology != "pmos-differential":
         raise ValueError("dynamic-preamp hidden credit gate requires pmos-differential hidden writer topology")
+    if hidden_credit_gate_mode == "dynamic-preamp" and hidden_writer_phase_mode != "default":
+        raise ValueError("dynamic-preamp hidden credit gate owns the hidden writer phase")
     if hidden_write_start_train_index < 0:
         raise ValueError("hidden_write_start_train_index must be nonnegative")
     if not (0.0 <= hidden_credit_sense_start_ns < hidden_credit_sense_end_ns <= CYCLE_NS):
@@ -1305,7 +1311,11 @@ def mnist01_live_hidden_netlist(
             hidden_writer_pmos_width_u,
             hidden_writer_gate_cap_f,
             hidden_writer_topology,
-            "h{hidden}_hcg_write" if hidden_credit_gate_mode == "dynamic-preamp" else "errphi",
+            (
+                "h{hidden}_hcg_write"
+                if hidden_credit_gate_mode == "dynamic-preamp"
+                else ("hiddenwritephi" if hidden_writer_phase_mode == "hidden-write" else "errphi")
+            ),
             hidden_credit_gate_mode == "dynamic-preamp",
             hidden_init_mode=hidden_init_mode,
             hidden_connectivity_mode=hidden_connectivity_mode,

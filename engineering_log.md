@@ -2,6 +2,39 @@
 
 ## 2026-05-29
 
+- Added `hidden_init_mode="patch2x2"` with `hidden_connectivity_mode="patch2x2-sparse"`
+  to the MNIST01 live-hidden deck.  For one 4x4 channel it creates the 9
+  stride-1 2x2 local receptive fields; for raw+complement two-channel inputs it
+  creates 18 local rows, preserving channel identity instead of summing raw and
+  complement into the same hidden precharge.  Structural tests prove the corner
+  patch mappings, sparse storage/forward/writer emission, two-channel
+  validation, and invalid-count rejection.  A raw-only ngspice smoke was weak
+  (`2/4`, `2/4`, `3/4` over a small readout-width probe), and a first
+  raw+complement single-row-per-patch smoke was also weak, so I did not promote
+  patch learning as a passing regression yet.  The useful progress is topology
+  support for the next learned-local-feature rung, not a new MNIST result.
+- Added the stricter hidden-margin rescue primitive requested by the latest
+  diagnosis.  Unlike the older hidden signcharge margin test that injected
+  fixed hidden-error rails, the new ngspice deck runs a physical score readout,
+  conductance-divider normalization, target-routed hidden-error rails,
+  readout-weighted hidden credit, dynamic hidden-credit preamp, bounded
+  signcharge packet hidden writer, dynamic reset, and a second physical score
+  replay, with no readout writer instantiated.  In the misclassified target-1
+  case, the normalized hidden error restores to about `+/-1.15 V`, hidden
+  credit is about `-0.69 V`, the hidden signed weight moves by `-7.75 mV`, next
+  pre evidence moves by `-7.52 mV`, and the target-vs-wrong score margin
+  improves by `+14.6 mV`.  The already-correct target-0 case produces only
+  sub-microvolt hidden-error/write movement.  This is the first low-level proof
+  that the normalized error path can drive a hidden-only physical update that
+  improves the downstream classifier margin, not just hidden capacitor voltage
+  or local pre evidence.  Verification: `python3 -m py_compile
+  spice/run_mnist01_live_hidden_divider_training.py
+  tests/test_mnist01_live_hidden_divider_training.py`; `python3 -m pytest
+  tests/test_mnist01_live_hidden_divider_training.py -q -k
+  'records_and_quadrant_mapping or netlist_is_live_transistor_path or
+  validation or conductance_divider_hidden_signcharge_rescues or
+  hidden_credit_signcharge_write_improves_downstream_score_margin'` -> `5
+  passed, 22 deselected` in `14.80 s`.
 - Added a downstream hidden-learning alignment primitive for the MNIST01
   signcharge path.  The new ngspice deck uses the real hidden forward cell,
   pre-differential score readout, readout-weighted hidden-credit current path,

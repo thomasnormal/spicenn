@@ -24,8 +24,8 @@ from run_spice_sweep import run_text_netlist
 
 
 HIDDEN = 4
-HIDDEN_INIT_MODES = ("quadrant", "identity")
-HIDDEN_CONNECTIVITY_MODES = ("dense", "identity-sparse")
+HIDDEN_INIT_MODES = ("quadrant", "identity", "patch2x2")
+HIDDEN_CONNECTIVITY_MODES = ("dense", "identity-sparse", "patch2x2-sparse")
 HIDDEN_WRITER_TOPOLOGIES = ("pmos-highside", "pmos-differential", "pmos-signcharge")
 HIDDEN_WRITER_PHASE_MODES = ("default", "hidden-write")
 READOUT_WRITER_NORMALIZATION_MODES = ("none", "activity-gate")
@@ -78,6 +78,11 @@ def hidden_unit_for_feature(feature: int, feature_count: int, hidden_count: int,
             raise ValueError("quadrant hidden_init_mode uses exactly four quadrant hidden units")
         image_size = _image_size_from_feature_count(feature_count)
         return hidden_block_for_feature(feature, image_size)
+    if hidden_init_mode == "patch2x2":
+        expected_hidden = patch2x2_hidden_count(feature_count)
+        if hidden_count != expected_hidden:
+            raise ValueError("patch2x2 hidden_init_mode uses one hidden unit per sliding 2x2 patch")
+        return patch2x2_hidden_for_feature(feature, feature_count)
     if hidden_count != feature_count:
         raise ValueError("identity hidden_init_mode requires one hidden unit per input feature")
     if not 0 <= feature < feature_count:
@@ -92,6 +97,70 @@ def _image_size_from_feature_count(feature_count: int) -> int:
     return image_size
 
 
+def _patch2x2_image_shape_from_feature_count(feature_count: int) -> tuple[int, int]:
+    try:
+        return _image_size_from_feature_count(feature_count), 1
+    except ValueError:
+        pass
+    if feature_count % 2 != 0:
+        raise ValueError("patch2x2 feature count must be a square image or two square feature channels")
+    image_size = int(round((feature_count // 2) ** 0.5))
+    if 2 * image_size * image_size != feature_count:
+        raise ValueError("patch2x2 feature count must be a square image or two square feature channels")
+    if image_size < 2:
+        raise ValueError("patch2x2 hidden_init_mode requires at least a 2x2 image")
+    return image_size, 2
+
+
+def patch2x2_hidden_count(feature_count: int) -> int:
+    image_size, channels = _patch2x2_image_shape_from_feature_count(feature_count)
+    if image_size < 2:
+        raise ValueError("patch2x2 hidden_init_mode requires at least a 2x2 image")
+    return channels * (image_size - 1) * (image_size - 1)
+
+
+def patch2x2_hidden_for_feature(feature: int, feature_count: int) -> int:
+    image_size, channels = _patch2x2_image_shape_from_feature_count(feature_count)
+    if image_size < 2:
+        raise ValueError("patch2x2 hidden_init_mode requires at least a 2x2 image")
+    pixels = image_size * image_size
+    if not 0 <= feature < channels * pixels:
+        raise ValueError("feature index is outside the image")
+    local_feature = feature % pixels
+    row = local_feature // image_size
+    col = local_feature % image_size
+    patch_row = min(row, image_size - 2)
+    patch_col = min(col, image_size - 2)
+    patch_count_per_channel = (image_size - 1) * (image_size - 1)
+    channel = feature // pixels
+    return channel * patch_count_per_channel + patch_row * (image_size - 1) + patch_col
+
+
+def patch2x2_features_for_hidden(hidden: int, feature_count: int, hidden_count: int) -> tuple[int, ...]:
+    image_size, channels = _patch2x2_image_shape_from_feature_count(feature_count)
+    expected_hidden = patch2x2_hidden_count(feature_count)
+    if hidden_count != expected_hidden:
+        raise ValueError("patch2x2 hidden_init_mode uses one hidden unit per sliding 2x2 patch")
+    if not 0 <= hidden < hidden_count:
+        raise ValueError("hidden index is outside the patch2x2 hidden range")
+    patch_count_per_channel = (image_size - 1) * (image_size - 1)
+    channel = hidden // patch_count_per_channel
+    patch_index = hidden % patch_count_per_channel
+    patch_row = patch_index // (image_size - 1)
+    patch_col = patch_index % (image_size - 1)
+    top_left = patch_row * image_size + patch_col
+    local_patch = (
+        top_left,
+        top_left + 1,
+        top_left + image_size,
+        top_left + image_size + 1,
+    )
+    pixels = image_size * image_size
+    if channel >= channels:
+        raise ValueError("hidden index is outside the patch2x2 hidden range")
+    return tuple(channel * pixels + feature for feature in local_patch)
+
+
 def _hidden_weight_node(hidden: int, feature: int, kind: str) -> str:
     return f"wh{hidden}f{feature}{kind}"
 
@@ -102,14 +171,18 @@ def _connected_features_for_hidden(
     hidden_count: int,
     init_mode: str,
     connectivity_mode: str,
-) -> range:
+) -> range | tuple[int, ...]:
     if connectivity_mode not in HIDDEN_CONNECTIVITY_MODES:
         raise ValueError(f"hidden_connectivity_mode must be one of {HIDDEN_CONNECTIVITY_MODES}")
     if connectivity_mode == "dense":
         return range(feature_count)
-    if init_mode != "identity" or hidden_count != feature_count:
-        raise ValueError("identity-sparse connectivity requires identity hidden rows")
-    return range(hidden, hidden + 1)
+    if connectivity_mode == "identity-sparse":
+        if init_mode != "identity" or hidden_count != feature_count:
+            raise ValueError("identity-sparse connectivity requires identity hidden rows")
+        return range(hidden, hidden + 1)
+    if init_mode != "patch2x2":
+        raise ValueError("patch2x2-sparse connectivity requires patch2x2 hidden rows")
+    return patch2x2_features_for_hidden(hidden, feature_count, hidden_count)
 
 
 def _readout_storage_lines(hidden_count: int, initial_positive: float, initial_negative: float) -> list[str]:
@@ -142,12 +215,21 @@ def _hidden_storage_lines(
         raise ValueError("quadrant hidden_init_mode uses exactly four quadrant hidden units")
     if init_mode == "identity" and hidden_count != feature_count:
         raise ValueError("identity hidden_init_mode requires one hidden unit per input feature")
+    if init_mode == "patch2x2" and hidden_count != patch2x2_hidden_count(feature_count):
+        raise ValueError("patch2x2 hidden_init_mode uses one hidden unit per sliding 2x2 patch")
     image_size = _image_size_from_feature_count(feature_count) if init_mode == "quadrant" else 0
     lines: list[str] = []
     for hidden in range(hidden_count):
+        patch_features = (
+            set(patch2x2_features_for_hidden(hidden, feature_count, hidden_count))
+            if init_mode == "patch2x2"
+            else set()
+        )
         for feature in _connected_features_for_hidden(hidden, feature_count, hidden_count, init_mode, connectivity_mode):
             if init_mode == "quadrant":
                 inside = hidden_block_for_feature(feature, image_size) == hidden
+            elif init_mode == "patch2x2":
+                inside = feature in patch_features
             else:
                 inside = hidden == feature
             positive = inside_positive if inside else outside_positive
@@ -1164,6 +1246,10 @@ def mnist01_live_hidden_netlist(
         raise ValueError("identity hidden_init_mode requires one hidden unit per input feature")
     if hidden_connectivity_mode == "identity-sparse" and hidden_init_mode != "identity":
         raise ValueError("identity-sparse connectivity requires identity hidden rows")
+    if hidden_connectivity_mode == "patch2x2-sparse" and hidden_init_mode != "patch2x2":
+        raise ValueError("patch2x2-sparse connectivity requires patch2x2 hidden rows")
+    if hidden_init_mode == "patch2x2" and hidden_count != patch2x2_hidden_count(feature_count):
+        raise ValueError("patch2x2 hidden_init_mode uses one hidden unit per sliding 2x2 patch")
     if hidden_init_mode == "quadrant":
         _image_size_from_feature_count(feature_count)
     if hidden_credit_gate_mode not in ("differential-excess", "dynamic-preamp"):

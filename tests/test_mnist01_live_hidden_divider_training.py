@@ -74,6 +74,14 @@ def test_mnist01_live_hidden_records_and_quadrant_mapping_are_real_4x4_mnist() -
     assert mnist01_hidden.hidden_block_for_feature(8, 4) == 2
     assert mnist01_hidden.hidden_block_for_feature(15, 4) == 3
     assert mnist01_hidden.hidden_unit_for_feature(15, 16, 16, "identity") == 15
+    assert mnist01_hidden.patch2x2_hidden_count(16) == 9
+    assert mnist01_hidden.patch2x2_features_for_hidden(0, 16, 9) == (0, 1, 4, 5)
+    assert mnist01_hidden.patch2x2_features_for_hidden(8, 16, 9) == (10, 11, 14, 15)
+    assert mnist01_hidden.patch2x2_hidden_count(32) == 18
+    assert mnist01_hidden.patch2x2_features_for_hidden(8, 32, 18) == (10, 11, 14, 15)
+    assert mnist01_hidden.patch2x2_features_for_hidden(17, 32, 18) == (26, 27, 30, 31)
+    assert mnist01_hidden.hidden_unit_for_feature(15, 16, 9, "patch2x2") == 8
+    assert mnist01_hidden.hidden_unit_for_feature(31, 32, 18, "patch2x2") == 17
     for sample in train + evals:
         assert len(sample["features"]) == 16
         assert all(0.0 <= value <= 1.1 for value in sample["features"])
@@ -297,6 +305,47 @@ def test_mnist01_live_hidden_netlist_is_live_transistor_path() -> None:
     assert "Mh0f1p_w h0f1pmid wh0f1p pre0_p 0 NSENSE" not in sparse_identity_netlist
     assert "Mh0f1_live_pup_pmos wh0f1p" not in sparse_identity_netlist
 
+    patch_netlist = mnist01_hidden.mnist01_live_hidden_netlist(
+        train,
+        train,
+        hidden_count=9,
+        hidden_init_mode="patch2x2",
+        hidden_connectivity_mode="patch2x2-sparse",
+    )
+    assert "Cwh0f0p wh0f0p 0 20f IC=1.05" in patch_netlist
+    assert "Cwh0f1p wh0f1p 0 20f IC=1.05" in patch_netlist
+    assert "Cwh0f4p wh0f4p 0 20f IC=1.05" in patch_netlist
+    assert "Cwh0f5p wh0f5p 0 20f IC=1.05" in patch_netlist
+    assert "Cwh8f10p wh8f10p 0 20f IC=1.05" in patch_netlist
+    assert "Cwh8f15p wh8f15p 0 20f IC=1.05" in patch_netlist
+    assert "Mh0f5p_w h0f5pmid wh0f5p pre0_p 0 NSENSE" in patch_netlist
+    assert "Mh8f15p_w h8f15pmid wh8f15p pre8_p 0 NSENSE" in patch_netlist
+    assert "Mh8f15_live_pup_pmos wh8f15p" in patch_netlist
+    assert "Mc1_h8_score_pa vdd hrow8 c1_h8_score_pa 0 NSENSE" in patch_netlist
+    assert ".meas tran final_hrow_h8_1" in patch_netlist
+    assert "Cwh0f2p wh0f2p 0 20f" not in patch_netlist
+    assert "Cwh8f9p wh8f9p 0 20f" not in patch_netlist
+    assert "Mh0f2p_w h0f2pmid wh0f2p pre0_p 0 NSENSE" not in patch_netlist
+    assert "Mh8f9_live_pup_pmos wh8f9p" not in patch_netlist
+
+    complement_patch_train = mnist01_fixed.add_complement_features(train, scale=0.5)
+    complement_patch_netlist = mnist01_hidden.mnist01_live_hidden_netlist(
+        complement_patch_train,
+        complement_patch_train,
+        hidden_count=18,
+        hidden_init_mode="patch2x2",
+        hidden_connectivity_mode="patch2x2-sparse",
+    )
+    assert "Cwh0f0p wh0f0p 0 20f IC=1.05" in complement_patch_netlist
+    assert "Cwh9f16p wh9f16p 0 20f IC=1.05" in complement_patch_netlist
+    assert "Cwh17f31p wh17f31p 0 20f IC=1.05" in complement_patch_netlist
+    assert "Mh17f31p_w h17f31pmid wh17f31p pre17_p 0 NSENSE" in complement_patch_netlist
+    assert "Mh17f31_live_pup_pmos wh17f31p" in complement_patch_netlist
+    assert "Cwh0f16p wh0f16p 0 20f" not in complement_patch_netlist
+    assert "Cwh8f31p wh8f31p 0 20f" not in complement_patch_netlist
+    assert "Cwh0f18p wh0f18p 0 20f" not in complement_patch_netlist
+    assert "Mh0f18p_w h0f18pmid wh0f18p pre0_p 0 NSENSE" not in complement_patch_netlist
+
     normalized_writer_netlist = mnist01_hidden.mnist01_live_hidden_netlist(
         train,
         train,
@@ -346,6 +395,28 @@ def test_mnist01_live_hidden_netlist_validation() -> None:
             [sample],
             [sample],
             hidden_connectivity_mode="identity-sparse",
+        )
+    with pytest.raises(ValueError, match="patch2x2"):
+        mnist01_hidden.mnist01_live_hidden_netlist(
+            [sample],
+            [sample],
+            hidden_count=8,
+            hidden_init_mode="patch2x2",
+            hidden_connectivity_mode="patch2x2-sparse",
+        )
+    with pytest.raises(ValueError, match="patch2x2-sparse"):
+        mnist01_hidden.mnist01_live_hidden_netlist(
+            [sample],
+            [sample],
+            hidden_connectivity_mode="patch2x2-sparse",
+        )
+    with pytest.raises(ValueError, match="square"):
+        mnist01_hidden.mnist01_live_hidden_netlist(
+            [{"features": [1.0, 0.0, 0.5, 0.2, 0.7, 0.1], "label": 0}],
+            [{"features": [1.0, 0.0, 0.5, 0.2, 0.7, 0.1], "label": 0}],
+            hidden_count=9,
+            hidden_init_mode="patch2x2",
+            hidden_connectivity_mode="patch2x2-sparse",
         )
     with pytest.raises(ValueError, match="hidden_init_mode"):
         mnist01_hidden.mnist01_live_hidden_netlist(
@@ -1976,6 +2047,133 @@ def _hidden_credit_signcharge_margin_after_write_netlist(target_class: int) -> s
     return "\n".join(lines)
 
 
+def _hidden_divider_signcharge_margin_rescue_netlist(target_class: int) -> str:
+    if target_class not in (0, 1):
+        raise ValueError("target_class must be 0 or 1")
+    other_class = 1 - target_class
+    target0 = 1.2 if target_class == 0 else 0.0
+    target1 = 1.2 if target_class == 1 else 0.0
+    lines = [
+        "* Conductance-divider hidden-margin rescue: score -> normalized hidden error -> hidden write -> score replay.",
+        ".param VDD=1.2",
+        mnist01_hidden.mos_models(),
+        ".options method=gear reltol=1e-4 abstol=1e-13 vntol=1e-7",
+        "Vdd vdd 0 {VDD}",
+        "Vrst rst 0 PWL(0n 1.2 0.45n 1.2 0.48n 0 3.00n 0 3.03n 1.2 3.45n 1.2 3.48n 0 6n 0)",
+        "Vrstn rstn 0 PWL(0n 0 0.45n 0 0.48n 1.2 3.00n 1.2 3.03n 0 3.45n 0 3.48n 1.2 6n 1.2)",
+        "Vfeatphi featphi 0 PWL(0n 0 0.75n 0 0.78n 1.2 1.25n 1.2 1.28n 0 3.75n 0 3.78n 1.2 4.25n 1.2 4.28n 0 6n 0)",
+        "Vscorephi scorephi 0 PWL(0n 0 1.30n 0 1.33n 1.2 1.65n 1.2 1.68n 0 4.30n 0 4.33n 1.2 4.65n 1.2 4.68n 0 6n 0)",
+        "Verrphi errphi 0 PWL(0n 0 1.68n 0 1.71n 1.2 2.25n 1.2 2.28n 0 6n 0)",
+        "Vhcgphi hcgphi 0 PWL(0n 0 2.25n 0 2.28n 1.2 2.75n 1.2 2.78n 0 6n 0)",
+        "Vhiddenwritephi hiddenwritephi 0 PWL(0n 0 2.65n 0 2.68n 1.2 2.78n 1.2 2.81n 0 6n 0)",
+        "Iprobref vdd rnorm PWL(0n 0 1.68n 0 1.71n 10u 2.25n 10u 2.28n 0 6n 0)",
+        "Vpx0 px0 0 1.2",
+        f"Vt0 t0 0 {target0:.12g}",
+        f"Vt1 t1 0 {target1:.12g}",
+        "Cwh0f0p wh0f0p 0 20f IC=0.75",
+        "Cwh0f0n wh0f0n 0 20f IC=0.15",
+        "Rwhp wh0f0p 0 1e15",
+        "Rwhn wh0f0n 0 1e15",
+        *mnist01_hidden.signed_store_lines(
+            positive_node=mnist01_hidden.class_node(0, "vwp0"),
+            negative_node=mnist01_hidden.class_node(0, "vwn0"),
+            positive_ic=0.90,
+            negative_ic=0.10,
+        ),
+        *mnist01_hidden.signed_store_lines(
+            positive_node=mnist01_hidden.class_node(1, "vwp0"),
+            negative_node=mnist01_hidden.class_node(1, "vwn0"),
+            positive_ic=0.10,
+            negative_ic=0.90,
+        ),
+        *mnist01_hidden._hidden_state_lines(1),
+        *mnist01_hidden._hidden_forward_lines(
+            1,
+            1,
+            8.0,
+            activation_mode="differential-preamp",
+            activation_sense_width_u=4.0,
+            hidden_init_mode="identity",
+            hidden_connectivity_mode="identity-sparse",
+        ),
+        *mnist01_hidden._score_storage_lines(),
+        *mnist01_hidden._score_readout_lines(1, 64.0, activation_mode="pre-differential"),
+        *mnist01_hidden._error_storage_lines(),
+        *mnist01_hidden._divider_probability_lines(0.5, 0.02),
+        *mnist01_hidden._route_to_hidden_error_rails_lines(16.0),
+        *mnist01_hidden._hidden_credit_lines(1, 32.0, 12.0, 0.05, 5.0e7),
+        *mnist01_hidden._hidden_credit_dynamic_preamp_gate_lines(
+            1,
+            sense_width_u=32.0,
+            latch_pmos_width_u=4.0,
+            output_width_u=2.0,
+            output_pull_width_u=0.5,
+            support_width_u=4.0,
+            write_gate_width_u=8.0,
+            capacitance_f=2.0,
+        ),
+        *mnist01_hidden._hidden_writer_lines(
+            1,
+            1,
+            0.2,
+            4.0,
+            0.2,
+            "pmos-signcharge",
+            "h{hidden}_hcg_write",
+            True,
+            hidden_init_mode="identity",
+            hidden_connectivity_mode="identity-sparse",
+        ),
+        ".meas tran pre_before_p FIND V(pre0_p) AT=1.25n",
+        ".meas tran pre_before_n FIND V(pre0_n) AT=1.25n",
+        ".meas tran pre_before PARAM='pre_before_p-pre_before_n'",
+        ".meas tran c0_scorep_before FIND V(c0_scorep) AT=1.65n",
+        ".meas tran c0_scoren_before FIND V(c0_scoren) AT=1.65n",
+        ".meas tran c1_scorep_before FIND V(c1_scorep) AT=1.65n",
+        ".meas tran c1_scoren_before FIND V(c1_scoren) AT=1.65n",
+        ".meas tran c0_signed_before PARAM='c0_scorep_before-c0_scoren_before'",
+        ".meas tran c1_signed_before PARAM='c1_scorep_before-c1_scoren_before'",
+        ".meas tran b0low_err FIND V(b0low) AT=2.10n",
+        ".meas tran b1low_err FIND V(b1low) AT=2.10n",
+        ".meas tran c0_herrp_probe FIND V(c0_herrp) AT=2.20n",
+        ".meas tran c0_herrn_probe FIND V(c0_herrn) AT=2.20n",
+        ".meas tran c1_herrp_probe FIND V(c1_herrp) AT=2.20n",
+        ".meas tran c1_herrn_probe FIND V(c1_herrn) AT=2.20n",
+        ".meas tran target_herrdiff PARAM='c{0}_herrp_probe-c{0}_herrn_probe'".format(target_class),
+        ".meas tran other_herrdiff PARAM='c{0}_herrp_probe-c{0}_herrn_probe'".format(other_class),
+        ".meas tran hdp FIND V(h0_hdp) AT=2.55n",
+        ".meas tran hdn FIND V(h0_hdn) AT=2.55n",
+        ".meas tran hcredit PARAM='hdp-hdn'",
+        ".meas tran gatep FIND V(h0_hdp_gate) AT=2.70n",
+        ".meas tran gaten FIND V(h0_hdn_gate) AT=2.70n",
+        ".meas tran gate_diff PARAM='gatep-gaten'",
+        ".meas tran pre_after_p FIND V(pre0_p) AT=4.25n",
+        ".meas tran pre_after_n FIND V(pre0_n) AT=4.25n",
+        ".meas tran pre_after PARAM='pre_after_p-pre_after_n'",
+        ".meas tran pre_delta PARAM='pre_after-pre_before'",
+        ".meas tran c0_scorep_after FIND V(c0_scorep) AT=4.65n",
+        ".meas tran c0_scoren_after FIND V(c0_scoren) AT=4.65n",
+        ".meas tran c1_scorep_after FIND V(c1_scorep) AT=4.65n",
+        ".meas tran c1_scoren_after FIND V(c1_scoren) AT=4.65n",
+        ".meas tran c0_signed_after PARAM='c0_scorep_after-c0_scoren_after'",
+        ".meas tran c1_signed_after PARAM='c1_scorep_after-c1_scoren_after'",
+        f".meas tran target_margin_before PARAM='c{target_class}_signed_before-c{other_class}_signed_before'",
+        f".meas tran target_margin_after PARAM='c{target_class}_signed_after-c{other_class}_signed_after'",
+        ".meas tran target_margin_delta PARAM='target_margin_after-target_margin_before'",
+        ".meas tran whp_after FIND V(wh0f0p) AT=4.80n",
+        ".meas tran whn_after FIND V(wh0f0n) AT=4.80n",
+        ".meas tran wh_delta PARAM='whp_after-whn_after-(0.75-0.15)'",
+        ".tran 1p 6n uic",
+        ".control",
+        "run",
+        "quit",
+        ".endc",
+        ".end",
+        "",
+    ]
+    return "\n".join(lines)
+
+
 @pytest.mark.ngspice
 def test_hidden_credit_dynamic_preamp_restores_mnist_scale_credit_with_dead_zone(
     tmp_path: Path,
@@ -2179,6 +2377,43 @@ def test_hidden_credit_signcharge_write_improves_downstream_score_margin(
     assert target1["target_margin_delta"] > 1.0e-3
     assert target1["c1_signed_after"] > target1["c1_signed_before"]
     assert target1["c0_signed_after"] < target1["c0_signed_before"]
+
+
+@pytest.mark.ngspice
+def test_conductance_divider_hidden_signcharge_rescues_misclassified_margin_without_readout_write(
+    tmp_path: Path,
+    ngspice_path: str,
+) -> None:
+    rescued = mnist01_hidden.run_netlist(
+        ngspice_path,
+        tmp_path / "hidden_divider_signcharge_margin_rescue_target1.cir",
+        _hidden_divider_signcharge_margin_rescue_netlist(1),
+        timeout=60.0,
+    )
+    already_correct = mnist01_hidden.run_netlist(
+        ngspice_path,
+        tmp_path / "hidden_divider_signcharge_margin_rescue_target0.cir",
+        _hidden_divider_signcharge_margin_rescue_netlist(0),
+        timeout=60.0,
+    )
+
+    assert rescued["target_margin_before"] < -0.25
+    assert rescued["target_herrdiff"] > 1.0
+    assert rescued["other_herrdiff"] < -1.0
+    assert rescued["hcredit"] < -0.50
+    assert rescued["gate_diff"] < -0.50
+    assert rescued["wh_delta"] < -3.0e-3
+    assert rescued["pre_delta"] < -3.0e-3
+    assert rescued["target_margin_delta"] > 5.0e-3
+    assert rescued["c1_signed_after"] > rescued["c1_signed_before"]
+    assert rescued["c0_signed_after"] < rescued["c0_signed_before"]
+
+    assert already_correct["target_margin_before"] > 0.25
+    assert abs(already_correct["target_herrdiff"]) < 1.0e-3
+    assert abs(already_correct["other_herrdiff"]) < 1.0e-3
+    assert abs(already_correct["gate_diff"]) < 1.0e-6
+    assert abs(already_correct["wh_delta"]) < 1.0e-4
+    assert abs(already_correct["target_margin_delta"]) < 1.0e-4
 
 
 @pytest.mark.ngspice

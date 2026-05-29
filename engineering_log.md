@@ -35,6 +35,28 @@
   validation or conductance_divider_hidden_signcharge_rescues or
   hidden_credit_signcharge_write_improves_downstream_score_margin'` -> `5
   passed, 22 deselected` in `14.80 s`.
+- Promoted the hidden-margin rescue proof from a synthetic one-feature cell to
+  a real local MNIST patch.  The new ngspice regression loads the first real
+  `4x4` digit-0 sample, extracts its center stride-1 2x2 patch
+  (`~0.69/0.75/0.55/0.52 V` pixels), instantiates a single `patch2x2-sparse`
+  hidden row with four persistent capacitor-stored weights, freezes an
+  intentionally inverted readout head, and runs the physical
+  score->conductance-divider->hidden-error->readout-weighted-credit->dynamic
+  preamp->signcharge-packet chain.  There is still no readout writer in this
+  primitive, so the score change is attributable to the hidden update.  The
+  misclassified patch starts with target margin about `-895 mV`; the hidden
+  update produces `~-0.69 V` credit, `~-1.10 V` restored write-gate
+  differential, `~-7.75 mV` signed movement on each active local weight,
+  `~-7.53 mV` next-pre movement, and a `+14.6 mV` physical score-margin
+  improvement.  This is now a real-MNIST local receptive-field same-sample
+  rescue proof, not yet multi-sample learned representation.  Verification:
+  `python3 -m py_compile spice/run_mnist01_live_hidden_divider_training.py
+  tests/test_mnist01_live_hidden_divider_training.py`; `python3 -m pytest
+  tests/test_mnist01_live_hidden_divider_training.py -q -k
+  'real_mnist_patch2x2_hidden_signcharge_rescues or
+  conductance_divider_hidden_signcharge_rescues or
+  netlist_is_live_transistor_path or validation'` -> `4 passed, 24
+  deselected` in `9.46 s`.
 - Added a downstream hidden-learning alignment primitive for the MNIST01
   signcharge path.  The new ngspice deck uses the real hidden forward cell,
   pre-differential score readout, readout-weighted hidden-credit current path,

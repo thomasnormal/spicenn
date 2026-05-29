@@ -2174,6 +2174,140 @@ def _hidden_divider_signcharge_margin_rescue_netlist(target_class: int) -> str:
     return "\n".join(lines)
 
 
+def _local_patch2x2_hidden_margin_rescue_netlist(patch_features: list[float]) -> str:
+    if len(patch_features) != 4:
+        raise ValueError("local patch rescue expects exactly four 2x2 patch features")
+    lines = [
+        "* Real local 2x2 patch hidden-margin rescue with frozen readout.",
+        ".param VDD=1.2",
+        mnist01_hidden.mos_models(),
+        ".options method=gear reltol=1e-4 abstol=1e-13 vntol=1e-7",
+        "Vdd vdd 0 {VDD}",
+        "Vrst rst 0 PWL(0n 1.2 0.45n 1.2 0.48n 0 3.00n 0 3.03n 1.2 3.45n 1.2 3.48n 0 6n 0)",
+        "Vrstn rstn 0 PWL(0n 0 0.45n 0 0.48n 1.2 3.00n 1.2 3.03n 0 3.45n 0 3.48n 1.2 6n 1.2)",
+        "Vfeatphi featphi 0 PWL(0n 0 0.75n 0 0.78n 1.2 1.25n 1.2 1.28n 0 3.75n 0 3.78n 1.2 4.25n 1.2 4.28n 0 6n 0)",
+        "Vscorephi scorephi 0 PWL(0n 0 1.30n 0 1.33n 1.2 1.65n 1.2 1.68n 0 4.30n 0 4.33n 1.2 4.65n 1.2 4.68n 0 6n 0)",
+        "Verrphi errphi 0 PWL(0n 0 1.68n 0 1.71n 1.2 2.25n 1.2 2.28n 0 6n 0)",
+        "Vhcgphi hcgphi 0 PWL(0n 0 2.25n 0 2.28n 1.2 2.75n 1.2 2.78n 0 6n 0)",
+        "Vhiddenwritephi hiddenwritephi 0 PWL(0n 0 2.65n 0 2.68n 1.2 2.78n 1.2 2.81n 0 6n 0)",
+        "Iprobref vdd rnorm PWL(0n 0 1.68n 0 1.71n 10u 2.25n 10u 2.28n 0 6n 0)",
+        "Vt0 t0 0 1.2",
+        "Vt1 t1 0 0",
+        *[f"Vpx{feature} px{feature} 0 {value:.12g}" for feature, value in enumerate(patch_features)],
+        *mnist01_hidden._hidden_storage_lines(
+            4,
+            1,
+            init_mode="patch2x2",
+            connectivity_mode="patch2x2-sparse",
+            inside_positive=0.75,
+            outside_positive=0.15,
+            inside_negative=0.15,
+            outside_negative=0.15,
+        ),
+        *mnist01_hidden.signed_store_lines(
+            positive_node=mnist01_hidden.class_node(0, "vwp0"),
+            negative_node=mnist01_hidden.class_node(0, "vwn0"),
+            positive_ic=0.10,
+            negative_ic=0.90,
+        ),
+        *mnist01_hidden.signed_store_lines(
+            positive_node=mnist01_hidden.class_node(1, "vwp0"),
+            negative_node=mnist01_hidden.class_node(1, "vwn0"),
+            positive_ic=0.90,
+            negative_ic=0.10,
+        ),
+        *mnist01_hidden._hidden_state_lines(1),
+        *mnist01_hidden._hidden_forward_lines(
+            4,
+            1,
+            8.0,
+            activation_mode="differential-preamp",
+            activation_sense_width_u=4.0,
+            hidden_init_mode="patch2x2",
+            hidden_connectivity_mode="patch2x2-sparse",
+        ),
+        *mnist01_hidden._score_storage_lines(),
+        *mnist01_hidden._score_readout_lines(1, 64.0, activation_mode="pre-differential"),
+        *mnist01_hidden._error_storage_lines(),
+        *mnist01_hidden._divider_probability_lines(0.5, 0.02),
+        *mnist01_hidden._route_to_hidden_error_rails_lines(16.0),
+        *mnist01_hidden._hidden_credit_lines(1, 32.0, 12.0, 0.05, 5.0e7),
+        *mnist01_hidden._hidden_credit_dynamic_preamp_gate_lines(
+            1,
+            sense_width_u=32.0,
+            latch_pmos_width_u=4.0,
+            output_width_u=2.0,
+            output_pull_width_u=0.5,
+            support_width_u=4.0,
+            write_gate_width_u=8.0,
+            capacitance_f=2.0,
+        ),
+        *mnist01_hidden._hidden_writer_lines(
+            4,
+            1,
+            0.2,
+            4.0,
+            0.2,
+            "pmos-signcharge",
+            "h{hidden}_hcg_write",
+            True,
+            hidden_init_mode="patch2x2",
+            hidden_connectivity_mode="patch2x2-sparse",
+        ),
+        ".meas tran pre_before_p FIND V(pre0_p) AT=1.25n",
+        ".meas tran pre_before_n FIND V(pre0_n) AT=1.25n",
+        ".meas tran pre_before PARAM='pre_before_p-pre_before_n'",
+        ".meas tran c0_scorep_before FIND V(c0_scorep) AT=1.65n",
+        ".meas tran c0_scoren_before FIND V(c0_scoren) AT=1.65n",
+        ".meas tran c1_scorep_before FIND V(c1_scorep) AT=1.65n",
+        ".meas tran c1_scoren_before FIND V(c1_scoren) AT=1.65n",
+        ".meas tran c0_signed_before PARAM='c0_scorep_before-c0_scoren_before'",
+        ".meas tran c1_signed_before PARAM='c1_scorep_before-c1_scoren_before'",
+        ".meas tran c0_herrp_probe FIND V(c0_herrp) AT=2.20n",
+        ".meas tran c0_herrn_probe FIND V(c0_herrn) AT=2.20n",
+        ".meas tran c1_herrp_probe FIND V(c1_herrp) AT=2.20n",
+        ".meas tran c1_herrn_probe FIND V(c1_herrn) AT=2.20n",
+        ".meas tran target_herrdiff PARAM='c0_herrp_probe-c0_herrn_probe'",
+        ".meas tran other_herrdiff PARAM='c1_herrp_probe-c1_herrn_probe'",
+        ".meas tran hdp FIND V(h0_hdp) AT=2.55n",
+        ".meas tran hdn FIND V(h0_hdn) AT=2.55n",
+        ".meas tran hcredit PARAM='hdp-hdn'",
+        ".meas tran gatep FIND V(h0_hdp_gate) AT=2.70n",
+        ".meas tran gaten FIND V(h0_hdn_gate) AT=2.70n",
+        ".meas tran gate_diff PARAM='gatep-gaten'",
+        ".meas tran pre_after_p FIND V(pre0_p) AT=4.25n",
+        ".meas tran pre_after_n FIND V(pre0_n) AT=4.25n",
+        ".meas tran pre_after PARAM='pre_after_p-pre_after_n'",
+        ".meas tran pre_delta PARAM='pre_after-pre_before'",
+        ".meas tran c0_scorep_after FIND V(c0_scorep) AT=4.65n",
+        ".meas tran c0_scoren_after FIND V(c0_scoren) AT=4.65n",
+        ".meas tran c1_scorep_after FIND V(c1_scorep) AT=4.65n",
+        ".meas tran c1_scoren_after FIND V(c1_scoren) AT=4.65n",
+        ".meas tran c0_signed_after PARAM='c0_scorep_after-c0_scoren_after'",
+        ".meas tran c1_signed_after PARAM='c1_scorep_after-c1_scoren_after'",
+        ".meas tran target_margin_before PARAM='c0_signed_before-c1_signed_before'",
+        ".meas tran target_margin_after PARAM='c0_signed_after-c1_signed_after'",
+        ".meas tran target_margin_delta PARAM='target_margin_after-target_margin_before'",
+        *[
+            line
+            for feature in range(4)
+            for line in [
+                f".meas tran wh{feature}p_after FIND V(wh0f{feature}p) AT=4.80n",
+                f".meas tran wh{feature}n_after FIND V(wh0f{feature}n) AT=4.80n",
+                f".meas tran wh{feature}_delta PARAM='wh{feature}p_after-wh{feature}n_after-(0.75-0.15)'",
+            ]
+        ],
+        ".tran 1p 6n uic",
+        ".control",
+        "run",
+        "quit",
+        ".endc",
+        ".end",
+        "",
+    ]
+    return "\n".join(lines)
+
+
 @pytest.mark.ngspice
 def test_hidden_credit_dynamic_preamp_restores_mnist_scale_credit_with_dead_zone(
     tmp_path: Path,
@@ -2414,6 +2548,41 @@ def test_conductance_divider_hidden_signcharge_rescues_misclassified_margin_with
     assert abs(already_correct["gate_diff"]) < 1.0e-6
     assert abs(already_correct["wh_delta"]) < 1.0e-4
     assert abs(already_correct["target_margin_delta"]) < 1.0e-4
+
+
+@pytest.mark.ngspice
+def test_real_mnist_patch2x2_hidden_signcharge_rescues_local_margin_without_readout_write(
+    tmp_path: Path,
+    ngspice_path: str,
+) -> None:
+    _require_mnist_raw()
+    train, _evals = mnist01_hidden.load_mnist01_records(
+        train_count_per_digit=1,
+        eval_count_per_digit=1,
+        image_size=4,
+    )
+    digit0 = next(record for record in train if int(record["label"]) == 0)
+    center_patch = mnist01_hidden.patch2x2_features_for_hidden(4, 16, 9)
+    patch_features = [float(digit0["features"][feature]) for feature in center_patch]
+    assert min(patch_features) > 0.50
+
+    rescued = mnist01_hidden.run_netlist(
+        ngspice_path,
+        tmp_path / "mnist01_local_patch2x2_hidden_margin_rescue.cir",
+        _local_patch2x2_hidden_margin_rescue_netlist(patch_features),
+        timeout=60.0,
+    )
+
+    assert rescued["target_margin_before"] < -0.25
+    assert rescued["target_herrdiff"] > 1.0
+    assert rescued["other_herrdiff"] < -1.0
+    assert rescued["hcredit"] < -0.50
+    assert rescued["gate_diff"] < -0.50
+    assert rescued["pre_delta"] < -5.0e-3
+    assert rescued["target_margin_delta"] > 5.0e-3
+    assert rescued["c0_signed_after"] > rescued["c0_signed_before"]
+    assert rescued["c1_signed_after"] < rescued["c1_signed_before"]
+    assert max(rescued[f"wh{feature}_delta"] for feature in range(4)) < -3.0e-3
 
 
 @pytest.mark.ngspice

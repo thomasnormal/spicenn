@@ -1671,6 +1671,103 @@ def _hidden_signcharge_forward_after_write_netlist(
     return "\n".join(lines)
 
 
+def _hidden_credit_signcharge_forward_after_write_netlist(error_mode: str) -> str:
+    if error_mode not in {"positive", "negative"}:
+        raise ValueError("error_mode must be positive or negative")
+    errp = 0.55 if error_mode == "positive" else 0.0
+    errn = 0.55 if error_mode == "negative" else 0.0
+    lines = [
+        "* Readout-weighted hidden credit followed by signcharge packet write and second forward.",
+        ".param VDD=1.2",
+        mnist01_hidden.mos_models(),
+        ".options method=gear reltol=1e-4 abstol=1e-13 vntol=1e-7",
+        "Vdd vdd 0 {VDD}",
+        "Vrst rst 0 PWL(0n 1.2 0.45n 1.2 0.48n 0 3.00n 0 3.03n 1.2 3.45n 1.2 3.48n 0 6n 0)",
+        "Vrstn rstn 0 PWL(0n 0 0.45n 0 0.48n 1.2 3.00n 1.2 3.03n 0 3.45n 0 3.48n 1.2 6n 1.2)",
+        "Vfeatphi featphi 0 PWL(0n 0 0.75n 0 0.78n 1.2 1.25n 1.2 1.28n 0 3.75n 0 3.78n 1.2 4.25n 1.2 4.28n 0 6n 0)",
+        "Vhcgphi hcgphi 0 PWL(0n 0 1.45n 0 1.48n 1.2 2.25n 1.2 2.28n 0 6n 0)",
+        "Vhiddenwritephi hiddenwritephi 0 PWL(0n 0 2.15n 0 2.18n 1.2 2.28n 1.2 2.31n 0 6n 0)",
+        "Vpx0 px0 0 0.78",
+        f"Vc0herrp c0_herrp 0 {errp:.12g}",
+        f"Vc0herrn c0_herrn 0 {errn:.12g}",
+        "Vc1herrp c1_herrp 0 0",
+        "Vc1herrn c1_herrn 0 0",
+        "Cwh0f0p wh0f0p 0 20f IC=0.75",
+        "Cwh0f0n wh0f0n 0 20f IC=0.15",
+        "Rwhp wh0f0p 0 1e15",
+        "Rwhn wh0f0n 0 1e15",
+        *mnist01_hidden.signed_store_lines(
+            positive_node=mnist01_hidden.class_node(0, "vwp0"),
+            negative_node=mnist01_hidden.class_node(0, "vwn0"),
+            positive_ic=0.46,
+            negative_ic=0.24,
+        ),
+        *mnist01_hidden.signed_store_lines(
+            positive_node=mnist01_hidden.class_node(1, "vwp0"),
+            negative_node=mnist01_hidden.class_node(1, "vwn0"),
+            positive_ic=0.40,
+            negative_ic=0.40,
+        ),
+        *mnist01_hidden._hidden_state_lines(1),
+        *mnist01_hidden._hidden_forward_lines(
+            1,
+            1,
+            8.0,
+            activation_mode="differential-preamp",
+            activation_sense_width_u=4.0,
+            hidden_init_mode="identity",
+            hidden_connectivity_mode="identity-sparse",
+        ),
+        *mnist01_hidden._hidden_credit_lines(1, 32.0, 12.0, 0.05, 5.0e7),
+        *mnist01_hidden._hidden_credit_dynamic_preamp_gate_lines(
+            1,
+            sense_width_u=32.0,
+            latch_pmos_width_u=4.0,
+            output_width_u=2.0,
+            output_pull_width_u=0.5,
+            support_width_u=4.0,
+            write_gate_width_u=8.0,
+            capacitance_f=2.0,
+        ),
+        *mnist01_hidden._hidden_writer_lines(
+            1,
+            1,
+            0.2,
+            4.0,
+            0.2,
+            "pmos-signcharge",
+            "h{hidden}_hcg_write",
+            True,
+            hidden_init_mode="identity",
+            hidden_connectivity_mode="identity-sparse",
+        ),
+        ".meas tran pre_before_p FIND V(pre0_p) AT=1.25n",
+        ".meas tran pre_before_n FIND V(pre0_n) AT=1.25n",
+        ".meas tran pre_before PARAM='pre_before_p-pre_before_n'",
+        ".meas tran hdp FIND V(h0_hdp) AT=2.10n",
+        ".meas tran hdn FIND V(h0_hdn) AT=2.10n",
+        ".meas tran hcredit PARAM='hdp-hdn'",
+        ".meas tran gatep FIND V(h0_hdp_gate) AT=2.20n",
+        ".meas tran gaten FIND V(h0_hdn_gate) AT=2.20n",
+        ".meas tran gate_diff PARAM='gatep-gaten'",
+        ".meas tran pre_after_p FIND V(pre0_p) AT=4.25n",
+        ".meas tran pre_after_n FIND V(pre0_n) AT=4.25n",
+        ".meas tran pre_after PARAM='pre_after_p-pre_after_n'",
+        ".meas tran pre_delta PARAM='pre_after-pre_before'",
+        ".meas tran whp_after FIND V(wh0f0p) AT=4.50n",
+        ".meas tran whn_after FIND V(wh0f0n) AT=4.50n",
+        ".meas tran wh_delta PARAM='whp_after-whn_after-(0.75-0.15)'",
+        ".tran 1p 6n uic",
+        ".control",
+        "run",
+        "quit",
+        ".endc",
+        ".end",
+        "",
+    ]
+    return "\n".join(lines)
+
+
 @pytest.mark.ngspice
 def test_hidden_credit_dynamic_preamp_restores_mnist_scale_credit_with_dead_zone(
     tmp_path: Path,
@@ -1811,6 +1908,34 @@ def test_hidden_signcharge_packet_write_changes_next_forward_evidence(
     assert abs(positive_saturated["pre_delta"]) < 1.0e-3
     assert negative_visible["wh_delta"] < -3.0e-3
     assert negative_visible["pre_delta"] < -3.0e-3
+
+
+@pytest.mark.ngspice
+def test_hidden_credit_signcharge_backprop_changes_next_forward_evidence(
+    tmp_path: Path,
+    ngspice_path: str,
+) -> None:
+    positive = mnist01_hidden.run_netlist(
+        ngspice_path,
+        tmp_path / "hidden_credit_signcharge_forward_positive.cir",
+        _hidden_credit_signcharge_forward_after_write_netlist("positive"),
+        timeout=30.0,
+    )
+    negative = mnist01_hidden.run_netlist(
+        ngspice_path,
+        tmp_path / "hidden_credit_signcharge_forward_negative.cir",
+        _hidden_credit_signcharge_forward_after_write_netlist("negative"),
+        timeout=30.0,
+    )
+
+    assert positive["hcredit"] > 100e-3
+    assert positive["gate_diff"] > 100e-3
+    assert positive["wh_delta"] > 3.0e-3
+    assert positive["pre_delta"] > 3.0e-3
+    assert negative["hcredit"] < -100e-3
+    assert negative["gate_diff"] < -100e-3
+    assert negative["wh_delta"] < -3.0e-3
+    assert negative["pre_delta"] < -3.0e-3
 
 
 @pytest.mark.ngspice

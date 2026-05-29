@@ -1122,6 +1122,8 @@ def _pre_differential_readout_probe_netlist(
     pre_n: float,
     vwp: float = 0.75,
     vwn: float = 0.35,
+    hrow: float = 1.2,
+    activation_mode: str = "pre-differential",
 ) -> str:
     lines = [
         "* Pre-differential readout product primitive.",
@@ -1133,9 +1135,10 @@ def _pre_differential_readout_probe_netlist(
         "Vscorephi scorephi 0 PULSE(0 1.2 0.50n 10p 10p 1.50n 4n)",
         f"Vprep pre0_p 0 {pre_p:.12g}",
         f"Vpren pre0_n 0 {pre_n:.12g}",
+        f"Vhrow hrow0 0 {hrow:.12g}",
         *mnist01_hidden._readout_storage_lines(1, vwp, vwn),
         *mnist01_hidden._score_storage_lines(),
-        *mnist01_hidden._score_readout_lines(1, 16.0, activation_mode="pre-differential"),
+        *mnist01_hidden._score_readout_lines(1, 16.0, activation_mode=activation_mode),
         ".meas tran scorep FIND V(c0_scorep) AT=2.40n",
         ".meas tran scoren FIND V(c0_scoren) AT=2.40n",
         ".meas tran score_net PARAM='scorep-scoren'",
@@ -1180,12 +1183,58 @@ def test_mnist01_pre_differential_readout_tracks_signed_pre_and_weight_product(
     assert positive["score_net"] == pytest.approx(-negative["score_net"], rel=0.25)
 
 
+@pytest.mark.ngspice
+def test_mnist01_gated_pre_differential_readout_preserves_sign_and_suppresses_off_rows(
+    tmp_path: Path,
+    ngspice_path: str,
+) -> None:
+    on = mnist01_hidden.run_netlist(
+        ngspice_path,
+        tmp_path / "mnist01_gated_pre_diff_readout_on.cir",
+        _pre_differential_readout_probe_netlist(
+            pre_p=0.55,
+            pre_n=0.35,
+            hrow=1.2,
+            activation_mode="pre-differential-gated",
+        ),
+        timeout=20.0,
+    )
+    off = mnist01_hidden.run_netlist(
+        ngspice_path,
+        tmp_path / "mnist01_gated_pre_diff_readout_off.cir",
+        _pre_differential_readout_probe_netlist(
+            pre_p=0.55,
+            pre_n=0.35,
+            hrow=0.0,
+            activation_mode="pre-differential-gated",
+        ),
+        timeout=20.0,
+    )
+    negative = mnist01_hidden.run_netlist(
+        ngspice_path,
+        tmp_path / "mnist01_gated_pre_diff_readout_negative.cir",
+        _pre_differential_readout_probe_netlist(
+            pre_p=0.35,
+            pre_n=0.55,
+            hrow=1.2,
+            activation_mode="pre-differential-gated",
+        ),
+        timeout=20.0,
+    )
+
+    assert on["score_net"] > 5e-3
+    assert negative["score_net"] < -5e-3
+    assert abs(off["score_net"]) < abs(on["score_net"]) * 0.20
+
+
 def _pre_differential_readout_writer_probe_netlist(
     *,
     pre_p: float,
     pre_n: float,
     errp: float = 0.75,
     errn: float = 0.0,
+    hrow: float = 1.2,
+    activation_mode: str = "pre-differential",
 ) -> str:
     lines = [
         "* Pre-differential readout writer primitive.",
@@ -1196,12 +1245,13 @@ def _pre_differential_readout_writer_probe_netlist(
         "Verrphi errphi 0 PULSE(0 1.2 0.50n 10p 10p 1.50n 4n)",
         f"Vprep pre0_p 0 {pre_p:.12g}",
         f"Vpren pre0_n 0 {pre_n:.12g}",
+        f"Vhrow hrow0 0 {hrow:.12g}",
         f"Verrp {mnist01_hidden.class_node(0, 'errp')} 0 {errp:.12g}",
         f"Verrn {mnist01_hidden.class_node(0, 'errn')} 0 {errn:.12g}",
         f"Verrp1 {mnist01_hidden.class_node(1, 'errp')} 0 0",
         f"Verrn1 {mnist01_hidden.class_node(1, 'errn')} 0 0",
         *mnist01_hidden._readout_storage_lines(1, 0.40, 0.40),
-        *mnist01_hidden._readout_writer_lines(1, 0.25, activation_mode="pre-differential"),
+        *mnist01_hidden._readout_writer_lines(1, 0.25, activation_mode=activation_mode),
         ".meas tran vwp_after FIND V(c0_vwp0) AT=2.80n",
         ".meas tran vwn_after FIND V(c0_vwn0) AT=2.80n",
         ".meas tran signed_after PARAM='vwp_after-vwn_after'",
@@ -1346,6 +1396,50 @@ def test_mnist01_pre_differential_writer_uses_signed_hidden_evidence(
     assert positive["signed_after"] > 2e-3
     assert negative["signed_after"] < -2e-3
     assert abs(common["signed_after"]) < 1e-3
+
+
+@pytest.mark.ngspice
+def test_mnist01_gated_pre_differential_writer_preserves_sign_and_suppresses_off_rows(
+    tmp_path: Path,
+    ngspice_path: str,
+) -> None:
+    on = mnist01_hidden.run_netlist(
+        ngspice_path,
+        tmp_path / "mnist01_gated_pre_diff_writer_on.cir",
+        _pre_differential_readout_writer_probe_netlist(
+            pre_p=0.55,
+            pre_n=0.35,
+            hrow=1.2,
+            activation_mode="pre-differential-gated",
+        ),
+        timeout=20.0,
+    )
+    off = mnist01_hidden.run_netlist(
+        ngspice_path,
+        tmp_path / "mnist01_gated_pre_diff_writer_off.cir",
+        _pre_differential_readout_writer_probe_netlist(
+            pre_p=0.55,
+            pre_n=0.35,
+            hrow=0.0,
+            activation_mode="pre-differential-gated",
+        ),
+        timeout=20.0,
+    )
+    negative = mnist01_hidden.run_netlist(
+        ngspice_path,
+        tmp_path / "mnist01_gated_pre_diff_writer_negative.cir",
+        _pre_differential_readout_writer_probe_netlist(
+            pre_p=0.35,
+            pre_n=0.55,
+            hrow=1.2,
+            activation_mode="pre-differential-gated",
+        ),
+        timeout=20.0,
+    )
+
+    assert on["signed_after"] > 0.5e-3
+    assert negative["signed_after"] < -0.5e-3
+    assert abs(off["signed_after"]) < abs(on["signed_after"]) * 0.25
 
 
 @pytest.mark.ngspice

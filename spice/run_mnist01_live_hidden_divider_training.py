@@ -543,8 +543,8 @@ def _score_storage_lines() -> list[str]:
 
 
 def _score_readout_lines(hidden_count: int, width_u: float, activation_mode: str = "hrow") -> list[str]:
-    if activation_mode not in ("hrow", "pre-differential"):
-        raise ValueError("readout_activation_mode must be hrow or pre-differential")
+    if activation_mode not in ("hrow", "pre-differential", "pre-differential-gated"):
+        raise ValueError("readout_activation_mode must be hrow, pre-differential, or pre-differential-gated")
     lines: list[str] = []
 
     def term(prefix: str, activation_node: str, weight_node: str, dest: str) -> list[str]:
@@ -560,6 +560,23 @@ def _score_readout_lines(hidden_count: int, width_u: float, activation_mode: str
             f"M{prefix}phi {node_b} scorephi {dest} 0 NSENSE W={width_u:.6g}u L=180n",
         ]
 
+    def gated_term(prefix: str, activation_node: str, gate_node: str, weight_node: str, dest: str) -> list[str]:
+        node_a = f"{prefix}a"
+        node_g = f"{prefix}g"
+        node_b = f"{prefix}b"
+        return [
+            f"R{node_a} {node_a} 0 1G",
+            f"R{node_g} {node_g} 0 1G",
+            f"R{node_b} {node_b} 0 1G",
+            f"C{node_a} {node_a} 0 0.05f IC=0",
+            f"C{node_g} {node_g} 0 0.05f IC=0",
+            f"C{node_b} {node_b} 0 0.05f IC=0",
+            f"M{prefix}a vdd {activation_node} {node_a} 0 NSENSE W={width_u:.6g}u L=180n",
+            f"M{prefix}g {node_a} {gate_node} {node_g} 0 NSENSE W={width_u:.6g}u L=180n",
+            f"M{prefix}w {node_g} {weight_node} {node_b} 0 NSENSE W={width_u:.6g}u L=180n",
+            f"M{prefix}phi {node_b} scorephi {dest} 0 NSENSE W={width_u:.6g}u L=180n",
+        ]
+
     for output in range(OUTPUTS):
         scorep = class_node(output, "scorep")
         scoren = class_node(output, "scoren")
@@ -571,12 +588,19 @@ def _score_readout_lines(hidden_count: int, width_u: float, activation_mode: str
             else:
                 pre_p = f"pre{hidden}_p"
                 pre_n = f"pre{hidden}_n"
+                hrow = f"hrow{hidden}"
                 vwp = class_node(output, f"vwp{hidden}")
                 vwn = class_node(output, f"vwn{hidden}")
-                lines += term(prefix + "pp", pre_p, vwp, scorep)
-                lines += term(prefix + "nn", pre_n, vwn, scorep)
-                lines += term(prefix + "pn", pre_p, vwn, scoren)
-                lines += term(prefix + "np", pre_n, vwp, scoren)
+                if activation_mode == "pre-differential":
+                    lines += term(prefix + "pp", pre_p, vwp, scorep)
+                    lines += term(prefix + "nn", pre_n, vwn, scorep)
+                    lines += term(prefix + "pn", pre_p, vwn, scoren)
+                    lines += term(prefix + "np", pre_n, vwp, scoren)
+                else:
+                    lines += gated_term(prefix + "pp", pre_p, hrow, vwp, scorep)
+                    lines += gated_term(prefix + "nn", pre_n, hrow, vwn, scorep)
+                    lines += gated_term(prefix + "pn", pre_p, hrow, vwn, scoren)
+                    lines += gated_term(prefix + "np", pre_n, hrow, vwp, scoren)
     return lines
 
 
@@ -687,11 +711,11 @@ def _readout_writer_lines(
     normalization_discharge_width_u: float = 0.02,
     normalization_gate_capacitance_f: float = 80.0,
 ) -> list[str]:
-    if activation_mode not in ("hrow", "pre-differential"):
-        raise ValueError("readout_writer_activation_mode must be hrow or pre-differential")
+    if activation_mode not in ("hrow", "pre-differential", "pre-differential-gated"):
+        raise ValueError("readout_writer_activation_mode must be hrow, pre-differential, or pre-differential-gated")
     if normalization_mode not in READOUT_WRITER_NORMALIZATION_MODES:
         raise ValueError(f"readout_writer_normalization_mode must be one of {READOUT_WRITER_NORMALIZATION_MODES}")
-    if activation_mode == "pre-differential" and normalization_mode != "none":
+    if activation_mode in ("pre-differential", "pre-differential-gated") and normalization_mode != "none":
         raise ValueError("readout_writer_normalization_mode is only supported for hrow, not pre-differential")
     lines = [
         "Vvwhi_ref vwhi_ref 0 0.48",
@@ -720,12 +744,14 @@ def _readout_writer_lines(
                     high_side_topology="pmos-differential",
                 )
             else:
+                update_guard_node = f"hrow{hidden}" if activation_mode == "pre-differential-gated" else None
                 lines += class_local_live_label_descent_update_lines(
                     class_idx=output,
                     feature_idx=hidden,
                     activation_node=f"pre{hidden}_p",
                     positive_descent_node=class_node(output, "errp"),
                     negative_descent_node=class_node(output, "errn"),
+                    update_guard_node=update_guard_node,
                     width_u=width_u,
                     high_side_topology="pmos-differential",
                     prefix_suffix="prep_",
@@ -736,6 +762,7 @@ def _readout_writer_lines(
                     activation_node=f"pre{hidden}_n",
                     positive_descent_node=class_node(output, "errn"),
                     negative_descent_node=class_node(output, "errp"),
+                    update_guard_node=update_guard_node,
                     width_u=width_u,
                     high_side_topology="pmos-differential",
                     prefix_suffix="pren_",
@@ -1424,15 +1451,15 @@ def mnist01_live_hidden_netlist(
         raise ValueError("hidden_input_mode must be raw, contrast-common-gate, or restored-common-gate")
     if hidden_row_select_mode not in ("act", "act-common-gate"):
         raise ValueError("hidden_row_select_mode must be act or act-common-gate")
-    if readout_activation_mode not in ("hrow", "pre-differential"):
-        raise ValueError("readout_activation_mode must be hrow or pre-differential")
-    if readout_writer_activation_mode not in ("hrow", "pre-differential"):
-        raise ValueError("readout_writer_activation_mode must be hrow or pre-differential")
+    if readout_activation_mode not in ("hrow", "pre-differential", "pre-differential-gated"):
+        raise ValueError("readout_activation_mode must be hrow, pre-differential, or pre-differential-gated")
+    if readout_writer_activation_mode not in ("hrow", "pre-differential", "pre-differential-gated"):
+        raise ValueError("readout_writer_activation_mode must be hrow, pre-differential, or pre-differential-gated")
     if readout_writer_normalization_mode not in READOUT_WRITER_NORMALIZATION_MODES:
         raise ValueError(
             f"readout_writer_normalization_mode must be one of {READOUT_WRITER_NORMALIZATION_MODES}"
         )
-    if readout_writer_activation_mode == "pre-differential" and readout_writer_normalization_mode != "none":
+    if readout_writer_activation_mode in ("pre-differential", "pre-differential-gated") and readout_writer_normalization_mode != "none":
         raise ValueError("readout_writer_normalization_mode is only supported for hrow, not pre-differential")
     if hidden_writer_topology not in HIDDEN_WRITER_TOPOLOGIES:
         raise ValueError(f"hidden_writer_topology must be one of {HIDDEN_WRITER_TOPOLOGIES}")

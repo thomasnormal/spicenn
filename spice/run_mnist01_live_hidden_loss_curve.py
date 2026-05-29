@@ -123,18 +123,18 @@ def _write_readout_metric_csv(path: Path, rows: list[dict[str, Any]]) -> None:
 def _plot_train_loss(path: Path, rows: list[dict[str, Any]], title: str) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     train_rows = [row for row in rows if row["phase"] == "train"]
-    x = [int(row["phase_index"]) for row in train_rows]
+    x = [int(row["phase_index"]) + 1 for row in train_rows]
     loss = [float(row["softplus_loss"]) for row in train_rows]
     acc = [float(row["phase_cumulative_accuracy"]) for row in train_rows]
 
     fig, ax_loss = plt.subplots(figsize=(7, 4))
-    ax_loss.plot(x, loss, marker="o", linewidth=1.8, label="train loss")
-    ax_loss.set_xlabel("training forward pass")
-    ax_loss.set_ylabel("softplus loss from measured margin")
+    ax_loss.plot(x, loss, marker="o", linewidth=1.8, label="pre-update train loss")
+    ax_loss.set_xlabel("training forward pass (1-based)")
+    ax_loss.set_ylabel("pre-update softplus loss from measured margin")
     ax_loss.grid(True, alpha=0.25)
     ax_acc = ax_loss.twinx()
-    ax_acc.plot(x, acc, color="C1", marker="s", linewidth=1.4, label="cumulative train accuracy")
-    ax_acc.set_ylabel("cumulative train accuracy")
+    ax_acc.plot(x, acc, color="C1", marker="s", linewidth=1.4, label="pre-update cumulative train accuracy")
+    ax_acc.set_ylabel("pre-update cumulative train accuracy")
     ax_acc.set_ylim(-0.05, 1.05)
     ax_loss.set_title(title)
     lines, labels = ax_loss.get_legend_handles_labels()

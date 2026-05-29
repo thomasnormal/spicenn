@@ -1227,6 +1227,168 @@ def test_mnist01_gated_pre_differential_readout_preserves_sign_and_suppresses_of
     assert abs(off["score_net"]) < abs(on["score_net"]) * 0.20
 
 
+WEAK_ZERO_PRE_P = (
+    0.1770948,
+    0.372905,
+    0.2479296,
+    0.2015259,
+    0.3771313,
+    0.3056752,
+    0.2023425,
+    0.4308137,
+    0.2395549,
+    0.4265476,
+    0.3482745,
+    0.4026968,
+    0.4096666,
+    0.3498117,
+    0.3939206,
+    0.4087584,
+    0.3295131,
+    0.4139395,
+)
+WEAK_ZERO_PRE_N = (
+    0.04029579,
+    0.132638,
+    0.06619135,
+    0.04040808,
+    0.1264236,
+    0.1262055,
+    0.0401928,
+    0.1257492,
+    0.06867585,
+    0.137868,
+    0.1465337,
+    0.1435734,
+    0.1374579,
+    0.1323814,
+    0.1409009,
+    0.1374621,
+    0.1361913,
+    0.1345355,
+)
+WEAK_ZERO_C0_VWP = (
+    0.3983066,
+    0.3934514,
+    0.3951209,
+    0.3949562,
+    0.4251607,
+    0.3994433,
+    0.3956214,
+    0.4070271,
+    0.396642,
+    0.409916,
+    0.3939899,
+    0.3952523,
+    0.3987061,
+    0.3934496,
+    0.3953635,
+    0.4003251,
+    0.3988637,
+    0.4067753,
+)
+WEAK_ZERO_C0_VWN = (
+    0.3982986,
+    0.3950124,
+    0.3950983,
+    0.3949373,
+    0.3987968,
+    0.3932855,
+    0.3956026,
+    0.3922848,
+    0.3964764,
+    0.420144,
+    0.4150118,
+    0.4163129,
+    0.4175983,
+    0.4103522,
+    0.4129714,
+    0.4182057,
+    0.4131973,
+    0.4162376,
+)
+
+
+def _measured_weak_zero_gated_readout_replay_netlist(active_hidden: set[int]) -> str:
+    hidden_count = len(WEAK_ZERO_PRE_P)
+    lines = [
+        "* Replay measured 4x4 MNIST01 weak-zero hidden/readout state through gated readout.",
+        ".param VDD=1.2",
+        mnist01_hidden.mos_models(),
+        ".options method=gear reltol=1e-4 abstol=1e-13 vntol=1e-7",
+        "Vdd vdd 0 {VDD}",
+        "Vrst rst 0 0",
+        "Vrstn rstn 0 1.2",
+        "Vscorephi scorephi 0 PULSE(0 1.2 0.50n 10p 10p 1.50n 4n)",
+    ]
+    for hidden, (pre_p, pre_n) in enumerate(zip(WEAK_ZERO_PRE_P, WEAK_ZERO_PRE_N, strict=True)):
+        hrow = 1.2 if hidden in active_hidden else 0.0
+        lines += [
+            f"Vpre{hidden}p pre{hidden}_p 0 {pre_p:.12g}",
+            f"Vpre{hidden}n pre{hidden}_n 0 {pre_n:.12g}",
+            f"Vhrow{hidden} hrow{hidden} 0 {hrow:.12g}",
+        ]
+    for hidden, (vwp, vwn) in enumerate(zip(WEAK_ZERO_C0_VWP, WEAK_ZERO_C0_VWN, strict=True)):
+        lines += [
+            f"Vc0vwp{hidden} {mnist01_hidden.class_node(0, f'vwp{hidden}')} 0 {vwp:.12g}",
+            f"Vc0vwn{hidden} {mnist01_hidden.class_node(0, f'vwn{hidden}')} 0 {vwn:.12g}",
+            f"Vc1vwp{hidden} {mnist01_hidden.class_node(1, f'vwp{hidden}')} 0 {vwn:.12g}",
+            f"Vc1vwn{hidden} {mnist01_hidden.class_node(1, f'vwn{hidden}')} 0 {vwp:.12g}",
+        ]
+    lines += [
+        *mnist01_hidden._score_storage_lines(),
+        *mnist01_hidden._score_readout_lines(
+            hidden_count,
+            64.0,
+            activation_mode="pre-differential-gated",
+        ),
+        ".meas tran c0_scorep_at FIND V(c0_scorep) AT=2.40n",
+        ".meas tran c0_scoren_at FIND V(c0_scoren) AT=2.40n",
+        ".meas tran c1_scorep_at FIND V(c1_scorep) AT=2.40n",
+        ".meas tran c1_scoren_at FIND V(c1_scoren) AT=2.40n",
+        ".meas tran c0_signed_at PARAM='c0_scorep_at-c0_scoren_at'",
+        ".meas tran c1_signed_at PARAM='c1_scorep_at-c1_scoren_at'",
+        ".meas tran margin_at PARAM='c0_signed_at-c1_signed_at'",
+        ".tran 2p 3n uic",
+        ".control",
+        "run",
+        "quit",
+        ".endc",
+        ".end",
+        "",
+    ]
+    return "\n".join(lines)
+
+
+@pytest.mark.ngspice
+def test_mnist01_measured_weak_zero_replay_needs_row_competition(
+    tmp_path: Path,
+    ngspice_path: str,
+) -> None:
+    all_rows = mnist01_hidden.run_netlist(
+        ngspice_path,
+        tmp_path / "mnist01_weak_zero_replay_all_rows.cir",
+        _measured_weak_zero_gated_readout_replay_netlist(set(range(len(WEAK_ZERO_PRE_P)))),
+        timeout=30.0,
+    )
+    top1 = mnist01_hidden.run_netlist(
+        ngspice_path,
+        tmp_path / "mnist01_weak_zero_replay_top1.cir",
+        _measured_weak_zero_gated_readout_replay_netlist({7}),
+        timeout=30.0,
+    )
+    top2 = mnist01_hidden.run_netlist(
+        ngspice_path,
+        tmp_path / "mnist01_weak_zero_replay_top2.cir",
+        _measured_weak_zero_gated_readout_replay_netlist({7, 9}),
+        timeout=30.0,
+    )
+
+    assert all_rows["margin_at"] < -5e-3
+    assert top1["margin_at"] > 10e-3
+    assert top2["margin_at"] < 0.0
+
+
 def _pre_differential_readout_writer_probe_netlist(
     *,
     pre_p: float,

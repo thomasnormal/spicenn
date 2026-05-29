@@ -569,14 +569,14 @@ def test_mnist01_live_hidden_identity_rows_learn_first_real_pair_without_python_
 
 
 @pytest.mark.ngspice
-def test_mnist01_live_hidden_sparse_complement_identity_rows_learn_ten_round_robin_margins(
+def test_mnist01_live_hidden_sparse_complement_identity_rows_learn_sixteen_round_robin_margins(
     tmp_path: Path,
     ngspice_path: str,
 ) -> None:
     _require_mnist_raw()
     train, evals = mnist01_hidden.load_mnist01_records(
-        train_count_per_digit=5,
-        eval_count_per_digit=5,
+        train_count_per_digit=8,
+        eval_count_per_digit=8,
         image_size=4,
     )
     train = mnist01_fixed.add_complement_features(mnist01_fixed.round_robin_by_label(train), scale=0.5)
@@ -595,17 +595,17 @@ def test_mnist01_live_hidden_sparse_complement_identity_rows_learn_ten_round_rob
             hidden_activation_sense_width_u=4.0,
             readout_activation_mode="pre-differential",
             readout_writer_activation_mode="pre-differential",
-            readout_update_width_u=0.20,
+            readout_update_width_u=0.22,
             hidden_writer_phase_mode="hidden-write",
             hidden_write_start_train_index=999,
         ),
-        timeout=420.0,
+        timeout=600.0,
     )
 
-    for sample_idx in range(10):
-        assert parsed[f"final_margin_{sample_idx}"] > 0.25e-3
-        assert parsed[f"final_margin_improvement_{sample_idx}"] > 0.25e-3
-    for train_idx in range(10):
+    for sample_idx in range(16):
+        assert parsed[f"final_margin_{sample_idx}"] > 1.0e-3
+        assert parsed[f"final_margin_improvement_{sample_idx}"] > 1.0e-3
+    for train_idx in range(16):
         assert abs(parsed[f"train_wh_probe_signed_delta_{train_idx}"]) < 1.0e-3
 
 

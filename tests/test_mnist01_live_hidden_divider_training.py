@@ -2663,6 +2663,196 @@ def _multipatch_patch2x2_hidden_selective_rescue_netlist(
     return "\n".join(lines)
 
 
+def _multipatch_patch2x2_readout_bootstrap_hidden_rescue_netlist(
+    bootstrap_features: list[float],
+    train_features: list[float],
+    opposite_features: list[float],
+) -> str:
+    if not (len(bootstrap_features) == len(train_features) == len(opposite_features) == 16):
+        raise ValueError("readout-bootstrap rescue expects three 4x4 feature vectors")
+    hidden_count = mnist01_hidden.patch2x2_hidden_count(16)
+    center_hidden = 4
+    center_features = mnist01_hidden.patch2x2_features_for_hidden(center_hidden, 16, hidden_count)
+    samples = [
+        {"features": bootstrap_features, "label": 1, "train": True},
+        {"features": train_features, "label": 0, "train": False},
+        {"features": opposite_features, "label": 1, "train": False},
+        {"features": train_features, "label": 0, "train": True},
+        {"features": train_features, "label": 0, "train": False},
+        {"features": opposite_features, "label": 1, "train": False},
+    ]
+    stop_ns = len(samples) * mnist01_fixed.CYCLE_NS
+    reset = [(idx * mnist01_fixed.CYCLE_NS, idx * mnist01_fixed.CYCLE_NS + 0.45) for idx in range(len(samples))]
+    feat = [
+        (idx * mnist01_fixed.CYCLE_NS + 0.75, idx * mnist01_fixed.CYCLE_NS + 2.10)
+        for idx in range(len(samples))
+    ]
+    score = [
+        (idx * mnist01_fixed.CYCLE_NS + 2.00, idx * mnist01_fixed.CYCLE_NS + 3.20)
+        for idx in range(len(samples))
+    ]
+    err = [
+        (0 * mnist01_fixed.CYCLE_NS + 3.50, 0 * mnist01_fixed.CYCLE_NS + 5.40),
+        (3 * mnist01_fixed.CYCLE_NS + 3.50, 3 * mnist01_fixed.CYCLE_NS + 5.40),
+    ]
+    readwrite = [(0 * mnist01_fixed.CYCLE_NS + 3.50, 0 * mnist01_fixed.CYCLE_NS + 5.40)]
+    hcg = [(3 * mnist01_fixed.CYCLE_NS + 5.00, 3 * mnist01_fixed.CYCLE_NS + 6.15)]
+    hiddenwrite = [(3 * mnist01_fixed.CYCLE_NS + 6.30, 3 * mnist01_fixed.CYCLE_NS + 8.40)]
+    lines = [
+        "* Patch2x2 hidden rescue using readout leverage created by a live readout writer.",
+        ".param VDD=1.2",
+        mnist01_hidden.mos_models(),
+        ".options method=gear reltol=1e-4 abstol=1e-13 vntol=1e-7",
+        "Vdd vdd 0 {VDD}",
+        f"Vrst rst 0 {mnist01_fixed._pulse_wave(reset, stop_ns)}",
+        f"Vrstn rstn 0 {mnist01_fixed._active_low_pulse_wave(reset, stop_ns)}",
+        f"Vfeatphi featphi 0 {mnist01_fixed._pulse_wave(feat, stop_ns)}",
+        f"Vscorephi scorephi 0 {mnist01_fixed._pulse_wave(score, stop_ns)}",
+        f"Verrphi errphi 0 {mnist01_fixed._pulse_wave(err, stop_ns)}",
+        f"Vreadwritephi readwritephi 0 {mnist01_fixed._pulse_wave(readwrite, stop_ns)}",
+        f"Vhcgphi hcgphi 0 {mnist01_fixed._pulse_wave(hcg, stop_ns)}",
+        f"Vhiddenwritephi hiddenwritephi 0 {mnist01_fixed._pulse_wave(hiddenwrite, stop_ns)}",
+        f"Iprobref vdd rnorm {mnist01_fixed._current_pulse_wave(err, stop_ns, 10.0e-6)}",
+        f"Vt0 t0 0 {mnist01_fixed._target_wave(samples, 0, stop_ns)}",
+        f"Vt1 t1 0 {mnist01_fixed._target_wave(samples, 1, stop_ns)}",
+        *[f"Vpx{feature} px{feature} 0 {mnist01_fixed._sample_feature_wave(samples, feature, stop_ns)}" for feature in range(16)],
+        *mnist01_hidden._hidden_storage_lines(
+            16,
+            hidden_count,
+            init_mode="patch2x2",
+            connectivity_mode="patch2x2-sparse",
+            inside_positive=0.75,
+            outside_positive=0.15,
+            inside_negative=0.15,
+            outside_negative=0.15,
+        ),
+        *mnist01_hidden._readout_storage_lines(hidden_count, 0.40, 0.40),
+        *mnist01_hidden._hidden_state_lines(hidden_count),
+        *mnist01_hidden._hidden_forward_lines(
+            16,
+            hidden_count,
+            8.0,
+            activation_mode="differential-preamp",
+            activation_sense_width_u=4.0,
+            hidden_init_mode="patch2x2",
+            hidden_connectivity_mode="patch2x2-sparse",
+        ),
+        *mnist01_hidden._score_storage_lines(),
+        *mnist01_hidden._score_readout_lines(hidden_count, 64.0, activation_mode="pre-differential"),
+        *mnist01_hidden._error_storage_lines(),
+        *mnist01_hidden._divider_probability_lines(0.5, 0.02),
+        *mnist01_hidden._route_to_error_rails_lines(16.0),
+        *mnist01_hidden._route_to_hidden_error_rails_lines(16.0),
+        "Vvwhi_ref vwhi_ref 0 0.48",
+        "Vvwlo_ref vwlo_ref 0 0.22",
+    ]
+    for output in range(2):
+        lines += mnist01_hidden.class_local_live_label_descent_update_lines(
+            class_idx=output,
+            feature_idx=center_hidden,
+            activation_node=f"hrow{center_hidden}",
+            positive_descent_node=mnist01_hidden.class_node(output, "errp"),
+            negative_descent_node=mnist01_hidden.class_node(output, "errn"),
+            update_guard_node="readwritephi",
+            update_guard_model="NSENSE",
+            width_u=0.8,
+            high_side_topology="pmos-differential",
+        )
+    lines += [
+        *mnist01_hidden._hidden_credit_lines(hidden_count, 32.0, 12.0, 0.05, 5.0e7),
+        *mnist01_hidden._hidden_credit_dynamic_preamp_gate_lines(
+            hidden_count,
+            sense_width_u=32.0,
+            latch_pmos_width_u=4.0,
+            output_width_u=2.0,
+            output_pull_width_u=0.5,
+            support_width_u=4.0,
+            write_gate_width_u=8.0,
+            capacitance_f=2.0,
+        ),
+        *mnist01_hidden._hidden_writer_lines(
+            16,
+            hidden_count,
+            0.2,
+            4.0,
+            0.2,
+            "pmos-signcharge",
+            "h{hidden}_hcg_write",
+            True,
+            hidden_init_mode="patch2x2",
+            hidden_connectivity_mode="patch2x2-sparse",
+        ),
+    ]
+
+    def score_measures(prefix: str, idx: int, margin_expr: str) -> list[str]:
+        base = idx * mnist01_fixed.CYCLE_NS
+        return [
+            f".meas tran {prefix}_center_pre_p FIND V(pre{center_hidden}_p) AT={base + 2.00:.2f}n",
+            f".meas tran {prefix}_center_pre_n FIND V(pre{center_hidden}_n) AT={base + 2.00:.2f}n",
+            f".meas tran {prefix}_center_pre PARAM='{prefix}_center_pre_p-{prefix}_center_pre_n'",
+            f".meas tran {prefix}_c0_scorep FIND V(c0_scorep) AT={base + 3.15:.2f}n",
+            f".meas tran {prefix}_c0_scoren FIND V(c0_scoren) AT={base + 3.15:.2f}n",
+            f".meas tran {prefix}_c1_scorep FIND V(c1_scorep) AT={base + 3.15:.2f}n",
+            f".meas tran {prefix}_c1_scoren FIND V(c1_scoren) AT={base + 3.15:.2f}n",
+            f".meas tran {prefix}_c0_signed PARAM='{prefix}_c0_scorep-{prefix}_c0_scoren'",
+            f".meas tran {prefix}_c1_signed PARAM='{prefix}_c1_scorep-{prefix}_c1_scoren'",
+            f".meas tran {prefix}_margin PARAM='{margin_expr}'",
+        ]
+
+    def center_readout_measures(prefix: str, at_ns: float) -> list[str]:
+        return [
+            f".meas tran {prefix}_c0_vwp FIND V(c0_vwp{center_hidden}) AT={at_ns:.2f}n",
+            f".meas tran {prefix}_c0_vwn FIND V(c0_vwn{center_hidden}) AT={at_ns:.2f}n",
+            f".meas tran {prefix}_c1_vwp FIND V(c1_vwp{center_hidden}) AT={at_ns:.2f}n",
+            f".meas tran {prefix}_c1_vwn FIND V(c1_vwn{center_hidden}) AT={at_ns:.2f}n",
+            f".meas tran {prefix}_c0_signed PARAM='{prefix}_c0_vwp-{prefix}_c0_vwn'",
+            f".meas tran {prefix}_c1_signed PARAM='{prefix}_c1_vwp-{prefix}_c1_vwn'",
+        ]
+
+    lines += center_readout_measures("readout_initial", 0.55)
+    lines += center_readout_measures("readout_after_bootstrap", 8.80)
+    lines += score_measures("train_before", 1, "train_before_c0_signed-train_before_c1_signed")
+    lines += score_measures("opposite_before", 2, "opposite_before_c1_signed-opposite_before_c0_signed")
+    lines += center_readout_measures("readout_before_hidden", 30.55)
+    lines += [
+        ".meas tran center_hdp FIND V(h4_hdp) AT=35.35n",
+        ".meas tran center_hdn FIND V(h4_hdn) AT=35.35n",
+        ".meas tran center_hcredit PARAM='center_hdp-center_hdn'",
+        ".meas tran center_gatep FIND V(h4_hdp_gate) AT=37.35n",
+        ".meas tran center_gaten FIND V(h4_hdn_gate) AT=37.35n",
+        ".meas tran center_gate_diff PARAM='center_gatep-center_gaten'",
+    ]
+    lines += score_measures("train_after", 4, "train_after_c0_signed-train_after_c1_signed")
+    lines += score_measures("opposite_after", 5, "opposite_after_c1_signed-opposite_after_c0_signed")
+    lines += center_readout_measures("readout_after_hidden", 58.80)
+    lines += [
+        ".meas tran c0_bootstrap_signed_delta PARAM='readout_after_bootstrap_c0_signed-readout_initial_c0_signed'",
+        ".meas tran c1_bootstrap_signed_delta PARAM='readout_after_bootstrap_c1_signed-readout_initial_c1_signed'",
+        ".meas tran c0_hidden_signed_drift PARAM='readout_after_hidden_c0_signed-readout_before_hidden_c0_signed'",
+        ".meas tran c1_hidden_signed_drift PARAM='readout_after_hidden_c1_signed-readout_before_hidden_c1_signed'",
+        ".meas tran train_margin_delta PARAM='train_after_margin-train_before_margin'",
+        ".meas tran train_center_pre_delta PARAM='train_after_center_pre-train_before_center_pre'",
+        ".meas tran opposite_margin_delta PARAM='opposite_after_margin-opposite_before_margin'",
+        *[
+            line
+            for feature in center_features
+            for line in [
+                f".meas tran center_wh{feature}p_after FIND V(wh{center_hidden}f{feature}p) AT=48.80n",
+                f".meas tran center_wh{feature}n_after FIND V(wh{center_hidden}f{feature}n) AT=48.80n",
+                f".meas tran center_wh{feature}_delta PARAM='center_wh{feature}p_after-center_wh{feature}n_after-(0.75-0.15)'",
+            ]
+        ],
+        f".tran 5p {stop_ns:.2f}n uic",
+        ".control",
+        "run",
+        "quit",
+        ".endc",
+        ".end",
+        "",
+    ]
+    return "\n".join(lines)
+
+
 @pytest.mark.ngspice
 def test_hidden_credit_dynamic_preamp_restores_mnist_scale_credit_with_dead_zone(
     tmp_path: Path,
@@ -3025,6 +3215,51 @@ def test_real_mnist_multipatch_hidden_rescue_is_center_selective(
     for feature in center_patch:
         assert replay[f"center_wh{feature}_delta"] < -3.0e-3
     assert abs(replay["off_wh5_delta"]) < 50e-6
+
+
+@pytest.mark.ngspice
+def test_real_mnist_patch2x2_hidden_rescue_can_use_live_learned_readout_leverage(
+    tmp_path: Path,
+    ngspice_path: str,
+) -> None:
+    _require_mnist_raw()
+    train, _evals = mnist01_hidden.load_mnist01_records(
+        train_count_per_digit=3,
+        eval_count_per_digit=1,
+        image_size=4,
+    )
+    digit0_records = [record for record in train if int(record["label"]) == 0]
+    digit1_records = [record for record in train if int(record["label"]) == 1]
+    center_patch = mnist01_hidden.patch2x2_features_for_hidden(4, 16, 9)
+    assert min(float(digit0_records[0]["features"][feature]) for feature in center_patch) > 0.50
+    assert sum(float(digit1_records[0]["features"][feature]) for feature in center_patch) > 1.0
+
+    replay = mnist01_hidden.run_netlist(
+        ngspice_path,
+        tmp_path / "mnist01_multipatch_patch2x2_readout_bootstrap_hidden_rescue.cir",
+        _multipatch_patch2x2_readout_bootstrap_hidden_rescue_netlist(
+            [float(value) for value in digit1_records[0]["features"]],
+            [float(value) for value in digit0_records[0]["features"]],
+            [float(value) for value in digit1_records[1]["features"]],
+        ),
+        timeout=180.0,
+    )
+
+    assert replay["c0_bootstrap_signed_delta"] < -10e-3
+    assert replay["c1_bootstrap_signed_delta"] > 10e-3
+    assert replay["readout_after_bootstrap_c0_signed"] < -10e-3
+    assert replay["readout_after_bootstrap_c1_signed"] > 10e-3
+    assert abs(replay["c0_hidden_signed_drift"]) < 1.0e-3
+    assert abs(replay["c1_hidden_signed_drift"]) < 1.0e-3
+    assert replay["train_before_margin"] < -0.25e-3
+    assert replay["center_hcredit"] < -50e-3
+    assert replay["center_gate_diff"] < -50e-3
+    assert replay["train_center_pre_delta"] < -1.0e-3
+    assert replay["train_margin_delta"] > 0.25e-3
+    assert replay["opposite_after_margin"] > 0.0
+    assert replay["opposite_margin_delta"] > -2.0e-3
+    for feature in center_patch:
+        assert replay[f"center_wh{feature}_delta"] < -1.0e-3
 
 
 @pytest.mark.ngspice

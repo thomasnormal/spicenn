@@ -1,8 +1,8 @@
 from __future__ import annotations
 
 import argparse
+import importlib.util
 import json
-import sys
 import time
 from pathlib import Path
 from typing import Any
@@ -16,8 +16,13 @@ from _util import MEAS_RE, parse_measures
 try:
     from spicenn.timing import CYCLE_NS
 except ModuleNotFoundError:
-    sys.path.insert(0, str(ROOT))
-    from spicenn.timing import CYCLE_NS
+    timing_path = ROOT / "spicenn" / "timing.py"
+    spec = importlib.util.spec_from_file_location("_spicenn_timing", timing_path)
+    if spec is None or spec.loader is None:
+        raise
+    timing_module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(timing_module)
+    CYCLE_NS = timing_module.CYCLE_NS
 
 
 def mos_models() -> str:

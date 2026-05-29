@@ -5,7 +5,10 @@ __pycache__/
 .mplcache/
 *.pyc
 
-# LaTeX build intermediates. Keep source .tex and committed PDFs.
+# LaTeX build intermediates and generated PDFs. The progress-note PDF was
+# regenerated and committed hundreds of times (~1.2 GB of history); keep the
+# .tex source under version control and treat PDFs as build artifacts.
+*.pdf
 *.aux
 *.fdb_latexmk
 *.fls

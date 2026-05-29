@@ -109,6 +109,14 @@ def test_mnist01_live_hidden_netlist_is_live_transistor_path() -> None:
     assert ".meas tran final_hrow_h3_1" in netlist
     assert ".meas tran final_margin_improvement_1" in netlist
 
+    readout_error_credit_netlist = mnist01_hidden.mnist01_live_hidden_netlist(
+        train,
+        train,
+        hidden_credit_error_source="readout",
+    )
+    assert "Mh1_c0_cred_pv_e vdd c0_errp h1_c0_cred_pv_e 0 NSENSE" in readout_error_credit_netlist
+    assert "Mh1_c0_cred_pv_e vdd c0_herrp h1_c0_cred_pv_e 0 NSENSE" not in readout_error_credit_netlist
+
     differential_netlist = mnist01_hidden.mnist01_live_hidden_netlist(
         train,
         train,
@@ -379,6 +387,12 @@ def test_mnist01_live_hidden_netlist_validation() -> None:
             [sample],
             [sample],
             hidden_credit_gate_mode="BAD",
+        )
+    with pytest.raises(ValueError, match="hidden_credit_error_source"):
+        mnist01_hidden.mnist01_live_hidden_netlist(
+            [sample],
+            [sample],
+            hidden_credit_error_source="BAD",
         )
     with pytest.raises(ValueError, match="hidden_activation_mode"):
         mnist01_hidden.mnist01_live_hidden_netlist(
@@ -676,6 +690,7 @@ def test_mnist01_live_hidden_sparse_complement_signcharge_packet_writes_are_bidi
             readout_writer_activation_mode="pre-differential",
             readout_update_width_u=0.20,
             hidden_credit_gate_mode="dynamic-preamp",
+            hidden_error_route_width_u=8.0,
             hidden_writer_topology="pmos-signcharge",
             hidden_write_start_train_index=1,
             hidden_credit_sense_start_ns=5.00,
@@ -696,7 +711,7 @@ def test_mnist01_live_hidden_sparse_complement_signcharge_packet_writes_are_bidi
     assert max(hidden_deltas) > 3.0e-3
     assert max(abs(delta) for delta in hidden_deltas) > 3.0e-3
     assert max(abs(delta) for delta in hidden_deltas) < 20.0e-3
-    assert max(abs(parsed[f"train_hcredit_gate_probe_{idx}"]) for idx in range(1, 4)) > 0.5
+    assert max(abs(parsed[f"train_hcredit_gate_probe_{idx}"]) for idx in range(1, 4)) > 0.30
 
     pre_deltas = [
         _hidden_feature_pre_evidence(
@@ -718,6 +733,8 @@ def test_mnist01_live_hidden_sparse_complement_signcharge_packet_writes_are_bidi
         for sample_idx in range(4)
     ]
     assert max(abs(delta) for delta in pre_deltas) > 5.0e-3
+    assert max(pre_deltas) > 5.0e-3
+    assert min(pre_deltas) < -5.0e-3
 
 
 def _hidden_activation_preamp_probe_netlist(

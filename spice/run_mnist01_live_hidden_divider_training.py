@@ -29,6 +29,7 @@ HIDDEN_CONNECTIVITY_MODES = ("dense", "identity-sparse")
 HIDDEN_WRITER_TOPOLOGIES = ("pmos-highside", "pmos-differential", "pmos-signcharge")
 HIDDEN_WRITER_PHASE_MODES = ("default", "hidden-write")
 READOUT_WRITER_NORMALIZATION_MODES = ("none", "activity-gate")
+HIDDEN_CREDIT_ERROR_SOURCES = ("hidden", "readout")
 
 
 def _clock_lines(
@@ -666,7 +667,10 @@ def _hidden_credit_lines(
     capacitance_f: float,
     internal_cap_f: float,
     internal_shunt_ohm: float,
+    error_source: str = "hidden",
 ) -> list[str]:
+    if error_source not in HIDDEN_CREDIT_ERROR_SOURCES:
+        raise ValueError(f"hidden_credit_error_source must be one of {HIDDEN_CREDIT_ERROR_SOURCES}")
     lines: list[str] = []
 
     def term(hidden: int, prefix: str, source: str, err: str, weight: str, dest: str) -> list[str]:
@@ -694,8 +698,9 @@ def _hidden_credit_lines(
             f"Mreset_{hdn} {hdn} rst 0 0 NMOS W=4u L=180n",
         ]
         for output in range(OUTPUTS):
-            errp = class_node(output, "herrp")
-            errn = class_node(output, "herrn")
+            err_prefix = "herr" if error_source == "hidden" else "err"
+            errp = class_node(output, f"{err_prefix}p")
+            errn = class_node(output, f"{err_prefix}n")
             vwp = class_node(output, f"vwp{hidden}")
             vwn = class_node(output, f"vwn{hidden}")
             prefix = f"h{hidden}_c{output}_cred"
@@ -1112,6 +1117,7 @@ def mnist01_live_hidden_netlist(
     hidden_credit_cap_f: float = 12.0,
     hidden_credit_internal_cap_f: float = 0.05,
     hidden_credit_internal_shunt_ohm: float = 5.0e7,
+    hidden_credit_error_source: str = "hidden",
     hidden_credit_gate_width_u: float = 4.0,
     hidden_credit_gate_cap_f: float = 2.0,
     hidden_credit_gate_pull_scale: float = 2.0,
@@ -1154,6 +1160,8 @@ def mnist01_live_hidden_netlist(
         _image_size_from_feature_count(feature_count)
     if hidden_credit_gate_mode not in ("differential-excess", "dynamic-preamp"):
         raise ValueError("hidden_credit_gate_mode must be differential-excess or dynamic-preamp")
+    if hidden_credit_error_source not in HIDDEN_CREDIT_ERROR_SOURCES:
+        raise ValueError(f"hidden_credit_error_source must be one of {HIDDEN_CREDIT_ERROR_SOURCES}")
     if hidden_activation_mode not in ("single-ended", "differential-preamp"):
         raise ValueError("hidden_activation_mode must be single-ended or differential-preamp")
     if hidden_input_mode not in ("raw", "contrast-common-gate", "restored-common-gate"):
@@ -1332,6 +1340,7 @@ def mnist01_live_hidden_netlist(
             hidden_credit_cap_f,
             hidden_credit_internal_cap_f,
             hidden_credit_internal_shunt_ohm,
+            hidden_credit_error_source,
         ),
         *(
             _hidden_credit_gate_lines(

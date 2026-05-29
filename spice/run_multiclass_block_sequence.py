@@ -2034,6 +2034,7 @@ def generate_netlist(
     class_bias_input: float = 0.85,
     readout_center_resistance: float = 0.0,
     readout_center_voltage: float = 0.40,
+    feature_margin_diagnostics: bool = False,
 ) -> str:
     if class_count < 2:
         raise ValueError("class_count must be at least 2")
@@ -3710,6 +3711,22 @@ def generate_netlist(
                         f".meas tran c{class_idx}_f{feature}_fcorrp_{cycle} FIND V({feature_correction_node(class_idx, feature, 'p')}) AT={base + score_error_measure_ns:.2f}n",
                         f".meas tran c{class_idx}_f{feature}_fcorrn_{cycle} FIND V({feature_correction_node(class_idx, feature, 'n')}) AT={base + score_error_measure_ns:.2f}n",
                     ]
+                    if feature_margin_diagnostics and uses_feature_margin_centered_objective:
+                        lines += [
+                            f".meas tran c{class_idx}_f{feature}_fcorrp_raw_{cycle} FIND V({feature_correction_node(class_idx, feature, 'p_raw')}) AT={base + score_error_measure_ns:.2f}n",
+                            f".meas tran c{class_idx}_f{feature}_fcorrn_raw_{cycle} FIND V({feature_correction_node(class_idx, feature, 'n_raw')}) AT={base + score_error_measure_ns:.2f}n",
+                            f".meas tran c{class_idx}_f{feature}_fcorrp_ctr_{cycle} FIND V({feature_correction_node(class_idx, feature, 'p_ctr')}) AT={base + score_error_measure_ns:.2f}n",
+                            f".meas tran c{class_idx}_f{feature}_fcorrn_ctr_{cycle} FIND V({feature_correction_node(class_idx, feature, 'n_ctr')}) AT={base + score_error_measure_ns:.2f}n",
+                        ]
+                if feature_margin_diagnostics:
+                    for class_idx in range(class_count):
+                        for opponent_idx in range(class_count):
+                            if opponent_idx == class_idx:
+                                continue
+                            lines += [
+                                f".meas tran c{class_idx}_gt_c{opponent_idx}_f{feature}_decision_{cycle} FIND V({feature_contribution_decision_node(class_idx, opponent_idx, feature)}) AT={base + score_decision_measure_ns:.2f}n",
+                                f".meas tran c{class_idx}_gt_c{opponent_idx}_f{feature}_diff_{cycle} PARAM='c{class_idx}_gt_c{opponent_idx}_f{feature}_decision_{cycle}-c{opponent_idx}_gt_c{class_idx}_f{feature}_decision_{cycle}'",
+                            ]
             if eval_score_readout_mode != "none":
                 lines.append(
                     f".meas tran eval_actrow_f{feature}_{cycle} FIND V(eval_actrow{feature}) AT={base + eval_score_measure_ns:.2f}n"
@@ -3847,6 +3864,24 @@ def generate_netlist(
                 before_ns = max(0.0, base + acc_start_ns - 0.05)
                 after_ns = min(base + CYCLE_NS - 0.10, base + acc_end_ns + 0.50)
                 writer_sample_ns = base + readout_eligibility_update_measure_ns
+                if feature_margin_diagnostics and uses_feature_margin_readout_objective:
+                    for feature in range(feature_count):
+                        for class_idx in range(class_count):
+                            diagnostic_nodes = [
+                                ("fcorrp_writer", feature_correction_node(class_idx, feature, "p")),
+                                ("fcorrn_writer", feature_correction_node(class_idx, feature, "n")),
+                            ]
+                            if uses_feature_margin_centered_objective:
+                                diagnostic_nodes += [
+                                    ("fcorrp_raw_writer", feature_correction_node(class_idx, feature, "p_raw")),
+                                    ("fcorrn_raw_writer", feature_correction_node(class_idx, feature, "n_raw")),
+                                    ("fcorrp_ctr_writer", feature_correction_node(class_idx, feature, "p_ctr")),
+                                    ("fcorrn_ctr_writer", feature_correction_node(class_idx, feature, "n_ctr")),
+                                ]
+                            for suffix, node in diagnostic_nodes:
+                                lines.append(
+                                    f".meas tran c{class_idx}_f{feature}_{suffix}_train{train_seen} FIND V({node}) AT={writer_sample_ns:.2f}n"
+                                )
                 for spec in live_writer_measure_specs:
                     class_idx = int(spec["class_idx"])
                     feature = int(spec["feature"])
@@ -4976,6 +5011,78 @@ def live_readout_writer_handoff_stats(
     }
 
 
+def feature_margin_diagnostic_stats(
+    measures: dict[str, float],
+    *,
+    train_labels: list[int],
+    class_count: int,
+    feature_count: int,
+    feature_margin_diagnostics: bool,
+    eligibility_active_threshold_v: float = 25e-3,
+) -> dict[str, Any]:
+    if not feature_margin_diagnostics:
+        return {"train_feature_margin_diagnostic_rows": []}
+    rows: list[dict[str, Any]] = []
+    for train_idx, label in enumerate(train_labels, start=1):
+        for class_idx in range(class_count):
+            role = "target" if class_idx == label else "nontarget"
+            for feature in range(feature_count):
+                prefix = f"c{class_idx}_f{feature}"
+                writer_pos_key = f"{prefix}_fcorrp_writer_train{train_idx}"
+                writer_neg_key = f"{prefix}_fcorrn_writer_train{train_idx}"
+                if writer_pos_key not in measures or writer_neg_key not in measures:
+                    continue
+                writer_prefix = f"{prefix}_writer"
+                eligibility_key = f"{writer_prefix}_elig_train{train_idx}"
+                row: dict[str, Any] = {
+                    "train_index": train_idx,
+                    "label": label,
+                    "class": class_idx,
+                    "feature": feature,
+                    "role": role,
+                    "fcorrp_writer_v": float(measures[writer_pos_key]),
+                    "fcorrn_writer_v": float(measures[writer_neg_key]),
+                    "fcorrdiff_writer_v": float(measures[writer_pos_key] - measures[writer_neg_key]),
+                }
+                if eligibility_key in measures:
+                    eligibility = float(measures[eligibility_key])
+                    row["eligibility_v"] = eligibility
+                    row["active"] = eligibility > eligibility_active_threshold_v
+                for suffix in ("raw", "ctr"):
+                    pos_key = f"{prefix}_fcorrp_{suffix}_writer_train{train_idx}"
+                    neg_key = f"{prefix}_fcorrn_{suffix}_writer_train{train_idx}"
+                    if pos_key in measures and neg_key in measures:
+                        row[f"fcorrp_{suffix}_writer_v"] = float(measures[pos_key])
+                        row[f"fcorrn_{suffix}_writer_v"] = float(measures[neg_key])
+                        row[f"fcorrdiff_{suffix}_writer_v"] = float(measures[pos_key] - measures[neg_key])
+                drive_key = f"{writer_prefix}_drive_diff_train{train_idx}"
+                delta_key = f"{writer_prefix}_signed_delta_train{train_idx}"
+                if drive_key in measures:
+                    row["writer_drive_diff_v"] = float(measures[drive_key])
+                if delta_key in measures:
+                    row["signed_delta_v"] = float(measures[delta_key])
+                rows.append(row)
+    active_target = [
+        row["fcorrdiff_writer_v"]
+        for row in rows
+        if row.get("active", False) and row["role"] == "target"
+    ]
+    active_nontarget = [
+        row["fcorrdiff_writer_v"]
+        for row in rows
+        if row.get("active", False) and row["role"] == "nontarget"
+    ]
+    return {
+        "train_feature_margin_diagnostic_rows": rows,
+        "train_feature_margin_active_target_fcorrdiff_mean_v": (
+            float(np.mean(active_target)) if active_target else None
+        ),
+        "train_feature_margin_active_nontarget_fcorrdiff_mean_v": (
+            float(np.mean(active_nontarget)) if active_nontarget else None
+        ),
+    }
+
+
 def activation_prototype_projection_stats(
     measures: dict[str, float],
     *,
@@ -5636,6 +5743,7 @@ def run_case(args: argparse.Namespace) -> dict[str, Any]:
         class_bias_input=args.class_bias_input,
         readout_center_resistance=args.readout_center_resistance,
         readout_center_voltage=args.readout_center_voltage,
+        feature_margin_diagnostics=args.feature_margin_diagnostics,
     )
     measures = run_netlist(spice_bin, path, deck, timeout=args.timeout)
     rows = rows_from_measures(all_records, measures, sequence=sequence, class_count=args.class_count)
@@ -6131,6 +6239,13 @@ def run_case(args: argparse.Namespace) -> dict[str, Any]:
             class_count=args.class_count,
             total_feature_count=total_feature_count,
         ),
+        **feature_margin_diagnostic_stats(
+            measures,
+            train_labels=[int(record["label"]) for record in train_records],
+            class_count=args.class_count,
+            feature_count=feature_count,
+            feature_margin_diagnostics=args.feature_margin_diagnostics,
+        ),
         **signed_projection,
         **class_centered_signed_projection,
         **projection_alignment_stats(
@@ -6344,6 +6459,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
     ap.add_argument("--physical-readout-replay", action="store_true")
     ap.add_argument("--physical-readout-replay-sweep", action="store_true")
     ap.add_argument("--physical-readout-replay-timeout", type=float, default=30.0)
+    ap.add_argument("--feature-margin-diagnostics", action="store_true")
     ap.add_argument("--readout-margin-target-v", type=float, default=10.0e-3)
     ap.add_argument("--min-target-signed", type=float, default=10e-3)
     return ap

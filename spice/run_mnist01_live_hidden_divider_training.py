@@ -1225,6 +1225,53 @@ def forward_metric_rows(
     return rows
 
 
+def hidden_state_metric_rows(
+    eval_records: list[dict[str, Any]],
+    measures: dict[str, float],
+    hidden_count: int,
+    *,
+    phase: str = "final",
+    hidden_init_mode: str = "patch2x2",
+) -> list[dict[str, Any]]:
+    if phase not in {"initial", "final"}:
+        raise ValueError("hidden state metrics are only measured for initial/final eval phases")
+    if hidden_count <= 0:
+        raise ValueError("hidden_count must be positive")
+    if not eval_records:
+        return []
+    feature_count = len(eval_records[0]["features"])
+    _validate_records(eval_records, feature_count, "eval")
+    rows: list[dict[str, Any]] = []
+    for sample_idx, sample in enumerate(eval_records):
+        probe_hidden, probe_feature = _probe_hidden_feature(sample, hidden_count, hidden_init_mode)
+        pre_signed = [
+            measures[f"{phase}_pre_signed_h{hidden}_{sample_idx}"]
+            for hidden in range(hidden_count)
+        ]
+        ordered = sorted(range(hidden_count), key=lambda hidden: pre_signed[hidden], reverse=True)
+        rank_by_hidden = {hidden: rank for rank, hidden in enumerate(ordered)}
+        best_hidden = ordered[0]
+        for hidden in range(hidden_count):
+            rows.append(
+                {
+                    "phase": phase,
+                    "phase_index": sample_idx,
+                    "label": int(sample["label"]),
+                    "hidden": hidden,
+                    "probe_feature": probe_feature,
+                    "is_probe_hidden": int(hidden == probe_hidden),
+                    "is_best_pre_signed": int(hidden == best_hidden),
+                    "pre_signed_rank": rank_by_hidden[hidden],
+                    "pre_p_v": measures[f"{phase}_prep_h{hidden}_{sample_idx}"],
+                    "pre_n_v": measures[f"{phase}_pren_h{hidden}_{sample_idx}"],
+                    "pre_signed_v": pre_signed[hidden],
+                    "act_v": measures[f"{phase}_act_h{hidden}_{sample_idx}"],
+                    "hrow_v": measures[f"{phase}_hrow_h{hidden}_{sample_idx}"],
+                }
+            )
+    return rows
+
+
 def mnist01_live_hidden_netlist(
     train_records: list[dict[str, Any]],
     eval_records: list[dict[str, Any]],

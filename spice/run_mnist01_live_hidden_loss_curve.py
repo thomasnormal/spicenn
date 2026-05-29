@@ -20,6 +20,8 @@ from run_spice_sweep import ROOT, detect_spice
 def _current_best_patch2x2_netlist(
     train: list[dict[str, Any]],
     evals: list[dict[str, Any]],
+    *,
+    measure_eval_hidden_states: bool = False,
 ) -> str:
     hidden_count = mnist01_hidden.patch2x2_hidden_count(len(train[0]["features"]))
     return mnist01_hidden.mnist01_live_hidden_netlist(
@@ -47,7 +49,7 @@ def _current_best_patch2x2_netlist(
         hidden_write_start_ns=5.35,
         hidden_write_end_ns=5.45,
         hidden_update_width_u=0.05,
-        measure_eval_hidden_states=False,
+        measure_eval_hidden_states=measure_eval_hidden_states,
         tran_step_ps=10.0,
     )
 
@@ -69,6 +71,29 @@ def _write_metric_csv(path: Path, rows: list[dict[str, Any]]) -> None:
         "cumulative_mean_loss",
         "phase_cumulative_accuracy",
         "phase_cumulative_mean_loss",
+    ]
+    with path.open("w", newline="") as f:
+        writer = csv.DictWriter(f, fieldnames=fieldnames)
+        writer.writeheader()
+        writer.writerows(rows)
+
+
+def _write_hidden_metric_csv(path: Path, rows: list[dict[str, Any]]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fieldnames = [
+        "phase",
+        "phase_index",
+        "label",
+        "hidden",
+        "probe_feature",
+        "is_probe_hidden",
+        "is_best_pre_signed",
+        "pre_signed_rank",
+        "pre_p_v",
+        "pre_n_v",
+        "pre_signed_v",
+        "act_v",
+        "hrow_v",
     ]
     with path.open("w", newline="") as f:
         writer = csv.DictWriter(f, fieldnames=fieldnames)
@@ -105,8 +130,10 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--train-count-per-digit", type=int, default=3)
     parser.add_argument("--eval-count-per-digit", type=int, default=3)
+    parser.add_argument("--epochs", type=int, default=1)
     parser.add_argument("--image-size", type=int, default=4)
     parser.add_argument("--loss-margin-scale-v", type=float, default=1.0e-3)
+    parser.add_argument("--measure-hidden-states", action="store_true")
     parser.add_argument("--spice", default="ngspice")
     parser.add_argument("--timeout", type=float, default=600.0)
     parser.add_argument(
@@ -124,13 +151,20 @@ def main() -> None:
         image_size=args.image_size,
     )
     train = mnist01_fixed.add_complement_features(mnist01_fixed.round_robin_by_label(train), scale=0.5)
+    if args.epochs <= 0:
+        raise ValueError("epochs must be positive")
+    train = train * args.epochs
     evals = mnist01_fixed.add_complement_features(evals, scale=0.5)
 
     with tempfile.TemporaryDirectory(prefix=f"{args.tag}_") as tmp:
         measures = mnist01_hidden.run_netlist(
             spice_bin,
             Path(tmp) / f"{args.tag}.cir",
-            _current_best_patch2x2_netlist(train, evals),
+            _current_best_patch2x2_netlist(
+                train,
+                evals,
+                measure_eval_hidden_states=args.measure_hidden_states,
+            ),
             timeout=args.timeout,
         )
     rows = mnist01_hidden.forward_metric_rows(
@@ -144,6 +178,7 @@ def main() -> None:
     final_accuracy = sum(int(row["correct"]) for row in final_rows) / len(final_rows)
     train_accuracy = sum(int(row["correct"]) for row in train_rows) / len(train_rows)
     final_margins = [float(row["margin_v"]) for row in final_rows]
+    worst_final_row = min(final_rows, key=lambda row: float(row["margin_v"]))
 
     csv_path = args.table_dir / f"{args.tag}_forward_metrics.csv"
     summary_path = args.table_dir / f"{args.tag}_summary.json"
@@ -154,20 +189,41 @@ def main() -> None:
         rows,
         f"4x4 MNIST01 local RF signcharge, final acc {final_accuracy:.3f}",
     )
+    hidden_csv_path = args.table_dir / f"{args.tag}_hidden_metrics.csv"
+    if args.measure_hidden_states:
+        hidden_count = mnist01_hidden.patch2x2_hidden_count(len(train[0]["features"]))
+        hidden_rows = []
+        for phase in ("initial", "final"):
+            hidden_rows.extend(
+                mnist01_hidden.hidden_state_metric_rows(
+                    evals,
+                    measures,
+                    hidden_count,
+                    phase=phase,
+                    hidden_init_mode="patch2x2",
+                )
+            )
+        _write_hidden_metric_csv(hidden_csv_path, hidden_rows)
     summary = {
         "tag": args.tag,
         "spice": spice_version,
         "train_count_per_digit": args.train_count_per_digit,
         "eval_count_per_digit": args.eval_count_per_digit,
+        "epochs": args.epochs,
         "image_size": args.image_size,
         "loss_margin_scale_v": args.loss_margin_scale_v,
         "train_accuracy": train_accuracy,
         "final_accuracy": final_accuracy,
         "final_margin_min_v": min(final_margins),
         "final_margin_mean_v": sum(final_margins) / len(final_margins),
+        "worst_final_phase_index": int(worst_final_row["phase_index"]),
+        "worst_final_label": int(worst_final_row["label"]),
+        "worst_final_margin_v": float(worst_final_row["margin_v"]),
         "metric_csv": str(csv_path),
         "loss_curve_png": str(figure_path),
     }
+    if args.measure_hidden_states:
+        summary["hidden_metric_csv"] = str(hidden_csv_path)
     summary_path.parent.mkdir(parents=True, exist_ok=True)
     summary_path.write_text(json.dumps(summary, indent=2) + "\n")
     print(json.dumps(summary, indent=2))

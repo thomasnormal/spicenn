@@ -17,6 +17,8 @@ from spicenn.timing import CYCLE_NS
 BITS = 2
 HIDDEN = 4
 OUTPUTS = 2
+ERROR_MODES = ("raw-score", "current-sum", "conductance-divider", "soft-wta")
+READOUT_INIT_MODES = ("xor-prior", "neutral")
 
 
 def bit_value(pattern: int, bit: int) -> int:
@@ -113,13 +115,24 @@ def hidden_caps() -> str:
     return "\n".join(lines)
 
 
-def readout_caps() -> str:
+def readout_caps(
+    *,
+    mode: str = "xor-prior",
+    neutral_positive_v: float = 0.45,
+    neutral_negative_v: float = 0.20,
+) -> str:
+    if mode not in READOUT_INIT_MODES:
+        raise ValueError(f"readout init mode must be one of {READOUT_INIT_MODES}")
     lines: list[str] = []
     for out in range(OUTPUTS):
         for h in range(HIDDEN):
-            same = out == xor_label(h)
-            p = 0.45 if same else 0.20
-            n = 0.20 if same else 0.45
+            if mode == "neutral":
+                p = neutral_positive_v
+                n = neutral_negative_v
+            else:
+                same = out == xor_label(h)
+                p = 0.45 if same else 0.20
+                n = 0.20 if same else 0.45
             lines += [
                 f"Cvw{out}{h}p vw{out}{h}p 0 20f IC={p:.12g}",
                 f"Cvw{out}{h}n vw{out}{h}n 0 20f IC={n:.12g}",
@@ -251,6 +264,119 @@ def error_cells() -> str:
     return "\n".join(lines)
 
 
+def current_sum_error_cells() -> str:
+    """Two-output current-sum descent rails for backprop.
+
+    For two classes, the current-sum normalized descent direction is proportional
+    to y - score / sum(score).  The common denominator is omitted physically, so
+    the target rail receives the opposing class score current and the nontarget
+    rail receives its own score current.  This preserves the softmax-like sign
+    while keeping the block transistor/passive.
+    """
+
+    lines: list[str] = []
+    for out in range(OUTPUTS):
+        other = 1 - out
+        lines += [
+            f"* Current-sum output descent for class {out}: dp ~ target*score{other}, dn ~ nontarget*score{out}.",
+            f"Mcserr_dp{out}_label vdd t{out} dp{out}_label 0 NSENSE W=32u L=180n",
+            f"Mcserr_dp{out}_opp dp{out}_label score{other} dp{out}_opp 0 NSENSE W=32u L=180n",
+            f"Mcserr_dp{out}_clk dp{out}_opp err dp{out} 0 NSENSE W=32u L=180n",
+            f"Mcserr_dn{out}_label vdd t{other} dn{out}_label 0 NSENSE W=32u L=180n",
+            f"Mcserr_dn{out}_own dn{out}_label score{out} dn{out}_own 0 NSENSE W=32u L=180n",
+            f"Mcserr_dn{out}_clk dn{out}_own err dn{out} 0 NSENSE W=32u L=180n",
+        ]
+    return "\n".join(lines)
+
+
+def probability_storage_caps(prefix: str) -> list[str]:
+    lines: list[str] = []
+    for out in range(OUTPUTS):
+        pnode = f"{prefix}{out}"
+        pbar = f"{prefix}{out}_bar"
+        lines += [
+            f"C{pnode} {pnode} 0 8f IC=0",
+            f"R{pnode} {pnode} 0 1G",
+            f"Mreset_{pnode} {pnode} rstg 0 0 NMOS W=4u L=180n",
+            f"C{pbar} {pbar} 0 4f IC=1.0",
+            f"R{pbar} {pbar} 0 1G",
+            f"Mpre_{pbar} vdd rstg {pbar} 0 NSENSE W=8u L=180n",
+        ]
+    return lines
+
+
+def normalized_error_from_probability_nodes(prefix: str, *, width_u: float = 32.0) -> list[str]:
+    lines: list[str] = []
+    for out in range(OUTPUTS):
+        other = 1 - out
+        prob = f"{prefix}{out}"
+        prob_other = f"{prefix}{other}"
+        lines += [
+            f"M{prefix}_dp{out}_label vdd t{out} {prefix}_dp{out}_label 0 NSENSE W={width_u:.6g}u L=180n",
+            f"M{prefix}_dp{out}_prob {prefix}_dp{out}_label {prob_other} {prefix}_dp{out}_prob 0 NSENSE W={width_u:.6g}u L=180n",
+            f"M{prefix}_dp{out}_clk {prefix}_dp{out}_prob err dp{out} 0 NSENSE W={width_u:.6g}u L=180n",
+            f"M{prefix}_dn{out}_label vdd t{other} {prefix}_dn{out}_label 0 NSENSE W={width_u:.6g}u L=180n",
+            f"M{prefix}_dn{out}_prob {prefix}_dn{out}_label {prob} {prefix}_dn{out}_prob 0 NSENSE W={width_u:.6g}u L=180n",
+            f"M{prefix}_dn{out}_clk {prefix}_dn{out}_prob err dn{out} 0 NSENSE W={width_u:.6g}u L=180n",
+        ]
+    return lines
+
+
+def conductance_divider_error_cells() -> str:
+    """Current-divider probability rails followed by output descent rails."""
+
+    lines = [
+        "* Conductance-divider normalizer: tail current is split by score-controlled conductances.",
+        "Vdivtail divtail 0 0.58",
+        "Vdivfloor divfloor 0 0.10",
+        "Rdivsrc divsrc 0 1G",
+        "Rdivtailnode divtailnode 0 1G",
+    ]
+    lines += probability_storage_caps("pdiv")
+    for out in range(OUTPUTS):
+        lines += [
+            f"Mpdiv{out}_score pdiv{out}_bar score{out} divsrc 0 NSENSE W=24u L=180n",
+            f"Mpdiv{out}_floor pdiv{out}_bar divfloor divsrc 0 NSENSE W=2u L=180n",
+        ]
+    lines += [
+        "Mpdiv_tail_gate divsrc err divtailnode 0 NSENSE W=32u L=180n",
+        "Mpdiv_tail divtailnode divtail 0 0 NMOS W=16u L=180n",
+    ]
+    for out in range(OUTPUTS):
+        other = 1 - out
+        lines += [
+            f"Mcd_dp{out}_prob cd_dp{out}_prob pdiv{other}_bar vdd vdd PMOS W=0.02u L=180n",
+            f"Mcd_dp{out}_label cd_dp{out}_prob t{out} cd_dp{out}_label 0 NSENSE W=0.1u L=180n",
+            f"Mcd_dp{out}_clk cd_dp{out}_label err dp{out} 0 NSENSE W=0.1u L=180n",
+            f"Mcd_dn{out}_prob cd_dn{out}_prob pdiv{out}_bar vdd vdd PMOS W=0.02u L=180n",
+            f"Mcd_dn{out}_label cd_dn{out}_prob t{other} cd_dn{out}_label 0 NSENSE W=0.1u L=180n",
+            f"Mcd_dn{out}_clk cd_dn{out}_label err dn{out} 0 NSENSE W=0.1u L=180n",
+        ]
+    return "\n".join(lines)
+
+
+def soft_wta_error_cells() -> str:
+    """Soft winner-take-all probability rails with shared inhibition."""
+
+    lines = [
+        "* Soft-WTA normalizer: score excitation competes against a shared inhibitory rail.",
+        "Cwta_inh wta_inh 0 8f IC=0",
+        "Rwta_inh wta_inh 0 1G",
+        "Mreset_wta_inh wta_inh rstg 0 0 NMOS W=4u L=180n",
+    ]
+    lines += probability_storage_caps("pwta")
+    for out in range(OUTPUTS):
+        lines += [
+            f"Mwta{out}_score vdd score{out} wta{out}_score 0 NSENSE W=96u L=180n",
+            f"Mwta{out}_clk wta{out}_score err pwta{out} 0 NSENSE W=96u L=180n",
+            f"Mwta{out}_inh_score vdd score{out} wta{out}_inh_score 0 NSENSE W=16u L=180n",
+            f"Mwta{out}_inh_clk wta{out}_inh_score err wta_inh 0 NSENSE W=16u L=180n",
+            f"Mwta{out}_suppress pwta{out} wta_inh 0 0 NMOS W=10u L=180n",
+        ]
+    lines += normalized_error_from_probability_nodes("pwta")
+    return "\n".join(lines)
+
+
 def hidden_delta() -> str:
     lines: list[str] = []
     for h in range(HIDDEN):
@@ -346,6 +472,13 @@ def measures(samples: list[dict[str, Any]], train_count: int) -> tuple[str, str]
                 f".meas tran train_target_before_{local} FIND V(out{label}) AT={base + 2.95:.2f}n",
                 f".meas tran train_other_before_{local} FIND V(out{other}) AT={base + 2.95:.2f}n",
                 f".meas tran train_margin_before_{local} PARAM='train_target_before_{local}-train_other_before_{local}'",
+                f".meas tran train_target_score_before_{local} FIND V(score{label}) AT={base + 2.95:.2f}n",
+                f".meas tran train_other_score_before_{local} FIND V(score{other}) AT={base + 2.95:.2f}n",
+                f".meas tran train_score_margin_before_{local} PARAM='train_target_score_before_{local}-train_other_score_before_{local}'",
+                f".meas tran train_dp_target_{local} FIND V(dp{label}) AT={base + 5.05:.2f}n",
+                f".meas tran train_dn_target_{local} FIND V(dn{label}) AT={base + 5.05:.2f}n",
+                f".meas tran train_dp_other_{local} FIND V(dp{other}) AT={base + 5.05:.2f}n",
+                f".meas tran train_dn_other_{local} FIND V(dn{other}) AT={base + 5.05:.2f}n",
                 f".meas tran train_d_margin_{local} PARAM='train_margin_{local}-train_margin_before_{local}'",
                 f".meas tran hdp_active_{local} FIND V(hdp{active}) AT={base + 7.10:.2f}n",
                 f".meas tran hdn_active_{local} FIND V(hdn{active}) AT={base + 7.10:.2f}n",
@@ -360,15 +493,32 @@ def measures(samples: list[dict[str, Any]], train_count: int) -> tuple[str, str]
     return "\n".join(lines), "\n".join(prints)
 
 
-def xor_netlist(pattern_order: list[int]) -> str:
+def xor_netlist(
+    pattern_order: list[int],
+    *,
+    error_mode: str = "raw-score",
+    readout_init_mode: str = "xor-prior",
+) -> str:
+    if error_mode not in ERROR_MODES:
+        raise ValueError(f"error_mode must be one of {ERROR_MODES}")
+    if readout_init_mode not in READOUT_INIT_MODES:
+        raise ValueError(f"readout_init_mode must be one of {READOUT_INIT_MODES}")
     train_samples = [{"pattern": p, "label": xor_label(p)} for p in pattern_order]
     eval_samples = [{"pattern": p, "label": xor_label(p)} for p in range(4)]
     samples = train_samples + eval_samples
     stop = len(samples) * CYCLE_NS
     meas, prints = measures(samples, len(train_samples))
+    output_error_lines = {
+        "raw-score": error_cells,
+        "current-sum": current_sum_error_cells,
+        "conductance-divider": conductance_divider_error_cells,
+        "soft-wta": soft_wta_error_cells,
+    }[error_mode]()
     return f"""
 * Device-level 2-bit XOR with hidden feature weight updates.
 * Four capacitor-held literal feature cells feed a two-output readout.
+* Error mode: {error_mode}.
+* Readout init: {readout_init_mode}.
 .param VDD=1.2
 {mos_models()}
 Vdd vdd 0 {{VDD}}
@@ -381,14 +531,14 @@ Vt1 t1 0 {target_wave(samples, 1, stop)}
 {phases(len(train_samples), len(samples))}
 
 {hidden_caps()}
-{readout_caps()}
+{readout_caps(mode=readout_init_mode)}
 
 {temporary_caps()}
 {resets()}
 
 {hidden_forward()}
 {output_forward()}
-{error_cells()}
+{output_error_lines}
 {hidden_delta()}
 {readout_gradients_and_updates()}
 {hidden_gradients_and_updates()}
@@ -418,7 +568,12 @@ def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--timeout", type=float, default=90.0)
     ap.add_argument("--tag", default="device_xor2_learned_features")
+    ap.add_argument("--error-mode", choices=ERROR_MODES, default="raw-score")
+    ap.add_argument("--readout-init-mode", choices=READOUT_INIT_MODES, default="xor-prior")
+    ap.add_argument("--epochs", type=int, default=1)
     args = ap.parse_args()
+    if args.epochs <= 0:
+        raise ValueError("epochs must be positive")
 
     spice_bin, version = detect_spice(None)
     generated = ROOT / "spice/generated"
@@ -429,11 +584,17 @@ def main() -> None:
     run_tiny_test(spice_bin, generated)
 
     safe_tag = "".join(ch if ch.isalnum() or ch in {"_", "-"} else "_" for ch in args.tag)
-    orders = [("binary_order", list(range(4))), ("interleaved_order", [0, 3, 1, 2])]
+    base_orders = [("binary_order", list(range(4))), ("interleaved_order", [0, 3, 1, 2])]
+    orders = [(name, order * args.epochs) for name, order in base_orders]
     rows: list[dict[str, Any]] = []
     t0 = time.perf_counter()
     for order_name, order in orders:
-        parsed = run_netlist(spice_bin, generated / f"{safe_tag}_{order_name}.cir", xor_netlist(order), args.timeout)
+        parsed = run_netlist(
+            spice_bin,
+            generated / f"{safe_tag}_{order_name}.cir",
+            xor_netlist(order, error_mode=args.error_mode, readout_init_mode=args.readout_init_mode),
+            args.timeout,
+        )
         for pattern in range(4):
             label = xor_label(pattern)
             slot = order.index(pattern)
@@ -482,10 +643,19 @@ def main() -> None:
         "architecture": "device_level_2bit_xor_learned_hidden_feature_updates",
         "status": "tiny_learned_hidden_update_device_smoke",
         "benchmark": "2-bit XOR",
+        "error_mode": args.error_mode,
+        "readout_init_mode": args.readout_init_mode,
+        "epochs": args.epochs,
         "model_level": "ngspice built-in LEVEL=1 MOS models; not a foundry PDK.",
         "signal_path": (
             "Four literal hidden feature cells and a two-output readout run forward/error/backward/accumulate/apply phases. "
             "Both readout weights and active hidden-feature match weights are capacitor-held and updated in SPICE."
+        ),
+        "output_gradient_interpretation": (
+            "current-sum mode drives target dp with opposing score current and nontarget dn with own score current, "
+            "which is proportional to y - score/sum(score) without physically dividing by the common sum."
+            if args.error_mode == "current-sum"
+            else "raw-score mode uses the older target-minus-score rail and is kept as a comparison."
         ),
         "no_behavioral_signal_math": True,
         "uses_behavioral_tanh": False,

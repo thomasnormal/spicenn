@@ -28,6 +28,7 @@ import run_device_readout_array_capfit as readout_array_capfit  # noqa: E402
 import run_device_readout_write_selectivity as readout_write_selectivity  # noqa: E402
 import run_device_softmax_current_competition as softmax_primitives  # noqa: E402
 import run_device_write_rail_exclusion_sweep as write_rail_primitives  # noqa: E402
+import run_device_xor2_learned_features as xor_learned_features  # noqa: E402
 import run_device_xor2_two_hidden as two_hidden_probe  # noqa: E402
 import run_device_xor2_random_hidden as direct_flow  # noqa: E402
 import spice_adapter  # noqa: E402
@@ -4871,6 +4872,77 @@ def test_two_hidden_probe_can_use_low_threshold_output_head() -> None:
     assert "Mrelu_o0 vdd score0 out0 0 NSENSE W=48u L=180n" in netlist
     assert "Mrelu_o1 vdd score1 out1 0 NSENSE W=48u L=180n" in netlist
     assert "signed readout from hidden layer 2" in netlist
+
+
+def test_xor_learned_features_current_sum_error_is_transistor_backprop() -> None:
+    netlist = xor_learned_features.xor_netlist([0, 3, 1, 2], error_mode="current-sum")
+
+    assert "\nB" not in netlist
+    assert "* Error mode: current-sum." in netlist
+    assert "Mcserr_dp0_opp dp0_label score1 dp0_opp 0 NSENSE" in netlist
+    assert "Mcserr_dn0_own dn0_label score0 dn0_own 0 NSENSE" in netlist
+    assert "Mcserr_dp1_opp dp1_label score0 dp1_opp 0 NSENSE" in netlist
+    assert "Mcserr_dn1_own dn1_label score1 dn1_own 0 NSENSE" in netlist
+    assert "Mhdp00a1 hdp00a0 vw00p hdp00a1 0 NMOS" in netlist
+    assert "Mghp00_d ghp00_x hdp0 ghp00_d 0 NSENSE" in netlist
+    assert "Mdp0_y1" not in netlist
+
+
+def test_xor_learned_features_conductance_divider_error_is_transistor_normalizer() -> None:
+    netlist = xor_learned_features.xor_netlist(
+        [0, 3, 1, 2],
+        error_mode="conductance-divider",
+        readout_init_mode="neutral",
+    )
+
+    assert "\nB" not in netlist
+    assert "* Error mode: conductance-divider." in netlist
+    assert "Mpdiv0_score pdiv0_bar score0 divsrc 0 NSENSE" in netlist
+    assert "Mpdiv0_floor pdiv0_bar divfloor divsrc 0 NSENSE" in netlist
+    assert "Mpdiv_tail divtailnode divtail 0 0 NMOS" in netlist
+    assert "Mcd_dp0_prob cd_dp0_prob pdiv1_bar vdd vdd PMOS" in netlist
+    assert "Mcd_dn1_prob cd_dn1_prob pdiv1_bar vdd vdd PMOS" in netlist
+
+
+def test_xor_learned_features_soft_wta_error_is_transistor_normalizer() -> None:
+    netlist = xor_learned_features.xor_netlist(
+        [0, 3, 1, 2],
+        error_mode="soft-wta",
+        readout_init_mode="neutral",
+    )
+
+    assert "\nB" not in netlist
+    assert "* Error mode: soft-wta." in netlist
+    assert "Cwta_inh wta_inh 0 8f IC=0" in netlist
+    assert "Mwta0_score vdd score0 wta0_score 0 NSENSE" in netlist
+    assert "Mwta0_suppress pwta0 wta_inh 0 0 NMOS" in netlist
+    assert "Mpwta_dp1_prob pwta_dp1_label pwta0 pwta_dp1_prob 0 NSENSE" in netlist
+
+
+def test_xor_learned_features_rejects_unknown_error_mode() -> None:
+    with pytest.raises(ValueError, match="error_mode"):
+        xor_learned_features.xor_netlist([0, 1], error_mode="bad")
+    with pytest.raises(ValueError, match="readout_init_mode"):
+        xor_learned_features.xor_netlist([0, 1], readout_init_mode="bad")
+
+
+def test_xor_learned_features_ngspice_current_sum_backprop_learns_all_patterns(
+    tmp_path: Path,
+    ngspice_path: str,
+) -> None:
+    order = [0, 3, 1, 2]
+    parsed = xor_learned_features.run_netlist(
+        ngspice_path,
+        tmp_path / "xor2_current_sum_backprop.cir",
+        xor_learned_features.xor_netlist(order, error_mode="current-sum"),
+        timeout=90.0,
+    )
+
+    for pattern in range(4):
+        assert parsed[f"eval_margin_{pattern}"] > 20e-3
+    for slot, pattern in enumerate(order):
+        assert parsed[f"train_d_margin_{slot}"] > 0.0
+        assert max(abs(parsed[f"d_wh{pattern}{bit}p_{slot}"]) for bit in range(xor_learned_features.BITS)) > 1e-7
 
 
 def test_two_hidden_random_middle_topology_has_exact_three_in_and_out_edges() -> None:

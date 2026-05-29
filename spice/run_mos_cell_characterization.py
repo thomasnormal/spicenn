@@ -17256,6 +17256,8 @@ quit
         ("load75", "7.5 pF, 1.00x R, 120 ns", 7.5, 1.00, 120.0, 1.0),
         ("load75_r125", "7.5 pF, 1.25x R, 120 ns", 7.5, 1.25, 120.0, 1.0),
         ("load75_w80", "7.5 pF, 1.00x R, 80 ns", 7.5, 1.00, 80.0, 1.0),
+        ("load75_r075_w80", "7.5 pF, 0.75x R, 80 ns", 7.5, 0.75, 80.0, 1.0),
+        ("load75_r050_w80", "7.5 pF, 0.50x R, 80 ns", 7.5, 0.50, 80.0, 1.0),
         ("load75_r125_w80", "7.5 pF, 1.25x R, 80 ns", 7.5, 1.25, 80.0, 1.0),
         ("load75_r150_w80", "7.5 pF, 1.50x R, 80 ns", 7.5, 1.50, 80.0, 1.0),
     ]
@@ -17503,8 +17505,24 @@ quit
                 config_load_mismatch.append(corner_load_mismatch)
                 config_ref_diff.append(corner_ref_diff)
                 if branch_name == "pos_trim" and (
-                    (config_label == "8 x 2 @ 3 kOhm" and corner_label in {"5 pF, 1.00x R, 120 ns", "7.5 pF, 1.25x R, 80 ns"})
-                    or (config_label == "16 x 1 @ 10 kOhm" and corner_label in {"5 pF, 1.00x R, 120 ns", "7.5 pF, 1.25x R, 80 ns"})
+                    (
+                        config_label == "8 x 2 @ 3 kOhm"
+                        and corner_label
+                        in {
+                            "5 pF, 1.00x R, 120 ns",
+                            "7.5 pF, 0.50x R, 80 ns",
+                            "7.5 pF, 1.25x R, 80 ns",
+                        }
+                    )
+                    or (
+                        config_label == "16 x 1 @ 10 kOhm"
+                        and corner_label
+                        in {
+                            "5 pF, 1.00x R, 120 ns",
+                            "7.5 pF, 0.50x R, 80 ns",
+                            "7.5 pF, 1.25x R, 80 ns",
+                        }
+                    )
                 ):
                     ref_p0 = fast_corner_cols[col_base]
                     ref_m0 = fast_corner_cols[col_base + 1]
@@ -17527,8 +17545,10 @@ quit
     focor_load75_idx = 1
     focor_load75_r125_idx = 2
     focor_load75_w80_idx = 3
-    focor_load75_r125_w80_idx = 4
-    focor_load75_r150_w80_idx = 5
+    focor_load75_r075_w80_idx = 4
+    focor_load75_r050_w80_idx = 5
+    focor_load75_r125_w80_idx = 6
+    focor_load75_r150_w80_idx = 7
     require(
         np.all(shift_refz_fast_corner_trim_error[:, :, focor_nom_idx, for_cycle3_idx] < 0.006),
         "combined-corner baseline should preserve the recovered nominal fast reset points",
@@ -21624,10 +21644,13 @@ quit
     shift_refz_fast_corner_fig, shift_refz_fast_corner_axes = plt.subplots(
         3,
         1,
-        figsize=(7.4, 7.4),
+        figsize=(7.8, 7.6),
         gridspec_kw={"height_ratios": [0.95, 0.9, 1.0]},
     )
-    focor_labels = [label for _name, label, _load_pf, _source_scale, _reset_width_ns, _reset_scale in shift_refz_fast_corner_cases]
+    focor_labels = [
+        label.replace(" pF, ", "p\n").replace(" R, ", "R\n").replace(" ns", "ns")
+        for _name, label, _load_pf, _source_scale, _reset_width_ns, _reset_scale in shift_refz_fast_corner_cases
+    ]
     focor_x = np.arange(len(focor_labels))
     width = 0.36
     for config_idx, (_config_name, config_label, _partition_count, _source_ohm) in enumerate(
@@ -21659,6 +21682,8 @@ quit
         f"{1e3 * np.max(shift_refz_fast_corner_trim_error[:, fold_p8_idx, focor_nom_idx, for_cycle3_idx]):.2f} mV\n"
         "8 x 2 combined 1.25x/80ns max = "
         f"{1e3 * np.max(shift_refz_fast_corner_trim_error[:, fold_p8_idx, focor_load75_r125_w80_idx, for_cycle3_idx]):.2f} mV\n"
+        "8 x 2 recovered 0.50x/80ns max = "
+        f"{1e3 * np.max(shift_refz_fast_corner_trim_error[:, fold_p8_idx, focor_load75_r050_w80_idx, for_cycle3_idx]):.2f} mV\n"
         "16 x 1 7.5 pF +branch = "
         f"{1e3 * shift_refz_fast_corner_trim_error[1, fold_p16_idx, focor_load75_idx, for_cycle3_idx]:.2f} mV\n"
         "1.50x/80ns worst = "
@@ -21685,6 +21710,13 @@ quit
             "o:" if config_idx == fold_p8_idx else "s:",
             label=f"{config_label}, 7.5 pF + 1.25x R + 80 ns",
         )
+        shift_refz_fast_corner_axes[1].plot(
+            [1, 2, 3],
+            1e3 * shift_refz_fast_corner_trim_error[1, config_idx, focor_load75_r050_w80_idx, :],
+            "o--" if config_idx == fold_p8_idx else "s--",
+            alpha=0.75,
+            label=f"{config_label}, 7.5 pF + 0.50x R + 80 ns",
+        )
     shift_refz_fast_corner_axes[1].axhline(6, color="0.4", linestyle=":", linewidth=0.9)
     shift_refz_fast_corner_axes[1].set_xticks([1, 2, 3])
     shift_refz_fast_corner_axes[1].set_ylabel("+65 mV trim error (mV)")
@@ -21692,7 +21724,7 @@ quit
     shift_refz_fast_corner_axes[1].grid(True, axis="y", alpha=0.25)
     shift_refz_fast_corner_axes[1].legend(loc="upper left", ncol=2, fontsize="xx-small")
     for label, focort, ref_diff in shift_refz_fast_corner_traces:
-        linestyle = ":" if "1.25x R" in label else "-"
+        linestyle = ":" if "1.25x R" in label else ("--" if "0.50x R" in label else "-")
         shift_refz_fast_corner_axes[2].plot(
             1e6 * focort,
             1e3 * ref_diff,

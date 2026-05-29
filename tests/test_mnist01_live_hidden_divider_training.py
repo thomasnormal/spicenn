@@ -400,6 +400,46 @@ def test_mnist01_live_hidden_forward_metric_rows_cover_every_forward_pass() -> N
     assert rows[-1]["cumulative_accuracy"] == pytest.approx(3.0 / 6.0)
 
 
+def test_mnist01_live_hidden_hidden_state_metric_rows_rank_measured_eval_features() -> None:
+    evals = [
+        {"features": [0.1, 0.9, 0.0, 0.0], "label": 0},
+        {"features": [0.0, 0.0, 0.8, 0.2], "label": 1},
+    ]
+    measures: dict[str, float] = {}
+    pre_signed_by_sample = [
+        [1.0e-3, 5.0e-3, -2.0e-3, 0.5e-3],
+        [0.0, 2.0e-3, 7.0e-3, -1.0e-3],
+    ]
+    for sample_idx, signed_values in enumerate(pre_signed_by_sample):
+        for hidden, signed in enumerate(signed_values):
+            measures[f"final_prep_h{hidden}_{sample_idx}"] = signed + 10.0e-3
+            measures[f"final_pren_h{hidden}_{sample_idx}"] = 10.0e-3
+            measures[f"final_pre_signed_h{hidden}_{sample_idx}"] = signed
+            measures[f"final_act_h{hidden}_{sample_idx}"] = max(signed, 0.0)
+            measures[f"final_hrow_h{hidden}_{sample_idx}"] = 1.2 if signed > 0.0 else 0.0
+
+    rows = mnist01_hidden.hidden_state_metric_rows(
+        evals,
+        measures,
+        4,
+        phase="final",
+        hidden_init_mode="identity",
+    )
+
+    assert len(rows) == 8
+    sample0 = [row for row in rows if row["phase_index"] == 0]
+    sample1 = [row for row in rows if row["phase_index"] == 1]
+    assert [row["hidden"] for row in sample0 if row["is_probe_hidden"]] == [1]
+    assert [row["hidden"] for row in sample1 if row["is_probe_hidden"]] == [2]
+    assert [row["hidden"] for row in sample0 if row["is_best_pre_signed"]] == [1]
+    assert [row["hidden"] for row in sample1 if row["is_best_pre_signed"]] == [2]
+    assert sample0[1]["pre_signed_rank"] == 0
+    assert sample1[2]["pre_signed_rank"] == 0
+
+    with pytest.raises(ValueError, match="initial/final"):
+        mnist01_hidden.hidden_state_metric_rows(evals, measures, 4, phase="train")
+
+
 @pytest.mark.ngspice
 def test_mnist01_live_hidden_forward_metric_rows_from_ngspice_measures(
     tmp_path: Path,

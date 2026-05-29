@@ -7138,6 +7138,64 @@ def test_multiclass_block_sequence_feature_margin_supported_bootstrap_gates_comm
     assert "Mfeature_f0_target_guard_c2_errp_non_target_xdn" in netlist
 
 
+def test_multiclass_block_sequence_feature_margin_diagnostics_probe_intermediate_rails() -> None:
+    records = [{"label": 1, "inputs": {"x0": 0.85}}]
+    netlist = seq.generate_netlist(
+        train_records=records,
+        eval_records=records,
+        class_count=3,
+        feature_count=1,
+        score_capacitance_f=5.0,
+        error_mode="label-descent",
+        readout_update_mode="live",
+        readout_live_objective_mode="feature-margin-centered-supported-bootstrap",
+        readout_live_high_side_topology="pmos-differential",
+        feature_margin_diagnostics=True,
+    )
+
+    assert ".meas tran c1_f0_fcorrp_raw_1 FIND V(c1_f0_fcorr_p_raw)" in netlist
+    assert ".meas tran c1_f0_fcorrp_ctr_1 FIND V(c1_f0_fcorr_p_ctr)" in netlist
+    assert ".meas tran c1_f0_fcorrp_raw_writer_train1 FIND V(c1_f0_fcorr_p_raw)" in netlist
+    assert ".meas tran c1_f0_fcorrp_ctr_writer_train1 FIND V(c1_f0_fcorr_p_ctr)" in netlist
+    assert ".meas tran c1_gt_c0_f0_decision_1 FIND V(c1_gt_c0_f0_contrib_decision)" in netlist
+    assert ".meas tran c1_gt_c0_f0_diff_1 PARAM=" in netlist
+
+
+def test_multiclass_block_sequence_feature_margin_diagnostic_stats_summarize_writer_rails() -> None:
+    measures = {
+        "c1_f0_fcorrp_writer_train1": 0.42,
+        "c1_f0_fcorrn_writer_train1": 0.10,
+        "c1_f0_fcorrp_raw_writer_train1": 0.30,
+        "c1_f0_fcorrn_raw_writer_train1": 0.20,
+        "c1_f0_fcorrp_ctr_writer_train1": 0.25,
+        "c1_f0_fcorrn_ctr_writer_train1": 0.15,
+        "c1_f0_writer_elig_train1": 1.2,
+        "c1_f0_writer_drive_diff_train1": 0.32,
+        "c1_f0_writer_signed_delta_train1": 0.08,
+        "c0_f0_fcorrp_writer_train1": 0.02,
+        "c0_f0_fcorrn_writer_train1": 0.40,
+        "c0_f0_writer_elig_train1": 1.2,
+    }
+
+    stats = seq.feature_margin_diagnostic_stats(
+        measures,
+        train_labels=[1],
+        class_count=2,
+        feature_count=1,
+        feature_margin_diagnostics=True,
+    )
+
+    rows = stats["train_feature_margin_diagnostic_rows"]
+    assert rows[0]["role"] == "nontarget"
+    assert rows[0]["fcorrdiff_writer_v"] == pytest.approx(-0.38)
+    assert rows[1]["role"] == "target"
+    assert rows[1]["fcorrdiff_writer_v"] == pytest.approx(0.32)
+    assert rows[1]["fcorrdiff_raw_writer_v"] == pytest.approx(0.10)
+    assert rows[1]["fcorrdiff_ctr_writer_v"] == pytest.approx(0.10)
+    assert stats["train_feature_margin_active_target_fcorrdiff_mean_v"] == pytest.approx(0.32)
+    assert stats["train_feature_margin_active_nontarget_fcorrdiff_mean_v"] == pytest.approx(-0.38)
+
+
 def test_multiclass_block_sequence_ngspice_feature_margin_live_objective_corrects_wrong_feature(
     tmp_path: Path,
     ngspice_path: str,

@@ -106,6 +106,7 @@ def test_mnist01_live_hidden_netlist_is_live_transistor_path() -> None:
     assert ".meas tran train_hrow_probe_0" in netlist
     assert ".meas tran initial_pre_signed_h0_0" in netlist
     assert ".meas tran initial_act_h0_0" in netlist
+    assert ".meas tran train_hcredit_gate_write_probe_0" in netlist
     assert ".meas tran final_hrow_h3_1" in netlist
     assert ".meas tran final_margin_improvement_1" in netlist
 
@@ -728,7 +729,7 @@ def test_mnist01_live_hidden_sparse_complement_signcharge_packet_writes_are_bidi
         assert parsed[f"final_margin_improvement_{sample_idx}"] > 0.25e-3
     assert abs(parsed["train_wh_probe_signed_delta_0"]) < 1.0e-3
     hidden_deltas = [parsed[f"train_wh_probe_signed_delta_{idx}"] for idx in range(1, 4)]
-    hidden_credit_gates = [parsed[f"train_hcredit_gate_probe_{idx}"] for idx in range(1, 4)]
+    hidden_credit_gates = [parsed[f"train_hcredit_gate_write_probe_{idx}"] for idx in range(1, 4)]
     assert min(hidden_deltas) < -3.0e-3
     assert max(hidden_deltas) > 3.0e-3
     assert max(abs(delta) for delta in hidden_deltas) > 3.0e-3

@@ -987,6 +987,7 @@ def _measure_lines(
     hidden_count: int = HIDDEN,
     hidden_init_mode: str = "quadrant",
     measure_eval_hidden_states: bool = True,
+    hidden_write_probe_ns: float = 7.35,
 ) -> list[str]:
     lines: list[str] = []
     train_offset = eval_count
@@ -1042,6 +1043,9 @@ def _measure_lines(
                 f".meas tran train_hdp_gate_probe_{local} FIND V(h{hidden}_hdp_gate) AT={err_at:.2f}n",
                 f".meas tran train_hdn_gate_probe_{local} FIND V(h{hidden}_hdn_gate) AT={err_at:.2f}n",
                 f".meas tran train_hcredit_gate_probe_{local} PARAM='train_hdp_gate_probe_{local}-train_hdn_gate_probe_{local}'",
+                f".meas tran train_hdp_gate_write_probe_{local} FIND V(h{hidden}_hdp_gate) AT={base + hidden_write_probe_ns:.2f}n",
+                f".meas tran train_hdn_gate_write_probe_{local} FIND V(h{hidden}_hdn_gate) AT={base + hidden_write_probe_ns:.2f}n",
+                f".meas tran train_hcredit_gate_write_probe_{local} PARAM='train_hdp_gate_write_probe_{local}-train_hdn_gate_write_probe_{local}'",
             ]
             for output in (label, other):
                 role = "target" if output == label else "other"
@@ -1391,6 +1395,7 @@ def mnist01_live_hidden_netlist(
             hidden_count=hidden_count,
             hidden_init_mode=hidden_init_mode,
             measure_eval_hidden_states=measure_eval_hidden_states,
+            hidden_write_probe_ns=(hidden_write_start_ns + hidden_write_end_ns) / 2.0,
         ),
         ".control",
         "run",

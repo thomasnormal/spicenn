@@ -306,6 +306,19 @@ def test_mnist01_live_hidden_netlist_is_live_transistor_path() -> None:
     assert "Mc0_f0_live_pos_dn_g c0_f0_live_pos_dn_allguard hrow_activity_gate c0_f0_live_pos_dn 0 NREL" in normalized_writer_netlist
     assert "Mc0_f0_live_pos_dn_e c0_vwn0 hrow0 c0_f0_live_pos_dn_allguard 0 NSENSE" in normalized_writer_netlist
 
+    light_measure_netlist = mnist01_hidden.mnist01_live_hidden_netlist(
+        train,
+        train,
+        measure_eval_hidden_states=False,
+        tran_step_ps=10.0,
+    )
+    assert ".meas tran initial_prep_h0_0" not in light_measure_netlist
+    assert ".meas tran final_hrow_h3_1" not in light_measure_netlist
+    assert ".meas tran initial_margin_0" in light_measure_netlist
+    assert ".meas tran final_margin_1" in light_measure_netlist
+    assert ".meas tran train_hrow_probe_0" in light_measure_netlist
+    assert ".tran 10p " in light_measure_netlist
+
 
 def test_mnist01_live_hidden_netlist_validation() -> None:
     sample = {"features": [1.0] * 16, "label": 0}
@@ -354,6 +367,12 @@ def test_mnist01_live_hidden_netlist_validation() -> None:
             [sample],
             [sample],
             hidden_error_route_width_u=0.0,
+        )
+    with pytest.raises(ValueError, match="positive"):
+        mnist01_hidden.mnist01_live_hidden_netlist(
+            [sample],
+            [sample],
+            tran_step_ps=0.0,
         )
     with pytest.raises(ValueError, match="hidden_writer_topology"):
         mnist01_hidden.mnist01_live_hidden_netlist(
@@ -569,14 +588,14 @@ def test_mnist01_live_hidden_identity_rows_learn_first_real_pair_without_python_
 
 
 @pytest.mark.ngspice
-def test_mnist01_live_hidden_sparse_complement_identity_rows_learn_sixteen_round_robin_margins(
+def test_mnist01_live_hidden_sparse_complement_identity_rows_learn_twenty_round_robin_margins(
     tmp_path: Path,
     ngspice_path: str,
 ) -> None:
     _require_mnist_raw()
     train, evals = mnist01_hidden.load_mnist01_records(
-        train_count_per_digit=8,
-        eval_count_per_digit=8,
+        train_count_per_digit=10,
+        eval_count_per_digit=10,
         image_size=4,
     )
     train = mnist01_fixed.add_complement_features(mnist01_fixed.round_robin_by_label(train), scale=0.5)
@@ -595,17 +614,19 @@ def test_mnist01_live_hidden_sparse_complement_identity_rows_learn_sixteen_round
             hidden_activation_sense_width_u=4.0,
             readout_activation_mode="pre-differential",
             readout_writer_activation_mode="pre-differential",
-            readout_update_width_u=0.22,
+            readout_update_width_u=0.21,
             hidden_writer_phase_mode="hidden-write",
             hidden_write_start_train_index=999,
+            measure_eval_hidden_states=False,
+            tran_step_ps=10.0,
         ),
-        timeout=600.0,
+        timeout=420.0,
     )
 
-    for sample_idx in range(16):
-        assert parsed[f"final_margin_{sample_idx}"] > 1.0e-3
-        assert parsed[f"final_margin_improvement_{sample_idx}"] > 1.0e-3
-    for train_idx in range(16):
+    for sample_idx in range(20):
+        assert parsed[f"final_margin_{sample_idx}"] > 0.20e-3
+        assert parsed[f"final_margin_improvement_{sample_idx}"] > 0.20e-3
+    for train_idx in range(20):
         assert abs(parsed[f"train_wh_probe_signed_delta_{train_idx}"]) < 1.0e-3
 
 

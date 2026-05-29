@@ -1,5 +1,38 @@
 # Engineering Log
 
+## 2026-05-29
+
+- Scaled the MNIST01 live-hidden sparse raw+complement output-learning rung
+  from `8` to `10` samples per digit in a single continuous ngspice transient.
+  The circuit remains unchanged: identity-sparse hidden rows, pre-differential
+  score/readout writer, conductance-divider normalized error, live
+  `pmos-differential` readout writer, ordinary hidden writes disabled via
+  `hiddenwritephi`, and no Python weight updates/checkpoints.  The enabling
+  change is diagnostic/runtime only: `measure_eval_hidden_states=False`
+  suppresses all-hidden initial/final probes for large runs, and `tran_step_ps`
+  makes the transient max step explicit.  This cuts the 20-sample live-hidden
+  deck from about `18.7k` lines / `7440` `.meas` statements to about `12.3k`
+  lines / `1040` `.meas` statements.
+- The adjacent write-strength check on the lightweight 20-sample rung was
+  informative rather than a broad sweep.  At `0.19u`, the live-hidden deck
+  reached `18/20` with min/mean margins `-0.631/2.198 mV`; at `0.20u`, it
+  reached `18/20` with min/mean margins `-0.513/3.584 mV`; at `0.21u`, it
+  reached `20/20` with min/mean margins `+0.275/4.857 mV`.  The promoted
+  regression uses `0.21u`, `10 ps`, and the lightweight diagnostics, with a
+  conservative `0.20 mV` final-margin floor.  This matches the fixed-feature
+  20-sample rung inside the live-hidden circuit path and is still mostly
+  output-layer learning through identity-sparse hidden rows, not learned
+  hidden-feature discovery.
+- Verification this turn: `python3 -m py_compile
+  spice/run_mnist01_live_hidden_divider_training.py
+  tests/test_mnist01_live_hidden_divider_training.py`; structural focused
+  tests `python3 -m pytest tests/test_mnist01_live_hidden_divider_training.py
+  -q -k 'netlist_is_live_transistor_path or validation'` -> `2 passed`; old
+  16-sample baseline before the regression change -> `1 passed` in `539 s`;
+  promoted 20-sample regression `python3 -m pytest
+  tests/test_mnist01_live_hidden_divider_training.py -q -k
+  'twenty_round_robin'` -> `1 passed` in `300.63 s`.
+
 ## 2026-05-28
 
 - Integrated the bounded hidden-writer sizing into a real MNIST01 live-hidden

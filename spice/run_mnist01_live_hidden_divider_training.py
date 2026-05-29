@@ -986,6 +986,7 @@ def _measure_lines(
     *,
     hidden_count: int = HIDDEN,
     hidden_init_mode: str = "quadrant",
+    measure_eval_hidden_states: bool = True,
 ) -> list[str]:
     lines: list[str] = []
     train_offset = eval_count
@@ -999,14 +1000,15 @@ def _measure_lines(
             local = idx if phase == "initial" else idx - final_offset
             act_at = base + 2.00
             at = base + 3.15
-            for hidden in range(hidden_count):
-                lines += [
-                    f".meas tran {phase}_prep_h{hidden}_{local} FIND V(pre{hidden}_p) AT={act_at:.2f}n",
-                    f".meas tran {phase}_pren_h{hidden}_{local} FIND V(pre{hidden}_n) AT={act_at:.2f}n",
-                    f".meas tran {phase}_pre_signed_h{hidden}_{local} PARAM='{phase}_prep_h{hidden}_{local}-{phase}_pren_h{hidden}_{local}'",
-                    f".meas tran {phase}_act_h{hidden}_{local} FIND V(act{hidden}) AT={act_at:.2f}n",
-                    f".meas tran {phase}_hrow_h{hidden}_{local} FIND V(hrow{hidden}) AT={act_at:.2f}n",
-                ]
+            if measure_eval_hidden_states:
+                for hidden in range(hidden_count):
+                    lines += [
+                        f".meas tran {phase}_prep_h{hidden}_{local} FIND V(pre{hidden}_p) AT={act_at:.2f}n",
+                        f".meas tran {phase}_pren_h{hidden}_{local} FIND V(pre{hidden}_n) AT={act_at:.2f}n",
+                        f".meas tran {phase}_pre_signed_h{hidden}_{local} PARAM='{phase}_prep_h{hidden}_{local}-{phase}_pren_h{hidden}_{local}'",
+                        f".meas tran {phase}_act_h{hidden}_{local} FIND V(act{hidden}) AT={act_at:.2f}n",
+                        f".meas tran {phase}_hrow_h{hidden}_{local} FIND V(hrow{hidden}) AT={act_at:.2f}n",
+                    ]
             lines += [
                 f".meas tran {phase}_target_scorep_{local} FIND V({class_node(label, 'scorep')}) AT={at:.2f}n",
                 f".meas tran {phase}_target_scoren_{local} FIND V({class_node(label, 'scoren')}) AT={at:.2f}n",
@@ -1139,6 +1141,8 @@ def mnist01_live_hidden_netlist(
     hidden_writer_signcharge_packet_cap_f: float = 0.25,
     hidden_writer_topology: str = "pmos-highside",
     hidden_writer_phase_mode: str = "default",
+    measure_eval_hidden_states: bool = True,
+    tran_step_ps: float = 5.0,
 ) -> str:
     if not train_records or not eval_records:
         raise ValueError("train and eval records must not be empty")
@@ -1252,6 +1256,7 @@ def mnist01_live_hidden_netlist(
         hidden_writer_pmos_width_u,
         hidden_writer_gate_cap_f,
         hidden_writer_signcharge_packet_cap_f,
+        tran_step_ps,
     ) <= 0.0:
         raise ValueError("voltages, currents, widths, and capacitances must be positive")
 
@@ -1378,8 +1383,15 @@ def mnist01_live_hidden_netlist(
             hidden_connectivity_mode=hidden_connectivity_mode,
             signcharge_packet_cap_f=hidden_writer_signcharge_packet_cap_f,
         ),
-        f".tran 5p {stop_ns:.2f}n uic",
-        *_measure_lines(samples, eval_count, train_count, hidden_count=hidden_count, hidden_init_mode=hidden_init_mode),
+        f".tran {tran_step_ps:.12g}p {stop_ns:.2f}n uic",
+        *_measure_lines(
+            samples,
+            eval_count,
+            train_count,
+            hidden_count=hidden_count,
+            hidden_init_mode=hidden_init_mode,
+            measure_eval_hidden_states=measure_eval_hidden_states,
+        ),
         ".control",
         "run",
         "quit",

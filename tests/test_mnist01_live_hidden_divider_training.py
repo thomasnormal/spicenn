@@ -10,6 +10,7 @@ ROOT = Path(__file__).resolve().parents[1]
 SPICE_DIR = ROOT / "spice"
 sys.path.insert(0, str(SPICE_DIR))
 
+import run_mnist01_fixed_feature_divider_training as mnist01_fixed  # noqa: E402
 import run_mnist01_live_hidden_divider_training as mnist01_hidden  # noqa: E402
 
 
@@ -243,6 +244,19 @@ def test_mnist01_live_hidden_netlist_is_live_transistor_path() -> None:
     )
     assert "Cwh5f5p wh5f5p 0 20f IC=1.05" in nonsquare_identity_netlist
     assert "Mc1_h5_score_pa vdd hrow5 c1_h5_score_pa 0 NSENSE" in nonsquare_identity_netlist
+    sparse_identity_netlist = mnist01_hidden.mnist01_live_hidden_netlist(
+        nonsquare_train,
+        nonsquare_train,
+        hidden_count=6,
+        hidden_init_mode="identity",
+        hidden_connectivity_mode="identity-sparse",
+    )
+    assert "Cwh5f5p wh5f5p 0 20f IC=1.05" in sparse_identity_netlist
+    assert "Mh5f5p_w h5f5pmid wh5f5p pre5_p 0 NSENSE" in sparse_identity_netlist
+    assert "Mh5f5_live_pup_pmos wh5f5p" in sparse_identity_netlist
+    assert "Cwh0f1p wh0f1p 0 20f" not in sparse_identity_netlist
+    assert "Mh0f1p_w h0f1pmid wh0f1p pre0_p 0 NSENSE" not in sparse_identity_netlist
+    assert "Mh0f1_live_pup_pmos wh0f1p" not in sparse_identity_netlist
 
     normalized_writer_netlist = mnist01_hidden.mnist01_live_hidden_netlist(
         train,
@@ -268,6 +282,18 @@ def test_mnist01_live_hidden_netlist_validation() -> None:
             [sample],
             hidden_count=4,
             hidden_init_mode="identity",
+        )
+    with pytest.raises(ValueError, match="identity-sparse"):
+        mnist01_hidden.mnist01_live_hidden_netlist(
+            [sample],
+            [sample],
+            hidden_connectivity_mode="BAD",
+        )
+    with pytest.raises(ValueError, match="identity-sparse"):
+        mnist01_hidden.mnist01_live_hidden_netlist(
+            [sample],
+            [sample],
+            hidden_connectivity_mode="identity-sparse",
         )
     with pytest.raises(ValueError, match="hidden_init_mode"):
         mnist01_hidden.mnist01_live_hidden_netlist(
@@ -475,6 +501,44 @@ def test_mnist01_live_hidden_identity_rows_learn_first_real_pair_without_python_
     for train_idx in range(2):
         assert parsed[f"train_target_signed_delta_{train_idx}"] > 3e-3
         assert parsed[f"train_other_signed_delta_{train_idx}"] < -3e-3
+
+
+@pytest.mark.ngspice
+def test_mnist01_live_hidden_sparse_complement_identity_rows_learn_four_real_margins(
+    tmp_path: Path,
+    ngspice_path: str,
+) -> None:
+    _require_mnist_raw()
+    train, evals = mnist01_hidden.load_mnist01_records(
+        train_count_per_digit=2,
+        eval_count_per_digit=2,
+        image_size=4,
+    )
+    train = mnist01_fixed.add_complement_features(train, scale=0.5)
+    evals = mnist01_fixed.add_complement_features(evals, scale=0.5)
+
+    parsed = mnist01_hidden.run_netlist(
+        ngspice_path,
+        tmp_path / "mnist01_live_hidden_sparse_complement_identity.cir",
+        mnist01_hidden.mnist01_live_hidden_netlist(
+            train,
+            evals,
+            hidden_count=32,
+            hidden_init_mode="identity",
+            hidden_connectivity_mode="identity-sparse",
+            hidden_activation_mode="differential-preamp",
+            hidden_activation_sense_width_u=4.0,
+            readout_activation_mode="pre-differential",
+            readout_writer_activation_mode="pre-differential",
+        ),
+        timeout=180.0,
+    )
+
+    for sample_idx in range(4):
+        assert parsed[f"final_margin_{sample_idx}"] > 1.0e-3
+        assert parsed[f"final_margin_improvement_{sample_idx}"] > 1.0e-3
+    for train_idx in range(4):
+        assert abs(parsed[f"train_wh_probe_signed_delta_{train_idx}"]) < 1.0e-3
 
 
 def _hidden_activation_preamp_probe_netlist(

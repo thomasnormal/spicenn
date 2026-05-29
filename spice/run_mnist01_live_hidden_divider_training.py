@@ -25,6 +25,7 @@ from run_spice_sweep import run_text_netlist
 
 HIDDEN = 4
 HIDDEN_INIT_MODES = ("quadrant", "identity")
+HIDDEN_CONNECTIVITY_MODES = ("dense", "identity-sparse")
 READOUT_WRITER_NORMALIZATION_MODES = ("none", "activity-gate")
 
 
@@ -92,6 +93,22 @@ def _hidden_weight_node(hidden: int, feature: int, kind: str) -> str:
     return f"wh{hidden}f{feature}{kind}"
 
 
+def _connected_features_for_hidden(
+    hidden: int,
+    feature_count: int,
+    hidden_count: int,
+    init_mode: str,
+    connectivity_mode: str,
+) -> range:
+    if connectivity_mode not in HIDDEN_CONNECTIVITY_MODES:
+        raise ValueError(f"hidden_connectivity_mode must be one of {HIDDEN_CONNECTIVITY_MODES}")
+    if connectivity_mode == "dense":
+        return range(feature_count)
+    if init_mode != "identity" or hidden_count != feature_count:
+        raise ValueError("identity-sparse connectivity requires identity hidden rows")
+    return range(hidden, hidden + 1)
+
+
 def _readout_storage_lines(hidden_count: int, initial_positive: float, initial_negative: float) -> list[str]:
     lines: list[str] = []
     for output in range(OUTPUTS):
@@ -114,6 +131,7 @@ def _hidden_storage_lines(
     outside_positive: float,
     inside_negative: float,
     outside_negative: float,
+    connectivity_mode: str = "dense",
 ) -> list[str]:
     if init_mode not in HIDDEN_INIT_MODES:
         raise ValueError(f"hidden_init_mode must be one of {HIDDEN_INIT_MODES}")
@@ -124,7 +142,7 @@ def _hidden_storage_lines(
     image_size = _image_size_from_feature_count(feature_count) if init_mode == "quadrant" else 0
     lines: list[str] = []
     for hidden in range(hidden_count):
-        for feature in range(feature_count):
+        for feature in _connected_features_for_hidden(hidden, feature_count, hidden_count, init_mode, connectivity_mode):
             if init_mode == "quadrant":
                 inside = hidden_block_for_feature(feature, image_size) == hidden
             else:
@@ -309,6 +327,8 @@ def _hidden_forward_lines(
     row_select_pullup_width_u: float = 128.0,
     row_select_pulldown_width_u: float = 24.0,
     row_select_pass_width_u: float = 16.0,
+    hidden_init_mode: str = "quadrant",
+    hidden_connectivity_mode: str = "dense",
 ) -> list[str]:
     if activation_mode not in ("single-ended", "differential-preamp"):
         raise ValueError("hidden_activation_mode must be single-ended or differential-preamp")
@@ -340,7 +360,13 @@ def _hidden_forward_lines(
         pre_p = f"pre{hidden}_p"
         pre_n = f"pre{hidden}_n"
         act = f"act{hidden}"
-        for feature in range(feature_count):
+        for feature in _connected_features_for_hidden(
+            hidden,
+            feature_count,
+            hidden_count,
+            hidden_init_mode,
+            hidden_connectivity_mode,
+        ):
             lines += [
                 f"Rh{hidden}f{feature}pmid h{hidden}f{feature}pmid 0 1G",
                 f"Ch{hidden}f{feature}pmid h{hidden}f{feature}pmid 0 0.05f IC=0",
@@ -781,6 +807,8 @@ def _hidden_writer_lines(
     topology: str,
     phase_node: str = "errphi",
     phase_low_side: bool = False,
+    hidden_init_mode: str = "quadrant",
+    hidden_connectivity_mode: str = "dense",
 ) -> list[str]:
     if topology not in ("pmos-highside", "pmos-differential"):
         raise ValueError("hidden_writer_topology must be pmos-highside or pmos-differential")
@@ -872,7 +900,13 @@ def _hidden_writer_lines(
         hdp = f"h{hidden}_hdp_gate"
         hdn = f"h{hidden}_hdn_gate"
         hidden_phase = phase_node.format(hidden=hidden)
-        for feature in range(feature_count):
+        for feature in _connected_features_for_hidden(
+            hidden,
+            feature_count,
+            hidden_count,
+            hidden_init_mode,
+            hidden_connectivity_mode,
+        ):
             whp = _hidden_weight_node(hidden, feature, "p")
             whn = _hidden_weight_node(hidden, feature, "n")
             prefix = f"h{hidden}f{feature}_live_"
@@ -991,6 +1025,7 @@ def mnist01_live_hidden_netlist(
     *,
     hidden_count: int = HIDDEN,
     hidden_init_mode: str = "quadrant",
+    hidden_connectivity_mode: str = "dense",
     readout_initial_positive: float = 0.40,
     readout_initial_negative: float = 0.40,
     hidden_inside_positive: float = 1.05,
@@ -1062,10 +1097,14 @@ def mnist01_live_hidden_netlist(
     _validate_records(eval_records, feature_count, "eval")
     if hidden_init_mode not in HIDDEN_INIT_MODES:
         raise ValueError(f"hidden_init_mode must be one of {HIDDEN_INIT_MODES}")
+    if hidden_connectivity_mode not in HIDDEN_CONNECTIVITY_MODES:
+        raise ValueError(f"hidden_connectivity_mode must be one of {HIDDEN_CONNECTIVITY_MODES}")
     if hidden_init_mode == "quadrant" and hidden_count != HIDDEN:
         raise ValueError("quadrant hidden_init_mode uses exactly four quadrant hidden units")
     if hidden_init_mode == "identity" and hidden_count != feature_count:
         raise ValueError("identity hidden_init_mode requires one hidden unit per input feature")
+    if hidden_connectivity_mode == "identity-sparse" and hidden_init_mode != "identity":
+        raise ValueError("identity-sparse connectivity requires identity hidden rows")
     if hidden_init_mode == "quadrant":
         _image_size_from_feature_count(feature_count)
     if hidden_credit_gate_mode not in ("differential-excess", "dynamic-preamp"):
@@ -1187,6 +1226,7 @@ def mnist01_live_hidden_netlist(
             outside_positive=hidden_outside_positive,
             inside_negative=hidden_inside_negative,
             outside_negative=hidden_outside_negative,
+            connectivity_mode=hidden_connectivity_mode,
         ),
         *_readout_storage_lines(hidden_count, readout_initial_positive, readout_initial_negative),
         *_hidden_state_lines(hidden_count),
@@ -1216,6 +1256,8 @@ def mnist01_live_hidden_netlist(
             row_select_pullup_width_u=hidden_row_select_pullup_width_u,
             row_select_pulldown_width_u=hidden_row_select_pulldown_width_u,
             row_select_pass_width_u=hidden_row_select_pass_width_u,
+            hidden_init_mode=hidden_init_mode,
+            hidden_connectivity_mode=hidden_connectivity_mode,
         ),
         *_score_readout_lines(hidden_count, readout_width_u, activation_mode=readout_activation_mode),
         *_error_storage_lines(),
@@ -1265,6 +1307,8 @@ def mnist01_live_hidden_netlist(
             hidden_writer_topology,
             "h{hidden}_hcg_write" if hidden_credit_gate_mode == "dynamic-preamp" else "errphi",
             hidden_credit_gate_mode == "dynamic-preamp",
+            hidden_init_mode=hidden_init_mode,
+            hidden_connectivity_mode=hidden_connectivity_mode,
         ),
         f".tran 5p {stop_ns:.2f}n uic",
         *_measure_lines(samples, eval_count, train_count, hidden_count=hidden_count, hidden_init_mode=hidden_init_mode),

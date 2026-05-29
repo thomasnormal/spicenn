@@ -22,6 +22,7 @@ def _current_best_patch2x2_netlist(
     evals: list[dict[str, Any]],
     *,
     measure_eval_hidden_states: bool = False,
+    measure_readout_states: bool = False,
 ) -> str:
     hidden_count = mnist01_hidden.patch2x2_hidden_count(len(train[0]["features"]))
     return mnist01_hidden.mnist01_live_hidden_netlist(
@@ -50,6 +51,7 @@ def _current_best_patch2x2_netlist(
         hidden_write_end_ns=5.45,
         hidden_update_width_u=0.05,
         measure_eval_hidden_states=measure_eval_hidden_states,
+        measure_readout_states=measure_readout_states,
         tran_step_ps=10.0,
     )
 
@@ -101,6 +103,23 @@ def _write_hidden_metric_csv(path: Path, rows: list[dict[str, Any]]) -> None:
         writer.writerows(rows)
 
 
+def _write_readout_metric_csv(path: Path, rows: list[dict[str, Any]]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fieldnames = [
+        "phase",
+        "class",
+        "hidden",
+        "signed_rank",
+        "vwp_v",
+        "vwn_v",
+        "signed_v",
+    ]
+    with path.open("w", newline="") as f:
+        writer = csv.DictWriter(f, fieldnames=fieldnames)
+        writer.writeheader()
+        writer.writerows(rows)
+
+
 def _plot_train_loss(path: Path, rows: list[dict[str, Any]], title: str) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     train_rows = [row for row in rows if row["phase"] == "train"]
@@ -134,6 +153,7 @@ def main() -> None:
     parser.add_argument("--image-size", type=int, default=4)
     parser.add_argument("--loss-margin-scale-v", type=float, default=1.0e-3)
     parser.add_argument("--measure-hidden-states", action="store_true")
+    parser.add_argument("--measure-readout-states", action="store_true")
     parser.add_argument("--spice", default="ngspice")
     parser.add_argument("--timeout", type=float, default=600.0)
     parser.add_argument(
@@ -164,6 +184,7 @@ def main() -> None:
                 train,
                 evals,
                 measure_eval_hidden_states=args.measure_hidden_states,
+                measure_readout_states=args.measure_readout_states,
             ),
             timeout=args.timeout,
         )
@@ -204,6 +225,11 @@ def main() -> None:
                 )
             )
         _write_hidden_metric_csv(hidden_csv_path, hidden_rows)
+    readout_csv_path = args.table_dir / f"{args.tag}_readout_metrics.csv"
+    if args.measure_readout_states:
+        hidden_count = mnist01_hidden.patch2x2_hidden_count(len(train[0]["features"]))
+        readout_rows = mnist01_hidden.readout_state_metric_rows(measures, hidden_count)
+        _write_readout_metric_csv(readout_csv_path, readout_rows)
     summary = {
         "tag": args.tag,
         "spice": spice_version,
@@ -224,6 +250,8 @@ def main() -> None:
     }
     if args.measure_hidden_states:
         summary["hidden_metric_csv"] = str(hidden_csv_path)
+    if args.measure_readout_states:
+        summary["readout_metric_csv"] = str(readout_csv_path)
     summary_path.parent.mkdir(parents=True, exist_ok=True)
     summary_path.write_text(json.dumps(summary, indent=2) + "\n")
     print(json.dumps(summary, indent=2))

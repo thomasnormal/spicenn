@@ -1069,6 +1069,7 @@ def _measure_lines(
     hidden_count: int = HIDDEN,
     hidden_init_mode: str = "quadrant",
     measure_eval_hidden_states: bool = True,
+    measure_readout_states: bool = False,
     hidden_write_probe_ns: float = 7.35,
 ) -> list[str]:
     lines: list[str] = []
@@ -1159,6 +1160,15 @@ def _measure_lines(
             ]
     for idx in range(eval_count):
         lines.append(f".meas tran final_margin_improvement_{idx} PARAM='final_margin_{idx}-initial_margin_{idx}'")
+    if measure_readout_states:
+        readout_at = final_offset * CYCLE_NS + 0.55
+        for output in range(OUTPUTS):
+            for hidden in range(hidden_count):
+                lines += [
+                    f".meas tran final_readout_c{output}_vwp_h{hidden} FIND V({class_node(output, f'vwp{hidden}')}) AT={readout_at:.2f}n",
+                    f".meas tran final_readout_c{output}_vwn_h{hidden} FIND V({class_node(output, f'vwn{hidden}')}) AT={readout_at:.2f}n",
+                    f".meas tran final_readout_c{output}_signed_h{hidden} PARAM='final_readout_c{output}_vwp_h{hidden}-final_readout_c{output}_vwn_h{hidden}'",
+                ]
     return lines
 
 
@@ -1272,6 +1282,39 @@ def hidden_state_metric_rows(
     return rows
 
 
+def readout_state_metric_rows(
+    measures: dict[str, float],
+    hidden_count: int,
+    *,
+    phase: str = "final",
+) -> list[dict[str, Any]]:
+    if phase != "final":
+        raise ValueError("readout state metrics are currently measured only after training")
+    if hidden_count <= 0:
+        raise ValueError("hidden_count must be positive")
+    rows: list[dict[str, Any]] = []
+    for output in range(OUTPUTS):
+        signed = [
+            measures[f"{phase}_readout_c{output}_signed_h{hidden}"]
+            for hidden in range(hidden_count)
+        ]
+        ordered = sorted(range(hidden_count), key=lambda hidden: signed[hidden], reverse=True)
+        rank_by_hidden = {hidden: rank for rank, hidden in enumerate(ordered)}
+        for hidden in range(hidden_count):
+            rows.append(
+                {
+                    "phase": phase,
+                    "class": output,
+                    "hidden": hidden,
+                    "signed_rank": rank_by_hidden[hidden],
+                    "vwp_v": measures[f"{phase}_readout_c{output}_vwp_h{hidden}"],
+                    "vwn_v": measures[f"{phase}_readout_c{output}_vwn_h{hidden}"],
+                    "signed_v": signed[hidden],
+                }
+            )
+    return rows
+
+
 def mnist01_live_hidden_netlist(
     train_records: list[dict[str, Any]],
     eval_records: list[dict[str, Any]],
@@ -1346,6 +1389,7 @@ def mnist01_live_hidden_netlist(
     hidden_writer_topology: str = "pmos-highside",
     hidden_writer_phase_mode: str = "default",
     measure_eval_hidden_states: bool = True,
+    measure_readout_states: bool = False,
     tran_step_ps: float = 5.0,
 ) -> str:
     if not train_records or not eval_records:
@@ -1599,6 +1643,7 @@ def mnist01_live_hidden_netlist(
             hidden_count=hidden_count,
             hidden_init_mode=hidden_init_mode,
             measure_eval_hidden_states=measure_eval_hidden_states,
+            measure_readout_states=measure_readout_states,
             hidden_write_probe_ns=(hidden_write_start_ns + hidden_write_end_ns) / 2.0,
         ),
         ".control",

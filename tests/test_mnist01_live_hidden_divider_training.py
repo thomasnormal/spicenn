@@ -371,6 +371,18 @@ def test_mnist01_live_hidden_netlist_is_live_transistor_path() -> None:
     assert ".meas tran train_hrow_probe_0" in light_measure_netlist
     assert ".tran 10p " in light_measure_netlist
 
+    readout_measure_netlist = mnist01_hidden.mnist01_live_hidden_netlist(
+        train,
+        train,
+        hidden_count=16,
+        hidden_init_mode="identity",
+        measure_eval_hidden_states=False,
+        measure_readout_states=True,
+        tran_step_ps=10.0,
+    )
+    assert ".meas tran final_readout_c0_vwp_h0" in readout_measure_netlist
+    assert ".meas tran final_readout_c1_signed_h15" in readout_measure_netlist
+
 
 def test_mnist01_live_hidden_forward_metric_rows_cover_every_forward_pass() -> None:
     train = [
@@ -438,6 +450,32 @@ def test_mnist01_live_hidden_hidden_state_metric_rows_rank_measured_eval_feature
 
     with pytest.raises(ValueError, match="initial/final"):
         mnist01_hidden.hidden_state_metric_rows(evals, measures, 4, phase="train")
+
+
+def test_mnist01_live_hidden_readout_state_metric_rows_rank_final_weights() -> None:
+    measures: dict[str, float] = {}
+    signed_by_class = [
+        [2.0e-3, -1.0e-3, 5.0e-3],
+        [-3.0e-3, 4.0e-3, 1.0e-3],
+    ]
+    for output, signed_values in enumerate(signed_by_class):
+        for hidden, signed in enumerate(signed_values):
+            measures[f"final_readout_c{output}_vwp_h{hidden}"] = 0.40 + signed
+            measures[f"final_readout_c{output}_vwn_h{hidden}"] = 0.40
+            measures[f"final_readout_c{output}_signed_h{hidden}"] = signed
+
+    rows = mnist01_hidden.readout_state_metric_rows(measures, 3)
+
+    assert len(rows) == 6
+    class0 = [row for row in rows if row["class"] == 0]
+    class1 = [row for row in rows if row["class"] == 1]
+    assert [row["hidden"] for row in class0 if row["signed_rank"] == 0] == [2]
+    assert [row["hidden"] for row in class1 if row["signed_rank"] == 0] == [1]
+    assert class0[2]["signed_v"] == pytest.approx(5.0e-3)
+    assert class1[1]["signed_v"] == pytest.approx(4.0e-3)
+
+    with pytest.raises(ValueError, match="after training"):
+        mnist01_hidden.readout_state_metric_rows(measures, 3, phase="train")
 
 
 @pytest.mark.ngspice

@@ -386,6 +386,72 @@ def _hidden_activation_common_gate_lines(
     return lines
 
 
+def _hidden_pre_differential_pairwise_wta_lines(
+    hidden_count: int,
+    *,
+    phase_node: str = "featphi",
+    sense_width_u: float = 1.0,
+    latch_pmos_width_u: float = 4.0,
+    precharge_width_u: float = 4.0,
+    discharge_width_u: float = 64.0,
+    negative_sense_width_scale: float = 4.0,
+) -> list[str]:
+    if min(
+        hidden_count,
+        sense_width_u,
+        latch_pmos_width_u,
+        precharge_width_u,
+        discharge_width_u,
+        negative_sense_width_scale,
+    ) <= 0.0:
+        raise ValueError("hidden pre-differential pairwise WTA sizes must be positive")
+    neg_width_u = sense_width_u * negative_sense_width_scale
+    lines: list[str] = []
+    for hidden in range(hidden_count):
+        lines += [
+            f"Chrow{hidden}_wta hrow{hidden} 0 1f IC=1.2",
+            f"Rhrow{hidden}_wta hrow{hidden} 0 1G",
+            f"Mhrow{hidden}_wta_pre hrow{hidden} rstn vdd vdd PMOS W={precharge_width_u:.6g}u L=180n",
+        ]
+    for winner in range(hidden_count):
+        for loser in range(hidden_count):
+            if winner == loser:
+                continue
+            beat = f"h{winner}_beats_h{loser}"
+            sense_p = f"{beat}_sense_p"
+            sense_n = f"{beat}_sense_n"
+            tail_n = f"{beat}_tail_n"
+            tail_p = f"{beat}_tail_p"
+            discharge_mid = f"{beat}_discharge_mid"
+            lines += [
+                f"C{beat} {beat} 0 1f IC=0",
+                f"R{beat} {beat} 0 1G",
+                f"M{beat}_rst {beat} rst 0 0 NMOS W=4u L=180n",
+                f"C{sense_p} {sense_p} 0 1f IC=1.2",
+                f"C{sense_n} {sense_n} 0 1f IC=1.2",
+                f"R{sense_p} {sense_p} vdd 1G",
+                f"R{sense_n} {sense_n} vdd 1G",
+                f"R{tail_n} {tail_n} 0 1G",
+                f"R{tail_p} {tail_p} 0 1G",
+                f"M{sense_p}_rst {sense_p} rstn vdd vdd PMOS W=4u L=180n",
+                f"M{sense_n}_rst {sense_n} rstn vdd vdd PMOS W=4u L=180n",
+                f"M{beat}_tail_n {tail_n} {phase_node} 0 0 NSENSE W={sense_width_u:.6g}u L=180n",
+                f"M{beat}_tail_p {tail_p} {phase_node} 0 0 NSENSE W={sense_width_u:.6g}u L=180n",
+                f"M{beat}_winner_p_sense {sense_n} pre{winner}_p {tail_n} 0 NSENSE W={sense_width_u:.6g}u L=180n",
+                f"M{beat}_loser_n_sense {sense_n} pre{loser}_n {tail_n} 0 NSENSE W={neg_width_u:.6g}u L=180n",
+                f"M{beat}_winner_n_sense {sense_p} pre{winner}_n {tail_p} 0 NSENSE W={neg_width_u:.6g}u L=180n",
+                f"M{beat}_loser_p_sense {sense_p} pre{loser}_p {tail_p} 0 NSENSE W={sense_width_u:.6g}u L=180n",
+                f"M{beat}_lp {sense_n} {sense_p} vdd vdd PMOS W={latch_pmos_width_u:.6g}u L=180n",
+                f"M{beat}_ln {sense_p} {sense_n} vdd vdd PMOS W={latch_pmos_width_u:.6g}u L=180n",
+                f"M{beat}_restore {beat} {sense_n} vdd vdd PMOS W={max(4.0, sense_width_u / 2.0):.6g}u L=180n",
+                f"R{discharge_mid} {discharge_mid} 0 1G",
+                f"C{discharge_mid} {discharge_mid} 0 0.05f IC=0",
+                f"M{beat}_hrow_discharge_b hrow{loser} {beat} {discharge_mid} 0 NMOS W={discharge_width_u:.6g}u L=180n",
+                f"M{beat}_hrow_discharge_phi {discharge_mid} {phase_node} 0 0 NSENSE W={discharge_width_u:.6g}u L=180n",
+            ]
+    return lines
+
+
 def _hidden_forward_lines(
     feature_count: int,
     hidden_count: int,
@@ -419,8 +485,8 @@ def _hidden_forward_lines(
         raise ValueError("hidden_activation_mode must be single-ended or differential-preamp")
     if input_mode not in ("raw", "contrast-common-gate", "restored-common-gate"):
         raise ValueError("hidden_input_mode must be raw, contrast-common-gate, or restored-common-gate")
-    if row_select_mode not in ("act", "act-common-gate"):
-        raise ValueError("hidden_row_select_mode must be act or act-common-gate")
+    if row_select_mode not in ("act", "act-common-gate", "pre-differential-pairwise-wta"):
+        raise ValueError("hidden_row_select_mode must be act, act-common-gate, or pre-differential-pairwise-wta")
     lines: list[str] = []
     if input_mode in ("contrast-common-gate", "restored-common-gate"):
         lines += _input_feature_common_gate_lines(
@@ -513,6 +579,9 @@ def _hidden_forward_lines(
             pulldown_width_u=row_select_pulldown_width_u,
             pass_width_u=row_select_pass_width_u,
         )
+    if row_select_mode == "pre-differential-pairwise-wta":
+        lines += _hidden_pre_differential_pairwise_wta_lines(hidden_count)
+        return lines
     for hidden in range(hidden_count):
         hrow_source = f"act_contrast{hidden}" if row_select_mode == "act-common-gate" else f"act{hidden}"
         hrow_select_model = "NMOS" if row_select_mode == "act-common-gate" else "NSENSE"
@@ -1449,8 +1518,8 @@ def mnist01_live_hidden_netlist(
         raise ValueError("hidden_activation_mode must be single-ended or differential-preamp")
     if hidden_input_mode not in ("raw", "contrast-common-gate", "restored-common-gate"):
         raise ValueError("hidden_input_mode must be raw, contrast-common-gate, or restored-common-gate")
-    if hidden_row_select_mode not in ("act", "act-common-gate"):
-        raise ValueError("hidden_row_select_mode must be act or act-common-gate")
+    if hidden_row_select_mode not in ("act", "act-common-gate", "pre-differential-pairwise-wta"):
+        raise ValueError("hidden_row_select_mode must be act, act-common-gate, or pre-differential-pairwise-wta")
     if readout_activation_mode not in ("hrow", "pre-differential", "pre-differential-gated"):
         raise ValueError("readout_activation_mode must be hrow, pre-differential, or pre-differential-gated")
     if readout_writer_activation_mode not in ("hrow", "pre-differential", "pre-differential-gated"):

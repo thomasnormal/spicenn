@@ -75,6 +75,22 @@ def test_mnist01_add_complement_features_preserves_records_and_adds_absence_rows
     assert augmented[0]["features"] == pytest.approx([0.0, 0.55, 1.1, 0.55, 0.275, 0.0])
 
 
+def test_mnist01_round_robin_by_label_interleaves_sample_stream_without_copying() -> None:
+    records = [
+        {"features": [0.0], "label": 0, "idx": 0},
+        {"features": [0.1], "label": 0, "idx": 1},
+        {"features": [1.0], "label": 1, "idx": 2},
+        {"features": [1.1], "label": 1, "idx": 3},
+        {"features": [1.2], "label": 1, "idx": 4},
+    ]
+
+    interleaved = mnist01_live.round_robin_by_label(records)
+
+    assert [record["idx"] for record in interleaved] == [0, 2, 1, 3, 4]
+    assert interleaved[0] is records[0]
+    assert interleaved[-1] is records[-1]
+
+
 def test_mnist01_fixed_feature_netlist_is_live_transistor_path() -> None:
     train = [
         {"features": [1.0, 0.0, 0.0, 0.0], "label": 0},

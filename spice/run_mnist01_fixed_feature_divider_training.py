@@ -185,6 +185,32 @@ def add_complement_features(
     return out
 
 
+def round_robin_by_label(
+    records: list[dict[str, Any]],
+    *,
+    labels: tuple[int, ...] = (0, 1),
+) -> list[dict[str, Any]]:
+    if not records:
+        raise ValueError("records must not be empty")
+    if not labels:
+        raise ValueError("labels must not be empty")
+    buckets: dict[int, list[dict[str, Any]]] = {int(label): [] for label in labels}
+    for record in records:
+        label = int(record.get("label", -1))
+        if label not in buckets:
+            raise ValueError("record label is not in the requested round-robin label set")
+        buckets[label].append(record)
+    if any(not bucket for bucket in buckets.values()):
+        raise ValueError("each round-robin label must have at least one record")
+    out: list[dict[str, Any]] = []
+    for idx in range(max(len(bucket) for bucket in buckets.values())):
+        for label in labels:
+            bucket = buckets[int(label)]
+            if idx < len(bucket):
+                out.append(bucket[idx])
+    return out
+
+
 def load_mnist01_records(
     *,
     train_count_per_digit: int = 1,

@@ -1097,6 +1097,63 @@ def test_mnist01_live_hidden_patch2x2_complement_signcharge_raises_weakest_six_m
         assert gate * delta > 0.0
 
 
+@pytest.mark.ngspice
+def test_mnist01_live_hidden_patch2x2_race_wta_readout_solves_four_per_digit(
+    tmp_path: Path,
+    ngspice_path: str,
+) -> None:
+    _require_mnist_raw()
+    train, evals = mnist01_hidden.load_mnist01_records(
+        train_count_per_digit=4,
+        eval_count_per_digit=4,
+        image_size=4,
+    )
+    train = mnist01_fixed.add_complement_features(mnist01_fixed.round_robin_by_label(train), scale=0.5)
+    evals = mnist01_fixed.add_complement_features(evals, scale=0.5)
+    hidden_count = mnist01_hidden.patch2x2_hidden_count(32)
+
+    parsed = mnist01_hidden.run_netlist(
+        ngspice_path,
+        tmp_path / "mnist01_live_hidden_patch2x2_race_wta_readout_four_per_digit.cir",
+        mnist01_hidden.mnist01_live_hidden_netlist(
+            train,
+            evals,
+            hidden_count=hidden_count,
+            hidden_init_mode="patch2x2",
+            hidden_connectivity_mode="patch2x2-sparse",
+            hidden_inside_positive=0.75,
+            hidden_inside_negative=0.15,
+            hidden_outside_positive=0.15,
+            hidden_outside_negative=0.15,
+            hidden_activation_mode="differential-preamp",
+            hidden_activation_sense_width_u=4.0,
+            hidden_row_select_mode="pre-differential-race-wta",
+            readout_activation_mode="pre-differential-gated",
+            readout_writer_activation_mode="pre-differential",
+            readout_width_u=64.0,
+            readout_update_width_u=0.25,
+            hidden_credit_gate_mode="dynamic-preamp",
+            hidden_error_route_width_u=8.0,
+            hidden_writer_topology="pmos-signcharge",
+            hidden_write_start_train_index=1,
+            hidden_credit_sense_start_ns=5.00,
+            hidden_credit_sense_end_ns=5.35,
+            hidden_write_start_ns=5.35,
+            hidden_write_end_ns=5.45,
+            hidden_update_width_u=0.05,
+            tran_step_ps=10.0,
+        ),
+        timeout=720.0,
+    )
+
+    final_margins = [parsed[f"final_margin_{sample_idx}"] for sample_idx in range(8)]
+    assert min(final_margins) > 1.0e-3
+    assert parsed["final_margin_1"] > 1.0e-3
+    for sample_idx, margin in enumerate(final_margins):
+        assert margin > 1.0e-3
+        assert parsed[f"final_margin_improvement_{sample_idx}"] > 1.0e-3
+
+
 def _hidden_activation_preamp_probe_netlist(
     *,
     pre_p: float,

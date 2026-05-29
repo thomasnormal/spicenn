@@ -1097,6 +1097,7 @@ def mnist01_live_hidden_netlist(
     feature_count = len(train_records[0]["features"])
     _validate_records(train_records, feature_count, "train")
     _validate_records(eval_records, feature_count, "eval")
+    samples, eval_count, train_count = _sample_plan(train_records, eval_records)
     if hidden_init_mode not in HIDDEN_INIT_MODES:
         raise ValueError(f"hidden_init_mode must be one of {HIDDEN_INIT_MODES}")
     if hidden_connectivity_mode not in HIDDEN_CONNECTIVITY_MODES:
@@ -1137,6 +1138,11 @@ def mnist01_live_hidden_netlist(
         raise ValueError("dynamic-preamp hidden credit gate owns the hidden writer phase")
     if hidden_write_start_train_index < 0:
         raise ValueError("hidden_write_start_train_index must be nonnegative")
+    if hidden_writer_phase_mode == "hidden-write" and hidden_write_start_train_index < train_count:
+        raise ValueError(
+            "active ordinary hiddenwritephi writes are not supported; use dynamic-preamp for active hidden writes "
+            "or set hidden_write_start_train_index after the train count to disable ordinary hidden writes"
+        )
     if not (0.0 <= hidden_credit_sense_start_ns < hidden_credit_sense_end_ns <= CYCLE_NS):
         raise ValueError("hidden credit sense window must be inside one cycle")
     if not (0.0 <= hidden_write_start_ns < hidden_write_end_ns <= CYCLE_NS):
@@ -1198,7 +1204,6 @@ def mnist01_live_hidden_netlist(
     ) <= 0.0:
         raise ValueError("voltages, currents, widths, and capacitances must be positive")
 
-    samples, eval_count, train_count = _sample_plan(train_records, eval_records)
     stop_ns = len(samples) * CYCLE_NS
     lines = [
         "* Live-hidden MNIST01 learner with conductance-divider normalized error.",

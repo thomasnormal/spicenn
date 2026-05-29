@@ -156,6 +156,7 @@ def test_mnist01_live_hidden_netlist_is_live_transistor_path() -> None:
         train,
         train,
         hidden_writer_phase_mode="hidden-write",
+        hidden_write_start_train_index=999,
     )
     assert "Mh1f6_live_pup_pgate_phi h1f6_live_pup_pgphi hiddenwritephi 0 0 NSENSE" in hidden_write_phase_netlist
     assert "Mh1f6_live_pup_pgate_phi h1f6_live_pup_pgphi errphi 0 0 NSENSE" not in hidden_write_phase_netlist
@@ -344,6 +345,13 @@ def test_mnist01_live_hidden_netlist_validation() -> None:
             hidden_credit_gate_mode="dynamic-preamp",
             hidden_writer_topology="pmos-differential",
             hidden_writer_phase_mode="hidden-write",
+        )
+    with pytest.raises(ValueError, match="active ordinary hiddenwritephi"):
+        mnist01_hidden.mnist01_live_hidden_netlist(
+            [sample],
+            [sample],
+            hidden_writer_phase_mode="hidden-write",
+            hidden_write_start_train_index=0,
         )
     with pytest.raises(ValueError, match="hidden_credit_gate_mode"):
         mnist01_hidden.mnist01_live_hidden_netlist(
@@ -564,6 +572,54 @@ def test_mnist01_live_hidden_sparse_complement_identity_rows_learn_ten_round_rob
         assert parsed[f"final_margin_improvement_{sample_idx}"] > 0.25e-3
     for train_idx in range(10):
         assert abs(parsed[f"train_wh_probe_signed_delta_{train_idx}"]) < 1.0e-3
+
+
+@pytest.mark.ngspice
+def test_mnist01_live_hidden_sparse_complement_dynamic_hidden_writes_stay_bounded(
+    tmp_path: Path,
+    ngspice_path: str,
+) -> None:
+    _require_mnist_raw()
+    train, evals = mnist01_hidden.load_mnist01_records(
+        train_count_per_digit=2,
+        eval_count_per_digit=2,
+        image_size=4,
+    )
+    train = mnist01_fixed.add_complement_features(mnist01_fixed.round_robin_by_label(train), scale=0.5)
+    evals = mnist01_fixed.add_complement_features(evals, scale=0.5)
+
+    parsed = mnist01_hidden.run_netlist(
+        ngspice_path,
+        tmp_path / "mnist01_live_hidden_sparse_complement_dynamic_hidden_write.cir",
+        mnist01_hidden.mnist01_live_hidden_netlist(
+            train,
+            evals,
+            hidden_count=32,
+            hidden_init_mode="identity",
+            hidden_connectivity_mode="identity-sparse",
+            hidden_activation_mode="differential-preamp",
+            hidden_activation_sense_width_u=4.0,
+            readout_activation_mode="pre-differential",
+            readout_writer_activation_mode="pre-differential",
+            readout_update_width_u=0.20,
+            hidden_credit_gate_mode="dynamic-preamp",
+            hidden_writer_topology="pmos-differential",
+            hidden_write_start_train_index=0,
+            hidden_credit_sense_start_ns=5.00,
+            hidden_credit_sense_end_ns=5.35,
+            hidden_write_start_ns=5.20,
+            hidden_write_end_ns=5.30,
+            hidden_update_width_u=0.05,
+        ),
+        timeout=240.0,
+    )
+
+    for sample_idx in range(4):
+        assert parsed[f"final_margin_{sample_idx}"] > 0.25e-3
+        assert parsed[f"final_margin_improvement_{sample_idx}"] > 0.25e-3
+    assert max(abs(parsed[f"train_hcredit_gate_probe_{idx}"]) for idx in range(1, 4)) > 0.5
+    for train_idx in range(4):
+        assert abs(parsed[f"train_wh_probe_signed_delta_{train_idx}"]) < 2.0e-3
 
 
 def _hidden_activation_preamp_probe_netlist(

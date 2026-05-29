@@ -34,8 +34,15 @@ def _hidden_feature_pre_evidence(
     records: list[dict[str, object]],
     phase: str,
     sample_idx: int,
+    *,
+    hidden_count: int = mnist01_hidden.HIDDEN,
+    hidden_init_mode: str = "quadrant",
 ) -> float:
-    hidden, _feature = mnist01_hidden._probe_hidden_feature(records[sample_idx])
+    hidden, _feature = mnist01_hidden._probe_hidden_feature(
+        records[sample_idx],
+        hidden_count,
+        hidden_init_mode,
+    )
     return measures[f"{phase}_pre_signed_h{hidden}_{sample_idx}"]
 
 
@@ -690,6 +697,27 @@ def test_mnist01_live_hidden_sparse_complement_signcharge_packet_writes_are_bidi
     assert max(abs(delta) for delta in hidden_deltas) > 3.0e-3
     assert max(abs(delta) for delta in hidden_deltas) < 20.0e-3
     assert max(abs(parsed[f"train_hcredit_gate_probe_{idx}"]) for idx in range(1, 4)) > 0.5
+
+    pre_deltas = [
+        _hidden_feature_pre_evidence(
+            parsed,
+            evals,
+            "final",
+            sample_idx,
+            hidden_count=32,
+            hidden_init_mode="identity",
+        )
+        - _hidden_feature_pre_evidence(
+            parsed,
+            evals,
+            "initial",
+            sample_idx,
+            hidden_count=32,
+            hidden_init_mode="identity",
+        )
+        for sample_idx in range(4)
+    ]
+    assert max(abs(delta) for delta in pre_deltas) > 5.0e-3
 
 
 def _hidden_activation_preamp_probe_netlist(

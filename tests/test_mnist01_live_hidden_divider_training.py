@@ -1845,6 +1845,136 @@ def _hidden_credit_signcharge_forward_after_write_netlist(error_mode: str) -> st
     return "\n".join(lines)
 
 
+def _hidden_credit_signcharge_margin_after_write_netlist(target_class: int) -> str:
+    if target_class not in (0, 1):
+        raise ValueError("target_class must be 0 or 1")
+    other_class = 1 - target_class
+    herr = {
+        (0, "p"): 0.55 if target_class == 0 else 0.0,
+        (0, "n"): 0.55 if target_class == 1 else 0.0,
+        (1, "p"): 0.55 if target_class == 1 else 0.0,
+        (1, "n"): 0.55 if target_class == 0 else 0.0,
+    }
+    lines = [
+        "* Hidden-credit signcharge write followed by downstream score-margin replay.",
+        ".param VDD=1.2",
+        mnist01_hidden.mos_models(),
+        ".options method=gear reltol=1e-4 abstol=1e-13 vntol=1e-7",
+        "Vdd vdd 0 {VDD}",
+        "Vrst rst 0 PWL(0n 1.2 0.45n 1.2 0.48n 0 3.00n 0 3.03n 1.2 3.45n 1.2 3.48n 0 6n 0)",
+        "Vrstn rstn 0 PWL(0n 0 0.45n 0 0.48n 1.2 3.00n 1.2 3.03n 0 3.45n 0 3.48n 1.2 6n 1.2)",
+        "Vfeatphi featphi 0 PWL(0n 0 0.75n 0 0.78n 1.2 1.25n 1.2 1.28n 0 3.75n 0 3.78n 1.2 4.25n 1.2 4.28n 0 6n 0)",
+        "Vscorephi scorephi 0 PWL(0n 0 1.30n 0 1.33n 1.2 1.65n 1.2 1.68n 0 4.30n 0 4.33n 1.2 4.65n 1.2 4.68n 0 6n 0)",
+        "Vhcgphi hcgphi 0 PWL(0n 0 1.65n 0 1.68n 1.2 2.25n 1.2 2.28n 0 6n 0)",
+        "Vhiddenwritephi hiddenwritephi 0 PWL(0n 0 2.15n 0 2.18n 1.2 2.28n 1.2 2.31n 0 6n 0)",
+        "Vpx0 px0 0 0.78",
+        f"Vc0herrp c0_herrp 0 {herr[(0, 'p')]:.12g}",
+        f"Vc0herrn c0_herrn 0 {herr[(0, 'n')]:.12g}",
+        f"Vc1herrp c1_herrp 0 {herr[(1, 'p')]:.12g}",
+        f"Vc1herrn c1_herrn 0 {herr[(1, 'n')]:.12g}",
+        "Cwh0f0p wh0f0p 0 20f IC=0.50",
+        "Cwh0f0n wh0f0n 0 20f IC=0.45",
+        "Rwhp wh0f0p 0 1e15",
+        "Rwhn wh0f0n 0 1e15",
+        *mnist01_hidden.signed_store_lines(
+            positive_node=mnist01_hidden.class_node(0, "vwp0"),
+            negative_node=mnist01_hidden.class_node(0, "vwn0"),
+            positive_ic=0.46,
+            negative_ic=0.24,
+        ),
+        *mnist01_hidden.signed_store_lines(
+            positive_node=mnist01_hidden.class_node(1, "vwp0"),
+            negative_node=mnist01_hidden.class_node(1, "vwn0"),
+            positive_ic=0.24,
+            negative_ic=0.46,
+        ),
+        *mnist01_hidden._hidden_state_lines(1),
+        *mnist01_hidden._hidden_forward_lines(
+            1,
+            1,
+            8.0,
+            activation_mode="differential-preamp",
+            activation_sense_width_u=4.0,
+            hidden_init_mode="identity",
+            hidden_connectivity_mode="identity-sparse",
+        ),
+        *[
+            line
+            for output in range(2)
+            for kind in ("scorep", "scoren")
+            for node in [mnist01_hidden.class_node(output, kind)]
+            for line in [
+                f"C{node} {node} 0 8f IC=0",
+                f"R{node} {node} 0 1G",
+                f"Mreset_{node} {node} rst 0 0 NMOS W=4u L=180n",
+            ]
+        ],
+        *mnist01_hidden._score_readout_lines(1, 16.0, activation_mode="pre-differential"),
+        *mnist01_hidden._hidden_credit_lines(1, 32.0, 12.0, 0.05, 5.0e7),
+        *mnist01_hidden._hidden_credit_dynamic_preamp_gate_lines(
+            1,
+            sense_width_u=32.0,
+            latch_pmos_width_u=4.0,
+            output_width_u=2.0,
+            output_pull_width_u=0.5,
+            support_width_u=4.0,
+            write_gate_width_u=8.0,
+            capacitance_f=2.0,
+        ),
+        *mnist01_hidden._hidden_writer_lines(
+            1,
+            1,
+            0.2,
+            4.0,
+            0.2,
+            "pmos-signcharge",
+            "h{hidden}_hcg_write",
+            True,
+            hidden_init_mode="identity",
+            hidden_connectivity_mode="identity-sparse",
+        ),
+        ".meas tran pre_before_p FIND V(pre0_p) AT=1.25n",
+        ".meas tran pre_before_n FIND V(pre0_n) AT=1.25n",
+        ".meas tran pre_before PARAM='pre_before_p-pre_before_n'",
+        ".meas tran c0_scorep_before FIND V(c0_scorep) AT=1.65n",
+        ".meas tran c0_scoren_before FIND V(c0_scoren) AT=1.65n",
+        ".meas tran c1_scorep_before FIND V(c1_scorep) AT=1.65n",
+        ".meas tran c1_scoren_before FIND V(c1_scoren) AT=1.65n",
+        ".meas tran c0_signed_before PARAM='c0_scorep_before-c0_scoren_before'",
+        ".meas tran c1_signed_before PARAM='c1_scorep_before-c1_scoren_before'",
+        ".meas tran hdp FIND V(h0_hdp) AT=2.10n",
+        ".meas tran hdn FIND V(h0_hdn) AT=2.10n",
+        ".meas tran hcredit PARAM='hdp-hdn'",
+        ".meas tran gatep FIND V(h0_hdp_gate) AT=2.20n",
+        ".meas tran gaten FIND V(h0_hdn_gate) AT=2.20n",
+        ".meas tran gate_diff PARAM='gatep-gaten'",
+        ".meas tran pre_after_p FIND V(pre0_p) AT=4.25n",
+        ".meas tran pre_after_n FIND V(pre0_n) AT=4.25n",
+        ".meas tran pre_after PARAM='pre_after_p-pre_after_n'",
+        ".meas tran pre_delta PARAM='pre_after-pre_before'",
+        ".meas tran c0_scorep_after FIND V(c0_scorep) AT=4.65n",
+        ".meas tran c0_scoren_after FIND V(c0_scoren) AT=4.65n",
+        ".meas tran c1_scorep_after FIND V(c1_scorep) AT=4.65n",
+        ".meas tran c1_scoren_after FIND V(c1_scoren) AT=4.65n",
+        ".meas tran c0_signed_after PARAM='c0_scorep_after-c0_scoren_after'",
+        ".meas tran c1_signed_after PARAM='c1_scorep_after-c1_scoren_after'",
+        f".meas tran target_margin_before PARAM='c{target_class}_signed_before-c{other_class}_signed_before'",
+        f".meas tran target_margin_after PARAM='c{target_class}_signed_after-c{other_class}_signed_after'",
+        ".meas tran target_margin_delta PARAM='target_margin_after-target_margin_before'",
+        ".meas tran whp_after FIND V(wh0f0p) AT=4.80n",
+        ".meas tran whn_after FIND V(wh0f0n) AT=4.80n",
+        ".meas tran wh_delta PARAM='whp_after-whn_after-(0.50-0.45)'",
+        ".tran 1p 6n uic",
+        ".control",
+        "run",
+        "quit",
+        ".endc",
+        ".end",
+        "",
+    ]
+    return "\n".join(lines)
+
+
 @pytest.mark.ngspice
 def test_hidden_credit_dynamic_preamp_restores_mnist_scale_credit_with_dead_zone(
     tmp_path: Path,
@@ -2013,6 +2143,41 @@ def test_hidden_credit_signcharge_backprop_changes_next_forward_evidence(
     assert negative["gate_diff"] < -100e-3
     assert negative["wh_delta"] < -3.0e-3
     assert negative["pre_delta"] < -3.0e-3
+
+
+@pytest.mark.ngspice
+def test_hidden_credit_signcharge_write_improves_downstream_score_margin(
+    tmp_path: Path,
+    ngspice_path: str,
+) -> None:
+    target0 = mnist01_hidden.run_netlist(
+        ngspice_path,
+        tmp_path / "hidden_credit_signcharge_margin_target0.cir",
+        _hidden_credit_signcharge_margin_after_write_netlist(0),
+        timeout=30.0,
+    )
+    target1 = mnist01_hidden.run_netlist(
+        ngspice_path,
+        tmp_path / "hidden_credit_signcharge_margin_target1.cir",
+        _hidden_credit_signcharge_margin_after_write_netlist(1),
+        timeout=30.0,
+    )
+
+    assert target0["hcredit"] > 100e-3
+    assert target0["gate_diff"] > 100e-3
+    assert target0["wh_delta"] > 3.0e-3
+    assert target0["pre_delta"] > 3.0e-3
+    assert target0["target_margin_delta"] > 0.25e-3
+    assert target0["c0_signed_after"] > target0["c0_signed_before"]
+    assert target0["c1_signed_after"] < target0["c1_signed_before"]
+
+    assert target1["hcredit"] < -100e-3
+    assert target1["gate_diff"] < -100e-3
+    assert target1["wh_delta"] < -3.0e-3
+    assert target1["pre_delta"] < -3.0e-3
+    assert target1["target_margin_delta"] > 1.0e-3
+    assert target1["c1_signed_after"] > target1["c1_signed_before"]
+    assert target1["c0_signed_after"] < target1["c0_signed_before"]
 
 
 @pytest.mark.ngspice

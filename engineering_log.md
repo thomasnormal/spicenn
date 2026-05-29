@@ -2,6 +2,24 @@
 
 ## 2026-05-29
 
+- Added a downstream hidden-learning alignment primitive for the MNIST01
+  signcharge path.  The new ngspice deck uses the real hidden forward cell,
+  pre-differential score readout, readout-weighted hidden-credit current path,
+  dynamic hidden-credit preamp, signcharge packet writer, and a second forward
+  plus score replay.  With an unsaturated readable hidden state
+  (`whp/whn=0.50/0.45 V`), target-class hidden credit now has to improve the
+  next physical target-vs-other score margin, not only `pre_p-pre_n`: target 0
+  produces positive hidden credit, a `~6.8 mV` signed hidden update, a
+  `~6.6 mV` next-pre increase, and `~0.43 mV` margin improvement; target 1
+  produces the opposite hidden/pre movement and `~14 mV` target-margin
+  improvement.  The earlier saturated helper remains in place and still proves
+  that rail-coded hidden states can move capacitors without readable score
+  effect, which is the key integration warning.  Verification: `python3 -m
+  py_compile tests/test_mnist01_live_hidden_divider_training.py`;
+  `python3 -m pytest tests/test_mnist01_live_hidden_divider_training.py -q -k
+  'hidden_credit_signcharge_write_improves_downstream_score_margin or
+  hidden_credit_signcharge_backprop_changes_next_forward_evidence'` -> `2
+  passed`; focused hidden-signcharge subset -> `4 passed`.
 - Tightened the live-hidden signcharge hidden-write checkpoint so it now
   asserts credit/write sign alignment, not just capacitor movement.  In the
   4-sample sparse raw+complement MNIST01 signcharge run, strong restored

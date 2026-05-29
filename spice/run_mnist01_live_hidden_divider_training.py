@@ -26,6 +26,7 @@ from run_spice_sweep import run_text_netlist
 HIDDEN = 4
 HIDDEN_INIT_MODES = ("quadrant", "identity")
 HIDDEN_CONNECTIVITY_MODES = ("dense", "identity-sparse")
+HIDDEN_WRITER_TOPOLOGIES = ("pmos-highside", "pmos-differential", "pmos-signcharge")
 HIDDEN_WRITER_PHASE_MODES = ("default", "hidden-write")
 READOUT_WRITER_NORMALIZATION_MODES = ("none", "activity-gate")
 
@@ -811,8 +812,8 @@ def _hidden_writer_lines(
     hidden_init_mode: str = "quadrant",
     hidden_connectivity_mode: str = "dense",
 ) -> list[str]:
-    if topology not in ("pmos-highside", "pmos-differential"):
-        raise ValueError("hidden_writer_topology must be pmos-highside or pmos-differential")
+    if topology not in HIDDEN_WRITER_TOPOLOGIES:
+        raise ValueError(f"hidden_writer_topology must be one of {HIDDEN_WRITER_TOPOLOGIES}")
     lines = [
         "Vhidden_whi_ref hidden_whi_ref 0 1.05",
         "Vhidden_wlo_ref hidden_wlo_ref 0 0.15",
@@ -922,8 +923,11 @@ def _hidden_writer_lines(
                     *pmos_charge_lines(f"{prefix}pup", whp, f"px{feature}", hdp, hidden_phase),
                     *pmos_charge_lines(f"{prefix}nup", whn, f"px{feature}", hdn, hidden_phase),
                 ]
-            else:
+            elif topology == "pmos-differential":
                 lines += pmos_differential_lines(prefix, whp, whn, f"px{feature}", hdp, hdn, hidden_phase)
+            else:
+                lines += pmos_charge_lines(f"{prefix}pup", whp, f"px{feature}", hdp, hidden_phase)
+                lines += pmos_charge_lines(f"{prefix}nup", whn, f"px{feature}", hdn, hidden_phase)
     return lines
 
 
@@ -1128,12 +1132,12 @@ def mnist01_live_hidden_netlist(
         )
     if readout_writer_activation_mode == "pre-differential" and readout_writer_normalization_mode != "none":
         raise ValueError("readout_writer_normalization_mode is only supported for hrow, not pre-differential")
-    if hidden_writer_topology not in ("pmos-highside", "pmos-differential"):
-        raise ValueError("hidden_writer_topology must be pmos-highside or pmos-differential")
+    if hidden_writer_topology not in HIDDEN_WRITER_TOPOLOGIES:
+        raise ValueError(f"hidden_writer_topology must be one of {HIDDEN_WRITER_TOPOLOGIES}")
     if hidden_writer_phase_mode not in HIDDEN_WRITER_PHASE_MODES:
         raise ValueError(f"hidden_writer_phase_mode must be one of {HIDDEN_WRITER_PHASE_MODES}")
-    if hidden_credit_gate_mode == "dynamic-preamp" and hidden_writer_topology != "pmos-differential":
-        raise ValueError("dynamic-preamp hidden credit gate requires pmos-differential hidden writer topology")
+    if hidden_credit_gate_mode == "dynamic-preamp" and hidden_writer_topology == "pmos-highside":
+        raise ValueError("dynamic-preamp hidden credit gate requires pmos-differential or pmos-signcharge hidden writer topology")
     if hidden_credit_gate_mode == "dynamic-preamp" and hidden_writer_phase_mode != "default":
         raise ValueError("dynamic-preamp hidden credit gate owns the hidden writer phase")
     if hidden_write_start_train_index < 0:

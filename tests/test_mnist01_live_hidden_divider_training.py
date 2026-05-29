@@ -152,6 +152,16 @@ def test_mnist01_live_hidden_netlist_is_live_transistor_path() -> None:
         in preamp_netlist
     )
 
+    signcharge_netlist = mnist01_hidden.mnist01_live_hidden_netlist(
+        train,
+        train,
+        hidden_credit_gate_mode="dynamic-preamp",
+        hidden_writer_topology="pmos-signcharge",
+        hidden_write_start_train_index=1,
+    )
+    assert "Mh1f6_live_pup_pgate_sel h1f6_live_pup_pgate px6 h1f6_live_pup_pgmid 0 NSENSE" in signcharge_netlist
+    assert "Mh1f6_live_pos_up_ctrl_phi" not in signcharge_netlist
+
     hidden_write_phase_netlist = mnist01_hidden.mnist01_live_hidden_netlist(
         train,
         train,
@@ -1430,6 +1440,63 @@ def _hidden_credit_preamp_primitive_netlist(raw_positive: float, raw_negative: f
     return "\n".join(lines)
 
 
+def _hidden_credit_signcharge_primitive_netlist(raw_positive: float, raw_negative: float) -> str:
+    lines = [
+        "* MNIST-scale hidden-credit signcharge writer primitive.",
+        ".param VDD=1.2",
+        mnist01_hidden.mos_models(),
+        ".options method=gear reltol=1e-4 abstol=1e-13 vntol=1e-7",
+        "Vdd vdd 0 {VDD}",
+        "Vrst rst 0 PULSE(1.2 0 0.4n 10p 10p 9n 20n)",
+        "Vrstn rstn 0 PULSE(0 1.2 0.4n 10p 10p 9n 20n)",
+        "Vhcgphi hcgphi 0 PULSE(0 1.2 1.0n 10p 10p 2.0n 20n)",
+        "Vhiddenwritephi hiddenwritephi 0 PWL(0n 0 3.27n 0 3.30n 1.2 3.80n 1.2 3.83n 0 8n 0)",
+        "Vpx0 px0 0 PULSE(0 1.2 3.3n 10p 10p 2.0n 20n)",
+        f"Vhdp h0_hdp 0 {raw_positive:.12g}",
+        f"Vhdn h0_hdn 0 {raw_negative:.12g}",
+        "Cwh0f0p wh0f0p 0 20f IC=0.45",
+        "Cwh0f0n wh0f0n 0 20f IC=0.40",
+        "Rwhp wh0f0p 0 1e15",
+        "Rwhn wh0f0n 0 1e15",
+        *mnist01_hidden._hidden_credit_dynamic_preamp_gate_lines(
+            1,
+            sense_width_u=32.0,
+            latch_pmos_width_u=4.0,
+            output_width_u=2.0,
+            output_pull_width_u=0.5,
+            support_width_u=4.0,
+            write_gate_width_u=8.0,
+            capacitance_f=2.0,
+        ),
+        *mnist01_hidden._hidden_writer_lines(
+            1,
+            1,
+            1.0,
+            4.0,
+            0.2,
+            "pmos-signcharge",
+            "h{hidden}_hcg_write",
+            True,
+        ),
+        ".meas tran gatep FIND V(h0_hdp_gate) AT=3.20n",
+        ".meas tran gaten FIND V(h0_hdn_gate) AT=3.20n",
+        ".meas tran gate_diff PARAM='gatep-gaten'",
+        ".meas tran write_gate FIND V(h0_hcg_write) AT=3.60n",
+        ".meas tran whp_after FIND V(wh0f0p) AT=7.00n",
+        ".meas tran whn_after FIND V(wh0f0n) AT=7.00n",
+        ".meas tran signed_after PARAM='whp_after-whn_after'",
+        ".meas tran signed_delta PARAM='signed_after-0.05'",
+        ".tran 1p 8n uic",
+        ".control",
+        "run",
+        "quit",
+        ".endc",
+        ".end",
+        "",
+    ]
+    return "\n".join(lines)
+
+
 @pytest.mark.ngspice
 def test_hidden_credit_dynamic_preamp_restores_mnist_scale_credit_with_dead_zone(
     tmp_path: Path,
@@ -1479,3 +1546,50 @@ def test_hidden_credit_dynamic_preamp_restores_mnist_scale_credit_with_dead_zone
     assert zero["support_pre"] < 1e-6
     assert zero["write_gate"] < 1e-6
     assert abs(zero["signed_delta"]) < 1e-3
+
+
+@pytest.mark.ngspice
+def test_hidden_credit_signcharge_writer_preserves_bounded_magnitude(
+    tmp_path: Path,
+    ngspice_path: str,
+) -> None:
+    negative = mnist01_hidden.run_netlist(
+        ngspice_path,
+        tmp_path / "hidden_credit_signcharge_negative.cir",
+        _hidden_credit_signcharge_primitive_netlist(0.25584, 0.25616),
+        timeout=30.0,
+    )
+    neutral = mnist01_hidden.run_netlist(
+        ngspice_path,
+        tmp_path / "hidden_credit_signcharge_neutral.cir",
+        _hidden_credit_signcharge_primitive_netlist(0.2560, 0.2560),
+        timeout=30.0,
+    )
+    tiny = mnist01_hidden.run_netlist(
+        ngspice_path,
+        tmp_path / "hidden_credit_signcharge_tiny.cir",
+        _hidden_credit_signcharge_primitive_netlist(0.25605, 0.25595),
+        timeout=30.0,
+    )
+    positive = mnist01_hidden.run_netlist(
+        ngspice_path,
+        tmp_path / "hidden_credit_signcharge_positive.cir",
+        _hidden_credit_signcharge_primitive_netlist(0.25616, 0.25584),
+        timeout=30.0,
+    )
+    large = mnist01_hidden.run_netlist(
+        ngspice_path,
+        tmp_path / "hidden_credit_signcharge_large.cir",
+        _hidden_credit_signcharge_primitive_netlist(0.2565, 0.2555),
+        timeout=30.0,
+    )
+
+    assert negative["gate_diff"] < -30e-3
+    assert -30e-3 < negative["signed_delta"] < -3e-3
+    assert abs(neutral["gate_diff"]) < 1e-6
+    assert abs(neutral["signed_delta"]) < 100e-6
+    assert tiny["gate_diff"] > 10e-3
+    assert abs(tiny["signed_delta"]) < 100e-6
+    assert positive["gate_diff"] > 30e-3
+    assert 3e-3 < positive["signed_delta"] < 30e-3
+    assert large["signed_delta"] > positive["signed_delta"] + 0.20

@@ -2308,6 +2308,175 @@ def _local_patch2x2_hidden_margin_rescue_netlist(patch_features: list[float]) ->
     return "\n".join(lines)
 
 
+def _local_patch2x2_hidden_margin_replay_netlist(
+    train_patch: list[float],
+    neighbor_patch: list[float],
+    opposite_patch: list[float],
+) -> str:
+    if not (len(train_patch) == len(neighbor_patch) == len(opposite_patch) == 4):
+        raise ValueError("local patch replay expects three 2x2 patch feature vectors")
+    samples = [
+        {"features": neighbor_patch, "label": 0, "train": False},
+        {"features": opposite_patch, "label": 1, "train": False},
+        {"features": train_patch, "label": 0, "train": True},
+        {"features": train_patch, "label": 0, "train": False},
+        {"features": neighbor_patch, "label": 0, "train": False},
+        {"features": opposite_patch, "label": 1, "train": False},
+    ]
+    stop_ns = len(samples) * mnist01_fixed.CYCLE_NS
+    reset = [(idx * mnist01_fixed.CYCLE_NS, idx * mnist01_fixed.CYCLE_NS + 0.45) for idx in range(len(samples))]
+    feat = [
+        (idx * mnist01_fixed.CYCLE_NS + 0.75, idx * mnist01_fixed.CYCLE_NS + 1.25)
+        for idx in range(len(samples))
+    ]
+    score = [
+        (idx * mnist01_fixed.CYCLE_NS + 1.30, idx * mnist01_fixed.CYCLE_NS + 1.65)
+        for idx in range(len(samples))
+    ]
+    err = [(2 * mnist01_fixed.CYCLE_NS + 1.68, 2 * mnist01_fixed.CYCLE_NS + 2.25)]
+    hcg = [(2 * mnist01_fixed.CYCLE_NS + 2.25, 2 * mnist01_fixed.CYCLE_NS + 2.75)]
+    hiddenwrite = [(2 * mnist01_fixed.CYCLE_NS + 2.65, 2 * mnist01_fixed.CYCLE_NS + 2.78)]
+    lines = [
+        "* Local 2x2 patch rescue with same/opposite replay and frozen readout.",
+        ".param VDD=1.2",
+        mnist01_hidden.mos_models(),
+        ".options method=gear reltol=1e-4 abstol=1e-13 vntol=1e-7",
+        "Vdd vdd 0 {VDD}",
+        f"Vrst rst 0 {mnist01_fixed._pulse_wave(reset, stop_ns)}",
+        f"Vrstn rstn 0 {mnist01_fixed._active_low_pulse_wave(reset, stop_ns)}",
+        f"Vfeatphi featphi 0 {mnist01_fixed._pulse_wave(feat, stop_ns)}",
+        f"Vscorephi scorephi 0 {mnist01_fixed._pulse_wave(score, stop_ns)}",
+        f"Verrphi errphi 0 {mnist01_fixed._pulse_wave(err, stop_ns)}",
+        f"Vhcgphi hcgphi 0 {mnist01_fixed._pulse_wave(hcg, stop_ns)}",
+        f"Vhiddenwritephi hiddenwritephi 0 {mnist01_fixed._pulse_wave(hiddenwrite, stop_ns)}",
+        f"Iprobref vdd rnorm {mnist01_fixed._current_pulse_wave(err, stop_ns, 10.0e-6)}",
+        "Vt0 t0 0 1.2",
+        "Vt1 t1 0 0",
+        *[f"Vpx{feature} px{feature} 0 {mnist01_fixed._sample_feature_wave(samples, feature, stop_ns)}" for feature in range(4)],
+        *mnist01_hidden._hidden_storage_lines(
+            4,
+            1,
+            init_mode="patch2x2",
+            connectivity_mode="patch2x2-sparse",
+            inside_positive=0.75,
+            outside_positive=0.15,
+            inside_negative=0.15,
+            outside_negative=0.15,
+        ),
+        *mnist01_hidden.signed_store_lines(
+            positive_node=mnist01_hidden.class_node(0, "vwp0"),
+            negative_node=mnist01_hidden.class_node(0, "vwn0"),
+            positive_ic=0.10,
+            negative_ic=0.90,
+        ),
+        *mnist01_hidden.signed_store_lines(
+            positive_node=mnist01_hidden.class_node(1, "vwp0"),
+            negative_node=mnist01_hidden.class_node(1, "vwn0"),
+            positive_ic=0.90,
+            negative_ic=0.10,
+        ),
+        *mnist01_hidden._hidden_state_lines(1),
+        *mnist01_hidden._hidden_forward_lines(
+            4,
+            1,
+            8.0,
+            activation_mode="differential-preamp",
+            activation_sense_width_u=4.0,
+            hidden_init_mode="patch2x2",
+            hidden_connectivity_mode="patch2x2-sparse",
+        ),
+        *mnist01_hidden._score_storage_lines(),
+        *mnist01_hidden._score_readout_lines(1, 64.0, activation_mode="pre-differential"),
+        *mnist01_hidden._error_storage_lines(),
+        *mnist01_hidden._divider_probability_lines(0.5, 0.02),
+        *mnist01_hidden._route_to_hidden_error_rails_lines(16.0),
+        *mnist01_hidden._hidden_credit_lines(1, 32.0, 12.0, 0.05, 5.0e7),
+        *mnist01_hidden._hidden_credit_dynamic_preamp_gate_lines(
+            1,
+            sense_width_u=32.0,
+            latch_pmos_width_u=4.0,
+            output_width_u=2.0,
+            output_pull_width_u=0.5,
+            support_width_u=4.0,
+            write_gate_width_u=8.0,
+            capacitance_f=2.0,
+        ),
+        *mnist01_hidden._hidden_writer_lines(
+            4,
+            1,
+            0.2,
+            4.0,
+            0.2,
+            "pmos-signcharge",
+            "h{hidden}_hcg_write",
+            True,
+            hidden_init_mode="patch2x2",
+            hidden_connectivity_mode="patch2x2-sparse",
+        ),
+    ]
+
+    def score_measures(prefix: str, idx: int, margin_expr: str) -> list[str]:
+        base = idx * mnist01_fixed.CYCLE_NS
+        return [
+            f".meas tran {prefix}_pre_p FIND V(pre0_p) AT={base + 1.25:.2f}n",
+            f".meas tran {prefix}_pre_n FIND V(pre0_n) AT={base + 1.25:.2f}n",
+            f".meas tran {prefix}_pre PARAM='{prefix}_pre_p-{prefix}_pre_n'",
+            f".meas tran {prefix}_c0_scorep FIND V(c0_scorep) AT={base + 1.65:.2f}n",
+            f".meas tran {prefix}_c0_scoren FIND V(c0_scoren) AT={base + 1.65:.2f}n",
+            f".meas tran {prefix}_c1_scorep FIND V(c1_scorep) AT={base + 1.65:.2f}n",
+            f".meas tran {prefix}_c1_scoren FIND V(c1_scoren) AT={base + 1.65:.2f}n",
+            f".meas tran {prefix}_c0_signed PARAM='{prefix}_c0_scorep-{prefix}_c0_scoren'",
+            f".meas tran {prefix}_c1_signed PARAM='{prefix}_c1_scorep-{prefix}_c1_scoren'",
+            f".meas tran {prefix}_margin PARAM='{margin_expr}'",
+        ]
+
+    lines += score_measures("neighbor_before", 0, "neighbor_before_c0_signed-neighbor_before_c1_signed")
+    lines += score_measures("opposite_before", 1, "opposite_before_c1_signed-opposite_before_c0_signed")
+    lines += score_measures("train_before", 2, "train_before_c0_signed-train_before_c1_signed")
+    lines += [
+        ".meas tran c0_herrp_probe FIND V(c0_herrp) AT=22.20n",
+        ".meas tran c0_herrn_probe FIND V(c0_herrn) AT=22.20n",
+        ".meas tran c1_herrp_probe FIND V(c1_herrp) AT=22.20n",
+        ".meas tran c1_herrn_probe FIND V(c1_herrn) AT=22.20n",
+        ".meas tran target_herrdiff PARAM='c0_herrp_probe-c0_herrn_probe'",
+        ".meas tran other_herrdiff PARAM='c1_herrp_probe-c1_herrn_probe'",
+        ".meas tran hdp FIND V(h0_hdp) AT=22.55n",
+        ".meas tran hdn FIND V(h0_hdn) AT=22.55n",
+        ".meas tran hcredit PARAM='hdp-hdn'",
+        ".meas tran gatep FIND V(h0_hdp_gate) AT=22.70n",
+        ".meas tran gaten FIND V(h0_hdn_gate) AT=22.70n",
+        ".meas tran gate_diff PARAM='gatep-gaten'",
+    ]
+    lines += score_measures("train_after", 3, "train_after_c0_signed-train_after_c1_signed")
+    lines += score_measures("neighbor_after", 4, "neighbor_after_c0_signed-neighbor_after_c1_signed")
+    lines += score_measures("opposite_after", 5, "opposite_after_c1_signed-opposite_after_c0_signed")
+    lines += [
+        ".meas tran train_margin_delta PARAM='train_after_margin-train_before_margin'",
+        ".meas tran neighbor_margin_delta PARAM='neighbor_after_margin-neighbor_before_margin'",
+        ".meas tran opposite_margin_delta PARAM='opposite_after_margin-opposite_before_margin'",
+        ".meas tran train_pre_delta PARAM='train_after_pre-train_before_pre'",
+        ".meas tran neighbor_pre_delta PARAM='neighbor_after_pre-neighbor_before_pre'",
+        ".meas tran opposite_pre_delta PARAM='opposite_after_pre-opposite_before_pre'",
+        *[
+            line
+            for feature in range(4)
+            for line in [
+                f".meas tran wh{feature}p_after FIND V(wh0f{feature}p) AT=35.00n",
+                f".meas tran wh{feature}n_after FIND V(wh0f{feature}n) AT=35.00n",
+                f".meas tran wh{feature}_delta PARAM='wh{feature}p_after-wh{feature}n_after-(0.75-0.15)'",
+            ]
+        ],
+        f".tran 5p {stop_ns:.2f}n uic",
+        ".control",
+        "run",
+        "quit",
+        ".endc",
+        ".end",
+        "",
+    ]
+    return "\n".join(lines)
+
+
 @pytest.mark.ngspice
 def test_hidden_credit_dynamic_preamp_restores_mnist_scale_credit_with_dead_zone(
     tmp_path: Path,
@@ -2583,6 +2752,49 @@ def test_real_mnist_patch2x2_hidden_signcharge_rescues_local_margin_without_read
     assert rescued["c0_signed_after"] > rescued["c0_signed_before"]
     assert rescued["c1_signed_after"] < rescued["c1_signed_before"]
     assert max(rescued[f"wh{feature}_delta"] for feature in range(4)) < -3.0e-3
+
+
+@pytest.mark.ngspice
+def test_real_mnist_patch2x2_hidden_rescue_preserves_neighbor_and_opposite_margin(
+    tmp_path: Path,
+    ngspice_path: str,
+) -> None:
+    _require_mnist_raw()
+    train, _evals = mnist01_hidden.load_mnist01_records(
+        train_count_per_digit=3,
+        eval_count_per_digit=1,
+        image_size=4,
+    )
+    center_patch = mnist01_hidden.patch2x2_features_for_hidden(4, 16, 9)
+    digit0_records = [record for record in train if int(record["label"]) == 0]
+    digit1_records = [record for record in train if int(record["label"]) == 1]
+    train_patch = [float(digit0_records[0]["features"][feature]) for feature in center_patch]
+    neighbor_patch = [float(digit0_records[1]["features"][feature]) for feature in center_patch]
+    opposite_patch = [float(digit1_records[0]["features"][feature]) for feature in center_patch]
+    assert min(train_patch) > 0.50
+    assert min(neighbor_patch) > 0.50
+    assert sum(opposite_patch) < sum(train_patch)
+
+    replay = mnist01_hidden.run_netlist(
+        ngspice_path,
+        tmp_path / "mnist01_local_patch2x2_hidden_margin_replay.cir",
+        _local_patch2x2_hidden_margin_replay_netlist(train_patch, neighbor_patch, opposite_patch),
+        timeout=90.0,
+    )
+
+    assert replay["train_before_margin"] < -0.25
+    assert replay["train_margin_delta"] > 5.0e-3
+    assert replay["neighbor_before_margin"] < -0.25
+    assert replay["neighbor_margin_delta"] > 5.0e-3
+    assert replay["opposite_before_margin"] > 5.0e-3
+    assert replay["opposite_margin_delta"] > 0.0
+    assert replay["opposite_after_margin"] > replay["opposite_before_margin"]
+    assert replay["hcredit"] < -0.50
+    assert replay["gate_diff"] < -0.50
+    assert replay["train_pre_delta"] < -5.0e-3
+    assert replay["neighbor_pre_delta"] < -5.0e-3
+    assert replay["opposite_pre_delta"] < 0.0
+    assert max(replay[f"wh{feature}_delta"] for feature in range(4)) < -3.0e-3
 
 
 @pytest.mark.ngspice

@@ -57,6 +57,27 @@
   conductance_divider_hidden_signcharge_rescues or
   netlist_is_live_transistor_path or validation'` -> `4 passed, 24
   deselected` in `9.46 s`.
+- Added the next local-representation check: same-class neighbor replay and
+  opposite-class protection after one hidden-only local patch update.  The deck
+  now runs six reset-separated phases in one transient: neighbor digit-0
+  before, opposite digit-1 before, trained digit-0 update, trained digit-0
+  replay, neighbor replay, and opposite replay.  Only dynamic nodes reset; the
+  local hidden weight capacitors persist after the signcharge packet update,
+  and the readout writer is still absent.  On the center 2x2 patch, the trained
+  digit-0 margin improves by `+14.63 mV`, the neighboring digit-0 margin
+  improves by `+14.63 mV`, and the first digit-1 margin remains positive and
+  slightly improves by `+0.35 mV` rather than being damaged.  This is still a
+  frozen-readout primitive, but it is a stronger learned-feature contract:
+  local hidden correction transfers to a nearby same-class patch while not
+  breaking an opposite-class replay.  Verification: `python3 -m py_compile
+  spice/run_mnist01_live_hidden_divider_training.py
+  tests/test_mnist01_live_hidden_divider_training.py`; `python3 -m pytest
+  tests/test_mnist01_live_hidden_divider_training.py -q -k
+  'real_mnist_patch2x2_hidden_rescue_preserves or
+  real_mnist_patch2x2_hidden_signcharge_rescues or
+  conductance_divider_hidden_signcharge_rescues or
+  netlist_is_live_transistor_path or validation'` -> `5 passed, 24
+  deselected` in `9.60 s`.
 - Added a downstream hidden-learning alignment primitive for the MNIST01
   signcharge path.  The new ngspice deck uses the real hidden forward cell,
   pre-differential score readout, readout-weighted hidden-credit current path,

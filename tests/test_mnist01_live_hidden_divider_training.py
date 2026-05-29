@@ -400,6 +400,50 @@ def test_mnist01_live_hidden_forward_metric_rows_cover_every_forward_pass() -> N
     assert rows[-1]["cumulative_accuracy"] == pytest.approx(3.0 / 6.0)
 
 
+@pytest.mark.ngspice
+def test_mnist01_live_hidden_forward_metric_rows_from_ngspice_measures(
+    tmp_path: Path,
+    ngspice_path: str,
+) -> None:
+    train = [
+        {"features": [1.0] + [0.0] * 15, "label": 0},
+        {"features": [0.0, 1.0] + [0.0] * 14, "label": 1},
+    ]
+    evals = [
+        {"features": [0.5] + [0.0] * 15, "label": 0},
+        {"features": [0.0, 0.5] + [0.0] * 14, "label": 1},
+    ]
+
+    measures = mnist01_hidden.run_netlist(
+        ngspice_path,
+        tmp_path / "mnist01_controller_forward_metrics.cir",
+        mnist01_hidden.mnist01_live_hidden_netlist(
+            train,
+            evals,
+            hidden_count=16,
+            hidden_init_mode="identity",
+            hidden_connectivity_mode="identity-sparse",
+            hidden_activation_mode="differential-preamp",
+            hidden_activation_sense_width_u=4.0,
+            measure_eval_hidden_states=False,
+            tran_step_ps=20.0,
+        ),
+        timeout=90.0,
+    )
+
+    rows = mnist01_hidden.forward_metric_rows(train, evals, measures, loss_margin_scale_v=1.0e-3)
+
+    assert [row["phase"] for row in rows] == ["initial", "initial", "train", "train", "final", "final"]
+    assert [row["phase_index"] for row in rows] == [0, 1, 0, 1, 0, 1]
+    assert all(row["softplus_loss"] >= 0.0 for row in rows)
+    assert all(0.0 <= row["cumulative_accuracy"] <= 1.0 for row in rows)
+    assert rows[-2]["correct"] == 1
+    assert rows[-1]["correct"] == 1
+    assert rows[-2]["softplus_loss"] < rows[0]["softplus_loss"]
+    assert rows[-1]["softplus_loss"] < rows[1]["softplus_loss"]
+    assert rows[-1]["phase_cumulative_accuracy"] == pytest.approx(1.0)
+
+
 def test_mnist01_live_hidden_netlist_validation() -> None:
     sample = {"features": [1.0] * 16, "label": 0}
 

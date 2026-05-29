@@ -214,3 +214,29 @@ def test_mnist01_fixed_feature_complement_rows_learn_twelve_round_robin_margins(
     for sample_idx in range(12):
         assert parsed[f"final_margin_{sample_idx}"] > 0.50e-3
         assert parsed[f"final_margin_improvement_{sample_idx}"] > 0.50e-3
+
+
+@pytest.mark.ngspice
+def test_mnist01_fixed_feature_complement_rows_learn_twenty_round_robin_margins(
+    tmp_path: Path,
+    ngspice_path: str,
+) -> None:
+    _require_mnist_raw()
+    train, evals = mnist01_live.load_mnist01_records(
+        train_count_per_digit=10,
+        eval_count_per_digit=10,
+        image_size=4,
+    )
+    train = mnist01_live.add_complement_features(mnist01_live.round_robin_by_label(train), scale=0.5)
+    evals = mnist01_live.add_complement_features(evals, scale=0.5)
+
+    parsed = mnist01_live.run_netlist(
+        ngspice_path,
+        tmp_path / "mnist01_fixed_feature_complement_rows_10pd.cir",
+        mnist01_live.mnist01_fixed_feature_netlist(train, evals, update_width_u=0.22),
+        timeout=420.0,
+    )
+
+    for sample_idx in range(20):
+        assert parsed[f"final_margin_{sample_idx}"] > 1.0e-3
+        assert parsed[f"final_margin_improvement_{sample_idx}"] > 1.0e-3

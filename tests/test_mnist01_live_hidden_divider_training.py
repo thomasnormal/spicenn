@@ -2477,6 +2477,192 @@ def _local_patch2x2_hidden_margin_replay_netlist(
     return "\n".join(lines)
 
 
+def _multipatch_patch2x2_hidden_selective_rescue_netlist(
+    train_features: list[float],
+    neighbor_features: list[float],
+    opposite_features: list[float],
+) -> str:
+    if not (len(train_features) == len(neighbor_features) == len(opposite_features) == 16):
+        raise ValueError("multi-patch rescue expects three 4x4 feature vectors")
+    hidden_count = mnist01_hidden.patch2x2_hidden_count(16)
+    center_hidden = 4
+    center_features = mnist01_hidden.patch2x2_features_for_hidden(center_hidden, 16, hidden_count)
+    off_hidden = 0
+    off_feature = 5
+    samples = [
+        {"features": neighbor_features, "label": 0, "train": False},
+        {"features": opposite_features, "label": 1, "train": False},
+        {"features": train_features, "label": 0, "train": True},
+        {"features": train_features, "label": 0, "train": False},
+        {"features": neighbor_features, "label": 0, "train": False},
+        {"features": opposite_features, "label": 1, "train": False},
+    ]
+    stop_ns = len(samples) * mnist01_fixed.CYCLE_NS
+    reset = [(idx * mnist01_fixed.CYCLE_NS, idx * mnist01_fixed.CYCLE_NS + 0.45) for idx in range(len(samples))]
+    feat = [
+        (idx * mnist01_fixed.CYCLE_NS + 0.75, idx * mnist01_fixed.CYCLE_NS + 1.25)
+        for idx in range(len(samples))
+    ]
+    score = [
+        (idx * mnist01_fixed.CYCLE_NS + 1.30, idx * mnist01_fixed.CYCLE_NS + 1.65)
+        for idx in range(len(samples))
+    ]
+    err = [(2 * mnist01_fixed.CYCLE_NS + 1.68, 2 * mnist01_fixed.CYCLE_NS + 2.25)]
+    hcg = [(2 * mnist01_fixed.CYCLE_NS + 2.25, 2 * mnist01_fixed.CYCLE_NS + 2.75)]
+    hiddenwrite = [(2 * mnist01_fixed.CYCLE_NS + 2.65, 2 * mnist01_fixed.CYCLE_NS + 2.78)]
+    lines = [
+        "* Full 9-row patch2x2 hidden rescue with center-row credit selectivity.",
+        ".param VDD=1.2",
+        mnist01_hidden.mos_models(),
+        ".options method=gear reltol=1e-4 abstol=1e-13 vntol=1e-7",
+        "Vdd vdd 0 {VDD}",
+        f"Vrst rst 0 {mnist01_fixed._pulse_wave(reset, stop_ns)}",
+        f"Vrstn rstn 0 {mnist01_fixed._active_low_pulse_wave(reset, stop_ns)}",
+        f"Vfeatphi featphi 0 {mnist01_fixed._pulse_wave(feat, stop_ns)}",
+        f"Vscorephi scorephi 0 {mnist01_fixed._pulse_wave(score, stop_ns)}",
+        f"Verrphi errphi 0 {mnist01_fixed._pulse_wave(err, stop_ns)}",
+        f"Vhcgphi hcgphi 0 {mnist01_fixed._pulse_wave(hcg, stop_ns)}",
+        f"Vhiddenwritephi hiddenwritephi 0 {mnist01_fixed._pulse_wave(hiddenwrite, stop_ns)}",
+        f"Iprobref vdd rnorm {mnist01_fixed._current_pulse_wave(err, stop_ns, 10.0e-6)}",
+        "Vt0 t0 0 1.2",
+        "Vt1 t1 0 0",
+        *[f"Vpx{feature} px{feature} 0 {mnist01_fixed._sample_feature_wave(samples, feature, stop_ns)}" for feature in range(16)],
+        *mnist01_hidden._hidden_storage_lines(
+            16,
+            hidden_count,
+            init_mode="patch2x2",
+            connectivity_mode="patch2x2-sparse",
+            inside_positive=0.75,
+            outside_positive=0.15,
+            inside_negative=0.15,
+            outside_negative=0.15,
+        ),
+    ]
+    for output in range(2):
+        for hidden in range(hidden_count):
+            if hidden == center_hidden and output == 0:
+                positive_ic, negative_ic = 0.10, 0.90
+            elif hidden == center_hidden and output == 1:
+                positive_ic, negative_ic = 0.90, 0.10
+            else:
+                positive_ic, negative_ic = 0.40, 0.40
+            lines += mnist01_hidden.signed_store_lines(
+                positive_node=mnist01_hidden.class_node(output, f"vwp{hidden}"),
+                negative_node=mnist01_hidden.class_node(output, f"vwn{hidden}"),
+                positive_ic=positive_ic,
+                negative_ic=negative_ic,
+            )
+    lines += [
+        *mnist01_hidden._hidden_state_lines(hidden_count),
+        *mnist01_hidden._hidden_forward_lines(
+            16,
+            hidden_count,
+            8.0,
+            activation_mode="differential-preamp",
+            activation_sense_width_u=4.0,
+            hidden_init_mode="patch2x2",
+            hidden_connectivity_mode="patch2x2-sparse",
+        ),
+        *mnist01_hidden._score_storage_lines(),
+        *mnist01_hidden._score_readout_lines(hidden_count, 64.0, activation_mode="pre-differential"),
+        *mnist01_hidden._error_storage_lines(),
+        *mnist01_hidden._divider_probability_lines(0.5, 0.02),
+        *mnist01_hidden._route_to_hidden_error_rails_lines(16.0),
+        *mnist01_hidden._hidden_credit_lines(hidden_count, 32.0, 12.0, 0.05, 5.0e7),
+        *mnist01_hidden._hidden_credit_dynamic_preamp_gate_lines(
+            hidden_count,
+            sense_width_u=32.0,
+            latch_pmos_width_u=4.0,
+            output_width_u=2.0,
+            output_pull_width_u=0.5,
+            support_width_u=4.0,
+            write_gate_width_u=8.0,
+            capacitance_f=2.0,
+        ),
+        *mnist01_hidden._hidden_writer_lines(
+            16,
+            hidden_count,
+            0.2,
+            4.0,
+            0.2,
+            "pmos-signcharge",
+            "h{hidden}_hcg_write",
+            True,
+            hidden_init_mode="patch2x2",
+            hidden_connectivity_mode="patch2x2-sparse",
+        ),
+    ]
+
+    def score_measures(prefix: str, idx: int, margin_expr: str) -> list[str]:
+        base = idx * mnist01_fixed.CYCLE_NS
+        return [
+            f".meas tran {prefix}_center_pre_p FIND V(pre{center_hidden}_p) AT={base + 1.25:.2f}n",
+            f".meas tran {prefix}_center_pre_n FIND V(pre{center_hidden}_n) AT={base + 1.25:.2f}n",
+            f".meas tran {prefix}_center_pre PARAM='{prefix}_center_pre_p-{prefix}_center_pre_n'",
+            f".meas tran {prefix}_off_pre_p FIND V(pre{off_hidden}_p) AT={base + 1.25:.2f}n",
+            f".meas tran {prefix}_off_pre_n FIND V(pre{off_hidden}_n) AT={base + 1.25:.2f}n",
+            f".meas tran {prefix}_off_pre PARAM='{prefix}_off_pre_p-{prefix}_off_pre_n'",
+            f".meas tran {prefix}_c0_scorep FIND V(c0_scorep) AT={base + 1.65:.2f}n",
+            f".meas tran {prefix}_c0_scoren FIND V(c0_scoren) AT={base + 1.65:.2f}n",
+            f".meas tran {prefix}_c1_scorep FIND V(c1_scorep) AT={base + 1.65:.2f}n",
+            f".meas tran {prefix}_c1_scoren FIND V(c1_scoren) AT={base + 1.65:.2f}n",
+            f".meas tran {prefix}_c0_signed PARAM='{prefix}_c0_scorep-{prefix}_c0_scoren'",
+            f".meas tran {prefix}_c1_signed PARAM='{prefix}_c1_scorep-{prefix}_c1_scoren'",
+            f".meas tran {prefix}_margin PARAM='{margin_expr}'",
+        ]
+
+    lines += score_measures("neighbor_before", 0, "neighbor_before_c0_signed-neighbor_before_c1_signed")
+    lines += score_measures("opposite_before", 1, "opposite_before_c1_signed-opposite_before_c0_signed")
+    lines += score_measures("train_before", 2, "train_before_c0_signed-train_before_c1_signed")
+    lines += [
+        ".meas tran center_hdp FIND V(h4_hdp) AT=22.55n",
+        ".meas tran center_hdn FIND V(h4_hdn) AT=22.55n",
+        ".meas tran center_hcredit PARAM='center_hdp-center_hdn'",
+        ".meas tran center_gatep FIND V(h4_hdp_gate) AT=22.70n",
+        ".meas tran center_gaten FIND V(h4_hdn_gate) AT=22.70n",
+        ".meas tran center_gate_diff PARAM='center_gatep-center_gaten'",
+        ".meas tran off_hdp FIND V(h0_hdp) AT=22.55n",
+        ".meas tran off_hdn FIND V(h0_hdn) AT=22.55n",
+        ".meas tran off_hcredit PARAM='off_hdp-off_hdn'",
+        ".meas tran off_gatep FIND V(h0_hdp_gate) AT=22.70n",
+        ".meas tran off_gaten FIND V(h0_hdn_gate) AT=22.70n",
+        ".meas tran off_gate_diff PARAM='off_gatep-off_gaten'",
+    ]
+    lines += score_measures("train_after", 3, "train_after_c0_signed-train_after_c1_signed")
+    lines += score_measures("neighbor_after", 4, "neighbor_after_c0_signed-neighbor_after_c1_signed")
+    lines += score_measures("opposite_after", 5, "opposite_after_c1_signed-opposite_after_c0_signed")
+    lines += [
+        ".meas tran train_margin_delta PARAM='train_after_margin-train_before_margin'",
+        ".meas tran neighbor_margin_delta PARAM='neighbor_after_margin-neighbor_before_margin'",
+        ".meas tran opposite_margin_delta PARAM='opposite_after_margin-opposite_before_margin'",
+        ".meas tran train_center_pre_delta PARAM='train_after_center_pre-train_before_center_pre'",
+        ".meas tran neighbor_center_pre_delta PARAM='neighbor_after_center_pre-neighbor_before_center_pre'",
+        ".meas tran opposite_center_pre_delta PARAM='opposite_after_center_pre-opposite_before_center_pre'",
+        ".meas tran train_off_pre_delta PARAM='train_after_off_pre-train_before_off_pre'",
+        ".meas tran neighbor_off_pre_delta PARAM='neighbor_after_off_pre-neighbor_before_off_pre'",
+        *[
+            line
+            for feature in center_features
+            for line in [
+                f".meas tran center_wh{feature}p_after FIND V(wh{center_hidden}f{feature}p) AT=35.00n",
+                f".meas tran center_wh{feature}n_after FIND V(wh{center_hidden}f{feature}n) AT=35.00n",
+                f".meas tran center_wh{feature}_delta PARAM='center_wh{feature}p_after-center_wh{feature}n_after-(0.75-0.15)'",
+            ]
+        ],
+        f".meas tran off_wh{off_feature}p_after FIND V(wh{off_hidden}f{off_feature}p) AT=35.00n",
+        f".meas tran off_wh{off_feature}n_after FIND V(wh{off_hidden}f{off_feature}n) AT=35.00n",
+        f".meas tran off_wh{off_feature}_delta PARAM='off_wh{off_feature}p_after-off_wh{off_feature}n_after-(0.75-0.15)'",
+        f".tran 5p {stop_ns:.2f}n uic",
+        ".control",
+        "run",
+        "quit",
+        ".endc",
+        ".end",
+        "",
+    ]
+    return "\n".join(lines)
+
+
 @pytest.mark.ngspice
 def test_hidden_credit_dynamic_preamp_restores_mnist_scale_credit_with_dead_zone(
     tmp_path: Path,
@@ -2795,6 +2981,50 @@ def test_real_mnist_patch2x2_hidden_rescue_preserves_neighbor_and_opposite_margi
     assert replay["neighbor_pre_delta"] < -5.0e-3
     assert replay["opposite_pre_delta"] < 0.0
     assert max(replay[f"wh{feature}_delta"] for feature in range(4)) < -3.0e-3
+
+
+@pytest.mark.ngspice
+def test_real_mnist_multipatch_hidden_rescue_is_center_selective(
+    tmp_path: Path,
+    ngspice_path: str,
+) -> None:
+    _require_mnist_raw()
+    train, _evals = mnist01_hidden.load_mnist01_records(
+        train_count_per_digit=3,
+        eval_count_per_digit=1,
+        image_size=4,
+    )
+    digit0_records = [record for record in train if int(record["label"]) == 0]
+    digit1_records = [record for record in train if int(record["label"]) == 1]
+    center_patch = mnist01_hidden.patch2x2_features_for_hidden(4, 16, 9)
+    assert min(float(digit0_records[0]["features"][feature]) for feature in center_patch) > 0.50
+
+    replay = mnist01_hidden.run_netlist(
+        ngspice_path,
+        tmp_path / "mnist01_multipatch_patch2x2_hidden_selective_rescue.cir",
+        _multipatch_patch2x2_hidden_selective_rescue_netlist(
+            [float(value) for value in digit0_records[0]["features"]],
+            [float(value) for value in digit0_records[1]["features"]],
+            [float(value) for value in digit1_records[0]["features"]],
+        ),
+        timeout=120.0,
+    )
+
+    assert replay["train_before_margin"] < -0.25
+    assert replay["train_margin_delta"] > 1.0e-3
+    assert replay["neighbor_margin_delta"] > 1.0e-3
+    assert replay["opposite_after_margin"] > 5.0e-3
+    assert replay["opposite_margin_delta"] > -0.5e-3
+    assert replay["center_hcredit"] < -0.50
+    assert replay["center_gate_diff"] < -0.50
+    assert abs(replay["off_hcredit"]) < 1.0e-6
+    assert abs(replay["off_gate_diff"]) < 1.0e-6
+    assert replay["train_center_pre_delta"] < -5.0e-3
+    assert replay["neighbor_center_pre_delta"] < -5.0e-3
+    assert abs(replay["train_off_pre_delta"]) < 1.0e-3
+    for feature in center_patch:
+        assert replay[f"center_wh{feature}_delta"] < -3.0e-3
+    assert abs(replay["off_wh5_delta"]) < 50e-6
 
 
 @pytest.mark.ngspice

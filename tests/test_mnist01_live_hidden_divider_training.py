@@ -366,8 +366,38 @@ def test_mnist01_live_hidden_netlist_is_live_transistor_path() -> None:
     assert ".meas tran final_hrow_h3_1" not in light_measure_netlist
     assert ".meas tran initial_margin_0" in light_measure_netlist
     assert ".meas tran final_margin_1" in light_measure_netlist
+    assert ".meas tran train_margin_0" in light_measure_netlist
+    assert ".meas tran train_target_signed_0" in light_measure_netlist
     assert ".meas tran train_hrow_probe_0" in light_measure_netlist
     assert ".tran 10p " in light_measure_netlist
+
+
+def test_mnist01_live_hidden_forward_metric_rows_cover_every_forward_pass() -> None:
+    train = [
+        {"features": [1.0] + [0.0] * 15, "label": 0},
+        {"features": [0.0, 1.0] + [0.0] * 14, "label": 1},
+    ]
+    evals = [
+        {"features": [0.5] + [0.0] * 15, "label": 0},
+        {"features": [0.0, 0.5] + [0.0] * 14, "label": 1},
+    ]
+    measures: dict[str, float] = {}
+    for phase in ("initial", "train", "final"):
+        for idx, margin in enumerate((-1.0e-3, 2.0e-3) if phase == "train" else (0.0, 3.0e-3)):
+            measures[f"{phase}_target_signed_{idx}"] = margin
+            measures[f"{phase}_other_signed_{idx}"] = 0.0
+            measures[f"{phase}_margin_{idx}"] = margin
+
+    rows = mnist01_hidden.forward_metric_rows(train, evals, measures, loss_margin_scale_v=1.0e-3)
+
+    assert [row["phase"] for row in rows] == ["initial", "initial", "train", "train", "final", "final"]
+    assert [row["phase_index"] for row in rows] == [0, 1, 0, 1, 0, 1]
+    assert rows[2]["correct"] == 0
+    assert rows[3]["correct"] == 1
+    assert rows[3]["softplus_loss"] < rows[2]["softplus_loss"]
+    assert rows[3]["phase_cumulative_accuracy"] == pytest.approx(0.5)
+    assert rows[-1]["phase_cumulative_accuracy"] == pytest.approx(0.5)
+    assert rows[-1]["cumulative_accuracy"] == pytest.approx(3.0 / 6.0)
 
 
 def test_mnist01_live_hidden_netlist_validation() -> None:

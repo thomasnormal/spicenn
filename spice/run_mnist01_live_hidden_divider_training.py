@@ -1104,11 +1104,19 @@ def _measure_lines(
         if sample["phase"] == "train":
             local = idx - train_offset
             before = base + 0.55
+            score_at = base + 3.15
             readout_after = base + 7.80
             hidden_after = base + 9.80
             err_at = base + 5.35
             hidden, feature = _probe_hidden_feature(sample, hidden_count, hidden_init_mode)
             lines += [
+                f".meas tran train_target_scorep_{local} FIND V({class_node(label, 'scorep')}) AT={score_at:.2f}n",
+                f".meas tran train_target_scoren_{local} FIND V({class_node(label, 'scoren')}) AT={score_at:.2f}n",
+                f".meas tran train_other_scorep_{local} FIND V({class_node(other, 'scorep')}) AT={score_at:.2f}n",
+                f".meas tran train_other_scoren_{local} FIND V({class_node(other, 'scoren')}) AT={score_at:.2f}n",
+                f".meas tran train_target_signed_{local} PARAM='train_target_scorep_{local}-train_target_scoren_{local}'",
+                f".meas tran train_other_signed_{local} PARAM='train_other_scorep_{local}-train_other_scoren_{local}'",
+                f".meas tran train_margin_{local} PARAM='train_target_signed_{local}-train_other_signed_{local}'",
                 f".meas tran train_act_probe_{local} FIND V(act{hidden}) AT={base + 2.00:.2f}n",
                 f".meas tran train_hrow_probe_{local} FIND V(hrow{hidden}) AT={base + 2.00:.2f}n",
                 f".meas tran train_hrow_ctrl_probe_{local} FIND V(hrow{hidden}_ctrl) AT={base + 2.00:.2f}n",
@@ -1152,6 +1160,69 @@ def _measure_lines(
     for idx in range(eval_count):
         lines.append(f".meas tran final_margin_improvement_{idx} PARAM='final_margin_{idx}-initial_margin_{idx}'")
     return lines
+
+
+def forward_metric_rows(
+    train_records: list[dict[str, Any]],
+    eval_records: list[dict[str, Any]],
+    measures: dict[str, float],
+    *,
+    loss_margin_scale_v: float = 1.0e-3,
+) -> list[dict[str, Any]]:
+    if loss_margin_scale_v <= 0.0:
+        raise ValueError("loss_margin_scale_v must be positive")
+    feature_count = len(train_records[0]["features"]) if train_records else 0
+    _validate_records(train_records, feature_count, "train")
+    _validate_records(eval_records, feature_count, "eval")
+    samples, eval_count, train_count = _sample_plan(train_records, eval_records)
+    final_offset = eval_count + train_count
+    rows: list[dict[str, Any]] = []
+    total_correct = 0
+    total_loss = 0.0
+    phase_counts: dict[str, int] = {}
+    phase_correct: dict[str, int] = {}
+    phase_loss: dict[str, float] = {}
+    for sample_idx, sample in enumerate(samples):
+        phase = str(sample["phase"])
+        if phase == "initial":
+            local = sample_idx
+        elif phase == "train":
+            local = sample_idx - eval_count
+        elif phase == "final":
+            local = sample_idx - final_offset
+        else:
+            raise ValueError(f"unknown sample phase {phase!r}")
+        prefix = phase
+        target_signed = measures[f"{prefix}_target_signed_{local}"]
+        other_signed = measures[f"{prefix}_other_signed_{local}"]
+        margin = measures[f"{prefix}_margin_{local}"]
+        loss = float(np.logaddexp(0.0, -margin / loss_margin_scale_v))
+        correct = margin > 0.0
+        total_correct += int(correct)
+        total_loss += loss
+        phase_counts[phase] = phase_counts.get(phase, 0) + 1
+        phase_correct[phase] = phase_correct.get(phase, 0) + int(correct)
+        phase_loss[phase] = phase_loss.get(phase, 0.0) + loss
+        count = len(rows) + 1
+        rows.append(
+            {
+                "forward_index": len(rows),
+                "cycle_index": sample_idx,
+                "phase": phase,
+                "phase_index": local,
+                "label": int(sample["label"]),
+                "target_signed_v": target_signed,
+                "other_signed_v": other_signed,
+                "margin_v": margin,
+                "correct": int(correct),
+                "softplus_loss": loss,
+                "cumulative_accuracy": total_correct / count,
+                "cumulative_mean_loss": total_loss / count,
+                "phase_cumulative_accuracy": phase_correct[phase] / phase_counts[phase],
+                "phase_cumulative_mean_loss": phase_loss[phase] / phase_counts[phase],
+            }
+        )
+    return rows
 
 
 def mnist01_live_hidden_netlist(

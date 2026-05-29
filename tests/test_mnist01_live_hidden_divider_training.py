@@ -728,11 +728,22 @@ def test_mnist01_live_hidden_sparse_complement_signcharge_packet_writes_are_bidi
         assert parsed[f"final_margin_improvement_{sample_idx}"] > 0.25e-3
     assert abs(parsed["train_wh_probe_signed_delta_0"]) < 1.0e-3
     hidden_deltas = [parsed[f"train_wh_probe_signed_delta_{idx}"] for idx in range(1, 4)]
+    hidden_credit_gates = [parsed[f"train_hcredit_gate_probe_{idx}"] for idx in range(1, 4)]
     assert min(hidden_deltas) < -3.0e-3
     assert max(hidden_deltas) > 3.0e-3
     assert max(abs(delta) for delta in hidden_deltas) > 3.0e-3
     assert max(abs(delta) for delta in hidden_deltas) < 20.0e-3
-    assert max(abs(parsed[f"train_hcredit_gate_probe_{idx}"]) for idx in range(1, 4)) > 0.30
+    assert max(abs(gate) for gate in hidden_credit_gates) > 0.30
+
+    strong_credit_pairs = [
+        (gate, delta)
+        for gate, delta in zip(hidden_credit_gates, hidden_deltas, strict=True)
+        if abs(gate) > 0.30
+    ]
+    assert strong_credit_pairs
+    for gate, delta in strong_credit_pairs:
+        assert abs(delta) > 3.0e-3
+        assert gate * delta > 0.0
 
     pre_deltas = [
         _hidden_feature_pre_evidence(

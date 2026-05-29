@@ -2,6 +2,23 @@
 
 ## 2026-05-29
 
+- Tightened the live-hidden signcharge hidden-write checkpoint so it now
+  asserts credit/write sign alignment, not just capacitor movement.  In the
+  4-sample sparse raw+complement MNIST01 signcharge run, strong restored
+  hidden-credit gates (`|h*_hdp_gate-h*_hdn_gate| > 0.30 V`) must move the
+  probed hidden signed state in the same direction by more than `3 mV`, while
+  the overall hidden movement remains bounded below `20 mV`.  A direct
+  comparison against the same deck with hidden writes disabled showed the
+  honest current boundary: hidden writes preserve the tiny readout-learned
+  margins within about `0.04 mV` and produce forward-visible selected
+  pre-evidence shifts (`+7.3 mV`, `-7.5 mV`, etc.), but they do not improve the
+  class margins yet.  This means the hidden-credit/signcharge handoff is
+  directionally real, while the hidden objective still needs a margin-aligned
+  update policy before it should be used on the 20-sample rung.  Verification:
+  `python3 -m py_compile tests/test_mnist01_live_hidden_divider_training.py`;
+  `python3 -m pytest tests/test_mnist01_live_hidden_divider_training.py -q -k
+  'signcharge_packet_writes_are_bidirectional'` -> `1 passed` in `184.78 s`;
+  existing hidden signcharge focused subset -> `3 passed` in `165.68 s`.
 - Scaled the MNIST01 live-hidden sparse raw+complement output-learning rung
   from `8` to `10` samples per digit in a single continuous ngspice transient.
   The circuit remains unchanged: identity-sparse hidden rows, pre-differential

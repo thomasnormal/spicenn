@@ -637,7 +637,7 @@ def test_mnist01_live_hidden_sparse_complement_dynamic_hidden_writes_stay_bounde
 
 
 @pytest.mark.ngspice
-def test_mnist01_live_hidden_sparse_complement_signcharge_packet_writes_are_bounded(
+def test_mnist01_live_hidden_sparse_complement_signcharge_packet_writes_are_bounded_unsaturated(
     tmp_path: Path,
     ngspice_path: str,
 ) -> None:
@@ -659,6 +659,10 @@ def test_mnist01_live_hidden_sparse_complement_signcharge_packet_writes_are_boun
             hidden_count=32,
             hidden_init_mode="identity",
             hidden_connectivity_mode="identity-sparse",
+            hidden_inside_positive=0.90,
+            hidden_inside_negative=0.15,
+            hidden_outside_positive=0.15,
+            hidden_outside_negative=0.15,
             hidden_activation_mode="differential-preamp",
             hidden_activation_sense_width_u=4.0,
             readout_activation_mode="pre-differential",
@@ -681,7 +685,7 @@ def test_mnist01_live_hidden_sparse_complement_signcharge_packet_writes_are_boun
         assert parsed[f"final_margin_improvement_{sample_idx}"] > 0.25e-3
     assert abs(parsed["train_wh_probe_signed_delta_0"]) < 1.0e-3
     hidden_deltas = [parsed[f"train_wh_probe_signed_delta_{idx}"] for idx in range(1, 4)]
-    assert max(abs(delta) for delta in hidden_deltas) > 5.0e-3
+    assert min(abs(delta) for delta in hidden_deltas) > 5.0e-3
     assert max(abs(delta) for delta in hidden_deltas) < 20.0e-3
     assert max(abs(parsed[f"train_hcredit_gate_probe_{idx}"]) for idx in range(1, 4)) > 0.5
 

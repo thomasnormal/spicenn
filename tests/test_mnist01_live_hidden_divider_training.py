@@ -253,6 +253,17 @@ def test_mnist01_live_hidden_netlist_is_live_transistor_path() -> None:
     assert "Mh0_beats_h1_hrow_discharge_b hrow1 h0_beats_h1 h0_beats_h1_discharge_mid 0 NMOS" in pre_wta_netlist
     assert "Mhrow0_ctrl_a" not in pre_wta_netlist
 
+    race_wta_netlist = mnist01_hidden.mnist01_live_hidden_netlist(
+        train,
+        train,
+        hidden_row_select_mode="pre-differential-race-wta",
+    )
+    assert "Cwta_stop_low wta_stop_low 0 0.5f IC=1.2" in race_wta_netlist
+    assert "Mh0_race_charge_p vdd pre0_p h0_race_charge_a 0 NSENSE" in race_wta_netlist
+    assert "Mh0_race_discharge_n h0_race pre0_n h0_race_discharge_mid 0 NSENSE" in race_wta_netlist
+    assert "Mhrow0_race_restore hrow0 h0_race_low vdd vdd PMOS" in race_wta_netlist
+    assert "Mhrow0_ctrl_a" not in race_wta_netlist
+
     pre_diff_readout_netlist = mnist01_hidden.mnist01_live_hidden_netlist(
         train,
         train,
@@ -1422,6 +1433,59 @@ def _measured_weak_zero_pairwise_wta_replay_netlist() -> str:
     return "\n".join(lines)
 
 
+def _measured_weak_zero_race_wta_replay_netlist() -> str:
+    hidden_count = len(WEAK_ZERO_PRE_P)
+    lines = [
+        "* Replay measured 4x4 MNIST01 weak-zero state through race-WTA gated readout.",
+        ".param VDD=1.2",
+        mnist01_hidden.mos_models(),
+        ".options method=gear reltol=1e-4 abstol=1e-13 vntol=1e-7",
+        "Vdd vdd 0 {VDD}",
+        "Vrst rst 0 PWL(0n 1.2 0.15n 1.2 0.18n 0 5n 0)",
+        "Vrstn rstn 0 PWL(0n 0 0.15n 0 0.18n 1.2 5n 1.2)",
+        "Vfeatphi featphi 0 PULSE(0 1.2 0.35n 10p 10p 1.60n 5n)",
+        "Vscorephi scorephi 0 PULSE(0 1.2 2.20n 10p 10p 1.20n 5n)",
+    ]
+    for hidden, (pre_p, pre_n) in enumerate(zip(WEAK_ZERO_PRE_P, WEAK_ZERO_PRE_N, strict=True)):
+        lines += [
+            f"Vpre{hidden}p pre{hidden}_p 0 {pre_p:.12g}",
+            f"Vpre{hidden}n pre{hidden}_n 0 {pre_n:.12g}",
+        ]
+    for hidden, (vwp, vwn) in enumerate(zip(WEAK_ZERO_C0_VWP, WEAK_ZERO_C0_VWN, strict=True)):
+        lines += [
+            f"Vc0vwp{hidden} {mnist01_hidden.class_node(0, f'vwp{hidden}')} 0 {vwp:.12g}",
+            f"Vc0vwn{hidden} {mnist01_hidden.class_node(0, f'vwn{hidden}')} 0 {vwn:.12g}",
+            f"Vc1vwp{hidden} {mnist01_hidden.class_node(1, f'vwp{hidden}')} 0 {vwn:.12g}",
+            f"Vc1vwn{hidden} {mnist01_hidden.class_node(1, f'vwn{hidden}')} 0 {vwp:.12g}",
+        ]
+    lines += [
+        *mnist01_hidden._hidden_pre_differential_race_wta_lines(hidden_count),
+        *mnist01_hidden._score_storage_lines(),
+        *mnist01_hidden._score_readout_lines(
+            hidden_count,
+            64.0,
+            activation_mode="pre-differential-gated",
+        ),
+        *[f".meas tran hrow{hidden}_at FIND V(hrow{hidden}) AT=2.10n" for hidden in range(hidden_count)],
+        ".meas tran stop_low_at FIND V(wta_stop_low) AT=2.10n",
+        ".meas tran c0_scorep_at FIND V(c0_scorep) AT=3.60n",
+        ".meas tran c0_scoren_at FIND V(c0_scoren) AT=3.60n",
+        ".meas tran c1_scorep_at FIND V(c1_scorep) AT=3.60n",
+        ".meas tran c1_scoren_at FIND V(c1_scoren) AT=3.60n",
+        ".meas tran c0_signed_at PARAM='c0_scorep_at-c0_scoren_at'",
+        ".meas tran c1_signed_at PARAM='c1_scorep_at-c1_scoren_at'",
+        ".meas tran margin_at PARAM='c0_signed_at-c1_signed_at'",
+        ".tran 2p 4n uic",
+        ".control",
+        "run",
+        "quit",
+        ".endc",
+        ".end",
+        "",
+    ]
+    return "\n".join(lines)
+
+
 @pytest.mark.ngspice
 def test_mnist01_measured_weak_zero_replay_needs_row_competition(
     tmp_path: Path,
@@ -1469,6 +1533,28 @@ def test_mnist01_measured_weak_zero_pairwise_wta_recovers_top1_margin(
     assert strongest == 7
     assert hrows[7] > 0.9
     assert max(value for hidden, value in enumerate(hrows) if hidden != 7) < 0.2
+    assert parsed["margin_at"] > 10e-3
+
+
+@pytest.mark.ngspice
+def test_mnist01_measured_weak_zero_race_wta_recovers_top1_margin(
+    tmp_path: Path,
+    ngspice_path: str,
+) -> None:
+    parsed = mnist01_hidden.run_netlist(
+        ngspice_path,
+        tmp_path / "mnist01_weak_zero_replay_race_wta.cir",
+        _measured_weak_zero_race_wta_replay_netlist(),
+        timeout=30.0,
+    )
+
+    hrows = [parsed[f"hrow{hidden}_at"] for hidden in range(len(WEAK_ZERO_PRE_P))]
+    strongest = max(range(len(hrows)), key=hrows.__getitem__)
+
+    assert strongest == 7
+    assert hrows[7] > 0.9
+    assert max(value for hidden, value in enumerate(hrows) if hidden != 7) < 0.2
+    assert parsed["stop_low_at"] < 0.2
     assert parsed["margin_at"] > 10e-3
 
 
@@ -1942,6 +2028,40 @@ def _hidden_pre_differential_pairwise_wta_probe_netlist(
     return "\n".join(lines)
 
 
+def _hidden_pre_differential_race_wta_probe_netlist(
+    pres: tuple[tuple[float, float], ...],
+) -> str:
+    lines = [
+        "* Low-level MNIST live-hidden pre-differential race WTA primitive.",
+        ".param VDD=1.2",
+        mnist01_hidden.mos_models(),
+        ".options method=gear reltol=1e-4 abstol=1e-13 vntol=1e-7",
+        "Vdd vdd 0 {VDD}",
+        "Vrst rst 0 PWL(0n 1.2 0.15n 1.2 0.18n 0 4n 0)",
+        "Vrstn rstn 0 PWL(0n 0 0.15n 0 0.18n 1.2 4n 1.2)",
+        "Vfeatphi featphi 0 PULSE(0 1.2 0.35n 10p 10p 1.60n 4n)",
+    ]
+    for hidden, (pre_p, pre_n) in enumerate(pres):
+        lines += [
+            f"Vpre{hidden}p pre{hidden}_p 0 {pre_p:.12g}",
+            f"Vpre{hidden}n pre{hidden}_n 0 {pre_n:.12g}",
+        ]
+    lines += [
+        *mnist01_hidden._hidden_pre_differential_race_wta_lines(len(pres)),
+        *[f".meas tran hrow{hidden}_at FIND V(hrow{hidden}) AT=2.40n" for hidden in range(len(pres))],
+        *[f".meas tran race{hidden}_mid FIND V(h{hidden}_race) AT=1.40n" for hidden in range(len(pres))],
+        ".meas tran stop_low_at FIND V(wta_stop_low) AT=2.40n",
+        ".tran 2p 3n uic",
+        ".control",
+        "run",
+        "quit",
+        ".endc",
+        ".end",
+        "",
+    ]
+    return "\n".join(lines)
+
+
 @pytest.mark.ngspice
 def test_mnist01_hidden_pre_differential_pairwise_wta_selects_largest_signed_evidence(
     tmp_path: Path,
@@ -1997,6 +2117,55 @@ def test_mnist01_hidden_pre_differential_pairwise_wta_selects_largest_signed_evi
     assert weak_zero_like["hrow0_at"] > 0.9
     assert weak_zero_like["hrow1_at"] < 0.2
     assert weak_zero_like["hrow2_at"] < 0.2
+
+
+@pytest.mark.ngspice
+def test_mnist01_hidden_pre_differential_race_wta_selects_first_signed_winner(
+    tmp_path: Path,
+    ngspice_path: str,
+) -> None:
+    clear = mnist01_hidden.run_netlist(
+        ngspice_path,
+        tmp_path / "mnist01_hidden_pre_diff_race_wta_clear.cir",
+        _hidden_pre_differential_race_wta_probe_netlist(
+            (
+                (0.42, 0.06),
+                (0.30, 0.06),
+                (0.12, 0.06),
+            )
+        ),
+        timeout=20.0,
+    )
+    signed_beats_raw_pre = mnist01_hidden.run_netlist(
+        ngspice_path,
+        tmp_path / "mnist01_hidden_pre_diff_race_wta_signed.cir",
+        _hidden_pre_differential_race_wta_probe_netlist(
+            (
+                (0.36, 0.04),
+                (0.48, 0.28),
+                (0.22, 0.04),
+            )
+        ),
+        timeout=20.0,
+    )
+    weak_zero_like = mnist01_hidden.run_netlist(
+        ngspice_path,
+        tmp_path / "mnist01_hidden_pre_diff_race_wta_weak_zero.cir",
+        _hidden_pre_differential_race_wta_probe_netlist(
+            (
+                (WEAK_ZERO_PRE_P[7], WEAK_ZERO_PRE_N[7]),
+                (WEAK_ZERO_PRE_P[9], WEAK_ZERO_PRE_N[9]),
+                (WEAK_ZERO_PRE_P[12], WEAK_ZERO_PRE_N[12]),
+            )
+        ),
+        timeout=20.0,
+    )
+
+    for parsed in (clear, signed_beats_raw_pre, weak_zero_like):
+        assert parsed["hrow0_at"] > 0.9
+        assert parsed["hrow1_at"] < 0.2
+        assert parsed["hrow2_at"] < 0.2
+        assert parsed["stop_low_at"] < 0.2
 
 
 def _hidden_forward_update_primitive_netlist() -> str:

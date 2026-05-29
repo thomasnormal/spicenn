@@ -452,6 +452,67 @@ def _hidden_pre_differential_pairwise_wta_lines(
     return lines
 
 
+def _hidden_pre_differential_race_wta_lines(
+    hidden_count: int,
+    *,
+    phase_node: str = "featphi",
+    charge_width_u: float = 2.0,
+    discharge_width_u: float = 8.0,
+    race_capacitance_f: float = 20.0,
+    hrow_capacitance_f: float = 0.5,
+    stop_capacitance_f: float = 0.5,
+    sense_width_u: float = 2.0,
+    stop_discharge_width_u: float = 64.0,
+    hrow_restore_width_u: float = 32.0,
+) -> list[str]:
+    if min(
+        hidden_count,
+        charge_width_u,
+        discharge_width_u,
+        race_capacitance_f,
+        hrow_capacitance_f,
+        stop_capacitance_f,
+        sense_width_u,
+        stop_discharge_width_u,
+        hrow_restore_width_u,
+    ) <= 0.0:
+        raise ValueError("hidden pre-differential race WTA sizes must be positive")
+    lines = [
+        f"Cwta_stop_low wta_stop_low 0 {stop_capacitance_f:.12g}f IC=1.2",
+        "Rwta_stop_low wta_stop_low vdd 1G",
+        "Mwta_stop_low_rst wta_stop_low rstn vdd vdd PMOS W=4u L=180n",
+    ]
+    for hidden in range(hidden_count):
+        race = f"h{hidden}_race"
+        low = f"h{hidden}_race_low"
+        charge_a = f"{race}_charge_a"
+        charge_b = f"{race}_charge_b"
+        discharge_mid = f"{race}_discharge_mid"
+        lines += [
+            f"Chrow{hidden}_race hrow{hidden} 0 {hrow_capacitance_f:.12g}f IC=0",
+            f"Rhrow{hidden}_race hrow{hidden} 0 1G",
+            f"Mhrow{hidden}_race_rst hrow{hidden} rst 0 0 NMOS W=4u L=180n",
+            f"C{race} {race} 0 {race_capacitance_f:.12g}f IC=0",
+            f"R{race} {race} 0 1G",
+            f"M{race}_rst {race} rst 0 0 NMOS W=4u L=180n",
+            f"C{low} {low} 0 1f IC=1.2",
+            f"R{low} {low} vdd 1G",
+            f"M{low}_rst {low} rstn vdd vdd PMOS W=4u L=180n",
+            f"R{charge_a} {charge_a} 0 1G",
+            f"R{charge_b} {charge_b} 0 1G",
+            f"R{discharge_mid} {discharge_mid} 0 1G",
+            f"M{race}_charge_p vdd pre{hidden}_p {charge_a} 0 NSENSE W={charge_width_u:.6g}u L=180n",
+            f"M{race}_charge_phi {charge_a} {phase_node} {charge_b} 0 NSENSE W={charge_width_u:.6g}u L=180n",
+            f"M{race}_charge_stop {charge_b} wta_stop_low {race} 0 NSENSE W={charge_width_u:.6g}u L=180n",
+            f"M{race}_discharge_n {race} pre{hidden}_n {discharge_mid} 0 NSENSE W={discharge_width_u:.6g}u L=180n",
+            f"M{race}_discharge_phi {discharge_mid} {phase_node} 0 0 NSENSE W={discharge_width_u:.6g}u L=180n",
+            f"M{low}_discharge {low} {race} 0 0 NREL W={sense_width_u:.6g}u L=180n",
+            f"Mhrow{hidden}_race_restore hrow{hidden} {low} vdd vdd PMOS W={hrow_restore_width_u:.6g}u L=180n",
+            f"Mwta_stop_h{hidden}_discharge wta_stop_low hrow{hidden} 0 0 NSENSE W={stop_discharge_width_u:.6g}u L=180n",
+        ]
+    return lines
+
+
 def _hidden_forward_lines(
     feature_count: int,
     hidden_count: int,
@@ -485,8 +546,16 @@ def _hidden_forward_lines(
         raise ValueError("hidden_activation_mode must be single-ended or differential-preamp")
     if input_mode not in ("raw", "contrast-common-gate", "restored-common-gate"):
         raise ValueError("hidden_input_mode must be raw, contrast-common-gate, or restored-common-gate")
-    if row_select_mode not in ("act", "act-common-gate", "pre-differential-pairwise-wta"):
-        raise ValueError("hidden_row_select_mode must be act, act-common-gate, or pre-differential-pairwise-wta")
+    if row_select_mode not in (
+        "act",
+        "act-common-gate",
+        "pre-differential-pairwise-wta",
+        "pre-differential-race-wta",
+    ):
+        raise ValueError(
+            "hidden_row_select_mode must be act, act-common-gate, "
+            "pre-differential-pairwise-wta, or pre-differential-race-wta"
+        )
     lines: list[str] = []
     if input_mode in ("contrast-common-gate", "restored-common-gate"):
         lines += _input_feature_common_gate_lines(
@@ -581,6 +650,9 @@ def _hidden_forward_lines(
         )
     if row_select_mode == "pre-differential-pairwise-wta":
         lines += _hidden_pre_differential_pairwise_wta_lines(hidden_count)
+        return lines
+    if row_select_mode == "pre-differential-race-wta":
+        lines += _hidden_pre_differential_race_wta_lines(hidden_count)
         return lines
     for hidden in range(hidden_count):
         hrow_source = f"act_contrast{hidden}" if row_select_mode == "act-common-gate" else f"act{hidden}"
@@ -1518,8 +1590,16 @@ def mnist01_live_hidden_netlist(
         raise ValueError("hidden_activation_mode must be single-ended or differential-preamp")
     if hidden_input_mode not in ("raw", "contrast-common-gate", "restored-common-gate"):
         raise ValueError("hidden_input_mode must be raw, contrast-common-gate, or restored-common-gate")
-    if hidden_row_select_mode not in ("act", "act-common-gate", "pre-differential-pairwise-wta"):
-        raise ValueError("hidden_row_select_mode must be act, act-common-gate, or pre-differential-pairwise-wta")
+    if hidden_row_select_mode not in (
+        "act",
+        "act-common-gate",
+        "pre-differential-pairwise-wta",
+        "pre-differential-race-wta",
+    ):
+        raise ValueError(
+            "hidden_row_select_mode must be act, act-common-gate, "
+            "pre-differential-pairwise-wta, or pre-differential-race-wta"
+        )
     if readout_activation_mode not in ("hrow", "pre-differential", "pre-differential-gated"):
         raise ValueError("readout_activation_mode must be hrow, pre-differential, or pre-differential-gated")
     if readout_writer_activation_mode not in ("hrow", "pre-differential", "pre-differential-gated"):

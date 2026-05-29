@@ -21,6 +21,9 @@ def _current_best_patch2x2_netlist(
     train: list[dict[str, Any]],
     evals: list[dict[str, Any]],
     *,
+    hidden_row_select_mode: str = "act",
+    readout_activation_mode: str = "pre-differential",
+    readout_writer_activation_mode: str = "pre-differential",
     measure_eval_hidden_states: bool = False,
     measure_readout_states: bool = False,
 ) -> str:
@@ -37,8 +40,9 @@ def _current_best_patch2x2_netlist(
         hidden_outside_negative=0.15,
         hidden_activation_mode="differential-preamp",
         hidden_activation_sense_width_u=4.0,
-        readout_activation_mode="pre-differential",
-        readout_writer_activation_mode="pre-differential",
+        hidden_row_select_mode=hidden_row_select_mode,
+        readout_activation_mode=readout_activation_mode,
+        readout_writer_activation_mode=readout_writer_activation_mode,
         readout_width_u=64.0,
         readout_update_width_u=0.25,
         hidden_credit_gate_mode="dynamic-preamp",
@@ -154,6 +158,21 @@ def main() -> None:
     parser.add_argument("--loss-margin-scale-v", type=float, default=1.0e-3)
     parser.add_argument("--measure-hidden-states", action="store_true")
     parser.add_argument("--measure-readout-states", action="store_true")
+    parser.add_argument(
+        "--hidden-row-select-mode",
+        choices=("act", "act-common-gate", "pre-differential-pairwise-wta", "pre-differential-race-wta"),
+        default="act",
+    )
+    parser.add_argument(
+        "--readout-activation-mode",
+        choices=("hrow", "pre-differential", "pre-differential-gated"),
+        default="pre-differential",
+    )
+    parser.add_argument(
+        "--readout-writer-activation-mode",
+        choices=("hrow", "pre-differential", "pre-differential-gated"),
+        default="pre-differential",
+    )
     parser.add_argument("--spice", default="ngspice")
     parser.add_argument("--timeout", type=float, default=600.0)
     parser.add_argument(
@@ -183,6 +202,9 @@ def main() -> None:
             _current_best_patch2x2_netlist(
                 train,
                 evals,
+                hidden_row_select_mode=args.hidden_row_select_mode,
+                readout_activation_mode=args.readout_activation_mode,
+                readout_writer_activation_mode=args.readout_writer_activation_mode,
                 measure_eval_hidden_states=args.measure_hidden_states,
                 measure_readout_states=args.measure_readout_states,
             ),
@@ -237,6 +259,9 @@ def main() -> None:
         "eval_count_per_digit": args.eval_count_per_digit,
         "epochs": args.epochs,
         "image_size": args.image_size,
+        "hidden_row_select_mode": args.hidden_row_select_mode,
+        "readout_activation_mode": args.readout_activation_mode,
+        "readout_writer_activation_mode": args.readout_writer_activation_mode,
         "loss_margin_scale_v": args.loss_margin_scale_v,
         "train_accuracy": train_accuracy,
         "final_accuracy": final_accuracy,

@@ -637,7 +637,7 @@ def test_mnist01_live_hidden_sparse_complement_dynamic_hidden_writes_stay_bounde
 
 
 @pytest.mark.ngspice
-def test_mnist01_live_hidden_sparse_complement_signcharge_packet_writes_are_bounded_unsaturated(
+def test_mnist01_live_hidden_sparse_complement_signcharge_packet_writes_are_bidirectional(
     tmp_path: Path,
     ngspice_path: str,
 ) -> None:
@@ -659,7 +659,7 @@ def test_mnist01_live_hidden_sparse_complement_signcharge_packet_writes_are_boun
             hidden_count=32,
             hidden_init_mode="identity",
             hidden_connectivity_mode="identity-sparse",
-            hidden_inside_positive=0.90,
+            hidden_inside_positive=0.75,
             hidden_inside_negative=0.15,
             hidden_outside_positive=0.15,
             hidden_outside_negative=0.15,
@@ -685,7 +685,9 @@ def test_mnist01_live_hidden_sparse_complement_signcharge_packet_writes_are_boun
         assert parsed[f"final_margin_improvement_{sample_idx}"] > 0.25e-3
     assert abs(parsed["train_wh_probe_signed_delta_0"]) < 1.0e-3
     hidden_deltas = [parsed[f"train_wh_probe_signed_delta_{idx}"] for idx in range(1, 4)]
-    assert min(abs(delta) for delta in hidden_deltas) > 5.0e-3
+    assert min(hidden_deltas) < -3.0e-3
+    assert max(hidden_deltas) > 3.0e-3
+    assert max(abs(delta) for delta in hidden_deltas) > 3.0e-3
     assert max(abs(delta) for delta in hidden_deltas) < 20.0e-3
     assert max(abs(parsed[f"train_hcredit_gate_probe_{idx}"]) for idx in range(1, 4)) > 0.5
 
@@ -1602,6 +1604,73 @@ def _hidden_signcharge_packet_writer_netlist(
     return "\n".join(lines)
 
 
+def _hidden_signcharge_forward_after_write_netlist(
+    *,
+    positive_gate: float,
+    negative_gate: float,
+    whp_ic: float,
+    whn_ic: float,
+) -> str:
+    lines = [
+        "* Hidden signcharge packet writer followed by a second forward read.",
+        ".param VDD=1.2",
+        mnist01_hidden.mos_models(),
+        ".options method=gear reltol=1e-4 abstol=1e-13 vntol=1e-7",
+        "Vdd vdd 0 {VDD}",
+        "Vrst rst 0 PWL(0n 1.2 0.45n 1.2 0.48n 0 2.00n 0 2.03n 1.2 2.45n 1.2 2.48n 0 5n 0)",
+        "Vrstn rstn 0 PWL(0n 0 0.45n 0 0.48n 1.2 2.00n 1.2 2.03n 0 2.45n 0 2.48n 1.2 5n 1.2)",
+        "Vfeatphi featphi 0 PWL(0n 0 0.75n 0 0.78n 1.2 1.25n 1.2 1.28n 0 2.75n 0 2.78n 1.2 3.25n 1.2 3.28n 0 5n 0)",
+        "Vhcgwrite h0_hcg_write 0 PWL(0n 0 1.52n 0 1.55n 1.2 1.65n 1.2 1.68n 0 5n 0)",
+        "Vpx0 px0 0 0.78",
+        f"Vhdpg h0_hdp_gate 0 {positive_gate:.12g}",
+        f"Vhdng h0_hdn_gate 0 {negative_gate:.12g}",
+        f"Cwh0f0p wh0f0p 0 20f IC={whp_ic:.12g}",
+        f"Cwh0f0n wh0f0n 0 20f IC={whn_ic:.12g}",
+        "Rwhp wh0f0p 0 1e15",
+        "Rwhn wh0f0n 0 1e15",
+        *mnist01_hidden._hidden_state_lines(1),
+        *mnist01_hidden._hidden_forward_lines(
+            1,
+            1,
+            8.0,
+            activation_mode="differential-preamp",
+            activation_sense_width_u=4.0,
+            hidden_init_mode="identity",
+            hidden_connectivity_mode="identity-sparse",
+        ),
+        *mnist01_hidden._hidden_writer_lines(
+            1,
+            1,
+            0.2,
+            4.0,
+            0.2,
+            "pmos-signcharge",
+            "h{hidden}_hcg_write",
+            True,
+            hidden_init_mode="identity",
+            hidden_connectivity_mode="identity-sparse",
+        ),
+        ".meas tran pre_before_p FIND V(pre0_p) AT=1.25n",
+        ".meas tran pre_before_n FIND V(pre0_n) AT=1.25n",
+        ".meas tran pre_before PARAM='pre_before_p-pre_before_n'",
+        ".meas tran pre_after_p FIND V(pre0_p) AT=3.25n",
+        ".meas tran pre_after_n FIND V(pre0_n) AT=3.25n",
+        ".meas tran pre_after PARAM='pre_after_p-pre_after_n'",
+        ".meas tran pre_delta PARAM='pre_after-pre_before'",
+        ".meas tran whp_after FIND V(wh0f0p) AT=3.50n",
+        ".meas tran whn_after FIND V(wh0f0n) AT=3.50n",
+        f".meas tran wh_delta PARAM='whp_after-whn_after-({whp_ic:.12g}-{whn_ic:.12g})'",
+        ".tran 1p 5n uic",
+        ".control",
+        "run",
+        "quit",
+        ".endc",
+        ".end",
+        "",
+    ]
+    return "\n".join(lines)
+
+
 @pytest.mark.ngspice
 def test_hidden_credit_dynamic_preamp_restores_mnist_scale_credit_with_dead_zone(
     tmp_path: Path,
@@ -1695,6 +1764,53 @@ def test_hidden_signcharge_packet_writer_bounds_saturated_state(
     assert -30e-3 < negative["signed_delta"] < -3e-3
     assert 3e-3 < positive["signed_delta"] < 30e-3
     assert abs(neutral["signed_delta"]) < 100e-6
+
+
+@pytest.mark.ngspice
+def test_hidden_signcharge_packet_write_changes_next_forward_evidence(
+    tmp_path: Path,
+    ngspice_path: str,
+) -> None:
+    positive_visible = mnist01_hidden.run_netlist(
+        ngspice_path,
+        tmp_path / "hidden_signcharge_forward_positive_visible.cir",
+        _hidden_signcharge_forward_after_write_netlist(
+            positive_gate=0.69,
+            negative_gate=0.0,
+            whp_ic=0.75,
+            whn_ic=0.15,
+        ),
+        timeout=30.0,
+    )
+    positive_saturated = mnist01_hidden.run_netlist(
+        ngspice_path,
+        tmp_path / "hidden_signcharge_forward_positive_saturated.cir",
+        _hidden_signcharge_forward_after_write_netlist(
+            positive_gate=0.69,
+            negative_gate=0.0,
+            whp_ic=0.90,
+            whn_ic=0.15,
+        ),
+        timeout=30.0,
+    )
+    negative_visible = mnist01_hidden.run_netlist(
+        ngspice_path,
+        tmp_path / "hidden_signcharge_forward_negative_visible.cir",
+        _hidden_signcharge_forward_after_write_netlist(
+            positive_gate=0.0,
+            negative_gate=0.69,
+            whp_ic=0.75,
+            whn_ic=0.15,
+        ),
+        timeout=30.0,
+    )
+
+    assert positive_visible["wh_delta"] > 3.0e-3
+    assert positive_visible["pre_delta"] > 3.0e-3
+    assert positive_saturated["wh_delta"] > 1.0e-3
+    assert abs(positive_saturated["pre_delta"]) < 1.0e-3
+    assert negative_visible["wh_delta"] < -3.0e-3
+    assert negative_visible["pre_delta"] < -3.0e-3
 
 
 @pytest.mark.ngspice
